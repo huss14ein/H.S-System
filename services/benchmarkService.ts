@@ -47,6 +47,8 @@ export async function fetchBenchmarkData(): Promise<BenchmarkData[]> {
     const now = Date.now();
     const sp500Return = (10 / 12) + (Math.random() - 0.5) * 2; // ~0.83% monthly ±1%
     const nasdaqReturn = (12 / 12) + (Math.random() - 0.5) * 2; // ~1% monthly ±1%
+    // Sukuk / Islamic fixed income: lower volatility proxy for fit vs `benchmarkFitByAssetType` (SUKUK label)
+    const sukukReturn = (4 / 12) + (Math.random() - 0.5) * 0.8;
 
     const benchmarks: BenchmarkData[] = [
       {
@@ -61,6 +63,13 @@ export async function fetchBenchmarkData(): Promise<BenchmarkData[]> {
         name: 'NASDAQ-100',
         currentValue: 100 * (1 + nasdaqReturn / 100),
         returnPct: nasdaqReturn,
+        date: new Date(now),
+      },
+      {
+        symbol: 'SUKUK_PROXY',
+        name: 'Sukuk / Islamic income (proxy)',
+        currentValue: 100 * (1 + sukukReturn / 100),
+        returnPct: sukukReturn,
         date: new Date(now),
       },
     ];

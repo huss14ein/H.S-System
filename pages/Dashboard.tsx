@@ -47,6 +47,7 @@ import { personalFinanceHealthScore } from '../services/decisionScoringEngine';
 import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
 import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
 import { useSelfLearning } from '../context/SelfLearningContext';
+import { BoltIcon } from '../components/icons/BoltIcon';
 
 interface ExtendedBudget extends Budget {
     spent: number;
@@ -401,8 +402,16 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             const lastMonthPnL = lastMonthIncome - lastMonthExpenses;
 
             // Net worth — shared with Summary / Risk hub (`services/personalNetWorth.ts`)
-            const netWorth = computePersonalNetWorthSAR(data, sarPerUsd);
-            const totalInvestmentsValue = getAllInvestmentsValueInSAR(investments, sarPerUsd);
+            const netWorth = computePersonalNetWorthSAR(data, sarPerUsd, { getAvailableCashForAccount });
+            const holdingsValueSAR = getAllInvestmentsValueInSAR(investments, sarPerUsd);
+            /** Cash at broker (deposits not yet invested) must count toward portfolio value or ROI reads as -100% with deposits only. */
+            let brokerageCashSAR = 0;
+            accounts.forEach((acc: Account) => {
+                if (acc.type === 'Investment' && personalAccountIds.has(acc.id)) {
+                    brokerageCashSAR += tradableCashBucketToSAR(getAvailableCashForAccount(acc.id), sarPerUsd);
+                }
+            });
+            const totalInvestmentsValue = holdingsValueSAR + brokerageCashSAR;
             const netWorthPrevMonth = netWorth - monthlyPnL;
             const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
 
@@ -462,9 +471,12 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
             const recentTx = transactions.filter((t: { date: string }) => new Date(t.date) >= sixMonthsAgo);
             const monthlyNets = new Map<string, number>();
-            recentTx.forEach((t: { date: string; amount?: number }) => {
+            recentTx.forEach((t: Transaction) => {
                 const key = t.date.slice(0, 7);
-                monthlyNets.set(key, (monthlyNets.get(key) || 0) + (Number(t.amount) ?? 0));
+                let delta = 0;
+                if (countsAsIncomeForCashflowKpi(t)) delta += Number(t.amount) ?? 0;
+                else if (countsAsExpenseForCashflowKpi(t)) delta += Number(t.amount) ?? 0;
+                monthlyNets.set(key, (monthlyNets.get(key) || 0) + delta);
             });
             const avgMonthlyNet = monthlyNets.size > 0
                 ? Array.from(monthlyNets.values()).reduce((a, b) => a + b, 0) / monthlyNets.size
@@ -488,7 +500,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             console.error("Dashboard calculation error:", e);
             return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
         }
-    }, [data, exchangeRate]);
+    }, [data, exchangeRate, getAvailableCashForAccount]);
 
     useEffect(() => {
         if (!isAdmin) return;
@@ -561,15 +573,23 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
 
     const kpiCards = useMemo(() => {
         const cardProps = { density: kpiDensity as 'compact' | 'comfortable' };
-        const efTrend = emergencyFund.status === 'healthy' ? `${EMERGENCY_FUND_TARGET_MONTHS} mo target met` : emergencyFund.status === 'adequate' ? 'Adequate' : emergencyFund.status === 'low' ? 'Build more' : 'Critical';
+        const efTrend = !emergencyFund.hasEssentialExpenseEstimate
+            ? 'Add expense data'
+            : emergencyFund.status === 'healthy'
+              ? `${EMERGENCY_FUND_TARGET_MONTHS} mo target met`
+              : emergencyFund.status === 'adequate'
+                ? 'Adequate'
+                : emergencyFund.status === 'low'
+                  ? 'Build more'
+                  : 'Critical';
         const efColor = emergencyFund.status === 'healthy' ? 'green' : emergencyFund.status === 'adequate' ? 'green' : emergencyFund.status === 'low' ? 'yellow' : 'red';
         return {
             netWorth: <Card {...cardProps} title="My Net Worth" value={maskBalance(formatCurrencyString(kpiSummary.netWorth || 0))} trend={`${(kpiSummary.netWorthTrend || 0) >= 0 ? '+' : ''}${getTrendString(kpiSummary.netWorthTrend)}`} indicatorColor={(kpiSummary.netWorthTrend || 0) >= 0 ? 'green' : 'red'} tooltip="Personal wealth only. Items with Owner set (e.g. Father) are excluded." onClick={() => setActivePage('Summary')} icon={<ScaleIcon className="h-5 w-5 text-slate-400" />} />,
             monthlyPnL: <Card {...cardProps} title="This Month's P&L" value={formatCurrency(kpiSummary.monthlyPnL || 0, { colorize: true })} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'Surplus' : 'Deficit'} indicatorColor={(kpiSummary.monthlyPnL || 0) >= 0 ? 'green' : 'red'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-slate-400" />} />,
-            emergencyFund: <Card {...cardProps} title="Emergency Fund" value={`${emergencyFund.monthsCovered.toFixed(1)} mo`} trend={efTrend} indicatorColor={efColor} tooltip={`Liquid cash (Checking + Savings) covers ${emergencyFund.monthsCovered.toFixed(1)} months of essential expenses. Target: ${EMERGENCY_FUND_TARGET_MONTHS} months.${emergencyFund.shortfall > 0 ? ` Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : ''}`} onClick={() => setActivePage('Summary')} icon={<ShieldCheckIcon className="h-5 w-5 text-slate-400" />} />,
+            emergencyFund: <Card {...cardProps} title="Emergency Fund" value={emergencyFund.hasEssentialExpenseEstimate ? `${emergencyFund.monthsCovered.toFixed(1)} mo` : '—'} trend={efTrend} indicatorColor={efColor} tooltip={emergencyFund.hasEssentialExpenseEstimate ? `Liquid cash (Checking + Savings) covers ${emergencyFund.monthsCovered.toFixed(1)} months of essential expenses. Target: ${EMERGENCY_FUND_TARGET_MONTHS} months.${emergencyFund.shortfall > 0 ? ` Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : ''}` : 'Categorize essential spending or add budgets so we can estimate months of coverage.'} onClick={() => setActivePage('Summary')} icon={<ShieldCheckIcon className="h-5 w-5 text-slate-400" />} />,
             budgetVariance: <Card {...cardProps} title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, { colorize: true })} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'Under budget' : 'Over budget'} indicatorColor={(kpiSummary.budgetVariance || 0) >= 0 ? 'green' : 'red'} tooltip="Money saved from budget this month (positive = under budget). Over budget is shown in red." onClick={() => setActivePage('Budgets')} icon={<PiggyBankIcon className="h-5 w-5 text-slate-400" />} />,
-            investmentRoi: <Card {...cardProps} title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="Return on Investment based on total capital invested." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" />} />,
-            investmentPlan: <Card {...cardProps} title="Investment Plan" value={`${investmentProgress.percent.toFixed(0)}%`} trend={investmentProgress.percent >= 100 ? 'Target met' : `${investmentProgress.percent.toFixed(0)}% of target`} indicatorColor={investmentProgress.percent >= 100 ? 'green' : 'yellow'} tooltip={`Progress: ${formatCurrencyString(investmentProgress.amount, { digits: 0, inCurrency: investmentProgress.planCurrency })} / ${formatCurrencyString(investmentProgress.target, { digits: 0, inCurrency: investmentProgress.planCurrency })} monthly.`} onClick={() => setActivePage('Investments')} icon={<ArrowPathIcon className="h-5 w-5 text-primary" />} />,
+            investmentRoi: <Card {...cardProps} title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="(Holdings + cash at broker) vs net deposits/withdrawals. Cash waiting to be invested counts as portfolio value." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" />} />,
+            investmentPlan: <Card {...cardProps} title="Investment Plan" value={`${investmentProgress.percent.toFixed(0)}%`} trend={investmentProgress.percent >= 100 ? 'Target met' : `${investmentProgress.percent.toFixed(0)}% of target`} indicatorColor={investmentProgress.percent >= 100 ? 'green' : 'yellow'} tooltip={`Progress: ${formatCurrencyString(investmentProgress.amount, { digits: 0, inCurrency: investmentProgress.planCurrency })} / ${formatCurrencyString(investmentProgress.target, { digits: 0, inCurrency: investmentProgress.planCurrency })} monthly.`} onClick={() => setActivePage('Investment Plan')} icon={<ArrowPathIcon className="h-5 w-5 text-primary" />} />,
             wealthUltra: <Card {...cardProps} title="Wealth Ultra" value="Engine" trend="Active" indicatorColor="green" tooltip="Automated portfolio allocation and order generation with performance tracking." onClick={() => setActivePage('Wealth Ultra')} icon={<ScaleIcon className="h-5 w-5 text-primary" />} />,
             marketEvents: <Card {...cardProps} title="Market Events" value="Calendar" trend="Upcoming" indicatorColor="yellow" tooltip="View upcoming FOMC meetings, earnings, and market-impacting events with AI insights." onClick={() => setActivePage('Market Events')} icon={<CalendarDaysIcon className="h-5 w-5 text-indigo-500" />} />,
         };
@@ -658,28 +678,91 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             )}
 
             {ready && (actionQueue.length > 0 || (analysis?.alerts?.length ?? 0) > 0) && (
-                <div className="mb-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
-                    <h3 className="text-sm font-semibold text-slate-800 mb-2">Cross-engine actions & alerts</h3>
-                    {analysis?.alerts && analysis.alerts.length > 0 && (
-                        <ul className="space-y-1.5 mb-3">
-                            {analysis.alerts.slice(0, 3).map((a, i) => (
-                                <li key={i} className="text-sm text-amber-800 flex items-start gap-2">
-                                    <ExclamationTriangleIcon className="h-4 w-4 shrink-0 mt-0.5" />
-                                    <span>{a.message}</span>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
-                    {actionQueue.length > 0 && (
-                        <ul className="space-y-1.5 text-sm text-slate-700">
-                            {actionQueue.slice(0, 5).map((item, i) => (
-                                <li key={i} className="flex justify-between gap-2">
-                                    <span>{item.action}</span>
-                                    <span className="text-slate-500 text-xs shrink-0">P{Math.round(item.priority)}</span>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
+                <div
+                    className="mb-4 relative overflow-hidden rounded-2xl border-2 border-amber-400/90 bg-gradient-to-br from-amber-50 via-white to-orange-50/60 shadow-[0_4px_24px_-4px_rgba(245,158,11,0.35)] ring-1 ring-amber-200/70"
+                    role="region"
+                    aria-label="Cross-engine actions and alerts"
+                >
+                    <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b from-amber-500 via-orange-500 to-rose-500" aria-hidden />
+                    <div className="pl-6 pr-4 py-4 sm:pl-7">
+                        <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-4">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-md shadow-amber-500/30">
+                                <BoltIcon className="h-5 w-5" aria-hidden />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                                <h3 className="text-base font-bold tracking-tight text-slate-900">Cross-engine actions & alerts</h3>
+                                <p className="text-xs text-slate-600 mt-0.5">Budget, cashflow, risk, and Wealth Ultra engines combined—review these first.</p>
+                            </div>
+                            <div className="flex flex-wrap gap-2 w-full sm:w-auto sm:justify-end">
+                                {(analysis?.alerts?.length ?? 0) > 0 && (
+                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-200 bg-rose-100 px-3 py-1 text-xs font-bold uppercase tracking-wide text-rose-900 shadow-sm">
+                                        <ExclamationTriangleIcon className="h-3.5 w-3.5 text-rose-600" aria-hidden />
+                                        {analysis!.alerts!.length} alert{analysis!.alerts!.length === 1 ? '' : 's'}
+                                    </span>
+                                )}
+                                {actionQueue.length > 0 && (
+                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-100 px-3 py-1 text-xs font-bold uppercase tracking-wide text-sky-900 shadow-sm">
+                                        <ClipboardDocumentListIcon className="h-3.5 w-3.5 text-sky-600" aria-hidden />
+                                        {actionQueue.length} action{actionQueue.length === 1 ? '' : 's'}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+
+                        {analysis?.alerts && analysis.alerts.length > 0 && (
+                            <div className="mb-4 rounded-xl border-2 border-amber-300/80 bg-amber-50/95 p-3 shadow-inner">
+                                <p className="text-[11px] font-bold uppercase tracking-wider text-amber-900/90 mb-2 flex items-center gap-2">
+                                    <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse motion-reduce:animate-none" aria-hidden />
+                                    Alerts
+                                </p>
+                                <ul className="space-y-2">
+                                    {analysis.alerts.slice(0, 3).map((a, i) => (
+                                        <li
+                                            key={i}
+                                            className="flex items-start gap-2.5 rounded-lg border border-amber-200/60 bg-white/80 px-3 py-2.5 text-sm font-medium text-amber-950 shadow-sm"
+                                        >
+                                            <ExclamationTriangleIcon className="h-5 w-5 shrink-0 text-amber-600" aria-hidden />
+                                            <span>{a.message}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+
+                        {actionQueue.length > 0 && (
+                            <div className="rounded-xl border-2 border-sky-300/80 bg-sky-50/95 p-3 shadow-inner">
+                                <p className="text-[11px] font-bold uppercase tracking-wider text-sky-900/90 mb-2 flex items-center gap-2">
+                                    <span className="inline-block h-2 w-2 rounded-full bg-sky-500" aria-hidden />
+                                    Prioritized actions
+                                </p>
+                                <ul className="space-y-2">
+                                    {actionQueue.slice(0, 5).map((item, i) => {
+                                        const p = Math.round(item.priority);
+                                        const priorityClass =
+                                            p <= 2
+                                                ? 'border-red-300 bg-red-100 text-red-900'
+                                                : p <= 4
+                                                  ? 'border-amber-300 bg-amber-100 text-amber-950'
+                                                  : 'border-slate-200 bg-slate-100 text-slate-800';
+                                        return (
+                                            <li
+                                                key={i}
+                                                className="flex items-start justify-between gap-3 rounded-lg border border-sky-200/70 bg-white/90 px-3 py-2.5 text-sm text-slate-800 shadow-sm"
+                                            >
+                                                <span className="min-w-0 flex-1 leading-snug font-medium">{item.action}</span>
+                                                <span
+                                                    className={`shrink-0 inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-bold tabular-nums ${priorityClass}`}
+                                                    title={`Priority ${p} (lower = more urgent)`}
+                                                >
+                                                    P{p}
+                                                </span>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 
@@ -756,7 +839,13 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                     <p className="text-2xl font-bold text-dark tabular-nums">{maskBalance(formatCurrencyString(projectedCash30d ?? currentCash ?? 0))}</p>
                     <p className="text-xs text-slate-500 mt-1">Projected cash in 30 days (current + average monthly flow).</p>
                     <div className="mt-3 pt-3 border-t border-slate-200">
-                        <p className="text-sm text-slate-700"><strong>Emergency fund:</strong> {maskBalance(formatCurrencyString(emergencyFund.emergencyCash))} liquid cash = <strong>{emergencyFund.monthsCovered.toFixed(1)} months</strong> of essential expenses (target {EMERGENCY_FUND_TARGET_MONTHS} months). {emergencyFund.shortfall > 0 ? `Shortfall: ${maskBalance(formatCurrencyString(emergencyFund.shortfall))}.` : 'Target met.'}</p>
+                        <p className="text-sm text-slate-700"><strong>Emergency fund:</strong> {maskBalance(formatCurrencyString(emergencyFund.emergencyCash))} liquid cash (Checking + Savings only; money moved to investments is not double-counted here)
+                            {emergencyFund.hasEssentialExpenseEstimate ? (
+                                <> = <strong>{emergencyFund.monthsCovered.toFixed(1)} months</strong> of essential expenses (target {EMERGENCY_FUND_TARGET_MONTHS} months). {emergencyFund.shortfall > 0 ? `Shortfall: ${maskBalance(formatCurrencyString(emergencyFund.shortfall))}.` : 'Target met.'}</>
+                            ) : (
+                                <>. Add essential expense categories or budgets to estimate months covered.</>
+                            )}
+                        </p>
                     </div>
                 </div>
             )}

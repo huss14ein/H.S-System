@@ -346,3 +346,25 @@ export function generateWealthSummaryReportHtml(input: WealthSummaryReportInput)
 </html>`;
 }
 
+/**
+ * Opens a full HTML document in a new window and triggers print after the document is ready.
+ * Use `document.open()` before `write()` (required in several browsers) and defer `print()`
+ * so the preview is not blank.
+ */
+export function openHtmlForPrint(html: string): boolean {
+  const w = window.open('', '_blank', 'noopener,noreferrer,width=980,height=760');
+  if (!w) return false;
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+  window.setTimeout(() => {
+    try {
+      w.focus();
+      w.print();
+    } catch {
+      /* ignore */
+    }
+  }, 150);
+  return true;
+}

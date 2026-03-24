@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useContext } from 'react';
+import React, { useState, useMemo, useCallback, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Area, ComposedChart, Line, ReferenceLine } from 'recharts';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from '../components/charts/chartTheme';
@@ -18,6 +18,7 @@ import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngin
 import type { Page } from '../types';
 import { normalizedMonthlyExpense } from '../services/financeMetrics';
 import { stressTestScenario, compareStrategies } from '../services/stressScenario';
+import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const toMonthlyRate = (annualPct: number) => {
@@ -37,68 +38,90 @@ const toMonthlyRate = (annualPct: number) => {
     return Math.pow(1 + annualPct / 100, 1 / 12) - 1;
 };
 
+/** Calendar month key in local time (avoid UTC shift from toISOString). */
+function localYearMonthKey(d: Date): string {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
 const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
     const { formatCurrencyString } = useFormatCurrency();
-    const { data, loading } = useContext(DataContext)!;
+    const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const [stressJobLossM, setStressJobLossM] = useState(3);
     const [stressMarketDrop, setStressMarketDrop] = useState(15);
     const [stressMedical, setStressMedical] = useState(8000);
 
     const savingsAnalytics = useMemo(() => {
+        const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Array<{
+            date: string;
+            amount?: number;
+            type?: string;
+            category?: string;
+        }>;
         const monthlyNet = new Map<string, number>();
         const now = new Date();
 
         for (let i = 11; i >= 0; i--) {
             const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-            monthlyNet.set(d.toISOString().slice(0, 7), 0);
+            monthlyNet.set(localYearMonthKey(d), 0);
         }
 
-        ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach((t: { date: string; amount?: number }) => {
-            const monthKey = t.date.slice(0, 7);
+        txs.forEach((t) => {
+            if (!t?.date) return;
+            const d = new Date(t.date);
+            if (Number.isNaN(d.getTime())) return;
+            const monthKey = localYearMonthKey(d);
             if (!monthlyNet.has(monthKey)) return;
-            monthlyNet.set(monthKey, (monthlyNet.get(monthKey) || 0) + (Number(t.amount) ?? 0));
+            let delta = 0;
+            if (countsAsIncomeForCashflowKpi(t)) delta += Number(t.amount) || 0;
+            else if (countsAsExpenseForCashflowKpi(t)) delta -= Math.abs(Number(t.amount) || 0);
+            else return;
+            monthlyNet.set(monthKey, (monthlyNet.get(monthKey) || 0) + delta);
         });
 
         const values = Array.from(monthlyNet.values());
-        if (values.length === 0 || values.every(v => v === 0)) {
-            // No transaction data available - return neutral defaults with a note
-            return { 
-                averageMonthlySavings: 0, 
-                medianMonthlySavings: 0, 
-                monthlyStdDev: 0, 
-                consistencyScore: 0, 
-                incomeGrowthSuggestion: 3 
+        if (values.length === 0 || values.every((v) => v === 0)) {
+            return {
+                averageMonthlyNet: 0,
+                medianMonthlyNet: 0,
+                monthlyStdDev: 0,
+                consistencyScore: 0,
+                incomeGrowthSuggestion: 3,
+                medianMonthlySavings: 0,
+                averageMonthlySavings: 0,
             };
         }
 
-        const averageMonthlySavings = values.reduce((sum, v) => sum + v, 0) / values.length;
+        const averageMonthlyNet = values.reduce((sum, v) => sum + v, 0) / values.length;
         const sorted = [...values].sort((a, b) => a - b);
         const middle = Math.floor(sorted.length / 2);
-        const medianMonthlySavings = sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+        const medianMonthlyNet = sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
 
-        const variance = values.reduce((sum, v) => sum + Math.pow(v - averageMonthlySavings, 2), 0) / values.length;
+        const variance = values.reduce((sum, v) => sum + Math.pow(v - averageMonthlyNet, 2), 0) / values.length;
         const monthlyStdDev = Math.sqrt(Math.max(0, variance));
-        const consistencyScore = averageMonthlySavings !== 0
-            ? clamp(100 - (Math.abs(monthlyStdDev / averageMonthlySavings) * 100), 0, 100)
-            : 0;
+        const volDenom = Math.max(1, Math.abs(averageMonthlyNet));
+        const consistencyScore = clamp(100 - (monthlyStdDev / volDenom) * 100, 0, 100);
 
         const firstHalfAvg = values.slice(0, 6).reduce((sum, v) => sum + v, 0) / 6;
         const secondHalfAvg = values.slice(6).reduce((sum, v) => sum + v, 0) / 6;
-        const growthRatio = firstHalfAvg > 0 ? (secondHalfAvg - firstHalfAvg) / firstHalfAvg : 0;
+        const growthRatio =
+            Math.abs(firstHalfAvg) > 1e-6 ? (secondHalfAvg - firstHalfAvg) / Math.abs(firstHalfAvg) : secondHalfAvg - firstHalfAvg > 0 ? 0.05 : 0;
         const incomeGrowthSuggestion = clamp(growthRatio * 100, -2, 12);
 
         return {
-            averageMonthlySavings: Math.max(0, averageMonthlySavings),
-            medianMonthlySavings: Math.max(0, medianMonthlySavings),
+            averageMonthlyNet,
+            medianMonthlyNet,
             monthlyStdDev,
             consistencyScore,
             incomeGrowthSuggestion,
+            medianMonthlySavings: medianMonthlyNet,
+            averageMonthlySavings: averageMonthlyNet,
         };
     }, [data]);
 
     const [horizon, setHorizon] = useState(10);
-    const [monthlySavings, setMonthlySavings] = useState(savingsAnalytics.medianMonthlySavings);
+    const [monthlySavingsTouched, setMonthlySavingsTouched] = useState(false);
+    const [monthlySavings, setMonthlySavings] = useState(0);
     const [investmentGrowth, setInvestmentGrowth] = useState(7);
     const [incomeGrowth, setIncomeGrowth] = useState(3);
     const [isLoading, setIsLoading] = useState(false);
@@ -116,18 +139,19 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const [timeline, setTimeline] = useState<{ horizonYears: number; events: { yearOffset: number; label: string; narrative: string }[] } | null>(null);
 
 
-    React.useEffect(() => {
-        setMonthlySavings(savingsAnalytics.medianMonthlySavings);
-    }, [savingsAnalytics.medianMonthlySavings]);
+    useEffect(() => {
+        if (monthlySavingsTouched) return;
+        setMonthlySavings(Math.max(0, savingsAnalytics.medianMonthlyNet));
+    }, [savingsAnalytics.medianMonthlyNet, monthlySavingsTouched]);
 
     const initialValues = useMemo(() => {
         const d = data as any;
         const investments = d?.personalInvestments ?? data?.investments ?? [];
         const fx = resolveSarPerUsd(data, exchangeRate);
-        const netWorth = computePersonalNetWorthSAR(data, fx);
+        const netWorth = computePersonalNetWorthSAR(data, fx, { getAvailableCashForAccount });
         const investmentValue = getAllInvestmentsValueInSAR(investments, fx);
         return { netWorth, investmentValue };
-    }, [data, exchangeRate]);
+    }, [data, exchangeRate, getAvailableCashForAccount]);
 
 
     const applyScenarioPreset = (preset: 'Conservative' | 'Base' | 'Aggressive') => {
@@ -188,10 +212,13 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 currentInvestmentValue += investmentGain;
                 currentNetWorth += normalizedMonthlySavings + investmentGain;
 
-                goalsWithProjections.forEach(goal => {
+                goalsWithProjections.forEach((goal) => {
                     if (goal.metMonth === null) {
-                        const netWorthNeededForGoal = initialValues.netWorth - (goal.currentAmount ?? 0) + (goal.targetAmount ?? 0);
-                        if (currentNetWorth >= netWorthNeededForGoal) {
+                        const target = Math.max(0, Number(goal.targetAmount) || 0);
+                        const current = Math.max(0, Number(goal.currentAmount) || 0);
+                        const gap = Math.max(0, target - current);
+                        const netWorthThreshold = initialValues.netWorth + gap;
+                        if (currentNetWorth >= netWorthThreshold) {
                             goal.metMonth = i + 1;
                         }
                     }
@@ -219,7 +246,8 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     }));
                 }
 
-                const volatilityFactor = clamp(savingsAnalytics.monthlyStdDev / Math.max(1, savingsAnalytics.averageMonthlySavings), 0, 1.5);
+                const volBase = Math.max(1, Math.abs(savingsAnalytics.averageMonthlyNet));
+                const volatilityFactor = clamp(savingsAnalytics.monthlyStdDev / volBase, 0, 1.5);
                 const horizonRisk = Math.sqrt(Math.max(1, horizon));
                 const spread = computedSummary.projectedNetWorth * (0.05 + volatilityFactor * 0.08) * (horizonRisk / 4);
                 setConfidenceBand({
@@ -241,11 +269,25 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
 
             setIsLoading(false);
         }, 0);
-    }, [horizon, monthlySavings, investmentGrowth, incomeGrowth, initialValues, data?.goals, scenarioPreset, savingsAnalytics.monthlyStdDev, savingsAnalytics.averageMonthlySavings]);
+    }, [
+        horizon,
+        monthlySavings,
+        investmentGrowth,
+        incomeGrowth,
+        initialValues,
+        data,
+        data?.goals,
+        scenarioPreset,
+        savingsAnalytics.monthlyStdDev,
+        savingsAnalytics.averageMonthlyNet,
+    ]);
 
     const goalReferenceLines = useMemo(() => {
         return (data?.goals ?? []).map((goal, idx) => {
-            const yValue = initialValues.netWorth - (goal.currentAmount ?? 0) + (goal.targetAmount ?? 0);
+            const target = Math.max(0, Number(goal.targetAmount) || 0);
+            const current = Math.max(0, Number(goal.currentAmount) || 0);
+            const gap = Math.max(0, target - current);
+            const yValue = initialValues.netWorth + gap;
             return {
                 y: yValue,
                 label: goal.name ?? '—',
@@ -311,7 +353,10 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                         <strong className="text-slate-900">Net worth:</strong> starts from your current snapshot (personal scope); incremental changes follow the same savings + return path as the investment line. Other assets and liabilities are not re-projected month-by-month—they stay implied in the opening snapshot only.
                     </li>
                     <li>
-                        <strong className="text-slate-900">Goals &amp; band:</strong> goal lines are a rough threshold check; the confidence band is a heuristic from savings volatility and horizon, not a statistical forecast.
+                        <strong className="text-slate-900">History for defaults:</strong> the 12‑month chart uses your <strong>personal</strong> transactions: external income minus external expenses per calendar month (internal Transfer/Transfers excluded), bucketed in <strong>local</strong> time—not raw signed sums and not UTC month boundaries.
+                    </li>
+                    <li>
+                        <strong className="text-slate-900">Goals &amp; band:</strong> goal reference lines use current net worth plus the unfunded gap (target − current saved). The confidence band scales with volatility of that net flow and horizon—illustrative, not a formal interval.
                     </li>
                 </ul>
                 <p className="text-xs text-slate-500 mt-4 border-t border-slate-200/80 pt-3">
@@ -342,7 +387,8 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                             <button
                                 type="button"
                                 onClick={() => {
-                                    setMonthlySavings(savingsAnalytics.medianMonthlySavings);
+                                    setMonthlySavingsTouched(true);
+                                    setMonthlySavings(Math.max(0, savingsAnalytics.medianMonthlyNet));
                                     handleManualIncomeGrowthChange(Number(savingsAnalytics.incomeGrowthSuggestion.toFixed(1)));
                                 }}
                                 className="px-2.5 py-1 text-xs rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100"
@@ -350,7 +396,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                             >
                                 Auto-fill from history
                             </button>
-                            <InfoHint text="Uses your last 12 months of transaction-derived savings: median monthly savings and a suggested annual savings growth rate. You can still edit fields after." />
+                            <InfoHint text="Uses your last 12 months of external cash flow (income minus expenses, transfers excluded): median net flow seeds the monthly contribution (floored at zero for this model) and a suggested savings growth rate." />
                         </span>
                     </div>
                     <div>
@@ -359,8 +405,19 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     </div>
                     <div>
                         <label htmlFor="monthly-savings" className="block text-sm font-medium text-gray-700 flex items-center">Monthly Savings Contribution <InfoHint text="Amount you save per month; used to project future wealth. Default uses your calculated average." /></label>
-                        <input type="number" id="monthly-savings" value={monthlySavings} onChange={e => setMonthlySavings(Number(e.target.value))} className="input-base mt-1" />
-                        <p className="text-xs text-gray-500 mt-1">Calculated 12M median is {formatCurrencyString(savingsAnalytics.medianMonthlySavings)}; average is {formatCurrencyString(savingsAnalytics.averageMonthlySavings)}.</p>
+                        <input
+                            type="number"
+                            id="monthly-savings"
+                            value={monthlySavings}
+                            onChange={(e) => {
+                                setMonthlySavingsTouched(true);
+                                setMonthlySavings(Number(e.target.value));
+                            }}
+                            className="input-base mt-1"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                            12M median net cash flow {formatCurrencyString(savingsAnalytics.medianMonthlyNet)}; average {formatCurrencyString(savingsAnalytics.averageMonthlyNet)}. Model adds only non‑negative amounts to wealth each month.
+                        </p>
                     </div>
                     <div>
                         <label htmlFor="investment-growth" className="block text-sm font-medium text-gray-700 flex items-center">Annual Investment Growth (%) <InfoHint text="Expected yearly return on investments; affects projected net worth." /></label>
@@ -502,7 +559,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
 
                     {summary && !isLoading && (
                         <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-xs text-slate-600 leading-relaxed">
-                            <strong className="text-slate-800">Inputs quality:</strong> savings consistency {savingsAnalytics.consistencyScore.toFixed(0)} / 100 · 12‑month savings volatility {formatCurrencyString(savingsAnalytics.monthlyStdDev, { digits: 0 })}.
+                            <strong className="text-slate-800">Inputs quality:</strong> net-flow consistency {savingsAnalytics.consistencyScore.toFixed(0)} / 100 · 12‑month net-flow volatility {formatCurrencyString(savingsAnalytics.monthlyStdDev, { digits: 0 })}.
                         </div>
                     )}
                 </div>

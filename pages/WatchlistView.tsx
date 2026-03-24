@@ -57,8 +57,6 @@ const AddWatchlistItemModal: React.FC<{
     const [isLoadingName, setIsLoadingName] = useState(false);
     const [step, setStep] = useState<'main' | 'details'>('main');
     const [validationError, setValidationError] = useState<string | null>(null);
-    const nameRef = useRef(name);
-    nameRef.current = name;
     const symbolInputRef = useRef<HTMLInputElement | null>(null);
     const priceInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -81,16 +79,24 @@ const AddWatchlistItemModal: React.FC<{
         const sym = symbol.trim().toUpperCase();
         if (sym.length < 2) {
             setName('');
+            setIsLoadingName(false);
             return;
         }
+        let cancelled = false;
         setIsLoadingName(true);
         const t = setTimeout(() => {
             fetchCompanyNameForSymbol(sym).then((apiName) => {
-                if (apiName && !nameRef.current.trim()) setName(apiName);
+                if (cancelled) return;
+                if (apiName) setName(apiName);
                 setIsLoadingName(false);
-            }).catch(() => setIsLoadingName(false));
+            }).catch(() => {
+                if (!cancelled) setIsLoadingName(false);
+            });
         }, 500);
-        return () => clearTimeout(t);
+        return () => {
+            cancelled = true;
+            clearTimeout(t);
+        };
     }, [symbol, isOpen]);
 
     useEffect(() => {

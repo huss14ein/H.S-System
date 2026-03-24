@@ -38,27 +38,30 @@ export function runAlertEngine(
 
   const driftThreshold = config.driftAlertPct ?? DRIFT_ALERT_PCT;
   // ---- Sleeve allocation drift (over or under target) ----
-  for (const alloc of allocations) {
-    if (!isDriftAlert(alloc.driftPct, driftThreshold)) continue;
-    const over = alloc.driftPct > 0;
-    const sleeve = alloc.sleeve;
-    const type = over ? 'sleeve_overweight' : 'sleeve_drift';
-    const severity: WealthUltraAlertSeverity = Math.abs(alloc.driftPct) > 10 ? 'warning' : 'info';
-    alerts.push({
-      type,
-      title: over ? 'Rebalance' : 'Allocation gap',
-      severity,
-      message: over
-        ? `${sleeve} is ${alloc.driftPct.toFixed(1)}% over target (current ${alloc.allocationPct.toFixed(1)}% vs target ${alloc.targetPct}%).`
-        : `${sleeve} is ${Math.abs(alloc.driftPct).toFixed(1)}% under target (current ${alloc.allocationPct.toFixed(1)}% vs target ${alloc.targetPct}%).`,
-      actionHint: over
-        ? `Trim ${sleeve} winners or pause new ${sleeve} buys until allocation is back near ${alloc.targetPct}%.`
-        : sleeve === 'Core'
-          ? `Use Monthly Core deployment to add to Core, or add to ${sleeve} to close the gap.`
-          : `Add to ${sleeve} when you deploy (within risk limits).`,
-      sleeve: alloc.sleeve,
-      value: alloc.driftPct,
-    });
+  // No deployable portfolio value: drift is not meaningful (engine reports 0% drift).
+  if (totalValue > 0) {
+    for (const alloc of allocations) {
+      if (!isDriftAlert(alloc.driftPct, driftThreshold)) continue;
+      const over = alloc.driftPct > 0;
+      const sleeve = alloc.sleeve;
+      const type = over ? 'sleeve_overweight' : 'sleeve_drift';
+      const severity: WealthUltraAlertSeverity = Math.abs(alloc.driftPct) > 10 ? 'warning' : 'info';
+      alerts.push({
+        type,
+        title: over ? 'Rebalance' : 'Allocation gap',
+        severity,
+        message: over
+          ? `${sleeve} is ${alloc.driftPct.toFixed(1)}% over target (current ${alloc.allocationPct.toFixed(1)}% vs target ${alloc.targetPct}%).`
+          : `${sleeve} is ${Math.abs(alloc.driftPct).toFixed(1)}% under target (current ${alloc.allocationPct.toFixed(1)}% vs target ${alloc.targetPct}%).`,
+        actionHint: over
+          ? `Trim ${sleeve} winners or pause new ${sleeve} buys until allocation is back near ${alloc.targetPct}%.`
+          : sleeve === 'Core'
+            ? `Use Monthly Core deployment to add to Core, or add to ${sleeve} to close the gap.`
+            : `Add to ${sleeve} when you deploy (within risk limits).`,
+        sleeve: alloc.sleeve,
+        value: alloc.driftPct,
+      });
+    }
   }
 
   // ---- Spec breach ----

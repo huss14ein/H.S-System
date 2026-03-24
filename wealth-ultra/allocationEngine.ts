@@ -20,7 +20,8 @@ export function computeSleeveAllocations(
       .reduce((sum, p) => sum + p.marketValue, 0);
     const allocationPct = totalPortfolioValue > 0 ? (marketValue / totalPortfolioValue) * 100 : 0;
     const targetPct = targetBySleeve[sleeve];
-    const driftPct = allocationPct - targetPct;
+    /** Without positive portfolio value, sleeve drift vs target is undefined — use 0 so UI/alerts are not misleading. */
+    const driftPct = totalPortfolioValue > 0 ? allocationPct - targetPct : 0;
 
     return {
       sleeve,

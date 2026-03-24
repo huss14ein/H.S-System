@@ -113,7 +113,7 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
                 <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => { trackAction('link-journal', 'Engines & Tools'); triggerPageAction('Engines & Tools', 'openJournal'); }}>
                   My notes & ideas
                 </button>
-                <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => { trackAction('link-risk-trading', 'Engines & Tools'); triggerPageAction('Investments', 'openRiskTradingHub'); }}>
+                <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => { trackAction('link-risk-trading', 'Engines & Tools'); triggerPageAction('Engines & Tools', 'openRiskTradingHub'); }}>
                   Safety & rules
                 </button>
               </>

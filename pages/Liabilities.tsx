@@ -205,7 +205,7 @@ const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) =>
 
 interface LiabilitiesProps { setActivePage?: (page: Page) => void; }
 const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
-    const { data, loading, addLiability, updateLiability } = useContext(DataContext)!;
+    const { data, loading, addLiability, updateLiability, getAvailableCashForAccount } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
@@ -256,11 +256,11 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
         const activeReceivables = personalReceivables.filter((l: { status?: string }) => (l.status ?? 'Active') === 'Active');
         const totalDebt = activeDebts.reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0);
         const totalReceivable = activeReceivables.reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0);
-        const { totalAssets } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd);
+        const { totalAssets } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd, { getAvailableCashForAccount });
         const debtToAssetRatio = totalAssets > 0 ? (totalDebt / totalAssets) * 100 : 0;
         const netPosition = totalReceivable - totalDebt;
         return { totalDebt, totalReceivable, debtToAssetRatio, netPosition };
-    }, [data, sarPerUsd]);
+    }, [data, sarPerUsd, getAvailableCashForAccount]);
 
     const { liquidityRatioVal, debtServicePct } = useMemo(() => {
         const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
@@ -392,7 +392,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
             </div>
 
             {allDebts.filter((l) => (l.status ?? 'Active') === 'Active').length > 0 && (
-                <SectionCard title="Debt intelligence" className="mt-6" collapsible collapsibleSummary="Payoff order, stress">
+                <SectionCard title="Debt intelligence" collapsible collapsibleSummary="Payoff order, stress">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <h4 className="font-semibold text-slate-800 mb-1">Payoff order (avalanche)</h4>
@@ -414,7 +414,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 </SectionCard>
             )}
 
-            <SectionCard title="What I Owe" className="mt-6" collapsible collapsibleSummary="Debts" defaultExpanded>
+            <SectionCard title="What I Owe" collapsible collapsibleSummary="Debts" defaultExpanded>
                 <p className="text-sm text-gray-500 mb-4">Loans, mortgages, credit card balances, and other debts. Credit card rows are synced from your linked accounts.</p>
                 {debts.length === 0 ? (
                     <p className="text-center text-gray-500 py-8">No debts recorded. Add a liability or link a credit account with a negative balance.</p>
@@ -435,7 +435,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 )}
             </SectionCard>
 
-            <SectionCard title="What I'm Owed" className="mt-6" collapsible collapsibleSummary="Receivables">
+            <SectionCard title="What I'm Owed" collapsible collapsibleSummary="Receivables">
                 <p className="text-sm text-gray-500 mb-4">Money others owe you—personal loans you gave, outstanding invoices, or money friends/family will repay. Add and track receivables here.</p>
                 {receivables.length === 0 ? (
                     <p className="text-center text-gray-500 py-8">No receivables in this group. Switch filter to Paid/All to review historical items, or add an entry.</p>

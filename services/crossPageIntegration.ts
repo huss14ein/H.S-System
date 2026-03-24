@@ -23,28 +23,21 @@ export function getRelatedPages(page: Page): Array<{ page: Page; label: string; 
       related.push(
         { page: 'Investments', label: 'Investments', reason: 'View holdings and portfolios' },
         { page: 'Market Events', label: 'Market Events', reason: 'Check upcoming market events' },
-        { page: 'Recovery Plan', label: 'Recovery Plan', reason: 'Review recovery plans for losing positions' }
-      );
-      break;
-    case 'Recovery Plan':
-      related.push(
-        { page: 'Wealth Ultra', label: 'Wealth Ultra', reason: 'View portfolio allocation' },
-        { page: 'Investments', label: 'Investments', reason: 'Manage holdings' },
-        { page: 'Market Events', label: 'Market Events', reason: 'Check earnings and macro events' }
+        { page: 'Investments', label: 'Recovery Plan (Investments tab)', reason: 'Review recovery plans for losing positions' }
       );
       break;
     case 'Market Events':
       related.push(
         { page: 'Wealth Ultra', label: 'Wealth Ultra', reason: 'Review portfolio strategy' },
         { page: 'Investments', label: 'Investments', reason: 'View affected holdings' },
-        { page: 'Recovery Plan', label: 'Recovery Plan', reason: 'Check recovery plans' },
+        { page: 'Investments', label: 'Recovery Plan (Investments tab)', reason: 'Check recovery plans' },
         { page: 'Budgets', label: 'Budgets', reason: 'Review budget impact' }
       );
       break;
     case 'Investments':
       related.push(
         { page: 'Wealth Ultra', label: 'Wealth Ultra', reason: 'View portfolio engine' },
-        { page: 'Recovery Plan', label: 'Recovery Plan', reason: 'Check recovery plans' },
+        { page: 'Investments', label: 'Recovery Plan (Investments tab)', reason: 'Check recovery plans' },
         { page: 'Market Events', label: 'Market Events', reason: 'View upcoming events' }
       );
       break;
@@ -71,8 +64,8 @@ export function generatePageAction(
   if (fromPage === 'Market Events' && toPage === 'Investments' && context?.symbol) {
     return `focus-symbol:${context.symbol}`;
   }
-  if (fromPage === 'Market Events' && toPage === 'Recovery Plan') {
-    return 'focus-recovery-plan';
+  if (fromPage === 'Market Events' && toPage === 'Investments' && context?.tab === 'recovery') {
+    return 'investment-tab:Recovery Plan';
   }
   if (fromPage === 'Wealth Ultra' && toPage === 'Investments') {
     return 'focus-investment-plan';

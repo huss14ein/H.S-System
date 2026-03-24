@@ -1,4 +1,5 @@
 import { Holding, InvestmentPortfolio, TradeCurrency } from '../types';
+import { resolveInvestmentPortfolioCurrency } from './investmentPortfolioCurrency';
 
 /** How many SAR equal 1 USD (multiply a USD amount by this to get SAR). */
 export const DEFAULT_SAR_PER_USD = 3.75;
@@ -42,7 +43,8 @@ export const getPortfolioHoldingsValueInSAR = (
     return sum + (Number.isFinite(value) ? value : 0);
   }, 0);
 
-  return toSAR(holdingsValueInPortfolioCurrency, portfolio.currency, exchangeRate);
+  const bookCurrency = resolveInvestmentPortfolioCurrency(portfolio);
+  return toSAR(holdingsValueInPortfolioCurrency, bookCurrency, exchangeRate);
 };
 
 export const getAllInvestmentsValueInSAR = (

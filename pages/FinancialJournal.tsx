@@ -171,7 +171,7 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
           <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => { trackAction('link-liquidation', 'Engines & Tools'); triggerPageAction('Engines & Tools', 'openLiquidation'); }}>
             See sell priority list
           </button>
-          <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => { trackAction('link-risk-trading', 'Engines & Tools'); triggerPageAction('Investments', 'openRiskTradingHub'); }}>
+          <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => { trackAction('link-risk-trading', 'Engines & Tools'); triggerPageAction('Engines & Tools', 'openRiskTradingHub'); }}>
             Safety & rules
           </button>
         </div>
@@ -247,7 +247,7 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
         </button>
       </SectionCard>
 
-      <SectionCard title="Your saved ideas" className="mt-6" collapsible collapsibleSummary={`${theses.length} ideas saved`} defaultExpanded>
+      <SectionCard title="Your saved ideas" collapsible collapsibleSummary={`${theses.length} ideas saved`} defaultExpanded>
         {theses.length === 0 ? (
           <p className="text-sm text-slate-500">No ideas saved yet. Add one above to get started.</p>
         ) : (
@@ -316,7 +316,7 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
           </div>
         )}
       </SectionCard>
-      <SectionCard title="Note history" className="mt-6" collapsible collapsibleSummary="Journal notes">
+      <SectionCard title="Note history" collapsible collapsibleSummary="Journal notes">
         {sorted.length === 0 ? (
           <p className="text-sm text-slate-500">No notes yet.</p>
         ) : (

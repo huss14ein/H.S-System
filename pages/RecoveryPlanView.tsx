@@ -19,6 +19,7 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { PresentationChartLineIcon } from '../components/icons/PresentationChartLineIcon';
 import { suggestRecoveryParameters, formatAiError } from '../services/geminiService';
+import { holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
 import {
   saveRecoveryExecution,
   getRecoveryExecutionsBySymbol,
@@ -198,12 +199,14 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       const qty = Number(holding.quantity) || 0;
       const currentVal = holding.currentValue != null ? Number(holding.currentValue) : NaN;
       const avgCost = (holding.avgCost != null ? Number(holding.avgCost) : 0) || 0;
-      const currentPrice =
-        priceMap[sym]
-        ?? (qty > 0 && Number.isFinite(currentVal) && currentVal > 0
-          ? currentVal / qty
-          : null)
-        ?? (qty > 0 ? avgCost : 0);
+      const useLiveQuote = holdingUsesLiveQuote(holding);
+      const currentPrice = useLiveQuote
+        ? (priceMap[sym]
+            ?? (qty > 0 && Number.isFinite(currentVal) && currentVal > 0
+              ? currentVal / qty
+              : null)
+            ?? (qty > 0 ? avgCost : 0))
+        : (qty > 0 && Number.isFinite(currentVal) && currentVal > 0 ? currentVal / qty : avgCost);
       const sleeveType = tickerToSleeve(sym, coreUpsideSpec.coreTickers.length || coreUpsideSpec.upsideTickers.length ? coreUpsideSpec : undefined);
       const riskTier = tickerToRiskTier(sym, coreUpsideSpec.coreTickers.length || coreUpsideSpec.upsideTickers.length ? coreUpsideSpec : undefined);
       const roughPlPct = avgCost > 0 && currentPrice > 0 ? ((currentPrice - avgCost) / avgCost) * 100 : 0;
@@ -493,7 +496,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }
 
   return (
-    <div className="page-container space-y-6 sm:space-y-8 mt-4 min-h-[40rem]">
+    <div className="page-container min-h-[40rem]">
       {/* Hero */}
       <section className="section-card p-6 sm:p-8">
         <div className="flex flex-col gap-6">
@@ -979,6 +982,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   <span className="text-sm font-bold text-slate-900">
                     {formatCurrencyString(selected.holding.avgCost ?? 0, {
                       inCurrency: selected.currency ?? 'USD',
+                      digits: HOLDING_PER_UNIT_DECIMALS,
                     })}
                   </span>
                 </div>
@@ -987,6 +991,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   <span className="text-sm font-bold text-slate-900">
                     {formatCurrencyString(selectedPlan.currentPrice, {
                       inCurrency: selected.currency ?? 'USD',
+                      digits: HOLDING_PER_UNIT_DECIMALS,
                     })}
                   </span>
                 </div>

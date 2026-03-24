@@ -1,5 +1,7 @@
-import type { FinancialData, Holding, InvestmentTransaction } from '../types';
-import { toSAR } from '../utils/currencyMath';
+import type { FinancialData, InvestmentTransaction } from '../types';
+import { resolveSarPerUsd } from '../utils/currencyMath';
+import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
+import { summarizeZakatableInvestmentsForZakat } from './zakatInvestmentValuation';
 
 export interface ZakatTradeSuggestion {
   symbol: string;
@@ -14,42 +16,29 @@ export interface ZakatAdviceSummary {
 export function buildZakatTradeAdvice(data: FinancialData | null | undefined): ZakatAdviceSummary {
   if (!data) return { suggestions: [] };
 
-  const investments = (data as any)?.personalInvestments ?? data.investments ?? [];
-  const personalAccountIds = new Set(((data as any)?.personalAccounts ?? data.accounts ?? []).map((a: { id: string }) => a.id));
-  const exchangeRate = (data as any).exchangeRate ?? 1;
-  const zakatableHoldings: { holding: Holding; portfolioCurrency: 'USD' | 'SAR' }[] = [];
+  const investments = getPersonalInvestments(data);
+  const personalAccounts = getPersonalAccounts(data);
+  const personalAccountIds = new Set(personalAccounts.map((a) => a.id));
+  const sarPerUsd = resolveSarPerUsd(data, undefined);
+  const { lines } = summarizeZakatableInvestmentsForZakat(investments, sarPerUsd);
 
-  investments.forEach((p: { currency?: string; holdings?: Holding[] }) => {
-    const currency = (p.currency === 'SAR' ? 'SAR' : 'USD') as 'USD' | 'SAR';
-    (p.holdings ?? []).forEach((h: Holding) => {
-      if (h.zakahClass === 'Zakatable') {
-        zakatableHoldings.push({ holding: h, portfolioCurrency: currency });
-      }
-    });
-  });
+  const bySymbol = new Map<string, number>();
+  for (const row of lines) {
+    const sym = row.symbol.toUpperCase();
+    bySymbol.set(sym, (bySymbol.get(sym) ?? 0) + row.valueSar);
+  }
 
-  const bySymbol = new Map<string, { value: number; holding: Holding }>();
-  zakatableHoldings.forEach(({ holding, portfolioCurrency }) => {
-    const sym = (holding.symbol ?? '').toUpperCase();
-    const valueSar = toSAR(holding.currentValue, portfolioCurrency, exchangeRate);
-    const prev = bySymbol.get(sym);
-    bySymbol.set(sym, {
-      value: (prev?.value ?? 0) + valueSar,
-      holding,
-    });
-  });
-
-  const totalZakatable = Array.from(bySymbol.values()).reduce((sum, v) => sum + v.value, 0);
+  const totalZakatable = Array.from(bySymbol.values()).reduce((sum, v) => sum + v, 0);
   if (totalZakatable <= 0) return { suggestions: [] };
 
   const suggestions: ZakatTradeSuggestion[] = [];
 
   const largePositions = Array.from(bySymbol.entries())
-    .sort((a, b) => b[1].value - a[1].value)
+    .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
 
-  largePositions.forEach(([symbol, info]) => {
-    const weightPct = (info.value / totalZakatable) * 100;
+  largePositions.forEach(([symbol, value]) => {
+    const weightPct = (value / totalZakatable) * 100;
     if (weightPct >= 15) {
       suggestions.push({
         symbol,
@@ -75,9 +64,9 @@ export function buildZakatTradeAdvice(data: FinancialData | null | undefined): Z
   });
 
   byBuySymbol.forEach((info, symbol) => {
-    const pos = bySymbol.get(symbol);
-    if (!pos) return;
-    const buyShare = info.amount / pos.value;
+    const posValue = bySymbol.get(symbol);
+    if (!posValue) return;
+    const buyShare = info.amount / posValue;
     if (buyShare > 0.7) {
       suggestions.push({
         symbol,
@@ -90,4 +79,3 @@ export function buildZakatTradeAdvice(data: FinancialData | null | undefined): Z
 
   return { suggestions };
 }
-

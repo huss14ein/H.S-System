@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useCallback, useContext, useEffect, lazy, Suspense } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getAIStockAnalysis, buildFallbackAnalystReport, executeInvestmentPlanStrategy, formatAiError, getSuggestedAnalystEligibility } from '../services/geminiService';
-import { InvestmentPortfolio, Holding, HoldingAssetClass, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog, UniverseTicker, TradeCurrency } from '../types';
+import { InvestmentPortfolio, Holding, HoldingAssetClass, HOLDING_ASSET_CLASS_OPTIONS, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog, UniverseTicker, TradeCurrency } from '../types';
 import type { Page } from '../types';
 import Modal from '../components/Modal';
 import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
@@ -22,6 +22,7 @@ import MiniPriceChart from '../components/charts/MiniPriceChart';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
 import InvestmentOverview from './InvestmentOverview';
+import InvestmentPlanView from './InvestmentPlanView';
 import { useMarketData } from '../context/MarketDataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useAI } from '../context/AiContext';
@@ -37,7 +38,6 @@ import { CurrencyDollarIcon } from '../components/icons/CurrencyDollarIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
-import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import type { HoldingFundamentals } from '../services/finnhubService';
 import { getHoldingFundamentals } from '../services/finnhubService';
 import { dollarToShareQuantity } from '../services/portfolioConstruction';
@@ -52,7 +52,11 @@ import { sellScore } from '../services/decisionEngine';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import type { Transaction } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { resolveSarPerUsd, totalLiquidCashSARFromAccounts, tradableCashBucketToSAR } from '../utils/currencyMath';
+import { holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
+import { getPersonalAccounts, getPersonalWealthData } from '../utils/wealthScope';
+import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
+import { computePlatformCardMetrics } from '../services/investmentPlatformCardMetrics';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -60,7 +64,7 @@ const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
 
 
 
-type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Safety & rules' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
+type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
 
 class InvestmentTabErrorBoundary extends React.Component<
     { activeTab: InvestmentSubPage; onReset: () => void; children: React.ReactNode },
@@ -101,13 +105,10 @@ class InvestmentTabErrorBoundary extends React.Component<
     }
 }
 
-const RiskTradingHub = lazy(() => import('./RiskTradingHub'));
-
 const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
     { name: 'Overview', icon: ChartPieIcon },
     { name: 'Portfolios', icon: Squares2X2Icon },
     { name: 'Investment Plan', icon: ClipboardDocumentListIcon },
-    { name: 'Safety & rules', icon: ShieldCheckIcon },
     { name: 'Recovery Plan', icon: ArrowsRightLeftIcon },
     { name: 'Dividend Tracker', icon: CurrencyDollarIcon },
     { name: 'AI Rebalancer', icon: ScaleIcon },
@@ -138,9 +139,12 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
         const currentYear = new Date().getFullYear();
         const plan = data?.investmentPlan;
         const planCurrency: TradeCurrency = (plan?.budgetCurrency as TradeCurrency) || 'SAR';
+        const personalAccountIds = new Set(getPersonalAccounts(data).map((a) => a.id));
 
         const monthlyInvested = (data?.investmentTransactions ?? [])
             .filter(t => {
+                const aid = t.accountId ?? (t as { account_id?: string }).account_id;
+                if (!aid || !personalAccountIds.has(aid)) return false;
                 const d = new Date(t.date);
                 return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy';
             })
@@ -179,7 +183,7 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
                             <button type="button" onClick={onEditPlan} className="text-sm font-medium text-primary hover:underline">Edit plan</button>
                         )}
                     </div>
-                    <p className="text-sm text-gray-500 mb-4">Your monthly strategy is set to invest <span className="font-bold text-dark">{formatCurrencyString(investmentProgress.target, { inCurrency: investmentProgress.planCurrency })}</span> with a {(investmentProgress.corePct * 100).toFixed(0)}% Core, {(investmentProgress.upsidePct * 100).toFixed(0)}% High-Upside{investmentProgress.specPct > 0 ? ` and ${(investmentProgress.specPct * 100).toFixed(0)}% Spec` : ''} split.</p>
+                    <p className="text-sm text-gray-500 mb-4">Your monthly strategy is set to invest <span className="font-bold text-dark">{formatCurrencyString(investmentProgress.target, { inCurrency: investmentProgress.planCurrency })}</span> with a {(investmentProgress.corePct * 100).toFixed(0)}% Core, {(investmentProgress.upsidePct * 100).toFixed(0)}% High-Upside{investmentProgress.specPct > 0.001 ? ` and ${(investmentProgress.specPct * 100).toFixed(0)}% Spec` : ''} split. Progress counts <strong>buy</strong> trades this month on <strong>your</strong> investment accounts only.</p>
                     
                     <div className="space-y-2">
                         <div className="flex justify-between text-xs font-bold uppercase tracking-wider text-gray-400">
@@ -246,18 +250,21 @@ const RecordTradeModal: React.FC<{
 }> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, initialData }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
-    const { currency: appCurrency } = useCurrency();
+    const { currency: appCurrency, exchangeRate } = useCurrency();
     const [accountId, setAccountId] = useState('');
     const [portfolioId, setPortfolioId] = useState('');
-    const [type, setType] = useState<'buy' | 'sell' | 'deposit' | 'withdrawal'>('buy');
+    const [type, setType] = useState<'buy' | 'sell'>('buy');
     const [tradeCurrency, setTradeCurrency] = useState<TradeCurrency>(appCurrency);
-    const [cashAmount, setCashAmount] = useState('');
     const [symbol, setSymbol] = useState('');
     const [quantity, setQuantity] = useState('');
     const [price, setPrice] = useState('');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [goalId, setGoalId] = useState<string | undefined>(undefined);
     const [holdingName, setHoldingName] = useState('');
+    const [holdingAssetClass, setHoldingAssetClass] = useState<HoldingAssetClass>('Stock');
+    /** Mashora, retirement plans, etc. — no live quote; user enters current position value. */
+    const [manualValuation, setManualValuation] = useState(false);
+    const [manualCurrentValue, setManualCurrentValue] = useState('');
     const [executedPlanId, setExecutedPlanId] = useState<string | undefined>();
     const [amountToInvest, setAmountToInvest] = useState<number | null>(null);
     const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT'>('LIMIT');
@@ -270,6 +277,18 @@ const RecordTradeModal: React.FC<{
 
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const efRunway = useEmergencyFund(data ?? null);
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
+    /** Checking/Savings + tradable cash on investment platforms (SAR), so runway matches money moved to a broker. */
+    const liquidCashSARForBuyPolicy = useMemo(() => {
+        if (!data) return 0;
+        const { personalAccounts } = getPersonalWealthData(data);
+        return totalLiquidCashSARFromAccounts(personalAccounts, getAvailableCashForAccount, sarPerUsd);
+    }, [data, getAvailableCashForAccount, sarPerUsd]);
+    const runwayMonthsForBuyPolicy = useMemo(() => {
+        const exp = efRunway.monthlyCoreExpenses;
+        if (exp > 0) return liquidCashSARForBuyPolicy / exp;
+        return liquidCashSARForBuyPolicy > 0 ? 99 : 0;
+    }, [liquidCashSARForBuyPolicy, efRunway.monthlyCoreExpenses]);
     const tradingPolicy = useMemo(() => loadTradingPolicy(), [isOpen]);
     const availableGoals = useMemo(() => data?.goals ?? [], [data?.goals]);
     const availableCashByCurrency = useMemo(() => (accountId ? getAvailableCashForAccount(accountId) : { SAR: 0, USD: 0 }), [accountId, getAvailableCashForAccount]);
@@ -277,7 +296,7 @@ const RecordTradeModal: React.FC<{
         () => (portfolioId ? portfolios.find(p => p.id === portfolioId) : null),
         [portfolioId, portfolios]
     );
-    const availableCashInTradeCurrency = (selectedPortfolio?.currency === 'SAR' ? availableCashByCurrency.SAR : availableCashByCurrency.USD) ?? 0;
+    const availableCashInTradeCurrency = (tradeCurrency === 'SAR' ? availableCashByCurrency.SAR : availableCashByCurrency.USD) ?? 0;
 
     const portfoliosForAccount = useMemo(() => accountId ? portfolios.filter(p => p.accountId === accountId) : [], [accountId, portfolios]);
     
@@ -288,11 +307,28 @@ const RecordTradeModal: React.FC<{
         }
         return false;
     }, [type, portfolioId, symbol, portfolios]);
+
+    const existingHoldingForSymbol = useMemo(() => {
+        if (!portfolioId || !symbol.trim()) return null;
+        const portfolio = portfolios.find((p) => p.id === portfolioId);
+        const norm = symbol.toUpperCase().trim();
+        return portfolio?.holdings.find((h) => (h.symbol || '').toUpperCase().trim() === norm) ?? null;
+    }, [portfolioId, symbol, portfolios]);
+
+    const isManualExisting = existingHoldingForSymbol?.holdingType === 'manual_fund';
+    const showManualCurrentValueField = type === 'buy' && ((isNewHolding && manualValuation) || isManualExisting);
+
+    useEffect(() => {
+        if (!isNewHolding) setManualValuation(false);
+    }, [isNewHolding]);
     
     const resetForm = () => {
-        setType('buy'); setSymbol(''); setQuantity(''); setPrice(''); setCashAmount('');
+        setType('buy'); setSymbol(''); setQuantity(''); setPrice('');
         setDate(new Date().toISOString().split('T')[0]);
         setHoldingName('');
+        setHoldingAssetClass('Stock');
+        setManualValuation(false);
+        setManualCurrentValue('');
         setTradeCurrency(appCurrency);
         setExecutedPlanId(undefined);
         setAmountToInvest(null);
@@ -305,8 +341,7 @@ const RecordTradeModal: React.FC<{
         setIsSubmitting(false);
         setAccountId(investmentAccounts[0]?.id || '');
     };
-    const isCashFlow = type === 'deposit' || type === 'withdrawal';
-
+    
     useEffect(() => {
         if (isOpen) {
             setSubmitError(null);
@@ -314,7 +349,6 @@ const RecordTradeModal: React.FC<{
             setT1ConfirmChecked(false);
             setPolicyBuyOverrideAck(false);
             setLargeSellAck(false);
-            setTradeCurrency(appCurrency);
             if (initialData) {
                 setType(initialData.tradeType || 'buy');
                 setSymbol(initialData.symbol || '');
@@ -339,10 +373,10 @@ const RecordTradeModal: React.FC<{
                 resetForm();
                 const learnedAccount = getLearnedDefault('record-trade', 'accountId') as string | undefined;
                 const learnedPortfolio = getLearnedDefault('record-trade', 'portfolioId') as string | undefined;
-                const learnedType = getLearnedDefault('record-trade', 'type') as 'buy' | 'sell' | 'deposit' | 'withdrawal' | undefined;
+                const learnedType = getLearnedDefault('record-trade', 'type') as 'buy' | 'sell' | undefined;
                 const learnedCurrency = getLearnedDefault('record-trade', 'tradeCurrency') as TradeCurrency | undefined;
                 if (learnedAccount && investmentAccounts.some((a) => a.id === learnedAccount)) setAccountId(learnedAccount);
-                if (learnedType && ['buy', 'sell', 'deposit', 'withdrawal'].includes(learnedType)) setType(learnedType);
+                if (learnedType && ['buy', 'sell'].includes(learnedType)) setType(learnedType as 'buy' | 'sell');
                 if (learnedCurrency && (learnedCurrency === 'SAR' || learnedCurrency === 'USD')) setTradeCurrency(learnedCurrency);
                 if (learnedPortfolio && portfolios.some((p) => p.id === learnedPortfolio)) setPortfolioId(learnedPortfolio);
             }
@@ -394,26 +428,30 @@ const RecordTradeModal: React.FC<{
         }
     }, [amountToInvest, price, type, brokerConstraints?.allowFractionalShares, brokerConstraints?.minimumOrderSize, brokerConstraints?.roundingRule]);
 
-    // Auto-fill company name from API when user enters a symbol (new holding)
-    const holdingNameRef = React.useRef(holdingName);
-    holdingNameRef.current = holdingName;
+    // Auto-fill company name when symbol is set (new holding): debounced lookup; refresh when ticker changes
     useEffect(() => {
-        if (!isOpen || type !== 'buy' || !symbol.trim() || symbol.trim().length < 2) return;
+        if (!isOpen || type !== 'buy' || !isNewHolding || manualValuation) return;
         const sym = symbol.trim().toUpperCase();
+        if (sym.length < 2) return;
+        let cancelled = false;
         const t = setTimeout(() => {
             fetchCompanyNameForSymbol(sym).then((name) => {
-                if (name && !holdingNameRef.current.trim()) setHoldingName(name);
+                if (cancelled || !name) return;
+                setHoldingName(name);
             });
-        }, 700);
-        return () => clearTimeout(t);
-    }, [symbol, isOpen, type]);
+        }, 500);
+        return () => {
+            cancelled = true;
+            clearTimeout(t);
+        };
+    }, [symbol, isOpen, type, isNewHolding, manualValuation]);
 
     const nbboStub = useMemo(() => {
-        if (isCashFlow || !symbol.trim()) return null;
+        if (!symbol.trim()) return null;
         const numPrice = parseFloat(price);
         if (!Number.isFinite(numPrice) || numPrice <= 0) return null;
         return getNBBOStub(symbol.trim().toUpperCase(), numPrice);
-    }, [isCashFlow, symbol, price]);
+    }, [symbol, price]);
 
     const { t1SettlementWarning } = useMemo(() => {
         const today = new Date().toISOString().slice(0, 10);
@@ -456,7 +494,7 @@ const RecordTradeModal: React.FC<{
     }, [data, isOpen]);
 
     const buyPolicyCheck = useMemo(() => {
-        if (type !== 'buy' || !portfolioId || isCashFlow) return { allowed: true as const };
+        if (type !== 'buy' || !portfolioId) return { allowed: true as const };
         const p = portfolios.find((x) => x.id === portfolioId);
         if (!p) return { allowed: true as const };
         const q = parseFloat(quantity);
@@ -472,14 +510,14 @@ const RecordTradeModal: React.FC<{
         const posPct = denom > 0 ? (afterSym / denom) * 100 : 0;
         return evaluateBuyAgainstPolicy({
             policy: tradingPolicy,
-            runwayMonths: efRunway.monthsCovered,
+            runwayMonths: runwayMonthsForBuyPolicy,
             monthlyNetLast30d,
             positionWeightAfterBuyPct: posPct,
         });
-    }, [type, portfolioId, quantity, price, symbol, portfolios, tradingPolicy, efRunway.monthsCovered, monthlyNetLast30d, isCashFlow]);
+    }, [type, portfolioId, quantity, price, symbol, portfolios, tradingPolicy, runwayMonthsForBuyPolicy, monthlyNetLast30d]);
 
     const sellRuleScore = useMemo(() => {
-        if (type !== 'sell' || !portfolioId || isCashFlow) return null;
+        if (type !== 'sell' || !portfolioId) return null;
         const p = portfolios.find((x) => x.id === portfolioId);
         if (!p || !symbol.trim()) return null;
         const norm = symbol.toUpperCase().trim();
@@ -495,7 +533,7 @@ const RecordTradeModal: React.FC<{
             ...sellScore({ aboveTargetWeightPct: Math.max(0, w - 15), needCash: w > 20 }),
             notional,
         };
-    }, [type, portfolioId, symbol, portfolios, quantity, price, isCashFlow]);
+    }, [type, portfolioId, symbol, portfolios, quantity, price]);
 
     const largeSellNeedsAck = Boolean(
         type === 'sell' &&
@@ -504,17 +542,17 @@ const RecordTradeModal: React.FC<{
     );
 
     const sorStub = useMemo(() => {
-        if (isCashFlow || !symbol.trim()) return null;
+        if (!symbol.trim()) return null;
         const q = parseFloat(quantity);
         const p = parseFloat(price);
         if (!Number.isFinite(q) || !Number.isFinite(p) || q <= 0 || p <= 0) return null;
         const notional = q * p;
         if (notional < 10_000) return null;
         return getSORStub(symbol.trim().toUpperCase(), type === 'buy' ? 'BUY' : 'SELL', q, p);
-    }, [isCashFlow, symbol, quantity, price, type]);
+    }, [symbol, quantity, price, type]);
 
     const vwapSlices = useMemo(() => {
-        if (isCashFlow) return null;
+        
         const q = parseFloat(quantity);
         const p = parseFloat(price);
         const notional = Number.isFinite(p) && p > 0 && Number.isFinite(q) ? q * p : 0;
@@ -523,15 +561,9 @@ const RecordTradeModal: React.FC<{
         if (!isLarge) return null;
         const n = Math.min(10, Math.max(3, Math.floor(q / 20)));
         return getVWAPSlices(q, n);
-    }, [isCashFlow, quantity, price]);
+    }, [quantity, price]);
 
     const validationError = useMemo(() => {
-        if (isCashFlow) {
-            if (!accountId) return 'Please select a platform.';
-            const amt = parseFloat(cashAmount);
-            if (!Number.isFinite(amt) || amt <= 0) return 'Amount must be greater than 0.';
-            return null;
-        }
         if (!portfolioId) return 'Please select a portfolio.';
         const parsedQuantity = parseFloat(quantity);
         const parsedPrice = parseFloat(price);
@@ -539,6 +571,14 @@ const RecordTradeModal: React.FC<{
         if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) return 'Quantity must be greater than 0.';
         if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) return 'Price must be greater than 0.';
         if (type === 'buy' && isNewHolding && !holdingName.trim()) return 'Company name is required for a new holding.';
+        if (type === 'buy' && isNewHolding && manualValuation) {
+            const m = parseFloat(manualCurrentValue);
+            if (!Number.isFinite(m) || m <= 0) return 'Enter the current position value (manual valuation), e.g. plan balance in ' + tradeCurrency + '.';
+        }
+        if (type === 'buy' && isManualExisting && manualCurrentValue.trim() !== '') {
+            const m = parseFloat(manualCurrentValue);
+            if (!Number.isFinite(m) || m <= 0) return 'Current value for this purchase must be a positive number, or leave blank to use the amount invested.';
+        }
         if (type === 'sell' && portfolioId) {
             const portfolio = portfolios.find(p => p.id === portfolioId);
             const normalized = symbol.toUpperCase().trim();
@@ -546,8 +586,14 @@ const RecordTradeModal: React.FC<{
             if (!holding) return 'Cannot sell: holding not found in selected portfolio.';
             if (holding.quantity < parsedQuantity) return `Cannot sell ${parsedQuantity}. Available quantity is ${holding.quantity}.`;
         }
+        if (type === 'buy') {
+            const notional = parsedQuantity * parsedPrice;
+            if (notional > availableCashInTradeCurrency + 1e-9) {
+                return `Insufficient platform cash in ${tradeCurrency}. Needed ${formatCurrencyString(notional, { inCurrency: tradeCurrency, digits: 0 })}, available ${formatCurrencyString(availableCashInTradeCurrency, { inCurrency: tradeCurrency, digits: 0 })}. Transfer funds from Checking/Savings first.`;
+            }
+        }
         return null;
-    }, [isCashFlow, accountId, cashAmount, portfolioId, quantity, price, symbol, type, isNewHolding, holdingName, portfolios]);
+    }, [portfolioId, quantity, price, symbol, type, isNewHolding, holdingName, manualValuation, manualCurrentValue, isManualExisting, tradeCurrency, portfolios, availableCashInTradeCurrency, formatCurrencyString]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -569,7 +615,7 @@ const RecordTradeModal: React.FC<{
             setSubmitError(`Large sell (≥ ${tradingPolicy.requireAckLargeSellNotional.toLocaleString()}): confirm below.`);
             return;
         }
-        if (!isCashFlow && (type === 'buy' || type === 'sell') && orderType === 'MARKET') {
+        if ((type === 'buy' || type === 'sell') && orderType === 'MARKET') {
             const now = new Date();
             const hourET = (now.getUTCHours() - 5 + 24) % 24;
             const minuteET = now.getUTCMinutes();
@@ -581,36 +627,36 @@ const RecordTradeModal: React.FC<{
         }
         try {
             setIsSubmitting(true);
-            if (isCashFlow) {
-                await onSave({
-                    accountId,
-                    type,
-                    date,
-                    symbol: 'CASH',
-                    quantity: 0,
-                    price: 0,
-                    total: parseFloat(cashAmount) || 0,
-                    currency: tradeCurrency,
-                }, undefined);
-                trackFormDefault('record-trade', 'accountId', accountId);
-                trackFormDefault('record-trade', 'type', type);
-                trackFormDefault('record-trade', 'tradeCurrency', tradeCurrency);
-            } else {
-                await onSave({
-                    accountId, portfolioId, type,
-                    symbol: symbol.toUpperCase().trim(),
-                    name: isNewHolding ? holdingName : undefined,
-                    quantity: parseFloat(quantity) || 0,
-                    price: parseFloat(price) || 0,
-                    date,
-                    currency: tradeCurrency,
-                    ...(goalId && { goalId }),
-                }, executedPlanId);
-                trackFormDefault('record-trade', 'accountId', accountId);
-                trackFormDefault('record-trade', 'portfolioId', portfolioId);
-                trackFormDefault('record-trade', 'type', type);
-                trackFormDefault('record-trade', 'tradeCurrency', tradeCurrency);
+            let manualCvPayload: number | undefined;
+            if (type === 'buy' && showManualCurrentValueField) {
+                if (isNewHolding && manualValuation) {
+                    manualCvPayload = parseFloat(manualCurrentValue);
+                } else if (isManualExisting) {
+                    const t = manualCurrentValue.trim();
+                    if (t !== '') {
+                        const p = parseFloat(t);
+                        if (Number.isFinite(p) && p > 0) manualCvPayload = p;
+                    }
+                }
             }
+            const useManualFund = type === 'buy' && ((isNewHolding && manualValuation) || isManualExisting);
+            await onSave({
+                accountId, portfolioId, type,
+                symbol: symbol.toUpperCase().trim(),
+                name: isNewHolding ? holdingName : undefined,
+                quantity: parseFloat(quantity) || 0,
+                price: parseFloat(price) || 0,
+                date,
+                currency: tradeCurrency,
+                ...(goalId && { goalId }),
+                ...(type === 'buy' && isNewHolding ? { assetClass: holdingAssetClass } : {}),
+                ...(useManualFund ? { holdingType: 'manual_fund' } : {}),
+                ...(manualCvPayload != null ? { manualCurrentValue: manualCvPayload } : {}),
+            }, executedPlanId);
+            trackFormDefault('record-trade', 'accountId', accountId);
+            trackFormDefault('record-trade', 'portfolioId', portfolioId);
+            trackFormDefault('record-trade', 'type', type);
+            trackFormDefault('record-trade', 'tradeCurrency', tradeCurrency);
             onClose();
         } catch (error) {
             setSubmitError(error instanceof Error ? error.message : String(error));
@@ -621,11 +667,9 @@ const RecordTradeModal: React.FC<{
 
     const hasNoAccounts = !investmentAccounts.length;
     const hasNoPortfolios = accountId ? portfoliosForAccount.length === 0 : true;
-    const buyPolicyBlocked = type === 'buy' && !isCashFlow && !buyPolicyCheck.allowed && !policyBuyOverrideAck;
+    const buyPolicyBlocked = type === 'buy' && !buyPolicyCheck.allowed && !policyBuyOverrideAck;
     const sellAckBlocked = type === 'sell' && largeSellNeedsAck && !largeSellAck;
-    const submitDisabled = isCashFlow
-        ? !accountId || !cashAmount || !!validationError || isSubmitting
-        : !!validationError || isSubmitting || hasNoPortfolios || buyPolicyBlocked || sellAckBlocked;
+    const submitDisabled = !!validationError || isSubmitting || hasNoPortfolios || buyPolicyBlocked || sellAckBlocked;
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Record a Trade">
@@ -639,17 +683,17 @@ const RecordTradeModal: React.FC<{
                 </div>
             ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
-                 {accountId && !isCashFlow && (
+                 {accountId && (
                     <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 space-y-1">
                         <p>Available cash in this platform (by currency):</p>
                         <p className="font-medium">SAR: <span className="font-semibold">{formatCurrencyString(availableCashByCurrency.SAR, { inCurrency: 'SAR', digits: 0 })}</span> · USD: <span className="font-semibold">{formatCurrencyString(availableCashByCurrency.USD, { inCurrency: 'USD', digits: 0 })}</span></p>
                         {selectedPortfolio && (
-                            <p className="text-xs text-slate-600">Recording in <strong>{selectedPortfolio.currency || 'USD'}</strong>. Use the &quot;Record in&quot; dropdown to match your trade currency. You can record buys/sells for record-keeping even when cash is zero.</p>
+                            <p className="text-xs text-slate-600">Quantity and price are in <strong>{selectedPortfolio.currency || 'USD'}</strong> (portfolio base). Funds must exist in that currency on this platform—transfer from Checking/Savings first; buys debit and sells credit the platform cash ledger automatically.</p>
                         )}
                     </div>
                  )}
                  {amountToInvest && <div className="p-2 bg-blue-50 text-blue-800 text-sm rounded-md text-center">Funds available from transfer: <span className="font-bold">{amountToInvest.toLocaleString()} {tradeCurrency}</span></div>}
-                 {hasNoPortfolios && accountId && !isCashFlow && (
+                 {hasNoPortfolios && accountId && (
                     <div className="p-2 bg-amber-50 text-amber-800 text-sm rounded-md">No portfolio in this account. Create a portfolio first from the Investments page.</div>
                  )}
                  {type === 'buy' && !buyPolicyCheck.allowed && buyPolicyCheck.reason && (
@@ -695,7 +739,6 @@ const RecordTradeModal: React.FC<{
                             {investmentAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
                         </select>
                     </div>
-                    {!isCashFlow && (
                     <div>
                         <label htmlFor="portfolio-id" className="block text-sm font-medium text-gray-700">Portfolio</label>
                         <select id="portfolio-id" value={portfolioId} onChange={e => setPortfolioId(e.target.value)} required disabled={portfoliosForAccount.length === 0} className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary disabled:bg-gray-100">
@@ -703,23 +746,26 @@ const RecordTradeModal: React.FC<{
                             {portfoliosForAccount.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                         </select>
                     </div>
-                    )}
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex flex-wrap gap-x-4 gap-y-1">
                         <label className="flex items-center"><input type="radio" value="buy" checked={type === 'buy'} onChange={() => setType('buy')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Buy</span></label>
                         <label className="flex items-center"><input type="radio" value="sell" checked={type === 'sell'} onChange={() => setType('sell')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Sell</span></label>
-                        <label className="flex items-center"><input type="radio" value="deposit" checked={type === 'deposit'} onChange={() => setType('deposit')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Deposit</span></label>
-                        <label className="flex items-center"><input type="radio" value="withdrawal" checked={type === 'withdrawal'} onChange={() => setType('withdrawal')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Withdrawal</span></label>
                     </div>
                     <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Record in</span>
-                        <select value={tradeCurrency} onChange={e => setTradeCurrency(e.target.value as TradeCurrency)} className="text-sm font-semibold border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-800 focus:ring-2 focus:ring-primary focus:border-primary">
+                        <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Currency</span>
+                        <select
+                            value={tradeCurrency}
+                            onChange={e => setTradeCurrency(e.target.value as TradeCurrency)}
+                            disabled={!!portfolioId}
+                            title={portfolioId ? 'Matches the selected portfolio base currency' : 'Select a portfolio to set trade currency'}
+                            className="text-sm font-semibold border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-800 focus:ring-2 focus:ring-primary focus:border-primary disabled:bg-slate-100 disabled:text-slate-600 disabled:cursor-not-allowed"
+                        >
                             <option value="USD">USD</option>
                             <option value="SAR">SAR</option>
                         </select>
                     </div>
-                    {!isCashFlow && (type === 'buy' || type === 'sell') && (
+                    {(type === 'buy' || type === 'sell') && (
                         <>
                             <div className="flex items-center gap-2">
                                 <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Order type</span>
@@ -741,21 +787,14 @@ const RecordTradeModal: React.FC<{
                         </>
                     )}
                 </div>
-                {isCashFlow ? (
-                    <>
-                        <div>
-                            <label htmlFor="cash-amount" className="block text-sm font-medium text-gray-700">Amount</label>
-                            <input type="number" id="cash-amount" value={cashAmount} onChange={e => setCashAmount(e.target.value)} required min="0.01" step="any" className="mt-1 w-full p-2 border border-gray-300 rounded-md" placeholder="e.g. 50000" />
-                        </div>
-                        {type === 'withdrawal' && accountId && (
-                            <p className="text-xs text-slate-500">Available to withdraw: {formatCurrencyString(availableCashInTradeCurrency, { inCurrency: tradeCurrency, digits: 0 })} (in {tradeCurrency})</p>
-                        )}
-                    </>
-                ) : (
+                
                 <>
                  <div>
                     <label htmlFor="symbol" className="block text-sm font-medium text-gray-700">Symbol</label>
-                    <input type="text" id="symbol" value={symbol} onChange={e => setSymbol(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                    <input type="text" id="symbol" value={symbol} onChange={e => setSymbol(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" placeholder={manualValuation ? 'e.g. MASHORA1 (your unique code for this plan)' : undefined} />
+                    {manualValuation && (
+                        <p className="mt-1 text-xs text-slate-500">Pick a short unique code you will reuse for buys/sells to this plan (not a stock ticker).</p>
+                    )}
                 </div>
                 {isNewHolding && (
                     <div>
@@ -763,16 +802,80 @@ const RecordTradeModal: React.FC<{
                         <input type="text" id="holdingName" value={holdingName} onChange={e => setHoldingName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" placeholder="e.g., Saudi Aramco"/>
                     </div>
                 )}
+                {type === 'buy' && isNewHolding && (
+                    <div>
+                        <label htmlFor="trade-asset-class" className="block text-sm font-medium text-gray-700">Asset class</label>
+                        <select
+                            id="trade-asset-class"
+                            value={holdingAssetClass}
+                            onChange={(e) => setHoldingAssetClass(e.target.value as HoldingAssetClass)}
+                            className="mt-1 w-full p-2 border border-gray-300 rounded-md"
+                        >
+                            {HOLDING_ASSET_CLASS_OPTIONS.map((ac) => (
+                                <option key={ac} value={ac}>
+                                    {ac === 'Sukuk' ? 'Sukuk (Islamic fixed income)' : ac}
+                                </option>
+                            ))}
+                        </select>
+                        <p className="mt-1 text-xs text-slate-500">Use <strong>Sukuk</strong> for Shariah-compliant fixed-income securities so allocation, AI rebalancer, and benchmarks classify them correctly (not as stocks).</p>
+                    </div>
+                )}
+                {type === 'buy' && isNewHolding && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50/90 p-3">
+                        <label className="flex items-start gap-2 cursor-pointer text-sm">
+                            <input
+                                type="checkbox"
+                                checked={manualValuation}
+                                onChange={(e) => {
+                                    setManualValuation(e.target.checked);
+                                    if (e.target.checked) setHoldingAssetClass('Other');
+                                }}
+                                className="mt-0.5 rounded border-slate-300"
+                            />
+                            <span>
+                                <span className="font-medium text-slate-800">Manual valuation (no live market price)</span>
+                                <span className="block text-xs text-slate-600 mt-0.5">
+                                    Use for Mashora, retirement accounts, and other balances without a listed quote. Enter the current value below; scheduled price updates will not overwrite it.
+                                </span>
+                            </span>
+                        </label>
+                    </div>
+                )}
                 <div className="grid grid-cols-2 gap-4">
                      <div>
-                        <label htmlFor="quantity" className="block text-sm font-medium text-gray-700">Quantity</label>
+                        <label htmlFor="quantity" className="block text-sm font-medium text-gray-700">
+                            {(isNewHolding && manualValuation) || isManualExisting ? 'Units (use 1 for a single plan/account)' : 'Quantity'}
+                        </label>
                         <input type="number" id="quantity" value={quantity} onChange={e => setQuantity(e.target.value)} required min="0" step="any" className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
                     </div>
                      <div>
-                        <label htmlFor="price" className="block text-sm font-medium text-gray-700">Price per Share</label>
+                        <label htmlFor="price" className="block text-sm font-medium text-gray-700">
+                            {(isNewHolding && manualValuation) || isManualExisting ? 'Cost per unit' : 'Price per Share'}
+                        </label>
                         <input type="number" id="price" value={price} onChange={e => setPrice(e.target.value)} required min="0" step="any" className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
                     </div>
                 </div>
+                {showManualCurrentValueField && (
+                    <div>
+                        <label htmlFor="manual-current-value" className="block text-sm font-medium text-gray-700">
+                            {isManualExisting && !isNewHolding ? 'Current value for this purchase (optional)' : 'Current position value'}
+                        </label>
+                        <input
+                            id="manual-current-value"
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={manualCurrentValue}
+                            onChange={(e) => setManualCurrentValue(e.target.value)}
+                            required={Boolean(isNewHolding && manualValuation)}
+                            placeholder={isManualExisting ? 'Leave blank to use amount invested (qty × price)' : ''}
+                            className="mt-1 w-full p-2 border border-gray-300 rounded-md"
+                        />
+                        <p className="mt-1 text-xs text-slate-500">
+                            Total value in <strong>{tradeCurrency}</strong> (portfolio base). Quantity × price still records cost basis and platform cash.
+                        </p>
+                    </div>
+                )}
                 {nbboStub && (
                     <p className="text-xs text-slate-500">
                         NBBO (sim): bid ${nbboStub.bid.toFixed(2)} / ask ${nbboStub.ask.toFixed(2)} USD
@@ -798,13 +901,12 @@ const RecordTradeModal: React.FC<{
                     </select>
                 </div>
                 </>
-                )}
                 <div>
                     <label htmlFor="date" className="block text-sm font-medium text-gray-700">Transaction Date</label>
                     <input type="date" id="date" value={date} onChange={e => setDate(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
                 </div>
                 {(submitError || validationError) && <p className="text-sm text-danger bg-red-50 border border-red-200 rounded p-2">{submitError || validationError}</p>}
-                <button type="submit" disabled={submitDisabled} className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">{isSubmitting ? 'Recording...' : isCashFlow ? (type === 'deposit' ? 'Record Deposit' : 'Record Withdrawal') : 'Record Trade'}</button>
+                <button type="submit" disabled={submitDisabled} className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400">{isSubmitting ? 'Recording...' : 'Record Trade'}</button>
             </form>
             )}
         </Modal>
@@ -921,6 +1023,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
         fundamentalsCurrencyRaw === 'SAR' ? 'SAR' : 'USD';
 
     const fmt = (val: number, opts?: { digits?: number }) => formatCurrencyString(val, { inCurrency: portfolioCurrency, ...opts });
+    const fmtPerUnit = (val: number) => fmt(val, { digits: HOLDING_PER_UNIT_DECIMALS });
     const fmtColor = (val: number, opts?: { digits?: number }) => formatCurrency(val, { inCurrency: portfolioCurrency, colorize: false, ...opts });
     const fmtFundamentals = (val: number, opts?: { digits?: number }) =>
         formatCurrencyString(val, { inCurrency: fundamentalsCurrency, ...opts });
@@ -977,7 +1080,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                         {portfolio && <p className="text-xs text-slate-500 mt-1">Portfolio: {portfolio.name ?? '—'}</p>}
                     </div>
                     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
-                        <span className="metric-value text-2xl sm:text-3xl font-bold text-slate-900 tabular-nums max-w-full" title={fmt(currentPrice)}>{fmt(currentPrice)}</span>
+                        <span className="metric-value text-2xl sm:text-3xl font-bold text-slate-900 tabular-nums max-w-full" title={fmtPerUnit(currentPrice)}>{fmtPerUnit(currentPrice)}</span>
                         <span className={`metric-value text-lg font-semibold tabular-nums shrink-0 ${priceTrendPercent >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                             {priceTrendPercent >= 0 ? '+' : ''}{priceTrendPercent.toFixed(2)}%
                         </span>
@@ -988,8 +1091,11 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                 {/* Key metrics grid — in portfolio currency */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 min-w-0">
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
-                        <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Market Value</p>
+                        <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Market value</p>
                         <p className="share-detail-metric-value w-full mt-1 text-base sm:text-lg font-bold text-slate-900 tabular-nums !whitespace-normal !overflow-visible !text-clip break-words leading-tight" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
+                        <p className="w-full mt-1 text-[11px] font-medium text-slate-500 tabular-nums leading-tight" title="Total purchased cost (cost basis)">
+                            Purchased cost {fmt(totalCost)}
+                        </p>
                     </div>
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Quantity</p>
@@ -997,7 +1103,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                     </div>
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Avg. Cost</p>
-                        <p className="share-detail-metric-value w-full mt-1 text-base sm:text-lg font-bold text-slate-900 tabular-nums !whitespace-normal !overflow-visible !text-clip break-words leading-tight" title={fmt(holding.avgCost ?? 0)}>{fmt(holding.avgCost ?? 0)}</p>
+                        <p className="share-detail-metric-value w-full mt-1 text-base sm:text-lg font-bold text-slate-900 tabular-nums !whitespace-normal !overflow-visible !text-clip break-words leading-tight" title={fmtPerUnit(holding.avgCost ?? 0)}>{fmtPerUnit(holding.avgCost ?? 0)}</p>
                     </div>
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Unrealized G/L</p>
@@ -1098,7 +1204,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                                         fundamentals.dividend.dividendPerShareAnnual > 0 && (
                                             <p className="text-xs text-slate-600">
                                                 Dividend per share (annualized, {fundamentalsCurrency}):{' '}
-                                                {fmtFundamentals(fundamentals.dividend.dividendPerShareAnnual, { digits: 2 })}
+                                                {fmtFundamentals(fundamentals.dividend.dividendPerShareAnnual, { digits: HOLDING_PER_UNIT_DECIMALS })}
                                             </p>
                                         )}
                                     {hasReliableDividendEstimate && projectedAnnualDividend && (
@@ -1132,7 +1238,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                         symbol={holding.symbol}
                         currentPrice={currentPrice}
                         changePercent={priceTrendPercent}
-                        formatPrice={(p) => fmt(p)}
+                        formatPrice={(p) => fmtPerUnit(p)}
                         showIllustrativeLabel
                     />
                 </div>
@@ -1225,12 +1331,11 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
                 <div>
                     <label className="block text-sm font-medium text-gray-700">Asset Class</label>
                     <select value={assetClass} onChange={e => setAssetClass(e.target.value as HoldingAssetClass)} className="mt-1 w-full p-2 border border-gray-300 rounded-md">
-                        <option value="Stock">Stock</option>
-                        <option value="Sukuk">Sukuk</option>
-                        <option value="ETF">ETF</option>
-                        <option value="Mutual Fund">Mutual Fund</option>
-                        <option value="REIT">REIT</option>
-                        <option value="Other">Other</option>
+                        {HOLDING_ASSET_CLASS_OPTIONS.map((ac) => (
+                            <option key={ac} value={ac}>
+                                {ac === 'Sukuk' ? 'Sukuk (Islamic fixed income)' : ac}
+                            </option>
+                        ))}
                     </select>
                 </div>
                 <div><label className="block text-sm font-medium text-gray-700">Zakat Classification</label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
@@ -1271,7 +1376,11 @@ export const PortfolioModal: React.FC<{
     useEffect(() => {
         if (isOpen) {
             setName(portfolioToEdit?.name || '');
-            setSelectedAccountId(accountId || investmentAccounts[0]?.id || '');
+            const fallbackAccountId =
+                investmentAccounts.length > 0
+                    ? investmentAccounts[investmentAccounts.length - 1]?.id
+                    : '';
+            setSelectedAccountId(accountId || fallbackAccountId || investmentAccounts[0]?.id || '');
             setGoalId(portfolioToEdit?.goalId);
             setCurrency((portfolioToEdit?.currency as TradeCurrency) || 'USD');
             setOwner(portfolioToEdit?.owner ?? '');
@@ -1401,14 +1510,16 @@ const PlatformCard: React.FC<{
     availableCashByCurrency?: { SAR: number; USD: number };
     onEditPlatform: (platform: Account) => void;
     onDeletePlatform: (platform: Account) => void;
+    onAddPortfolio: (platformId: string) => void;
     onEditPortfolio: (portfolio: InvestmentPortfolio) => void;
     onDeletePortfolio: (portfolio: InvestmentPortfolio) => void;
     onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number; }, portfolio: InvestmentPortfolio) => void;
     onEditHolding: (holding: Holding) => void;
     simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
 }> = (props) => {
-    const { platform, portfolios, transactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices } = props;
+    const { platform, portfolios, transactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices } = props;
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
+    const { data: dataCtx } = useContext(DataContext)!;
     const [isTxnModalOpen, setIsTxnModalOpen] = useState(false);
 
     const platformCurrency = useMemo(() => {
@@ -1417,117 +1528,31 @@ const PlatformCard: React.FC<{
     }, [portfolios]);
     const hasMixedCurrencies = platformCurrency === undefined && portfolios.length > 1;
 
-    const { totalValue, totalValueInSAR, totalGainLoss, dailyPnL, totalInvested, totalWithdrawn, roi, totalAvailable } = useMemo(() => {
-        const allHoldings = portfolios.flatMap(p => p.holdings || []);
-        const rate = sarPerUsd;
-
-        // Treat simulated prices as SAR; convert to platform currency only for display.
-        let valueSarFromSim = 0;
-        let valueSarFromStored = 0;
-        let valueUsdFromStored = 0;
-
-        portfolios.forEach(p => {
-            const cur = ((p.currency as TradeCurrency) || 'USD') as TradeCurrency;
-            (p.holdings || []).forEach(h => {
-                const symbol = (h.symbol || '').trim().toUpperCase();
-                const priceInfo = simulatedPrices[symbol];
-                if (priceInfo && Number.isFinite(priceInfo.price) && (h.quantity ?? 0) > 0) {
-                    // Live SAR price
-                    const liveSar = priceInfo.price * (h.quantity || 0);
-                    if (Number.isFinite(liveSar) && liveSar > 0) {
-                        valueSarFromSim += liveSar;
-                        return;
-                    }
-                }
-                // Fallback: use stored currentValue in portfolio currency
-                const fallback = Number.isFinite(h.currentValue) ? (h.currentValue as number) : 0;
-                if (!Number.isFinite(fallback) || fallback <= 0) return;
-                if (cur === 'SAR') valueSarFromStored += fallback;
-                else valueUsdFromStored += fallback;
-            });
-        });
-
-        const totalValueInSAR = valueSarFromSim + valueSarFromStored + valueUsdFromStored * rate;
-        const totalValue =
-            platformCurrency === 'SAR'
-                ? totalValueInSAR
-                : platformCurrency === 'USD'
-                ? (totalValueInSAR / rate)
-                : totalValueInSAR;
-
-        // Capital flows: deposits into the platform vs withdrawals OUT of the platform.
-        // These are explicit cash movements, not buys/sells of holdings.
-        let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0;
-        transactions.filter(t => t.type === 'deposit').forEach(t => {
-            const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
-            if (c === 'SAR') invSAR += t.total ?? 0;
-            else invUSD += t.total ?? 0;
-        });
-        transactions.filter(t => t.type === 'withdrawal').forEach(t => {
-            const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
-            if (c === 'SAR') wdrSAR += t.total ?? 0;
-            else wdrUSD += t.total ?? 0;
-        });
-        const totalInvested =
-            platformCurrency === 'SAR'
-                ? invSAR + invUSD * rate
-                : platformCurrency === 'USD'
-                ? invUSD + invSAR / rate
-                : invSAR + invUSD * rate;
-        const totalWithdrawn =
-            platformCurrency === 'SAR'
-                ? wdrSAR + wdrUSD * rate
-                : platformCurrency === 'USD'
-                ? wdrUSD + wdrSAR / rate
-                : wdrSAR + wdrUSD * rate;
-
-        const netCapital = totalInvested - totalWithdrawn;
-        const totalGainLoss = totalValue - netCapital;
-        const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
-
-        // Daily P/L: simulated change is assumed in SAR; convert for display currency.
-        const dailyPnLSar = allHoldings.reduce(
-            (s, h) => {
-                const symbol = (h.symbol || '').trim().toUpperCase();
-                const info = simulatedPrices[symbol];
-                if (!info || !Number.isFinite(info.change) || (h.quantity ?? 0) <= 0) return s;
-                return s + info.change * (h.quantity || 0);
-            },
-            0
-        );
-        const dailyPnL =
-            platformCurrency === 'SAR'
-                ? dailyPnLSar
-                : platformCurrency === 'USD'
-                ? (dailyPnLSar / rate)
-                : dailyPnLSar;
-
-        const cashSAR = availableCashByCurrency.SAR ?? 0;
-        const cashUSD = availableCashByCurrency.USD ?? 0;
-        const totalAvailable =
-            platformCurrency === 'SAR'
-                ? cashSAR + cashUSD * rate
-                : platformCurrency === 'USD'
-                ? cashUSD + cashSAR / rate
-                : cashSAR + cashUSD * rate;
-
-        return {
-            totalValue,
-            totalValueInSAR,
-            totalGainLoss,
-            dailyPnL,
-            totalInvested,
-            totalWithdrawn,
-            roi,
-            totalAvailable,
-        };
-    }, [portfolios, transactions, simulatedPrices, platformCurrency, sarPerUsd, availableCashByCurrency]);
+    const { totalValue, totalValueInSAR, totalGainLoss, dailyPnL, totalInvested, totalWithdrawn, roi, totalAvailable } = useMemo(
+        () =>
+            computePlatformCardMetrics({
+                portfolios,
+                transactions,
+                accounts: dataCtx?.accounts ?? [],
+                allInvestments: dataCtx?.investments ?? [],
+                sarPerUsd,
+                availableCashByCurrency,
+                simulatedPrices,
+                platformCurrency,
+            }),
+        [portfolios, transactions, simulatedPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx?.accounts, dataCtx?.investments],
+    );
 
     const holdingsWithGains = (holdings: Holding[]) => holdings.map(h => {
-        const priceInfo = simulatedPrices[h.symbol];
-        const currentMktPrice = priceInfo ? priceInfo.price : (h.currentValue / (h.quantity || 1));
-        const liveValue = currentMktPrice * h.quantity;
         const totalCost = h.avgCost * h.quantity;
+        let liveValue: number;
+        if (holdingUsesLiveQuote(h)) {
+            const priceInfo = simulatedPrices[h.symbol];
+            const currentMktPrice = priceInfo ? priceInfo.price : (h.currentValue / (h.quantity || 1));
+            liveValue = currentMktPrice * h.quantity;
+        } else {
+            liveValue = Number.isFinite(h.currentValue) ? h.currentValue : 0;
+        }
         const gainLoss = liveValue - totalCost;
         return { ...h, currentValue: liveValue, totalCost, gainLoss };
     }).sort((a,b) => b.currentValue - a.currentValue);
@@ -1640,11 +1665,24 @@ const PlatformCard: React.FC<{
             <div className="platform-card-body">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                     <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Portfolios · {portfolios.length}</h4>
+                    <button
+                        type="button"
+                        onClick={() => onAddPortfolio(platform.id)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-primary bg-primary/10 rounded-lg hover:bg-primary/15 border border-primary/20 transition-colors"
+                    >
+                        <PlusIcon className="h-3.5 w-3.5" /> Add portfolio
+                    </button>
                 </div>
                 {portfolios.length === 0 ? (
                     <div className="rounded-xl bg-slate-50/80 border-2 border-dashed border-slate-200 py-8 px-4 text-center">
                         <p className="text-sm text-slate-600">No portfolios in this platform yet.</p>
-                        <p className="text-xs text-slate-500 mt-1">Use <strong>Add Portfolio</strong> above and select this platform.</p>
+                        <button
+                            type="button"
+                            onClick={() => onAddPortfolio(platform.id)}
+                            className="mt-3 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary rounded-xl hover:bg-primary/90"
+                        >
+                            <PlusIcon className="h-4 w-4" /> Add portfolio to this platform
+                        </button>
                     </div>
                 ) : null}
                 {portfolios.map(portfolio => {
@@ -1652,6 +1690,7 @@ const PlatformCard: React.FC<{
                     const portfolioHoldings = holdingsWithGains(portfolio.holdings || []);
                     const portfolioValue = portfolioHoldings.reduce((sum, h) => sum + h.currentValue, 0);
                     const fmt = (val: number, opts?: { digits?: number; showSecondary?: boolean }) => formatCurrencyString(val, { inCurrency: portfolioCurrency, ...opts });
+                    const fmtPerUnit = (val: number) => fmt(val, { digits: HOLDING_PER_UNIT_DECIMALS });
                     const fmtColor = (val: number, opts?: { digits?: number }) => formatCurrency(val, { inCurrency: portfolioCurrency, colorize: false, ...opts });
                     return (
                         <section key={portfolio.id} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
@@ -1696,7 +1735,10 @@ const PlatformCard: React.FC<{
                                                     <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right w-20">Alloc.</th>
                                                     <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Qty</th>
                                                     <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right whitespace-nowrap">Avg cost</th>
-                                                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Value</th>
+                                                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">
+                                                        <span className="block leading-tight">Current</span>
+                                                        <span className="block text-[10px] font-normal normal-case text-slate-400 tracking-normal mt-0.5">Purchased cost</span>
+                                                    </th>
                                                     <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-center">P/L</th>
                                                     <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Today</th>
                                                     <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-center w-20">Zakat</th>
@@ -1706,7 +1748,9 @@ const PlatformCard: React.FC<{
                                             <tbody className="divide-y divide-slate-100">
                                                 {portfolioHoldings.map(h => {
                                                     const allocationPct = portfolioValue > 0 ? (h.currentValue / portfolioValue) * 100 : 0;
-                                                    const dailyPnL = simulatedPrices[h.symbol]?.change * h.quantity || 0;
+                                                    const dailyPnL = holdingUsesLiveQuote(h)
+                                                        ? (simulatedPrices[h.symbol]?.change ?? 0) * (h.quantity || 0)
+                                                        : 0;
                                                     const gainLossPct = (h.totalCost && h.totalCost > 0) ? (h.gainLoss / h.totalCost) * 100 : 0;
                                                     return (
                                                         <tr key={h.id} className="group hover:bg-slate-50/80 transition-colors">
@@ -1714,7 +1758,7 @@ const PlatformCard: React.FC<{
                                                                 <div className="flex items-center gap-2 min-w-0">
                                                                     <button
                                                                         type="button"
-                                                                        onClick={() => onHoldingClick({ ...h, gainLossPercent: gainLossPct, priceChangePercent: simulatedPrices[h.symbol]?.changePercent ?? 0 }, portfolio)}
+                                                                        onClick={() => onHoldingClick({ ...h, gainLossPercent: gainLossPct, priceChangePercent: holdingUsesLiveQuote(h) ? (simulatedPrices[h.symbol]?.changePercent ?? 0) : 0 }, portfolio)}
                                                                         className="text-left rounded-lg py-0.5 pr-1 -ml-1 hover:bg-slate-100/80 transition-colors min-w-0 flex-1 overflow-hidden"
                                                                     >
                                                                         <span className="metric-value font-bold text-slate-900 block w-full" title={h.symbol}>{h.symbol}</span>
@@ -1736,8 +1780,27 @@ const PlatformCard: React.FC<{
                                                                 )}
                                                             </td>
                                                             <td className="px-3 py-3 text-center text-sm font-medium text-slate-800 tabular-nums">{h.quantity}</td>
-                                                            <td className="px-3 py-3 text-center text-sm font-medium text-slate-700 tabular-nums">{fmt(h.avgCost ?? 0, { digits: 2 })}</td>
-                                                            <td className="px-3 py-3 text-center text-sm font-bold text-slate-900 tabular-nums" title={portfolioCurrency === 'USD' ? formatCurrencyString(h.currentValue, { inCurrency: 'USD', showSecondary: true }) : undefined}>{fmt(h.currentValue, { digits: 0 })}</td>
+                                                            <td className="px-3 py-3 text-center text-sm font-medium text-slate-700 tabular-nums">{fmtPerUnit(h.avgCost ?? 0)}</td>
+                                                            <td className="px-3 py-3 text-right align-top">
+                                                                <div className="inline-flex flex-col items-end gap-0.5 tabular-nums min-w-0">
+                                                                    <span
+                                                                        className="text-sm font-bold text-slate-900 leading-tight"
+                                                                        title={
+                                                                            portfolioCurrency === 'USD'
+                                                                                ? formatCurrencyString(h.currentValue, { inCurrency: 'USD', showSecondary: true })
+                                                                                : undefined
+                                                                        }
+                                                                    >
+                                                                        {fmt(h.currentValue, { digits: 0 })}
+                                                                    </span>
+                                                                    <span
+                                                                        className="text-[11px] font-medium text-slate-500 leading-tight"
+                                                                        title="Total purchased cost (quantity × average cost)"
+                                                                    >
+                                                                        {fmt((h.avgCost ?? 0) * (h.quantity || 0), { digits: 0 })}
+                                                                    </span>
+                                                                </div>
+                                                            </td>
                                                             <td className="px-3 py-3 text-center whitespace-nowrap">
                                                                 <span
                                                                     className={`inline-flex items-center justify-center gap-1 tabular-nums ${
@@ -1783,7 +1846,7 @@ const PlatformCard: React.FC<{
 
 const PlatformView: React.FC<{
     onAddPlatform: () => void;
-    onOpenAddPortfolio: () => void;
+    onOpenAddPortfolio: (accountId?: string | null) => void;
     setActivePage?: (page: Page) => void;
     setActiveTab?: (tab: InvestmentSubPage) => void;
     onEditPlatform: (platform: Account) => void;
@@ -1823,22 +1886,22 @@ const PlatformView: React.FC<{
         };
 
         return platformsData.reduce((sum, p) => {
+            const cashSar = tradableCashBucketToSAR(p.availableCashByCurrency, sarPerUsd);
             const platformTotalSar = p.portfolios.reduce((portfolioSum, portfolio) => {
                 const portfolioCurrency = portfolio.currency === 'SAR' || portfolio.currency === 'USD' ? portfolio.currency : 'USD';
                 const holdingsTotalSar = (portfolio.holdings || []).reduce((holdingSum, h) => {
                     const symbol = (h.symbol || '').trim().toUpperCase();
-                    const priceInfo = props.simulatedPrices[symbol];
-                    // If we have a simulated price, treat it as SAR price and skip FX
+                    const priceInfo = holdingUsesLiveQuote(h) ? props.simulatedPrices[symbol] : undefined;
                     if (priceInfo && Number.isFinite(priceInfo.price) && (h.quantity ?? 0) > 0) {
-                        const liveSar = priceInfo.price * (h.quantity || 0);
-                        return holdingSum + (Number.isFinite(liveSar) ? liveSar : 0);
+                        const live = priceInfo.price * (h.quantity || 0);
+                        if (!Number.isFinite(live) || live <= 0) return holdingSum;
+                        return holdingSum + (portfolioCurrency === 'SAR' ? live : live * sarPerUsd);
                     }
-                    // Fallback: use stored currentValue in portfolio currency and convert to SAR
                     const fallbackValue = Number.isFinite(h.currentValue) ? (h.currentValue as number) : 0;
                     return holdingSum + toSar(fallbackValue, portfolioCurrency);
                 }, 0);
                 return portfolioSum + holdingsTotalSar;
-            }, 0);
+            }, 0) + cashSar;
             return sum + platformTotalSar;
         }, 0);
     }, [platformsData, props.simulatedPrices, sarPerUsd]);
@@ -1877,7 +1940,7 @@ const PlatformView: React.FC<{
                                 Go to Accounts
                             </button>
                         )}
-                        <button type="button" onClick={onOpenAddPortfolio} className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 text-sm font-medium shadow-sm">
+                        <button type="button" onClick={() => onOpenAddPortfolio(null)} className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 text-sm font-medium shadow-sm">
                             <PlusIcon className="h-4 w-4" /> Add Portfolio
                         </button>
                         <button type="button" onClick={props.onAddPlatform} className="inline-flex items-center gap-2 px-4 py-2.5 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-700 text-sm font-medium transition-colors">
@@ -1889,7 +1952,7 @@ const PlatformView: React.FC<{
                     <div className="mt-5 pt-5 border-t border-slate-200">
                         <div className="flex flex-wrap items-center gap-4 sm:gap-6">
                             <div className="flex items-baseline gap-2">
-                                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Portfolio value (holdings)</span>
+                                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total value (holdings + cash)</span>
                                 <span className="text-xl sm:text-2xl font-bold text-primary tabular-nums tracking-tight">{formatCurrencyString(aggregateValue)}</span>
                             </div>
                             <div className="flex items-center gap-2 sm:gap-4">
@@ -1931,7 +1994,7 @@ const PlatformView: React.FC<{
                     <ClipboardDocumentListIcon className="mx-auto h-12 w-12 text-amber-500" aria-hidden />
                     <h3 className="mt-4 text-lg font-semibold text-slate-800">No portfolios yet</h3>
                     <p className="mt-2 text-sm text-slate-600 max-w-md mx-auto">Create a portfolio under one of your platforms below, then record buys and sells.</p>
-                    <button type="button" onClick={onOpenAddPortfolio} className="mt-6 inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 text-sm font-medium">
+                    <button type="button" onClick={() => onOpenAddPortfolio(null)} className="mt-6 inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 text-sm font-medium">
                         <PlusIcon className="h-4 w-4" /> Add Portfolio
                     </button>
                 </div>
@@ -1949,6 +2012,7 @@ const PlatformView: React.FC<{
                         availableCashByCurrency={p.availableCashByCurrency}
                         onEditPlatform={props.onEditPlatform}
                         onDeletePlatform={props.onDeletePlatform}
+                        onAddPortfolio={(accountId) => onOpenAddPortfolio(accountId)}
                         onEditPortfolio={props.onEditPortfolio}
                         onDeletePortfolio={props.onDeletePortfolio}
                         onHoldingClick={props.onHoldingClick}
@@ -2568,8 +2632,9 @@ Save anyway?`)) return;
     const holdingPriceFallbackMap = useMemo<Record<string, number>>(() => {
         const map: Record<string, number> = {};
         const portfolios = (data as any)?.personalInvestments ?? data?.investments ?? [];
-        portfolios.forEach((portfolio: { holdings?: { symbol?: string; quantity?: number; currentValue?: number; avgCost?: number }[] }) => {
-            (portfolio.holdings ?? []).forEach((holding: { symbol?: string; quantity?: number; currentValue?: number; avgCost?: number }) => {
+        portfolios.forEach((portfolio: { holdings?: { symbol?: string; quantity?: number; currentValue?: number; avgCost?: number; holdingType?: string; holding_type?: string }[] }) => {
+            (portfolio.holdings ?? []).forEach((holding: { symbol?: string; quantity?: number; currentValue?: number; avgCost?: number; holdingType?: string; holding_type?: string }) => {
+                if (!holdingUsesLiveQuote(holding as Holding)) return;
                 const symbol = (holding.symbol || '').trim().toUpperCase();
                 if (!symbol) return;
                 const inferred = (holding.quantity ?? 0) > 0 ? ((holding.currentValue ?? 0) / (holding.quantity ?? 1)) : (holding.avgCost || 0);
@@ -2635,8 +2700,23 @@ Save anyway?`)) return;
             const holdings = portfolio.holdings || [];
             const liveHoldingValues = holdings.map((holding) => {
                 const symbol = (holding.symbol || '').trim().toUpperCase();
-                const livePrice = simulatedPrices[symbol]?.price || (holding.quantity > 0 ? (holding.currentValue / holding.quantity) : 0) || holding.avgCost || 0;
-                const liveValue = livePrice > 0 ? livePrice * (holding.quantity || 0) : (holding.currentValue || 0);
+                const useLive = holdingUsesLiveQuote(holding as Holding);
+                let livePrice: number;
+                let liveValue: number;
+                if (useLive) {
+                    livePrice =
+                        simulatedPrices[symbol]?.price
+                        || (holding.quantity > 0 ? holding.currentValue / holding.quantity : 0)
+                        || holding.avgCost
+                        || 0;
+                    if (!Number.isFinite(livePrice)) livePrice = 0;
+                    liveValue =
+                        livePrice > 0 ? livePrice * (holding.quantity || 0) : (holding.currentValue || 0);
+                } else {
+                    liveValue = Number.isFinite(holding.currentValue) ? holding.currentValue : 0;
+                    livePrice =
+                        (holding.quantity ?? 0) > 0 ? liveValue / holding.quantity : (holding.avgCost || 0);
+                }
                 return { holding, symbol, livePrice, liveValue };
             });
 
@@ -3347,23 +3427,26 @@ Save anyway?`)) return;
                     </div>
                 </div>
 
-                <div className="xl:col-span-3">
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="xl:col-span-5 w-full min-w-0">
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden w-full">
                     <div className="p-6 border-b border-slate-100 bg-emerald-50/40">
-                        <div className="flex items-start justify-between gap-3">
-                            <div>
-                                <h2 className="text-xl font-bold text-slate-800 mb-1">Smart Add-On Opportunities (Existing Winners)</h2>
-                                <p className="text-sm text-slate-600">Automated suggestions for buying more of profitable shares you already own, with pullback entry zones and capped sizing.</p>
+                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                                <h2 className="text-xl sm:text-2xl font-bold text-slate-800 mb-1 flex flex-wrap items-center gap-2">
+                                    <ArrowTrendingUpIcon className="h-7 w-7 text-emerald-600 shrink-0" aria-hidden />
+                                    Smart Add-On Opportunities (Existing Winners)
+                                </h2>
+                                <p className="text-sm text-slate-600 max-w-4xl">Automated suggestions for buying more of profitable shares you already own, with pullback entry zones and capped sizing. Full width for easier review—scroll horizontally on small screens.</p>
                             </div>
-                            <span className="text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 font-semibold">AUTO</span>
+                            <span className="text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 font-semibold shrink-0 self-start">AUTO</span>
                         </div>
                     </div>
                     <div className="p-6">
                         {addOnOpportunities.length === 0 ? (
                             <p className="text-sm text-slate-500">No add-on opportunities right now. Suggestions appear when a holding is profitable, actionable (Core/High-Upside), and below max position weight.</p>
                         ) : (
-                            <div className="rounded-lg border border-slate-200 overflow-hidden">
-                                <table className="w-full table-fixed text-sm">
+                            <div className="rounded-lg border border-slate-200 overflow-x-auto">
+                                <table className="w-full min-w-[720px] text-sm">
                                     <thead>
                                         <tr className="bg-slate-50 border-b border-slate-200 text-left text-slate-600">
                                             <th className="w-[18%] px-3 py-2 font-semibold">Share</th>
@@ -3386,14 +3469,14 @@ Save anyway?`)) return;
                                                     <div className={`mt-1 inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold ${o.confidence === 'High' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>{o.confidence}</div>
                                                 </td>
                                                 <td className="px-3 py-2">
-                                                    <div className="text-xs text-slate-700">Pullback: <strong>{formatCurrencyString(o.pullbackPrice, { inCurrency: o.tradeCurrency, digits: 2 })}</strong></div>
-                                                    <div className="text-xs text-slate-500">Deep pullback: {formatCurrencyString(o.deepPullbackPrice, { inCurrency: o.tradeCurrency, digits: 2 })}</div>
+                                                    <div className="text-xs text-slate-700">Pullback: <strong>{formatCurrencyString(o.pullbackPrice, { inCurrency: o.tradeCurrency, digits: HOLDING_PER_UNIT_DECIMALS })}</strong></div>
+                                                    <div className="text-xs text-slate-500">Deep pullback: {formatCurrencyString(o.deepPullbackPrice, { inCurrency: o.tradeCurrency, digits: HOLDING_PER_UNIT_DECIMALS })}</div>
                                                     <div className="text-[11px] text-slate-500 mt-1 leading-snug">{o.reason}</div>
                                                 </td>
                                                 <td className="px-3 py-2 text-right">
                                                     <div className="font-mono font-semibold text-primary tabular-nums">{formatCurrencyString(o.suggestedPlanAmount, { inCurrency: planCurrency, digits: 0 })}</div>
                                                     <div className="text-[11px] text-slate-500">≈ {formatCurrencyString(o.amountInTradeCurrency, { inCurrency: o.tradeCurrency, digits: 0 })}</div>
-                                                    <div className="text-[11px] text-slate-500">{o.suggestedQuantity.toFixed(4)} sh @ {formatCurrencyString(o.pullbackPrice, { inCurrency: o.tradeCurrency, digits: 2 })}</div>
+                                                    <div className="text-[11px] text-slate-500">{o.suggestedQuantity.toFixed(4)} sh @ {formatCurrencyString(o.pullbackPrice, { inCurrency: o.tradeCurrency, digits: HOLDING_PER_UNIT_DECIMALS })}</div>
                                                 </td>
                                                 {onOpenRecordTrade && (
                                                     <td className="px-3 py-2 text-right">
@@ -3437,7 +3520,7 @@ interface InvestmentsProps {
 }
 
 const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
-  const { data, loading, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
+  const { data, loading, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, getAvailableCashForAccount } = useContext(DataContext)!;
   const { isAiAvailable } = useAI();
   const { simulatedPrices } = useMarketData();
   const { formatCurrency, formatCurrencyString } = useFormatCurrency();
@@ -3480,9 +3563,11 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         const cur = (p.currency || 'USD') as TradeCurrency;
         (p.holdings || []).forEach((h: Holding) => {
             const sym = (h.symbol || '').trim().toUpperCase();
-            const priceInfo = simulatedPrices[sym];
+            const priceInfo = holdingUsesLiveQuote(h) ? simulatedPrices[sym] : undefined;
             if (priceInfo && Number.isFinite(priceInfo.price) && (h.quantity ?? 0) > 0) {
-                valueSAR += priceInfo.price * (h.quantity || 0);
+                const live = priceInfo.price * (h.quantity || 0);
+                if (cur === 'SAR') valueSAR += live;
+                else valueUSD += live;
             } else {
                 const fallback = Number.isFinite(h.currentValue) ? (h.currentValue as number) : 0;
                 if (cur === 'SAR') valueSAR += fallback; else valueUSD += fallback;
@@ -3490,15 +3575,32 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         });
     });
     const totalInvestmentsValueSAR = valueSAR + valueUSD * rate;
+    const invAccounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []).filter(
+        (a: { id: string; type?: string }) => personalAccountIds.has(a.id) && a.type === 'Investment',
+    ) as { id: string }[];
+    const invTradableCashSAR = invAccounts.reduce(
+        (s, a) => s + tradableCashBucketToSAR(getAvailableCashForAccount(a.id), rate),
+        0,
+    );
     const totalCommoditiesValue = allCommodities.reduce((sum: number, ch: { symbol?: string; quantity?: number; currentValue?: number }) => sum + (simulatedPrices[ch.symbol!] ? simulatedPrices[ch.symbol!].price * (ch.quantity ?? 0) : (ch.currentValue ?? 0)), 0);
-    const totalValue = totalInvestmentsValueSAR + totalCommoditiesValue;
+    const totalValue = totalInvestmentsValueSAR + totalCommoditiesValue + invTradableCashSAR;
 
     // Capital flows: use deposit/withdrawal for personal accounts only
     const invTxs = (data?.investmentTransactions ?? []).filter((t: { accountId?: string; type?: string }) => personalAccountIds.has(t.accountId ?? '') && t.type === 'deposit');
     const wdrTxs = (data?.investmentTransactions ?? []).filter((t: { accountId?: string; type?: string }) => personalAccountIds.has(t.accountId ?? '') && t.type === 'withdrawal');
+    const accList = data?.accounts ?? [];
+    const invPortfolios = data?.investments ?? [];
     let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0;
-    invTxs.forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') invSAR += t.total ?? 0; else invUSD += t.total ?? 0; });
-    wdrTxs.forEach((t: InvestmentTransaction) => { const c = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency; if (c === 'SAR') wdrSAR += t.total ?? 0; else wdrUSD += t.total ?? 0; });
+    invTxs.forEach((t: InvestmentTransaction) => {
+        const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
+        if (c === 'SAR') invSAR += t.total ?? 0;
+        else invUSD += t.total ?? 0;
+    });
+    wdrTxs.forEach((t: InvestmentTransaction) => {
+        const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
+        if (c === 'SAR') wdrSAR += t.total ?? 0;
+        else wdrUSD += t.total ?? 0;
+    });
     const totalInvestedSAR = invSAR + invUSD * rate;
     const totalWithdrawnSAR = wdrSAR + wdrUSD * rate;
     const commodityCost = allCommodities.reduce((sum: number, ch: { purchaseValue?: number }) => sum + (ch.purchaseValue ?? 0), 0);
@@ -3506,13 +3608,27 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     const totalGainLoss = totalValue - netCapital;
     const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
 
-    const allHoldings = portfolios.flatMap((p: InvestmentPortfolio) => p.holdings || []);
-    const totalDailyPnL = [...allHoldings, ...allCommodities].reduce((sum: number, item: { symbol?: string; quantity?: number }) => (simulatedPrices[item.symbol!] ? sum + simulatedPrices[item.symbol!].change * (item.quantity ?? 0) : sum), 0);
+    let totalDailyPnL = 0;
+    portfolios.forEach((p: InvestmentPortfolio) => {
+        const cur = (p.currency || 'USD') as TradeCurrency;
+        (p.holdings || []).forEach((h: Holding) => {
+            const sym = (h.symbol || '').trim().toUpperCase();
+            const info = holdingUsesLiveQuote(h) ? simulatedPrices[sym] : undefined;
+            if (!info || !Number.isFinite(info.change) || (h.quantity ?? 0) <= 0) return;
+            const d = info.change * (h.quantity ?? 0);
+            totalDailyPnL += cur === 'SAR' ? d : d * rate;
+        });
+    });
+    totalDailyPnL += allCommodities.reduce(
+        (sum: number, ch: { symbol?: string; quantity?: number }) =>
+            sum + (simulatedPrices[ch.symbol!] ? simulatedPrices[ch.symbol!].change * (ch.quantity ?? 0) : 0),
+        0,
+    );
     const previousTotalValue = totalValue - totalDailyPnL;
     const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
 
     return { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage };
-  }, [data?.investments, data?.investmentTransactions, data?.commodityHoldings, data?.accounts, (data as any)?.personalInvestments, (data as any)?.personalAccounts, (data as any)?.personalCommodityHoldings, data?.wealthUltraConfig, simulatedPrices, exchangeRate]);
+  }, [data?.investments, data?.investmentTransactions, data?.commodityHoldings, data?.accounts, (data as any)?.personalInvestments, (data as any)?.personalAccounts, (data as any)?.personalCommodityHoldings, data?.wealthUltraConfig, simulatedPrices, exchangeRate, getAvailableCashForAccount]);
 
   const getTrendString = (trend: number) => {
     return `${trend >= 0 ? '+' : ''}${trend.toFixed(2)}%`;
@@ -3564,11 +3680,24 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         setActiveTab('Investment Plan');
         clearPageAction?.();
     }
-    if (pageAction === 'openRiskTradingHub') {
-        setActiveTab('Safety & rules');
+    if (pageAction?.startsWith('investment-tab:')) {
+        const raw = pageAction.slice('investment-tab:'.length);
+        const allowed = new Set<InvestmentSubPage>([
+            'Investment Plan',
+            'Recovery Plan',
+            'Dividend Tracker',
+            'AI Rebalancer',
+            'Watchlist',
+        ]);
+        if (allowed.has(raw as InvestmentSubPage)) {
+            setActiveTab(raw as InvestmentSubPage);
+        }
         clearPageAction?.();
     }
-  }, [pageAction, clearPageAction, data?.investments, setActiveTab]);
+    if (pageAction === 'openRiskTradingHub') {
+        triggerPageAction?.('Engines & Tools', 'openRiskTradingHub');
+    }
+  }, [pageAction, clearPageAction, data?.investments, setActiveTab, triggerPageAction]);
 
   const investmentAccounts = useMemo(() => (data?.accounts ?? []).filter(acc => acc.type === 'Investment'), [data?.accounts]);
 
@@ -3591,14 +3720,24 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     setPlatformToEdit(platform);
     setIsPlatformModalOpen(true);
   };
-  
+
+  const handleOpenPortfolioModal = (portfolio: InvestmentPortfolio | null, accountId: string | null) => {
+      if (!portfolio) trackAction('add-portfolio', 'Investments');
+      setPortfolioToEdit(portfolio);
+      setCurrentAccountId(accountId);
+      setIsPortfolioModalOpen(true);
+  };
+
   const handleSavePlatform = async (platform: Account) => {
       try {
           if (platform.id) {
               await updatePlatform(platform);
           } else {
               const { id, balance, ...newPlatformData } = platform;
-              await addPlatform(newPlatformData);
+              const newId = await addPlatform(newPlatformData);
+              if (newId) {
+                  handleOpenPortfolioModal(null, newId);
+              }
           }
       } catch (error) {
           // Error already alerted in DataContext
@@ -3616,13 +3755,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     setItemToDelete(null);
     setIsDeleteModalOpen(false);
   };
-  
-  const handleOpenPortfolioModal = (portfolio: InvestmentPortfolio | null, accountId: string | null) => {
-      if (!portfolio) trackAction('add-portfolio', 'Investments');
-      setPortfolioToEdit(portfolio);
-      setCurrentAccountId(accountId);
-      setIsPortfolioModalOpen(true);
-  };
+
   const handleSavePortfolio = async (portfolio: Omit<InvestmentPortfolio, 'id' | 'user_id' | 'holdings'> | InvestmentPortfolio) => {
       try {
           if ('id' in portfolio && portfolio.id) {
@@ -3650,7 +3783,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         return <PlatformView 
             simulatedPrices={simulatedPrices}
             onAddPlatform={() => handleOpenPlatformModal()}
-            onOpenAddPortfolio={() => handleOpenPortfolioModal(null, null)}
+            onOpenAddPortfolio={(accountId) => handleOpenPortfolioModal(null, accountId ?? null)}
             setActivePage={setActivePage}
             setActiveTab={setActiveTab}
             onEditPlatform={handleOpenPlatformModal} 
@@ -3661,34 +3794,47 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
             onEditHolding={handleOpenHoldingEditModal}
         />;
       case 'Investment Plan': return (
-                <InvestmentPlan
-                    onNavigateToTab={(tab) => setActiveTab(tab)}
-                    onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined}
-                    onOpenRecordTrade={(trade) => {
-                        trackAction('record-trade-from-plan', 'Investments');
-                        const normalizedSymbol = trade.ticker.trim().toUpperCase();
-                        const inv = data?.investments ?? [];
-                        const targetPortfolio = inv.find((portfolio) =>
-                            (portfolio.holdings || []).some((holding) => (holding.symbol || '').trim().toUpperCase() === normalizedSymbol)
-                        ) || inv.find((portfolio) => ((portfolio.currency as TradeCurrency) || 'USD') === (trade.tradeCurrency || 'USD')) || inv[0];
-                        setTradeInitialData({
-                            symbol: trade.ticker,
-                            amount: trade.amount,
-                            tradeType: 'buy' as const,
-                            reason: trade.reason,
-                            price: trade.price,
-                            quantity: trade.quantity,
-                            tradeCurrency: trade.tradeCurrency,
-                            accountId: targetPortfolio?.accountId,
-                            portfolioId: targetPortfolio?.id,
-                            name: targetPortfolio?.holdings?.find((holding) => (holding.symbol || '').trim().toUpperCase() === normalizedSymbol)?.name,
-                        });
-                        setIsTradeModalOpen(true);
-                    }}
-                />
+                <div className="space-y-14 sm:space-y-16">
+                    <InvestmentPlanView
+                        embedded
+                        onExecutePlan={() => {}}
+                        setActivePage={setActivePage}
+                        triggerPageAction={triggerPageAction}
+                    />
+                    <section className="rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50/80 to-white p-4 sm:p-6 shadow-sm scroll-mt-6" aria-labelledby="monthly-allocation-heading">
+                        <div className="mb-4 border-b border-slate-200 pb-3">
+                            <h2 id="monthly-allocation-heading" className="text-base font-semibold text-slate-900">Monthly budget and sleeve strategy</h2>
+                            <p className="mt-1 text-sm text-slate-600">Set how much you invest each month and how it splits between stable vs growth names. This works together with the trade plans above.</p>
+                        </div>
+                        <InvestmentPlan
+                            onNavigateToTab={(tab) => setActiveTab(tab)}
+                            onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined}
+                            onOpenRecordTrade={(trade) => {
+                                trackAction('record-trade-from-plan', 'Investments');
+                                const normalizedSymbol = trade.ticker.trim().toUpperCase();
+                                const inv = data?.investments ?? [];
+                                const targetPortfolio = inv.find((portfolio) =>
+                                    (portfolio.holdings || []).some((holding) => (holding.symbol || '').trim().toUpperCase() === normalizedSymbol)
+                                ) || inv.find((portfolio) => ((portfolio.currency as TradeCurrency) || 'USD') === (trade.tradeCurrency || 'USD')) || inv[0];
+                                setTradeInitialData({
+                                    symbol: trade.ticker,
+                                    amount: trade.amount,
+                                    tradeType: 'buy' as const,
+                                    reason: trade.reason,
+                                    price: trade.price,
+                                    quantity: trade.quantity,
+                                    tradeCurrency: trade.tradeCurrency,
+                                    accountId: targetPortfolio?.accountId,
+                                    portfolioId: targetPortfolio?.id,
+                                    name: targetPortfolio?.holdings?.find((holding) => (holding.symbol || '').trim().toUpperCase() === normalizedSymbol)?.name,
+                                });
+                                setIsTradeModalOpen(true);
+                            }}
+                        />
+                    </section>
+                </div>
             );
       case 'Dividend Tracker': return <DividendTrackerView setActivePage={setActivePage} />;
-      case 'Safety & rules': return <RiskTradingHub setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Recovery Plan': return <RecoveryPlanView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
       case 'AI Rebalancer': return <AIRebalancerView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
       case 'Watchlist': return <WatchlistView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} />;
@@ -3741,7 +3887,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 indicatorColor="green"
                 valueColor="text-emerald-700"
                 icon={<ChartPieIcon className="h-5 w-5 text-emerald-600" aria-hidden />}
-                tooltip="Combined value of all portfolios and commodity holdings at current prices."
+                tooltip="Holdings at current prices, plus tradable cash on investment platforms (SAR/USD per ledger), plus commodities."
             />
             <Card
                 title="Unrealized P/L"

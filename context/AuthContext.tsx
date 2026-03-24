@@ -695,9 +695,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
         const APPROVAL_FETCH_MS = 8000;
         try {
+            // Use select() without a column list so Postgres returns all existing columns.
+            // If `approved` was never migrated, .select('approved') errors with 42703.
             const query = supabase
                 .from('users')
-                .select('approved')
+                .select()
                 .eq('id', userId)
                 .maybeSingle();
 

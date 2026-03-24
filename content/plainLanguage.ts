@@ -56,7 +56,7 @@ export const PAGE_INTROS: Record<string, { title: string; description: string }>
   },
   'Investment Plan': {
     title: 'Plan your trades ahead of time',
-    description: 'Set buy or sell plans that trigger when a price or date is reached. The system suggests ideas from your portfolio and checks them against AI recommendations so you can invest with confidence.',
+    description: 'You choose the stock and the rule (price or date). We watch the market for you and say when it’s time to act—then you confirm the trade in your portfolio.',
   },
   Settings: {
     title: 'Your preferences',
@@ -104,9 +104,9 @@ export const EMPTY_STATE_MESSAGES: Record<string, { title: string; description: 
     action: 'Add a portfolio',
   },
   noPlannedTrades: {
-    title: 'No plans yet',
-    description: 'Create your first trade plan—set a target price or date, and the system will tell you when it\'s time to act.',
-    action: 'Create plan',
+    title: 'No trade plans yet',
+    description: 'Tell the app what you’d like to buy or sell and when (price or date). When the market hits your rule, we’ll flag it so you can record the trade—no need to watch charts all day.',
+    action: 'Create your first plan',
   },
   noAiCandidates: {
     title: 'All set for now',

@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useContext, useEffect } from 'react';
+import React, { useMemo, useState, useContext, useEffect, useRef } from 'react';
 import ProgressBar from '../components/ProgressBar';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';
@@ -56,6 +56,7 @@ import {
     generateCommonScenarios,
     detectAnomalies,
     detectSeasonality,
+    effectiveMonthExpense,
     type PredictiveForecast,
     type ScenarioAnalysis,
     type BudgetAnomaly,
@@ -224,7 +225,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const [requestStatusFilter, setRequestStatusFilter] = useState<'All' | 'Pending' | 'Finalized' | 'Rejected'>('All');
     const [requestMonthFilter, setRequestMonthFilter] = useState<string>('');
     const [historyItemsToShow, setHistoryItemsToShow] = useState(10);
-    const [historyCollapsed, setHistoryCollapsed] = useState(true);
+    const [historyCollapsed, setHistoryCollapsed] = useState(false);
     const HISTORY_PAGE_SIZE = 15;
 
     const [currentDate, setCurrentDate] = useState(new Date());
@@ -363,6 +364,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const [bulkAddTargetYear, setBulkAddTargetYear] = useState(currentYear);
     const [bulkAddSalary, setBulkAddSalary] = useState<number | ''>('');
     const [bulkAddSelectedCategories, setBulkAddSelectedCategories] = useState<string[]>([]);
+    /** Previous bulk-add template category order; used to merge user checkbox state when salary/family/profile/month updates. */
+    const bulkAddPrevSuggestionNamesRef = useRef<string[]>([]);
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
 
@@ -391,7 +394,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 if (Number.isFinite(parsed?.adults)) setHouseholdAdults(Math.max(1, Math.round(parsed.adults)));
                 if (Number.isFinite(parsed?.kids)) setHouseholdKids(Math.max(0, Math.round(parsed.kids)));
                 if (Array.isArray(parsed?.overrides)) setHouseholdOverrides(parsed.overrides);
-                if (parsed?.profile && ['Conservative', 'Moderate', 'Growth'].includes(parsed.profile)) {
+                if (parsed?.profile && Object.prototype.hasOwnProperty.call(HOUSEHOLD_ENGINE_PROFILES, parsed.profile)) {
                     setEngineProfile(parsed.profile as HouseholdEngineProfile);
                 }
                 if (typeof parsed?.expectedMonthlySalary === 'number' && parsed.expectedMonthlySalary > 0) {
@@ -425,7 +428,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 if (Number.isFinite(profile?.adults)) setHouseholdAdults(Math.max(1, Math.round(profile.adults)));
                 if (Number.isFinite(profile?.kids)) setHouseholdKids(Math.max(0, Math.round(profile.kids)));
                 if (Array.isArray(profile?.overrides)) setHouseholdOverrides(profile.overrides);
-                if (profile?.profile && ['Conservative', 'Moderate', 'Growth'].includes(profile.profile)) {
+                if (profile?.profile && Object.prototype.hasOwnProperty.call(HOUSEHOLD_ENGINE_PROFILES, profile.profile)) {
                     setEngineProfile(profile.profile as HouseholdEngineProfile);
                 }
                 if (typeof profile?.expectedMonthlySalary === 'number' && profile.expectedMonthlySalary > 0) {
@@ -959,18 +962,60 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             bulkAddSuggestedCategories,
             bulkAddSelectedCategories,
             monthlySalary,
-            engineProfile
+            engineProfile,
+            householdAdults,
+            householdKids
         );
-    }, [bulkAddSuggestedCategories, bulkAddSelectedCategories, bulkAddSalary, expectedMonthlySalary, suggestedMonthlySalary, engineProfile]);
+    }, [bulkAddSuggestedCategories, bulkAddSelectedCategories, bulkAddSalary, expectedMonthlySalary, suggestedMonthlySalary, engineProfile, householdAdults, householdKids]);
 
-    // Default bulk-add selection to all suggested categories when list changes
+    // Keep checkbox selection stable when only limits change; add new template rows as selected; drop removed rows.
+    // (Old logic reset to “all selected” whenever length differed — that wiped unchecks on adults/kids/profile/salary/month changes.)
     React.useEffect(() => {
-        if (bulkAddSuggestedCategories.length === 0) return;
-        setBulkAddSelectedCategories((prev) => {
-            const names = bulkAddSuggestedCategories.map((c) => c.category);
-            const same = names.length === prev.length && names.every((n, i) => n === prev[i]);
-            return same ? prev : names;
+        const names = bulkAddSuggestedCategories.map((c) => c.category);
+        if (names.length === 0) {
+            bulkAddPrevSuggestionNamesRef.current = [];
+            setBulkAddSelectedCategories([]);
+            return;
+        }
+
+        const prevNames = bulkAddPrevSuggestionNamesRef.current;
+        const prevSet = new Set(prevNames);
+        const currSet = new Set(names);
+
+        const sameCategorySet =
+            prevNames.length > 0 &&
+            prevNames.length === names.length &&
+            names.every((n) => prevSet.has(n));
+
+        if (prevNames.length === 0) {
+            setBulkAddSelectedCategories(names);
+            bulkAddPrevSuggestionNamesRef.current = names;
+            return;
+        }
+
+        if (sameCategorySet) {
+            setBulkAddSelectedCategories((sel) => {
+                const selSet = new Set(sel);
+                return names.filter((n) => selSet.has(n));
+            });
+            bulkAddPrevSuggestionNamesRef.current = names;
+            return;
+        }
+
+        const added = names.filter((n) => !prevSet.has(n));
+        setBulkAddSelectedCategories((sel) => {
+            const kept = sel.filter((n) => currSet.has(n));
+            const keptSet = new Set(kept);
+            const withNew = [...kept];
+            for (const n of added) {
+                if (!keptSet.has(n)) {
+                    withNew.push(n);
+                    keptSet.add(n);
+                }
+            }
+            return names.filter((n) => keptSet.has(n));
         });
+        bulkAddPrevSuggestionNamesRef.current = names;
     }, [bulkAddSuggestedCategories]);
 
     React.useEffect(() => {
@@ -2382,9 +2427,13 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                             <div className="pt-2 border-t border-slate-200">
                                                 <p className="text-xs font-semibold text-slate-700 mb-1">Goal Impact:</p>
                                                 {scenario.goalAchievementImpact.map((impact, i) => (
-                                                    <p key={i} className="text-xs text-slate-600">
-                                                        {impact.goalName}: {impact.achievementDelayMonths >= 0 ? '+' : ''}{impact.achievementDelayMonths.toFixed(1)} months
-                                                    </p>
+                                                    <div key={i} className="flex justify-between gap-3 text-xs text-slate-600">
+                                                        <span className="truncate">{impact.goalName}</span>
+                                                        <span className="shrink-0 font-medium tabular-nums text-slate-800">
+                                                            {impact.achievementDelayMonths >= 0 ? '+' : ''}
+                                                            {impact.achievementDelayMonths.toFixed(1)} mo
+                                                        </span>
+                                                    </div>
                                                 ))}
                                             </div>
                                         )}
@@ -2431,11 +2480,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                             <div className="h-48 flex items-end justify-between gap-1">
                                 {householdBudgetEngine.months.slice(-6).map((month, idx) => {
-                                    const outflows = householdBudgetEngine.months.slice(-6).map(m => 
-                                        (m.totalActualOutflow ?? 0) > 0 ? (m.totalActualOutflow ?? 0) : (m.totalPlannedOutflow ?? 0)
-                                    );
+                                    const outflows = householdBudgetEngine.months.slice(-6).map((m) => effectiveMonthExpense(m));
                                     const maxExpense = outflows.length > 0 ? Math.max(...outflows) : 0;
-                                    const expense = (month.totalActualOutflow ?? 0) > 0 ? (month.totalActualOutflow ?? 0) : (month.totalPlannedOutflow ?? 0);
+                                    const expense = effectiveMonthExpense(month);
                                     const height = maxExpense > 0 ? (expense / maxExpense) * 100 : 0;
                                     const income = (month.incomeActual ?? 0) > 0 ? (month.incomeActual ?? 0) : (month.incomePlanned ?? 0);
                                     const net = income - expense;

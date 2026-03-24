@@ -25,6 +25,10 @@ import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import PageLayout from '../components/PageLayout';
 import { useSelfLearning } from '../context/SelfLearningContext';
+import { parseMoneyInput, roundMoney, roundQuantity } from '../utils/money';
+import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
+import { useCurrency } from '../context/CurrencyContext';
+import { resolveSarPerUsd } from '../utils/currencyMath';
 
 // --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; preferredType?: AssetType; }> = ({ isOpen, onClose, onSave, assetToEdit, preferredType = 'Property' }) => {
@@ -36,6 +40,9 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
     const [isRental, setIsRental] = useState(false);
     const [monthlyRent, setMonthlyRent] = useState('');
     const [owner, setOwner] = useState('');
+    const [issueDate, setIssueDate] = useState('');
+    const [maturityDate, setMaturityDate] = useState('');
+    const [notes, setNotes] = useState('');
 
     React.useEffect(() => {
         if (assetToEdit) {
@@ -46,6 +53,9 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
             setIsRental(assetToEdit.isRental || false);
             setMonthlyRent(assetToEdit.monthlyRent?.toString() || '');
             setOwner(assetToEdit.owner || '');
+            setIssueDate(assetToEdit.issueDate ?? '');
+            setMaturityDate(assetToEdit.maturityDate ?? '');
+            setNotes(assetToEdit.notes ?? '');
         } else {
             const learnedType = getLearnedDefault('asset-add', 'type') as AssetType | undefined;
             const validTypes: AssetType[] = ['Sukuk', 'Property', 'Vehicle', 'Other'];
@@ -56,6 +66,9 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
             setIsRental(false);
             setMonthlyRent('');
             setOwner('');
+            setIssueDate('');
+            setMaturityDate('');
+            setNotes('');
         }
     }, [assetToEdit, isOpen, preferredType, getLearnedDefault]);
 
@@ -63,11 +76,14 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
         e.preventDefault();
         const newAsset: Asset = {
             id: assetToEdit ? assetToEdit.id : `asset${Date.now()}`,
-            name, type, value: parseFloat(value) || 0,
-            purchasePrice: parseFloat(purchasePrice) || undefined,
+            name, type, value: parseMoneyInput(value),
+            purchasePrice: purchasePrice.trim() !== '' ? parseMoneyInput(purchasePrice) : undefined,
             isRental: type === 'Property' ? isRental : undefined,
-            monthlyRent: type === 'Property' && isRental ? parseFloat(monthlyRent) || 0 : undefined,
+            monthlyRent: type === 'Property' && isRental ? parseMoneyInput(monthlyRent) : undefined,
             goalId: assetToEdit?.goalId, owner: owner || undefined,
+            issueDate: type === 'Sukuk' && issueDate.trim() !== '' ? issueDate.trim().slice(0, 10) : undefined,
+            maturityDate: type === 'Sukuk' && maturityDate.trim() !== '' ? maturityDate.trim().slice(0, 10) : undefined,
+            notes: notes.trim() !== '' ? notes.trim() : undefined,
         };
         onSave(newAsset);
         if (!assetToEdit) trackFormDefault('asset-add', 'type', type);
@@ -89,12 +105,37 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
                 <label className="block text-sm font-medium text-gray-700 flex items-center">Current Value <InfoHint text="Use your best current market estimate; this affects net worth and allocation insights." /></label><input type="number" placeholder="Current Value" value={value} onChange={e => setValue(e.target.value)} required className="input-base"/>
                 <input type="number" placeholder="Purchase Price (optional)" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} className="input-base"/>
                 <label className="block text-sm font-medium text-gray-700 flex items-center">Owner (optional) <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father for managed wealth (excluded from your net worth)." /></label><input type="text" placeholder="Owner (e.g., Father, Spouse) or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="input-base" />
+                {type === 'Sukuk' && (
+                    <div className="space-y-3 border-t border-sky-100 pt-4 rounded-lg bg-sky-50/40 px-3 py-3">
+                        <p className="text-xs font-semibold text-sky-900">Sukuk dates (required)</p>
+                        <label className="block text-sm font-medium text-gray-700">Issue / subscription date</label>
+                        <input type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} required className="input-base" aria-required />
+                        <label className="block text-sm font-medium text-gray-700">Maturity date</label>
+                        <input type="date" value={maturityDate} onChange={(e) => setMaturityDate(e.target.value)} required className="input-base" aria-required />
+                    </div>
+                )}
                 {type === 'Property' && (
                     <div className="space-y-2 border-t pt-4">
                         <label className="flex items-center"><input type="checkbox" checked={isRental} onChange={e => setIsRental(e.target.checked)} className="h-4 w-4 text-primary rounded"/> <span className="ml-2">Is this a rental property?</span></label>
                         {isRental && <input type="number" placeholder="Monthly Rent" value={monthlyRent} onChange={e => setMonthlyRent(e.target.value)} className="input-base"/>}
                     </div>
                 )}
+                <div className="border-t border-slate-200 pt-4">
+                    <label className="block text-sm font-medium text-gray-700 flex items-center gap-1" htmlFor="asset-notes">
+                        Notes <span className="text-slate-400 font-normal">(optional)</span>
+                        <InfoHint text="Deed or account reference, location, insurance policy, condition, co-owners, or any context you want on record." hintId="asset-notes" hintPage="Assets" />
+                    </label>
+                    <textarea
+                        id="asset-notes"
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        placeholder="Add details…"
+                        rows={4}
+                        maxLength={5000}
+                        className="input-base mt-1 min-h-[96px] resize-y"
+                    />
+                    <p className="text-xs text-slate-500 mt-1">{notes.length} / 5000</p>
+                </div>
                 <button type="submit" className="w-full btn-primary">Save Asset</button>
             </form>
         </Modal>
@@ -110,10 +151,10 @@ const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => voi
             default: return <QuestionMarkCircleIcon className="h-8 w-8 text-slate-500" />;
         }
     };
-    const unrealizedGain = asset.purchasePrice != null ? asset.value - asset.purchasePrice : null;
-    const unrealizedGainPct = asset.purchasePrice != null && asset.purchasePrice > 0 && unrealizedGain !== null
-        ? (unrealizedGain / asset.purchasePrice) * 100
-        : null;
+    const v = roundMoney(asset.value);
+    const pp = asset.purchasePrice != null ? roundMoney(asset.purchasePrice) : null;
+    const unrealizedGain = pp != null ? roundMoney(v - pp) : null;
+    const unrealizedGainPct = pp != null && pp > 0 && unrealizedGain !== null ? (unrealizedGain / pp) * 100 : null;
     const borderTone = unrealizedGain === null ? 'border-t-slate-200' : unrealizedGain >= 0 ? 'border-t-emerald-500' : 'border-t-rose-500';
     const linkedGoal = asset.goalId ? goals.find(g => g.id === asset.goalId) : null;
     return (
@@ -140,6 +181,12 @@ const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => voi
                 </div>
                 {asset.type === 'Sukuk' && <div className="text-xs text-sky-700 bg-sky-50 border border-sky-100 rounded-lg px-2 py-1">Tracked as Shariah-compliant fixed income in your asset allocation.</div>}
                 {asset.isRental && asset.monthlyRent != null && <div className="min-w-0 overflow-hidden"><dt className="metric-label text-slate-500">Monthly Rent</dt><dd className="metric-value font-semibold text-dark">{formatCurrencyString(asset.monthlyRent)}</dd></div>}
+                {asset.notes && asset.notes.trim() !== '' && (
+                    <div className="mt-3 pt-3 border-t border-slate-100 min-w-0">
+                        <dt className="metric-label text-slate-500 text-xs mb-1">Notes</dt>
+                        <dd className="text-sm text-slate-700 whitespace-pre-wrap break-words max-h-40 overflow-y-auto">{asset.notes}</dd>
+                    </div>
+                )}
             </div>
             <div className="border-t mt-4 pt-4 flex items-center justify-between gap-2 flex-wrap">
                 {linkedGoal ? <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"><LinkIcon className="h-4 w-4 mr-1.5" />{linkedGoal.name}</span> : <span className="text-xs text-slate-400">Not linked</span>}
@@ -154,13 +201,15 @@ const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => voi
 // --- End Physical Asset Components ---
 
 // --- Commodity Components ---
-const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => Promise<void>; holdingToEdit: CommodityHolding | null; goals: Goal[]; }> = ({ isOpen, onClose, onSave, holdingToEdit, goals }) => {
+const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => Promise<void>; holdingToEdit: CommodityHolding | null; goals: Goal[]; sarPerUsd: number; }> = ({ isOpen, onClose, onSave, holdingToEdit, goals, sarPerUsd }) => {
+    const { formatCurrencyString } = useFormatCurrency();
     const [name, setName] = useState<CommodityHolding['name']>('Gold');
     const [quantity, setQuantity] = useState('');
     const [unit, setUnit] = useState<CommodityHolding['unit']>('gram');
     const [goldKarat, setGoldKarat] = useState<NonNullable<CommodityHolding['goldKarat']>>(24);
     const [purchaseValue, setPurchaseValue] = useState('');
-    const [currentValue, setCurrentValue] = useState('');
+    /** Manual current value only when commodity is "Other" (no market symbol). */
+    const [otherCurrentValue, setOtherCurrentValue] = useState('');
     const [zakahClass, setZakahClass] = useState<CommodityHolding['zakahClass']>('Zakatable');
     const [owner, setOwner] = useState('');
     const [goalId, setGoalId] = useState<string | undefined>(undefined);
@@ -173,10 +222,11 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
         if (holdingToEdit) {
             setName(holdingToEdit.name); setQuantity(String(holdingToEdit.quantity)); setUnit(holdingToEdit.unit);
             setGoldKarat((holdingToEdit.goldKarat as NonNullable<CommodityHolding['goldKarat']>) || 24);
-            setPurchaseValue(String(holdingToEdit.purchaseValue)); setCurrentValue(String(holdingToEdit.currentValue));
+            setPurchaseValue(String(holdingToEdit.purchaseValue));
+            setOtherCurrentValue(holdingToEdit.name === 'Other' ? String(holdingToEdit.currentValue ?? '') : '');
             setZakahClass(holdingToEdit.zakahClass); setOwner(holdingToEdit.owner || ''); setGoalId(holdingToEdit.goalId);
         } else {
-            setName('Gold'); setQuantity(''); setUnit('gram'); setGoldKarat(24); setPurchaseValue(''); setCurrentValue(''); setZakahClass('Zakatable'); setOwner(''); setGoalId(undefined);
+            setName('Gold'); setQuantity(''); setUnit('gram'); setGoldKarat(24); setPurchaseValue(''); setOtherCurrentValue(''); setZakahClass('Zakatable'); setOwner(''); setGoalId(undefined);
         }
         setFormError(null);
         setDiagnosticReport(null);
@@ -205,9 +255,8 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
         setDiagnosticReport(null);
         setCopied(false);
 
-        const parsedQuantity = parseFloat(quantity);
-        const parsedPurchaseValue = parseFloat(purchaseValue);
-        const parsedCurrentValue = parseFloat(currentValue);
+        const parsedQuantity = roundQuantity(parseFloat(quantity) || 0);
+        const parsedPurchaseValue = parseMoneyInput(purchaseValue);
         if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
             setFormError('Quantity must be a positive number.');
             return;
@@ -216,18 +265,24 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
             setFormError('Purchase value must be greater than 0.');
             return;
         }
-        if (!Number.isFinite(parsedCurrentValue) || parsedCurrentValue < 0) {
-            setFormError('Current value cannot be negative.');
-            return;
+
+        const sym = getSymbol(name, unit, goldKarat);
+
+        let parsedCurrentValue = 0;
+        if (name === 'Other') {
+            parsedCurrentValue = parseMoneyInput(otherCurrentValue);
+            if (!Number.isFinite(parsedCurrentValue) || parsedCurrentValue < 0) {
+                setFormError('Current value cannot be negative.');
+                return;
+            }
         }
 
-        const holdingData = {
+        const holdingDataBase = {
             name,
             quantity: parsedQuantity,
             unit,
             purchaseValue: parsedPurchaseValue,
-            currentValue: parsedCurrentValue,
-            symbol: getSymbol(name, unit, goldKarat),
+            symbol: sym,
             goldKarat: name === 'Gold' ? goldKarat : undefined,
             zakahClass,
             owner: owner || undefined,
@@ -236,6 +291,27 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
 
         try {
             setIsSubmitting(true);
+            if (name !== 'Other') {
+                try {
+                    const live = await fetchLiveCommodityValueSar({
+                        symbol: sym,
+                        name,
+                        quantity: parsedQuantity,
+                        goldKarat: name === 'Gold' ? goldKarat : undefined,
+                        sarPerUsd,
+                    });
+                    if (!live.ok) {
+                        setFormError(live.message);
+                        return;
+                    }
+                    parsedCurrentValue = live.currentValue;
+                } catch (fetchErr) {
+                    setFormError(formatAiError(fetchErr));
+                    return;
+                }
+            }
+
+            const holdingData = { ...holdingDataBase, currentValue: parsedCurrentValue };
             if (holdingToEdit) await onSave({ ...holdingToEdit, ...holdingData });
             else await onSave(holdingData);
             onClose();
@@ -323,7 +399,28 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
                         </select>
                     </div>
                 )}
-                <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /><input type="number" placeholder="Current Value" value={currentValue} onChange={e => setCurrentValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" /></div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Purchase Value</label>
+                        <input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" />
+                    </div>
+                    {name === 'Other' ? (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Current Value <InfoHint text='No market quote for "Other"; enter an estimate or use a named commodity for live pricing.' /></label>
+                            <input type="number" placeholder="Current Value" value={otherCurrentValue} onChange={e => setOtherCurrentValue(e.target.value)} required min="0" step="any" className="w-full p-2 border rounded-md" />
+                        </div>
+                    ) : (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Current Value <InfoHint text="Computed when you save: live unit price (Finnhub for gold/silver, Binance for Bitcoin) × quantity, with gold karat applied." /></label>
+                            <div className="w-full p-2 border border-dashed border-slate-300 rounded-md bg-slate-50 text-sm text-slate-700">
+                                Live from market on save — priced in SAR using your app USD→SAR rate (header/settings).
+                                {holdingToEdit && (
+                                    <span className="block mt-1 text-xs text-slate-500">Last saved: {formatCurrencyString(holdingToEdit.currentValue)}</span>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
                 <div><label className="block text-sm font-medium text-gray-700">Owner <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father for managed wealth (excluded)." /></label><input type="text" placeholder="e.g. Father, Spouse or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="mt-1 w-full p-2 border rounded-md" /></div>
                 <div><label className="block text-sm font-medium text-gray-700">Zakat Classification <InfoHint text="Mark whether this holding should be included in zakat calculation." /></label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="mt-1 w-full p-2 border border-gray-300 rounded-md"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
                 <div><label className="block text-sm font-medium text-gray-700">Link to Goal <InfoHint text="Connect this commodity to a goal so goal progress includes it." /></label><select value={goalId || 'none'} onChange={(e) => setGoalId(e.target.value === 'none' ? undefined : e.target.value)} className="mt-1 w-full p-2 border rounded-md"><option value="none">Not linked</option>{goals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></div>
@@ -426,6 +523,8 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const { data, loading, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
     const { isAiAvailable } = useAI();
     const { formatCurrencyString } = useFormatCurrency();
+    const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
 
     // State for both types of modals
     const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
@@ -436,6 +535,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const [itemToDelete, setItemToDelete] = useState<Asset | CommodityHolding | null>(null);
     const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
     const [groundingChunks, setGroundingChunks] = useState<any[]>([]);
+    const [physicalAssetFilter, setPhysicalAssetFilter] = useState<'All' | 'Property' | 'Sukuk' | 'Vehicle' | 'Other'>('All');
 
     useEffect(() => {
         if (pageAction === 'open-asset-modal') {
@@ -489,7 +589,10 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
         setIsUpdatingPrices(true);
         setGroundingChunks([]);
         try {
-            const { prices, groundingChunks: chunks } = await getAICommodityPrices(commodityHoldings.map((c: CommodityHolding) => ({ symbol: c.symbol ?? '', name: c.name ?? '', goldKarat: c.goldKarat })));
+            const { prices, groundingChunks: chunks } = await getAICommodityPrices(
+                commodityHoldings.map((c: CommodityHolding) => ({ symbol: c.symbol ?? '', name: c.name ?? '', goldKarat: c.goldKarat })),
+                { sarPerUsd },
+            );
             if (chunks) {
                 setGroundingChunks(chunks);
             }
@@ -499,13 +602,17 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 if (updates.length > 0) await batchUpdateCommodityHoldingValues(updates);
             }
         } catch (error) {
-            alert(`Failed to update commodity prices. Crypto/metals use Finnhub when AI is unavailable.\n\n${formatAiError(error)}`);
+            alert(`Failed to update commodity prices (Finnhub for metals, Binance for Bitcoin).\n\n${formatAiError(error)}`);
         } 
         finally { setIsUpdatingPrices(false); }
     };
 
 
     const orderedAssets = useMemo(() => [...assetsList].sort((a, b) => a.name.localeCompare(b.name)), [assetsList]);
+    const filteredPhysicalAssets = useMemo(() => {
+        if (physicalAssetFilter === 'All') return orderedAssets;
+        return orderedAssets.filter((a: Asset) => a.type === physicalAssetFilter);
+    }, [orderedAssets, physicalAssetFilter]);
     const orderedCommodities = useMemo(() => [...commodityList].sort((a, b) => (a.name || '').localeCompare(b.name || '')), [commodityList]);
 
     if (loading || !data) {
@@ -546,7 +653,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                     </div>
                     <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3">
                         <p className="font-semibold text-sky-800">How to add Sukuk</p>
-                        <p className="text-slate-700 mt-1">Use <strong>Add → Sukuk</strong> (or Add Physical Asset and choose type Sukuk), enter value/purchase price, then optionally link it to a goal.</p>
+                        <p className="text-slate-700 mt-1">Use <strong>Add → Sukuk</strong>, enter value/purchase price, <strong>issue date</strong> and <strong>maturity date</strong> (full calendar dates), then optionally link to a goal.</p>
                     </div>
                 </div>
             </CollapsibleSection>
@@ -558,12 +665,38 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} tooltip="Rental income from your personal rental-flagged properties." />
             </div>
 
-            <SectionCard title="Physical Assets" className="overflow-visible" collapsible collapsibleSummary="Property, vehicles" defaultExpanded>
+            <SectionCard
+                title="Physical Assets"
+                className="overflow-visible"
+                collapsible
+                collapsibleSummary="Property, Sukuk, vehicles"
+                defaultExpanded
+                headerAction={
+                    <label className="flex items-center gap-2 text-sm text-slate-600 shrink-0">
+                        <span className="hidden sm:inline whitespace-nowrap">Show</span>
+                        <select
+                            value={physicalAssetFilter}
+                            onChange={(e) => setPhysicalAssetFilter(e.target.value as typeof physicalAssetFilter)}
+                            className="select-base text-sm py-1.5 min-w-[9rem]"
+                            aria-label="Filter physical assets by type"
+                        >
+                            <option value="All">All types</option>
+                            <option value="Property">Property only</option>
+                            <option value="Sukuk">Sukuk only</option>
+                            <option value="Vehicle">Vehicles only</option>
+                            <option value="Other">Other only</option>
+                        </select>
+                    </label>
+                }
+            >
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">
-                    {orderedAssets.map((asset) => (
+                    {filteredPhysicalAssets.map((asset) => (
                         <AssetCardComponent key={asset.id} asset={asset} onEdit={handleOpenAssetModal} onDelete={handleOpenDeleteModal} onLinkGoal={handleLinkGoal} goals={data?.goals ?? []} />
                     ))}
                     {assetsList.length === 0 && <p className="empty-state md:col-span-2 xl:col-span-3">No physical assets added yet.</p>}
+                    {assetsList.length > 0 && filteredPhysicalAssets.length === 0 && (
+                        <p className="empty-state md:col-span-2 xl:col-span-3">No assets match this filter. Choose &quot;All types&quot; or add a {physicalAssetFilter === 'Other' ? 'Other' : physicalAssetFilter} asset.</p>
+                    )}
                 </div>
             </SectionCard>
 
@@ -589,7 +722,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 <div className="mb-4 rounded-lg bg-slate-50/80 border border-slate-200 p-3 sm:p-4 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                         <p className="text-sm text-slate-700 leading-relaxed">
-                            Track gold, silver, bitcoin and other commodities. Use <strong>Update Prices</strong> to fetch current values from AI with deterministic fallback APIs (Finnhub/Stooq).
+                            Track gold, silver, bitcoin and other commodities. <strong>Save</strong> on a commodity fetches live unit prices (Finnhub for metals, Binance for Bitcoin). Use <strong>Update Prices</strong> to refresh all holdings without re-entering each one.
                         </p>
                         <span className="mt-0.5 shrink-0"><InfoHint text="Pricing uses AI when available; otherwise Finnhub or Stooq. If one provider fails, the system retries with alternatives." /></span>
                     </div>
@@ -618,7 +751,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             </SectionCard>
             
             <AssetModal isOpen={isAssetModalOpen} onClose={() => setIsAssetModalOpen(false)} onSave={handleSaveAsset} assetToEdit={assetToEdit} preferredType={preferredAssetType} />
-            <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} goals={data?.goals ?? []} />
+            <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} goals={data?.goals ?? []} sarPerUsd={sarPerUsd} />
             <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
         </PageLayout>
     );

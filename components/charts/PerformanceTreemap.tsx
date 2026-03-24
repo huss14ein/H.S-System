@@ -119,7 +119,9 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
     const processedData = useMemo(() => (
         data
             .map(item => {
-                const marketValue = Number(item.currentValue ?? 0);
+                const sarVal = Number(item.currentValueSar);
+                const bookVal = Number(item.currentValue ?? 0);
+                const marketValue = Number.isFinite(sarVal) && sarVal > 0 ? sarVal : bookVal;
                 const fallbackCostValue = Number(item.avgCost ?? 0) * Number(item.quantity ?? 0);
                 const size = Number.isFinite(marketValue) && marketValue > 0
                     ? marketValue

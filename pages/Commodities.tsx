@@ -16,21 +16,29 @@ import InfoHint from '../components/InfoHint';
 import OwnerBadge from '../components/OwnerBadge';
 import { getAICommodityPrices, formatAiError } from '../services/geminiService';
 import { useSelfLearning } from '../context/SelfLearningContext';
+import { parseMoneyInput, roundQuantity } from '../utils/money';
+import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
+import { useCurrency } from '../context/CurrencyContext';
+import { resolveSarPerUsd } from '../utils/currencyMath';
 
 const CommodityHoldingModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
-    onSave: (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => void;
+    onSave: (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => void | Promise<void>;
     holdingToEdit: CommodityHolding | null;
-}> = ({ isOpen, onClose, onSave, holdingToEdit }) => {
+    sarPerUsd: number;
+}> = ({ isOpen, onClose, onSave, holdingToEdit, sarPerUsd }) => {
+    const { formatCurrencyString } = useFormatCurrency();
     const [name, setName] = useState<CommodityHolding['name']>('Gold');
     const [quantity, setQuantity] = useState('');
     const [unit, setUnit] = useState<CommodityHolding['unit']>('gram');
     const [goldKarat, setGoldKarat] = useState<NonNullable<CommodityHolding['goldKarat']>>(24);
     const [purchaseValue, setPurchaseValue] = useState('');
-    const [currentValue, setCurrentValue] = useState('');
+    const [otherCurrentValue, setOtherCurrentValue] = useState('');
     const [zakahClass, setZakahClass] = useState<CommodityHolding['zakahClass']>('Zakatable');
     const [owner, setOwner] = useState('');
+    const [formError, setFormError] = useState<string | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
     
     useEffect(() => {
         if (holdingToEdit) {
@@ -39,12 +47,13 @@ const CommodityHoldingModal: React.FC<{
             setUnit(holdingToEdit.unit);
             setGoldKarat((holdingToEdit.goldKarat as NonNullable<CommodityHolding['goldKarat']>) || 24);
             setPurchaseValue(String(holdingToEdit.purchaseValue));
-            setCurrentValue(String(holdingToEdit.currentValue ?? ''));
+            setOtherCurrentValue(holdingToEdit.name === 'Other' ? String(holdingToEdit.currentValue ?? '') : '');
             setZakahClass(holdingToEdit.zakahClass);
             setOwner(holdingToEdit.owner || '');
         } else {
-            setName('Gold'); setQuantity(''); setUnit('gram'); setGoldKarat(24); setPurchaseValue(''); setCurrentValue(''); setZakahClass('Zakatable'); setOwner('');
+            setName('Gold'); setQuantity(''); setUnit('gram'); setGoldKarat(24); setPurchaseValue(''); setOtherCurrentValue(''); setZakahClass('Zakatable'); setOwner('');
         }
+        setFormError(null);
     }, [holdingToEdit, isOpen]);
 
     useEffect(() => {
@@ -63,25 +72,69 @@ const CommodityHoldingModal: React.FC<{
         return 'OTHER';
     }
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        const parsedPurchaseValue = parseFloat(purchaseValue);
-        if (isNaN(parsedPurchaseValue) || parsedPurchaseValue <= 0) {
-            alert("Purchase Value must be a positive number.");
+        setFormError(null);
+        const parsedQuantity = roundQuantity(parseFloat(quantity) || 0);
+        const parsedPurchaseValue = parseMoneyInput(purchaseValue);
+        if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
+            setFormError('Quantity must be a positive number.');
+            return;
+        }
+        if (!Number.isFinite(parsedPurchaseValue) || parsedPurchaseValue <= 0) {
+            setFormError('Purchase value must be greater than 0.');
             return;
         }
 
-        const holdingData = {
-            name, quantity: parseFloat(quantity) || 0, unit,
+        const sym = getSymbol(name, unit, goldKarat);
+        let parsedCurrentValue = 0;
+        if (name === 'Other') {
+            parsedCurrentValue = parseMoneyInput(otherCurrentValue);
+            if (!Number.isFinite(parsedCurrentValue) || parsedCurrentValue < 0) {
+                setFormError('Current value cannot be negative.');
+                return;
+            }
+        }
+
+        const holdingDataBase = {
+            name,
+            quantity: parsedQuantity,
+            unit,
             purchaseValue: parsedPurchaseValue,
-            currentValue: parseFloat(currentValue) || 0,
-            symbol: getSymbol(name, unit, goldKarat), zakahClass,
+            symbol: sym,
+            zakahClass,
             goldKarat: name === 'Gold' ? goldKarat : undefined,
             owner: owner || undefined,
         };
-        if (holdingToEdit) onSave({ ...holdingToEdit, ...holdingData });
-        else onSave(holdingData);
-        onClose();
+
+        try {
+            setIsSubmitting(true);
+            if (name !== 'Other') {
+                try {
+                    const live = await fetchLiveCommodityValueSar({
+                        symbol: sym,
+                        name,
+                        quantity: parsedQuantity,
+                        goldKarat: name === 'Gold' ? goldKarat : undefined,
+                        sarPerUsd,
+                    });
+                    if (!live.ok) {
+                        setFormError(live.message);
+                        return;
+                    }
+                    parsedCurrentValue = live.currentValue;
+                } catch (fetchErr) {
+                    setFormError(formatAiError(fetchErr));
+                    return;
+                }
+            }
+            const holdingData = { ...holdingDataBase, currentValue: parsedCurrentValue };
+            if (holdingToEdit) await onSave({ ...holdingToEdit, ...holdingData });
+            else await onSave(holdingData);
+            onClose();
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     return (
@@ -106,13 +159,32 @@ const CommodityHoldingModal: React.FC<{
                         </div>
                     )}
                 </div>
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Purchase & Current Value <InfoHint text="Cost basis and current market value; use Update Prices to refresh current value from APIs." /></label>
-                    <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="input-base w-full" /><input type="number" placeholder="Current Value" value={currentValue} onChange={e => setCurrentValue(e.target.value)} required min="0" step="any" className="input-base w-full" /></div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Purchase Value <InfoHint text="Your cost basis." /></label>
+                        <input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="input-base w-full" />
+                    </div>
+                    {name === 'Other' ? (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Current Value <InfoHint text='No market quote for "Other"; enter an estimate or pick Gold, Silver, or Bitcoin for live pricing.' /></label>
+                            <input type="number" placeholder="Current Value" value={otherCurrentValue} onChange={e => setOtherCurrentValue(e.target.value)} required min="0" step="any" className="input-base w-full" />
+                        </div>
+                    ) : (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Current Value <InfoHint text="Computed on save from live quotes (Finnhub for metals, Binance for Bitcoin)." /></label>
+                            <div className="w-full p-2 border border-dashed border-slate-300 rounded-md bg-slate-50 text-sm text-slate-700">
+                                Live from market on save — priced in SAR using your app USD→SAR rate (header/settings).
+                                {holdingToEdit && (
+                                    <span className="block mt-1 text-xs text-slate-500">Last saved: {formatCurrencyString(holdingToEdit.currentValue)}</span>
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </div>
+                {formError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">{formError}</p>}
                  <div><label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father, Spouse for managed wealth (excluded)." /></label><input type="text" placeholder="e.g. Father, Spouse or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="input-base mt-1 w-full" /></div>
                 <div><label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Zakat Classification <InfoHint text="Zakatable: included in Zakat calculation. Non-Zakatable: excluded (e.g. personal use)." /></label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="select-base mt-1 w-full"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
-                <button type="submit" className="w-full btn-primary">Save</button>
+                <button type="submit" disabled={isSubmitting} className="w-full btn-primary disabled:opacity-50">{isSubmitting ? 'Fetching price & saving…' : 'Save'}</button>
             </form>
         </Modal>
     );
@@ -160,6 +232,8 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
     const { data, loading, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const { formatCurrencyString } = useFormatCurrency();
+    const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     
     const [isCommodityModalOpen, setIsCommodityModalOpen] = useState(false);
     const [commodityToEdit, setCommodityToEdit] = useState<CommodityHolding | null>(null);
@@ -176,11 +250,11 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
     }, [commodityRows]);
 
     const handleOpenCommodityModal = (holding: CommodityHolding | null = null) => { setCommodityToEdit(holding); setIsCommodityModalOpen(true); };
-    const handleSaveCommodity = (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => {
+    const handleSaveCommodity = async (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => {
         if ('id' in holding) {
-            updateCommodityHolding(holding);
+            await updateCommodityHolding(holding);
         } else {
-            addCommodityHolding(holding);
+            await addCommodityHolding(holding);
         }
     };
     const handleOpenCommodityDeleteModal = (holding: CommodityHolding) => { setCommodityToDelete(holding); };
@@ -192,7 +266,10 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
         if (!holdingsForPrices.length) return;
         setIsUpdatingPrices(true);
         try {
-            const { prices } = await getAICommodityPrices(holdingsForPrices.map((c: { symbol?: string; name?: string; goldKarat?: number }) => ({ symbol: c.symbol ?? '', name: c.name ?? '', goldKarat: c.goldKarat })));
+            const { prices } = await getAICommodityPrices(
+                holdingsForPrices.map((c: { symbol?: string; name?: string; goldKarat?: number }) => ({ symbol: c.symbol ?? '', name: c.name ?? '', goldKarat: c.goldKarat })),
+                { sarPerUsd },
+            );
             const match = (p: { symbol: string }, h: CommodityHolding) => (p.symbol || '').toUpperCase() === (h.symbol || '').toUpperCase();
             if (prices.length > 0) {
                 const updates = holdingsForPrices
@@ -220,7 +297,7 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
     return (
         <PageLayout
             title="Metals & Crypto"
-            description="Gold, silver, Bitcoin, and other commodities. Use Update Prices to refresh values; Zakat classification affects your Zakat calculation."
+            description="Gold, silver, Bitcoin, and other commodities. Saving a holding applies live unit prices (Finnhub/Binance). Use Update Prices to refresh all holdings at once. Zakat classification affects your Zakat calculation."
             action={
                 <div className="flex flex-wrap items-center gap-2">
                     {setActivePage && (
@@ -252,7 +329,7 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
                 </div>
             </div>
             
-            <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} />
+            <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} sarPerUsd={sarPerUsd} />
             <DeleteConfirmationModal isOpen={!!commodityToDelete} onClose={() => setCommodityToDelete(null)} onConfirm={handleConfirmCommodityDelete} itemName={commodityToDelete?.name || ''} />
         </div>
         )}

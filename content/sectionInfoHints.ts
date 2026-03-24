@@ -92,7 +92,7 @@ const HINTS_BY_TITLE: Record<string, string> = {
   'sleeve allocation & drift analysis':
     'Current vs target weights for Core, Upside, and Spec. Drift above ~5% flags rebalancing need; aligns with Generated Orders and your plan targets.',
   'generated orders':
-    'Suggested BUY/SELL limits from the engine from drift and policy. Export JSON or use as a checklist in your broker—orders are not sent automatically.',
+    'Suggested BUY/SELL limits from drift and policy. Export JSON or use as a checklist at your broker. Finova does not link to broker APIs — nothing is executed automatically.',
   'next move — monthly deployment':
     'How much the engine suggests deploying this month and optional focus ticker, consistent with deployable cash and your monthly plan. Use before you place trades.',
   'speculative sleeve status':
@@ -122,7 +122,7 @@ const HINTS_BY_TITLE: Record<string, string> = {
   'your safety rules':
     'Rules you set to avoid impulsive trades. Edit in Settings.',
   'trading policy (this device)':
-    'Runway, position caps, large-sell ack. Presets: conservative/moderate/aggressive. Auto-saves; Record Trade uses these rules.',
+    'Runway, position caps, large-sell acknowledgment, and cashflow blocks. Presets apply conservative, moderate, or aggressive defaults. Changes auto-save to this browser after about 1.5 seconds. Record Trade and investment flows use these rules when you log activity.',
   'portfolio return (simplified)':
     'How your investments performed over time, considering deposits and withdrawals. Not audited.',
   'approx. mwrr (cashflows)':
@@ -218,7 +218,8 @@ const HINTS_BY_TITLE: Record<string, string> = {
   'zakatable assets': 'Items included in Zakat calculation per your settings—verify against Shariah guidance you follow.',
   'deductible liabilities': 'Offsets applied before net zakatable amount—confirm with your scholar or policy.',
   calculation: 'Computed zakatable amount from inputs—educational; confirm methodology with qualified guidance.',
-  notifications: 'In-app alerts from budgets, goals, approvals, and data-quality rules.',
+  notifications:
+    'Email summaries and in-app alerts driven by your budgets, goals, approvals, and data-quality checks. Toggle matches your Settings snapshot; enable weekly email when you want a scheduled digest.',
   'activity log (this device)': 'Local audit trail of creates/updates/deletes. Filter by entity, search, export CSV, or clear.',
   'reports & export': 'Backup and export options for your data.',
   'data management': 'Reset, import/export, and retention controls for your workspace.',
@@ -226,7 +227,8 @@ const HINTS_BY_TITLE: Record<string, string> = {
   'user approvals': 'Pending signups or requests requiring admin action.',
   'financial preferences': 'Risk profile, budget/drift thresholds, presets. Guides AI and plan suggestions.',
   'enhanced default parameters': 'Advanced defaults for engines and forms.',
-  'decision preview (rules)': 'Sample outputs from rule engines with current settings.',
+  'decision preview (rules)':
+    'Live buy score and capital-rank preview: largest holding weight, max sleeve drift (same Core/Upside/Spec math as Wealth Ultra), trading policy max position, and runway. Financial preferences drift % is your alert threshold (shown under the sleeve drift tile). Lump-sum tracks ~15% of liquid until you edit it. Updates when data or settings change.',
   'settings snapshot': 'Quick read of key settings—open subsections to edit.',
   'overall goal progress': 'Aggregate progress across goals—drill into each goal for funding detail.',
   'savings allocation strategy': 'Suggested split across goals from engine heuristics—adjust to your priorities.',

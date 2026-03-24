@@ -13,7 +13,7 @@ import { SendIcon } from './icons/SendIcon';
 import SafeMarkdownRenderer from './SafeMarkdownRenderer';
 
 const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({ isOpen, onClose }) => {
-    const { data, addWatchlistItem } = useContext(DataContext)!;
+    const { data, addWatchlistItem, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const [history, setHistory] = useState<Content[]>([]);
     const [userInput, setUserInput] = useState('');
@@ -38,8 +38,9 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
 
     // Function definitions
     const getNetWorth_ = useCallback(() => {
-        return { netWorth: computePersonalNetWorthSAR(data, resolveSarPerUsd(data, exchangeRate)) };
-    }, [data, exchangeRate]);
+        const fx = resolveSarPerUsd(data, exchangeRate);
+        return { netWorth: computePersonalNetWorthSAR(data, fx, { getAvailableCashForAccount }) };
+    }, [data, exchangeRate, getAvailableCashForAccount]);
 
     const getBudgetStatus_ = useCallback(({ category }: { category: string }) => {
         const budget = (data?.budgets ?? []).find(b => b.category.toLowerCase() === category.toLowerCase());

@@ -105,7 +105,7 @@ interface LogicEnginesHubProps {
 }
 
 const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, triggerPageAction, dataTick = 0 }) => {
-  const { data, loading } = useContext(DataContext)!;
+  const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
   const { trackAction } = useSelfLearning();
   const ef = useEmergencyFund(data ?? null);
   const { formatCurrencyString } = useFormatCurrency();
@@ -113,7 +113,10 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
   const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
 
   const scoped = useMemo(() => getScopedData(data ?? null), [data]);
-  const netWorth = useMemo(() => computePersonalNetWorthSAR(data ?? null, sarPerUsd), [data, sarPerUsd]);
+  const netWorth = useMemo(
+    () => computePersonalNetWorthSAR(data ?? null, sarPerUsd, { getAvailableCashForAccount }),
+    [data, sarPerUsd, getAvailableCashForAccount]
+  );
   /** Local NW snapshots (device); refresh when tab visible so Risk hub + Dashboard writes show up. */
   const snaps = useMemo(() => listNetWorthSnapshots(), [data?.accounts?.length, dataTick]);
   const liquidityRunway = useMemo(() => computeLiquidityRunwayFromData(data ?? null), [data]);
@@ -448,7 +451,7 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
               <button
                 type="button"
                 className="text-sm text-primary-600 hover:text-primary-700 underline"
-                onClick={() => { trackAction('link-risk-trading', 'Engines & Tools'); triggerPageAction ? triggerPageAction('Investments', 'openRiskTradingHub') : setActivePage?.('Investments'); }}
+                onClick={() => { trackAction('link-risk-trading', 'Engines & Tools'); triggerPageAction ? triggerPageAction('Engines & Tools', 'openRiskTradingHub') : setActivePage?.('Engines & Tools'); }}
               >
                 Safety & rules
               </button>
@@ -625,7 +628,16 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
                 <span className="font-medium">{a.title}</span> <span className="text-gray-400">({a.priorityScore})</span>
                 <p className="text-gray-600 text-xs">{a.description}</p>
                 {setActivePage && a.link && (
-                  <button type="button" className="text-xs text-primary-600 underline mt-1" onClick={() => { trackAction(`link-${String(a.link).toLowerCase().replace(/\s+/g, '-')}`, 'Engines & Tools'); setActivePage(a.link as Page); }}>
+                  <button
+                    type="button"
+                    className="text-xs text-primary-600 underline mt-1"
+                    onClick={() => {
+                      trackAction(`link-${String(a.link).toLowerCase().replace(/\s+/g, '-')}`, 'Engines & Tools');
+                      const subAction = (a as { data?: { action?: string } }).data?.action;
+                      if (subAction && triggerPageAction) triggerPageAction(a.link as Page, subAction);
+                      else setActivePage(a.link as Page);
+                    }}
+                  >
                     Open {a.linkLabel ?? a.link}
                   </button>
                 )}

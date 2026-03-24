@@ -4,7 +4,14 @@ import { useMarketData } from '../context/MarketDataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useAI } from '../context/AiContext';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
-import { runWealthUltraEngine, exportOrdersJson, capitalEfficiencyScore, getDefaultWealthUltraConfig, getRiskWeight } from '../wealth-ultra';
+import {
+  runWealthUltraEngine,
+  exportOrdersJson,
+  capitalEfficiencyScore,
+  getRiskWeight,
+  getDefaultWealthUltraConfig,
+  buildFinancialWealthUltraConfig,
+} from '../wealth-ultra';
 import { calculatePortfolioRisk } from '../services/advancedRiskScoring';
 import { valueAtRiskHistorical, getPDTStatus, getMarketHoursGuardrail, volatilityAdjustedWeights } from '../services/riskCompliance';
 import type { WealthUltraSleeve, WealthUltraPosition, WealthUltraRiskTier } from '../types';
@@ -34,143 +41,6 @@ const toSafeText = (value: unknown, fallback = '—'): string => {
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   return fallback;
 };
-
-/** Build full Wealth Ultra config from app data. Auto-derives sleeve tickers from Portfolio Universe or holdings when plan lists are empty. */
-function buildEngineConfigFromSystem(
-  data: {
-    investmentPlan?: any;
-    wealthUltraConfig?: any;
-    settings?: { driftThreshold?: number };
-    accounts?: any[];
-    portfolioUniverse?: Array<{ ticker: string; status?: string }>;
-    investments?: Array<{ holdings?: Array<{ symbol?: string }> }>;
-  },
-  totalDeployableCash?: number
-) {
-  const plan = data?.investmentPlan;
-  const systemConfig = data?.wealthUltraConfig;
-  const defaults = getDefaultWealthUltraConfig();
-  const base = { ...defaults, ...systemConfig } as typeof defaults;
-
-  const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-  const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
-  const cashAvailable =
-    totalDeployableCash ??
-    accounts.reduce((s: number, a: { balance?: number }) => s + (a.balance ?? 0), 0);
-
-  const allHoldingTickers: string[] =
-    investments
-      .flatMap((p: { holdings?: Array<{ symbol?: string }> }) => p.holdings || [])
-      .map((h: { symbol?: string }) => (h.symbol || '').toUpperCase())
-      .filter((s: string) => Boolean(s));
-
-  const universe = data?.portfolioUniverse ?? [];
-
-  let coreTickers: string[] = [];
-  let upsideTickers: string[] = [];
-  let specTickers: string[] = [];
-
-  if (plan) {
-    const sleeves = plan.sleeves && Array.isArray(plan.sleeves) && plan.sleeves.length > 0;
-    const core = sleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'core' || s.id === 'Core') : null;
-    const upside = sleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'upside' || s.id === 'Upside') : null;
-    const spec = sleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'spec' || s.id === 'Spec') : null;
-
-    coreTickers = sleeves && core
-      ? (core.tickers || [])
-      : (plan.corePortfolio ?? []).map((x: { ticker: string }) => (x.ticker || '').toUpperCase()).filter(Boolean);
-    upsideTickers = sleeves && upside
-      ? (upside.tickers || [])
-      : (plan.upsideSleeve ?? []).map((x: { ticker: string }) => (x.ticker || '').toUpperCase()).filter(Boolean);
-    specTickers = sleeves && spec ? (spec.tickers || []) : [];
-  }
-
-  if (coreTickers.length === 0 && upsideTickers.length === 0 && specTickers.length === 0 && universe.length > 0) {
-    universe.forEach((t: { ticker: string; status?: string }) => {
-      const sym = (t.ticker || '').toUpperCase();
-      if (!sym) return;
-      const status = (t.status || '').toLowerCase();
-      if (status === 'core') coreTickers.push(sym);
-      else if (status === 'high-upside' || status === 'highupside') upsideTickers.push(sym);
-      else if (status === 'speculative' || status === 'spec') specTickers.push(sym);
-    });
-  }
-
-  if (coreTickers.length === 0 && upsideTickers.length === 0 && specTickers.length === 0 && allHoldingTickers.length > 0) {
-    coreTickers = [...new Set(allHoldingTickers)];
-  }
-
-  const coreSet = new Set(coreTickers.map(t => t.toUpperCase()));
-  const upsideSet = new Set(upsideTickers.map(t => t.toUpperCase()));
-  const specSet = new Set(specTickers.map(t => t.toUpperCase()));
-  const universeByTicker = new Map(universe.map((t: { ticker: string; status?: string }) => [(t.ticker || '').toUpperCase(), (t.status || '').toLowerCase()]));
-  allHoldingTickers.forEach((sym: string) => {
-    if (coreSet.has(sym) || upsideSet.has(sym) || specSet.has(sym)) return;
-    const status = universeByTicker.get(sym);
-    if (status === 'core') coreSet.add(sym);
-    else if (status === 'high-upside' || status === 'highupside') upsideSet.add(sym);
-    else if (status === 'speculative' || status === 'spec') specSet.add(sym);
-    else coreSet.add(sym);
-  });
-  coreTickers = Array.from(coreSet);
-  upsideTickers = Array.from(upsideSet);
-  specTickers = Array.from(specSet);
-
-  const hasSleeves = plan?.sleeves && Array.isArray(plan.sleeves) && plan.sleeves.length > 0;
-  const coreSleeve = hasSleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'core' || s.id === 'Core') : null;
-  const upsideSleeve = hasSleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'upside' || s.id === 'Upside') : null;
-  const specSleeve = hasSleeves ? plan.sleeves.find((s: { id: string }) => s.id === 'spec' || s.id === 'Spec') : null;
-  const coreExplicit = coreSleeve && typeof coreSleeve.targetPct === 'number';
-  const upsideExplicit = upsideSleeve && typeof upsideSleeve.targetPct === 'number';
-  const specExplicit = specSleeve && typeof specSleeve.targetPct === 'number';
-
-  let targetCorePct: number;
-  let targetUpsidePct: number;
-  let targetSpecPct: number;
-
-  if (!plan) {
-    targetCorePct = base.targetCorePct;
-    targetUpsidePct = base.targetUpsidePct;
-    targetSpecPct = base.targetSpecPct;
-  } else if (hasSleeves && coreExplicit && upsideExplicit && specExplicit) {
-    targetCorePct = coreSleeve.targetPct;
-    targetUpsidePct = upsideSleeve.targetPct;
-    targetSpecPct = specSleeve.targetPct;
-  } else if (hasSleeves && (coreExplicit || upsideExplicit || specExplicit)) {
-    targetCorePct = coreExplicit ? coreSleeve.targetPct : base.targetCorePct;
-    targetUpsidePct = upsideExplicit ? upsideSleeve.targetPct : base.targetUpsidePct;
-    targetSpecPct = specExplicit ? specSleeve.targetPct : base.targetSpecPct;
-    const sum = targetCorePct + targetUpsidePct + targetSpecPct;
-    if (Math.abs(sum - 100) > 0.01) {
-      const scale = 100 / sum;
-      targetCorePct *= scale;
-      targetUpsidePct *= scale;
-      targetSpecPct *= scale;
-    }
-  } else {
-    const specDefault = (plan.specAllocation ?? 0.05) * 100;
-    const remainder = 100 - specDefault;
-    const coreRatio = (plan.coreAllocation ?? 0.7) / ((plan.coreAllocation ?? 0.7) + (plan.upsideAllocation ?? 0.3));
-    const upsideRatio = (plan.upsideAllocation ?? 0.3) / ((plan.coreAllocation ?? 0.7) + (plan.upsideAllocation ?? 0.3));
-    targetSpecPct = specDefault;
-    targetCorePct = remainder * coreRatio;
-    targetUpsidePct = remainder * upsideRatio;
-  }
-
-  const settings = data?.settings;
-  return {
-    ...base,
-    monthlyDeposit: plan?.monthlyBudget ?? base.monthlyDeposit,
-    cashAvailable,
-    targetCorePct,
-    targetUpsidePct,
-    targetSpecPct,
-    coreTickers,
-    upsideTickers,
-    specTickers,
-    driftAlertPct: settings?.driftThreshold ?? (base as any).driftAlertPct,
-  };
-}
 
 interface WealthUltraDashboardProps {
   setActivePage?: (page: Page) => void;
@@ -204,7 +74,15 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     return base;
   }, [totalDeployableCash, household?.cashflowStressSignals, cash?.cashflowBuffer, cash?.discretionaryBudget]);
 
-  const engineState = useMemo(() => {
+  const investmentHoldingsCount = useMemo(() => {
+    const personalInvestments = (data as any)?.personalInvestments ?? data?.investments ?? [];
+    return personalInvestments.reduce(
+      (n: number, p: { holdings?: unknown[] }) => n + (p.holdings?.length ?? 0),
+      0
+    );
+  }, [data?.investments, (data as any)?.personalInvestments]);
+
+  const engineBundle = useMemo(() => {
     const personalInvestments = (data as any)?.personalInvestments ?? data?.investments ?? [];
     const personalAccounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
     const allHoldings = personalInvestments.flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []);
@@ -220,7 +98,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     if (scenario.multiplier !== 1) {
       Object.keys(priceMap).forEach(sym => { priceMap[sym] = priceMap[sym] * scenario.multiplier; });
     }
-    const config = buildEngineConfigFromSystem(
+    const config = buildFinancialWealthUltraConfig(
       {
         investmentPlan: data?.investmentPlan,
         wealthUltraConfig: data?.wealthUltraConfig,
@@ -231,12 +109,35 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       },
       effectiveDeployableCash
     );
-    return runWealthUltraEngine({
-      holdings: allHoldings,
-      priceMap,
-      config,
-    });
+    try {
+      const state = runWealthUltraEngine({
+        holdings: allHoldings as any,
+        priceMap,
+        config,
+      });
+      return { state, engineWarning: null as string | null };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn('[Wealth Ultra] engine error, using validated defaults', e);
+      try {
+        const state = runWealthUltraEngine({
+          holdings: [],
+          priceMap: {},
+          config: getDefaultWealthUltraConfig(),
+        });
+        return {
+          state,
+          engineWarning: `Showing safe defaults because the engine could not run with your plan/config: ${msg}. Ensure Investment Plan sleeve targets sum to 100% and Wealth Ultra parameters are valid.`,
+        };
+      } catch (e2) {
+        console.error('[Wealth Ultra] fatal engine error', e2);
+        throw e2;
+      }
+    }
   }, [data?.investments, data?.investmentPlan, data?.accounts, data?.wealthUltraConfig, data?.settings, data?.portfolioUniverse, (data as any)?.personalInvestments, (data as any)?.personalAccounts, simulatedPrices, effectiveDeployableCash, scenarioId]);
+
+  const engineState = engineBundle.state;
+  const engineWarning = engineBundle.engineWarning;
 
   const {
     totalPortfolioValue,
@@ -672,7 +573,14 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             collapsibleSummary="Core / Upside / Spec"
             defaultExpanded
           >
-            <p className="text-xs text-slate-600 mb-6 font-medium">Current vs target allocation. Drift &gt;5% suggests rebalancing action.</p>
+            <p className="text-xs text-slate-600 mb-6 font-medium">
+              Current vs target allocation. Drift &gt;5% suggests rebalancing action. With no portfolio value, drift is not measured (shown as 0%).
+            </p>
+            {totalPortfolioValue <= 0 && (
+              <p className="text-xs text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2 mb-4">
+                Add holdings with market value in Investments to measure sleeve drift. Targets below still reflect your plan and defaults.
+              </p>
+            )}
             <div className="space-y-4">
               {allocations.map(a => {
                 const driftAbs = Math.abs(a.driftPct);
@@ -737,7 +645,9 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             collapsibleSummary="Buys & sells"
             defaultExpanded
           >
-            <p className="text-xs text-slate-700 mb-5 font-medium">Suggested limit orders from the engine. Export to JSON or use as a checklist when placing trades.</p>
+            <p className="text-xs text-slate-700 mb-5 font-medium">
+              Suggested limit orders from the engine. Export JSON or use the list as a manual checklist at your broker. Finova does not connect to any broker API and does not send trades automatically.
+            </p>
             {orders.length > 0 ? (
               <div className="space-y-5">
                 {buyOrders.length > 0 && (
@@ -1198,6 +1108,22 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       }
     >
       <div className="space-y-8">
+        {engineWarning && (
+          <div className="rounded-xl border-2 border-amber-400 bg-amber-50 p-4 text-sm text-amber-950 shadow-sm" role="alert">
+            <p className="font-semibold flex items-center gap-2">
+              <ExclamationTriangleIcon className="h-5 w-5 shrink-0" /> Engine fallback active
+            </p>
+            <p className="mt-2 leading-relaxed">{engineWarning}</p>
+          </div>
+        )}
+        {investmentHoldingsCount === 0 && (
+          <div className="rounded-xl border border-sky-200 bg-sky-50/95 p-4 text-sm text-sky-950">
+            <p className="font-semibold">No investment holdings in scope</p>
+            <p className="mt-1 text-sky-900/90 leading-relaxed">
+              Sleeve drift, positions, and order suggestions fill in once you add holdings under Investments. Cash deployable, plan targets, and stress scenarios still run from your accounts and settings.
+            </p>
+          </div>
+        )}
         {/* Overview Section */}
         <section className="space-y-6">
           <div className="border-b border-slate-200 pb-2">
@@ -1339,7 +1265,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         <section className="space-y-6">
           <div className="border-b border-slate-200 pb-2">
             <h2 className="text-lg font-bold text-slate-900 uppercase tracking-wide">Orders & Actions</h2>
-            <p className="text-xs text-slate-500 mt-1">Generated orders — export to JSON or use as a checklist when placing trades</p>
+            <p className="text-xs text-slate-500 mt-1">Suggested orders only — not sent to any broker; export JSON or use as your own trade checklist</p>
           </div>
 
           <div>

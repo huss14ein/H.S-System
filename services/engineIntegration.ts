@@ -20,6 +20,12 @@ interface Investment {
   type: string;
 }
 
+/** Composite risk scores are weighted sums of floats; clamp to 0–100 and round for stable UI and alerts. */
+export function roundRiskScore0to100(score: number): number {
+  const x = Math.min(100, Math.max(0, Number.isFinite(score) ? score : 0));
+  return Math.round(x * 10) / 10;
+}
+
 function mapRecurringBillsToInfo(transactions: Transaction[]): RecurringBillInfo[] {
   const patterns = detectRecurringBillPatterns(transactions, 2);
   return patterns.map(p => ({
@@ -153,6 +159,7 @@ export function buildUnifiedFinancialContext(
   
   // Calculate risk constraints using advanced risk scoring
   const portfolioRisk = computeRiskFromInvestments(investments);
+  const portfolioRiskScore = roundRiskScore0to100(portfolioRisk.overallRiskScore || 50);
   
   // Generate cashflow stress signals
   const lastMonthTransactions = transactions.filter(t => {
@@ -187,8 +194,8 @@ export function buildUnifiedFinancialContext(
       maxPortfolioVolatility: 0.25,
       maxPositionConcentration: 0.25,
       maxSectorExposure: 0.30,
-      currentPortfolioRisk: portfolioRisk.overallRiskScore || 50,
-      riskBudgetRemaining: Math.max(0, 100 - (portfolioRisk.overallRiskScore || 50))
+      currentPortfolioRisk: portfolioRiskScore,
+      riskBudgetRemaining: roundRiskScore0to100(100 - portfolioRiskScore),
     },
     household: {
       fixedMonthlyObligations: monthlyRecurring,

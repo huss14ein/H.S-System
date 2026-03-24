@@ -139,7 +139,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
     }
 
     return (
-        <div className="page-container space-y-6 sm:space-y-8">
+        <div className="page-container">
             {/* Hero Section */}
             <div className="section-card p-6 sm:p-8">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">

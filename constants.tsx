@@ -20,11 +20,26 @@ import { PresentationChartLineIcon } from './components/icons/PresentationChartL
 import { DocumentArrowUpIcon } from './components/icons/DocumentArrowUpIcon';
 import { DocumentTextIcon } from './components/icons/DocumentTextIcon';
 import { CubeIcon } from './components/icons/CubeIcon';
+import { FlagIcon } from './components/icons/FlagIcon';
+import { BanknotesIcon } from './components/icons/BanknotesIcon';
+import { SparklesIcon } from './components/icons/SparklesIcon';
+import { EyeIcon } from './components/icons/EyeIcon';
 
 /** User-friendly display names for pages (nav, command palette, document title) */
 export const PAGE_DISPLAY_NAMES: Partial<Record<Page, string>> = {
   'Engines & Tools': 'Money Tools',
 };
+
+/** Sub-views opened only inside Investments (not top-level nav / hash routes). */
+export const INVESTMENT_SUB_NAV_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
+  { name: 'Recovery Plan', icon: FlagIcon },
+  { name: 'Investment Plan', icon: ClipboardDocumentListIcon },
+  { name: 'Dividend Tracker', icon: BanknotesIcon },
+  { name: 'AI Rebalancer', icon: SparklesIcon },
+  { name: 'Watchlist', icon: EyeIcon },
+];
+
+export const INVESTMENT_SUB_NAV_PAGE_NAMES: readonly Page[] = INVESTMENT_SUB_NAV_ITEMS.map((i) => i.name);
 
 export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
   { name: 'Dashboard', icon: HomeIcon },

@@ -197,7 +197,7 @@ Underlying data: **`data.budgets`**, personal transactions for spend, RPC-backed
 
 ## Settings (`pages/Settings.tsx`)
 
-Layout: custom **`page-container`** (not `PageLayout`) with a **hero** strip and **in-page anchor nav** (`#settings-snapshot`, `#user-profile`, …). Props from `App`: optional **`setActivePage`**, **`triggerPageAction`** (opens Investments → Safety & rules from trading policy).
+Layout: custom **`page-container`** (not `PageLayout`) with a **hero** strip and **in-page anchor nav** (`#settings-snapshot`, `#user-profile`, …). Props from `App`: optional **`setActivePage`**, **`triggerPageAction`** (opens **Money Tools** → Safety & rules from trading policy).
 
 **Global wiring:** `DataContext` — `data`, `loading`, **`updateSettings`**, **`restoreFromBackup`**; `AuthContext`; `useCurrency` (`exchangeRate` for wealth summary payload); `useEmergencyFund(data)`; `usePrivacyMask`; `useToast`. Admin-only: Supabase `users` table + RPCs **`approve_signup_user`**, **`reject_signup_user`**.
 
@@ -268,9 +268,10 @@ Layout: custom **`page-container`** (not `PageLayout`) with a **hero** strip and
 
 | Control | Persists | Data source |
 |---------|----------|-------------|
-| **Windfall / lump sum (SAR)** | Local React state only | Drives **`rankCapitalUses`** from `decisionEngine` |
+| **Windfall / lump sum (SAR)** | Local React state | Drives **`rankCapitalUses`** from `decisionEngine`. Defaults to ~15% of Checking+Savings (min 5k SAR) and **stays in sync** with liquid until the user edits the field; resets sync behavior on **auth user change**. |
 | Ranked allocation list | — | Output of `rankCapitalUses(capitalPreviewAmount)` |
-| **Max / Current position %**, **Drift from target %** sliders | Local state | **`buyScore`** preview with **`ef.monthsCovered`** from `useEmergencyFund` |
+| **Policy max position**, **Largest holding %**, **Sleeve drift (max)**, **Runway** | — | Derived: trading policy cap, personal holdings, **`computeMaxAbsSleeveDriftPercent`** (`services/settingsDecisionPreview`, same config path as Wealth Ultra), **`useEmergencyFund`**. Drift **alert** % from Financial preferences is shown as caption only. |
+| **Buy score (0–100)** | — | **`buyScore`** using live runway, policy cap, largest holding, and **measured sleeve drift** (0 if no holdings). |
 
 *(Does not write to `data.settings`.)*
 
@@ -287,7 +288,7 @@ Layout: custom **`page-container`** (not `PageLayout`) with a **hero** strip and
 | **Block buys if last-30d net cashflow negative** | same | |
 | **Save policy** | Immediate save + toast | `saveTradingPolicy` |
 | **Reset defaults** | same | `DEFAULT_TRADING_POLICY` |
-| **Safety & rules** | Navigation | `triggerPageAction('Investments', 'openRiskTradingHub')` or `setActivePage('Investments')` |
+| **Safety & rules** | Navigation | `triggerPageAction('Engines & Tools', 'openRiskTradingHub')` or `setActivePage('Engines & Tools')` |
 
 Auto-save: **~1.5s debounce** on `tradingPolicyLocal` changes.
 
@@ -339,14 +340,14 @@ Refresh also runs when **`data.transactions.length`** changes (effect dependency
 
 ## Investments hub (`pages/Investments.tsx`)
 
-**Tabs** (`InvestmentSubPage`): Overview · Portfolios · Investment Plan · Safety & rules · Recovery Plan · Watchlist · AI Rebalancer · Dividend Tracker · Execution History.
+**Tabs** (`InvestmentSubPage`): Overview · Portfolios · Investment Plan · Recovery Plan · Watchlist · AI Rebalancer · Dividend Tracker · Execution History. (**Safety & rules** lives under **Money Tools** / `Engines & Tools`.)
 
 | Tab | Component | Data |
 |-----|-----------|------|
 | Overview | `InvestmentOverview` | `personalInvestments`, `exchangeRate`, allocation + AI |
 | Portfolios | `PlatformView` | Portfolios, holdings, `MarketDataContext` prices |
 | Investment Plan | Inner `InvestmentPlan` | `investmentPlan`, trades |
-| Safety & rules | `RiskTradingHub` | Policies, runway, snapshots — **`SectionCard`** list (see below) |
+| Safety & rules | `RiskTradingHub` (embedded in **Money Tools**) | Policies, runway, snapshots — **`SectionCard`** list (see below) |
 | Recovery Plan | `RecoveryPlanView` | Recovery services + `onOpenWealthUltra` |
 | AI Rebalancer | `AIRebalancerView` | Portfolios, `portfolioConstruction`, Gemini plan |
 | Watchlist | `WatchlistView` | Watchlist + quotes + AI |
@@ -409,6 +410,8 @@ Refresh also runs when **`data.transactions.length`** changes (effect dependency
 13. Risk Distribution  
 
 Data: **`data`** (personal investments, plan, config), **`wealthUltraConfig`**, **`CurrencyContext`**, **`MarketDataContext`**, modules under `wealth-ultra/`.
+
+**Accuracy & safety:** `runWealthUltraEngine` uses **`buildFinancialWealthUltraConfig`** (shared with Settings decision preview). If the merged plan/config fails validation, the dashboard **falls back** to `getDefaultWealthUltraConfig()` with **no holdings** and shows an **amber warning** (no white screen). **Sleeve drift** is **0%** when total portfolio value is **0** (empty or zero-value positions) so targets do not produce fake “−65%” gaps. **Sleeve drift alerts** in `runAlertEngine` are skipped when portfolio value is zero. **Banners:** engine fallback (amber), no holdings (sky) at top of page.
 
 ---
 

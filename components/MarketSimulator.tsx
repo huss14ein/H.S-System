@@ -3,15 +3,37 @@ import { DataContext } from '../context/DataContext';
 import { PriceAlert } from '../types';
 import { MarketDataContext } from '../context/MarketDataContext';
 import { getLivePrices, getAICommodityPrices } from '../services/geminiService';
+import { canonicalQuoteLookupKey } from '../services/finnhubService';
+import { useCurrency } from '../context/CurrencyContext';
+import { resolveSarPerUsd } from '../utils/currencyMath';
+import { holdingUsesLiveQuote } from '../utils/holdingValuation';
 
 const MarketSimulator: React.FC = () => {
     const dataContext = useContext(DataContext);
     const marketContext = useContext(MarketDataContext);
+    const { exchangeRate } = useCurrency();
 
-    const contextRef = useRef({ dataContext, marketContext });
-    contextRef.current = { dataContext, marketContext };
+    const contextRef = useRef({ dataContext, marketContext, exchangeRate });
+    contextRef.current = { dataContext, marketContext, exchangeRate };
 
     const previousPricesRef = useRef<Record<string, number>>({});
+    const didInitialPricePassRef = useRef(false);
+
+    /** When portfolio data first loads, run one price pass (live if API key present). */
+    useEffect(() => {
+        const { data } = dataContext ?? {};
+        if (!data || !marketContext?.bumpPriceRefresh) return;
+        const inv = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        const holdings = inv.flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []);
+        const watch = data?.watchlist ?? [];
+        const planned = data?.plannedTrades ?? [];
+        const comm = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
+        const hasSymbols =
+            holdings.length > 0 || watch.length > 0 || planned.length > 0 || comm.length > 0;
+        if (!hasSymbols || didInitialPricePassRef.current) return;
+        didInitialPricePassRef.current = true;
+        marketContext.bumpPriceRefresh();
+    }, [dataContext?.data, marketContext?.bumpPriceRefresh]);
 
     useEffect(() => {
         if (!marketContext) return;
@@ -19,11 +41,15 @@ const MarketSimulator: React.FC = () => {
         
         const runSimulationTick = async (isRealFetch: boolean = false) => {
             const { dataContext, marketContext } = contextRef.current;
-            if (!dataContext || !marketContext || !dataContext.data) return;
+            if (!dataContext || !marketContext || !dataContext.data) {
+                marketContext?.setIsRefreshing(false);
+                return;
+            }
 
             const { data, batchUpdateHoldingValues, batchUpdateCommodityHoldingValues, updatePriceAlert } = dataContext;
             const { setSimulatedPrices, simulatedPrices: currentSimulatedPrices, setIsLive, setLastUpdated, touchQuoteTimestamps } = marketContext;
-            
+            const sarPerUsd = resolveSarPerUsd(data, contextRef.current.exchangeRate);
+
             const allHoldings = ((data as any)?.personalInvestments ?? data?.investments ?? []).flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []);
             const allWatchlistItems = data?.watchlist ?? [];
             const allPlannedTrades = data?.plannedTrades ?? [];
@@ -44,7 +70,7 @@ const MarketSimulator: React.FC = () => {
                 try {
                     const [investmentPrices, commodityData] = await Promise.all([
                         uniqueSymbols.length > 0 ? getLivePrices(uniqueSymbols) : Promise.resolve({}),
-                        allCommodities.length > 0 ? getAICommodityPrices(allCommodities) : Promise.resolve({ prices: [], groundingChunks: [] })
+                        allCommodities.length > 0 ? getAICommodityPrices(allCommodities, { sarPerUsd }) : Promise.resolve({ prices: [], groundingChunks: [] })
                     ]);
 
                     newPrices = { ...investmentPrices };
@@ -127,12 +153,15 @@ const MarketSimulator: React.FC = () => {
             setIsLive(liveStatus);
             touchQuoteTimestamps(Object.keys(newPrices));
 
-            (allHoldings as { id?: string; symbol?: string; quantity?: number }[]).forEach((holding: { id?: string; symbol?: string; quantity?: number }) => {
+            (allHoldings as { id?: string; symbol?: string; quantity?: number; holdingType?: string }[]).forEach((holding) => {
+                if (!holdingUsesLiveQuote(holding as { holdingType?: string; holding_type?: string })) return;
                 const sym = holding.symbol;
-                if (holding.id && sym != null && newPrices[sym]) {
+                if (sym == null || !holding.id) return;
+                const row = newPrices[sym] ?? newPrices[canonicalQuoteLookupKey(sym)];
+                if (row) {
                     holdingUpdates.push({
                         id: holding.id,
-                        currentValue: newPrices[sym].price * (holding.quantity ?? 0)
+                        currentValue: row.price * (holding.quantity ?? 0)
                     });
                 }
             });
@@ -161,7 +190,15 @@ const MarketSimulator: React.FC = () => {
             }
         };
 
-        runSimulationTick(true);
+        void (async () => {
+            try {
+                await runSimulationTick(true);
+            } catch (e) {
+                console.error('MarketSimulator tick failed:', e);
+            } finally {
+                contextRef.current.marketContext?.setIsRefreshing(false);
+            }
+        })();
 
     }, [marketContext?.refreshTrigger]);
 

@@ -90,14 +90,39 @@ export function getExchangeAndCurrencyForSymbol(symbol: string): { exchange: str
   return null;
 }
 
-/** Normalize symbol for Finnhub (US upper, crypto mapped). */
-function toFinnhubSymbol(symbol: string): string {
+/**
+ * Normalize user/holding symbol to Finnhub `symbol` query format (single mapping for the whole app).
+ * US tickers: uppercase; Tadawul `1234.SR` → `TADAWUL:1234`; crypto shortcuts → BINANCE pairs.
+ */
+export function toFinnhubSymbol(symbol: string): string {
   const upper = (symbol || '').toUpperCase().trim();
   if (!upper) return upper;
   if (upper === 'BTC' || upper === 'BTC-USD') return 'BINANCE:BTCUSDT';
   if (upper === 'ETH' || upper === 'ETH-USD') return 'BINANCE:ETHUSDT';
-  const tadawulMatch = upper.match(/^([0-9]{4,6})\.(SR|SA)$/);
+  // Earnings/calendar often return Saudi listings as bare digits (e.g. 2222) — same Finnhub prefix as 2222.SR.
+  if (/^[0-9]{4,6}$/.test(upper)) return `TADAWUL:${upper}`;
+  // Tadawul: numeric (2222.SR) and letter tickers (REITF.SR) both use TADAWUL: prefix on Finnhub.
+  const tadawulMatch = upper.match(/^([A-Z0-9]{1,8})\.(SR|SA)$/);
   if (tadawulMatch) return `TADAWUL:${tadawulMatch[1]}`;
+  // US class shares: Finnhub uses hyphen (e.g. BRK-B), not a dot — but not .SR/.SA (handled above).
+  const usClass = upper.match(/^([A-Z]{1,5})\.([A-Z])$/);
+  if (usClass) return `${usClass[1]}-${usClass[2]}`;
+  return upper;
+}
+
+/** Canonical key used for live quote maps (matches getFinnhubLivePrices / fromFinnhubSymbol after request). */
+export function canonicalQuoteLookupKey(symbol: string): string {
+  return fromFinnhubSymbol(toFinnhubSymbol(symbol));
+}
+
+/** Map Finnhub quote/profile symbol back to app display keys (e.g. TADAWUL:2222 → 2222.SR). */
+export function fromFinnhubSymbol(finnhubSymbol: string): string {
+  const upper = (finnhubSymbol || '').toUpperCase().trim();
+  if (!upper) return upper;
+  if (upper === 'BINANCE:BTCUSDT') return 'BTC';
+  if (upper === 'BINANCE:ETHUSDT') return 'ETH';
+  const tadawulMatch = upper.match(/^TADAWUL:([A-Z0-9]{1,8})$/);
+  if (tadawulMatch) return `${tadawulMatch[1]}.SR`;
   return upper;
 }
 
@@ -269,8 +294,17 @@ export interface CompanyProfile {
 
 export async function getCompanyProfile(symbol: string): Promise<CompanyProfile | null> {
   try {
-    const data = await get<CompanyProfile>('/stock/profile2', { symbol: toFinnhubSymbol(symbol) });
-    return data && data.name ? data : null;
+    const resolved = toFinnhubSymbol(symbol);
+    const data = await get<CompanyProfile>('/stock/profile2', { symbol: resolved });
+    if (!data?.name) return null;
+    // Finnhub may return ticker as bare "2222" or "REITF" while we queried TADAWUL:… — still the same listing.
+    if (data.ticker) {
+      const apiResolved = toFinnhubSymbol(data.ticker);
+      if (apiResolved !== resolved && canonicalQuoteLookupKey(data.ticker) !== canonicalQuoteLookupKey(symbol)) {
+        console.warn(`[Finnhub] profile2 ticker may not match "${symbol}": requested ${resolved}, profile ticker ${data.ticker} (keeping profile if name is set)`);
+      }
+    }
+    return data;
   } catch {
     return null;
   }
@@ -406,9 +440,13 @@ export async function getHoldingFundamentals(symbol: string): Promise<HoldingFun
   const oneYearAhead = new Date(today.getTime() + 365 * 24 * 60 * 60 * 1000);
   const to = oneYearAhead.toISOString().split('T')[0];
 
+  const wantResolved = toFinnhubSymbol(symbol).toUpperCase();
   const [earningsList, metrics, profile, quote] = await Promise.all([
     getEarningsCalendar(from, to).then((list) =>
-      list.filter((e) => e.symbol.toUpperCase() === symbol.toUpperCase() && e.date)
+      list.filter((e) => {
+        if (!e.date || !e.symbol) return false;
+        return toFinnhubSymbol(e.symbol).toUpperCase() === wantResolved;
+      }),
     ),
     getBasicFinancials(symbol),
     getCompanyProfile(symbol),
@@ -523,7 +561,7 @@ export async function getInsiderTransactions(symbol: string, from?: string, to?:
     const toDate = to || new Date().toISOString().split('T')[0];
     const fromDate = from || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     const data = await get<{ data?: InsiderTransaction[] }>('/stock/insider-transactions', {
-      symbol: symbol.toUpperCase(),
+      symbol: toFinnhubSymbol(symbol),
       from: fromDate,
       to: toDate,
     });
@@ -545,7 +583,7 @@ export interface CompanyNewsItem {
 
 export async function getCompanyNews(symbol: string, from: string, to: string): Promise<CompanyNewsItem[]> {
   try {
-    const data = await get<any[]>('/company-news', { symbol: symbol.toUpperCase(), from, to });
+    const data = await get<any[]>('/company-news', { symbol: toFinnhubSymbol(symbol), from, to });
     if (!Array.isArray(data)) return [];
     return data.slice(0, 10).map((item) => ({
       symbol,
@@ -577,12 +615,24 @@ interface MarketCalendarCachePayload {
 
 export type MarketCalendarLoadMode = 'fresh' | 'cache_fresh' | 'cache_stale' | 'none';
 
-const MARKET_CALENDAR_CACHE_PREFIX = 'finnhub-market-calendar:v1:';
+const MARKET_CALENDAR_CACHE_PREFIX = 'finnhub-market-calendar:v2:';
 const MARKET_CALENDAR_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 
 function getMarketCalendarCacheKey(from: string, to: string, symbols: string[]): string {
   const normalizedSymbols = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter(Boolean))].sort().join(',');
   return `${MARKET_CALENDAR_CACHE_PREFIX}${from}:${to}:${normalizedSymbols}`;
+}
+
+/**
+ * Finnhub earnings rows may use bare tickers (e.g. `2222`) while the app stores `2222.SR`.
+ * Compare using the same Finnhub symbol mapping as quotes/calendar requests.
+ */
+export function earningsEventMatchesTrackedSymbols(trackedDisplaySymbols: string[], earningsApiSymbol: string): boolean {
+  const tracked = trackedDisplaySymbols.map((s) => s.trim().toUpperCase()).filter(Boolean);
+  if (tracked.length === 0) return true;
+  const keys = new Set(tracked.map((s) => toFinnhubSymbol(s).toUpperCase()));
+  const k = toFinnhubSymbol((earningsApiSymbol || '').trim()).toUpperCase();
+  return keys.has(k);
 }
 
 function readMarketCalendarCache(cacheKey: string): { payload: MarketCalendarCachePayload; stale: boolean } | null {
@@ -659,8 +709,7 @@ export async function getMarketCalendarCached(from: string, to: string, trackedS
     }
     const earningsAll = await getEarningsCalendar(from, to);
 
-    const symbolSet = new Set(symbols);
-    const earnings = earningsAll.filter((e) => symbolSet.size === 0 || symbolSet.has((e.symbol || '').trim().toUpperCase()));
+    const earnings = earningsAll.filter((e) => earningsEventMatchesTrackedSymbols(symbols, e.symbol || ''));
     const payload: MarketCalendarCachePayload = { cachedAt: Date.now(), economic, earnings };
     writeMarketCalendarCache(cacheKey, payload);
     return { economic, earnings, mode: 'fresh', cachedAt: payload.cachedAt, warnings };
@@ -691,8 +740,7 @@ export async function getMarketCalendarFresh(from: string, to: string, trackedSy
     }
   }
   const earningsAll = await getEarningsCalendar(from, to);
-  const symbolSet = new Set(symbols);
-  const earnings = earningsAll.filter((e) => symbolSet.size === 0 || symbolSet.has((e.symbol || '').trim().toUpperCase()));
+  const earnings = earningsAll.filter((e) => earningsEventMatchesTrackedSymbols(symbols, e.symbol || ''));
   const payload: MarketCalendarCachePayload = { cachedAt: Date.now(), economic, earnings };
   writeMarketCalendarCache(getMarketCalendarCacheKey(from, to, symbols), payload);
   return { economic, earnings, cachedAt: payload.cachedAt, warnings };

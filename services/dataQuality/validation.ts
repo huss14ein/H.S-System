@@ -226,12 +226,26 @@ export function validateSettings(input: { goldPrice?: unknown; nisabAmount?: unk
   return { valid: errors.length === 0, errors };
 }
 
+const MAX_ASSET_NOTES_LEN = 5000;
+
 /** Validate asset before add/update */
-export function validateAsset(input: { name?: string; type?: string; value?: unknown }): { valid: boolean; errors: string[] } {
+export function validateAsset(input: {
+  name?: string;
+  type?: string;
+  value?: unknown;
+  issueDate?: string;
+  maturityDate?: string;
+  notes?: string;
+}): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
   const name = String(input.name ?? '').trim();
   if (!name) errors.push('Asset name is required.');
   else if (name.length > MAX_NAME_LEN) errors.push(`Asset name must be at most ${MAX_NAME_LEN} characters.`);
+
+  const notesStr = input.notes != null ? String(input.notes) : '';
+  if (notesStr.length > MAX_ASSET_NOTES_LEN) {
+    errors.push(`Notes must be at most ${MAX_ASSET_NOTES_LEN} characters.`);
+  }
 
   const type = input.type;
   if (!type || !VALID_ASSET_TYPES.includes(type as any)) {
@@ -241,6 +255,19 @@ export function validateAsset(input: { name?: string; type?: string; value?: unk
   const val = safeNumber(input.value, NaN);
   if (Number.isNaN(val) || !Number.isFinite(val)) errors.push('Asset value must be a valid number.');
   else if (val < 0) errors.push('Asset value cannot be negative.');
+
+  const isoDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s.trim());
+  if (type === 'Sukuk') {
+    const issue = String(input.issueDate ?? '').trim();
+    const maturity = String(input.maturityDate ?? '').trim();
+    if (!issue) errors.push('Sukuk requires an issue (or subscription) date (YYYY-MM-DD).');
+    else if (!isoDate(issue)) errors.push('Sukuk issue date must be a complete calendar date (YYYY-MM-DD).');
+    if (!maturity) errors.push('Sukuk requires a maturity date (YYYY-MM-DD).');
+    else if (!isoDate(maturity)) errors.push('Sukuk maturity date must be a complete calendar date (YYYY-MM-DD).');
+    if (issue && maturity && isoDate(issue) && isoDate(maturity) && issue > maturity) {
+      errors.push('Sukuk maturity date must be on or after the issue date.');
+    }
+  }
 
   return { valid: errors.length === 0, errors };
 }

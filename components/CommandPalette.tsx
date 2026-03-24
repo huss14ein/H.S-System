@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useContext } from 'react';
-import { NAVIGATION_ITEMS, PAGE_DISPLAY_NAMES } from '../constants';
+import { NAVIGATION_ITEMS, PAGE_DISPLAY_NAMES, INVESTMENT_SUB_NAV_ITEMS } from '../constants';
 import { Page } from '../types';
 import { DataContext } from '../context/DataContext';
 import { useSelfLearning } from '../context/SelfLearningContext';
@@ -45,9 +45,20 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
         }));
         const subPages: { name: string; action: () => void; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [];
         if (triggerPageAction) {
-            subPages.push({ name: 'Go to Safety & rules', action: () => { trackAction('safety-rules', 'Investments'); triggerPageAction('Investments', 'openRiskTradingHub'); setIsOpen(false); }, icon: NAVIGATION_ITEMS.find(i => i.name === 'Investments')!.icon });
+            subPages.push({ name: 'Go to Safety & rules', action: () => { trackAction('safety-rules', 'Engines & Tools'); triggerPageAction('Engines & Tools', 'openRiskTradingHub'); setIsOpen(false); }, icon: NAVIGATION_ITEMS.find(i => i.name === 'Engines & Tools')!.icon });
             subPages.push({ name: 'Go to Sell priority', action: () => { trackAction('liquidation', 'Engines & Tools'); triggerPageAction('Engines & Tools', 'openLiquidation'); setIsOpen(false); }, icon: NAVIGATION_ITEMS.find(i => i.name === 'Engines & Tools')!.icon });
             subPages.push({ name: 'Go to Notes & ideas', action: () => { trackAction('journal', 'Engines & Tools'); triggerPageAction('Engines & Tools', 'openJournal'); setIsOpen(false); }, icon: NAVIGATION_ITEMS.find(i => i.name === 'Engines & Tools')!.icon });
+            INVESTMENT_SUB_NAV_ITEMS.forEach((item) => {
+                subPages.push({
+                    name: `Go to Investments → ${PAGE_DISPLAY_NAMES[item.name] ?? item.name}`,
+                    action: () => {
+                        trackAction(`go-to-inv-${item.name}`, 'Investments');
+                        triggerPageAction('Investments', `investment-tab:${item.name}`);
+                        setIsOpen(false);
+                    },
+                    icon: item.icon,
+                });
+            });
         }
         const quick: { name: string; action: () => void; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [];
         if (onOpenLiveAdvisor) {

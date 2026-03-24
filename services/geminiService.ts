@@ -1,8 +1,9 @@
 import { Type, FunctionDeclaration } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult, ProposedTrade, TradeCurrency } from '../types';
-import { finnhubFetch } from './finnhubService';
+import { finnhubFetch, toFinnhubSymbol, fromFinnhubSymbol, canonicalQuoteLookupKey } from './finnhubService';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { capitalizeCategoryName } from '../utils/categoryFormat';
+import { DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
 
 // --- Model Constants ---
 const FAST_MODEL = 'gemini-3-flash-preview';
@@ -268,25 +269,6 @@ const getFinnhubApiKey = (): string => {
     return apiKey;
 };
 
-const toFinnhubSymbol = (symbol: string): string => {
-    const upper = symbol.toUpperCase().trim();
-    if (!upper) return upper;
-    if (upper === 'BTC' || upper === 'BTC-USD') return 'BINANCE:BTCUSDT';
-    if (upper === 'ETH' || upper === 'ETH-USD') return 'BINANCE:ETHUSDT';
-    const tadawulMatch = upper.match(/^([0-9]{4,6})\.(SR|SA)$/);
-    if (tadawulMatch) return `TADAWUL:${tadawulMatch[1]}`;
-    return upper;
-};
-
-const fromFinnhubSymbol = (symbol: string): string => {
-    const upper = symbol.toUpperCase();
-    if (upper === 'BINANCE:BTCUSDT') return 'BTC';
-    if (upper === 'BINANCE:ETHUSDT') return 'ETH';
-    const tadawulMatch = upper.match(/^TADAWUL:([0-9]{4,6})$/);
-    if (tadawulMatch) return `${tadawulMatch[1]}.SR`;
-    return upper;
-};
-
 /** Stooq uses lowercase with dot for Saudi: 2222.sr. Others use dash (e.g. aapl.us). */
 const toStooqSymbol = (symbol: string): string => {
     const s = (symbol || '').trim();
@@ -312,7 +294,13 @@ const getFinnhubLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
             if (!Number.isFinite(price) || price <= 0) continue;
             if (!Number.isFinite(change)) change = 0;
             if (!Number.isFinite(changePercent)) changePercent = 0;
-            mapped[fromFinnhubSymbol(finnhubSymbol)] = { price, change, changePercent };
+            const quote = { price, change, changePercent };
+            const displayKey = fromFinnhubSymbol(finnhubSymbol);
+            const rawUpper = (rawSymbol || '').trim().toUpperCase();
+            const keys = new Set<string>([displayKey, rawUpper].filter(Boolean));
+            const tad = displayKey.match(/^([0-9]{4,6})\.SR$/);
+            if (tad) keys.add(`${tad[1]}.SA`);
+            for (const k of keys) mapped[k] = quote;
         } catch (error) {
             console.warn(`Finnhub quote failed for ${rawSymbol}:`, error);
         }
@@ -526,7 +514,7 @@ SAR, Saudi context. Exact amounts and percentages.`;
 export type SalaryAllocationExpertParams = { salary: number; fixedExpenses: number; currentSavings: number; goal: string };
 export type CashFlowExpertParams = { salary: number; expenseBreakdown: string };
 export type Wealth5YExpertParams = { salary: number; monthlyInvestment: number; currentNetWorth: number };
-export type DebtEliminationExpertParams = { salary: number; debtList: string };
+export type DebtEliminationExpertParams = { salary: number; debtList: string; receivablesContext?: string };
 export type InvestmentAutomationExpertParams = { salary: number; investmentAmountOrPct: string; riskTolerance: string };
 export type FinancialIndependenceExpertParams = { monthlyExpenses: number; currentPortfolio: number; monthlyInvestment: number };
 export type LifestyleUpgradeExpertParams = { salary: number; currentExpenses: number };
@@ -569,11 +557,22 @@ Highlight the single change that would have the biggest impact on the final numb
 }
 
 export async function getDebtEliminationExpert(params: DebtEliminationExpertParams): Promise<string> {
-    const prompt = `My monthly take-home salary is ${params.salary} SAR.
-I currently have the following debts:
-${params.debtList}
+    const recv = (params.receivablesContext ?? '').trim();
+    const recvBlock = recv
+        ? `
 
-Calculate the fastest and cheapest way to become completely debt-free.
+Amounts owed TO me (receivables — money others owe me; these are ASSETS for context only, NOT debts to pay off):
+${recv}`
+        : '';
+    const prompt = `My monthly take-home salary is ${params.salary} SAR.
+
+DEBTS I OWE (money I must repay — analyze ONLY these for payoff order, interest, and timeline):
+${params.debtList}
+${recvBlock}
+
+Important: In Finova, negative liability balances are debts you owe; positive balances are receivables (owed to you). Never treat receivables as debt to "pay off." If the debt section is empty or none, say so and give general debt-payoff guidance only.
+
+Calculate the fastest and cheapest way to become completely debt-free for debts I actually owe.
 Show month-by-month payoff timeline, total interest paid, and how much faster/cheaper it is compared to minimum payments only.
 Recommend avalanche vs snowball and why. Minimize total interest and time to payoff.`;
     const response = await invokeAI({ model: FAST_MODEL, contents: prompt, config: { systemInstruction: SALARY_EXPERT_SYSTEM } });
@@ -1312,10 +1311,12 @@ const buildRuleBasedRebalancingPlan = (holdings: Holding[], riskProfile: 'Conser
         return `### Current Portfolio Analysis\n- We could not detect positive holding market values to analyze concentration.\n- Add or refresh holdings prices, then run rebalancing again.\n\n### Target Allocation (${riskProfile})\n- Stocks: ${targetByRisk[riskProfile].stocks}%\n- Sukuk/Bonds: ${targetByRisk[riskProfile].sukuk}%\n- Other assets: ${targetByRisk[riskProfile].other}%\n\n### Rebalancing Suggestions\n- Update market values first so concentration and sizing are computed accurately.\n- Then run rebalancing and execute via Investment Plan for budgeted, controlled allocation changes.`;
     }
 
+    const equityLike = new Set(['Stock', 'ETF', 'Mutual Fund', 'REIT']);
     const bucket = { stocks: 0, sukuk: 0, other: 0 };
     normalized.forEach((h) => {
-        if (h.assetClass === 'Stock') bucket.stocks += h.value;
-        else if (h.assetClass === 'Sukuk') bucket.sukuk += h.value;
+        const ac = h.assetClass || 'Other';
+        if (ac === 'Sukuk') bucket.sukuk += h.value;
+        else if (equityLike.has(ac)) bucket.stocks += h.value;
         else bucket.other += h.value;
     });
 
@@ -1514,12 +1515,46 @@ export const getAICategorySuggestion = async (description: string, categories: s
     }
 };
 
-const SAR_PER_USD = 3.75;
 const GRAMS_PER_TROY_OZ = 31.1035;
 const BINANCE_BASE = 'https://api.binance.com/api/v3';
 
+/**
+ * Finnhub free plans often return 403 for OANDA forex/metal symbols (XAU/XAG).
+ * PAX Gold (~1 troy oz per token) is a practical public spot proxy in USD/oz for the same math as OANDA:XAU_USD.
+ */
+async function getGoldSpotUsdPerTroyOzCoinGecko(): Promise<number | null> {
+    try {
+        const res = await fetch(
+            'https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd',
+            { headers: { Accept: 'application/json' } },
+        );
+        if (!res.ok) return null;
+        const j = (await res.json()) as { 'pax-gold'?: { usd?: number } };
+        const v = j?.['pax-gold']?.usd;
+        return Number.isFinite(v) && v! > 0 ? v! : null;
+    } catch {
+        return null;
+    }
+}
+
+/** ~1 troy oz silver proxy when OANDA:XAG_USD is 403 (same free-tier limitation as gold). */
+async function getSilverSpotUsdPerTroyOzCoinGecko(): Promise<number | null> {
+    try {
+        const res = await fetch(
+            'https://api.coingecko.com/api/v3/simple/price?ids=kinesis-silver&vs_currencies=usd',
+            { headers: { Accept: 'application/json' } },
+        );
+        if (!res.ok) return null;
+        const j = (await res.json()) as { 'kinesis-silver'?: { usd?: number } };
+        const v = j?.['kinesis-silver']?.usd;
+        return Number.isFinite(v) && v! > 0 ? v! : null;
+    } catch {
+        return null;
+    }
+}
+
 /** Fetch BTC/ETH prices from Binance (no API key). Returns SAR. Used when Finnhub fails or is unavailable. */
-async function getBinanceCryptoPrices(symbols: string[]): Promise<{ symbol: string; price: number }[]> {
+async function getBinanceCryptoPrices(symbols: string[], sarPerUsd: number = DEFAULT_SAR_PER_USD): Promise<{ symbol: string; price: number }[]> {
     const out: { symbol: string; price: number }[] = [];
     const binancePairs: [string, string][] = []; // [requestSymbol, normalizedSymbol]
     for (const sym of symbols) {
@@ -1534,7 +1569,7 @@ async function getBinanceCryptoPrices(symbols: string[]): Promise<{ symbol: stri
             const data = await res.json();
             const priceUsd = Number(data?.price);
             if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
-            out.push({ symbol: normalized, price: priceUsd * SAR_PER_USD });
+            out.push({ symbol: normalized, price: priceUsd * sarPerUsd });
         } catch {
             // skip
         }
@@ -1542,41 +1577,69 @@ async function getBinanceCryptoPrices(symbols: string[]): Promise<{ symbol: stri
     return out;
 }
 
-/** Fetch commodity prices from Finnhub (crypto + metals). Returns prices in SAR. */
-export async function getFinnhubCommodityPrices(commodities: Pick<CommodityHolding, 'symbol' | 'name' | 'goldKarat'>[]): Promise<{ symbol: string; price: number }[]> {
+/** Fetch commodity prices from Finnhub (crypto + metals). Returns unit prices in SAR. `sarPerUsd` should match app FX (e.g. from `resolveSarPerUsd`). */
+export async function getFinnhubCommodityPrices(
+    commodities: Pick<CommodityHolding, 'symbol' | 'name' | 'goldKarat'>[],
+    sarPerUsd: number = DEFAULT_SAR_PER_USD,
+): Promise<{ symbol: string; price: number }[]> {
     const token = import.meta.env.VITE_FINNHUB_API_KEY;
-    if (!token) return [];
+    const fx = Number.isFinite(sarPerUsd) && sarPerUsd > 0 ? sarPerUsd : DEFAULT_SAR_PER_USD;
     const out: { symbol: string; price: number }[] = [];
+    let coinGeckoGoldUsd: number | null | undefined;
+    let coinGeckoSilverUsd: number | null | undefined;
     for (const c of commodities) {
         const sym = (c.symbol || '').toUpperCase().trim();
         let finnhubSym = '';
-        let priceMultiplier = SAR_PER_USD;
+        let priceMultiplier = fx;
         let normalizedSym = sym;
         const karatFromSymbol = Number(sym.match(/_(24|22|21|18)K$/)?.[1] || 0);
         const normalizedKarat = Number(c.goldKarat ?? (Number.isFinite(karatFromSymbol) && karatFromSymbol > 0 ? karatFromSymbol : 24));
-        const karatFactor = sym.startsWith('XAU_') ? Math.min(1, Math.max(0.5, normalizedKarat / 24)) : 1;
+        const karatFactor = sym.startsWith('XAU_') ? Math.min(1, Math.max(0, normalizedKarat / 24)) : 1;
         if (sym === 'BTC_USD' || sym === 'BTC') {
             finnhubSym = 'BINANCE:BTCUSDT';
             normalizedSym = 'BTC';
         } else if (sym === 'ETH_USD' || sym === 'ETH') {
             finnhubSym = 'BINANCE:ETHUSDT';
             normalizedSym = 'ETH';
+        } else if (sym.startsWith('XAU_OUNCE')) {
+            finnhubSym = 'OANDA:XAU_USD';
+            priceMultiplier = fx;
+            normalizedSym = sym;
         } else if (sym.startsWith('XAU_GRAM') || sym === 'XAU') {
             finnhubSym = 'OANDA:XAU_USD';
-            priceMultiplier = SAR_PER_USD / GRAMS_PER_TROY_OZ;
+            priceMultiplier = fx / GRAMS_PER_TROY_OZ;
             normalizedSym = sym === 'XAU' ? 'XAU' : sym;
+        } else if (sym.startsWith('XAG_OUNCE')) {
+            finnhubSym = 'OANDA:XAG_USD';
+            priceMultiplier = fx;
+            normalizedSym = sym;
         } else if (sym.startsWith('XAG_GRAM') || sym === 'XAG') {
             finnhubSym = 'OANDA:XAG_USD';
-            priceMultiplier = SAR_PER_USD / GRAMS_PER_TROY_OZ;
+            priceMultiplier = fx / GRAMS_PER_TROY_OZ;
             normalizedSym = sym === 'XAG' ? 'XAG' : sym;
         }
         if (!finnhubSym) continue;
         try {
-            const res = await finnhubFetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(finnhubSym)}&token=${encodeURIComponent(token)}`);
-            if (!res.ok) continue;
-            const row = await res.json();
-            const priceUsd = Number(row?.c ?? row?.pc ?? row?.p);
-            if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
+            let priceUsd: number | null = null;
+            if (token) {
+                const res = await finnhubFetch(
+                    `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(finnhubSym)}&token=${encodeURIComponent(token)}`,
+                );
+                if (res.ok) {
+                    const row = await res.json();
+                    const v = Number(row?.c ?? row?.pc ?? row?.p);
+                    if (Number.isFinite(v) && v > 0) priceUsd = v;
+                }
+            }
+            if (priceUsd == null && finnhubSym === 'OANDA:XAU_USD') {
+                if (coinGeckoGoldUsd === undefined) coinGeckoGoldUsd = await getGoldSpotUsdPerTroyOzCoinGecko();
+                if (coinGeckoGoldUsd != null) priceUsd = coinGeckoGoldUsd;
+            }
+            if (priceUsd == null && finnhubSym === 'OANDA:XAG_USD') {
+                if (coinGeckoSilverUsd === undefined) coinGeckoSilverUsd = await getSilverSpotUsdPerTroyOzCoinGecko();
+                if (coinGeckoSilverUsd != null) priceUsd = coinGeckoSilverUsd;
+            }
+            if (priceUsd == null) continue;
             out.push({ symbol: normalizedSym, price: priceUsd * priceMultiplier * karatFactor });
         } catch {
             // skip
@@ -1593,16 +1656,23 @@ function normalizeCommoditySymbolForMatch(sym: string): string {
     return s;
 }
 
+export type AICommodityPricesOptions = { sarPerUsd?: number };
+
 /** Commodity prices: Finnhub first, then Binance fallback for crypto so metals and crypto are reliably retrieved. */
-export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, 'symbol' | 'name' | 'goldKarat'>[]): Promise<{ prices: { symbol: string; price: number }[], groundingChunks: any[] }> => {
+export const getAICommodityPrices = async (
+    commodities: Pick<CommodityHolding, 'symbol' | 'name' | 'goldKarat'>[],
+    options?: AICommodityPricesOptions,
+): Promise<{ prices: { symbol: string; price: number }[], groundingChunks: any[] }> => {
     if (commodities.length === 0) return { prices: [], groundingChunks: [] };
-    let prices = await getFinnhubCommodityPrices(commodities);
+    const rawFx = options?.sarPerUsd;
+    const sarPerUsd = typeof rawFx === 'number' && Number.isFinite(rawFx) && rawFx > 0 ? rawFx : DEFAULT_SAR_PER_USD;
+    let prices = await getFinnhubCommodityPrices(commodities, sarPerUsd);
     const haveSymbol = new Set(prices.map(p => normalizeCommoditySymbolForMatch(p.symbol)));
     const missingCrypto = commodities
         .map(c => (c.symbol || '').toUpperCase().trim())
         .filter(s => (s === 'BTC' || s === 'BTC_USD' || s === 'ETH' || s === 'ETH_USD') && !haveSymbol.has(normalizeCommoditySymbolForMatch(s)));
     if (missingCrypto.length > 0) {
-        const binancePrices = await getBinanceCryptoPrices([...new Set(missingCrypto)]);
+        const binancePrices = await getBinanceCryptoPrices([...new Set(missingCrypto)], sarPerUsd);
         for (const p of binancePrices) {
             if (!prices.some(x => normalizeCommoditySymbolForMatch(x.symbol) === p.symbol)) {
                 prices = [...prices, p];
@@ -1620,6 +1690,27 @@ export const getAICommodityPrices = async (commodities: Pick<CommodityHolding, '
     // Always return result (keyed by original symbols); never raw prices (e.g. 'BTC') to avoid UI matching failures
     return { prices: result, groundingChunks: [] };
 };
+
+/** Translate an English financial insight to Modern Standard Arabic; keeps numbers and currency tokens. */
+export async function translateFinancialInsightToArabic(englishText: string): Promise<string> {
+    const src = (englishText || '').trim();
+    if (!src) return '';
+    const prompt = `You are a professional financial translator. Translate the following text into Modern Standard Arabic.
+
+Rules:
+- Preserve every number, percentage, date, and currency label (SAR, USD, etc.) exactly as in the source.
+- Use clear, direct Arabic suitable for a personal finance app.
+- Output plain text only: short paragraphs and/or lines starting with "- " for bullets. Do NOT use markdown headers (no ###).
+- Do not add disclaimers or meta-commentary.`;
+
+    const response = await invokeAI({
+        model: FAST_MODEL,
+        contents: `${prompt}\n\n---\n${src}\n---`,
+        config: { systemInstruction: DEFAULT_SYSTEM_INSTRUCTION },
+    });
+    const out = (response?.text ?? '').trim();
+    return out || src;
+}
 
 export const getAIDividendAnalysis = async (ytdIncome: number, projectedAnnual: number, topPayers: {name: string, projected: number}[]): Promise<string> => {
     try {
@@ -1679,36 +1770,46 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
 
     const provider = (import.meta.env.VITE_LIVE_PRICE_PROVIDER || 'auto').toLowerCase();
     const tryFinnhub = async () => {
-        const finnhub = await getFinnhubLivePrices(symbols);
-        if (Object.keys(finnhub).length > 0) return finnhub;
-        throw new Error('Finnhub returned no symbols');
+        try {
+            return await getFinnhubLivePrices(symbols);
+        } catch (e) {
+            console.warn('Finnhub live batch failed:', e);
+            return {};
+        }
     };
-    const tryStooq = async () => {
-        const stooq = await getStooqLivePrices(symbols);
-        if (Object.keys(stooq).length > 0) return stooq;
-        throw new Error('Stooq returned no symbols');
+    const tryStooq = async (syms: string[]) => {
+        const stooq = await getStooqLivePrices(syms);
+        return Object.keys(stooq).length > 0 ? stooq : {};
+    };
+
+    const mergeFinnhubAndStooq = async (): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {
+        const finnhub = await tryFinnhub();
+        const missing = symbols.filter((s) => {
+            const u = (s || '').trim().toUpperCase();
+            const canon = canonicalQuoteLookupKey(s);
+            const has =
+                finnhub[s] ||
+                finnhub[u] ||
+                finnhub[canon] ||
+                Object.keys(finnhub).some((k) => canonicalQuoteLookupKey(k) === canon);
+            return !has;
+        });
+        if (missing.length === 0 && Object.keys(finnhub).length > 0) return finnhub;
+        const stooq = await tryStooq(missing.length > 0 ? missing : symbols);
+        return { ...stooq, ...finnhub };
     };
 
     try {
-        if (provider === 'finnhub') {
-            try {
-                return await tryFinnhub();
-            } catch {
-                return await tryStooq();
-            }
+        if (provider === 'stooq') {
+            const stooq = await tryStooq(symbols);
+            if (Object.keys(stooq).length > 0) return stooq;
+            throw new Error('Stooq returned no symbols');
         }
-        if (provider === 'stooq') return await tryStooq();
         if (provider === 'ai') return await aiFetch();
-
-        // auto: Finnhub first, then fill Saudi (.SR) and other missing symbols via Stooq
-        let result = await getFinnhubLivePrices(symbols).catch(() => ({} as { [s: string]: { price: number; change: number; changePercent: number } }));
-        const missing = symbols.filter((s) => !result[(s || '').trim().toUpperCase()]);
-        if (missing.length > 0) {
-            const stooqResult = await getStooqLivePrices(missing).catch(() => ({}));
-            result = { ...result, ...stooqResult };
-        }
-        if (Object.keys(result).length > 0) return result;
-        throw new Error('No live prices returned from Finnhub or Stooq');
+        // finnhub | auto | unset: Finnhub first, Stooq fills gaps (same mapping as finnhubService)
+        const merged = await mergeFinnhubAndStooq();
+        if (Object.keys(merged).length > 0) return merged;
+        throw new Error('No live prices from Finnhub or Stooq');
     } catch (error) {
         console.error("Error fetching live prices:", error);
         throw error;

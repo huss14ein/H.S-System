@@ -1,4 +1,5 @@
 import type { FinancialData } from '../types';
+import { tradableCashBucketToSAR } from '../utils/currencyMath';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import {
   getPersonalAccounts,
@@ -8,8 +9,17 @@ import {
   getPersonalTransactions,
 } from '../utils/wealthScope';
 
+export type LiquidNetWorthOptions = {
+  getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number };
+  /** SAR per USD — required together with `getAvailableCashForAccount` to convert broker cash buckets. */
+  exchangeRate?: number;
+};
+
 /** Cash-like + investments + commodities + receivables − debt (simplified liquid picture). */
-export function computeLiquidNetWorth(data: FinancialData | null | undefined): {
+export function computeLiquidNetWorth(
+  data: FinancialData | null | undefined,
+  options?: LiquidNetWorthOptions
+): {
   liquidCash: number;
   investmentsSAR: number;
   commodities: number;
@@ -32,9 +42,18 @@ export function computeLiquidNetWorth(data: FinancialData | null | undefined): {
     };
   }
   const accounts = getPersonalAccounts(data);
-  const liquidCash = accounts
+  let liquidCash = accounts
     .filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings')
     .reduce((s: number, a: { balance?: number }) => s + Math.max(0, Number(a.balance) || 0), 0);
+  if (options?.getAvailableCashForAccount && options.exchangeRate != null) {
+    const fx = options.exchangeRate;
+    const getCash = options.getAvailableCashForAccount;
+    accounts
+      .filter((a: { type?: string }) => a.type === 'Investment')
+      .forEach((a: { id: string }) => {
+        liquidCash += tradableCashBucketToSAR(getCash(a.id), fx);
+      });
+  }
   const inv = getPersonalInvestments(data);
   let investmentsSAR = 0;
   inv.forEach((p: { holdings?: { currentValue?: number }[] }) => {
