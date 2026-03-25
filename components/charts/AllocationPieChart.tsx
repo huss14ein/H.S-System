@@ -104,7 +104,7 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
             ))}
           </Pie>
-          {sanitizedData.length > 1 && (
+          {!isEmpty && (
             <Tooltip
               content={<CustomTooltip totalValue={totalValue} />}
               position={tooltipPosition}

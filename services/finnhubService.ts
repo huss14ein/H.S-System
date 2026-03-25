@@ -409,6 +409,61 @@ export async function getEarningsCalendar(from: string, to: string): Promise<Ear
   }
 }
 
+/** One historical cash dividend payment (per share) from Finnhub `/stock/dividend`. */
+export interface StockDividendPayment {
+  /** ISO payment date used for the ledger row. */
+  payDate: string;
+  amountPerShare: number;
+  /** Declared currency when Finnhub provides it; otherwise inferred from symbol. */
+  currency: 'USD' | 'SAR';
+}
+
+function parseDividendRows(raw: unknown): StockDividendPayment[] {
+  const rows = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data)
+      ? (raw as { data: unknown[] }).data
+      : [];
+  const out: StockDividendPayment[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue;
+    const r = row as Record<string, unknown>;
+    const payRaw = (r.payDate ?? r.date ?? r.paymentDate ?? r.paidDate) as string | undefined;
+    if (!payRaw || typeof payRaw !== 'string') continue;
+    const payDate = payRaw.slice(0, 10);
+    const amt =
+      Number(r.adjustedAmount ?? r.amount ?? r.dividend ?? r.cashAmount ?? 0) || 0;
+    if (!Number.isFinite(amt) || amt <= 0) continue;
+    const curUp = String(r.currency ?? '').toUpperCase();
+    const currency: 'USD' | 'SAR' = curUp === 'SAR' ? 'SAR' : 'USD';
+    out.push({ payDate, amountPerShare: amt, currency });
+  }
+  return out;
+}
+
+/**
+ * Historical dividend payments for a symbol (cash per share). Uses Finnhub `stock/dividend`.
+ * Dates must be `YYYY-MM-DD`. Throttled via `finnhubFetch` queue.
+ */
+export async function fetchStockDividendHistory(
+  symbol: string,
+  fromIso: string,
+  toIso: string,
+): Promise<StockDividendPayment[]> {
+  if (!symbol?.trim()) return [];
+  try {
+    const raw = await get<unknown>('/stock/dividend', {
+      symbol: toFinnhubSymbol(symbol),
+      from: fromIso,
+      to: toIso,
+    });
+    return parseDividendRows(raw);
+  } catch (e) {
+    console.warn('Finnhub stock/dividend failed:', symbol, e);
+    return [];
+  }
+}
+
 export interface HoldingFundamentals {
   symbol: string;
   currency?: string;

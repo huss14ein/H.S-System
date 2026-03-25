@@ -29,6 +29,7 @@ import { parseMoneyInput, roundMoney, roundQuantity } from '../utils/money';
 import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
 import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd } from '../utils/currencyMath';
+import AIAdvisor from '../components/AIAdvisor';
 
 // --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; preferredType?: AssetType; }> = ({ isOpen, onClose, onSave, assetToEdit, preferredType = 'Property' }) => {
@@ -43,6 +44,7 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
     const [issueDate, setIssueDate] = useState('');
     const [maturityDate, setMaturityDate] = useState('');
     const [notes, setNotes] = useState('');
+    const [formError, setFormError] = useState<string | null>(null);
 
     React.useEffect(() => {
         if (assetToEdit) {
@@ -70,17 +72,54 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
             setMaturityDate('');
             setNotes('');
         }
+        setFormError(null);
     }, [assetToEdit, isOpen, preferredType, getLearnedDefault]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
+        setFormError(null);
+        const parsedValue = parseMoneyInput(value);
+        const parsedPurchasePrice = purchasePrice.trim() !== '' ? parseMoneyInput(purchasePrice) : undefined;
+        const parsedMonthlyRent = type === 'Property' && isRental ? parseMoneyInput(monthlyRent) : undefined;
+        if (!name.trim()) {
+            setFormError('Asset name is required.');
+            return;
+        }
+        if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+            setFormError('Current value must be a non-negative number.');
+            return;
+        }
+        if (parsedPurchasePrice != null && (!Number.isFinite(parsedPurchasePrice) || parsedPurchasePrice < 0)) {
+            setFormError('Purchase price must be a non-negative number.');
+            return;
+        }
+        if (type === 'Property' && isRental && (parsedMonthlyRent == null || !Number.isFinite(parsedMonthlyRent) || parsedMonthlyRent < 0)) {
+            setFormError('Monthly rent must be a non-negative number.');
+            return;
+        }
+        if (type === 'Sukuk') {
+            const issueMs = issueDate ? new Date(issueDate).getTime() : Number.NaN;
+            const maturityMs = maturityDate ? new Date(maturityDate).getTime() : Number.NaN;
+            if (!issueDate || Number.isNaN(issueMs)) {
+                setFormError('Issue / subscription date is required and must be valid.');
+                return;
+            }
+            if (!maturityDate || Number.isNaN(maturityMs)) {
+                setFormError('Maturity date is required and must be valid.');
+                return;
+            }
+            if (maturityMs < issueMs) {
+                setFormError('Maturity date cannot be before issue date.');
+                return;
+            }
+        }
         const newAsset: Asset = {
             id: assetToEdit ? assetToEdit.id : `asset${Date.now()}`,
-            name, type, value: parseMoneyInput(value),
-            purchasePrice: purchasePrice.trim() !== '' ? parseMoneyInput(purchasePrice) : undefined,
+            name: name.trim(), type, value: parsedValue,
+            purchasePrice: parsedPurchasePrice,
             isRental: type === 'Property' ? isRental : undefined,
-            monthlyRent: type === 'Property' && isRental ? parseMoneyInput(monthlyRent) : undefined,
-            goalId: assetToEdit?.goalId, owner: owner || undefined,
+            monthlyRent: parsedMonthlyRent,
+            goalId: assetToEdit?.goalId, owner: owner.trim() || undefined,
             issueDate: type === 'Sukuk' && issueDate.trim() !== '' ? issueDate.trim().slice(0, 10) : undefined,
             maturityDate: type === 'Sukuk' && maturityDate.trim() !== '' ? maturityDate.trim().slice(0, 10) : undefined,
             notes: notes.trim() !== '' ? notes.trim() : undefined,
@@ -102,8 +141,8 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
                     <option value="Vehicle">Vehicle</option>
                     <option value="Other">Other</option>
                 </select>
-                <label className="block text-sm font-medium text-gray-700 flex items-center">Current Value <InfoHint text="Use your best current market estimate; this affects net worth and allocation insights." /></label><input type="number" placeholder="Current Value" value={value} onChange={e => setValue(e.target.value)} required className="input-base"/>
-                <input type="number" placeholder="Purchase Price (optional)" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} className="input-base"/>
+                <label className="block text-sm font-medium text-gray-700 flex items-center">Current Value <InfoHint text="Use your best current market estimate; this affects net worth and allocation insights." /></label><input type="number" min="0" step="any" placeholder="Current Value" value={value} onChange={e => setValue(e.target.value)} required className="input-base"/>
+                <input type="number" min="0" step="any" placeholder="Purchase Price (optional)" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} className="input-base"/>
                 <label className="block text-sm font-medium text-gray-700 flex items-center">Owner (optional) <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father for managed wealth (excluded from your net worth)." /></label><input type="text" placeholder="Owner (e.g., Father, Spouse) or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="input-base" />
                 {type === 'Sukuk' && (
                     <div className="space-y-3 border-t border-sky-100 pt-4 rounded-lg bg-sky-50/40 px-3 py-3">
@@ -117,7 +156,7 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
                 {type === 'Property' && (
                     <div className="space-y-2 border-t pt-4">
                         <label className="flex items-center"><input type="checkbox" checked={isRental} onChange={e => setIsRental(e.target.checked)} className="h-4 w-4 text-primary rounded"/> <span className="ml-2">Is this a rental property?</span></label>
-                        {isRental && <input type="number" placeholder="Monthly Rent" value={monthlyRent} onChange={e => setMonthlyRent(e.target.value)} className="input-base"/>}
+                        {isRental && <input type="number" min="0" step="any" placeholder="Monthly Rent" value={monthlyRent} onChange={e => setMonthlyRent(e.target.value)} className="input-base"/>}
                     </div>
                 )}
                 <div className="border-t border-slate-200 pt-4">
@@ -136,6 +175,7 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
                     />
                     <p className="text-xs text-slate-500 mt-1">{notes.length} / 5000</p>
                 </div>
+                {formError && <p className="text-sm text-danger bg-red-50 border border-red-200 rounded p-2">{formError}</p>}
                 <button type="submit" className="w-full btn-primary">Save Asset</button>
             </form>
         </Modal>
@@ -536,6 +576,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
     const [groundingChunks, setGroundingChunks] = useState<any[]>([]);
     const [physicalAssetFilter, setPhysicalAssetFilter] = useState<'All' | 'Property' | 'Sukuk' | 'Vehicle' | 'Other'>('All');
+    const [lastCommodityRefreshAt, setLastCommodityRefreshAt] = useState<string | null>(null);
 
     useEffect(() => {
         if (pageAction === 'open-asset-modal') {
@@ -599,7 +640,10 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             if (prices.length > 0) {
                 const match = (p: { symbol: string }, h: CommodityHolding) => (p.symbol || '').toUpperCase() === (h.symbol || '').toUpperCase();
                 const updates = commodityHoldings.map((h: CommodityHolding) => { const p = prices.find(pr => match(pr, h)); return p ? { id: h.id, currentValue: p.price * h.quantity } : null; }).filter((u: { id: string; currentValue: number } | null): u is { id: string; currentValue: number } => u !== null);
-                if (updates.length > 0) await batchUpdateCommodityHoldingValues(updates);
+                if (updates.length > 0) {
+                    await batchUpdateCommodityHoldingValues(updates);
+                    setLastCommodityRefreshAt(new Date().toISOString());
+                }
             }
         } catch (error) {
             alert(`Failed to update commodity prices (Finnhub for metals, Binance for Bitcoin).\n\n${formatAiError(error)}`);
@@ -614,6 +658,59 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
         return orderedAssets.filter((a: Asset) => a.type === physicalAssetFilter);
     }, [orderedAssets, physicalAssetFilter]);
     const orderedCommodities = useMemo(() => [...commodityList].sort((a, b) => (a.name || '').localeCompare(b.name || '')), [commodityList]);
+    const assetsValidationWarnings = useMemo(() => {
+        const warnings: string[] = [];
+        if (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0) warnings.push('FX rate is invalid. Commodity USD-to-SAR conversion may be inaccurate.');
+        const goalIds = new Set((data?.goals ?? []).map((g) => g.id));
+        const badAssetValues = assetsList.filter((a: Asset) => !Number.isFinite(Number(a.value)) || Number(a.value) < 0).length;
+        if (badAssetValues > 0) warnings.push(`${badAssetValues} physical asset(s) have invalid current value.`);
+        const badAssetPurchase = assetsList.filter((a: Asset) => a.purchasePrice != null && (!Number.isFinite(Number(a.purchasePrice)) || Number(a.purchasePrice) < 0)).length;
+        if (badAssetPurchase > 0) warnings.push(`${badAssetPurchase} physical asset(s) have invalid purchase price.`);
+        const badRental = assetsList.filter((a: Asset) => a.isRental && (!Number.isFinite(Number(a.monthlyRent)) || Number(a.monthlyRent) < 0)).length;
+        if (badRental > 0) warnings.push(`${badRental} rental asset(s) have invalid monthly rent.`);
+        const badSukukDates = assetsList.filter((a: Asset) => {
+            if (a.type !== 'Sukuk') return false;
+            const issue = a.issueDate ? new Date(a.issueDate).getTime() : Number.NaN;
+            const maturity = a.maturityDate ? new Date(a.maturityDate).getTime() : Number.NaN;
+            return Number.isNaN(issue) || Number.isNaN(maturity) || maturity < issue;
+        }).length;
+        if (badSukukDates > 0) warnings.push(`${badSukukDates} sukuk asset(s) have missing/invalid issue or maturity dates.`);
+        const brokenAssetLinks = assetsList.filter((a: Asset) => a.goalId && !goalIds.has(a.goalId)).length;
+        if (brokenAssetLinks > 0) warnings.push(`${brokenAssetLinks} physical asset goal link(s) are stale (goal was deleted).`);
+        const badCommodities = commodityList.filter((h: CommodityHolding) => !Number.isFinite(Number(h.quantity)) || Number(h.quantity) <= 0 || !Number.isFinite(Number(h.currentValue)) || Number(h.currentValue) < 0 || !Number.isFinite(Number(h.purchaseValue)) || Number(h.purchaseValue) < 0).length;
+        if (badCommodities > 0) warnings.push(`${badCommodities} commodity holding(s) contain invalid quantity/value.`);
+        const brokenCommodityLinks = commodityList.filter((h: CommodityHolding) => h.goalId && !goalIds.has(h.goalId)).length;
+        if (brokenCommodityLinks > 0) warnings.push(`${brokenCommodityLinks} commodity goal link(s) are stale (goal was deleted).`);
+        const recomputedPhysical = assetsList.reduce((sum: number, a: Asset) => sum + (Number(a.value) || 0), 0);
+        const recomputedCommodities = commodityList.reduce((sum: number, h: CommodityHolding) => sum + (Number(h.currentValue) || 0), 0);
+        const recomputedTotal = recomputedPhysical + recomputedCommodities;
+        if (Math.abs(recomputedTotal - totalAssetValue) > 0.01) warnings.push('Asset total card is out of sync with row totals.');
+        return warnings;
+    }, [sarPerUsd, data?.goals, assetsList, commodityList, totalAssetValue]);
+    const assetsAiContext = useMemo(() => {
+        const now = new Date();
+        const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const byType = new Map<string, number>();
+        for (const a of assetsList as Asset[]) {
+            const key = a.type || 'Other';
+            byType.set(key, (byType.get(key) ?? 0) + (Number(a.value) || 0));
+        }
+        for (const c of commodityList as CommodityHolding[]) {
+            const key = c.name || 'Other';
+            byType.set(key, (byType.get(key) ?? 0) + (Number(c.currentValue) || 0));
+        }
+        const compositionData = Array.from(byType.entries()).map(([name, value]) => ({ name, value }));
+        return {
+            spendingData: [
+                { category: 'Physical Assets', value: totalPhysicalAssetValue },
+                { category: 'Metals & Crypto', value: totalCommodityValue },
+                { category: 'Monthly Rental Income', value: totalRentalIncome },
+                { category: 'Total Assets', value: totalAssetValue },
+            ],
+            trendData: [{ month, value: totalAssetValue }],
+            compositionData: compositionData.length > 0 ? compositionData : [{ name: 'No Assets', value: 0 }],
+        };
+    }, [assetsList, commodityList, totalPhysicalAssetValue, totalCommodityValue, totalRentalIncome, totalAssetValue]);
 
     if (loading || !data) {
         return (
@@ -664,6 +761,15 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} tooltip="Personal commodity holdings only." />
                 <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} tooltip="Rental income from your personal rental-flagged properties." />
             </div>
+            {assetsValidationWarnings.length > 0 && (
+                <SectionCard title="Assets validation checks" collapsible collapsibleSummary="Data quality and wiring checks" defaultExpanded>
+                    <ul className="space-y-1 text-sm text-amber-800">
+                        {assetsValidationWarnings.slice(0, 8).map((w, i) => (
+                            <li key={`aw-${i}`}>- {w}</li>
+                        ))}
+                    </ul>
+                </SectionCard>
+            )}
 
             <SectionCard
                 title="Physical Assets"
@@ -707,16 +813,23 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 collapsibleSummary="Gold, silver, crypto"
                 defaultExpanded
                 headerAction={
-                    <button
-                        type="button"
-                        onClick={handleUpdatePrices}
-                        disabled={isUpdatingPrices || commodityList.length === 0}
-                        title={commodityList.length === 0 ? "Add a commodity to update prices" : "Update prices"}
-                        className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        <SparklesIcon className="h-4 w-4" />
-                        {isUpdatingPrices ? 'Updating...' : 'Update Prices'}
-                    </button>
+                    <div className="flex flex-col items-end gap-1">
+                        <button
+                            type="button"
+                            onClick={handleUpdatePrices}
+                            disabled={isUpdatingPrices || commodityList.length === 0}
+                            title={commodityList.length === 0 ? "Add a commodity to update prices" : "Update prices"}
+                            className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            <SparklesIcon className="h-4 w-4" />
+                            {isUpdatingPrices ? 'Updating...' : 'Update Prices'}
+                        </button>
+                        {lastCommodityRefreshAt && (
+                            <p className="text-[11px] text-slate-500">
+                                Last successful check: {new Date(lastCommodityRefreshAt).toLocaleString()}
+                            </p>
+                        )}
+                    </div>
                 }
             >
                 <div className="mb-4 rounded-lg bg-slate-50/80 border border-slate-200 p-3 sm:p-4 min-w-0">
@@ -749,6 +862,14 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                     {commodityList.length === 0 && <p className="empty-state col-span-full py-8 text-center text-slate-500">No metals or crypto added yet. Use the menu above to add a commodity.</p>}
                 </div>
             </SectionCard>
+
+            <AIAdvisor
+                pageContext="analysis"
+                contextData={assetsAiContext}
+                title="Assets AI Advisor"
+                subtitle="Allocation clarity, valuation signals, and asset-quality insights."
+                buttonLabel="Get AI Assets Insights"
+            />
             
             <AssetModal isOpen={isAssetModalOpen} onClose={() => setIsAssetModalOpen(false)} onSave={handleSaveAsset} assetToEdit={assetToEdit} preferredType={preferredAssetType} />
             <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} goals={data?.goals ?? []} sarPerUsd={sarPerUsd} />

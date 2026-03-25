@@ -1,24 +1,30 @@
-import React, { createContext, useState, useContext, ReactNode } from 'react';
+import React, { createContext, useState, useContext, useCallback, ReactNode } from 'react';
+import { DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
 
 type Currency = 'SAR' | 'USD';
 
 interface CurrencyContextType {
   currency: Currency;
   setCurrency: (currency: Currency) => void;
-  /** SAR per 1 USD — multiply USD amounts to convert to SAR (same as `toSAR` / `resolveSarPerUsd`). */
+  /** SAR per 1 USD — kept in sync with `resolveSarPerUsd(data)` via `ExchangeRateSync` (Wealth Ultra / fallbacks). */
   exchangeRate: number;
+  setExchangeRate: (rate: number) => void;
 }
 
 export const CurrencyContext = createContext<CurrencyContextType | null>(null);
 
 export const CurrencyProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [currency, setCurrency] = useState<Currency>('SAR');
-    const exchangeRate = 3.75; // 1 USD = 3.75 SAR
+    const [exchangeRate, setExchangeRateState] = useState<number>(DEFAULT_SAR_PER_USD);
+    const setExchangeRate = useCallback((rate: number) => {
+        if (Number.isFinite(rate) && rate > 0) setExchangeRateState(rate);
+    }, []);
 
     const value = {
         currency,
         setCurrency,
-        exchangeRate
+        exchangeRate,
+        setExchangeRate,
     };
 
     return (

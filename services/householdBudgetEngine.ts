@@ -95,8 +95,8 @@ export type HouseholdEngineProfile = 'Moderate' | 'Conservative' | 'Aggressive' 
 export const HOUSEHOLD_ENGINE_PROFILES: Record<HouseholdEngineProfile, { label: string; description: string }> = {
   Moderate: { label: 'Moderate', description: 'Balanced savings and spending. Good for stable income and medium-term goals.' },
   Conservative: { label: 'Conservative', description: 'Higher emergency and reserve allocation. Prioritizes safety and liquidity.' },
-  Aggressive: { label: 'Aggressive', description: 'More toward goals and investing. Suited for higher risk tolerance.' },
-  Growth: { label: 'Growth', description: 'Similar to Aggressive; maximizes goal and investment allocation.' },
+  Aggressive: { label: 'Aggressive', description: 'Wider spending envelope and higher risk tolerance; still allocates to goals and investing.' },
+  Growth: { label: 'Growth', description: 'Tighter discretionary envelope than Aggressive; prioritizes goals, retirement, and investing over day-to-day spend.' },
 };
 
 /** Default months of expenses to target for emergency fund (e.g. 6). */
@@ -162,7 +162,7 @@ export type SaudiBudgetCategorySuggestion = HouseholdBudgetCategorySuggestion;
 
 /** KSA expense category descriptions for UI help text and dropdowns. */
 export const KSA_EXPENSE_CATEGORY_HINTS: Record<string, string> = {
-  'Housing Rent (Monthly)': 'If paid monthly; common in newer apartments.',
+  'Housing Rent': 'Total rent or mortgage for the year (one yearly budget).',
   'Groceries & Supermarket': 'Food, toiletries, and cleaning supplies.',
   'Utilities': 'Electricity (SEC), Water (NWC). Note: Electricity spikes in summer.',
   'Telecommunications': 'Home Fiber/5G internet and mobile data plans.',
@@ -173,7 +173,6 @@ export const KSA_EXPENSE_CATEGORY_HINTS: Record<string, string> = {
   'Debt/Loans': 'Personal loan installments or credit card minimums.',
   'Remittances': 'Funds sent to family outside KSA (for expats).',
   'Pocket Money': 'Cash for small daily needs (tea, snacks, parking).',
-  'Housing Rent (Semi-Annual)': 'Most common in KSA: 2 checks per year.',
   'School Tuition (Semester)': 'Private/international school fees per semester.',
   'Bulk Household Maintenance': 'AC cleaning/servicing before and after summer.',
   'Iqama Renewal': 'Government fee for residency (expats).',
@@ -192,11 +191,12 @@ export const KSA_EXPENSE_CATEGORY_HINTS: Record<string, string> = {
 
 /**
  * How much extra room groceries get vs the neutral profile (after the global +10% bump).
- * Conservative = higher essential-food envelope; Aggressive/Growth = leaner vs investing focus.
+ * Conservative = higher essential-food envelope; Aggressive = leaner; Growth = slightly more room than Aggressive while prioritizing investments elsewhere.
  */
 function groceryProfileSpendingMultiplier(profile: HouseholdEngineProfile): number {
   if (profile === 'Conservative') return 1.06;
-  if (profile === 'Aggressive' || profile === 'Growth') return 0.94;
+  if (profile === 'Aggressive') return 0.94;
+  if (profile === 'Growth') return 0.96;
   return 1.0;
 }
 
@@ -257,10 +257,15 @@ function tierProfileTilt(profile: HouseholdEngineProfile, tier: 'Core' | 'Suppor
     if (tier === 'Supporting') return 1.025;
     return 0.965;
   }
-  if (profile === 'Aggressive' || profile === 'Growth') {
+  if (profile === 'Aggressive') {
     if (tier === 'Core') return 0.985;
     if (tier === 'Supporting') return 1.045;
     return 1.065;
+  }
+  if (profile === 'Growth') {
+    if (tier === 'Core') return 0.992;
+    if (tier === 'Supporting') return 1.03;
+    return 1.04;
   }
   return 1;
 }
@@ -296,20 +301,14 @@ export function generateHouseholdBudgetCategories(
   const incomeAnnual =
     monthlySalary > 0 ? monthlySalary * 12 : Math.max(72000, Math.round(effectiveTemplateBaseExpense(12000, adults, kids) * 12));
   const income = incomeAnnual;
-  const savingsMultiplier = profile === 'Conservative' ? 1.2 : profile === 'Aggressive' || profile === 'Growth' ? 0.85 : 1;
+  const savingsMultiplier =
+    profile === 'Conservative' ? 1.2 : profile === 'Growth' ? 0.92 : profile === 'Aggressive' ? 0.85 : 1;
   const result: HouseholdBudgetCategorySuggestion[] = [];
 
   const pct = (share: number, tier: 'Core' | 'Supporting' | 'Optional') =>
     applyTierUplift(baseExpense * share, tier, profile);
 
   // ——— Monthly (recurring, every 30 days) ———
-  result.push({
-    category: 'Housing Rent (Monthly)',
-    limit: pct(0.3, 'Core'),
-    period: 'monthly',
-    tier: 'Core',
-    hint: KSA_EXPENSE_CATEGORY_HINTS['Housing Rent (Monthly)'],
-  });
   const groceriesPct = groceryShareOfBaseExpense(adults, kids, profile);
   result.push({
     category: 'Groceries & Supermarket',
@@ -398,15 +397,15 @@ export function generateHouseholdBudgetCategories(
     });
   }
 
-  // ——— 6-Month (semi-annual): store as yearly, limit = total per year (2 payments) ———
+  // ——— Yearly / semester-style (limits as stored period) ———
   const semiCore = (share: number) => applyTierUplift(baseExpense * share * 2, 'Core', profile);
   const semiSup = (share: number) => applyTierUplift(baseExpense * share * 2, 'Supporting', profile);
   result.push({
-    category: 'Housing Rent (Semi-Annual)',
-    limit: semiCore(0.3),
+    category: 'Housing Rent',
+    limit: applyTierUplift(baseExpense * 0.3 * 12, 'Core', profile),
     period: 'yearly',
     tier: 'Core',
-    hint: KSA_EXPENSE_CATEGORY_HINTS['Housing Rent (Semi-Annual)'],
+    hint: KSA_EXPENSE_CATEGORY_HINTS['Housing Rent'],
   });
   result.push({
     category: 'School Tuition (Semester)',
@@ -555,13 +554,17 @@ const PROFILE_BULK_ENVELOPE_PCT: Partial<Record<string, number>> = {
   Conservative: 0.52 * ENVELOPE_BASE_BUMP,
   Moderate: 0.58 * ENVELOPE_BASE_BUMP,
   Aggressive: 0.64 * ENVELOPE_BASE_BUMP,
-  Growth: 0.62 * ENVELOPE_BASE_BUMP,
+  /** Tighter discretionary envelope than Aggressive; pairs with higher goal/investing weights in the engine. */
+  Growth: 0.58 * ENVELOPE_BASE_BUMP,
 };
 
 /**
  * When **all** categories are selected, returns the base suggestions unchanged (engine-merged template).
  * When **fewer** are selected, reallocates `salary × envelope(profile)` across selected rows in proportion
  * to each row’s monthly-equivalent weight from the base list so limits stay synced with salary + profile + selection count.
+ *
+ * When **no** categories are selected, returns the base list unchanged (full template limits on every row).
+ * The Budgets UI overrides that after the template has synced so “deselect all” shows zero limits instead of misleading full amounts.
  */
 export function computeBulkAddLimitsForSelection(
   baseSuggestions: HouseholdBudgetCategorySuggestion[],
@@ -575,9 +578,11 @@ export function computeBulkAddLimitsForSelection(
   const salary = Number(monthlySalary) || 0;
   if (salary <= 0) return baseSuggestions.map((c) => ({ ...c }));
 
-  const selected = new Set(selectedCategoryNames.filter(Boolean));
+  const templateCategorySet = new Set(baseSuggestions.map((c) => c.category));
+  /** Ignore stale names so “all current categories selected” still counts as full template (no bogus subset reallocation). */
+  const selected = new Set(selectedCategoryNames.filter((n) => n && templateCategorySet.has(n)));
   const allSelected =
-    selected.size === baseSuggestions.length && baseSuggestions.every((c) => selected.has(c.category));
+    baseSuggestions.length > 0 && baseSuggestions.every((c) => selected.has(c.category));
   if (allSelected) return baseSuggestions.map((c) => ({ ...c }));
 
   const selectedRows = baseSuggestions.filter((c) => selected.has(c.category));
@@ -734,14 +739,23 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
         investing: 0.05,         // 5% of income
         kidsFutureSavings: 0.03, // 3% of income
       };
-    } else if (profile === 'Aggressive' || profile === 'Growth') {
+    } else if (profile === 'Aggressive') {
       return {
-        emergencySavings: 0.05, // 5% of income
-        reserveSavings: 0.03,   // 3% of income
-        goalSavings: 0.10,      // 10% of income
-        retirementSavings: 0.20, // 20% of income
-        investing: 0.15,         // 15% of income
-        kidsFutureSavings: 0.05, // 5% of income
+        emergencySavings: 0.05,
+        reserveSavings: 0.03,
+        goalSavings: 0.08,
+        retirementSavings: 0.18,
+        investing: 0.12,
+        kidsFutureSavings: 0.05,
+      };
+    } else if (profile === 'Growth') {
+      return {
+        emergencySavings: 0.06,
+        reserveSavings: 0.04,
+        goalSavings: 0.12,
+        retirementSavings: 0.22,
+        investing: 0.18,
+        kidsFutureSavings: 0.05,
       };
     } else { // Moderate
       return {
@@ -788,7 +802,6 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
     };
 
     const semiAnnualExpenses = {
-      housingSemiAnnual: tierAdjustedAmount(baseExpense * 0.3, 'Core', engineProfile) / 6,
       schoolTuition: tierAdjustedAmount(baseExpense * 0.1, 'Core', engineProfile) / 6,
       householdMaintenance: tierAdjustedAmount(baseExpense * 0.03, 'Supporting', engineProfile) / 6,
     };

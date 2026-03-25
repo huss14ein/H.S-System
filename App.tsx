@@ -4,12 +4,14 @@ import { Page } from './types';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import PendingApprovalPage from './pages/PendingApprovalPage';
-import { AuthContext, AuthProvider } from './context/AuthContext';
+import { AuthContext } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { DataProvider } from './context/DataContext';
 import { CurrencyProvider } from './context/CurrencyContext';
+import ExchangeRateSync from './components/ExchangeRateSync';
 import { MarketDataProvider } from './context/MarketDataContext';
 import { NotificationsProvider } from './context/NotificationsContext';
+import { TodosProvider } from './context/TodosContext';
 import MarketSimulator from './components/MarketSimulator';
 import { AiProvider } from './context/AiContext';
 import LoadingSpinner from './components/LoadingSpinner';
@@ -177,7 +179,7 @@ const App: React.FC = () => {
       case 'Forecast': return <Forecast setActivePage={setActivePage} />;
       case 'Analysis': return <Analysis setActivePage={setActivePage} />;
       case 'Zakat': return <Zakat setActivePage={setActivePage} />;
-      case 'Notifications': return <Notifications setActivePage={setActivePage} />;
+      case 'Notifications': return <Notifications setActivePage={setActivePage} pageAction={pageAction} clearPageAction={clearPageAction} triggerPageAction={triggerPageAction} />;
       case 'Settings': return <Settings setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       
       // Investment & Strategy Pages (sub-views live inside Investments only)
@@ -218,9 +220,7 @@ const App: React.FC = () => {
     const showSignup = authHash === '#signup';
     return (
       <ThemeProvider>
-        <AuthProvider>
-          {showSignup ? <SignupPage /> : <LoginPage />}
-        </AuthProvider>
+        {showSignup ? <SignupPage /> : <LoginPage />}
       </ThemeProvider>
     );
   }
@@ -228,9 +228,7 @@ const App: React.FC = () => {
   if (isApproved === false) {
     return (
       <ThemeProvider>
-        <AuthProvider>
-          <PendingApprovalPage />
-        </AuthProvider>
+        <PendingApprovalPage />
       </ThemeProvider>
     );
   }
@@ -238,51 +236,50 @@ const App: React.FC = () => {
   if (isApproved === null) {
     return (
       <ThemeProvider>
-        <AuthProvider>
-          <div className="flex justify-center items-center min-h-screen bg-gray-50">
-            <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Checking access" />
-          </div>
-        </AuthProvider>
+        <div className="flex justify-center items-center min-h-screen bg-gray-50">
+          <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Checking access" />
+        </div>
       </ThemeProvider>
     );
   }
 
   return (
     <ThemeProvider>
-        <AuthProvider>
-          <ToastProvider>
-            <SelfLearningProvider>
-            <AiProvider>
-              <DataProvider>
-                <CurrencyProvider>
-                  <MarketDataProvider>
-                    <NotificationsProvider>
-                      <StatementProcessingProvider>
-                        <AIProvider>
-                          <ReconciliationProvider>
-                            <MultiBankProvider>
-                              <PrivacyProvider>
-                                <MarketSimulator />
-                                <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction}>
-                                  <AppErrorBoundary pageLabel={activePage} onRecover={() => setActivePage('Dashboard')}>
-                                    <Suspense fallback={<LoadingSpinner className="min-h-[24rem]" />}>
-                                      {renderPage()}
-                                    </Suspense>
-                                  </AppErrorBoundary>
-                                </Layout>
-                              </PrivacyProvider>
-                            </MultiBankProvider>
-                          </ReconciliationProvider>
-                        </AIProvider>
-                      </StatementProcessingProvider>
-                    </NotificationsProvider>
-                    </MarketDataProvider>
-                </CurrencyProvider>
-              </DataProvider>
-            </AiProvider>
-            </SelfLearningProvider>
-          </ToastProvider>
-        </AuthProvider>
+      <ToastProvider>
+        <SelfLearningProvider>
+        <AiProvider>
+          <DataProvider>
+            <CurrencyProvider>
+              <ExchangeRateSync />
+              <MarketDataProvider>
+                <TodosProvider>
+                  <NotificationsProvider>
+                  <StatementProcessingProvider>
+                    <AIProvider>
+                      <ReconciliationProvider>
+                        <MultiBankProvider>
+                          <PrivacyProvider>
+                            <MarketSimulator />
+                            <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction} triggerPageActionPair={triggerPageAction}>
+                              <AppErrorBoundary pageLabel={activePage} onRecover={() => setActivePage('Dashboard')}>
+                                <Suspense fallback={<LoadingSpinner className="min-h-[24rem]" />}>
+                                  {renderPage()}
+                                </Suspense>
+                              </AppErrorBoundary>
+                            </Layout>
+                          </PrivacyProvider>
+                        </MultiBankProvider>
+                      </ReconciliationProvider>
+                    </AIProvider>
+                  </StatementProcessingProvider>
+                  </NotificationsProvider>
+                </TodosProvider>
+                </MarketDataProvider>
+            </CurrencyProvider>
+          </DataProvider>
+        </AiProvider>
+        </SelfLearningProvider>
+      </ToastProvider>
     </ThemeProvider>
   );
 };

@@ -1,4 +1,4 @@
-import React, { useState, useContext, useRef, useEffect } from 'react';
+import React, { useState, useContext, useRef, useEffect, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useStatementProcessing } from '../context/StatementProcessingContext';
 import PageLayout from '../components/PageLayout';
@@ -11,6 +11,10 @@ import { parseBankStatement, parseSMSTransactions, parseTradingStatement, valida
 import { Transaction, InvestmentTransaction, Page } from '../types';
 import InfoHint from '../components/InfoHint';
 import { findDuplicateTransactions } from '../services/dataQuality';
+import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import AIAdvisor from '../components/AIAdvisor';
+import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 
 interface StatementUploadProps {
   setActivePage?: (page: Page) => void;
@@ -19,6 +23,7 @@ interface StatementUploadProps {
 const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
   const { data, loading, addTransaction, recordTrade } = useContext(DataContext)!;
   const { commitParsedStatementFromUpload } = useStatementProcessing();
+  const { formatCurrencyString } = useFormatCurrency();
   const [activeTab, setActiveTab] = useState<'bank' | 'sms' | 'trading'>('bank');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [smsText, setSmsText] = useState('');
@@ -33,11 +38,57 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
   const [selectedTransactions, setSelectedTransactions] = useState<Set<number>>(new Set());
   const [validationWarnings, setValidationWarnings] = useState<string[]>([]);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [parseStats, setParseStats] = useState<{
+    totalTransactions: number;
+    validTransactions: number;
+    invalidTransactions: number;
+    duplicateCount: number;
+    dateRange: { start: string; end: string } | null;
+    amountRange: { min: number; max: number; total: number } | null;
+  } | null>(null);
   const [currentStatementId, setCurrentStatementId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const stmtInvSymbols = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          extractedInvestmentTransactions
+            .map((tx) => (tx.symbol || '').trim())
+            .filter((s) => s.length >= 2 && s !== 'CASH'),
+        ),
+      ),
+    [extractedInvestmentTransactions],
+  );
+  const { names: stmtCompanyNames } = useCompanyNames(stmtInvSymbols);
+
   const bankAccounts = (data?.accounts ?? []).filter(a => a.type !== 'Investment');
   const investmentAccounts = (data?.accounts ?? []).filter(a => a.type === 'Investment');
+  const selectedAccountObj = useMemo(
+    () => (data?.accounts ?? []).find((a) => a.id === selectedAccount) ?? null,
+    [data?.accounts, selectedAccount],
+  );
+  const selectedAccountCurrency = selectedAccountObj?.currency === 'USD' ? 'USD' : 'SAR';
+  const selectedAccountTypeForStatement = useMemo<'checking' | 'savings' | 'credit' | 'investment'>(() => {
+    if (!selectedAccountObj) return activeTab === 'trading' ? 'investment' : 'checking';
+    if (selectedAccountObj.type === 'Savings') return 'savings';
+    if (selectedAccountObj.type === 'Credit') return 'credit';
+    if (selectedAccountObj.type === 'Investment') return 'investment';
+    return 'checking';
+  }, [selectedAccountObj, activeTab]);
+  const setupValidationWarnings = useMemo(() => {
+    const warnings: string[] = [];
+    if ((activeTab === 'bank' || activeTab === 'sms') && bankAccounts.length === 0) {
+      warnings.push('No cash accounts are available for statement import.');
+    }
+    if (activeTab === 'trading' && investmentAccounts.length === 0) {
+      warnings.push('No investment accounts are available for trading statement import.');
+    }
+    if (parseStats?.invalidTransactions && parseStats.invalidTransactions > 0) {
+      warnings.push(`${parseStats.invalidTransactions} extracted transaction(s) failed validation and may be skipped.`);
+    }
+    return warnings;
+  }, [activeTab, bankAccounts.length, investmentAccounts.length, parseStats]);
 
   // When switching tabs, clear file state and fix account selection so it matches the tab
   useEffect(() => {
@@ -68,6 +119,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     setProcessingError(null);
     setValidationWarnings([]);
     setValidationErrors([]);
+    setParseStats(null);
     setIsProcessingFile(true);
     setProcessingProgress(10);
 
@@ -92,12 +144,14 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         setExtractedInvestmentTransactions(investmentTransactions);
         if (result.warnings) setValidationWarnings(result.warnings);
         if (result.errors) setValidationErrors(result.errors);
+        setParseStats(result.validation?.statistics ?? null);
       } else {
         const result = await parseBankStatement(file, selectedAccount);
         transactions = result.transactions;
         setExtractedTransactions(transactions);
         if (result.warnings) setValidationWarnings(result.warnings);
         if (result.errors) setValidationErrors(result.errors);
+        setParseStats(result.validation?.statistics ?? null);
       }
       
       setProcessingProgress(80);
@@ -117,7 +171,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
             bankInfo: {
               bankName: 'Auto-detected',
               accountNumber: selectedAccount || 'Unknown',
-              accountType: activeTab === 'trading' ? 'investment' : 'checking',
+              accountType: activeTab === 'trading' ? 'investment' : selectedAccountTypeForStatement,
             },
             accountId: selectedAccount || null,
             bankTransactions: activeTab === 'trading' ? undefined : transactions,
@@ -164,6 +218,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       setExtractedTransactions(result.transactions);
       if (result.warnings) setValidationWarnings(result.warnings);
       if (result.errors) setValidationErrors(result.errors);
+      setParseStats(result.validation?.statistics ?? null);
       setProcessingProgress(70);
       
       if (result.transactions.length > 0) {
@@ -173,7 +228,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
             bankInfo: {
               bankName: 'SMS Import',
               accountNumber: selectedAccount || 'Unknown',
-              accountType: 'checking',
+              accountType: selectedAccountTypeForStatement,
             },
             accountId: selectedAccount || null,
             bankTransactions: result.transactions,
@@ -321,6 +376,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       setSelectedTransactions(new Set());
       setValidationWarnings([]);
       setValidationErrors([]);
+      setParseStats(null);
       setCurrentStatementId(null);
       setProcessingProgress(0);
       setSmsText('');
@@ -383,6 +439,15 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       }
     >
       <div className="space-y-6">
+        {setupValidationWarnings.length > 0 && (
+          <SectionCard title="Statement upload validation checks" collapsible collapsibleSummary="Setup and parser checks" defaultExpanded>
+            <ul className="space-y-1 text-sm text-amber-800">
+              {setupValidationWarnings.map((w, idx) => (
+                <li key={`sv-${idx}`}>- {w}</li>
+              ))}
+            </ul>
+          </SectionCard>
+        )}
         {/* Tabs */}
         <div className="bg-white rounded-xl border border-slate-200 p-1">
           <div className="flex gap-1">
@@ -733,6 +798,23 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                 </ul>
               </div>
             )}
+            {parseStats && (
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
+                <p className="text-sm font-semibold text-slate-800 mb-2">Extraction quality summary</p>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs text-slate-700">
+                  <div>Total: {parseStats.totalTransactions}</div>
+                  <div>Valid: {parseStats.validTransactions}</div>
+                  <div>Invalid: {parseStats.invalidTransactions}</div>
+                  <div>In-file duplicates: {parseStats.duplicateCount}</div>
+                  <div>
+                    Range: {parseStats.dateRange ? `${parseStats.dateRange.start} to ${parseStats.dateRange.end}` : 'N/A'}
+                  </div>
+                  <div>
+                    Abs total: {parseStats.amountRange ? formatCurrencyString(parseStats.amountRange.total, { inCurrency: selectedAccountCurrency }) : 'N/A'}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Progress Indicator */}
             {processingProgress > 0 && processingProgress < 100 && (
@@ -834,7 +916,8 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                             <td className="px-4 py-3 text-sm text-slate-900">{new Date(tx.date).toLocaleDateString()}</td>
                             <td className="px-4 py-3 text-sm text-slate-900">{tx.description}</td>
                             <td className={`px-4 py-3 text-sm text-right font-medium ${tx.amount >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                              {tx.amount >= 0 ? '+' : ''}{tx.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SAR
+                              {tx.amount >= 0 ? '+' : '-'}
+                              {formatCurrencyString(Math.abs(tx.amount), { inCurrency: selectedAccountCurrency })}
                             </td>
                             <td className="px-4 py-3 text-sm text-slate-600">{tx.category || 'Uncategorized'}</td>
                             <td className="px-4 py-3 text-center">
@@ -926,7 +1009,18 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                                 {tx.type.toUpperCase()}
                               </span>
                             </td>
-                            <td className="px-4 py-3 text-sm font-medium text-slate-900">{tx.symbol}</td>
+                            <td className="px-4 py-3 text-sm font-medium text-slate-900 min-w-0 max-w-[180px]">
+                              {tx.symbol === 'CASH' || !tx.symbol ? (
+                                '—'
+                              ) : (
+                                <ResolvedSymbolLabel
+                                  symbol={tx.symbol}
+                                  names={stmtCompanyNames}
+                                  layout="inline"
+                                  symbolClassName="font-medium text-slate-900"
+                                />
+                              )}
+                            </td>
                             <td className="px-4 py-3 text-sm text-right text-slate-900">{tx.quantity}</td>
                             <td className="px-4 py-3 text-sm text-right text-slate-900">{tx.price.toFixed(2)}</td>
                             <td className="px-4 py-3 text-sm text-right font-medium text-slate-900">
@@ -984,6 +1078,13 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
             </div>
           </div>
         </Modal>
+        <AIAdvisor
+          pageContext="cashflow"
+          contextData={{ transactions: extractedTransactions, budgets: data?.budgets ?? [] }}
+          title="Statement Import Advisor"
+          subtitle="Review extraction quality and import risks before approving."
+          buttonLabel="Get AI Import Insights"
+        />
       </div>
     </PageLayout>
   );

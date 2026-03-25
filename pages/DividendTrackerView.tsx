@@ -1,106 +1,223 @@
-import React, { useState, useContext, useMemo, useCallback } from 'react';
+import React, { useState, useContext, useMemo, useCallback, useEffect, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from '../components/charts/chartTheme';
 import ChartContainer from '../components/charts/ChartContainer';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import { getAIDividendAnalysis, formatAiError } from '../services/geminiService';
+import { getAIDividendAnalysis, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
+import { getHoldingFundamentals, type HoldingFundamentals } from '../services/finnhubService';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { TrophyIcon } from '../components/icons/TrophyIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
+import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import { useCurrency } from '../context/CurrencyContext';
-import { toSAR, getAllInvestmentsValueInSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import {
+    toSAR,
+    resolveSarPerUsd,
+    personalInvestmentTerminalValueSAR,
+} from '../utils/currencyMath';
 import { unrealizedPnL } from '../services/portfolioMetrics';
-import type { Holding } from '../types';
-import type { Page } from '../types';
-import { approximatePortfolioMWRR, flowsFromInvestmentTransactionsInSAR } from '../services/portfolioXirr';
+import type { Holding, InvestmentTransaction, Page } from '../types';
+import { approximatePortfolioMWRR, flowsFromInvestmentTransactionsInSARWithDatedFx } from '../services/portfolioXirr';
+import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
+import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
+import { useAI } from '../context/AiContext';
+import { useToast } from '../context/ToastContext';
+import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
+import { resolveCanonicalAccountId, inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
+import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
+import InfoHint from '../components/InfoHint';
+import { syncFinnhubDividendsForHoldings, defaultDividendSyncWindow } from '../services/dividendFinnhubSync';
+
+const DIVIDEND_AI_LANG_KEY = 'finova_default_ai_lang_v1';
+const FINNHUB_DIV_SYNC_KEY = 'finova_dividend_finnhub_last_sync_v1';
 
 const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
-    const { data, loading } = useContext(DataContext)!;
+    const { data, loading, recordTrade, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { formatCurrencyString } = useFormatCurrency();
+    const { showToast } = useToast();
+    const { isAiAvailable } = useAI();
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [aiError, setAiError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [divDisplayLang, setDivDisplayLang] = useState<'en' | 'ar'>(() => {
+        try {
+            return typeof localStorage !== 'undefined' && localStorage.getItem(DIVIDEND_AI_LANG_KEY) === 'ar' ? 'ar' : 'en';
+        } catch {
+            return 'en';
+        }
+    });
+    const [aiAnalysisAr, setAiAnalysisAr] = useState<string | null>(null);
+    const [isTranslatingDiv, setIsTranslatingDiv] = useState(false);
+    const [fundMap, setFundMap] = useState<Record<string, HoldingFundamentals['dividend']>>({});
+    const [syncBusy, setSyncBusy] = useState(false);
+    const autoSyncStarted = useRef(false);
 
-    const { dividendIncomeYTD, monthlyDividendsChartData, recentDividendTransactions, projectedAnnualIncome, averageYield, topPayers, mwrrPct } = useMemo(() => {
-        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-        const personalAccountIds = new Set(accounts.map((a: { id: string }) => a.id));
-        const invTxPersonal = (data?.investmentTransactions ?? []).filter((t) => personalAccountIds.has(t.accountId ?? ''));
+    const accountsFull = data?.accounts ?? [];
+    const portfoliosAll = data?.investments ?? [];
+    const personalAccounts = useMemo(() => getPersonalAccounts(data), [data]);
+    const personalInvestments = useMemo(() => getPersonalInvestments(data), [data]);
+
+    const personalInvestmentAccountIds = useMemo(
+        () => personalAccounts.filter((a) => a.type === 'Investment').map((a) => a.id),
+        [personalAccounts],
+    );
+
+    const txHitsPersonalInvestment = useCallback(
+        (t: InvestmentTransaction) => {
+            const raw = (t.accountId ?? (t as { account_id?: string }).account_id ?? '').trim();
+            if (!raw) return false;
+            const canon = resolveCanonicalAccountId(raw, accountsFull);
+            const ids = new Set(personalAccounts.map((a) => a.id));
+            return ids.has(canon) || ids.has(raw);
+        },
+        [accountsFull, personalAccounts],
+    );
+
+    const invTxPersonal = useMemo(
+        () => (data?.investmentTransactions ?? []).filter(txHitsPersonalInvestment),
+        [data?.investmentTransactions, txHitsPersonalInvestment],
+    );
+
+    const {
+        dividendIncomeYTD,
+        monthlyDividendsChartData,
+        recentDividendTransactions,
+        projectedAnnualIncome,
+        averageYield,
+        topPayers,
+        mwrrPct,
+        mwrrNote,
+    } = useMemo(() => {
         const dividendTransactions = invTxPersonal.filter((t) => t.type === 'dividend');
         const now = new Date();
 
         const dividendIncomeYTD = dividendTransactions
-            .filter(t => new Date(t.date).getFullYear() === now.getFullYear())
-            .reduce((sum, t) => sum + toSAR(t.total ?? 0, t.currency ?? 'USD', sarPerUsd), 0);
+            .filter((t) => new Date(t.date).getFullYear() === now.getFullYear())
+            .reduce((sum, t) => {
+                const cur = inferInvestmentTransactionCurrency(t, accountsFull, portfoliosAll);
+                return sum + toSAR(t.total ?? 0, cur, sarPerUsd);
+            }, 0);
 
         const monthlyDividends = new Map<string, number>();
         const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
-        dividendTransactions.filter(t => new Date(t.date) >= twelveMonthsAgo).forEach(t => {
-            const monthKey = t.date.slice(0, 7); // YYYY-MM
-            monthlyDividends.set(monthKey, (monthlyDividends.get(monthKey) || 0) + toSAR(t.total ?? 0, t.currency ?? 'USD', sarPerUsd));
-        });
-        
-        const monthlyDividendsChartData = Array.from(monthlyDividends.entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([key, value]) => ({ 
-            name: new Date(key + '-02').toLocaleString('default', { month: 'short', year: '2-digit' }), 
-            "Dividend Income": value 
-        }));
+        dividendTransactions
+            .filter((t) => new Date(t.date) >= twelveMonthsAgo)
+            .forEach((t) => {
+                const monthKey = t.date.slice(0, 7);
+                const cur = inferInvestmentTransactionCurrency(t, accountsFull, portfoliosAll);
+                monthlyDividends.set(
+                    monthKey,
+                    (monthlyDividends.get(monthKey) || 0) + toSAR(t.total ?? 0, cur, sarPerUsd),
+                );
+            });
+
+        const monthlyDividendsChartData = Array.from(monthlyDividends.entries())
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([key, value]) => ({
+                name: new Date(key + '-02').toLocaleString('default', { month: 'short', year: '2-digit' }),
+                'Dividend Income': value,
+            }));
 
         const recentDividendTransactions = dividendTransactions
-            .filter(t => {
+            .filter((t) => {
                 const txDate = new Date(t.date);
                 return !isNaN(txDate.getTime());
             })
             .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-            .slice(0, 10);
+            .slice(0, 15);
 
-        const portfolios = (data as any)?.personalInvestments ?? data?.investments ?? [];
-        type HoldingRow = { currentValue?: number; dividendYield?: number; name?: string; symbol?: string; avgCost?: number; quantity?: number };
-        const allHoldings = portfolios.flatMap((p: { holdings?: HoldingRow[]; currency?: string }) => ((p.holdings ?? []) as HoldingRow[]).map(h => ({ ...h, portfolioCurrency: p.currency ?? 'USD' }))) as (HoldingRow & { portfolioCurrency?: string })[];
-        const totalInvestmentValue = allHoldings.reduce((sum: number, h) => sum + toSAR(h.currentValue ?? 0, (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR', sarPerUsd), 0);
+        type HoldingRow = Holding & { portfolioCurrency?: string };
+        const allHoldings: HoldingRow[] = personalInvestments.flatMap((p) =>
+            (p.holdings ?? []).map((h) => ({
+                ...h,
+                portfolioCurrency: resolveInvestmentPortfolioCurrency(p),
+            })),
+        );
+
+        const totalInvestmentValue = allHoldings.reduce(
+            (sum, h) => sum + toSAR(h.currentValue ?? 0, (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR', sarPerUsd),
+            0,
+        );
 
         const holdingsWithProjectedDividends = allHoldings
-            .filter(h => {
-                const yieldVal = h.dividendYield ?? 0;
-                return yieldVal > 0 && Number.isFinite(yieldVal) && yieldVal <= 100; // Validate yield is reasonable
-            })
             .map((h) => {
+                const sym = (h.symbol || '').trim().toUpperCase();
+                const live = sym ? fundMap[sym] : undefined;
+                const yieldVal = Number(h.dividendYield ?? live?.dividendYieldPct ?? 0) || 0;
+                const perShareAnnual = live?.dividendPerShareAnnual;
                 const holding = h as unknown as Holding;
                 const uPnL = unrealizedPnL(holding);
                 const costBasis = Math.max(0, Number(holding.avgCost) || 0) * Math.max(0, Number(holding.quantity) || 0);
                 const cv = Number(h.currentValue) || 0;
-                const dy = Number(h.dividendYield) || 0;
-                const annualDivLocal = cv * (dy / 100);
-                const yieldOnCostPct = costBasis > 0.01 && annualDivLocal > 0 ? (annualDivLocal / costBasis) * 100 : null;
+                const book = (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR';
+                const qty = Math.max(0, Number(h.quantity) || 0);
+
+                let annualCashBook = 0;
+                if (perShareAnnual && perShareAnnual > 0 && qty > 0) {
+                    annualCashBook = perShareAnnual * qty;
+                } else if (yieldVal > 0 && yieldVal <= 100 && cv > 0) {
+                    annualCashBook = cv * (yieldVal / 100);
+                }
+
+                const projected = toSAR(annualCashBook, book, sarPerUsd);
+                const unrealizedSAR = toSAR(uPnL, book, sarPerUsd);
+                const dy = yieldVal;
+                const yieldOnCostPct =
+                    costBasis > 0.01 && annualCashBook > 0 ? (annualCashBook / costBasis) * 100 : null;
+
                 return {
+                    symbol: sym,
                     name: h.name ?? h.symbol ?? '—',
-                    projected: toSAR(h.currentValue ?? 0, (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR', sarPerUsd) * (dy / 100),
-                    unrealizedSAR: toSAR(uPnL, (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR', sarPerUsd),
+                    projected,
+                    unrealizedSAR,
                     forwardYieldPct: dy,
                     yieldOnCostPct,
+                    include: annualCashBook > 0 && (dy > 0 || (perShareAnnual ?? 0) > 0),
                 };
-            });
+            })
+            .filter((x) => x.include);
 
-        const projectedAnnualIncome = holdingsWithProjectedDividends.reduce((sum: number, h: { projected: number }) => sum + h.projected, 0);
+        const projectedAnnualIncome = holdingsWithProjectedDividends.reduce((sum, h) => sum + h.projected, 0);
         const averageYield = totalInvestmentValue > 0 ? (projectedAnnualIncome / totalInvestmentValue) * 100 : 0;
         const topPayers = holdingsWithProjectedDividends
-            .sort((a: { projected: number }, b: { projected: number }) => b.projected - a.projected)
-            .slice(0, 5)
-            .map((h: { name?: string; projected: number; unrealizedSAR?: number; forwardYieldPct?: number; yieldOnCostPct?: number | null }) => ({
-                name: h.name ?? '',
-                projected: h.projected,
-                unrealizedSAR: h.unrealizedSAR,
-                forwardYieldPct: h.forwardYieldPct,
-                yieldOnCostPct: h.yieldOnCostPct,
-            }));
+            .sort((a, b) => b.projected - a.projected)
+            .slice(0, 5);
 
-        const flows = flowsFromInvestmentTransactionsInSAR(invTxPersonal, sarPerUsd);
-        const termVal = getAllInvestmentsValueInSAR(portfolios, sarPerUsd);
-        const mwrrPct = approximatePortfolioMWRR(flows, termVal, new Date().toISOString().slice(0, 10));
+        if (data) hydrateSarPerUsdDailySeries(data, exchangeRate);
+        const flows = flowsFromInvestmentTransactionsInSARWithDatedFx(
+            invTxPersonal.map((t) => ({
+                date: t.date,
+                type: t.type,
+                total: t.total,
+                currency: inferInvestmentTransactionCurrency(t, accountsFull, portfoliosAll),
+            })),
+            data ?? null,
+            exchangeRate,
+        );
+        const termVal = personalInvestmentTerminalValueSAR({
+            portfolios: personalInvestments,
+            investmentAccountIds: personalInvestmentAccountIds,
+            exchangeRate: sarPerUsd,
+            getAvailableCashForAccount,
+        });
+        const rawMwrr = approximatePortfolioMWRR(flows, termVal, new Date().toISOString().slice(0, 10));
+        let mwrrNote = '';
+        let mwrrPct: number | null = rawMwrr;
+        if (flows.length === 0 && termVal <= 0) {
+            mwrrPct = null;
+            mwrrNote = 'Add investment activity and holdings to estimate money-weighted return.';
+        } else if (rawMwrr != null && (!Number.isFinite(rawMwrr) || rawMwrr <= -90 || rawMwrr > 400)) {
+            mwrrPct = null;
+            mwrrNote =
+                'This estimate is outside a believable range—usually missing transfers, mixed currencies, or incomplete history. Keep recording deposits, buys, sells, and dividends.';
+        }
 
         return {
             dividendIncomeYTD,
@@ -110,12 +227,78 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
             averageYield,
             topPayers,
             mwrrPct,
+            mwrrNote,
         };
-    }, [data, sarPerUsd]);
+    }, [
+        data,
+        exchangeRate,
+        invTxPersonal,
+        accountsFull,
+        portfoliosAll,
+        sarPerUsd,
+        personalInvestments,
+        personalInvestmentAccountIds,
+        getAvailableCashForAccount,
+        fundMap,
+    ]);
+
+    const dividendTxSymbols = useMemo(() => {
+        if (!data) return [] as string[];
+        const dividendTransactions = invTxPersonal.filter((t) => t.type === 'dividend');
+        return Array.from(
+            new Set(
+                dividendTransactions
+                    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                    .slice(0, 15)
+                    .map((t) => (t.symbol || '').trim())
+                    .filter((s) => s.length >= 2),
+            ),
+        );
+    }, [data, invTxPersonal]);
+
+    const topPayerSymbols = useMemo(
+        () => Array.from(new Set(topPayers.map((p) => (p.symbol || '').trim()).filter((s) => s.length >= 2))),
+        [topPayers],
+    );
+
+    const fundamentalsSymbols = useMemo(() => {
+        const fromHoldings = personalInvestments.flatMap((p) =>
+            (p.holdings ?? []).map((h) => String(h.symbol ?? '').trim().toUpperCase()),
+        );
+        return Array.from(new Set(fromHoldings.filter((s) => s.length >= 2))).slice(0, 24);
+    }, [personalInvestments]);
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            for (const sym of fundamentalsSymbols) {
+                if (cancelled) break;
+                try {
+                    const f = await getHoldingFundamentals(sym);
+                    if (!cancelled && f?.dividend) {
+                        setFundMap((prev) => ({ ...prev, [sym]: f.dividend! }));
+                    }
+                } catch {
+                    /* ignore */
+                }
+                await new Promise((r) => setTimeout(r, 1200));
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [fundamentalsSymbols.join('|')]);
+
+    const dividendSymbolBatch = useMemo(
+        () => Array.from(new Set([...dividendTxSymbols, ...topPayerSymbols])),
+        [dividendTxSymbols, topPayerSymbols],
+    );
+    const { names: dividendCompanyNames } = useCompanyNames(dividendSymbolBatch);
 
     const handleGetAnalysis = useCallback(async () => {
         setIsLoading(true);
         setAiError(null);
+        setAiAnalysisAr(null);
         try {
             const analysis = await getAIDividendAnalysis(dividendIncomeYTD, projectedAnnualIncome, topPayers);
             setAiAnalysis(analysis);
@@ -126,6 +309,96 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
             setIsLoading(false);
         }
     }, [dividendIncomeYTD, projectedAnnualIncome, topPayers]);
+
+    useEffect(() => {
+        if (divDisplayLang !== 'ar' || !aiAnalysis.trim() || aiAnalysisAr != null || !isAiAvailable) return;
+        let cancelled = false;
+        (async () => {
+            setIsTranslatingDiv(true);
+            try {
+                const ar = await translateFinancialInsightToArabic(aiAnalysis);
+                if (!cancelled) setAiAnalysisAr(ar);
+            } finally {
+                if (!cancelled) setIsTranslatingDiv(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [divDisplayLang, aiAnalysis, aiAnalysisAr, isAiAvailable]);
+
+    const runFinnhubSync = useCallback(
+        async (isManual: boolean) => {
+            if (!data || syncBusy) return;
+            setSyncBusy(true);
+            try {
+                const { fromIso, toIso } = defaultDividendSyncWindow();
+                const result = await syncFinnhubDividendsForHoldings({
+                    portfolios: personalInvestments,
+                    investmentTransactions: data.investmentTransactions ?? [],
+                    accounts: data.accounts ?? [],
+                    fromIso,
+                    toIso,
+                    sarPerUsd,
+                    recordDividend: async ({ portfolioId, accountId, symbol, date, total, currency }) => {
+                        await recordTrade({
+                            type: 'dividend',
+                            portfolioId,
+                            accountId,
+                            symbol,
+                            date,
+                            quantity: 0,
+                            price: 0,
+                            total,
+                            currency,
+                        });
+                    },
+                });
+                const msg = `Finnhub sync: ${result.created} new, ${result.skipped} already had${result.errors.length ? `, ${result.errors.length} issues` : ''}.`;
+                showToast(msg, result.errors.length ? 'error' : 'success');
+                if (result.errors.length && isManual) {
+                    console.warn('Dividend sync errors', result.errors);
+                }
+                try {
+                    localStorage.setItem(FINNHUB_DIV_SYNC_KEY, new Date().toISOString());
+                } catch {
+                    /* ignore */
+                }
+            } catch (e) {
+                showToast(formatAiError(e), 'error');
+            } finally {
+                setSyncBusy(false);
+            }
+        },
+        [data, personalInvestments, sarPerUsd, recordTrade, showToast, syncBusy],
+    );
+
+    useEffect(() => {
+        if (loading || !data || autoSyncStarted.current) return;
+        autoSyncStarted.current = true;
+        let cancelled = false;
+        (async () => {
+            try {
+                const last = localStorage.getItem(FINNHUB_DIV_SYNC_KEY);
+                if (last && Date.now() - Date.parse(last) < 24 * 60 * 60 * 1000) return;
+                if (cancelled) return;
+                await runFinnhubSync(false);
+            } catch {
+                /* ignore auto failures */
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [loading, data, runFinnhubSync]);
+
+    const formatTxAmountSar = useCallback(
+        (t: InvestmentTransaction) => {
+            const cur = inferInvestmentTransactionCurrency(t, accountsFull, portfoliosAll);
+            return formatCurrencyString(toSAR(t.total ?? 0, cur, sarPerUsd));
+        },
+        [accountsFull, portfoliosAll, sarPerUsd, formatCurrencyString],
+    );
 
     if (loading || !data) {
         return (
@@ -139,8 +412,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
     }
 
     return (
-        <div className="page-container">
-            {/* Hero Section */}
+        <div className="page-container space-y-6">
             <div className="section-card p-6 sm:p-8">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
                     <div className="flex items-center gap-4">
@@ -149,64 +421,86 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         </div>
                         <div>
                             <h2 className="page-title text-2xl sm:text-3xl">Dividend Tracker</h2>
-                            <p className="text-slate-600 mt-1">Monitor your passive income from dividend-paying investments</p>
+                            <p className="text-slate-600 mt-1">
+                                Passive income from your portfolio — amounts are normalized to your display currency (SAR) using your USD→SAR rate.
+                            </p>
                         </div>
                     </div>
-                    <span className="text-sm font-medium text-slate-500 uppercase tracking-wider">Live data</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => runFinnhubSync(true)}
+                            disabled={syncBusy}
+                            className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-900 hover:bg-indigo-100 disabled:opacity-50"
+                        >
+                            <ArrowPathIcon className={`h-4 w-4 ${syncBusy ? 'animate-spin' : ''}`} aria-hidden />
+                            {syncBusy ? 'Syncing from Finnhub…' : 'Import dividends (Finnhub)'}
+                        </button>
+                    </div>
                 </div>
-                <div className="mt-6 bg-slate-50 rounded-xl p-6 border border-slate-200">
-                    <p className="text-slate-700 leading-relaxed">
-                        Track your dividend income year-to-date, view projected annual earnings, and analyze your portfolio&apos;s dividend yield.
-                        Get AI-powered insights to optimize your passive income strategy.
-                    </p>
-                </div>
+                <p className="mt-4 text-sm text-slate-600 rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-3">
+                    <strong className="text-slate-800">How it works:</strong> Cash dividends from Finnhub are saved as investment transactions (same ledger as manual entries). We match your share counts per portfolio so amounts stay proportional. Requires{' '}
+                    <code className="text-xs bg-white px-1 rounded">VITE_FINNHUB_API_KEY</code>.
+                    <InfoHint text="Finnhub reports historical per-share payments; we multiply by your recorded quantity and book in each portfolio’s currency (USD or SAR), then show SAR using your FX setting." />
+                </p>
             </div>
 
-            {/* Stats Cards */}
             <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
                 <div className="section-card">
                     <div className="flex items-center justify-between mb-3">
-                        <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Dividend Income (YTD)</p>
+                        <p className="text-sm font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1">
+                            Dividend Income (YTD)
+                            <InfoHint text="Sum of dividend transactions this calendar year on your personal investment platforms, converted to SAR." />
+                        </p>
                         <div className="w-10 h-10 bg-success/10 rounded-xl flex items-center justify-center">
                             <TrophyIcon className="h-5 w-5 text-success" />
                         </div>
                     </div>
                     <p className="text-2xl font-bold text-dark tabular-nums">{formatCurrencyString(dividendIncomeYTD)}</p>
-                    <p className="text-sm text-slate-600 mt-1">Received so far this year</p>
+                    <p className="text-sm text-slate-600 mt-1">Received so far this year (SAR equivalent)</p>
                 </div>
                 <div className="section-card">
                     <div className="flex items-center justify-between mb-3">
-                        <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Projected Annual Income</p>
+                        <p className="text-sm font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1">
+                            Projected Annual Income
+                            <InfoHint text="Uses Finnhub yield or dividend-per-share when available, otherwise the yield stored on each holding. Forward-looking estimate only." />
+                        </p>
                         <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center">
                             <BanknotesIcon className="h-5 w-5 text-primary" />
                         </div>
                     </div>
                     <p className="text-2xl font-bold text-dark tabular-nums">{formatCurrencyString(projectedAnnualIncome)}</p>
-                    <p className="text-sm text-slate-600 mt-1">Based on current holdings</p>
+                    <p className="text-sm text-slate-600 mt-1">Estimated from live fundamentals + holdings</p>
                 </div>
                 <div className="section-card">
                     <div className="flex items-center justify-between mb-3">
-                        <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Average Portfolio Yield</p>
+                        <p className="text-sm font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1">
+                            Average Portfolio Yield
+                            <InfoHint text="Projected annual dividend income divided by total holding value (SAR). Not a broker-reported figure." />
+                        </p>
                         <div className="w-10 h-10 bg-secondary/10 rounded-xl flex items-center justify-center">
                             <ArrowTrendingUpIcon className="h-5 w-5 text-secondary" />
                         </div>
                     </div>
                     <p className="text-2xl font-bold text-dark tabular-nums">{averageYield.toFixed(2)}%</p>
-                    <p className="text-sm text-slate-600 mt-1">Annual dividend percentage</p>
+                    <p className="text-sm text-slate-600 mt-1">Weighted by current value</p>
                 </div>
             </div>
 
             <div className="section-card border border-violet-100 bg-violet-50/40">
-                <p className="text-sm font-semibold text-slate-800">Approx. portfolio MWRR (money-weighted)</p>
+                <p className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+                    Approx. portfolio MWRR (money-weighted)
+                    <InfoHint text="Uses your investment ledger (deposits, withdrawals, buys, sells, dividends) and today’s holdings plus idle cash on platforms—everything converted to SAR the same way as the Investments page." />
+                </p>
                 <p className="text-2xl font-bold text-violet-800 tabular-nums mt-1">
                     {mwrrPct != null && Number.isFinite(mwrrPct) ? `${mwrrPct.toFixed(2)}%` : '—'}
                 </p>
-                <p className="text-xs text-slate-500 mt-2">
-                    IRR on trade totals + terminal book value (account currency mix). Simplified heuristic.
+                <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+                    {mwrrNote ||
+                        'Educational estimate only; not tax or advisor-grade performance. Dividends count as positive cash flows; terminal value includes tradable cash on your investment accounts.'}
                 </p>
             </div>
-            
-            {/* AI Advisor Section */}
+
             <div className="section-card">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
                     <div className="flex items-center gap-3">
@@ -215,23 +509,56 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         </div>
                         <div>
                             <h3 className="section-title mb-0">Dividend Advisor</h3>
-                            <p className="text-sm text-slate-500 mt-0.5">Expert analysis powered by AI</p>
+                            <p className="text-sm text-slate-500 mt-0.5">Expert analysis · English or Arabic</p>
                         </div>
                     </div>
-                    <button
-                        onClick={handleGetAnalysis}
-                        disabled={isLoading}
-                        className="btn-primary"
-                    >
-                        <SparklesIcon className="h-5 w-5" />
-                        {isLoading ? 'Analyzing...' : 'Generate Analysis'}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5" role="group" aria-label="Response language">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    try {
+                                        localStorage.setItem(DIVIDEND_AI_LANG_KEY, 'en');
+                                    } catch {
+                                        /* ignore */
+                                    }
+                                    setDivDisplayLang('en');
+                                }}
+                                className={`px-3 py-1.5 text-xs font-semibold rounded-md ${divDisplayLang === 'en' ? 'bg-primary/15 text-primary' : 'text-slate-600'}`}
+                            >
+                                English
+                            </button>
+                            <button
+                                type="button"
+                                disabled={!isAiAvailable}
+                                title={!isAiAvailable ? 'Configure AI for Arabic translation' : 'عرض بالعربية'}
+                                onClick={() => {
+                                    try {
+                                        localStorage.setItem(DIVIDEND_AI_LANG_KEY, 'ar');
+                                    } catch {
+                                        /* ignore */
+                                    }
+                                    setDivDisplayLang('ar');
+                                    setAiAnalysisAr(null);
+                                }}
+                                className={`px-3 py-1.5 text-xs font-semibold rounded-md ${divDisplayLang === 'ar' ? 'bg-primary/15 text-primary' : 'text-slate-600'} disabled:opacity-40 disabled:cursor-not-allowed`}
+                            >
+                                العربية
+                            </button>
+                        </div>
+                        <button onClick={handleGetAnalysis} disabled={isLoading || !isAiAvailable} className="btn-primary disabled:opacity-50">
+                            <SparklesIcon className="h-5 w-5" />
+                            {isLoading ? 'Analyzing...' : 'Generate Analysis'}
+                        </button>
+                    </div>
                 </div>
 
                 {aiError && (
                     <div className="alert-warning mb-4">
                         <SafeMarkdownRenderer content={aiError} />
-                        <button type="button" onClick={handleGetAnalysis} className="btn-ghost mt-3">Retry</button>
+                        <button type="button" onClick={handleGetAnalysis} className="btn-ghost mt-3">
+                            Retry
+                        </button>
                     </div>
                 )}
 
@@ -243,8 +570,16 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 )}
 
                 {!isLoading && aiAnalysis && (
-                    <div className="rounded-xl p-6 border border-slate-200 bg-slate-50/50">
-                        <SafeMarkdownRenderer content={aiAnalysis} />
+                    <div className="rounded-xl p-6 border border-slate-200 bg-slate-50/50" dir={divDisplayLang === 'ar' ? 'rtl' : 'ltr'} lang={divDisplayLang === 'ar' ? 'ar' : 'en'}>
+                        {divDisplayLang === 'ar' && isTranslatingDiv && (
+                            <p className="text-sm text-violet-800 mb-2">جاري الترجمة…</p>
+                        )}
+                        {divDisplayLang === 'ar' && !isAiAvailable && !aiAnalysisAr && aiAnalysis.trim() && !isTranslatingDiv && (
+                            <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
+                                Arabic needs the AI service enabled. Switch to English or add an API key.
+                            </p>
+                        )}
+                        <SafeMarkdownRenderer content={divDisplayLang === 'ar' ? (aiAnalysisAr ?? aiAnalysis) : aiAnalysis} />
                     </div>
                 )}
 
@@ -253,62 +588,57 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
                             <LightBulbIcon className="h-7 w-7 text-slate-500" />
                         </div>
-                        <p className="text-sm text-slate-600">Click &quot;Generate Analysis&quot; for an expert summary of your dividend income</p>
+                        <p className="text-sm text-slate-600">Click Generate Analysis for plain-language commentary on your dividend income.</p>
                     </div>
                 )}
             </div>
 
-            {/* Chart Section */}
             <div className="section-card">
-                <h3 className="section-title">Monthly Dividend Income</h3>
-                <p className="text-sm text-slate-500 mb-4">Last 12 months performance</p>
+                <h3 className="section-title flex items-center gap-2">
+                    Monthly Dividend Income
+                    <InfoHint text="Last 12 months from your dividend transactions, in SAR." />
+                </h3>
+                <p className="text-sm text-slate-500 mb-4">Based on recorded payments (imported or manual)</p>
                 <div className="h-[400px]">
-                    <ChartContainer 
-                        height="100%" 
-                        isEmpty={!monthlyDividendsChartData?.length} 
-                        emptyMessage="No dividend income data for the last 12 months." 
+                    <ChartContainer
+                        height="100%"
+                        isEmpty={!monthlyDividendsChartData?.length}
+                        emptyMessage="No dividend transactions in the last 12 months. Use Import dividends (Finnhub) or add dividends from your broker."
                         className="flex-1 min-h-0"
                     >
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={monthlyDividendsChartData} margin={CHART_MARGIN}>
                                 <CartesianGrid strokeDasharray={CHART_GRID_STROKE} stroke={CHART_GRID_COLOR} />
                                 <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
-                                <YAxis 
-                                    tickFormatter={(v) => formatAxisNumber(Number(v))} 
-                                    stroke={CHART_AXIS_COLOR} 
-                                    fontSize={12} 
-                                    tickLine={false} 
-                                    width={48} 
+                                <YAxis
+                                    tickFormatter={(v) => formatAxisNumber(Number(v))}
+                                    stroke={CHART_AXIS_COLOR}
+                                    fontSize={12}
+                                    tickLine={false}
+                                    width={48}
                                 />
                                 <Tooltip
                                     formatter={(val: number) => formatCurrencyString(val, { digits: 2 })}
-                                    contentStyle={{ 
-                                        backgroundColor: 'white', 
-                                        border: '2px solid #e2e8f0', 
-                                        borderRadius: '12px', 
-                                        boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', 
-                                        padding: '12px 16px' 
+                                    contentStyle={{
+                                        backgroundColor: 'white',
+                                        border: '2px solid #e2e8f0',
+                                        borderRadius: '12px',
+                                        boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
+                                        padding: '12px 16px',
                                     }}
                                 />
                                 <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                                <Bar 
-                                    dataKey="Dividend Income" 
-                                    fill={CHART_COLORS.secondary} 
-                                    name="Dividend Income" 
-                                    radius={[6, 6, 0, 0]} 
-                                />
+                                <Bar dataKey="Dividend Income" fill={CHART_COLORS.secondary} name="Dividend Income" radius={[6, 6, 0, 0]} />
                             </BarChart>
                         </ResponsiveContainer>
                     </ChartContainer>
                 </div>
             </div>
 
-            {/* Bottom Sections */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Recent Dividend Payments */}
                 <div className="section-card">
                     <h3 className="section-title">Recent Dividend Payments</h3>
-                    <p className="text-sm text-slate-500 mb-4">Latest dividend transactions</p>
+                    <p className="text-sm text-slate-500 mb-4">Latest dividend transactions (amounts shown in SAR equivalent)</p>
                     <div className="overflow-x-auto">
                         <div className="rounded-xl border border-slate-200 overflow-hidden">
                             <table className="min-w-full">
@@ -320,19 +650,24 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                                     </tr>
                                 </thead>
                                 <tbody className="bg-white divide-y divide-slate-100">
-                                    {recentDividendTransactions.map(t => (
+                                    {recentDividendTransactions.map((t) => (
                                         <tr key={t.id} className="hover:bg-slate-50 transition-colors duration-150">
                                             <td className="px-4 py-3 text-sm text-slate-900 font-medium">
                                                 {new Date(t.date).toLocaleDateString()}
                                             </td>
                                             <td className="px-4 py-3">
-                                                <span className="inline-flex items-center px-3 py-1 rounded-lg bg-slate-100 text-slate-800 font-bold text-sm">
-                                                    {t.symbol}
+                                                <span className="inline-flex items-center px-3 py-1 rounded-lg bg-slate-100 text-slate-800 font-bold text-sm min-w-0">
+                                                    <ResolvedSymbolLabel
+                                                        symbol={t.symbol || ''}
+                                                        names={dividendCompanyNames}
+                                                        layout="inline"
+                                                        symbolClassName="font-bold text-sm"
+                                                    />
                                                 </span>
                                             </td>
                                             <td className="px-4 py-3 text-right">
                                                 <span className="inline-flex items-center px-3 py-1 rounded-lg bg-emerald-100 text-emerald-800 font-bold text-sm">
-                                                    {formatCurrencyString(t.total ?? 0)}
+                                                    {formatTxAmountSar(t)}
                                                 </span>
                                             </td>
                                         </tr>
@@ -343,10 +678,8 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     </div>
                     {recentDividendTransactions.length === 0 && (
                         <div className="text-center py-8">
-                            <div className="w-16 h-16 bg-gradient-to-br from-slate-100 to-slate-200 rounded-full flex items-center justify-center mx-auto mb-4">
-                                <span className="text-slate-400 text-2xl">📭</span>
-                            </div>
-                            <p className="text-slate-500 font-medium">No dividend transactions recorded</p>
+                            <p className="text-slate-500 font-medium">No dividend transactions yet</p>
+                            <p className="text-sm text-slate-500 mt-2">Use Import dividends (Finnhub) or add them via Record Trade / statement upload.</p>
                         </div>
                     )}
                     {recentDividendTransactions.length > 0 && (
@@ -355,12 +688,12 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                                 type="button"
                                 onClick={() => {
                                     const csv = [
-                                        ['Date', 'Symbol', 'Amount'].join(','),
-                                        ...recentDividendTransactions.map(t => [
-                                            t.date,
-                                            t.symbol,
-                                            t.total ?? 0
-                                        ].join(','))
+                                        ['Date', 'Symbol', 'Amount_SAR_equiv'].join(','),
+                                        ...recentDividendTransactions.map((t) =>
+                                            [t.date, t.symbol, toSAR(t.total ?? 0, inferInvestmentTransactionCurrency(t, accountsFull, portfoliosAll), sarPerUsd)].join(
+                                                ',',
+                                            ),
+                                        ),
                                     ].join('\n');
                                     const blob = new Blob([csv], { type: 'text/csv' });
                                     const url = URL.createObjectURL(blob);
@@ -380,28 +713,49 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     )}
                 </div>
 
-                {/* Top Dividend Payers */}
                 <div className="section-card">
-                    <h3 className="section-title">Top 5 Dividend Payers</h3>
+                    <h3 className="section-title flex items-center gap-2">
+                        Top 5 Dividend Payers
+                        <InfoHint text="Ranked by projected annual income in SAR (Finnhub data when available)." />
+                    </h3>
                     <p className="text-sm text-slate-500 mb-4">Based on projected annual income</p>
                     <div className="space-y-3">
-                        {topPayers.map((payer: { name: string; projected: number; unrealizedSAR?: number; forwardYieldPct?: number; yieldOnCostPct?: number | null }, index: number) => (
-                            <div key={payer.name} className="list-row flex-wrap gap-2">
+                        {topPayers.map((payer, index: number) => (
+                            <div key={`${payer.symbol || payer.name}-${index}`} className="list-row flex-wrap gap-2">
                                 <div className="flex items-center gap-3">
-                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
-                                        index === 0 ? 'bg-amber-100 text-amber-800' :
-                                        index === 1 ? 'bg-slate-200 text-slate-700' :
-                                        index === 2 ? 'bg-slate-100 text-slate-600' :
-                                        'bg-slate-100 text-slate-600'
-                                    }`}>
+                                    <div
+                                        className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
+                                            index === 0
+                                                ? 'bg-amber-100 text-amber-800'
+                                                : index === 1
+                                                  ? 'bg-slate-200 text-slate-700'
+                                                  : index === 2
+                                                    ? 'bg-slate-100 text-slate-600'
+                                                    : 'bg-slate-100 text-slate-600'
+                                        }`}
+                                    >
                                         {index + 1}
                                     </div>
                                     <div>
-                                        <span className="font-bold text-slate-900 block">{payer.name}</span>
+                                        {payer.symbol ? (
+                                            <ResolvedSymbolLabel
+                                                symbol={payer.symbol}
+                                                storedName={payer.name}
+                                                names={dividendCompanyNames}
+                                                layout="stacked"
+                                                symbolClassName="font-bold text-slate-900"
+                                                companyClassName="text-xs text-slate-500"
+                                            />
+                                        ) : (
+                                            <span className="font-bold text-slate-900 block">{payer.name}</span>
+                                        )}
                                         <span className="text-xs text-slate-500">
                                             Forward yield {Number(payer.forwardYieldPct ?? 0).toFixed(2)}%
                                             {payer.yieldOnCostPct != null && Number.isFinite(payer.yieldOnCostPct) ? (
-                                                <> · <strong className="text-violet-700">YoC {payer.yieldOnCostPct.toFixed(2)}%</strong></>
+                                                <>
+                                                    {' '}
+                                                    · <strong className="text-violet-700">YoC {payer.yieldOnCostPct.toFixed(2)}%</strong>
+                                                </>
                                             ) : null}
                                         </span>
                                     </div>
@@ -412,7 +766,8 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                                     </span>
                                     {payer.unrealizedSAR != null && Number.isFinite(payer.unrealizedSAR) && Math.abs(payer.unrealizedSAR) >= 0.01 && (
                                         <span className={`text-xs ${payer.unrealizedSAR >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                                            Unrealized {payer.unrealizedSAR >= 0 ? '+' : ''}{formatCurrencyString(payer.unrealizedSAR)}
+                                            Unrealized {payer.unrealizedSAR >= 0 ? '+' : ''}
+                                            {formatCurrencyString(payer.unrealizedSAR)}
                                         </span>
                                     )}
                                 </div>
@@ -421,7 +776,8 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     </div>
                     {topPayers.length === 0 && (
                         <div className="empty-state">
-                            <p className="font-medium">No holdings with dividend yields found</p>
+                            <p className="font-medium">No dividend estimates yet</p>
+                            <p className="text-sm text-slate-500 mt-1">Hold dividend-paying stocks with live prices, or wait for fundamentals to load.</p>
                         </div>
                     )}
                 </div>

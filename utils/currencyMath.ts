@@ -15,7 +15,11 @@ export function resolveSarPerUsd(
   uiSarPerUsd?: number,
 ): number {
   const w = Number(data?.wealthUltraConfig?.fxRate);
-  if (Number.isFinite(w) && w > 0) return w;
+  if (Number.isFinite(w) && w > 0) {
+    // Legacy rows sometimes stored **USD per 1 SAR** (~0.27) instead of SAR per 1 USD (~3.75).
+    if (w < 0.55) return safeRate(1 / w);
+    return w;
+  }
   const u = Number(uiSarPerUsd);
   if (Number.isFinite(u) && u > 0) return u;
   return DEFAULT_SAR_PER_USD;
@@ -59,6 +63,25 @@ export const getAllInvestmentsValueInSAR = (
 };
 
 /**
+ * Terminal value for simple MWRR: all personal portfolio holdings (book → SAR) plus **tradable** cash
+ * on investment platforms (ledger), matching how the Investments KPI thinks about total book value.
+ */
+export function personalInvestmentTerminalValueSAR(args: {
+  portfolios: InvestmentPortfolio[];
+  investmentAccountIds: string[];
+  exchangeRate: number;
+  getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number };
+}): number {
+  const { portfolios, investmentAccountIds, exchangeRate, getAvailableCashForAccount } = args;
+  const holdingsSar = getAllInvestmentsValueInSAR(portfolios, exchangeRate);
+  let cashSar = 0;
+  for (const id of investmentAccountIds) {
+    cashSar += tradableCashBucketToSAR(getAvailableCashForAccount(id), exchangeRate);
+  }
+  return holdingsSar + cashSar;
+}
+
+/**
  * Converts a **tradable cash** bucket (from investment transaction ledger) to a single SAR number.
  * USD is converted using the same `toSAR` rule as elsewhere.
  */
@@ -76,7 +99,7 @@ export const tradableCashBucketToSAR = (
  * (ledger from `investment_transactions`), not account `balance` and not holdings market value.
  */
 export const totalLiquidCashSARFromAccounts = (
-  accounts: { id: string; type?: string; balance?: number }[],
+  accounts: { id: string; type?: string; balance?: number; currency?: TradeCurrency }[],
   getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number },
   exchangeRate: number,
 ): number => {
@@ -84,10 +107,80 @@ export const totalLiquidCashSARFromAccounts = (
   for (const a of accounts) {
     const t = a.type ?? '';
     if (t === 'Checking' || t === 'Savings') {
-      sum += Math.max(0, Number(a.balance) || 0);
+      const bal = Math.max(0, Number(a.balance) || 0);
+      const cur = a.currency === 'USD' ? 'USD' : 'SAR';
+      sum += toSAR(bal, cur, exchangeRate);
     } else if (t === 'Investment') {
       sum += tradableCashBucketToSAR(getAvailableCashForAccount(a.id), exchangeRate);
     }
   }
   return sum;
 };
+
+/** Tadawul-style symbols use SAR; most others treated as USD (matches execution-plan helpers). */
+export function inferInstrumentCurrencyFromSymbol(symbol: string): TradeCurrency {
+  const s = (symbol || '').trim().toUpperCase();
+  if (/(\.SR|\.SA)$/i.test(s)) return 'SAR';
+  return 'USD';
+}
+
+/**
+ * Tradable cash on an investment platform, expressed in the portfolio ledger currency (same rule as `recordTrade` in DataContext).
+ */
+export function availableTradableCashInLedgerCurrency(
+  buckets: { SAR: number; USD: number },
+  ledgerCurrency: TradeCurrency,
+  sarPerUsd: number,
+): number {
+  const sar = Number.isFinite(buckets.SAR) ? Math.max(0, buckets.SAR) : 0;
+  const usd = Number.isFinite(buckets.USD) ? Math.max(0, buckets.USD) : 0;
+  const r = safeRate(sarPerUsd);
+  if (ledgerCurrency === 'SAR') return sar + usd * r;
+  return usd + sar / r;
+}
+
+/** Convert a nominal amount (cash or price) between USD and SAR using the same FX as the rest of the app. */
+export function convertBetweenTradeCurrencies(
+  amount: number,
+  from: TradeCurrency,
+  to: TradeCurrency,
+  sarPerUsd: number,
+): number {
+  if (from === to) return amount;
+  if (from === 'SAR' && to === 'USD') return fromSAR(amount, 'USD', sarPerUsd);
+  if (from === 'USD' && to === 'SAR') return toSAR(amount, 'USD', sarPerUsd);
+  return amount;
+}
+
+/**
+ * Live quote notional (price × quantity): quotes are in **instrument** currency (e.g. USD for AAPL),
+ * portfolio rows are in **book** currency (SAR or USD). Converts so KPIs and tables stay consistent.
+ */
+export function quoteNotionalInBookCurrency(
+  pricePerUnit: number,
+  quantity: number,
+  symbol: string,
+  bookCurrency: TradeCurrency,
+  sarPerUsd: number,
+): number {
+  const inst = inferInstrumentCurrencyFromSymbol(symbol);
+  const q = Number.isFinite(quantity) ? Math.max(0, quantity) : 0;
+  const p = Number.isFinite(pricePerUnit) ? pricePerUnit : 0;
+  const raw = p * q;
+  if (raw <= 0) return 0;
+  return convertBetweenTradeCurrencies(raw, inst, bookCurrency, sarPerUsd);
+}
+
+/** Today's move (change per share × qty) from instrument currency into portfolio book currency. */
+export function quoteDailyPnLInBookCurrency(
+  changePerShare: number,
+  quantity: number,
+  symbol: string,
+  bookCurrency: TradeCurrency,
+  sarPerUsd: number,
+): number {
+  const inst = inferInstrumentCurrencyFromSymbol(symbol);
+  const q = Number.isFinite(quantity) ? Math.max(0, quantity) : 0;
+  const c = Number.isFinite(changePerShare) ? changePerShare : 0;
+  return convertBetweenTradeCurrencies(c * q, inst, bookCurrency, sarPerUsd);
+}

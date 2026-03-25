@@ -17,8 +17,11 @@ import {
 } from '../services/transactionIntelligence';
 import { salaryToExpenseCoverage } from '../services/salaryExpenseCoverage';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR, totalLiquidCashSARFromAccounts, resolveSarPerUsd } from '../utils/currencyMath';
+import { resolveSarPerUsd } from '../utils/currencyMath';
+import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
+import { computePersonalNetWorthChartBucketsSAR } from '../services/personalNetWorth';
+import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 
 const TOOLTIP_STYLE = { backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' };
 
@@ -117,26 +120,15 @@ const AssetLiabilityChart: React.FC = () => {
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const chartData = useMemo(() => {
-        const d = data as any;
-        const inv = d?.personalInvestments ?? data?.investments ?? [];
-        const acc = d?.personalAccounts ?? data?.accounts ?? [];
-        const ast = d?.personalAssets ?? data?.assets ?? [];
-        const liab = d?.personalLiabilities ?? data?.liabilities ?? [];
-
         const fx = resolveSarPerUsd(data, exchangeRate);
-        const totalInvestments = getAllInvestmentsValueInSAR(inv, fx);
-        const totalCash = totalLiquidCashSARFromAccounts(acc, getAvailableCashForAccount, fx);
-        const totalPhysicalAssets = ast.reduce((sum: number, asset: { value?: number }) => sum + Math.max(0, asset.value || 0), 0);
-        const totalDebt = liab.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, l: { amount?: number }) => sum + Math.abs(l.amount ?? 0), 0)
-            + acc.filter((a: { type?: string; balance?: number }) => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum: number, a: { balance?: number }) => sum + Math.abs(a.balance ?? 0), 0);
-        const totalReceivable = liab.filter((l: { amount?: number; type?: string }) => (l.amount ?? 0) > 0 || l.type === 'Receivable').reduce((sum: number, l: { amount?: number }) => sum + Math.max(0, l.amount ?? 0), 0);
+        const buckets = computePersonalNetWorthChartBucketsSAR(data, fx, { getAvailableCashForAccount });
 
         return [
-            { name: 'Investments', value: totalInvestments },
-            { name: 'Cash', value: totalCash },
-            { name: 'Physical Assets', value: totalPhysicalAssets },
-            { name: 'Receivables', value: totalReceivable },
-            { name: 'Debt', value: totalDebt },
+            { name: 'Investments', value: buckets.investments },
+            { name: 'Cash', value: buckets.cash },
+            { name: 'Physical Assets', value: buckets.physicalAndCommodities },
+            { name: 'Receivables', value: buckets.receivables },
+            { name: 'Debt', value: Math.abs(buckets.liabilities) },
         ];
     }, [data, exchangeRate, getAvailableCashForAccount]);
 
@@ -171,10 +163,6 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = () => {
     const contextData = useMemo(() => {
         const d = data as any;
         const transactions = d?.personalTransactions ?? data?.transactions ?? [];
-        const investments = d?.personalInvestments ?? data?.investments ?? [];
-        const accounts = d?.personalAccounts ?? data?.accounts ?? [];
-        const assets = d?.personalAssets ?? data?.assets ?? [];
-        const liabilities = d?.personalLiabilities ?? data?.liabilities ?? [];
 
         const spendingMap = new Map<string, number>();
         transactions.filter((t: Transaction) => countsAsExpenseForCashflowKpi(t)).forEach((t: { budgetCategory?: string; category?: string; amount?: number }) => {
@@ -187,19 +175,15 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = () => {
 
         const trendData = buildTrendData(transactions, 6);
 
+        hydrateSarPerUsdDailySeries(data, exchangeRate);
         const fx = resolveSarPerUsd(data, exchangeRate);
-        const totalInvestments = getAllInvestmentsValueInSAR(investments, fx);
-        const totalCash = totalLiquidCashSARFromAccounts(accounts, getAvailableCashForAccount, fx);
-        const totalPhysicalAssets = assets.reduce((sum: number, asset: { value?: number }) => sum + Math.max(0, asset.value || 0), 0);
-        const totalDebt = liabilities.filter((l: { amount?: number }) => (l.amount ?? 0) < 0).reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0)
-            + accounts.filter((a: { type?: string; balance?: number }) => a.type === 'Credit' && (a.balance ?? 0) < 0).reduce((sum: number, acc: { balance?: number }) => sum + Math.abs(acc.balance ?? 0), 0);
-        const totalReceivable = liabilities.filter((l: { amount?: number; type?: string }) => (l.amount ?? 0) > 0 || l.type === 'Receivable').reduce((sum: number, liab: { amount?: number }) => sum + Math.max(0, liab.amount ?? 0), 0);
+        const nwBuckets = computePersonalNetWorthChartBucketsSAR(data, fx, { getAvailableCashForAccount });
         const compositionData = [
-            { name: 'Investments', value: totalInvestments },
-            { name: 'Cash', value: totalCash },
-            { name: 'Physical Assets', value: totalPhysicalAssets },
-            { name: 'Receivables', value: totalReceivable },
-            { name: 'Debt', value: totalDebt },
+            { name: 'Investments', value: nwBuckets.investments },
+            { name: 'Cash', value: nwBuckets.cash },
+            { name: 'Physical Assets', value: nwBuckets.physicalAndCommodities },
+            { name: 'Receivables', value: nwBuckets.receivables },
+            { name: 'Debt', value: Math.abs(nwBuckets.liabilities) },
         ];
 
         const merchants = spendByMerchant(transactions as Transaction[], { months: 6 });
@@ -211,6 +195,20 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = () => {
 
         return { spendingData, trendData, compositionData, merchants, salary, subs, bnpl, refundPairs, salaryCoverage };
     }, [data, exchangeRate, getAvailableCashForAccount]);
+
+    const analysisValidationWarnings = useMemo(() => {
+        const warnings: string[] = [];
+        const fx = resolveSarPerUsd(data, exchangeRate);
+        const monthlyKpis = computeMonthlyReportFinancialKpis(data, fx, getAvailableCashForAccount);
+        if (!Number.isFinite(monthlyKpis.budgetVariance)) warnings.push('Budget variance could not be computed.');
+        if (!Number.isFinite(monthlyKpis.roi)) warnings.push('Investment ROI could not be computed.');
+        if (!Number.isFinite((contextData as any).salaryCoverage?.ratio ?? 1)) warnings.push('Salary coverage ratio is invalid.');
+        if (((contextData as any).trendData ?? []).every((x: { income: number; expenses: number }) => (x.income ?? 0) === 0 && (x.expenses ?? 0) === 0)) {
+            warnings.push('No income/expense signal in the last 6 months.');
+        }
+        if (((contextData as any).spendingData ?? []).length === 0) warnings.push('No categorized spending data found.');
+        return warnings;
+    }, [data, exchangeRate, getAvailableCashForAccount, contextData]);
 
     if (loading || !data) {
         return (
@@ -225,6 +223,16 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = () => {
             title="Financial Analysis"
         >
             <AIAdvisor pageContext="analysis" contextData={contextData} />
+
+            {analysisValidationWarnings.length > 0 && (
+                <SectionCard title="Analysis validation checks" collapsible collapsibleSummary="Data quality and wiring checks" defaultExpanded>
+                    <ul className="space-y-1 text-sm text-amber-800">
+                        {analysisValidationWarnings.slice(0, 6).map((w, i) => (
+                            <li key={`av-${i}`}>- {w}</li>
+                        ))}
+                    </ul>
+                </SectionCard>
+            )}
 
             <SectionCard title="Salary vs expense coverage" collapsible collapsibleSummary="Coverage ratio" defaultExpanded
             >

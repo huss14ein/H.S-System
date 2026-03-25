@@ -24,8 +24,18 @@ import {
     type WealthSummaryReportInput,
 } from '../services/reportingEngine';
 import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { useNotifications } from '../context/NotificationsContext';
+import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
+import AIAdvisor from '../components/AIAdvisor';
+import {
+  computeProfileSetupPercent,
+  computeAccountsSetupPercent,
+  computePreferencesConfigured,
+  countActivePriceAlerts,
+  countPortfolioDriftAttention,
+  countTrackedSymbolsForFeed,
+} from '../services/settingsSnapshot';
 import { computeWealthSummaryReportModel, computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { computeMaxAbsSleeveDriftPercent } from '../services/settingsDecisionPreview';
 import type { FinancialData } from '../types';
@@ -57,22 +67,112 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     const { data, loading, updateSettings, restoreFromBackup, getAvailableCashForAccount } = useContext(DataContext)!;
     const { showToast } = useToast();
     const auth = useContext(AuthContext)!;
-    const { exchangeRate } = useCurrency();
+    const { exchangeRate, currency, setCurrency } = useCurrency();
+    const notifCtx = useNotifications();
     const [localSettings, setLocalSettings] = useState(data?.settings ?? {});
     const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
     const [auditFilter, setAuditFilter] = useState<{ entity?: AuditEntity; search: string }>({ search: '' });
     const [capitalPreviewAmount, setCapitalPreviewAmount] = useState(50000);
     const [tradingPolicyLocal, setTradingPolicyLocal] = useState<TradingPolicy>(() => loadTradingPolicy());
     const ef = useEmergencyFund(data ?? null);
+    const { maskSensitive, setMaskSensitive, playNotificationSound, setPlayNotificationSound } = usePrivacyMask();
+
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
 
     const liquidCashSar = useMemo(() => {
         const accounts = getPersonalAccounts(data);
         return accounts
-            .filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings')
-            .reduce((s: number, a: { balance?: number }) => s + Math.max(0, Number(a.balance) || 0), 0);
-    }, [data]);
+            .filter((a) => a.type === 'Checking' || a.type === 'Savings')
+            .reduce((s, a) => {
+                const bal = Math.max(0, Number(a.balance) || 0);
+                const cur = a.currency === 'USD' ? 'USD' : 'SAR';
+                return s + toSAR(bal, cur, sarPerUsd);
+            }, 0);
+    }, [data, sarPerUsd]);
 
     const sleeveDriftPct = useMemo(() => computeMaxAbsSleeveDriftPercent(data), [data]);
+
+    const profileSetupPct = useMemo(() => computeProfileSetupPercent(localSettings as any), [localSettings]);
+    const accountsSetupPct = useMemo(() => computeAccountsSetupPercent(data), [data]);
+    const preferencesConfigured = useMemo(
+        () => computePreferencesConfigured(localSettings as any),
+        [localSettings]
+    );
+    const activePriceAlertCount = useMemo(() => countActivePriceAlerts(data), [data]);
+    const trackedSymbolCount = useMemo(() => countTrackedSymbolsForFeed(data), [data]);
+    const driftThresholdSetting = useMemo(
+        () => Math.min(20, Math.max(0, Number(localSettings?.driftThreshold ?? 5))),
+        [localSettings?.driftThreshold]
+    );
+    const portfolioDriftFlag = useMemo(
+        () => countPortfolioDriftAttention(sleeveDriftPct, driftThresholdSetting),
+        [sleeveDriftPct, driftThresholdSetting]
+    );
+    const inAppFeedCount = notifCtx?.notifications?.length ?? 0;
+    const unreadNotif = notifCtx?.unreadCount ?? 0;
+
+    const NOTIF_FREQ_KEY = 'finova_notification_digest_freq_v1';
+    const [digestFrequency, setDigestFrequency] = useState<'immediate' | 'daily' | 'weekly'>(() => {
+        try {
+            const v = localStorage.getItem(NOTIF_FREQ_KEY);
+            if (v === 'daily' || v === 'weekly' || v === 'immediate') return v;
+        } catch {
+            /* ignore */
+        }
+        return 'immediate';
+    });
+    useEffect(() => {
+        try {
+            localStorage.setItem(NOTIF_FREQ_KEY, digestFrequency);
+        } catch {
+            /* ignore */
+        }
+    }, [digestFrequency]);
+
+    const settingsAiContext = useMemo(() => {
+        const acc = getPersonalAccounts(data);
+        return {
+            sarPerUsd,
+            displayCurrency: currency,
+            riskProfile: String(localSettings?.riskProfile ?? 'Moderate'),
+            budgetThresholdPct: Math.min(100, Math.max(0, Number(localSettings?.budgetThreshold ?? 90))),
+            driftThresholdPct: driftThresholdSetting,
+            profileSetupPct,
+            accountsSetupPct,
+            personalAccountCount: acc.length,
+            preferencesDone: preferencesConfigured.done,
+            preferencesTotal: preferencesConfigured.total,
+            activePriceAlerts: activePriceAlertCount,
+            portfolioDriftFlag,
+            sleeveDriftPct,
+            trackedSymbols: trackedSymbolCount,
+            inAppFeedCount,
+            unreadNotifications: unreadNotif,
+            enableWeeklyEmail: Boolean(localSettings?.enableEmails),
+            inAppSoundEnabled: playNotificationSound,
+            liquidCashSarApprox: liquidCashSar,
+        };
+    }, [
+        sarPerUsd,
+        currency,
+        localSettings?.riskProfile,
+        localSettings?.budgetThreshold,
+        localSettings?.enableEmails,
+        profileSetupPct,
+        accountsSetupPct,
+        preferencesConfigured.done,
+        preferencesConfigured.total,
+        activePriceAlertCount,
+        portfolioDriftFlag,
+        sleeveDriftPct,
+        trackedSymbolCount,
+        inAppFeedCount,
+        unreadNotif,
+        playNotificationSound,
+        liquidCashSar,
+        driftThresholdSetting,
+        data,
+    ]);
 
     /** Live inputs for buyScore — derived from portfolio, trading policy, and sleeve drift (same engine as Wealth Ultra). */
     const liveDecisionInputs = useMemo(() => {
@@ -120,11 +220,9 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
 
     const wealthSummaryPayload = useMemo((): WealthSummaryReportInput | null => {
         if (!data) return null;
-        const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
         return computeWealthSummaryReportModel(data, sarPerUsd, getAvailableCashForAccount).wealthSummaryReportPayload;
-    }, [data, exchangeRate, getAvailableCashForAccount]);
+    }, [data, sarPerUsd, getAvailableCashForAccount]);
 
-    const { maskSensitive, setMaskSensitive, playNotificationSound, setPlayNotificationSound } = usePrivacyMask();
     const [isAdmin, setIsAdmin] = useState(false);
     const [pendingUsers, setPendingUsers] = useState<{ id: string; name: string | null; email: string | null; created_at: string }[]>([]);
     const [approvalLoading, setApprovalLoading] = useState<string | null>(null);
@@ -264,6 +362,7 @@ const hasData = accountsForEmptyCheck.length > 0;
                         { id: 'decision-preview', label: 'Decision rules' },
                         { id: 'trading-policy', label: 'Trading policy' },
                         { id: 'notifications', label: 'Notifications' },
+                        { id: 'ai-settings', label: 'AI' },
                         { id: 'activity-log', label: 'Activity log' },
                         { id: 'reports-export', label: 'Reports' },
                         { id: 'data-management', label: 'Data' },
@@ -286,34 +385,40 @@ const hasData = accountsForEmptyCheck.length > 0;
             </div>
 
             <div className="space-y-6 sm:space-y-8">
-            <SectionCard id="settings-snapshot" title="Settings Snapshot" collapsible collapsibleSummary="Risk, budget, drift" defaultExpanded>
+            <SectionCard id="settings-snapshot" title="Settings Snapshot" collapsible collapsibleSummary="Live readiness & alerts" defaultExpanded>
+                <p className="text-xs text-slate-600 mb-3">
+                    Cards use your real data: personal accounts, preferences, in-app notification feed, and price alerts. FX for cash uses{' '}
+                    <strong>1 USD = {sarPerUsd.toFixed(4)} SAR</strong> (Wealth Ultra rate or header default).
+                </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                     <SnapshotMetricCard
                         variant="risk"
-                        label="Risk profile"
+                        label="Profile"
                         value={String(localSettings?.riskProfile ?? '—')}
-                        hint="Drives guidance across investing and planning. Conservative = lower volatility; Aggressive = higher growth tolerance."
+                        secondaryPercent={profileSetupPct}
+                        secondaryLabel="Setup"
+                        hint="Risk level drives guidance across investing and planning. Bar = how complete core profile fields are (risk, budget %, drift %, gold price)."
                     />
                     <SnapshotMetricCard
                         variant="budget"
-                        label="Budget alert"
-                        value={`${localSettings?.budgetThreshold ?? 90}%`}
-                        percent={Number(localSettings?.budgetThreshold ?? 90)}
-                        hint="You get a heads-up when spending reaches this share of your monthly budget."
+                        label="Accounts"
+                        value={`${getPersonalAccounts(data).length} personal`}
+                        percent={accountsSetupPct}
+                        hint="Readiness from having accounts, balances, recent activity, and account-type diversity (0–100%)."
                     />
                     <SnapshotMetricCard
                         variant="drift"
-                        label="Drift threshold"
-                        value={`${localSettings?.driftThreshold ?? 5}%`}
-                        percent={Math.min(100, (Number(localSettings?.driftThreshold ?? 5) / 20) * 100)}
-                        hint="Alerts when portfolio allocation drifts this far from your targets (percentage points)."
+                        label="Preferences"
+                        value={`${preferencesConfigured.done}/${preferencesConfigured.total}`}
+                        percent={preferencesConfigured.total > 0 ? (preferencesConfigured.done / preferencesConfigured.total) * 100 : 0}
+                        hint="Checklist: risk, budget alert range (50–100%), drift range (0–20%), gold price for Zakat. Email toggle is separate below."
                     />
                     <SnapshotMetricCard
                         variant="email"
-                        label="Email summary"
-                        value={localSettings?.enableEmails ? 'Enabled' : 'Disabled'}
-                        on={Boolean(localSettings?.enableEmails)}
-                        hint="Periodic summary emails with highlights from your data (if enabled)."
+                        label="Notifications"
+                        value={inAppFeedCount > 0 || activePriceAlertCount > 0 ? `${inAppFeedCount} in feed` : 'Quiet'}
+                        on={Boolean(localSettings?.enableEmails || playNotificationSound || inAppFeedCount > 0)}
+                        hint="In-app feed size from Notifications engine. Email = weekly summary toggle below. Sound = in-app beep only (not OS push)."
                     />
                 </div>
             </SectionCard>
@@ -371,6 +476,24 @@ const hasData = accountsForEmptyCheck.length > 0;
 
             <SectionCard id="financial-preferences" title="Financial Preferences" className="border border-slate-200" collapsible collapsibleSummary="Risk, budget, gold, nisab" defaultExpanded>
                 <div className="space-y-6">
+                    <div className="rounded-lg border border-slate-200 p-3 bg-slate-50/80">
+                        <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
+                            Display currency
+                            <InfoHint text="Controls labels and conversions across the app (amounts in KPIs and many reports are SAR-normalized using your USD→SAR rate regardless)." />
+                        </label>
+                        <div className="grid grid-cols-2 gap-2 rounded-xl bg-slate-100 p-1 max-w-xs">
+                            {(['SAR', 'USD'] as const).map((c) => (
+                                <button
+                                    key={c}
+                                    type="button"
+                                    onClick={() => setCurrency(c)}
+                                    className={`px-3 py-2 text-sm font-semibold rounded-md transition-all ${currency === c ? 'bg-white shadow text-primary' : 'text-slate-600 hover:bg-white/50'}`}
+                                >
+                                    {c}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
                     <div>
                         <label className="block text-sm font-medium text-slate-700 mb-2">Quick presets</label>
                         <div className="flex flex-wrap gap-2 mb-4">
@@ -405,7 +528,30 @@ const hasData = accountsForEmptyCheck.length > 0;
                         </div>
                         <div className="rounded-lg border border-slate-200 p-3">
                             <label htmlFor="gold-price-settings" className="block text-sm font-medium text-slate-700 flex items-center">Gold price (SAR/gram) <InfoHint text="Current gold price per gram. Used to calculate the Nisab threshold (minimum wealth before Zakat is due). Usually gold price × 85 grams." /></label>
-                            <input id="gold-price-settings" type="number" min={1} max={100000} step={0.01} value={Number((localSettings as any)?.goldPrice ?? (localSettings as any)?.gold_price ?? 275)} onChange={(e) => setLocalSettings(prev => ({ ...prev, goldPrice: parseFloat(e.target.value) || 275 }))} onBlur={(e) => { const v = parseFloat(e.target.value); const fallback = Number((localSettings as any)?.goldPrice ?? (localSettings as any)?.gold_price ?? 275); if (Number.isFinite(v) && v > 0 && v <= 1e6) updateSettings({ goldPrice: v }); else setLocalSettings(prev => ({ ...prev, goldPrice: fallback })); }} className="mt-2 w-full input-base" />
+                            <input
+                                id="gold-price-settings"
+                                type="number"
+                                min={1}
+                                max={1000000}
+                                step={0.01}
+                                value={Number((localSettings as any)?.goldPrice ?? (localSettings as any)?.gold_price ?? 275)}
+                                onChange={(e) => {
+                                    const v = parseFloat(e.target.value);
+                                    if (!Number.isFinite(v)) return;
+                                    const clamped = Math.min(1e6, Math.max(0.01, v));
+                                    setLocalSettings((prev) => ({ ...prev, goldPrice: clamped }));
+                                }}
+                                onBlur={(e) => {
+                                    const v = parseFloat(e.target.value);
+                                    const fallback = Number((localSettings as any)?.goldPrice ?? (localSettings as any)?.gold_price ?? 275) || 275;
+                                    if (Number.isFinite(v) && v > 0 && v <= 1e6) {
+                                        updateSettings({ goldPrice: v });
+                                    } else {
+                                        setLocalSettings((prev) => ({ ...prev, goldPrice: fallback }));
+                                    }
+                                }}
+                                className="mt-2 w-full input-base"
+                            />
                         </div>
                         <div className="rounded-lg border border-slate-200 p-3">
                             <label htmlFor="nisab-amount-settings" className="block text-sm font-medium text-slate-700 flex items-center">Nisab amount override (SAR) <InfoHint text="Optional. If your authority uses a different Nisab, enter it here. Otherwise leave empty and we'll use gold price × 85 grams." /></label>
@@ -424,18 +570,6 @@ const hasData = accountsForEmptyCheck.length > 0;
                             onChange={(e) => setMaskSensitive(e.target.checked)}
                         />
                     </label>
-                    <label className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 p-3 cursor-pointer">
-                        <span className="text-sm text-slate-700">
-                            <span className="font-medium">Notification sound</span>
-                            <p className="text-xs text-slate-500 mt-0.5">Short beep when the header notification count increases or you open the bell with unread items. Uses Web Audio (no file). This device only.</p>
-                        </span>
-                        <input
-                            type="checkbox"
-                            className="h-5 w-5 rounded border-slate-300 text-primary"
-                            checked={playNotificationSound}
-                            onChange={(e) => setPlayNotificationSound(e.target.checked)}
-                        />
-                    </label>
                 </div>
             </SectionCard>
 
@@ -445,8 +579,12 @@ const hasData = accountsForEmptyCheck.length > 0;
                     Source: app defaults + optional DB (<code className="text-xs bg-slate-100 px-1 rounded">wealth_ultra_config</code>) + sleeve targets below
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
-                    <ParamCard label="FX rate (USD→SAR)" value={(defaultWealthUltra?.fxRate ?? 0).toFixed(4)} hint="Conversion baseline" />
-                    <ParamCard label="Monthly deposit" value={`$${Math.round(defaultWealthUltra?.monthlyDeposit ?? 0).toLocaleString()}`} hint="Deployment budget" />
+                    <ParamCard label="FX rate (USD→SAR)" value={(defaultWealthUltra?.fxRate ?? sarPerUsd).toFixed(4)} hint="Conversion baseline (merged with live resolver)" />
+                    <ParamCard
+                        label="Monthly deposit"
+                        value={`${Math.round(toSAR(Number(defaultWealthUltra?.monthlyDeposit ?? 0) || 0, 'USD', sarPerUsd)).toLocaleString()} SAR (~$${Math.round(Number(defaultWealthUltra?.monthlyDeposit ?? 0) || 0).toLocaleString()} USD)`}
+                        hint="Wealth Ultra deployment budget (stored USD; shown SAR + USD)"
+                    />
                     <ParamCard label="Cash reserve" value={`${defaultWealthUltra?.cashReservePct ?? 0}%`} hint="Liquidity guardrail" />
                     <ParamCard label="Max per ticker" value={`${defaultWealthUltra?.maxPerTickerPct ?? 0}%`} hint="Concentration cap" />
                     <ParamCard label="Core target" value={`${defaultWealthUltra?.targetCorePct ?? 0}%`} hint="Stability sleeve" />
@@ -626,19 +764,90 @@ const hasData = accountsForEmptyCheck.length > 0;
                 </div>
             </SectionCard>
 
-            <SectionCard id="notifications" title="Notifications" collapsible collapsibleSummary="Email reports">
-                <label htmlFor="email-toggle" className="flex items-center justify-between cursor-pointer">
-                    <span className="text-sm text-slate-700">
-                        <span className="font-medium flex items-center">Weekly Email Reports <InfoHint text="When enabled, you receive a weekly summary of budgets, net worth, and alerts (if the feature is configured)." /></span>
-                        <p className="text-xs text-slate-500 mt-0.5">Receive a summary of your financial health every week.</p>
-                    </span>
-                    <div className="relative inline-block w-10 h-6">
-                        <input id="email-toggle" type="checkbox" className="sr-only" checked={localSettings?.enableEmails ?? false}
-                                onChange={(e) => handleSettingChange('enableEmails', e.target.checked)} />
-                        <div className={`block w-10 h-6 rounded-full transition ${(localSettings?.enableEmails ?? false) ? 'bg-primary' : 'bg-slate-200'}`}></div>
-                        <div className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full shadow transition ${(localSettings?.enableEmails ?? false) ? 'translate-x-4' : ''}`}></div>
+            <SectionCard id="notifications" title="Notifications & alerts" collapsible collapsibleSummary="Live counts, channels" defaultExpanded>
+                <p className="text-xs text-slate-600 mb-3">
+                    Counts are computed from your data and the same engines as the Notifications page. Tracked symbols = personal holdings + watchlist (calendar surface).
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+                    <div className="rounded-xl border border-sky-100 bg-sky-50/90 px-3 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase text-sky-800">Price alerts</p>
+                        <p className="text-xl font-bold text-sky-950 tabular-nums">{activePriceAlertCount}</p>
+                        <p className="text-[10px] text-sky-800/90">Active (Investments)</p>
                     </div>
-                </label>
+                    <div className="rounded-xl border border-amber-100 bg-amber-50/90 px-3 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase text-amber-900">Portfolio drift</p>
+                        <p className="text-xl font-bold text-amber-950 tabular-nums">{portfolioDriftFlag}</p>
+                        <p className="text-[10px] text-amber-900/90">
+                            {sleeveDriftPct == null ? 'N/A' : `${sleeveDriftPct}% vs ${driftThresholdSetting}% thr.`}
+                        </p>
+                    </div>
+                    <div className="rounded-xl border border-violet-100 bg-violet-50/90 px-3 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase text-violet-900">Tracked symbols</p>
+                        <p className="text-xl font-bold text-violet-950 tabular-nums">{trackedSymbolCount}</p>
+                        <p className="text-[10px] text-violet-900/90">Holdings + watchlist</p>
+                    </div>
+                    <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase text-primary">In-app feed</p>
+                        <p className="text-xl font-bold text-slate-900 tabular-nums">{inAppFeedCount}</p>
+                        <p className="text-[10px] text-slate-600">{unreadNotif} unread</p>
+                    </div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-4 mb-4">
+                    <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2">Digest frequency (preference)</p>
+                    <p className="text-[11px] text-slate-500 mb-2">Stored on this device. Full automation of email digests depends on your deployment.</p>
+                    <div className="flex flex-wrap gap-2">
+                        {(['immediate', 'daily', 'weekly'] as const).map((f) => (
+                            <button
+                                key={f}
+                                type="button"
+                                onClick={() => setDigestFrequency(f)}
+                                className={`px-3 py-1.5 text-sm rounded-lg border capitalize ${digestFrequency === f ? 'border-primary bg-primary/10 text-primary font-semibold' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                            >
+                                {f}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+                <div className="space-y-3">
+                    <label htmlFor="email-toggle" className="flex items-center justify-between cursor-pointer rounded-lg border border-slate-200 p-3">
+                        <span className="text-sm text-slate-700">
+                            <span className="font-medium flex items-center">Weekly email summaries <InfoHint text="Persists to your Finova settings. Delivery requires a configured backend." /></span>
+                            <p className="text-xs text-slate-500 mt-0.5">Toggle preference for periodic summaries.</p>
+                        </span>
+                        <div className="relative inline-block w-10 h-6 shrink-0">
+                            <input id="email-toggle" type="checkbox" className="sr-only" checked={localSettings?.enableEmails ?? false}
+                                onChange={(e) => handleSettingChange('enableEmails', e.target.checked)} />
+                            <div className={`block w-10 h-6 rounded-full transition ${(localSettings?.enableEmails ?? false) ? 'bg-primary' : 'bg-slate-200'}`} />
+                            <div className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full shadow transition ${(localSettings?.enableEmails ?? false) ? 'translate-x-4' : ''}`} />
+                        </div>
+                    </label>
+                    <label className="flex items-center justify-between cursor-pointer rounded-lg border border-slate-200 p-3">
+                        <span className="text-sm text-slate-700">
+                            <span className="font-medium">In-app sound</span>
+                            <p className="text-xs text-slate-500 mt-0.5">Short beep when the notification bell updates — not mobile push.</p>
+                        </span>
+                        <input
+                            type="checkbox"
+                            className="h-5 w-5 rounded border-slate-300 text-primary shrink-0"
+                            checked={playNotificationSound}
+                            onChange={(e) => setPlayNotificationSound(e.target.checked)}
+                        />
+                    </label>
+                </div>
+                {setActivePage && (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                        <button type="button" className="btn-outline text-sm" onClick={() => setActivePage('Notifications')}>Open Notifications</button>
+                        <button type="button" className="btn-outline text-sm" onClick={() => setActivePage('Investments')}>Price alerts &amp; Investments</button>
+                        <button type="button" className="btn-outline text-sm" onClick={() => setActivePage('Market Events')}>Market calendar</button>
+                    </div>
+                )}
+            </SectionCard>
+
+            <SectionCard id="ai-settings" title="AI insights" collapsible collapsibleSummary="English ↔ العربية" defaultExpanded>
+                <p className="text-sm text-slate-600 mb-3">
+                    Uses the same Gemini stack as the rest of Finova. Default language for new insight panels is saved when you pick **العربية** or English in any AI box.
+                </p>
+                <AIAdvisor pageContext="settings" contextData={settingsAiContext} title="Settings coach" subtitle="Validate your setup with SAR-aware context · English / Arabic" buttonLabel="Review my settings" />
             </SectionCard>
 
             <SectionCard id="activity-log" title="Activity log (this device)" collapsible collapsibleSummary="Recent changes">
@@ -888,6 +1097,8 @@ function SnapshotMetricCard({
     hint,
     percent,
     on,
+    secondaryPercent,
+    secondaryLabel,
 }: {
     variant: 'risk' | 'budget' | 'drift' | 'email';
     label: string;
@@ -896,6 +1107,9 @@ function SnapshotMetricCard({
     /** 0–100 for bar fill */
     percent?: number;
     on?: boolean;
+    /** Extra bar under risk pill (e.g. profile setup %) */
+    secondaryPercent?: number;
+    secondaryLabel?: string;
 }) {
     const border =
         variant === 'risk'
@@ -916,6 +1130,10 @@ function SnapshotMetricCard({
                 : { pill: 'bg-slate-100 text-slate-700 ring-1 ring-slate-200', dot: 'bg-slate-400' };
 
     const barPct = percent != null && Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0;
+    const secPct =
+        secondaryPercent != null && Number.isFinite(secondaryPercent)
+            ? Math.max(0, Math.min(100, secondaryPercent))
+            : null;
 
     return (
         <div
@@ -943,7 +1161,20 @@ function SnapshotMetricCard({
             </div>
             <div className="px-3 pb-3">
                 {variant === 'risk' ? (
-                    <span className={`inline-flex items-center rounded-lg px-2.5 py-1 text-sm font-bold ${riskVisual.pill}`}>{value}</span>
+                    <div className="space-y-2">
+                        <span className={`inline-flex items-center rounded-lg px-2.5 py-1 text-sm font-bold ${riskVisual.pill}`}>{value}</span>
+                        {secPct != null && (
+                            <>
+                                <p className="text-[10px] text-slate-500">{secondaryLabel ?? 'Progress'}: {Math.round(secPct)}%</p>
+                                <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+                                    <div
+                                        className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-indigo-600 transition-all"
+                                        style={{ width: `${secPct}%` }}
+                                    />
+                                </div>
+                            </>
+                        )}
+                    </div>
                 ) : variant === 'email' ? (
                     <span
                         className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-sm font-bold ${on ? 'bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200' : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200'}`}

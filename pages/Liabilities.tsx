@@ -15,6 +15,7 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import AIAdvisor from '../components/AIAdvisor';
 import OwnerBadge from '../components/OwnerBadge';
 import { liquidityRatio, debtServiceRatio } from '../services/liabilityMetrics';
 import { countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
@@ -22,7 +23,7 @@ import { debtPayoffPlan, debtStressScore } from '../services/debtEngines';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { computePersonalNetWorthBreakdownSAR } from '../services/personalNetWorth';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 
 type StatusFilter = 'active' | 'paid' | 'all';
 
@@ -166,7 +167,7 @@ const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void;
             </div>
             <div className="mt-4 text-right">
                 <p className="text-sm text-gray-500">{isPaid ? 'Balance when paid (reference)' : 'Amount owed'}</p>
-                <p className={`text-2xl font-semibold ${isPaid ? 'text-slate-600' : 'text-danger'}`}>{formatCurrencyString(Math.abs(liability.amount))}</p>
+                <p className={`text-2xl font-semibold ${isPaid ? 'text-slate-600' : 'text-danger'}`}>{formatCurrencyString(Math.abs(liability.amount), { inCurrency: 'SAR', digits: 2 })}</p>
             </div>
         </div>
     );
@@ -197,7 +198,7 @@ const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) =>
             </div>
             <div className="mt-4 text-right">
                 <p className="text-sm text-gray-500">{isPaid ? 'Amount when paid (reference)' : 'Amount owed to you'}</p>
-                <p className={`text-2xl font-semibold ${isPaid ? 'text-slate-600' : 'text-emerald-700'}`}>{formatCurrencyString(liability.amount)}</p>
+                <p className={`text-2xl font-semibold ${isPaid ? 'text-slate-600' : 'text-emerald-700'}`}>{formatCurrencyString(Math.abs(liability.amount), { inCurrency: 'SAR', digits: 2 })}</p>
             </div>
         </div>
     );
@@ -235,6 +236,17 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     const receivables = useMemo(() => allReceivables.filter(l => matchesStatusFilter(l, statusFilter)), [allReceivables, statusFilter]);
     const liabilityIds = useMemo(() => new Set((data?.liabilities ?? []).map(l => l.id)), [data?.liabilities]);
 
+    /** Checking + savings only, SAR equivalent (mixed USD/SAR accounts). */
+    const liquidCheckingSavingsSar = useMemo(() => {
+        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        return accounts
+            .filter((a: Account) => a.type === 'Checking' || a.type === 'Savings')
+            .reduce((s: number, a: Account) => {
+                const cur = a.currency === 'USD' ? 'USD' : 'SAR';
+                return s + Math.max(0, toSAR(Number(a.balance) || 0, cur, sarPerUsd));
+            }, 0);
+    }, [data, sarPerUsd]);
+
     const { totalDebt, totalReceivable, debtToAssetRatio, netPosition } = useMemo(() => {
         const personalLiabilities = (data as any)?.personalLiabilities ?? data?.liabilities ?? [];
         const allAccounts = data?.accounts ?? [];
@@ -263,11 +275,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     }, [data, sarPerUsd, getAvailableCashForAccount]);
 
     const { liquidityRatioVal, debtServicePct } = useMemo(() => {
-        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-        const liquid = accounts
-            .filter((a: Account) => a.type === 'Checking' || a.type === 'Savings')
-            .reduce((s: number, a: Account) => s + Math.max(0, a.balance ?? 0), 0);
-        const liq = liquidityRatio(liquid, Math.max(1, totalDebt));
+        const liq = liquidityRatio(liquidCheckingSavingsSar, totalDebt);
         const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
         const now = new Date();
         const start = new Date(now.getFullYear(), now.getMonth() - 6, 1);
@@ -284,10 +292,14 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
         const avgMonthlyIncome =
             byM.size > 0 ? Array.from(byM.values()).reduce((a, b) => a + b, 0) / byM.size : 0;
         const annualDebtGuess = totalDebt * 0.12;
-        const dsr =
-            avgMonthlyIncome > 0 ? debtServiceRatio(annualDebtGuess, avgMonthlyIncome) * 100 : null;
+        let dsr: number | null = null;
+        if (totalDebt <= 0 && avgMonthlyIncome > 0) {
+            dsr = 0;
+        } else if (avgMonthlyIncome > 0) {
+            dsr = debtServiceRatio(annualDebtGuess, avgMonthlyIncome) * 100;
+        }
         return { liquidityRatioVal: liq, debtServicePct: dsr };
-    }, [data, totalDebt]);
+    }, [data, totalDebt, liquidCheckingSavingsSar]);
 
     const debtPayoffOrder = useMemo(() => {
         const active = allDebts.filter((l) => (l.status ?? 'Active') === 'Active');
@@ -316,13 +328,55 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
             byM.set(k, (byM.get(k) ?? 0) + (Number(t.amount) || 0));
         });
         const grossMonthly = byM.size > 0 ? Array.from(byM.values()).reduce((a, b) => a + b, 0) / byM.size : 0;
-        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-        const liquid = accounts
-            .filter((a: Account) => a.type === 'Checking' || a.type === 'Savings')
-            .reduce((s: number, a: Account) => s + Math.max(0, a.balance ?? 0), 0);
         const monthlyPaymentsEst = totalDebt * 0.02;
-        return debtStressScore(monthlyPaymentsEst, grossMonthly, liquid);
-    }, [data, totalDebt]);
+        return debtStressScore(monthlyPaymentsEst, grossMonthly, liquidCheckingSavingsSar);
+    }, [data, totalDebt, liquidCheckingSavingsSar]);
+
+    const liabilityValidationWarnings = useMemo(() => {
+        const warnings: string[] = [];
+        if (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0) warnings.push('FX rate is invalid. Debt-to-asset and net worth ratios that use SAR conversion may be off.');
+        const goalIds = new Set((data?.goals ?? []).map((g) => g.id));
+        const rows = data?.liabilities ?? [];
+        const badAmounts = rows.filter((l) => !Number.isFinite(Number(l.amount))).length;
+        if (badAmounts > 0) warnings.push(`${badAmounts} manual liability row(s) have invalid amounts.`);
+        const brokenLinks = rows.filter((l) => l.goalId && !goalIds.has(l.goalId)).length;
+        if (brokenLinks > 0) warnings.push(`${brokenLinks} liability goal link(s) are stale (goal was deleted).`);
+        const emptyName = rows.filter((l) => !String(l.name ?? '').trim()).length;
+        if (emptyName > 0) warnings.push(`${emptyName} manual liability row(s) have empty names.`);
+        const hasUsdCash = ((data as any)?.personalAccounts ?? data?.accounts ?? []).some(
+            (a: Account) => (a.type === 'Checking' || a.type === 'Savings') && a.currency === 'USD',
+        );
+        if (hasUsdCash) warnings.push('Some cash accounts are in USD; liquidity uses SAR equivalent from your FX rate (header/settings).');
+        if (totalDebt > 0 && debtServicePct == null) {
+            warnings.push('Debt service cannot be estimated without recent categorized income (last 6 months).');
+        }
+        return warnings;
+    }, [sarPerUsd, data?.goals, data?.liabilities, data?.accounts, (data as any)?.personalAccounts, totalDebt, debtServicePct]);
+
+    const liabilitiesAiContext = useMemo(() => {
+        const now = new Date();
+        const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const activeDebtsOnly = allDebts.filter((l) => (l.status ?? 'Active') === 'Active' && (l.amount ?? 0) < 0);
+        const byType = new Map<string, number>();
+        for (const l of activeDebtsOnly) {
+            const k = l.type || 'Other';
+            byType.set(k, (byType.get(k) ?? 0) + Math.abs(Number(l.amount) || 0));
+        }
+        const compositionData =
+            byType.size > 0
+                ? Array.from(byType.entries()).map(([name, value]) => ({ name, value }))
+                : [{ name: 'No active debt', value: 0 }];
+        return {
+            spendingData: [
+                { category: 'Total Debt', value: totalDebt },
+                { category: 'Receivables', value: totalReceivable },
+                { category: 'Net (Recv − Debt)', value: netPosition },
+                { category: 'Debt stress score', value: debtStress.score },
+            ],
+            trendData: [{ month, value: totalDebt }],
+            compositionData,
+        };
+    }, [allDebts, totalDebt, totalReceivable, netPosition, debtStress.score]);
 
     const handleOpenModal = (liability: Liability | null = null) => {
         setLiabilityToEdit(liability);
@@ -383,13 +437,50 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
             }
         >
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-                <Card title="Total Debt" value={formatCurrencyString(totalDebt)} indicatorColor="red" valueColor="text-red-700" icon={<CreditCardIcon className="h-5 w-5 text-red-600" />} tooltip="Sum of unpaid money you owe." />
-                <Card title="Money Owed to You" value={formatCurrencyString(totalReceivable)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of unpaid amounts others owe you." />
-                <Card title="Net (Receivables − Debt)" value={formatCurrencyString(netPosition)} indicatorColor={netPosition >= 0 ? 'green' : 'red'} valueColor={netPosition >= 0 ? 'text-emerald-700' : 'text-red-700'} tooltip="Positive = you are owed more than you owe; negative = you owe more than you are owed." />
-                <Card title="Debt-to-Asset Ratio" value={`${debtToAssetRatio.toFixed(2)}%`} tooltip="Debt as a percentage of your assets (excludes receivables)." indicatorColor={debtToAssetRatio > 50 ? 'red' : debtToAssetRatio > 25 ? 'yellow' : 'green'} valueColor={debtToAssetRatio > 50 ? 'text-red-700' : debtToAssetRatio > 25 ? 'text-amber-700' : 'text-green-700'} />
-                <Card title="Liquidity ratio" value={liquidityRatioVal.toFixed(2)} tooltip="Checking+Savings vs total debt (higher = more cash to cover debt)." indicatorColor={liquidityRatioVal >= 0.5 ? 'green' : liquidityRatioVal >= 0.2 ? 'yellow' : 'red'} valueColor={liquidityRatioVal >= 0.5 ? 'text-emerald-700' : liquidityRatioVal >= 0.2 ? 'text-amber-700' : 'text-red-700'} />
-                <Card title="Debt service (est.)" value={debtServicePct != null ? `${debtServicePct.toFixed(1)}%` : '—'} tooltip="Rough: ~12% of debt balance as annual payments vs your 6-mo avg income." indicatorColor={debtServicePct != null && debtServicePct > 40 ? 'red' : debtServicePct != null && debtServicePct > 25 ? 'yellow' : 'green'} valueColor={debtServicePct != null && debtServicePct > 40 ? 'text-red-700' : debtServicePct != null && debtServicePct > 25 ? 'text-amber-700' : 'text-slate-700'} />
+                <Card title="Total debt" value={formatCurrencyString(totalDebt, { inCurrency: 'SAR', digits: 2 })} indicatorColor="red" valueColor="text-red-700" icon={<CreditCardIcon className="h-5 w-5 text-red-600" />} tooltip="Unpaid debt in SAR equivalent. Matches Summary / net worth personal scope." />
+                <Card title="Receivables" value={formatCurrencyString(totalReceivable, { inCurrency: 'SAR', digits: 2 })} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Money others owe you (active receivables), same basis as manual entries." />
+                <Card title="Net position" value={formatCurrencyString(netPosition, { inCurrency: 'SAR', digits: 2 })} indicatorColor={netPosition >= 0 ? 'green' : 'red'} valueColor={netPosition >= 0 ? 'text-emerald-700' : 'text-red-700'} tooltip="Receivables minus debt. Positive means you are owed more than you owe." />
+                <Card title="Debt vs assets" value={`${debtToAssetRatio.toFixed(2)}%`} tooltip="Total debt ÷ personal total assets (SAR, from net worth engine)." indicatorColor={debtToAssetRatio > 50 ? 'red' : debtToAssetRatio > 25 ? 'yellow' : 'green'} valueColor={debtToAssetRatio > 50 ? 'text-red-700' : debtToAssetRatio > 25 ? 'text-amber-700' : 'text-green-700'} />
+                <Card
+                    title="Cash vs debt"
+                    value={liquidityRatioVal != null ? liquidityRatioVal.toFixed(2) : '—'}
+                    tooltip={
+                        liquidityRatioVal != null
+                            ? 'Checking + savings (SAR eq.) ÷ total debt. Higher = more liquid cash per unit of debt.'
+                            : 'No active debt. This ratio is liquid cash ÷ debt once you record money you owe.'
+                    }
+                    indicatorColor={
+                        liquidityRatioVal == null ? 'green' : liquidityRatioVal >= 0.5 ? 'green' : liquidityRatioVal >= 0.2 ? 'yellow' : 'red'
+                    }
+                    valueColor={
+                        liquidityRatioVal == null ? 'text-slate-600' : liquidityRatioVal >= 0.5 ? 'text-emerald-700' : liquidityRatioVal >= 0.2 ? 'text-amber-700' : 'text-red-700'
+                    }
+                />
+                <Card
+                    title="Debt service"
+                    value={debtServicePct != null ? `${debtServicePct.toFixed(1)}%` : '—'}
+                    tooltip={
+                        totalDebt <= 0
+                            ? 'No debt service burden while total debt is zero. With debt, this compares ~12% of balance (annual payment proxy) to your 6-month average income.'
+                            : 'Rough estimate: ~12% of debt balance as annual payments vs your 6-month average income (needs categorized income).'
+                    }
+                    indicatorColor={
+                        debtServicePct == null ? 'yellow' : debtServicePct > 40 ? 'red' : debtServicePct > 25 ? 'yellow' : 'green'
+                    }
+                    valueColor={
+                        debtServicePct == null ? 'text-amber-700' : debtServicePct > 40 ? 'text-red-700' : debtServicePct > 25 ? 'text-amber-700' : 'text-slate-700'
+                    }
+                />
             </div>
+            {liabilityValidationWarnings.length > 0 && (
+                <SectionCard title="Liabilities validation checks" collapsible collapsibleSummary="Data quality and wiring checks" defaultExpanded>
+                    <ul className="space-y-1 text-sm text-amber-800">
+                        {liabilityValidationWarnings.slice(0, 8).map((w, i) => (
+                            <li key={`lw-${i}`}>- {w}</li>
+                        ))}
+                    </ul>
+                </SectionCard>
+            )}
 
             {allDebts.filter((l) => (l.status ?? 'Active') === 'Active').length > 0 && (
                 <SectionCard title="Debt intelligence" collapsible collapsibleSummary="Payoff order, stress">
@@ -447,6 +538,14 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                     </div>
                 )}
             </SectionCard>
+
+            <AIAdvisor
+                pageContext="analysis"
+                contextData={liabilitiesAiContext}
+                title="Liabilities AI Advisor"
+                subtitle="Debt load, receivables, and payoff context. After insights load, use English / العربية to read in Arabic."
+                buttonLabel="Get AI Liabilities Insights"
+            />
 
             <LiabilityModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveLiability} liabilityToEdit={liabilityToEdit} />
         </PageLayout>

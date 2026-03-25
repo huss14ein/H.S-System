@@ -6,6 +6,62 @@
 
 export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'Settings' | 'Investments' | 'Plan' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan' | 'Investment Plan' | 'Dividend Tracker' | 'AI Rebalancer' | 'Watchlist' | 'Assets' | 'System & APIs Health' | 'Statement Upload' | 'Statement History' | 'Commodities' | 'Engines & Tools';
 
+/** User tasks on the Notifications page (persisted per account). */
+export type TodoPriority = 'low' | 'medium' | 'high';
+export type TodoStatus = 'open' | 'completed';
+/** When not `done`, completing the parent rolls due date forward instead of archiving (see TodosContext). */
+export type TodoRecurrence = 'none' | 'daily' | 'weekly' | 'monthly';
+
+export interface TodoSubtask {
+  id: string;
+  title: string;
+  done: boolean;
+}
+
+/** Attachment metadata in localStorage; file bytes in IndexedDB (see todoAttachmentIdb). */
+export interface TodoAttachmentMeta {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+export interface TodoItem {
+  id: string;
+  title: string;
+  notes?: string;
+  priority: TodoPriority;
+  status: TodoStatus;
+  /** Calendar day yyyy-mm-dd */
+  dueDate?: string;
+  /** Local wall time HH:mm (24h), together with dueDate for reminders */
+  dueTime?: string;
+  /** Minutes before due date+time to show in-app toast (default applied in UI if unset) */
+  reminderMinutesBefore?: number;
+  recurrence?: TodoRecurrence;
+  /** Last calendar day we fired the due reminder (yyyy-mm-dd) */
+  lastReminderNotifiedYmd?: string;
+  /** Show at top of lists */
+  pinned?: boolean;
+  /** Hide from due/overdue until this calendar day (yyyy-mm-dd) */
+  snoozedUntil?: string;
+  /** List / project bucket */
+  listId?: string;
+  /** Free-form tags (lowercase recommended) */
+  tags?: string[];
+  subtasks?: TodoSubtask[];
+  /** File metadata only; blobs stored separately in IndexedDB. */
+  attachments?: TodoAttachmentMeta[];
+  linkedPage?: Page;
+  /** When created from an alert row */
+  sourceNotificationId?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  sortOrder: number;
+}
+
 export type UserRole = 'Admin' | 'Restricted';
 export type ApprovalStatus = 'Pending' | 'Approved' | 'Rejected';
 
@@ -227,6 +283,8 @@ export interface InvestmentTransaction {
   quantity: number;
   price: number;
   total: number;
+  /** Optional commissions/fees in the same currency as the trade (included in `total` for ledger cash). */
+  fees?: number;
   /** Currency the trade was recorded in (display & reporting). */
   currency?: TradeCurrency;
   /** For deposits/withdrawals: the linked cash account ID (source for deposits, destination for withdrawals) */
@@ -513,6 +571,11 @@ export interface InvestmentPlanSettings {
   brokerConstraints: BrokerConstraints;
   /** Set when user saves monthly plan (DB + notifications for FX freshness). */
   fxRateUpdatedAt?: string | null;
+  /**
+   * Per investment portfolio (`investment_portfolios.id`): budget, sleeves, etc.
+   * Stored as `plans_by_portfolio_id` JSON on `investment_plan`. Nested values must omit `plansByPortfolioId`.
+   */
+  plansByPortfolioId?: Record<string, Omit<InvestmentPlanSettings, 'plansByPortfolioId'>>;
 }
 
 /** Wealth Ultra default parameters (from app settings/config, not DB). General share/sleeve config. */
@@ -527,6 +590,8 @@ export interface WealthUltraSystemConfig {
   defaultTarget1Pct: number;
   defaultTarget2Pct: number;
   defaultTrailingPct: number;
+  /** Monthly deploy default (USD) from Settings / engine seed when present. */
+  monthlyDeposit?: number;
 }
 
 export interface ProposedTrade {
@@ -566,6 +631,8 @@ export type TickerStatus = 'Core' | 'High-Upside' | 'Watchlist' | 'Quarantine' |
 export interface UniverseTicker {
   id: string;
   user_id?: string;
+  /** When set, this universe row applies only to this investment portfolio (`investment_portfolios.id`). */
+  portfolioId?: string | null;
   ticker: string;
   name: string;
   status: TickerStatus;

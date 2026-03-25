@@ -66,13 +66,23 @@ export function collectTrackedSymbols(data: {
   return [...out];
 }
 
-/** Per-symbol: missing timestamp or older than threshold counts as stale. */
+export type GetStaleQuoteSymbolsOptions = {
+  /**
+   * When false, symbols with no per-symbol timestamp are not listed as stale
+   * (e.g. after a fresh global refresh, some tickers may still be loading or unsupported).
+   */
+  countMissingTimestampAsStale?: boolean;
+};
+
+/** Per-symbol: missing timestamp or older than threshold counts as stale (unless opted out). */
 export function getStaleQuoteSymbols(
   symbols: string[],
   symbolQuoteUpdatedAt: Record<string, string | undefined>,
-  isLive: boolean
+  isLive: boolean,
+  opts?: GetStaleQuoteSymbolsOptions
 ): string[] {
   if (symbols.length === 0) return [];
+  const countMissing = opts?.countMissingTimestampAsStale !== false;
   const maxH = isLive ? STALE_MARKET_HOURS_LIVE : STALE_MARKET_HOURS_SIM;
   const msMax = maxH * 3600000;
   const stale: string[] = [];
@@ -81,7 +91,7 @@ export function getStaleQuoteSymbols(
     if (!s) continue;
     const iso = symbolQuoteUpdatedAt[s];
     if (!iso) {
-      stale.push(s);
+      if (countMissing) stale.push(s);
       continue;
     }
     const t = new Date(iso).getTime();

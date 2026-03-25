@@ -28,6 +28,7 @@ import { EyeIcon } from './components/icons/EyeIcon';
 /** User-friendly display names for pages (nav, command palette, document title) */
 export const PAGE_DISPLAY_NAMES: Partial<Record<Page, string>> = {
   'Engines & Tools': 'Money Tools',
+  Notifications: 'Tasks & alerts',
 };
 
 /** Sub-views opened only inside Investments (not top-level nav / hash routes). */
@@ -64,3 +65,8 @@ export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSV
   { name: 'Settings', icon: Cog6ToothIcon },
   { name: 'Engines & Tools', icon: CubeIcon },
 ];
+
+/** All pages linkable from a task (top nav + Investments sub-tabs). */
+export const ALL_TODO_LINK_PAGES: Page[] = Array.from(
+  new Set<Page>([...NAVIGATION_ITEMS.map((i) => i.name), ...INVESTMENT_SUB_NAV_ITEMS.map((i) => i.name)]),
+).sort((a, b) => a.localeCompare(b));

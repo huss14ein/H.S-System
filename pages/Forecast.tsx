@@ -12,13 +12,15 @@ import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
 import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
 import type { Page } from '../types';
 import { normalizedMonthlyExpense } from '../services/financeMetrics';
 import { stressTestScenario, compareStrategies } from '../services/stressScenario';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
+import AIAdvisor from '../components/AIAdvisor';
+import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const toMonthlyRate = (annualPct: number) => {
@@ -147,9 +149,14 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const initialValues = useMemo(() => {
         const d = data as any;
         const investments = d?.personalInvestments ?? data?.investments ?? [];
+        const accounts = d?.personalAccounts ?? data?.accounts ?? [];
         const fx = resolveSarPerUsd(data, exchangeRate);
         const netWorth = computePersonalNetWorthSAR(data, fx, { getAvailableCashForAccount });
-        const investmentValue = getAllInvestmentsValueInSAR(investments, fx);
+        const holdingsSar = getAllInvestmentsValueInSAR(investments, fx);
+        const brokerageCashSar = accounts
+            .filter((a: { type?: string }) => a.type === 'Investment')
+            .reduce((s: number, a: { id: string }) => s + tradableCashBucketToSAR(getAvailableCashForAccount(a.id), fx), 0);
+        const investmentValue = holdingsSar + brokerageCashSar;
         return { netWorth, investmentValue };
     }, [data, exchangeRate, getAvailableCashForAccount]);
 
@@ -299,12 +306,13 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const stressInputs = useMemo(() => {
         const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
         const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const fx = resolveSarPerUsd(data, exchangeRate);
         const liquidCash = accounts
             .filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings')
-            .reduce((s: number, a: { balance?: number }) => s + Math.max(0, a.balance ?? 0), 0);
+            .reduce((s: number, a: { balance?: number; currency?: string }) => s + Math.max(0, toSAR(a.balance ?? 0, (a.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD', fx)), 0);
         const monthlyExpense = normalizedMonthlyExpense(txs as { date: string; type?: string; category?: string; amount?: number }[], { monthsLookback: 6 });
         return { liquidCash, monthlyExpense };
-    }, [data]);
+    }, [data, exchangeRate]);
 
     const stressResult = useMemo(
         () =>
@@ -327,6 +335,19 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         };
     }, [monthlySavings, formatCurrencyString]);
 
+    const forecastValidationWarnings = useMemo(() => {
+        const warnings: string[] = [];
+        const fx = resolveSarPerUsd(data, exchangeRate);
+        const kpis = computeMonthlyReportFinancialKpis(data, fx, getAvailableCashForAccount);
+        if (!Number.isFinite(initialValues.netWorth) || initialValues.netWorth < 0) warnings.push('Net worth baseline is invalid.');
+        if (!Number.isFinite(initialValues.investmentValue) || initialValues.investmentValue < 0) warnings.push('Investment baseline is invalid.');
+        if (!Number.isFinite(kpis.roi)) warnings.push('Reference ROI could not be computed.');
+        if (!Number.isFinite(kpis.budgetVariance)) warnings.push('Reference budget variance could not be computed.');
+        if (monthlySavings < 0) warnings.push('Monthly savings is negative; model clamps to zero.');
+        if (!Number.isFinite(stressInputs.monthlyExpense) || stressInputs.monthlyExpense <= 0) warnings.push('Monthly expense signal is weak; stress test is less reliable.');
+        return warnings;
+    }, [data, exchangeRate, getAvailableCashForAccount, initialValues, monthlySavings, stressInputs.monthlyExpense]);
+
     if (loading || !data) {
         return (
             <div className="flex justify-center items-center h-96" aria-busy="true">
@@ -341,6 +362,31 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             description="Deterministic long-horizon view from today’s balances, savings rate, and return assumptions—use alongside Goals and your real plan."
         >
             <div className="space-y-6 lg:space-y-8">
+            <AIAdvisor
+                pageContext="analysis"
+                contextData={{
+                    spendingData: [{ name: 'Forecast horizon', value: horizon }],
+                    trendData: forecastData,
+                    compositionData: [
+                        { name: 'Net worth baseline', value: initialValues.netWorth },
+                        { name: 'Investment baseline', value: initialValues.investmentValue },
+                    ],
+                }}
+                title="Forecast Advisor"
+                subtitle="AI interpretation of assumptions and projected outcomes"
+                buttonLabel="Get AI Forecast Insights"
+            />
+
+            {forecastValidationWarnings.length > 0 && (
+                <SectionCard title="Forecast validation checks" collapsible collapsibleSummary="Data quality and assumptions" defaultExpanded>
+                    <ul className="space-y-1 text-sm text-amber-800">
+                        {forecastValidationWarnings.slice(0, 6).map((w, i) => (
+                            <li key={`fv-${i}`}>- {w}</li>
+                        ))}
+                    </ul>
+                </SectionCard>
+            )}
+
             <CollapsibleSection title="Forecast methodology" summary="How projections are calculated" className="border border-sky-100 bg-gradient-to-br from-sky-50/80 via-white to-slate-50/50 shadow-sm">
                 <ul className="text-sm text-slate-700 space-y-2 list-disc pl-5 leading-relaxed">
                     <li>

@@ -321,15 +321,6 @@
         @apply bg-blue-50 border-l-4 border-primary text-blue-800 p-4 rounded-r-xl;
     }
 
-    /* Single-line labels/values: no mid-word wrap; ellipsis when overflow (cards, metric boxes, tables) */
-    .metric-label,
-    .metric-value {
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        min-width: 0;
-    }
-
     /* Chart containers: consistent layout so ResponsiveContainer can size correctly */
     .chart-container {
         @apply w-full overflow-hidden rounded-lg;

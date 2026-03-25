@@ -76,12 +76,19 @@ export function clearExceptionQueue(): void {
 
 /** Suggest repairs (e.g. "Set opening balance" for cash drift). */
 export function repairSuggestionEngine(args: {
-  cashDrift?: { accountId: string; drift: number };
+  cashDrift?: { accountId: string; drift: number; accountName?: string; bookCurrency?: string };
   missingCategory?: boolean;
-}): { action: string; entityId?: string }[] {
-  const suggestions: { action: string; entityId?: string }[] = [];
+}): { action: string; entityId?: string; detail?: string }[] {
+  const suggestions: { action: string; entityId?: string; detail?: string }[] = [];
   if (args.cashDrift && Math.abs(args.cashDrift.drift) > 0) {
-    suggestions.push({ action: 'Set or correct opening balance for account to match transaction ledger', entityId: args.cashDrift.accountId });
+    const detail = [args.cashDrift.accountName, args.cashDrift.bookCurrency ? `book ${args.cashDrift.bookCurrency}` : null]
+      .filter(Boolean)
+      .join(' · ');
+    suggestions.push({
+      action: 'Set or correct opening balance for account to match transaction ledger',
+      entityId: args.cashDrift.accountId,
+      detail: detail || undefined,
+    });
   }
   if (args.missingCategory) {
     suggestions.push({ action: 'Assign categories to uncategorized transactions' });

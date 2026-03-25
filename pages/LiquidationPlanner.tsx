@@ -9,6 +9,8 @@ import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { sellScore } from '../services/decisionEngine';
 import { thesisValidityCheck, type ThesisRecord } from '../services/thesisJournalEngine';
 import type { Holding, InvestmentPortfolio, Page } from '../types';
+import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 
 const THESIS_KEY = 'finova_thesis_records_v1';
 
@@ -93,6 +95,12 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
     return rows.sort((a, b) => b.score - a.score);
   }, [data, sarPerUsd, thesisBySymbol]);
 
+  const liqSymbols = useMemo(
+    () => Array.from(new Set(ranked.map((r) => (r.symbol || '').trim()).filter((s) => s.length >= 2))),
+    [ranked],
+  );
+  const { names: liqCompanyNames } = useCompanyNames(liqSymbols);
+
   if (loading || !data) {
     return (
       <div className="flex justify-center py-24">
@@ -144,7 +152,16 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
                 {ranked.map((r, i) => (
                   <tr key={`${r.symbol}-${i}`} className="border-b border-slate-50 hover:bg-slate-50/50">
                     <td className="py-3 pr-4 text-slate-500">{i + 1}</td>
-                    <td className="py-3 pr-4 font-medium text-slate-900">{r.symbol}</td>
+                    <td className="py-3 pr-4 font-medium text-slate-900 min-w-0 max-w-[200px]">
+                      <ResolvedSymbolLabel
+                        symbol={r.symbol}
+                        storedName={r.name}
+                        names={liqCompanyNames}
+                        layout="stacked"
+                        symbolClassName="font-medium text-slate-900"
+                        companyClassName="text-xs text-slate-500"
+                      />
+                    </td>
                     <td className="py-3 pr-4">{formatCurrencyString(r.valueSAR, { digits: 0 })}</td>
                     <td className="py-3 pr-4">
                       <span className={`font-semibold ${r.score >= 50 ? 'text-amber-700' : 'text-slate-700'}`}>{r.score}</span>

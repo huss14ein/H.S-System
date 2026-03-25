@@ -41,6 +41,9 @@ export async function parseBankStatement(
       text = await extractTextFromPDF(file);
     } else if (fileType === 'csv') {
       text = await parseCSV(file);
+    } else if (fileType === 'ofx' || fileType === 'qfx') {
+      // OFX/QFX are text-based; parse as text and let extractor normalize rows.
+      text = await parseCSV(file);
     } else if (fileType === 'xlsx' || fileType === 'xls') {
       text = await parseExcel(file);
     } else {
@@ -429,7 +432,9 @@ Only return valid JSON, no other text.`;
 
     const parsed = JSON.parse(jsonMatch[0]);
     
-    return parsed.map((tx: any) => ({
+    return parsed.map((tx: any) => {
+      const normalizedCurrency = String(tx.currency || 'SAR').toUpperCase();
+      return ({
       id: `inv-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       accountId,
       date: tx.date || new Date().toISOString().split('T')[0],
@@ -438,8 +443,9 @@ Only return valid JSON, no other text.`;
       quantity: typeof tx.quantity === 'number' ? tx.quantity : parseFloat(tx.quantity) || 0,
       price: typeof tx.price === 'number' ? tx.price : parseFloat(tx.price) || 0,
       total: typeof tx.total === 'number' ? tx.total : parseFloat(tx.total) || (tx.quantity * tx.price),
-      currency: tx.currency || 'SAR'
-    }));
+      currency: normalizedCurrency === 'USD' ? 'USD' : 'SAR'
+      });
+    });
   } catch (error) {
     console.error('Error extracting investment transactions with AI:', error);
     return [];
@@ -652,6 +658,9 @@ export function validateTransactions(
 
       if (!tx.accountId) {
         txErrors.push(`Investment transaction ${index + 1}: Missing account ID`);
+      }
+      if ((tx.currency || '').toUpperCase() !== 'SAR' && (tx.currency || '').toUpperCase() !== 'USD') {
+        txWarnings.push(`Investment transaction ${index + 1}: Unsupported currency "${tx.currency}", defaulting to SAR`);
       }
 
       // Check for duplicates

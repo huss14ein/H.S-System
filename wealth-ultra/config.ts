@@ -1,8 +1,10 @@
 import type { WealthUltraConfig, WealthUltraSystemConfig } from '../types';
+import { DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
 
 /** Front-end only: Wealth Ultra defaults (no database). Used by Settings, Wealth Ultra dashboard, and Recovery Plan. */
 const DEFAULT_CONFIG: Omit<WealthUltraConfig, 'coreTickers' | 'upsideTickers' | 'specTickers'> = {
-  fxRate: 0.2667,
+  /** SAR per 1 USD — same convention as `resolveSarPerUsd` / Settings “USD→SAR”. */
+  fxRate: DEFAULT_SAR_PER_USD,
   targetCorePct: 65,
   targetUpsidePct: 28,
   targetSpecPct: 7,

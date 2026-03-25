@@ -1,4 +1,4 @@
-import React, { useState, useContext, useEffect, useMemo } from 'react';
+import React, { useState, useContext, useEffect, useMemo, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
 import { PlannedTrade, type Page, type TradeCurrency } from '../types';
 import Modal from '../components/Modal';
@@ -32,6 +32,8 @@ import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { ChartBarIcon } from '../components/icons/ChartBarIcon';
 import { ClockIcon, TargetIcon } from '../components/icons';
 import { useSelfLearning } from '../context/SelfLearningContext';
+import { useCurrency } from '../context/CurrencyContext';
+import { resolveSarPerUsd, convertBetweenTradeCurrencies, inferInstrumentCurrencyFromSymbol } from '../utils/currencyMath';
 
 const ISO_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -62,6 +64,12 @@ const PlanTradeModal: React.FC<{
     const [amount, setAmount] = useState('');
     const [priority, setPriority] = useState<'High' | 'Medium' | 'Low'>('Medium');
     const [notes, setNotes] = useState('');
+
+    const { data } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
+    const planCcy = (budgetCurrency || 'SAR') as TradeCurrency;
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
+    const instrumentCurrency = useMemo(() => inferInstrumentCurrencyFromSymbol(symbol), [symbol]);
 
     useEffect(() => {
         if (planToEdit) {
@@ -159,18 +167,24 @@ const PlanTradeModal: React.FC<{
             }
         }
         
-        // Validate quantity/amount consistency if both are provided
+        // Validate quantity/amount vs target (amount is plan currency; target price is in the symbol's traded currency)
         if (quantity && amount) {
             const qty = parseFloat(quantity);
             const amt = parseFloat(amount);
             if (qty > 0 && amt > 0) {
-                const impliedPrice = amt / qty;
                 if (conditionType === 'price') {
                     const targetPrice = parseFloat(targetValue);
                     if (targetPrice > 0) {
-                        const diff = Math.abs(impliedPrice - targetPrice) / targetPrice;
+                        const instr = inferInstrumentCurrencyFromSymbol(symbol);
+                        const amtInstr = convertBetweenTradeCurrencies(amt, planCcy, instr, sarPerUsd);
+                        const impliedPriceInstr = amtInstr / qty;
+                        const diff = Math.abs(impliedPriceInstr - targetPrice) / targetPrice;
                         if (diff > 0.1) {
-                            if (!confirm(`Quantity and amount imply a price of ${impliedPrice.toFixed(2)}, which differs from target price ${targetPrice.toFixed(2)}. Continue anyway?`)) {
+                            if (
+                                !confirm(
+                                    `Quantity and ${planCcy} amount imply ~${impliedPriceInstr.toFixed(4)} ${instr}/share; target is ${targetPrice.toFixed(4)} ${instr}. Continue anyway?`,
+                                )
+                            ) {
                                 return;
                             }
                         }
@@ -231,6 +245,69 @@ const PlanTradeModal: React.FC<{
             if (suggested >= 100) setAmount(String(suggested));
         }
     }, [isOpen, planToEdit, tradeType, monthlyBudget, coreAllocation]);
+
+    const planTargetPriceNum = useMemo(() => {
+        if (conditionType !== 'price') return NaN;
+        const t = parseFloat(targetValue);
+        return Number.isFinite(t) && t > 0 ? t : NaN;
+    }, [conditionType, targetValue]);
+
+    const recalcPlanAmountQuantityFromTarget = useCallback(() => {
+        if (conditionType !== 'price') return;
+        const tp = planTargetPriceNum;
+        if (!Number.isFinite(tp) || tp <= 0) return;
+        const instr = instrumentCurrency;
+        const a = parseFloat(amount);
+        const q = parseFloat(quantity);
+        if (Number.isFinite(a) && a > 0) {
+            const amtInstr = convertBetweenTradeCurrencies(a, planCcy, instr, sarPerUsd);
+            setQuantity((amtInstr / tp).toFixed(6).replace(/\.?0+$/, '') || '0');
+        } else if (Number.isFinite(q) && q > 0) {
+            const notionalInstr = q * tp;
+            const aPlan = convertBetweenTradeCurrencies(notionalInstr, instr, planCcy, sarPerUsd);
+            setAmount(aPlan.toFixed(2).replace(/\.?0+$/, '') || '0');
+        }
+    }, [conditionType, planTargetPriceNum, amount, quantity, instrumentCurrency, planCcy, sarPerUsd]);
+
+    const handlePlanQuantityChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const v = e.target.value;
+        setQuantity(v);
+        if (conditionType === 'price' && Number.isFinite(planTargetPriceNum) && planTargetPriceNum > 0) {
+            const q = parseFloat(v);
+            if (Number.isFinite(q) && q > 0) {
+                const notionalInstr = q * planTargetPriceNum;
+                const aPlan = convertBetweenTradeCurrencies(notionalInstr, instrumentCurrency, planCcy, sarPerUsd);
+                setAmount(aPlan.toFixed(2).replace(/\.?0+$/, '') || '0');
+            }
+        }
+    };
+
+    const handlePlanAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const v = e.target.value;
+        setAmount(v);
+        if (conditionType === 'price' && Number.isFinite(planTargetPriceNum) && planTargetPriceNum > 0) {
+            const a = parseFloat(v);
+            if (Number.isFinite(a) && a > 0) {
+                const amtInstr = convertBetweenTradeCurrencies(a, planCcy, instrumentCurrency, sarPerUsd);
+                setQuantity((amtInstr / planTargetPriceNum).toFixed(6).replace(/\.?0+$/, '') || '0');
+            }
+        }
+    };
+
+    const planTradeSizing = useMemo(() => {
+        if (conditionType !== 'price' || !Number.isFinite(planTargetPriceNum)) return null;
+        const q = parseFloat(quantity);
+        const a = parseFloat(amount);
+        const tp = planTargetPriceNum;
+        const instr = instrumentCurrency;
+        if (Number.isFinite(q) && q > 0 && Number.isFinite(tp)) {
+            const notionalInstr = q * tp;
+            const inPlan = convertBetweenTradeCurrencies(notionalInstr, instr, planCcy, sarPerUsd);
+            return { notionalInstr, inPlan, instr };
+        }
+        if (Number.isFinite(a) && a > 0) return { notionalInstr: null as number | null, inPlan: a, instr: instrumentCurrency };
+        return null;
+    }, [conditionType, planTargetPriceNum, quantity, amount, instrumentCurrency, planCcy, sarPerUsd]);
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={planToEdit ? 'Edit plan' : 'Create plan'}>
@@ -342,6 +419,7 @@ const PlanTradeModal: React.FC<{
                             type={conditionType === 'date' ? 'date' : 'number'} 
                             value={targetValue} 
                             onChange={e => setTargetValue(e.target.value)} 
+                            onBlur={conditionType === 'price' ? recalcPlanAmountQuantityFromTarget : undefined}
                             required 
                             min="0" 
                             step="any" 
@@ -360,7 +438,7 @@ const PlanTradeModal: React.FC<{
                             id="quantity"
                             type="number" 
                             value={quantity} 
-                            onChange={e => setQuantity(e.target.value)} 
+                            onChange={handlePlanQuantityChange} 
                             min="0" 
                             step="any" 
                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent" 
@@ -375,7 +453,7 @@ const PlanTradeModal: React.FC<{
                             id="amount"
                             type="number" 
                             value={amount} 
-                            onChange={e => setAmount(e.target.value)} 
+                            onChange={handlePlanAmountChange} 
                             min="0" 
                             step="any" 
                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent" 
@@ -383,6 +461,32 @@ const PlanTradeModal: React.FC<{
                         />
                     </div>
                 </div>
+                {conditionType === 'price' && planTradeSizing != null && (
+                    <p className="text-sm text-slate-600 -mt-2">
+                        {planTradeSizing.notionalInstr != null ? (
+                            <>
+                                At target ({planTargetPriceNum.toLocaleString(undefined, { maximumFractionDigits: 4 })}{' '}
+                                {planTradeSizing.instr}/share): notional ≈{' '}
+                                <span className="font-semibold tabular-nums">
+                                    {planTradeSizing.notionalInstr.toLocaleString(undefined, { maximumFractionDigits: 2 })}{' '}
+                                    {planTradeSizing.instr}
+                                </span>
+                                {' · '}
+                                <span className="text-slate-700">
+                                    ≈ {planTradeSizing.inPlan.toLocaleString(undefined, { maximumFractionDigits: 2 })} {planCcy} (plan)
+                                </span>
+                                <span className="text-slate-500"> · FX {sarPerUsd.toFixed(4)} SAR/USD</span>
+                            </>
+                        ) : (
+                            <>
+                                Amount (plan):{' '}
+                                <span className="font-semibold tabular-nums">
+                                    {planTradeSizing.inPlan.toLocaleString(undefined, { maximumFractionDigits: 2 })} {planCcy}
+                                </span>
+                            </>
+                        )}
+                    </p>
+                )}
                 
                 <div>
                     <label htmlFor="notes" className="block text-sm font-semibold text-gray-700 mb-2">Notes (Optional)</label>

@@ -5,11 +5,16 @@ import { DataContext } from '../context/DataContext';
 import { getMarketCalendarCached, getMarketCalendarFresh, getMarketHolidays, type MarketCalendarLoadMode } from '../services/finnhubService';
 import { getStaticMarketHolidays, getStaticEconomicCalendar } from '../services/staticMarketCalendarService';
 import type { Page } from '../types';
-import { getPersonalInvestments } from '../utils/wealthScope';
+import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import { CalendarDaysIcon } from '../components/icons/CalendarDaysIcon';
 import { Bars3Icon } from '../components/icons/Bars3Icon';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
+import { useCurrency } from '../context/CurrencyContext';
+import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
+import { getAIMarketEventInsight, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
+import { useAI } from '../context/AiContext';
 
 type Impact = 'High' | 'Medium' | 'Low';
 type EventCategory = 'Macro' | 'Earnings' | 'Dividend' | 'Portfolio' | 'Holiday';
@@ -106,6 +111,29 @@ function lastWeekdayOfMonth(year: number, month0: number, weekday: number): Date
 
 function firstWeekdayOfMonth(year: number, month0: number, weekday: number): Date {
   return nthWeekdayOfMonth(year, month0, weekday, 1);
+}
+
+function eventPreferenceScore(e: MarketEventItem): number {
+  const source = (e.source || '').toLowerCase();
+  const sourceScore =
+    source.includes('finnhub') ? 4 :
+    source.includes('us market calendar') ? 3 :
+    source.includes('portfolio timeline') ? 2 :
+    source.includes('static') ? 1 : 0;
+  const estimatedPenalty = e.estimated ? -1 : 0;
+  return sourceScore + estimatedPenalty;
+}
+
+function dedupeEvents(items: MarketEventItem[]): MarketEventItem[] {
+  const map = new Map<string, MarketEventItem>();
+  for (const e of items) {
+    const key = `${toLocalDateKey(e.date)}|${e.category}|${(e.symbol ?? '').toUpperCase()}|${e.title.trim().toLowerCase()}`;
+    const prev = map.get(key);
+    if (!prev || eventPreferenceScore(e) > eventPreferenceScore(prev)) {
+      map.set(key, e);
+    }
+  }
+  return Array.from(map.values());
 }
 
 function nextEstimatedEarningsDate(base: Date, symbol: string): Date {
@@ -297,6 +325,8 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
 
 const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
   const { data, loading } = useContext(DataContext)!;
+  const { exchangeRate } = useCurrency();
+  const { isAiAvailable } = useAI();
   const [categoryFilter, setCategoryFilter] = useState<'All' | EventCategory>('All');
   const [impactFilter, setImpactFilter] = useState<'All' | Impact>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -307,14 +337,27 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   const [includeEstimated, setIncludeEstimated] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
   const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [aiEventId, setAiEventId] = useState<string | null>(null);
+  const [aiInsightEn, setAiInsightEn] = useState<string>('');
+  const [aiInsightAr, setAiInsightAr] = useState<string | null>(null);
+  const [aiLang, setAiLang] = useState<'en' | 'ar'>('en');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiTranslating, setAiTranslating] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiTranslateError, setAiTranslateError] = useState<string | null>(null);
+
+  const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+  const personalAccounts = useMemo(() => getPersonalAccounts(data ?? null), [data]);
+  const personalAccountIds = useMemo(() => new Set(personalAccounts.map((a) => a.id)), [personalAccounts]);
+  const personalInvestments = useMemo(() => getPersonalInvestments(data ?? null), [data]);
 
   const trackedSymbols = useMemo((): string[] => {
     const fromWatchlist = (data?.watchlist ?? []).map((w: { symbol?: string }) => w.symbol?.trim().toUpperCase()).filter((s): s is string => Boolean(s));
-    const fromHoldings = getPersonalInvestments(data ?? null).flatMap((p: { holdings?: { symbol?: string }[] }) =>
+    const fromHoldings = personalInvestments.flatMap((p: { holdings?: { symbol?: string }[] }) =>
       (p.holdings ?? []).map((h: { symbol?: string }) => h.symbol?.trim().toUpperCase()).filter((s): s is string => Boolean(s)),
     );
     return Array.from(new Set([...fromWatchlist, ...fromHoldings]));
-  }, [data]);
+  }, [data, personalInvestments]);
 
   useEffect(() => {
     try {
@@ -626,7 +669,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
 
     const firstBuyBySymbol = new Map<string, Date>();
     (data?.investmentTransactions ?? [])
-      .filter(t => t.type === 'buy' && t.symbol)
+      .filter(t => t.type === 'buy' && t.symbol && personalAccountIds.has(t.accountId ?? ''))
       .forEach((t) => {
         const s = t.symbol.trim().toUpperCase();
         const d = new Date(t.date);
@@ -664,13 +707,13 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     const reliableEvents = [...finnhubState.events, ...holidayEvents, ...portfolioEvents];
     const modeledEvents = [...modeledMacro, ...modeledSymbolEvents];
 
-    return [...reliableEvents, ...(includeEstimated ? modeledEvents : [])]
+    return dedupeEvents([...reliableEvents, ...(includeEstimated ? modeledEvents : [])])
       .filter((e) => {
         const t = e.date.getTime();
         return t >= now.getTime() && t <= end.getTime();
       })
       .sort((a, b) => a.date.getTime() - b.date.getTime());
-  }, [data, trackedSymbols, finnhubState.events, holidayEvents, includeEstimated]);
+  }, [data, trackedSymbols, finnhubState.events, holidayEvents, includeEstimated, personalAccountIds]);
 
   const filtered = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -712,6 +755,90 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       .sort((a, b) => b.score - a.score || a.daysUntil - b.daysUntil)
       .slice(0, 5);
   }, [filtered, reminders]);
+
+  const diagnostics = useMemo(() => {
+    const warnings: string[] = [];
+    if (trackedSymbols.length === 0) warnings.push('No tracked symbols found from Watchlist or personal holdings. Add symbols to improve event relevance.');
+    if (finnhubState.mode === 'none') warnings.push('Live market calendar feed is unavailable; static schedule fallback is active.');
+    if (finnhubState.mode === 'cache_stale') warnings.push('Using stale cached market calendar snapshot; click refresh prices to sync data.');
+    if (events.length === 0) warnings.push('No events available in the next 6 months for current data scope.');
+    return warnings;
+  }, [trackedSymbols.length, finnhubState.mode, events.length]);
+
+  const aiPortfolioContext = useMemo(() => {
+    const holdings = personalInvestments.flatMap((p) => {
+      const ccy = resolveInvestmentPortfolioCurrency(p);
+      return (p.holdings ?? []).map((h) => ({
+        symbol: h.symbol,
+        quantity: Number(h.quantity) || 0,
+        currentValue: Math.max(0, toSAR(Number(h.currentValue) || 0, ccy, sarPerUsd)),
+      }));
+    });
+    return {
+      holdings: holdings.filter((h) => h.symbol && h.quantity > 0),
+      watchlist: (data?.watchlist ?? [])
+        .map((w: { symbol?: string }) => (w.symbol ?? '').trim().toUpperCase())
+        .filter((s: string) => s.length > 0),
+    };
+  }, [personalInvestments, sarPerUsd, data?.watchlist]);
+
+  const aiTargetEvent = useMemo(() => {
+    if (!aiEventId) return topFocusEvents[0]?.event ?? null;
+    return filtered.find((e) => e.id === aiEventId) ?? topFocusEvents[0]?.event ?? null;
+  }, [aiEventId, filtered, topFocusEvents]);
+
+  const handleGenerateAiInsight = async () => {
+    if (!aiTargetEvent) return;
+    if (!isAiAvailable) {
+      setAiError('Configure AI to enable market event insights.');
+      return;
+    }
+    setAiLoading(true);
+    setAiError(null);
+    setAiTranslateError(null);
+    setAiInsightEn('');
+    setAiInsightAr(null);
+    setAiLang('en');
+    try {
+      const out = await getAIMarketEventInsight(
+        {
+          id: aiTargetEvent.id,
+          title: aiTargetEvent.title,
+          description: aiTargetEvent.description,
+          category: aiTargetEvent.category,
+          impact: aiTargetEvent.impact,
+          symbol: aiTargetEvent.symbol,
+          date: aiTargetEvent.date.toISOString().slice(0, 10),
+        },
+        aiPortfolioContext,
+      );
+      setAiInsightEn(`### Insight\n${out.insight}\n\n### Action\n${out.action}\n\n### Relevance\n${out.relevance}`);
+    } catch (e) {
+      setAiError(formatAiError(e));
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const handleAiLangChange = async (lang: 'en' | 'ar') => {
+    setAiLang(lang);
+    if (lang !== 'ar') return;
+    if (!isAiAvailable) {
+      setAiTranslateError('Configure AI to enable Arabic translation.');
+      return;
+    }
+    if (!aiInsightEn || aiInsightAr || aiTranslating) return;
+    setAiTranslating(true);
+    setAiTranslateError(null);
+    try {
+      const ar = await translateFinancialInsightToArabic(aiInsightEn);
+      setAiInsightAr(ar);
+    } catch (e) {
+      setAiTranslateError(formatAiError(e));
+    } finally {
+      setAiTranslating(false);
+    }
+  };
 
 
   const groupedByMonth = useMemo(() => {
@@ -916,6 +1043,14 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
             <StatCard label="Reminders" value={String(stats.reminderCount)} />
           </div>
         </div>
+        {diagnostics.length > 0 && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            <p className="font-semibold mb-1">Validation diagnostics</p>
+            <ul className="list-disc pl-5 space-y-1 text-xs">
+              {diagnostics.map((d) => <li key={d}>{d}</li>)}
+            </ul>
+          </div>
+        )}
 
         {viewMode === 'calendar' && (
           <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
@@ -1016,6 +1151,59 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
               </div>
             ))}
           </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-800">AI Market Event Advisor</h3>
+              <p className="text-xs text-slate-500">Generate personalized guidance from your holdings/watchlist. After insight loads, use English / العربية.</p>
+            </div>
+            <button type="button" className="btn-primary text-xs" onClick={handleGenerateAiInsight} disabled={aiLoading || !aiTargetEvent}>
+              {aiLoading ? 'Generating…' : 'Get AI insight'}
+            </button>
+          </div>
+          <div className="mt-3 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 items-end">
+            <div>
+              <label className="text-xs font-medium text-slate-600">Event for AI analysis</label>
+              <select
+                className="select-base h-10 text-sm mt-1"
+                value={aiTargetEvent?.id ?? ''}
+                onChange={(e) => setAiEventId(e.target.value || null)}
+              >
+                {(topFocusEvents.length ? topFocusEvents.map((x) => x.event) : filtered.slice(0, 10)).map((e) => (
+                  <option key={`ai-${e.id}`} value={e.id}>
+                    {e.title} ({e.date.toLocaleDateString()})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => void handleAiLangChange('en')}
+                className={`px-2.5 py-1 text-xs rounded-md border ${aiLang === 'en' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300'}`}
+              >
+                English
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleAiLangChange('ar')}
+                className={`px-2.5 py-1 text-xs rounded-md border ${aiLang === 'ar' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300'}`}
+                disabled={aiTranslating || !aiInsightEn}
+                title={!isAiAvailable ? 'Configure AI to enable Arabic translation' : 'عرض بالعربية'}
+              >
+                {aiTranslating ? 'Translating…' : 'العربية'}
+              </button>
+            </div>
+          </div>
+          {aiError && <p className="mt-3 text-xs text-rose-700">{aiError}</p>}
+          {(aiInsightEn || aiInsightAr) && (
+            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="text-sm text-slate-800 whitespace-pre-wrap">{aiLang === 'ar' ? (aiInsightAr ?? aiInsightEn) : aiInsightEn}</div>
+              {aiLang === 'ar' && aiTranslateError && <p className="mt-2 text-xs text-rose-700">{aiTranslateError}</p>}
+            </div>
+          )}
         </div>
 
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">

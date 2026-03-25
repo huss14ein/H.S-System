@@ -17,6 +17,7 @@ import { computeRiskLaneFromData, type RiskLaneContext } from './riskLaneEngine'
 import { runShockDrill, type ShockDrillResult } from './shockDrillEngine';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { computeLiquidNetWorth } from './liquidNetWorth';
+import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 
 export type GetAvailableCashFn = (accountId: string) => { SAR: number; USD: number };
 
@@ -91,6 +92,8 @@ export function computeMonthlyReportFinancialKpis(
 ): { budgetVariance: number; roi: number } {
   const now = new Date();
   const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const currentMonth = now.getMonth() + 1;
+  const currentYear = now.getFullYear();
   const d = data as { personalTransactions?: typeof data.transactions; personalAccounts?: typeof data.accounts; personalInvestments?: typeof data.investments };
   const transactions = d?.personalTransactions ?? data.transactions ?? [];
   const accounts = d?.personalAccounts ?? data.accounts ?? [];
@@ -102,7 +105,9 @@ export function computeMonthlyReportFinancialKpis(
     .filter((t: { type?: string; category?: string }) => countsAsExpenseForCashflowKpi(t))
     .reduce((sum: number, t: { amount?: number }) => sum + Math.abs(Number(t.amount) ?? 0), 0);
 
-  const totalBudget = (data.budgets ?? []).reduce((sum, b) => sum + budgetToMonthly(b), 0);
+  const totalBudget = (data.budgets ?? [])
+    .filter((b) => b.month === currentMonth && b.year === currentYear)
+    .reduce((sum, b) => sum + budgetToMonthly(b), 0);
   const budgetVariance = totalBudget - monthlyExpenses;
 
   const holdingsValueSAR = getAllInvestmentsValueInSAR(investments, sarPerUsd);
@@ -116,10 +121,24 @@ export function computeMonthlyReportFinancialKpis(
   const invTx = (data.investmentTransactions ?? []).filter((t: { accountId?: string }) => personalAccountIds.has(t.accountId ?? ''));
   const totalInvestedSar = invTx
     .filter((t: { type?: string }) => t.type === 'deposit')
-    .reduce((sum: number, t: { total?: number; currency?: string }) => sum + toSAR(t.total ?? 0, (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as 'SAR' | 'USD', sarPerUsd), 0);
+    .reduce((sum: number, t: { total?: number; currency?: string; accountId?: string }) => {
+      const currency = inferInvestmentTransactionCurrency(
+        { currency: t.currency as 'SAR' | 'USD' | undefined, accountId: t.accountId ?? '' },
+        accounts as Account[],
+        investments as any,
+      );
+      return sum + toSAR(t.total ?? 0, currency, sarPerUsd);
+    }, 0);
   const totalWithdrawnSar = invTx
     .filter((t: { type?: string }) => t.type === 'withdrawal')
-    .reduce((sum: number, t: { total?: number; currency?: string }) => sum + toSAR(t.total ?? 0, (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as 'SAR' | 'USD', sarPerUsd), 0);
+    .reduce((sum: number, t: { total?: number; currency?: string; accountId?: string }) => {
+      const currency = inferInvestmentTransactionCurrency(
+        { currency: t.currency as 'SAR' | 'USD' | undefined, accountId: t.accountId ?? '' },
+        accounts as Account[],
+        investments as any,
+      );
+      return sum + toSAR(t.total ?? 0, currency, sarPerUsd);
+    }, 0);
   const netCapital = totalInvestedSar - totalWithdrawnSar;
   const totalGainLoss = totalInvestmentsValue - netCapital;
   const roi = netCapital > 0 ? totalGainLoss / netCapital : 0;
@@ -139,7 +158,7 @@ export function computeWealthSummaryReportModel(
 
   const monthlyIncome = recentTransactions
     .filter((t) => countsAsIncomeForCashflowKpi(t))
-    .reduce((sum, t) => sum + (Number(t.amount) ?? 0), 0);
+    .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
   const monthlyExpenses = recentTransactions
     .filter((t) => countsAsExpenseForCashflowKpi(t))
     .reduce((sum, t) => sum + Math.abs(Number(t.amount) ?? 0), 0);
@@ -241,7 +260,7 @@ export function computeWealthSummaryReportModel(
   const personalNW = personalAst - personalDebt + personalRec;
   const managedWealthTotal = Math.round(fullNW - personalNW);
 
-  const emergencyFund = computeEmergencyFundMetrics(data);
+  const emergencyFund = computeEmergencyFundMetrics(data, { exchangeRate: sarPerUsd });
   const efStatus: 'green' | 'yellow' | 'red' =
     emergencyFund.status === 'healthy' || emergencyFund.status === 'adequate'
       ? 'green'

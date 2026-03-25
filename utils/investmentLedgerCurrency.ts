@@ -9,6 +9,28 @@ function resolveAccountId(candidate: string | undefined, accounts: Account[]): s
   return external?.id;
 }
 
+/**
+ * Normalize any stored account reference (internal id or legacy external id) to the canonical `Account.id`
+ * used in UI and `getAvailableCashForAccount`. Falls back to the trimmed raw string when unmatched.
+ */
+export function resolveCanonicalAccountId(candidate: string | undefined, accounts: Account[]): string {
+  const c = (candidate ?? '').trim();
+  if (!c) return '';
+  return resolveAccountId(c, accounts) ?? c;
+}
+
+/** True if a portfolio is linked to this platform account (handles legacy `account_id` aliases). */
+export function portfolioBelongsToAccount(
+  portfolio: Pick<InvestmentPortfolio, 'accountId'>,
+  account: Pick<Account, 'id'>,
+  accounts: Account[],
+): boolean {
+  const raw = ((portfolio as { account_id?: string }).account_id ?? portfolio.accountId ?? '').trim();
+  if (!raw) return false;
+  const canon = resolveCanonicalAccountId(raw, accounts);
+  return canon === account.id || raw === account.id;
+}
+
 /** Denomination of balances/transfers on a cash account (Checking/Savings). */
 export function resolveCashAccountCurrency(
   acc: Account | undefined,

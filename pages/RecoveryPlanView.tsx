@@ -9,6 +9,7 @@ import type { Holding, InvestmentPortfolio, TradeCurrency } from '../types';
 import type { RecoveryPositionConfig, RecoveryGlobalConfig, RecoveryOrderDraft } from '../types';
 import {
   buildRecoveryPlan,
+  computeNewAverage,
   orderDraftGenerator,
   DEFAULT_RECOVERY_GLOBAL_CONFIG,
 } from '../services/recoveryPlan';
@@ -18,7 +19,7 @@ import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { PresentationChartLineIcon } from '../components/icons/PresentationChartLineIcon';
-import { suggestRecoveryParameters, formatAiError } from '../services/geminiService';
+import { suggestRecoveryParameters, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
 import { holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
 import {
   saveRecoveryExecution,
@@ -31,21 +32,21 @@ import {
 } from '../services/recoveryPlanPerformance';
 import type { Page } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
-import { tradableCashBucketToSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import {
+  convertBetweenTradeCurrencies,
+  inferInstrumentCurrencyFromSymbol,
+  resolveSarPerUsd,
+  tradableCashBucketToSAR,
+} from '../utils/currencyMath';
+import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { ResolvedSymbolLabel, formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
+import { getPersonalInvestments } from '../utils/wealthScope';
 
 interface RecoveryPlanViewProps {
   onNavigateToTab?: (tab: string) => void;
   onOpenWealthUltra?: () => void;
   setActivePage?: (page: Page) => void;
 }
-
-const inferMarketCurrencyFromSymbol = (symbol?: string): TradeCurrency | null => {
-  const sym = (symbol ?? '').trim().toUpperCase();
-  if (!sym) return null;
-  if (sym.endsWith('.SR')) return 'SAR';
-  return 'USD';
-};
-
 
 const convertCurrency = (amount: number, from: TradeCurrency, to: TradeCurrency, fxRate: number): number => {
   if (!Number.isFinite(amount)) return 0;
@@ -88,25 +89,23 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const { isAiAvailable } = useAI();
 
   const allHoldingsWithPortfolio = useMemo(() => {
-    const list: { holding: Holding; portfolioName: string; currency: TradeCurrency; accountId?: string }[] = [];
-    ((data as any)?.personalInvestments ?? data?.investments ?? []).forEach((p: InvestmentPortfolio) => {
+    const list: { holding: Holding; portfolioName: string; bookCurrency: TradeCurrency; accountId?: string }[] = [];
+    getPersonalInvestments(data ?? null).forEach((p: InvestmentPortfolio) => {
+      const bookCurrency: TradeCurrency =
+        p.currency === 'SAR' || p.currency === 'USD' ? p.currency : 'USD';
       (p.holdings ?? [])
         .filter((h: Holding) => (Number(h.quantity) || 0) > 0)
         .forEach((h: Holding) => {
-          const portfolioCurrency: TradeCurrency =
-            p.currency === 'SAR' || p.currency === 'USD' ? p.currency : 'USD';
-          const symbolInferredCurrency = inferMarketCurrencyFromSymbol(h.symbol);
-          const effectiveCurrency = symbolInferredCurrency ?? portfolioCurrency;
           list.push({
             holding: h,
             portfolioName: p.name ?? 'Portfolio',
-            currency: effectiveCurrency,
+            bookCurrency,
             accountId: p.accountId,
           });
         });
     });
     return list;
-  }, [data?.investments, (data as any)?.personalInvestments]);
+  }, [data]);
   const allHoldings = useMemo(() => allHoldingsWithPortfolio.map(({ holding }) => holding), [allHoldingsWithPortfolio]);
   const priceMap = useMemo(() => {
     const map: Record<string, number> = {};
@@ -193,25 +192,48 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const [showStats, setShowStats] = useState(false);
   const [recoveryTimeline, setRecoveryTimeline] = useState<RecoveryTimelineProjection | null>(null);
 
+  const RECOVERY_AI_LANG_KEY = 'finova_default_ai_lang_v1';
+  const [recoveryDisplayLang, setRecoveryDisplayLang] = useState<'en' | 'ar'>(() => {
+    try {
+      return typeof localStorage !== 'undefined' && localStorage.getItem(RECOVERY_AI_LANG_KEY) === 'ar' ? 'ar' : 'en';
+    } catch {
+      return 'en';
+    }
+  });
+  const [recoveryBriefAr, setRecoveryBriefAr] = useState<string | null>(null);
+  const [recoveryNotesAr, setRecoveryNotesAr] = useState<string | null>(null);
+  const [recoveryTranslateErr, setRecoveryTranslateErr] = useState<string | null>(null);
+  const [recoveryTranslating, setRecoveryTranslating] = useState(false);
+  const [whatIfSpend, setWhatIfSpend] = useState('');
+  const [whatIfPrice, setWhatIfPrice] = useState('');
+
   const positionsWithRecovery = useMemo(() => {
-    return allHoldingsWithPortfolio.map(({ holding, portfolioName, currency }) => {
+    return allHoldingsWithPortfolio.map(({ holding, portfolioName, bookCurrency }) => {
       const sym = (holding.symbol || '').toUpperCase();
       const qty = Number(holding.quantity) || 0;
       const currentVal = holding.currentValue != null ? Number(holding.currentValue) : NaN;
       const avgCost = (holding.avgCost != null ? Number(holding.avgCost) : 0) || 0;
       const useLiveQuote = holdingUsesLiveQuote(holding);
-      const currentPrice = useLiveQuote
-        ? (priceMap[sym]
-            ?? (qty > 0 && Number.isFinite(currentVal) && currentVal > 0
-              ? currentVal / qty
-              : null)
-            ?? (qty > 0 ? avgCost : 0))
-        : (qty > 0 && Number.isFinite(currentVal) && currentVal > 0 ? currentVal / qty : avgCost);
+      const rawInstrumentPx = priceMap[sym];
+      let currentPrice: number;
+      if (useLiveQuote && rawInstrumentPx != null && Number.isFinite(rawInstrumentPx) && rawInstrumentPx > 0) {
+        currentPrice = convertBetweenTradeCurrencies(
+          rawInstrumentPx,
+          inferInstrumentCurrencyFromSymbol(sym),
+          bookCurrency,
+          sarPerUsd,
+        );
+      } else if (qty > 0 && Number.isFinite(currentVal) && currentVal > 0) {
+        currentPrice = currentVal / qty;
+      } else {
+        currentPrice = avgCost;
+      }
       const sleeveType = tickerToSleeve(sym, coreUpsideSpec.coreTickers.length || coreUpsideSpec.upsideTickers.length ? coreUpsideSpec : undefined);
       const riskTier = tickerToRiskTier(sym, coreUpsideSpec.coreTickers.length || coreUpsideSpec.upsideTickers.length ? coreUpsideSpec : undefined);
       const roughPlPct = avgCost > 0 && currentPrice > 0 ? ((currentPrice - avgCost) / avgCost) * 100 : 0;
-      const deployableCashInHoldingCurrency = currency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR;
-      const dynamicConfig = deriveDynamicPositionConfig(sym, sleeveType, riskTier, deployableCashInHoldingCurrency, roughPlPct);
+      const deployableCashInBookCurrency =
+        bookCurrency === 'SAR' ? deployableCashSAR : deployableCashSAR / sarPerUsd;
+      const dynamicConfig = deriveDynamicPositionConfig(sym, sleeveType, riskTier, deployableCashInBookCurrency, roughPlPct);
       const ai = aiRecoveryBySymbol[sym];
       const mergedConfig: RecoveryPositionConfig = ai
         ? { ...dynamicConfig, lossTriggerPct: ai.lossTriggerPct, cashCap: ai.cashCap, recoveryEnabled: ai.recoveryEnabled }
@@ -226,12 +248,12 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         Math.min(
           mergedConfig.cashCap,
           marketValue > 0 ? marketValue * costCapMultiplier : mergedConfig.cashCap,
-          deployableCashInHoldingCurrency * globalConfig.recoveryBudgetPct,
+          deployableCashInBookCurrency * globalConfig.recoveryBudgetPct,
         ),
       );
       const positionGlobalConfig: RecoveryGlobalConfig = {
         ...globalConfig,
-        deployableCash: deployableCashInHoldingCurrency,
+        deployableCash: deployableCashInBookCurrency,
       };
       const positionConfig: RecoveryPositionConfig = {
         ...mergedConfig,
@@ -239,12 +261,32 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         maxAddCost: Number(boundedMaxAddCost.toFixed(2)),
       };
       const plan = buildRecoveryPlan(holding, currentPrice, positionConfig, positionGlobalConfig);
-      return { holding, portfolioName, currency, currentPrice, positionConfig, plan, aiNotes: ai?.notes };
+      return { holding, portfolioName, bookCurrency, currentPrice, positionConfig, plan, aiNotes: ai?.notes };
     });
   }, [allHoldingsWithPortfolio, priceMap, globalConfig, coreUpsideSpec, deployableCashSAR, sarPerUsd, aiRecoveryBySymbol]);
 
   const losingPositions = useMemo(() => positionsWithRecovery.filter(p => p.plan.plPct < 0), [positionsWithRecovery]);
+  const recoverySymbols = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          losingPositions
+            .map(({ holding }) => (holding.symbol || '').trim())
+            .filter((s) => s.length >= 2),
+        ),
+      ),
+    [losingPositions],
+  );
+  const { names: recoveryCompanyNames } = useCompanyNames(recoverySymbols);
   const qualifiedPositions = useMemo(() => positionsWithRecovery.filter(p => p.plan.qualified), [positionsWithRecovery]);
+
+  const estimatedRecoveryDeploymentSAR = useMemo(() => {
+    return qualifiedPositions.reduce((sum, p) => {
+      const cost = p.plan.totalPlannedCost ?? 0;
+      if (!Number.isFinite(cost) || cost <= 0) return sum;
+      return sum + (p.bookCurrency === 'SAR' ? cost : cost * sarPerUsd);
+    }, 0);
+  }, [qualifiedPositions, sarPerUsd]);
 
   // Load recovery statistics dynamically
   useEffect(() => {
@@ -358,24 +400,88 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     }
   }, []);
   const selectedCurrencyDeployableCash = selected
-    ? (selected.currency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR)
+    ? (selected.bookCurrency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR)
     : deployableCashSAR;
   const alternateCurrencyDeployableCash = selected
-    ? (selected.currency === 'USD' ? deployableCashSAR : deployableCashSAR / sarPerUsd)
+    ? (selected.bookCurrency === 'USD' ? deployableCashSAR : deployableCashSAR / sarPerUsd)
     : deployableCashSAR / sarPerUsd;
   const isSelected = (holdingId: string) => selectedHoldingId === holdingId;
+
+  const whatIfSimulation = useMemo(() => {
+    if (!selected || !selectedPlan) return null;
+    const spend = parseFloat(whatIfSpend);
+    const price = parseFloat(whatIfPrice);
+    if (!Number.isFinite(spend) || spend <= 0 || !Number.isFinite(price) || price <= 0) return null;
+    const sh = Number(selected.holding.quantity) || 0;
+    const ac = Number(selected.holding.avgCost) || 0;
+    const qtyAdd = Math.floor(spend / price);
+    if (qtyAdd <= 0) return { error: 'Buy amount is too small for that price (zero shares).' as const };
+    const ladder = [
+      {
+        level: 1 as const,
+        qty: qtyAdd,
+        price,
+        cost: qtyAdd * price,
+        weightPct: 100,
+      },
+    ];
+    const { newShares, newAvgCost } = computeNewAverage(sh, ac, ladder);
+    const deploy =
+      selected.bookCurrency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR;
+    const cashSpend = qtyAdd * price;
+    const overBudget = cashSpend > deploy + 1e-6;
+    return { newShares, newAvgCost, addedShares: qtyAdd, spend: cashSpend, overBudget };
+  }, [selected, selectedPlan, whatIfSpend, whatIfPrice, deployableCashSAR, sarPerUsd]);
 
 
   const selectedRecoveryBrief = useMemo(() => {
     if (!selected || !selectedPlan) return null;
-    const secondaryCurrency: TradeCurrency = selected.currency === 'USD' ? 'SAR' : 'USD';
-    const plannedCostSecondary = convertCurrency(selectedPlan.totalPlannedCost ?? 0, selected.currency, secondaryCurrency, sarPerUsd);
-    const postAvgSecondary = convertCurrency(selectedPlan.newAvgCost ?? 0, selected.currency, secondaryCurrency, sarPerUsd);
+    const secondaryCurrency: TradeCurrency = selected.bookCurrency === 'USD' ? 'SAR' : 'USD';
+    const plannedCostSecondary = convertCurrency(selectedPlan.totalPlannedCost ?? 0, selected.bookCurrency, secondaryCurrency, sarPerUsd);
+    const postAvgSecondary = convertCurrency(selectedPlan.newAvgCost ?? 0, selected.bookCurrency, secondaryCurrency, sarPerUsd);
     const triggerGap = Math.abs(selectedPlan.plPct) - Math.abs(selected.positionConfig.lossTriggerPct);
     const triggerStatus = triggerGap >= 0 ? 'trigger met' : 'monitor only';
     const aiNote = selected.aiNotes ? ` AI note: ${selected.aiNotes}` : '';
-    return `Status ${triggerStatus}. Planned recovery ladder cost is ${formatCurrencyString(selectedPlan.totalPlannedCost ?? 0, { inCurrency: selected.currency ?? 'USD' })} (${formatCurrencyString(plannedCostSecondary, { inCurrency: secondaryCurrency })}) across ${selectedPlan.ladder?.length ?? 0} levels; projected post-average cost is ${formatCurrencyString(selectedPlan.newAvgCost ?? 0, { inCurrency: selected.currency ?? 'USD' })} (${formatCurrencyString(postAvgSecondary, { inCurrency: secondaryCurrency })}).${aiNote}`;
+    return `Status ${triggerStatus}. Planned recovery ladder cost is ${formatCurrencyString(selectedPlan.totalPlannedCost ?? 0, { inCurrency: selected.bookCurrency ?? 'USD' })} (${formatCurrencyString(plannedCostSecondary, { inCurrency: secondaryCurrency })}) across ${selectedPlan.ladder?.length ?? 0} levels; projected post-average cost is ${formatCurrencyString(selectedPlan.newAvgCost ?? 0, { inCurrency: selected.bookCurrency ?? 'USD' })} (${formatCurrencyString(postAvgSecondary, { inCurrency: secondaryCurrency })}).${aiNote}`;
   }, [selected, selectedPlan, sarPerUsd, formatCurrencyString]);
+
+  useEffect(() => {
+    if (recoveryDisplayLang !== 'ar' || !isAiAvailable) {
+      setRecoveryBriefAr(null);
+      setRecoveryNotesAr(null);
+      setRecoveryTranslateErr(null);
+      return;
+    }
+    const brief = selectedRecoveryBrief?.trim();
+    const notes = selected?.aiNotes?.trim();
+    if (!brief && !notes) return;
+    let cancelled = false;
+    setRecoveryTranslating(true);
+    setRecoveryTranslateErr(null);
+    (async () => {
+      try {
+        if (brief) {
+          const b = await translateFinancialInsightToArabic(brief);
+          if (!cancelled) setRecoveryBriefAr(b);
+        } else {
+          setRecoveryBriefAr(null);
+        }
+        if (notes) {
+          const n = await translateFinancialInsightToArabic(notes);
+          if (!cancelled) setRecoveryNotesAr(n);
+        } else {
+          setRecoveryNotesAr(null);
+        }
+      } catch (e) {
+        if (!cancelled) setRecoveryTranslateErr(formatAiError(e));
+      } finally {
+        if (!cancelled) setRecoveryTranslating(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [recoveryDisplayLang, isAiAvailable, selectedRecoveryBrief, selected?.aiNotes, selected?.holding?.id]);
 
   const refreshAiRecoveryConfig = useCallback(async () => {
     if (!selected) return;
@@ -390,7 +496,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         sleeveType: selected.positionConfig.sleeveType,
         riskTier: selected.positionConfig.riskTier,
         plPct: selected.plan.plPct,
-        deployableCash: selected.currency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR,
+        deployableCash: selected.bookCurrency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR,
         currentPrice: selected.plan.currentPrice,
         avgCost: selected.holding.avgCost ?? 0,
       });
@@ -412,7 +518,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       const updates = await Promise.all(
         qualifiedPositions.slice(0, 12).map(async (position) => {
           const sym = (position.holding.symbol || '').toUpperCase();
-          const deployableCash = position.currency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR;
+          const deployableCash = position.bookCurrency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR;
           const suggestion = await suggestRecoveryParameters({
             symbol: sym,
             sleeveType: position.positionConfig.sleeveType,
@@ -432,6 +538,11 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       setIsBulkAiRecoveryLoading(false);
     }
   }, [qualifiedPositions, deployableCashSAR, sarPerUsd, trackAction]);
+
+  useEffect(() => {
+    setWhatIfSpend('');
+    setWhatIfPrice('');
+  }, [selected?.holding?.id]);
 
   useEffect(() => {
     const symbol = selected?.holding?.symbol;
@@ -686,7 +797,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       )}
 
       {/* KPI cards */}
-      <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
+      <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <div className="section-card">
           <div className="flex items-center justify-between mb-3">
             <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Losing positions</p>
@@ -717,6 +828,21 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           <p className="text-2xl font-bold text-dark tabular-nums">{formatCurrencyString(deployableCashSAR)}</p>
           <p className="text-sm text-slate-600 mt-1">Approximate total across currencies</p>
           <p className="text-xs text-slate-500 mt-2">Per-position values below use each portfolio&apos;s base currency</p>
+        </div>
+        <div className="section-card">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1">
+              Est. recovery buys (SAR)
+              <InfoHint text="Sum of planned ladder costs for every recovery-eligible position, converted to SAR using your FX rate. Approximate; actual fills depend on prices." />
+            </p>
+            <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center">
+              <span className="text-indigo-700 font-bold text-lg">∑</span>
+            </div>
+          </div>
+          <p className="text-2xl font-bold text-dark tabular-nums">
+            {formatCurrencyString(estimatedRecoveryDeploymentSAR, { inCurrency: 'SAR', digits: 0 })}
+          </p>
+          <p className="text-sm text-slate-600 mt-1">If all suggested ladders were fully executed</p>
         </div>
       </div>
 
@@ -749,7 +875,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   </td>
                 </tr>
               ) : (
-                losingPositions.map(({ holding, portfolioName, currency, plan }) => (
+                losingPositions.map(({ holding, portfolioName, bookCurrency, plan }) => (
                   <tr key={holding.id} className={`${isSelected(holding.id) ? 'bg-primary/10 border-l-4 border-primary' : 'hover:bg-slate-50'} transition-colors duration-150`}>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
@@ -757,7 +883,18 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                           <span className="font-bold text-slate-700 text-sm">{(holding.symbol ?? '').slice(0, 2)}</span>
                         </div>
                         <div>
-                          <span className="font-bold text-slate-900 text-lg">{holding.symbol ?? '—'}</span>
+                          {holding.symbol ? (
+                            <ResolvedSymbolLabel
+                              symbol={holding.symbol}
+                              storedName={holding.name}
+                              names={recoveryCompanyNames}
+                              layout="stacked"
+                              symbolClassName="font-bold text-slate-900 text-lg"
+                              companyClassName="text-sm text-slate-600 font-medium"
+                            />
+                          ) : (
+                            <span className="font-bold text-slate-900 text-lg">—</span>
+                          )}
                           <span className="block text-sm text-slate-500">{portfolioName}</span>
                         </div>
                       </div>
@@ -769,10 +906,10 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                     </td>
                     <td className="px-6 py-4 text-right text-slate-600 tabular-nums font-medium">
                       <div className="flex flex-col gap-1">
-                        <span>{formatCurrencyString(plan.costBasis, { inCurrency: currency })}</span>
+                        <span>{formatCurrencyString(plan.costBasis, { inCurrency: bookCurrency })}</span>
                         <div className="flex items-center gap-2 text-slate-400">
                           <span>→</span>
-                          <span>{formatCurrencyString(plan.marketValue, { inCurrency: currency })}</span>
+                          <span>{formatCurrencyString(plan.marketValue, { inCurrency: bookCurrency })}</span>
                         </div>
                       </div>
                     </td>
@@ -810,7 +947,13 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       </SectionCard>
 
       {selected && selectedPlan && (
-        <SectionCard title={`${selected.holding.symbol ?? 'Holding'} — Recovery Plan`} className="space-y-5" collapsible collapsibleSummary="Ladder, targets" defaultExpanded>
+        <SectionCard
+          title={`${selected.holding.symbol ? formatSymbolWithCompany(selected.holding.symbol, selected.holding.name, recoveryCompanyNames) : 'Holding'} — Recovery Plan`}
+          className="space-y-5"
+          collapsible
+          collapsibleSummary="Ladder, targets"
+          defaultExpanded
+        >
           {(() => {
             const symbolHistory = getRecoveryExecutionsBySymbol(selected.holding.symbol ?? '');
             if (symbolHistory.length > 0) {
@@ -875,11 +1018,45 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   Portfolio: {selected.portfolioName}
                 </p>
                 <p className="text-xs text-slate-600">
-                  Display currency: {selected.currency ?? 'USD'}
+                  Portfolio base (book): <strong>{selected.bookCurrency ?? 'USD'}</strong> — prices and P/L are computed in this currency; live USD quotes are converted with your SAR/USD rate.
                 </p>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-3">
+              <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRecoveryDisplayLang('en');
+                    try {
+                      localStorage.setItem(RECOVERY_AI_LANG_KEY, 'en');
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
+                  className={`rounded-md px-2.5 py-1.5 ${recoveryDisplayLang === 'en' ? 'bg-slate-100 text-slate-900' : 'text-slate-600'}`}
+                >
+                  English
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRecoveryBriefAr(null);
+                    setRecoveryNotesAr(null);
+                    setRecoveryDisplayLang('ar');
+                    try {
+                      localStorage.setItem(RECOVERY_AI_LANG_KEY, 'ar');
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
+                  disabled={!isAiAvailable}
+                  className={`rounded-md px-2.5 py-1.5 ${recoveryDisplayLang === 'ar' ? 'bg-slate-100 text-slate-900' : 'text-slate-600'} disabled:opacity-50`}
+                                title={!isAiAvailable ? 'Enable AI for Arabic translation' : 'Translate AI summary to Arabic'}
+                >
+                  العربية
+                </button>
+              </div>
               <button 
                 type="button" 
                 onClick={refreshAiRecoveryConfig} 
@@ -904,7 +1081,23 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                 <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
                   <span className="text-white font-bold text-sm">ℹ</span>
                 </div>
-                <p className="text-sm text-indigo-800 font-medium leading-relaxed">{selectedRecoveryBrief}</p>
+                <div className="min-w-0 flex-1">
+                  {recoveryTranslating && recoveryDisplayLang === 'ar' && (
+                    <p className="text-xs text-indigo-600 mb-2">Translating summary to Arabic…</p>
+                  )}
+                  {recoveryTranslateErr && (
+                    <p className="text-xs text-rose-600 mb-2">{recoveryTranslateErr}</p>
+                  )}
+                  <p
+                    className="text-sm text-indigo-800 font-medium leading-relaxed"
+                    dir={recoveryDisplayLang === 'ar' ? 'rtl' : 'ltr'}
+                    lang={recoveryDisplayLang === 'ar' ? 'ar' : 'en'}
+                  >
+                    {recoveryDisplayLang === 'ar' && recoveryBriefAr
+                      ? recoveryBriefAr
+                      : selectedRecoveryBrief}
+                  </p>
+                </div>
               </div>
             </div>
           )}
@@ -914,7 +1107,13 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                 <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-green-600 rounded-lg flex items-center justify-center flex-shrink-0">
                   <span className="text-white font-bold text-sm">✓</span>
                 </div>
-                <p className="text-sm text-emerald-800 font-medium leading-relaxed">{selected.aiNotes}</p>
+                <p
+                  className="text-sm text-emerald-800 font-medium leading-relaxed"
+                  dir={recoveryDisplayLang === 'ar' ? 'rtl' : 'ltr'}
+                  lang={recoveryDisplayLang === 'ar' ? 'ar' : 'en'}
+                >
+                  {recoveryDisplayLang === 'ar' && recoveryNotesAr ? recoveryNotesAr : selected.aiNotes}
+                </p>
               </div>
             </div>
           )}
@@ -933,21 +1132,21 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 p-6 shadow-lg hover:shadow-xl transition-all duration-300">
               <div className="flex items-center justify-between mb-4">
-                <p className="text-sm font-bold text-slate-700 uppercase tracking-wider">Deployable cash ({selected.currency ?? 'USD'})</p>
+                <p className="text-sm font-bold text-slate-700 uppercase tracking-wider">Deployable cash ({selected.bookCurrency ?? 'USD'})</p>
                 <div className="w-8 h-8 bg-gradient-to-br from-slate-500 to-slate-600 rounded-lg flex items-center justify-center">
                   <span className="text-white font-bold text-sm">💰</span>
                 </div>
               </div>
-              <p className="text-2xl font-black text-slate-900 tabular-nums">{formatCurrencyString(selectedCurrencyDeployableCash, { inCurrency: selected.currency ?? 'USD' })}</p>
+              <p className="text-2xl font-black text-slate-900 tabular-nums">{formatCurrencyString(selectedCurrencyDeployableCash, { inCurrency: selected.bookCurrency ?? 'USD' })}</p>
             </div>
             <div className="rounded-2xl border-2 border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-6 shadow-lg hover:shadow-xl transition-all duration-300">
               <div className="flex items-center justify-between mb-4">
-                <p className="text-sm font-bold text-blue-700 uppercase tracking-wider">Cross-currency reference ({selected?.currency === 'USD' ? 'SAR' : 'USD'})</p>
+                <p className="text-sm font-bold text-blue-700 uppercase tracking-wider">Cross-currency reference ({selected?.bookCurrency === 'USD' ? 'SAR' : 'USD'})</p>
                 <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
                   <span className="text-white font-bold text-sm">🔄</span>
                 </div>
               </div>
-              <p className="text-2xl font-black text-blue-900 tabular-nums">{formatCurrencyString(alternateCurrencyDeployableCash, { inCurrency: (selected?.currency === 'USD' ? 'SAR' : 'USD') as TradeCurrency })}</p>
+              <p className="text-2xl font-black text-blue-900 tabular-nums">{formatCurrencyString(alternateCurrencyDeployableCash, { inCurrency: (selected?.bookCurrency === 'USD' ? 'SAR' : 'USD') as TradeCurrency })}</p>
             </div>
           </div>
           {!isAiAvailable && (
@@ -981,7 +1180,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   <span className="text-sm text-slate-600 font-medium">Avg Cost:</span>
                   <span className="text-sm font-bold text-slate-900">
                     {formatCurrencyString(selected.holding.avgCost ?? 0, {
-                      inCurrency: selected.currency ?? 'USD',
+                      inCurrency: selected.bookCurrency ?? 'USD',
                       digits: HOLDING_PER_UNIT_DECIMALS,
                     })}
                   </span>
@@ -990,7 +1189,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   <span className="text-sm text-slate-600 font-medium">Price:</span>
                   <span className="text-sm font-bold text-slate-900">
                     {formatCurrencyString(selectedPlan.currentPrice, {
-                      inCurrency: selected.currency ?? 'USD',
+                      inCurrency: selected.bookCurrency ?? 'USD',
                       digits: HOLDING_PER_UNIT_DECIMALS,
                     })}
                   </span>
@@ -1002,7 +1201,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                       selectedPlan.plPct >= 0 ? 'text-emerald-700' : 'text-rose-700'
                     }`}>
                       {formatCurrencyString(selectedPlan.plUsd, {
-                        inCurrency: selected.currency ?? 'USD',
+                        inCurrency: selected.bookCurrency ?? 'USD',
                       })} ({selectedPlan.plPct.toFixed(1)}%)
                     </span>
                   </div>
@@ -1025,7 +1224,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   <span className="text-sm text-emerald-600 font-medium">New Avg Cost:</span>
                   <span className="text-sm font-bold text-emerald-900">
                     {formatCurrencyString(selectedPlan.newAvgCost ?? 0, {
-                      inCurrency: selected.currency ?? 'USD',
+                      inCurrency: selected.bookCurrency ?? 'USD',
                     })}
                   </span>
                 </div>
@@ -1034,7 +1233,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                     <span className="text-sm text-emerald-600 font-medium">Planned Recovery Cost:</span>
                     <span className="text-lg font-black text-emerald-900 tabular-nums">
                       {formatCurrencyString(selectedPlan.totalPlannedCost ?? 0, {
-                        inCurrency: selected.currency ?? 'USD',
+                        inCurrency: selected.bookCurrency ?? 'USD',
                       })}
                     </span>
                   </div>
@@ -1047,6 +1246,65 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                 </div>
               </div>
             </div>
+          </div>
+
+          <div className="rounded-2xl border-2 border-violet-200 bg-gradient-to-br from-violet-50 to-white p-6 shadow-md">
+            <h4 className="text-sm font-bold text-violet-900 uppercase tracking-wider mb-2 flex items-center gap-2">
+              Try averaging down (what-if)
+              <InfoHint text="See how one extra buy at a limit price would change your average cost. Amounts are in your portfolio base currency. Does not place real orders." />
+            </h4>
+            <p className="text-xs text-violet-800/90 mb-4">
+              Enter gross cash to deploy and the limit price per share (same currency as your portfolio: {selected.bookCurrency}).
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+              <div>
+                <label className="block text-xs font-medium text-violet-900 mb-1">Buy amount (gross)</label>
+                <input
+                  type="number"
+                  min={0}
+                  step="any"
+                  value={whatIfSpend}
+                  onChange={(e) => setWhatIfSpend(e.target.value)}
+                  className="w-full rounded-lg border border-violet-200 px-3 py-2 text-sm"
+                  placeholder="e.g. 35000"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-violet-900 mb-1">Limit price per share</label>
+                <input
+                  type="number"
+                  min={0}
+                  step="any"
+                  value={whatIfPrice}
+                  onChange={(e) => setWhatIfPrice(e.target.value)}
+                  className="w-full rounded-lg border border-violet-200 px-3 py-2 text-sm"
+                  placeholder="e.g. 150.12"
+                />
+              </div>
+            </div>
+            {whatIfSimulation && 'error' in whatIfSimulation && (
+              <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{whatIfSimulation.error}</p>
+            )}
+            {whatIfSimulation && !('error' in whatIfSimulation) && (
+              <div className="rounded-xl bg-white/80 border border-violet-100 p-4 space-y-2 text-sm">
+                <p className="text-violet-900">
+                  <span className="font-semibold">New avg cost:</span>{' '}
+                  {formatCurrencyString(whatIfSimulation.newAvgCost, { inCurrency: selected.bookCurrency ?? 'USD' })}
+                </p>
+                <p className="text-violet-800">
+                  <span className="font-semibold">Total shares after:</span> {whatIfSimulation.newShares.toLocaleString()} (+{whatIfSimulation.addedShares} shares)
+                </p>
+                <p className="text-violet-800 tabular-nums">
+                  <span className="font-semibold">Cash used:</span>{' '}
+                  {formatCurrencyString(whatIfSimulation.spend, { inCurrency: selected.bookCurrency ?? 'USD' })}
+                </p>
+                {whatIfSimulation.overBudget && (
+                  <p className="text-rose-700 font-medium text-sm">
+                    This exceeds your total deployable cash shown above (all accounts). Lower the amount or add funds first.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="p-4 rounded-xl bg-white border border-slate-100">
@@ -1169,12 +1427,12 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                       <td className="px-4 py-3 text-right font-bold text-slate-900 tabular-nums">{l.qty}</td>
                       <td className="px-4 py-3 text-right font-medium text-slate-800 tabular-nums">
                         {formatCurrencyString(l.price, {
-                          inCurrency: selected.currency ?? 'USD',
+                          inCurrency: selected.bookCurrency ?? 'USD',
                         })}
                       </td>
                       <td className="px-4 py-3 text-right font-bold text-emerald-700 tabular-nums">
                         {formatCurrencyString(l.cost, {
-                          inCurrency: selected.currency ?? 'USD',
+                          inCurrency: selected.bookCurrency ?? 'USD',
                         })}
                       </td>
                     </tr>
@@ -1198,7 +1456,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                     <p className="text-sm font-bold text-violet-800">Target 1: {selectedPlan.exitPlan.target1Pct}%</p>
                     <p className="text-sm font-black text-violet-900 tabular-nums">
                       {formatCurrencyString(selectedPlan.exitPlan.target1Price, {
-                        inCurrency: selected.currency ?? 'USD',
+                        inCurrency: selected.bookCurrency ?? 'USD',
                       })}
                     </p>
                   </div>
@@ -1209,7 +1467,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                     <p className="text-sm font-bold text-indigo-800">Target 2: {selectedPlan.exitPlan.target2Pct}%</p>
                     <p className="text-sm font-black text-indigo-900 tabular-nums">
                       {formatCurrencyString(selectedPlan.exitPlan.target2Price, {
-                        inCurrency: selected.currency ?? 'USD',
+                        inCurrency: selected.bookCurrency ?? 'USD',
                       })}
                     </p>
                   </div>
@@ -1220,7 +1478,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                     <p className="text-sm font-bold text-amber-800">Trailing: {selectedPlan.exitPlan.trailPct}%</p>
                     <p className="text-sm font-black text-amber-900 tabular-nums">
                       {formatCurrencyString(selectedPlan.exitPlan.trailStopPrice, {
-                        inCurrency: selected.currency ?? 'USD',
+                        inCurrency: selected.bookCurrency ?? 'USD',
                       })}
                     </p>
                   </div>
@@ -1347,7 +1605,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                       d.symbol,
                       d.qty,
                       d.limitPrice,
-                      selected?.currency ?? 'USD',
+                      selected?.bookCurrency ?? 'USD',
                       d.label || ''
                     ].join(','))
                   ].join('\n');
@@ -1369,7 +1627,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                 type="button"
                 onClick={() => {
                   const text = draftOrders.map((d, i) => 
-                    `${i + 1}. ${d.type.toUpperCase()} ${d.symbol} - Qty: ${d.qty}, Limit: ${formatCurrencyString(d.limitPrice, { inCurrency: selected?.currency ?? 'USD' })}${d.label ? ` (${d.label})` : ''}`
+                    `${i + 1}. ${d.type.toUpperCase()} ${d.symbol} - Qty: ${d.qty}, Limit: ${formatCurrencyString(d.limitPrice, { inCurrency: selected?.bookCurrency ?? 'USD' })}${d.label ? ` (${d.label})` : ''}`
                   ).join('\n');
                   navigator.clipboard.writeText(text).then(() => {
                     alert('Orders copied to clipboard!');
@@ -1396,14 +1654,14 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                 <span className="text-slate-600">
                   Limit:{' '}
                   {formatCurrencyString(d.limitPrice, {
-                    inCurrency: selected?.currency ?? 'USD',
+                    inCurrency: selected?.bookCurrency ?? 'USD',
                   })}
                 </span>
                 {d.label && <span className="text-slate-500">({d.label})</span>}
                 <button
                   type="button"
                   onClick={() => {
-                    const text = `${d.type.toUpperCase()} ${d.symbol} - Qty: ${d.qty}, Limit: ${formatCurrencyString(d.limitPrice, { inCurrency: selected?.currency ?? 'USD' })}${d.label ? ` (${d.label})` : ''}`;
+                    const text = `${d.type.toUpperCase()} ${d.symbol} - Qty: ${d.qty}, Limit: ${formatCurrencyString(d.limitPrice, { inCurrency: selected?.bookCurrency ?? 'USD' })}${d.label ? ` (${d.label})` : ''}`;
                     navigator.clipboard.writeText(text).then(() => {
                       // Visual feedback could be added here
                     }).catch(() => {

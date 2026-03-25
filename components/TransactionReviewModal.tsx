@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect, useContext, useMemo } from 'react';
 import Modal from './Modal';
-import { Transaction } from '../types';
+import { Transaction, Account } from '../types';
 import { DataContext } from '../context/DataContext';
 import { getAICategorySuggestion } from '../services/geminiService';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { transactionBookCurrency } from '../utils/cashAccountDisplay';
 import Combobox from './Combobox';
 
 interface TransactionReviewModalProps {
@@ -18,6 +19,11 @@ const TransactionReviewModal: React.FC<TransactionReviewModalProps> = ({ isOpen,
     const dataContext = useContext(DataContext);
     const updateTransaction = dataContext?.updateTransaction;
     const { formatCurrencyString } = useFormatCurrency();
+    const accountsById = useMemo(() => {
+        const list =
+            (dataContext?.data as { personalAccounts?: Account[] } | undefined)?.personalAccounts ?? dataContext?.data?.accounts ?? [];
+        return new Map<string, Account>(list.map((a) => [a.id, a]));
+    }, [dataContext?.data]);
     const [currentIndex, setCurrentIndex] = useState(0);
     const [selectedCategory, setSelectedCategory] = useState('');
     const [isSuggesting, setIsSuggesting] = useState(false);
@@ -81,7 +87,7 @@ const TransactionReviewModal: React.FC<TransactionReviewModalProps> = ({ isOpen,
                 <div className="bg-gray-50 p-4 rounded-lg border">
                     <div className="flex justify-between items-baseline">
                         <p className="font-semibold text-lg text-dark">{currentTransaction.description}</p>
-                        <p className="font-bold text-red-600">{formatCurrencyString(currentTransaction.amount)}</p>
+                        <p className="font-bold text-red-600">{formatCurrencyString(currentTransaction.amount, { inCurrency: transactionBookCurrency(currentTransaction, accountsById), showSecondary: true })}</p>
                     </div>
                     <p className="text-sm text-gray-500">{new Date(currentTransaction.date).toLocaleDateString()}</p>
                 </div>

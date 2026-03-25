@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useContext, useEffect } from 'react';
+import React, { useMemo, useState, useContext, useEffect, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
 import { Transaction, Account, Page, UserRole, RecurringTransaction } from '../types';
 import Card from '../components/Card';
@@ -30,6 +30,9 @@ import {
 } from '../services/transactionFilters';
 import { validateSplitTotal } from '../services/transactionIntelligence';
 import { encodeNoteWithSplits } from '../services/transactionSplitNote';
+import { useCurrency } from '../context/CurrencyContext';
+import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 
 /**
  * Income-specific categories. Do not include "Transfer" / "Transfers": those labels are reserved for
@@ -378,7 +381,7 @@ const TransactionModal: React.FC<{
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
                         Amount{' '}
-                        <InfoHint text="Enter a positive number. The stored amount is + for income and − for expense. Account-to-account transfers use one expense and one income leg—those are excluded from the Transactions page Income/Expenses totals (Transfer/Transfers category)." hintId="transaction-amount" hintPage="Transactions" />
+                        <InfoHint text="Enter a positive number in this account’s currency (SAR or USD—same as the account balance). Stored as + for income and − for expense. Transfers use one expense and one income leg and are excluded from Income/Expense KPIs when labeled Transfer/Transfers." hintId="transaction-amount" hintPage="Transactions" />
                     </label>
                         <input type="number" placeholder="Amount" value={amount} onChange={e => setAmount(e.target.value)} required min="0.01" step="0.01" className="w-full p-2 border border-gray-300 rounded-md"/>
                     </div>
@@ -722,6 +725,7 @@ const RecurringModal: React.FC<{
 
 const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
     const { data, loading, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
     const recurringList = data?.recurringTransactions ?? [];
     const auth = useContext(AuthContext);
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
@@ -882,6 +886,27 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         loadPendingTransactions();
     }, [userRole, data?.transactions, pendingRefreshKey]);
 
+    const accountsById = useMemo(
+        () => new Map<string, Account>(((data as any)?.personalAccounts ?? data?.accounts ?? []).map((a: Account) => [a.id, a])),
+        [data?.accounts, (data as any)?.personalAccounts],
+    );
+
+    const formatCashTransactionDisplay = useCallback(
+        (t: Transaction) => {
+            const book = transactionBookCurrency(t, accountsById);
+            return formatCurrencyString(t.amount, { inCurrency: book, showSecondary: true });
+        },
+        [accountsById, formatCurrencyString],
+    );
+
+    const formatRecurringDisplay = useCallback(
+        (r: RecurringTransaction) => {
+            const book = accountBookCurrency(accountsById.get(r.accountId));
+            return formatCurrencyString(r.amount, { inCurrency: book, showSecondary: true });
+        },
+        [accountsById, formatCurrencyString],
+    );
+
     const filteredTransactions = useMemo(() => {
         const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
         const [year, month] = filters.month.split('-').map(Number);
@@ -889,36 +914,50 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         const endDate = new Date(year, month, 0, 23, 59, 59);
 
         const baseTransactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
-        return baseTransactions.filter((t: { date: string; accountId?: string; transactionNature?: string; expenseType?: string; budgetCategory?: string }) => {
+        return baseTransactions.filter((t: { date: string; accountId?: string; transactionNature?: string; expenseType?: string; budgetCategory?: string; category?: string }) => {
             const transactionDate = new Date(t.date);
             const isMonthMatch = transactionDate >= startDate && transactionDate <= endDate;
             const isAccountMatch = filters.accountId === 'all' || t.accountId === filters.accountId;
             const isNatureMatch = filters.nature === 'all' || t.transactionNature === filters.nature;
             const isExpenseTypeMatch = filters.expenseType === 'all' || t.expenseType === filters.expenseType;
-            const isBudgetMatch = filters.budgetCategory === 'all' || t.budgetCategory === filters.budgetCategory;
-            const isPermitted = userRole === 'Admin' || !t.budgetCategory || allowedRestrictedCategories.has(t.budgetCategory);
+            const txBudget = String(t.budgetCategory ?? t.category ?? '').trim();
+            const isBudgetMatch = filters.budgetCategory === 'all' || txBudget === filters.budgetCategory;
+            const isPermitted = userRole === 'Admin' || !txBudget || allowedRestrictedCategories.has(txBudget);
             return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isBudgetMatch && isPermitted;
         });
     }, [data?.transactions, (data as any)?.personalTransactions, filters, userRole, permittedBudgetCategories, sharedBudgetCategories]);
 
     const { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown } = useMemo(() => {
+        const fx = resolveSarPerUsd(data, exchangeRate);
+        const accountsMap = new Map<string, Account>(((data as any)?.personalAccounts ?? data?.accounts ?? []).map((a: Account) => [a.id, a]));
+        const txAmountSar = (t: Transaction) => {
+            const acc = accountsMap.get(t.accountId ?? '');
+            const cur = acc?.currency === 'USD' ? 'USD' : 'SAR';
+            return Math.abs(toSAR(Number(t.amount) || 0, cur, fx));
+        };
+        const txBudgetCategory = (t: Transaction) => String(t.budgetCategory ?? t.category ?? '').trim();
         const approvedTransactions = filteredTransactions.filter((t: Transaction) => (t.status ?? 'Approved') === 'Approved');
-        const monthlyIncome = approvedTransactions.filter((t: Transaction) => countsAsIncomeForCashflowKpi(t)).reduce((sum: number, t: Transaction) => sum + t.amount, 0);
-        const monthlyExpenses = approvedTransactions.filter((t: Transaction) => countsAsExpenseForCashflowKpi(t)).reduce((sum: number, t: Transaction) => sum + Math.abs(t.amount), 0);
+        const monthlyIncome = approvedTransactions
+            .filter((t: Transaction) => countsAsIncomeForCashflowKpi(t))
+            .reduce((sum: number, t: Transaction) => sum + txAmountSar(t), 0);
+        const monthlyExpenses = approvedTransactions
+            .filter((t: Transaction) => countsAsExpenseForCashflowKpi(t))
+            .reduce((sum: number, t: Transaction) => sum + txAmountSar(t), 0);
         const netCashflow = monthlyIncome - monthlyExpenses;
         
         const spending = new Map<string, number>();
         approvedTransactions
-            .filter((t: Transaction) => countsAsExpenseForCashflowKpi(t) && t.budgetCategory)
+            .filter((t: Transaction) => countsAsExpenseForCashflowKpi(t) && txBudgetCategory(t))
             .forEach((t: Transaction) => {
-                const currentSpend = spending.get(t.budgetCategory!) || 0;
-                spending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
+                const key = txBudgetCategory(t);
+                const currentSpend = spending.get(key) || 0;
+                spending.set(key, currentSpend + txAmountSar(t));
             });
         
         const expenseBreakdown = Array.from(spending, ([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
 
         return { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown };
-    }, [filteredTransactions]);
+    }, [filteredTransactions, data, exchangeRate]);
     
     const allCategories = useMemo((): string[] => Array.from(new Set(((data as any)?.personalTransactions ?? data?.transactions ?? []).map((t: { category: string }) => t.category))), [data?.transactions, (data as any)?.personalTransactions]);
     const budgetCategories = useMemo(() => {
@@ -927,6 +966,20 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         const allowedSet = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
         return Array.from(new Set([...ownCategories.filter(c => allowedSet.has(c)), ...sharedBudgetCategories]));
     }, [data?.budgets, userRole, permittedBudgetCategories, sharedBudgetCategories]);
+
+    const transactionValidationWarnings = useMemo(() => {
+        const warnings: string[] = [];
+        const approved = filteredTransactions.filter((t: Transaction) => (t.status ?? 'Approved') === 'Approved');
+        const uncategorized = approved.filter((t: Transaction) => countsAsExpenseForCashflowKpi(t) && !String(t.budgetCategory ?? t.category ?? '').trim()).length;
+        if (uncategorized > 0) warnings.push(`${uncategorized} approved expense transaction(s) are missing budget category mapping.`);
+        const invalidDates = approved.filter((t: Transaction) => Number.isNaN(new Date(t.date).getTime())).length;
+        if (invalidDates > 0) warnings.push(`${invalidDates} transaction(s) have invalid dates.`);
+        const unknownAccounts = approved.filter((t: Transaction) => !(data?.accounts ?? []).some((a) => a.id === t.accountId)).length;
+        if (unknownAccounts > 0) warnings.push(`${unknownAccounts} transaction(s) reference missing accounts.`);
+        const invalidAmounts = approved.filter((t: Transaction) => !Number.isFinite(Number(t.amount)) || Number(t.amount) === 0).length;
+        if (invalidAmounts > 0) warnings.push(`${invalidAmounts} transaction(s) have invalid/zero amount.`);
+        return warnings;
+    }, [filteredTransactions, data?.accounts]);
 
     const handleOpenTransactionModal = (transaction: Transaction | null = null) => {
         setTransactionToEdit(transaction);
@@ -1203,7 +1256,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                 <div className="flex-1 min-w-0">
                                     <span className="font-medium text-dark">{r.description}</span>
                                     <span className={`ml-2 text-sm font-medium ${r.type === 'income' ? 'text-green-700' : 'text-red-700'}`}>
-                                        {r.type === 'income' ? '+' : '−'}{formatCurrencyString(r.amount)}
+                                        {r.type === 'income' ? '+' : '−'}{formatRecurringDisplay(r)}
                                     </span>
                                     <span className="text-xs text-gray-500 ml-2">
                                         • Day {r.dayOfMonth} • {(data?.accounts ?? []).find(a => a.id === r.accountId)?.name ?? r.accountId}
@@ -1253,7 +1306,14 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                         <p className="text-xs text-gray-500">{pending.budgetCategory || 'Unmapped'} • {new Date(pending.date).toLocaleDateString()}</p>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <span className="font-semibold text-amber-700">{formatCurrency(Number(pending.amount), { colorize: false })}</span>
+                                        <span className="font-semibold text-amber-700">
+                                            {formatCurrencyString(Number(pending.amount) || 0, {
+                                                inCurrency: accountBookCurrency(
+                                                    accountsById.get(String((pending as { accountId?: string }).accountId ?? (pending as { account_id?: string }).account_id ?? '')),
+                                                ),
+                                                showSecondary: true,
+                                            })}
+                                        </span>
                                         <button onClick={() => reviewPendingTransaction(pending.id, 'Approved')} className="px-3 py-1 text-xs rounded bg-green-600 text-white">Approve</button>
                                         <button onClick={() => reviewPendingTransaction(pending.id, 'Rejected')} className="px-3 py-1 text-xs rounded bg-red-600 text-white">Reject</button>
                                     </div>
@@ -1269,6 +1329,16 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 <Card title="Expenses" value={formatCurrencyString(monthlyExpenses)} />
                 <Card title="Net Flow" value={formatCurrency(netCashflow, { colorize: true })} trend={netCashflow >= 0 ? 'SURPLUS' : 'DEFICIT'} />
             </div>
+
+            {transactionValidationWarnings.length > 0 && (
+                <SectionCard title="Transactions validation checks" collapsible collapsibleSummary="Data quality checks" defaultExpanded>
+                    <ul className="space-y-1 text-sm text-amber-800">
+                        {transactionValidationWarnings.slice(0, 6).map((w, i) => (
+                            <li key={`tv-${i}`}>- {w}</li>
+                        ))}
+                    </ul>
+                </SectionCard>
+            )}
             
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
                  <AIAdvisor pageContext="cashflow" contextData={{ transactions: filteredTransactions, budgets: data?.budgets ?? [] }} />
@@ -1319,7 +1389,13 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                 </div>
                             </div>
                             <div className="flex items-center gap-3 flex-shrink-0">
-                                <p className="font-bold text-lg tabular-nums">{formatCurrency(transaction.amount, { colorize: true })}</p>
+                                <p
+                                    className={`font-bold text-lg tabular-nums ${
+                                        transaction.amount > 0 ? 'text-success' : transaction.amount < 0 ? 'text-danger' : 'text-dark'
+                                    }`}
+                                >
+                                    {formatCashTransactionDisplay(transaction)}
+                                </p>
                                 <button type="button" onClick={() => handleOpenTransactionModal(transaction)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-primary/50" aria-label="Edit"><PencilIcon className="h-5 w-5"/></button>
                                 <button type="button" onClick={() => setItemToDelete(transaction)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-danger/50" aria-label="Delete"><TrashIcon className="h-5 w-5"/></button>
                             </div>

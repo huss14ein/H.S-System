@@ -1,8 +1,13 @@
-import React, { useMemo, useContext, useEffect } from 'react';
+import React, { useMemo, useContext, useEffect, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { useCurrency } from '../context/CurrencyContext';
 import { useAI } from '../context/AiContext';
+import { resolveSarPerUsd } from '../utils/currencyMath';
+import { aggregateMonthlyBudgetAcrossPortfolios } from '../utils/investmentPlanPerPortfolio';
+import type { InvestmentPlanSettings, UniverseTicker } from '../types';
+import AIAdvisor from '../components/AIAdvisor';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import {
   runWealthUltraEngine,
@@ -23,6 +28,8 @@ import Card from '../components/Card';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import InfoHint from '../components/InfoHint';
+import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { ResolvedSymbolLabel, formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
 
 const SLEEVE_COLORS: Record<WealthUltraSleeve, string> = {
   Core: 'bg-blue-500',
@@ -57,7 +64,16 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
   const { data, loading, totalDeployableCash } = useContext(DataContext)!;
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
+  const { exchangeRate } = useCurrency();
   const { isAiAvailable } = useAI();
+
+  const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
+
+  /** Engine outputs (positions, orders, deployable cash from config) are interpreted as USD for display consistency. */
+  const fmtEngineUsd = useCallback(
+    (n: number, digits = 0) => formatCurrencyString(n, { inCurrency: 'USD', showSecondary: true, digits }),
+    [formatCurrencyString]
+  );
   const [scenarioId, setScenarioId] = React.useState('current');
 
   const { analysis: crossEngineAnalysis, household, cash } = useFinancialEnginesIntegration();
@@ -74,13 +90,38 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     return base;
   }, [totalDeployableCash, household?.cashflowStressSignals, cash?.cashflowBuffer, cash?.discretionaryBudget]);
 
+  const personalInvestments = useMemo(
+    () => ((data as any)?.personalInvestments ?? data?.investments ?? []) as Array<{ id: string; name?: string; holdings?: unknown[] }>,
+    [data?.investments, (data as any)?.personalInvestments]
+  );
+  const portfolioIds = useMemo(() => personalInvestments.map((p) => p.id).filter(Boolean), [personalInvestments]);
+
   const investmentHoldingsCount = useMemo(() => {
-    const personalInvestments = (data as any)?.personalInvestments ?? data?.investments ?? [];
     return personalInvestments.reduce(
       (n: number, p: { holdings?: unknown[] }) => n + (p.holdings?.length ?? 0),
       0
     );
-  }, [data?.investments, (data as any)?.personalInvestments]);
+  }, [personalInvestments]);
+
+  const aggBudget = useMemo(() => {
+    if (!data?.investmentPlan) return { total: 0, planCurrency: 'SAR' as const };
+    return aggregateMonthlyBudgetAcrossPortfolios(
+      data.investmentPlan as InvestmentPlanSettings,
+      portfolioIds,
+      data.investmentPlan as InvestmentPlanSettings
+    );
+  }, [data?.investmentPlan, portfolioIds]);
+
+  const universeByPortfolio = useMemo(() => {
+    const rows = (data?.portfolioUniverse ?? []) as UniverseTicker[];
+    const map = new Map<string | '__unassigned__', UniverseTicker[]>();
+    for (const t of rows) {
+      const key = t.portfolioId ? String(t.portfolioId) : '__unassigned__';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(t);
+    }
+    return { map, rows };
+  }, [data?.portfolioUniverse]);
 
   const engineBundle = useMemo(() => {
     const personalInvestments = (data as any)?.personalInvestments ?? data?.investments ?? [];
@@ -207,14 +248,52 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     }
   }, [engineState.positions, totalPortfolioValue]);
 
-  const totalSAR = totalPortfolioValue / config.fxRate;
+  /** Engine book value in USD → SAR using the same resolver as the rest of the app (not raw `config.fxRate`, which may be stale vs UI). */
+  const totalPortfolioValueSar = totalPortfolioValue * sarPerUsd;
   const positions = engineState.positions || [];
   const top5Gainers = positions.filter(p => p.plPct > 0).sort((a, b) => b.plPct - a.plPct).slice(0, 5);
   const top5Losers = positions.filter(p => p.plPct < 0).sort((a, b) => a.plPct - b.plPct).slice(0, 5);
   const positionCount = positions.length;
-  const portfolioCount = ((data as any)?.personalInvestments ?? data?.investments ?? []).filter((p: { holdings?: unknown[] }) => (p.holdings?.length ?? 0) > 0).length;
+  const portfolioCount = personalInvestments.filter((p: { holdings?: unknown[] }) => (p.holdings?.length ?? 0) > 0).length;
   const buyOrders = orders.filter(o => o.type === 'BUY');
   const sellOrders = orders.filter(o => o.type === 'SELL');
+
+  const wealthUltraAiContext = useMemo(
+    () => ({
+      totalPortfolioValueUsd: totalPortfolioValue,
+      deployableCashUsd: deployableCash,
+      totalPlannedBuyCostUsd: totalPlannedBuyCost,
+      monthlyDeployUsd: monthlyDeployment.amountToDeploy,
+      monthlyBudgetTotal: aggBudget.total,
+      monthlyBudgetCurrency: aggBudget.planCurrency,
+      sarPerUsd,
+      portfolioHealthLabel: portfolioHealth.label,
+      portfolioHealthScore: portfolioHealth.score,
+      alertCount: alerts.length,
+      buyOrderCount: buyOrders.length,
+      positionCount: positions.length,
+      investmentPortfolioCount: personalInvestments.length,
+      universeTickerCount: (data?.portfolioUniverse ?? []).length,
+      cashPlannerStatus,
+    }),
+    [
+      totalPortfolioValue,
+      deployableCash,
+      totalPlannedBuyCost,
+      monthlyDeployment.amountToDeploy,
+      aggBudget.total,
+      aggBudget.planCurrency,
+      sarPerUsd,
+      portfolioHealth.label,
+      portfolioHealth.score,
+      alerts.length,
+      buyOrders.length,
+      positions.length,
+      personalInvestments.length,
+      data?.portfolioUniverse,
+      cashPlannerStatus,
+    ]
+  );
 
   const riskDistribution = useMemo(() => {
     const tiers: WealthUltraRiskTier[] = ['Low', 'Med', 'High', 'Spec'];
@@ -240,6 +319,19 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
 
   const positionsSortedByPl = useMemo(() => [...positions].sort((a, b) => b.plPct - a.plPct), [positions]);
 
+  const ultraTickerSymbols = useMemo(() => {
+    const set = new Set<string>();
+    positions.forEach((p) => {
+      if (p.ticker) set.add(p.ticker);
+    });
+    if (monthlyDeployment.suggestedTicker) set.add(monthlyDeployment.suggestedTicker);
+    (orders ?? []).forEach((o: { ticker?: string }) => {
+      if (o.ticker) set.add(o.ticker);
+    });
+    return Array.from(set).filter((s) => s.length >= 2);
+  }, [positions, monthlyDeployment.suggestedTicker, orders]);
+  const { names: ultraTickerNames } = useCompanyNames(ultraTickerSymbols);
+
   const healthColor = portfolioHealth.score >= 85 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : portfolioHealth.score >= 65 ? 'text-amber-600 bg-amber-50 border-amber-200' : portfolioHealth.score >= 40 ? 'text-amber-700 bg-amber-100 border-amber-300' : 'text-rose-600 bg-rose-50 border-rose-200';
 
   const engineIntelligence = useMemo(() => {
@@ -254,7 +346,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     if (cashPlannerStatus !== 'WITHIN_LIMIT') {
       recommendations.push({
         title: 'Trim buy list to fit cash limits',
-        reason: `Planned buys ${formatCurrencyString(totalPlannedBuyCost)} exceed deployable cash ${formatCurrencyString(deployableCash)}.`,
+        reason: `Planned buys ${fmtEngineUsd(totalPlannedBuyCost)} exceed deployable cash ${fmtEngineUsd(deployableCash)}.`,
         priority: 'high',
       });
     }
@@ -275,7 +367,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     if (monthlyDeployment.amountToDeploy > 0) {
       recommendations.push({
         title: 'Automate monthly deployment',
-        reason: `Current monthly deployment target is ${formatCurrencyString(monthlyDeployment.amountToDeploy)}; convert top BUY orders into recurring instructions.`,
+        reason: `Current monthly deployment target is ${fmtEngineUsd(monthlyDeployment.amountToDeploy)}; convert top BUY orders into recurring instructions.`,
         priority: 'low',
       });
     }
@@ -305,7 +397,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       guardrails,
       estimatedRebalanceMonths,
     };
-  }, [allocations, alerts.length, cashPlannerStatus, deployableCash, formatCurrencyString, monthlyDeployment, orders.length, positions.length, specBreach, specBuysDisabled, totalPlannedBuyCost]);
+  }, [allocations, alerts.length, cashPlannerStatus, deployableCash, fmtEngineUsd, monthlyDeployment, orders.length, positions.length, specBreach, specBuysDisabled, totalPlannedBuyCost]);
 
   const exceptionHistory = useMemo(() => {
     if (typeof window === 'undefined') return [] as Array<{ at: string; severity: string; title: string; message: string; actionHint?: string }>;
@@ -392,52 +484,71 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
         id: 'kpis',
         content: (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-slate-600 font-medium">
-                All amounts in <span className="font-semibold text-slate-900">USD</span>
-              </p>
-              <p className="text-xs text-slate-500">
-                SAR conversion rate: <span className="font-mono font-semibold">{config.fxRate.toFixed(4)}</span>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <p className="text-xs text-slate-600 font-medium max-w-3xl">
+                Engine totals below use <span className="font-semibold text-slate-900">USD</span> (share prices and order math). SAR in parentheses uses the same rate as the rest of the app:{' '}
+                <span className="font-mono font-semibold text-slate-800">{sarPerUsd.toFixed(4)}</span> SAR per 1 USD
+                {Number.isFinite(config.fxRate) && Math.abs(config.fxRate - sarPerUsd) > 0.0001 && (
+                  <span className="text-slate-500"> (stored config {config.fxRate.toFixed(4)} is ignored for display — resolver wins)</span>
+                )}
+                .
               </p>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
               <Card
                 title="Total portfolio value"
-                value={formatCurrencyString(totalPortfolioValue, { digits: 0 })}
-                trend={`≈ ${totalSAR.toLocaleString('en-US', {
+                value={fmtEngineUsd(totalPortfolioValue, 0)}
+                trend={`≈ ${totalPortfolioValueSar.toLocaleString('en-US', {
                   style: 'currency',
                   currency: 'SAR',
                   minimumFractionDigits: 0,
                   maximumFractionDigits: 0,
-                })} SAR`}
+                })} total (USD × ${sarPerUsd.toFixed(4)})`}
                 density="compact"
                 indicatorColor="green"
                 valueColor="text-slate-900"
-                tooltip="All Wealth Ultra positions at current prices (USD). SAR shown for reference."
+                tooltip="Wealth Ultra values holdings using USD notionally; SAR is for comparison with the rest of your Finova totals."
               />
               <Card
-                title="Deployable cash"
-                value={formatCurrencyString(deployableCash, { digits: 0 })}
+                title="Combined monthly plan budget"
+                value={
+                  aggBudget.total > 0
+                    ? formatCurrencyString(aggBudget.total, { inCurrency: 'SAR', showSecondary: true, digits: 2 })
+                    : 'No monthly target'
+                }
+                trend={
+                  aggBudget.total > 0
+                    ? `Summed from Investment Plan across ${portfolioIds.length || 'your'} portfolio(s)`
+                    : 'Set budgets per portfolio in Investments → Investment Plan'
+                }
+                density="compact"
+                indicatorColor={aggBudget.total > 0 ? 'green' : 'yellow'}
+                valueColor="text-slate-900"
+                tooltip="Pulled from your saved Investment Plan (per portfolio when set). This is separate from the engine’s USD deployment line."
+              />
+              <Card
+                title="Deployable cash (engine)"
+                value={fmtEngineUsd(deployableCash, 0)}
                 density="compact"
                 indicatorColor={deployableCash > 0 ? 'green' : 'yellow'}
                 valueColor="text-slate-900"
-                tooltip="Cash available for buys after reserve, as seen by the Wealth Ultra engine."
+                tooltip="Cash available for buys after reserve, in the engine’s USD view — matches the cash pipeline feeding Wealth Ultra."
               />
               <Card
-                title="Planned buys"
-                value={formatCurrencyString(totalPlannedBuyCost, { digits: 0 })}
+                title="Planned buys (engine)"
+                value={fmtEngineUsd(totalPlannedBuyCost, 0)}
                 density="compact"
                 indicatorColor={totalPlannedBuyCost > 0 ? 'green' : undefined}
                 valueColor="text-slate-900"
-                tooltip="Total cost of suggested BUY orders generated by the engine."
+                tooltip="Total notional USD cost of suggested BUY orders from the engine this run."
               />
               <Card
-                title="Cash plan"
+                title="Cash plan vs orders"
                 value={cashPlannerStatus === 'WITHIN_LIMIT' ? 'Within limit' : 'Over budget'}
                 indicatorColor={cashPlannerStatus === 'WITHIN_LIMIT' ? 'green' : 'red'}
                 density="compact"
                 valueColor={cashPlannerStatus === 'WITHIN_LIMIT' ? 'text-emerald-700' : 'text-rose-700'}
-                tooltip="Compares planned BUY cost vs deployable cash. Over budget means orders exceed safe cash."
+                tooltip="Compares planned BUY cost vs deployable cash in the engine. “Over budget” means suggested buys exceed that cash line."
               />
             </div>
           </div>
@@ -593,7 +704,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                         <span className={`w-4 h-4 rounded-full ${SLEEVE_COLORS[a.sleeve]} shadow-sm`} />
                         <div>
                           <p className="font-bold text-lg text-slate-900">{a.sleeve} Sleeve</p>
-                          <p className="text-sm text-slate-700 mt-1 tabular-nums font-medium">Value: {formatCurrencyString(a.marketValue)}</p>
+                          <p className="text-sm text-slate-700 mt-1 tabular-nums font-medium">Value: {fmtEngineUsd(a.marketValue, 0)}</p>
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2 sm:justify-end">
@@ -660,9 +771,16 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                       {buyOrders.map((o, i) => (
                         <li key={i} className="grid grid-cols-2 sm:grid-cols-4 items-center gap-3 py-3 px-4 rounded-lg bg-white border-2 border-emerald-100 shadow-sm hover:shadow-md transition-shadow text-sm">
                           <span className="font-bold text-emerald-700 uppercase tracking-wide">BUY</span>
-                          <span className="font-mono font-bold text-slate-900">{o.ticker}</span>
+                          <span className="min-w-0">
+                            <ResolvedSymbolLabel
+                              symbol={o.ticker}
+                              names={ultraTickerNames}
+                              layout="inline"
+                              symbolClassName="font-mono font-bold text-slate-900"
+                            />
+                          </span>
                           <span className="text-slate-700 font-medium">Qty: <span className="font-bold">{o.qty}</span></span>
-                          <span className="text-slate-700 font-medium">Limit: <span className="font-bold tabular-nums">{formatCurrencyString(o.limitPrice ?? 0)}</span></span>
+                          <span className="text-slate-700 font-medium">Limit: <span className="font-bold tabular-nums">{fmtEngineUsd(o.limitPrice ?? 0, 2)}</span></span>
                         </li>
                       ))}
                     </ul>
@@ -678,7 +796,14 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                       {sellOrders.map((o, i) => (
                         <li key={i} className="grid grid-cols-2 sm:grid-cols-4 items-center gap-3 py-3 px-4 rounded-lg bg-white border-2 border-rose-100 shadow-sm hover:shadow-md transition-shadow text-sm">
                           <span className="font-bold text-rose-700 uppercase tracking-wide">SELL</span>
-                          <span className="font-mono font-bold text-slate-900">{o.ticker}</span>
+                          <span className="min-w-0">
+                            <ResolvedSymbolLabel
+                              symbol={o.ticker}
+                              names={ultraTickerNames}
+                              layout="inline"
+                              symbolClassName="font-mono font-bold text-slate-900"
+                            />
+                          </span>
                           <span className="text-slate-700 font-medium">Qty: <span className="font-bold">{o.qty}</span></span>
                           {(o.target1Price ?? o.target2Price ?? o.trailingStopPrice) ? (
                             <span className="text-slate-600 text-xs font-medium">Targets / trailing in export</span>
@@ -719,12 +844,18 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
               <div className="space-y-3 pt-4 border-t border-slate-200">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs font-bold uppercase tracking-wide text-slate-600">Planned Deployment</span>
-                  <span className="text-2xl font-black text-slate-900 tabular-nums">{formatCurrencyString(monthlyDeployment.amountToDeploy)}</span>
+                  <span className="text-2xl font-black text-slate-900 tabular-nums">{fmtEngineUsd(monthlyDeployment.amountToDeploy, 0)}</span>
                 </div>
                 {monthlyDeployment.suggestedTicker && (
-                  <div className="inline-flex items-center gap-2 rounded-lg bg-primary/20 border-2 border-primary/30 text-primary px-4 py-2 w-full justify-center">
+                  <div className="inline-flex flex-col sm:flex-row items-center gap-2 rounded-lg bg-primary/20 border-2 border-primary/30 text-primary px-4 py-2 w-full justify-center text-center">
                     <span className="text-xs uppercase tracking-wide text-primary/90 font-bold">Ticker</span>
-                    <span className="font-mono font-bold text-lg">{monthlyDeployment.suggestedTicker}</span>
+                    <ResolvedSymbolLabel
+                      symbol={monthlyDeployment.suggestedTicker}
+                      names={ultraTickerNames}
+                      layout="stacked"
+                      symbolClassName="font-mono font-bold text-lg text-primary"
+                      companyClassName="text-xs text-primary/90 font-medium"
+                    />
                   </div>
                 )}
               </div>
@@ -803,7 +934,15 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                   <tbody className="divide-y divide-slate-200">
                     {positionsSortedByPl.map(p => (
                       <tr key={p.ticker} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-3 px-4 font-bold text-slate-900">{p.ticker}</td>
+                        <td className="py-3 px-4 min-w-0">
+                          <ResolvedSymbolLabel
+                            symbol={p.ticker}
+                            names={ultraTickerNames}
+                            layout="stacked"
+                            symbolClassName="font-bold text-slate-900"
+                            companyClassName="text-xs text-slate-500 font-medium"
+                          />
+                        </td>
                         <td className="py-3 px-4">
                           <span className="inline-flex items-center gap-2">
                             <span className={`inline-block w-3 h-3 rounded-full ${SLEEVE_COLORS[p.sleeveType]} shadow-sm`} />
@@ -815,7 +954,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                             {p.strategyMode}
                           </span>
                         </td>
-                        <td className="py-3 px-4 text-right tabular-nums font-bold text-slate-900">{formatCurrencyString(p.marketValue)}</td>
+                        <td className="py-3 px-4 text-right tabular-nums font-bold text-slate-900">{fmtEngineUsd(p.marketValue, 0)}</td>
                         <td className={`py-3 px-4 text-right tabular-nums font-black text-base ${p.plPct > 0 ? 'text-emerald-700' : p.plPct < 0 ? 'text-rose-700' : 'text-slate-500'}`}>
                           {p.plPct > 0 ? '+' : ''}{p.plPct.toFixed(1)}%
                         </td>
@@ -853,7 +992,14 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                   <li key={p.ticker} className="flex justify-between items-center py-2.5 px-3 rounded-lg bg-white border-2 border-emerald-100 shadow-sm hover:shadow-md transition-shadow">
                     <div className="flex items-center gap-3">
                       <span className="flex items-center justify-center w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs">{idx + 1}</span>
-                      <span className="font-bold text-slate-900">{p.ticker}</span>
+                      <span className="min-w-0">
+                        <ResolvedSymbolLabel
+                          symbol={p.ticker}
+                          names={ultraTickerNames}
+                          layout="inline"
+                          symbolClassName="font-bold text-slate-900"
+                        />
+                      </span>
                     </div>
                     <span className="text-emerald-700 font-black text-lg tabular-nums">+{p.plPct.toFixed(1)}%</span>
                   </li>
@@ -887,7 +1033,14 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                   <li key={p.ticker} className="flex justify-between items-center py-2.5 px-3 rounded-lg bg-white border-2 border-rose-100 shadow-sm hover:shadow-md transition-shadow">
                     <div className="flex items-center gap-3">
                       <span className="flex items-center justify-center w-6 h-6 rounded-full bg-rose-100 text-rose-800 font-bold text-xs">{idx + 1}</span>
-                      <span className="font-bold text-slate-900">{p.ticker}</span>
+                      <span className="min-w-0">
+                        <ResolvedSymbolLabel
+                          symbol={p.ticker}
+                          names={ultraTickerNames}
+                          layout="inline"
+                          symbolClassName="font-bold text-slate-900"
+                        />
+                      </span>
                     </div>
                     <span className="text-rose-700 font-black text-lg tabular-nums">{p.plPct.toFixed(1)}%</span>
                   </li>
@@ -927,7 +1080,13 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                       <div className="flex items-center gap-3 min-w-0">
                         <span className="flex items-center justify-center w-7 h-7 rounded-full bg-slate-200 text-slate-800 font-bold text-xs shrink-0">{i + 1}</span>
                         <div className="min-w-0">
-                          <span className="font-bold text-slate-900">{p.ticker}</span>
+                          <ResolvedSymbolLabel
+                            symbol={p.ticker}
+                            names={ultraTickerNames}
+                            layout="inline"
+                            symbolClassName="font-bold text-slate-900"
+                            companyClassName="text-slate-500 text-xs font-medium"
+                          />
                           <span className="text-slate-500 text-xs ml-2 font-medium">({tier})</span>
                         </div>
                       </div>
@@ -1024,7 +1183,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                   <div key={tier} className={`rounded-xl ${colors.bg} border-2 ${colors.border} px-5 py-4 shadow-sm`}>
                     <p className="text-xs font-bold uppercase tracking-wide text-slate-600 mb-2">{tier} Risk</p>
                     <p className="text-sm font-medium text-slate-700 mb-1">{stat.count} position{stat.count !== 1 ? 's' : ''}</p>
-                    <p className={`text-xl font-black tabular-nums ${colors.text}`}>{formatCurrencyString(stat.value ?? 0)}</p>
+                    <p className={`text-xl font-black tabular-nums ${colors.text}`}>{fmtEngineUsd(stat.value ?? 0, 0)}</p>
                   </div>
                 );
               })}
@@ -1043,11 +1202,16 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       positionCount,
       portfolioCount,
       totalPortfolioValue,
-      totalSAR,
+      totalPortfolioValueSar,
+      sarPerUsd,
+      aggBudget,
+      portfolioIds,
+      config.fxRate,
       cashPlannerStatus,
       deployableCash,
       totalPlannedBuyCost,
       formatCurrencyString,
+      fmtEngineUsd,
       allocations,
       orders,
       buyOrders,
@@ -1064,6 +1228,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       config,
       riskDistribution,
       engineIntelligence,
+      ultraTickerNames,
     ]
   );
   if (loading || !data) {
@@ -1130,6 +1295,14 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             <h2 className="text-lg font-bold text-slate-900 uppercase tracking-wide">Portfolio Overview</h2>
             <p className="text-xs text-slate-500 mt-1">Key metrics and engine intelligence</p>
           </div>
+
+          <AIAdvisor
+            pageContext="wealthUltra"
+            contextData={wealthUltraAiContext}
+            title="Portfolio insights"
+            subtitle="Plain-language summary of this page. After generating, switch to English or العربية."
+            buttonLabel="Explain this screen"
+          />
           
           {/* Hero & Health Status */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -1183,7 +1356,9 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                   const positions = (engineState?.positions ?? []) as WealthUltraPosition[];
                   const vols = positions.filter((p: WealthUltraPosition) => (p.marketValue ?? 0) > 0).map(() => 0.2);
                   const volWeights = vols.length >= 2 ? volatilityAdjustedWeights(vols, 0.15) : [];
-                  const volWeightLabels = positions.filter((p: WealthUltraPosition) => (p.marketValue ?? 0) > 0).map((p: WealthUltraPosition) => p.ticker ?? '');
+                  const volWeightLabels = positions
+                    .filter((p: WealthUltraPosition) => (p.marketValue ?? 0) > 0)
+                    .map((p: WealthUltraPosition) => formatSymbolWithCompany(p.ticker ?? '', undefined, ultraTickerNames));
                   return (
                     <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
                       <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Risk & compliance</p>
@@ -1244,6 +1419,70 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             <h2 className="text-lg font-bold text-slate-900 uppercase tracking-wide">Allocation & Strategy</h2>
             <p className="text-xs text-slate-500 mt-1">Sleeve allocation, drift, spec status, and next deployment</p>
           </div>
+
+          <SectionCard
+            title="Portfolio universe (by investment account)"
+            className="border-2 border-slate-200 bg-white shadow-md"
+            collapsible
+            collapsibleSummary={`${universeByPortfolio.rows.length} ticker(s) in universe`}
+            defaultExpanded
+          >
+            <p className="text-xs text-slate-600 mb-4 font-medium">
+              Same universe rows as Investments — grouped by portfolio when <span className="font-mono">portfolio_id</span> is set. Edit tickers and status in the Investments hub.
+            </p>
+            {universeByPortfolio.rows.length === 0 ? (
+              <div className="py-8 text-center border-2 border-dashed border-slate-200 rounded-lg bg-slate-50 text-sm text-slate-600">
+                No universe tickers yet. Add them under Investments → Portfolio universe to drive sleeve lists and automation.
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {Array.from(universeByPortfolio.map.entries())
+                  .sort(([a], [b]) => {
+                    if (a === '__unassigned__') return 1;
+                    if (b === '__unassigned__') return -1;
+                    return a.localeCompare(b);
+                  })
+                  .map(([key, tickers]) => {
+                    const portfolioLabel =
+                      key === '__unassigned__'
+                        ? 'Not linked to a portfolio (legacy)'
+                        : personalInvestments.find((p) => p.id === key)?.name?.trim() || `Portfolio ${key.slice(0, 8)}…`;
+                    return (
+                      <div key={key} className="rounded-xl border border-slate-200 overflow-hidden">
+                        <div className="bg-slate-50 px-4 py-2 border-b border-slate-200">
+                          <p className="text-sm font-bold text-slate-900">{portfolioLabel}</p>
+                          <p className="text-xs text-slate-500">{tickers.length} symbol(s)</p>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead className="bg-white border-b border-slate-100">
+                              <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
+                                <th className="py-2 px-3">Ticker</th>
+                                <th className="py-2 px-3">Name</th>
+                                <th className="py-2 px-3">Status</th>
+                                <th className="py-2 px-3 text-right">Weight %</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {tickers.map((t) => (
+                                <tr key={t.id} className="hover:bg-slate-50/80">
+                                  <td className="py-2 px-3 font-mono font-semibold text-slate-900">{t.ticker}</td>
+                                  <td className="py-2 px-3 text-slate-700">{toSafeText(t.name, '—')}</td>
+                                  <td className="py-2 px-3 text-slate-600">{t.status}</td>
+                                  <td className="py-2 px-3 text-right tabular-nums">
+                                    {typeof t.monthly_weight === 'number' && Number.isFinite(t.monthly_weight) ? `${t.monthly_weight.toFixed(1)}%` : '—'}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </SectionCard>
 
           {/* Sleeve Allocation — full width for clarity */}
           <div>

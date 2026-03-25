@@ -11,11 +11,12 @@ import {
   getPersonalLiabilities,
   getPersonalTransactions,
 } from '../utils/wealthScope';
-import { tradableCashBucketToSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { tradableCashBucketToSAR, resolveSarPerUsd, toSAR, fromSAR, availableTradableCashInLedgerCurrency, DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
 import {
     inferInvestmentTransactionCurrency,
     ledgerCurrencyCashToInvestment,
     ledgerCurrencyInvestmentToCash,
+    resolveCanonicalAccountId,
     resolveCashAccountCurrency,
 } from '../utils/investmentLedgerCurrency';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
@@ -26,6 +27,8 @@ import { parseSplitsFromNote } from '../services/transactionSplitNote';
 import { applyBuyToHolding, consolidateHoldingsBySymbol } from '../services/holdingMath';
 import { roundAvgCostPerUnit, roundMoney, roundQuantity } from '../utils/money';
 import { normalizeCoreUpsideAllocations } from '../utils/investmentPlanAllocations';
+import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/investmentPlanPerPortfolio';
+import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
@@ -124,7 +127,7 @@ interface DataContextType {
   addPlannedTrade: (plan: Omit<PlannedTrade, 'id' | 'user_id'>) => Promise<void>;
   updatePlannedTrade: (plan: PlannedTrade) => Promise<void>;
   deletePlannedTrade: (planId: string) => Promise<void>;
-  saveInvestmentPlan: (plan: InvestmentPlanSettings) => Promise<void>;
+  saveInvestmentPlan: (plan: InvestmentPlanSettings, portfolioId?: string) => Promise<void>;
   addUniverseTicker: (ticker: Omit<UniverseTicker, 'id' | 'user_id'>) => Promise<void>;
   updateUniverseTickerStatus: (tickerId: string, status: TickerStatus, updates?: Partial<UniverseTicker>) => Promise<void>;
   deleteUniverseTicker: (tickerId: string) => Promise<void>;
@@ -187,6 +190,14 @@ function settingsOverridesToRow(merged: Settings, explicitClears?: Partial<Setti
     return row;
 }
 
+function normalizeUniverseTicker(row: any): UniverseTicker {
+    if (!row || typeof row !== 'object') return row as UniverseTicker;
+    return {
+        ...row,
+        portfolioId: row.portfolio_id ?? row.portfolioId ?? null,
+    };
+}
+
 function normalizeSleeves(raw: any): SleeveDefinition[] | undefined {
     if (!raw || !Array.isArray(raw)) return undefined;
     const arr = raw.map((s: any) => ({
@@ -206,7 +217,7 @@ function normalizeInvestmentPlan(raw: any): InvestmentPlanSettings {
         raw.upside_allocation ?? raw.upsideAllocation,
         { core: initialData.investmentPlan.coreAllocation, upside: initialData.investmentPlan.upsideAllocation },
     );
-    return {
+    const base: InvestmentPlanSettings = {
         ...initialData.investmentPlan,
         user_id: raw.user_id,
         monthlyBudget: Number(raw.monthly_budget ?? raw.monthlyBudget ?? initialData.investmentPlan.monthlyBudget),
@@ -230,6 +241,18 @@ function normalizeInvestmentPlan(raw: any): InvestmentPlanSettings {
             leftoverCashRule: (bc.leftover_cash_rule ?? bc.leftoverCashRule ?? 'reinvest_core') as 'reinvest_core' | 'hold',
         } : initialData.investmentPlan.brokerConstraints,
         fxRateUpdatedAt: raw.fx_rate_updated_at ?? raw.fxRateUpdatedAt ?? undefined,
+    };
+    let plansByPortfolioId: InvestmentPlanSettings['plansByPortfolioId'];
+    const rawPlans = raw.plans_by_portfolio_id ?? raw.plansByPortfolioId;
+    if (rawPlans && typeof rawPlans === 'object' && !Array.isArray(rawPlans)) {
+        plansByPortfolioId = {};
+        for (const [pid, v] of Object.entries(rawPlans)) {
+            plansByPortfolioId[pid] = normalizePlanSlice(v as any, initialData.investmentPlan);
+        }
+    }
+    return {
+        ...base,
+        ...(plansByPortfolioId ? { plansByPortfolioId } : {}),
     };
 }
 
@@ -508,6 +531,11 @@ function investmentPlanToRow(plan: InvestmentPlanSettings): Record<string, unkno
     if (plan.fxRateUpdatedAt != null && plan.fxRateUpdatedAt !== '') {
         row.fx_rate_updated_at = plan.fxRateUpdatedAt;
     }
+    if (plan.plansByPortfolioId && Object.keys(plan.plansByPortfolioId).length > 0) {
+        row.plans_by_portfolio_id = Object.fromEntries(
+            Object.entries(plan.plansByPortfolioId).map(([k, v]) => [k, toPlanSlice(v as InvestmentPlanSettings)]),
+        );
+    }
     return row;
 }
 
@@ -657,10 +685,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             deadline: goal.deadline,
             savings_allocation_percent: goal.savingsAllocationPercent,
         };
-        // Prefer snake_case + priority (typical Postgres); then camelCase + priority; legacy schemas without `priority` column last.
+        // Prefer snake_case + priority (typical Postgres), then legacy `goal_priority`, then camelCase; schemas without priority last.
         return [
             { ...snake, priority: p },
+            { ...snake, goal_priority: p },
             { ...camel, priority: p },
+            { ...camel, goal_priority: p },
             snake,
             camel,
         ];
@@ -849,7 +879,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 notifications: [],
                 investmentPlan: normalizeInvestmentPlan((investmentPlan as any).data),
                 wealthUltraConfig,
-                portfolioUniverse: filterOwnedRows((portfolioUniverse as any).data || []),
+                portfolioUniverse: filterOwnedRows((portfolioUniverse as any).data || []).map(normalizeUniverseTicker),
                 statusChangeLog: filterOwnedRows((statusChangeLog as any).data || []),
                 executionLogs: filterOwnedRows((executionLogs as any).data || []).map(normalizeExecutionLog),
                 recurringTransactions: (recurringTransactions as any).error ? [] : filterOwnedRows((recurringTransactions as any).data || []).map((r: any) =>
@@ -886,6 +916,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         
         return () => clearTimeout(timeoutId);
     }, [auth?.user]);
+
+    /** Keep a dense SAR/USD point per calendar day for charts/KPIs (spot + snapshot seed + forward-fill). */
+    useEffect(() => {
+        hydrateSarPerUsdDailySeries(data, resolveSarPerUsd(data ?? null, DEFAULT_SAR_PER_USD));
+    }, [data, dataResetKey]);
 
     // Helper to add user_id to any object
     const withUser = (obj: any) => ({ ...obj, user_id: auth?.user?.id });
@@ -1503,6 +1538,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
 
+        const rate = resolveSarPerUsd(data ?? null, (data as any)?.investmentPlan?.fxRate);
+        const fromCur = fromAcc?.currency === 'USD' ? 'USD' : 'SAR';
+        const toCur = toAcc?.currency === 'USD' ? 'USD' : 'SAR';
+        const inboundAmount = fromCur === toCur ? absAmount : fromSAR(toSAR(absAmount, fromCur, rate), toCur, rate);
         await addTransaction({
             date: dateStr,
             description: descOut,
@@ -1514,7 +1553,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await addTransaction({
             date: dateStr,
             description: descIn,
-            amount: absAmount,
+            amount: inboundAmount,
             type: 'income',
             accountId: toAccountId,
             category: 'Transfer',
@@ -2002,6 +2041,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             price: trade.price,
             total: trade.total,
             symbol: trade.symbol,
+            date: trade.date,
         });
         if (!tradeVal.valid) {
             throw new Error(tradeVal.errors.join('\n'));
@@ -2009,7 +2049,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         tradeSubmissionInFlightRef.current = true;
         try {
-            const { portfolioId, name, assetClass: tradeAssetClass, manualCurrentValue: manualCvInput, holdingType: incomingHoldingType, ...tradeData } = trade as typeof trade & { assetClass?: string; manualCurrentValue?: number; holdingType?: string };
+            const { portfolioId, name, assetClass: tradeAssetClass, manualCurrentValue: manualCvInput, holdingType: incomingHoldingType, fees: feesInput, ...tradeData } = trade as typeof trade & {
+                assetClass?: string;
+                manualCurrentValue?: number;
+                holdingType?: string;
+                fees?: number;
+            };
+            const feesRecorded =
+                typeof feesInput === 'number' && Number.isFinite(feesInput) ? Math.max(0, roundMoney(feesInput)) : 0;
             const manualCv =
                 typeof manualCvInput === 'number' && Number.isFinite(manualCvInput) && manualCvInput >= 0
                     ? roundMoney(manualCvInput)
@@ -2072,7 +2119,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         // 2. Validate cash ledger limits before writing the transaction.
-        const tradeTotal = isCashFlow ? (trade.total ?? 0) : (tradeData.quantity * tradeData.price);
+        const basisNotional = tradeData.quantity * tradeData.price;
+        const tradeTotal = isCashFlow
+            ? (trade.total ?? 0)
+            : tradeData.type === 'dividend'
+              ? roundMoney(Math.max(0, Number(trade.total) || 0))
+              : tradeData.type === 'buy'
+                ? basisNotional + feesRecorded
+                : tradeData.type === 'sell'
+                  ? Math.max(0, basisNotional - feesRecorded)
+                  : basisNotional;
+        if (!isCashFlow && tradeData.type === 'sell' && feesRecorded > basisNotional + 1e-9) {
+            throw new Error('Fees cannot exceed gross sale proceeds (quantity × price).');
+        }
         /** Buys/sells are always booked in the portfolio base currency so SAR/USD buckets match holdings. */
         let portfolioLedgerCurrency: TradeCurrency | undefined;
         if (!isCashFlow && portfolio) {
@@ -2089,15 +2148,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     data?.investments ?? [],
                 ));
         const availableBefore = getAvailableCashForAccount(accountIdForInsert);
-        const availableInTxCurrency = txCurrency === 'SAR' ? availableBefore.SAR : availableBefore.USD;
+        const sarPerUsd = resolveSarPerUsd(data ?? null);
+        const availableInTxCurrency = availableTradableCashInLedgerCurrency(availableBefore, txCurrency, sarPerUsd);
         if (tradeData.type === 'buy' && tradeTotal > availableInTxCurrency + 1e-9) {
             throw new Error(
-                `Insufficient investment cash (${txCurrency}). Needed ${roundMoney(tradeTotal).toLocaleString()} ${txCurrency}, available ${roundMoney(availableInTxCurrency).toLocaleString()} ${txCurrency}. Transfer funds from Checking/Savings first.`,
+                `Insufficient investment cash. Needed ${roundMoney(tradeTotal).toLocaleString()} ${txCurrency}, available ${roundMoney(availableInTxCurrency).toLocaleString()} ${txCurrency} (pooled from ${roundMoney(availableBefore.SAR).toLocaleString()} SAR + ${roundMoney(availableBefore.USD).toLocaleString()} USD). Transfer funds from Checking/Savings first.`,
             );
+        }
+        if (tradeData.type === 'dividend' && tradeTotal <= 0) {
+            throw new Error('Dividend amount must be greater than zero.');
         }
         if (tradeData.type === 'withdrawal' && tradeTotal > availableInTxCurrency + 1e-9) {
             throw new Error(
-                `Cannot withdraw ${roundMoney(tradeTotal).toLocaleString()} ${txCurrency}. Available cash is ${roundMoney(availableInTxCurrency).toLocaleString()} ${txCurrency}.`,
+                `Cannot withdraw ${roundMoney(tradeTotal).toLocaleString()} ${txCurrency}. Available cash is ${roundMoney(availableInTxCurrency).toLocaleString()} ${txCurrency} (pooled from ${roundMoney(availableBefore.SAR).toLocaleString()} SAR + ${roundMoney(availableBefore.USD).toLocaleString()} USD).`,
             );
         }
 
@@ -2105,13 +2168,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         let newTransaction: any = null;
         let txError: any = null;
         const linkedCashAccountId = (trade as any).linkedCashAccountId;
-        const tradePayload: any = { 
-            ...tradeData, 
-            accountId: accountIdForInsert, 
-            symbol: normalizedSymbol, 
-            quantity: isCashFlow ? 0 : tradeData.quantity, 
-            price: isCashFlow ? 0 : tradeData.price, 
-            total: tradeTotal 
+        const tradePayload: any = {
+            ...tradeData,
+            accountId: accountIdForInsert,
+            symbol: normalizedSymbol,
+            quantity: isCashFlow ? 0 : tradeData.quantity,
+            price: isCashFlow ? 0 : tradeData.price,
+            total: tradeTotal,
         };
         if (portfolioLedgerCurrency) {
             tradePayload.currency = portfolioLedgerCurrency;
@@ -2173,8 +2236,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
         }
 
-        // 3. Process trade logic (skip for deposit/withdrawal)
+        // 3. Process trade logic (skip for deposit/withdrawal / dividend — dividend only updates ledger cash)
         if (isCashFlow) {
+            tradeSubmissionInFlightRef.current = false;
+            return;
+        }
+
+        if (tradeData.type === 'dividend') {
             tradeSubmissionInFlightRef.current = false;
             return;
         }
@@ -2225,7 +2293,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     };
                     await addHolding(newHoldingData);
                 }
-            } else { // 'sell'
+            } else if (tradeData.type === 'sell') {
                 if (!existingHolding) throw new Error("Cannot sell a holding you don't own.");
                 const holdingForSell = existingHolding;
                 const newQuantity = holdingForSell.quantity - tradeData.quantity;
@@ -2237,6 +2305,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 } else {
                     await deleteHolding(holdingForSell.id);
                 }
+            } else {
+                throw new Error(`Unsupported trade type for holding update: ${tradeData.type}`);
             }
         } catch (error) {
             console.error("Error updating holdings after trade:", error);
@@ -2466,21 +2536,31 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
-    const saveInvestmentPlan = async (plan: InvestmentPlanSettings) => {
+    const saveInvestmentPlan = async (plan: InvestmentPlanSettings, portfolioId?: string) => {
         if (!supabase || !auth?.user) return;
+        const mergedPlan: InvestmentPlanSettings =
+            portfolioId && data?.investmentPlan
+                ? {
+                      ...data.investmentPlan,
+                      plansByPortfolioId: {
+                          ...(data.investmentPlan.plansByPortfolioId ?? {}),
+                          [portfolioId]: toPlanSlice(stripNestedPlans(plan)),
+                      },
+                  }
+                : plan;
         const v = validateInvestmentPlan({
-            monthlyBudget: plan.monthlyBudget,
-            coreAllocation: plan.coreAllocation,
-            upsideAllocation: plan.upsideAllocation,
-            minimumUpsidePercentage: plan.minimumUpsidePercentage,
-            stale_days: plan.stale_days,
-            min_coverage_threshold: plan.min_coverage_threshold,
+            monthlyBudget: mergedPlan.monthlyBudget,
+            coreAllocation: mergedPlan.coreAllocation,
+            upsideAllocation: mergedPlan.upsideAllocation,
+            minimumUpsidePercentage: mergedPlan.minimumUpsidePercentage,
+            stale_days: mergedPlan.stale_days,
+            min_coverage_threshold: mergedPlan.min_coverage_threshold,
         });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
-        const overrides = investmentPlanOverridesToRow(plan);
+        const overrides = investmentPlanOverridesToRow(mergedPlan);
         const planWithUser = { ...overrides, user_id: auth.user.id };
         const planStamped: InvestmentPlanSettings = {
-            ...plan,
+            ...mergedPlan,
             fxRateUpdatedAt: new Date().toISOString(),
         };
         const overridesStamped = investmentPlanOverridesToRow(planStamped);
@@ -2506,11 +2586,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!supabase) return;
         const v = validateUniverseTicker({ ticker: ticker.ticker, name: ticker.name, status: ticker.status });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
-        const { data: newTicker, error } = await supabase.from('portfolio_universe').insert(withUser(ticker)).select().single();
+        const { portfolioId: universePortfolioId, ...tickerRest } = ticker;
+        const { data: newTicker, error } = await supabase
+            .from('portfolio_universe')
+            .insert(
+                withUser({
+                    ...tickerRest,
+                    portfolio_id: universePortfolioId ?? null,
+                } as Record<string, unknown>),
+            )
+            .select()
+            .single();
         if (error) {
             console.error("Error adding ticker:", error);
         } else if (newTicker) {
-            setData(prev => ({ ...prev, portfolioUniverse: [...prev.portfolioUniverse, newTicker] }));
+            setData(prev => ({ ...prev, portfolioUniverse: [...prev.portfolioUniverse, normalizeUniverseTicker(newTicker)] }));
         }
     };
 
@@ -2592,7 +2682,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const availableCashByAccountId = useMemo(() => {
         const map: Record<string, { SAR: number; USD: number }> = {};
         (data.investmentTransactions || []).forEach((t: InvestmentTransaction) => {
-            const accId = t.accountId ?? (t as any).account_id;
+            const raw = t.accountId ?? (t as any).account_id;
+            if (!raw) return;
+            const accId = resolveCanonicalAccountId(String(raw), data?.accounts ?? []);
             if (!accId) return;
             if (!(accId in map)) map[accId] = { SAR: 0, USD: 0 };
             const amt = t.total ?? 0;
@@ -2605,7 +2697,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             map[accId].USD = Math.max(0, map[accId].USD);
         });
         return map;
-    }, [data?.investmentTransactions]);
+    }, [data?.investmentTransactions, data?.accounts, data?.investments]);
 
     const getAvailableCashForAccount = useCallback((accountId: string): { SAR: number; USD: number } => {
         const v = availableCashByAccountId[accountId] ?? { SAR: 0, USD: 0 };

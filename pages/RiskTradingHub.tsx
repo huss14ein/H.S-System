@@ -13,7 +13,7 @@ import {
   isMonthLocked,
   createMonthlySnapshot,
 } from '../services/netWorthSnapshot';
-import { approximatePortfolioMWRR, flowsFromInvestmentTransactionsInSAR } from '../services/portfolioXirr';
+import { approximatePortfolioMWRR, flowsFromInvestmentTransactionsInSARWithDatedFx } from '../services/portfolioXirr';
 import { attributeNetWorthWithFlows } from '../services/portfolioAttribution';
 import { personalNetCashflowBetween } from '../services/netWorthPeriodFlows';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -31,6 +31,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import type { Page, Transaction } from '../types';
 import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
 import { getAllInvestmentsValueInSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 
 const RiskTradingHub: React.FC<{
@@ -117,13 +118,15 @@ const RiskTradingHub: React.FC<{
   const annualItems = useMemo(() => annualResetWorkflow(), []);
 
   const mwrr = useMemo(() => {
-    const txs = data?.investmentTransactions ?? [];
-    const flows = flowsFromInvestmentTransactionsInSAR(txs, sarPerUsd);
+    if (!data) return null;
+    hydrateSarPerUsdDailySeries(data, exchangeRate);
+    const txs = data.investmentTransactions ?? [];
+    const flows = flowsFromInvestmentTransactionsInSARWithDatedFx(txs, data, exchangeRate);
     const inv = (data as any)?.personalInvestments ?? data?.investments ?? [];
     const tv = getAllInvestmentsValueInSAR(inv, sarPerUsd);
     const r = approximatePortfolioMWRR(flows, tv, new Date().toISOString().slice(0, 10));
     return r;
-  }, [data, sarPerUsd]);
+  }, [data, sarPerUsd, exchangeRate]);
 
   const attr = useMemo(() => {
     if (snaps.length < 2) return null;
@@ -235,7 +238,8 @@ const RiskTradingHub: React.FC<{
             onClick={() => {
               const nw = currentNetWorth;
               if (typeof nw === 'number' && Number.isFinite(nw)) {
-                createMonthlySnapshot(nw);
+                hydrateSarPerUsdDailySeries(data, exchangeRate);
+                createMonthlySnapshot(nw, undefined, sarPerUsd);
                 setCompareFrom('');
                 setCompareTo('');
                 setRestoreDate('');

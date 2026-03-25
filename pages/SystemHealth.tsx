@@ -1,9 +1,12 @@
 import React, { useState, useCallback, useContext, useMemo, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
 import type { Page } from '../types';
-import { invokeAI } from '../services/geminiService';
+import { probeGeminiProxyHealth, type SystemHealthAiContext } from '../services/geminiService';
+import { resolveSarPerUsd } from '../utils/currencyMath';
+import { useCurrency } from '../context/CurrencyContext';
+import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
+import AIAdvisor from '../components/AIAdvisor';
 import { getMarketStatus, getMarketHolidays, finnhubFetch, type MarketStatusItem, type MarketHoliday } from '../services/finnhubService';
-import { MarketDataContext } from '../context/MarketDataContext';
 import { DataContext } from '../context/DataContext';
 import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
@@ -48,7 +51,7 @@ const initialServices: Service[] = [
   { name: 'Database Service (Supabase)', status: 'Operational' },
   { name: 'AI Services API (Gemini)', status: 'Operational' },
   { name: 'Market Data API (Finnhub)', status: 'Operational' },
-  { name: 'Multi-user Access', status: 'Operational' },
+  { name: 'Users table (Supabase)', status: 'Operational' },
 ];
 
 const getStatusInfo = (status: ServiceStatus) => {
@@ -77,14 +80,16 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(null);
   const [nextRefreshIn, setNextRefreshIn] = useState(AUTO_REFRESH_SECONDS);
   const [incidents, setIncidents] = useState<HealthIncident[]>([]);
-  const marketContext = useContext(MarketDataContext);
   const appDataCtx = useContext(DataContext);
+  const { exchangeRate } = useCurrency();
 
-  const runHealthChecks = useCallback(async (trigger: 'manual' | 'auto' = 'manual') => {
+  const runHealthChecks = useCallback(async (_trigger: 'manual' | 'auto' = 'manual') => {
     setIsLoading(true);
-    setServices((current) => current.map((s) =>
-      s.status !== 'Simulated' ? { ...s, status: 'Checking...', responseTime: undefined, error: undefined } : s
-    ));
+    setServices((prev) =>
+      prev.map((s) =>
+        s.status !== 'Simulated' ? { ...s, status: 'Checking...', responseTime: undefined, error: undefined } : s
+      )
+    );
 
     const checkSupabaseAuth = async (): Promise<Partial<Service>> => {
       if (!supabase) return { status: 'Outage', error: 'Supabase client is not configured.' };
@@ -114,12 +119,17 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
 
     const checkAIService = async (): Promise<Partial<Service>> => {
       try {
-        const start = performance.now();
-        await invokeAI({ model: 'gemini-3-flash-preview', contents: 'health-check' });
-        const duration = Math.round(performance.now() - start);
-        return { status: duration > 3000 ? 'Degraded Performance' : 'Operational', responseTime: duration };
+        const r = await probeGeminiProxyHealth();
+        if (!r.ok) {
+          return { status: 'Outage', responseTime: r.ms, error: r.error ?? 'AI proxy unhealthy.' };
+        }
+        return {
+          status: r.ms > 3500 ? 'Degraded Performance' : 'Operational',
+          responseTime: r.ms,
+          error: undefined,
+        };
       } catch (e) {
-        const errorMessage = e instanceof Error ? e.message : 'AI service check failed.';
+        const errorMessage = e instanceof Error ? e.message : 'AI health probe failed.';
         return { status: 'Outage', error: errorMessage };
       }
     };
@@ -150,12 +160,21 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
         const { count, error } = await supabase.from('users').select('id', { count: 'exact', head: true });
         if (error) throw error;
         const duration = Math.round(performance.now() - start);
-        if (!count || count < 2) {
-          return { status: 'Degraded Performance', responseTime: duration, error: 'System is active but only one user profile is currently detected.' };
+        const n = Number(count ?? 0);
+        if (n <= 0) {
+          return {
+            status: 'Degraded Performance',
+            responseTime: duration,
+            error: 'No rows in `users` table (unexpected for a signed-in app).',
+          };
         }
-        return { status: duration > 1500 ? 'Degraded Performance' : 'Operational', responseTime: duration };
+        return {
+          status: duration > 1500 ? 'Degraded Performance' : 'Operational',
+          responseTime: duration,
+          error: undefined,
+        };
       } catch {
-        return { status: 'Outage', error: 'Could not verify multi-user access from users table.' };
+        return { status: 'Outage', error: 'Could not read `users` table (RLS or schema).' };
       }
     };
 
@@ -167,21 +186,24 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       checkMultiUserAccess(),
     ]);
 
-    const newServices = services.map((s) => {
-      if (s.name.includes('Authentication')) return { ...s, ...auth };
-      if (s.name.includes('Database')) return { ...s, ...db };
-      if (s.name.includes('AI Services')) return { ...s, ...ai };
-      if (s.name.includes('Market Data API (Finnhub)')) return { ...s, ...finnhub };
-      if (s.name.includes('Multi-user Access')) return { ...s, ...multiUser };
-      return s;
-    });
-    setServices(newServices);
-
     const nowIso = new Date().toISOString();
+    let mergedRows: Service[] = [];
+    setServices((prev) => {
+      mergedRows = prev.map((s) => {
+        if (s.status === 'Simulated') return s;
+        if (s.name.includes('Authentication')) return { ...s, ...auth } as Service;
+        if (s.name.includes('Database')) return { ...s, ...db } as Service;
+        if (s.name.includes('AI Services')) return { ...s, ...ai } as Service;
+        if (s.name.includes('Market Data API (Finnhub)')) return { ...s, ...finnhub } as Service;
+        if (s.name.includes('Users table')) return { ...s, ...multiUser } as Service;
+        return s;
+      });
+      return mergedRows;
+    });
     setLastCheckedAt(nowIso);
     setNextRefreshIn(AUTO_REFRESH_SECONDS);
 
-    const newIncidents = newServices
+    const newIncidents = mergedRows
       .filter((s) => s.status === 'Outage' || s.status === 'Degraded Performance')
       .map((s) => ({ at: nowIso, service: s.name, status: s.status, message: s.error } as HealthIncident));
     if (newIncidents.length > 0) {
@@ -202,11 +224,8 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       setMarketHolidays([]);
     }
 
-    if (trigger === 'auto') {
-      setServices((current) => current.map((s) => s.status === 'Checking...' ? { ...s, status: 'Degraded Performance', error: s.error || 'Auto-check completed with incomplete telemetry.' } : s));
-    }
     setIsLoading(false);
-  }, [services, marketContext?.isLive, marketContext ? Object.keys(marketContext.simulatedPrices).length : 0]);
+  }, []);
 
   useEffect(() => {
     try {
@@ -252,27 +271,26 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   const smartInsights = useMemo(() => {
     const degraded = services.filter((s) => s.status === 'Degraded Performance').length;
     const outages = services.filter((s) => s.status === 'Outage').length;
-    const avgLatency = services.filter((s) => Number.isFinite(s.responseTime)).reduce((sum, s, _, arr) => {
-      const count = arr.filter((x) => Number.isFinite(x.responseTime)).length || 1;
-      return sum + (s.responseTime || 0) / count;
-    }, 0);
+    const withRt = services.filter((s) => Number.isFinite(s.responseTime));
+    const avgLatency =
+      withRt.length === 0 ? 0 : Math.round(withRt.reduce((sum, s) => sum + (s.responseTime ?? 0), 0) / withRt.length);
     const topIncident = incidents[0];
 
     const recommendations: string[] = [];
     if (outages > 0) recommendations.push('Resolve active outages first (credentials, deployment, or API quota).');
     if (degraded > 0) recommendations.push('Degraded services detected: tune retries/timeouts and check upstream response ceilings.');
-    if (avgLatency > 1800) recommendations.push('Average latency is high; consider lighter probes and cache warmup windows.');
+    if (avgLatency > 1800) recommendations.push('Average probe latency is high; check network path to your proxy/API region.');
     if (!recommendations.length) recommendations.push('All key services are healthy. Keep auto-check cadence active for early anomaly detection.');
 
-    return { degraded, outages, avgLatency: Math.round(avgLatency), topIncident, recommendations: recommendations.slice(0, 3) };
+    return { degraded, outages, avgLatency, topIncident, recommendations: recommendations.slice(0, 3) };
   }, [services, incidents]);
 
   const integritySummary = useMemo(() => {
     const financialData = appDataCtx?.data;
     if (!financialData) return null;
 
-    const accounts = (financialData.accounts ?? []) as Account[];
-    const transactions = (financialData.transactions ?? []) as Transaction[];
+    const accounts = getPersonalAccounts(financialData) as Account[];
+    const transactions = getPersonalTransactions(financialData) as Transaction[];
     const goals = (financialData.goals ?? []) as Goal[];
 
     const integrity = validateSystemIntegrity({
@@ -287,14 +305,27 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       transactions: transactions.map((t) => ({ accountId: t.accountId, goalId: (t as any).goalId })),
     });
 
-    const cashExceptions = (accounts ?? [])
+    const cashExceptions = accounts
       .filter((a) => a.type === 'Checking' || a.type === 'Savings')
-      .map((a) => reconcileCashAccountBalance(a as any, transactions))
-      .filter((x): x is NonNullable<typeof x> => x != null && x.showWarning)
-      .map((x) => ({ accountId: x.accountId, drift: x.drift, showWarning: x.showWarning }));
+      .map((a) => {
+        const r = reconcileCashAccountBalance(a as Account, transactions);
+        if (r == null || !r.showWarning) return null;
+        const bookCurrency: 'USD' | 'SAR' = a.currency === 'USD' ? 'USD' : 'SAR';
+        return {
+          accountId: r.accountId,
+          drift: r.drift,
+          showWarning: r.showWarning,
+          bookCurrency,
+          accountLabel: a.name?.trim() || r.accountId,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x != null);
 
-    const holdings: Holding[] = (financialData.investments ?? []).flatMap((p: any) => (p.holdings ?? [])) as Holding[];
-    const investmentTxs: InvestmentTransaction[] = (financialData.investmentTransactions ?? []) as InvestmentTransaction[];
+    const holdings: Holding[] = getPersonalInvestments(financialData).flatMap((p) => (p.holdings ?? [])) as Holding[];
+    const invAccountIds = new Set(accounts.filter((a) => a.type === 'Investment').map((a) => a.id));
+    const investmentTxs: InvestmentTransaction[] = (financialData.investmentTransactions ?? []).filter((t) =>
+      invAccountIds.has((t as InvestmentTransaction).accountId ?? '')
+    ) as InvestmentTransaction[];
 
     const storedBySymbol = new Map<string, number>();
     holdings.forEach((h) => {
@@ -327,7 +358,15 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     });
 
     const missingCategory = (transactions ?? []).some((t) => countsAsExpenseForCashflowKpi(t) && !t.budgetCategory);
-    const cashDrift = cashExceptions[0] ? { accountId: cashExceptions[0].accountId, drift: cashExceptions[0].drift } : undefined;
+    const firstCash = cashExceptions[0];
+    const cashDrift = firstCash
+      ? {
+          accountId: firstCash.accountId,
+          drift: firstCash.drift,
+          accountName: firstCash.accountLabel,
+          bookCurrency: firstCash.bookCurrency,
+        }
+      : undefined;
     const repairSuggestions = repairSuggestionEngine({ cashDrift, missingCategory });
 
     // Populate the in-memory exception queue so other UI can consume it later.
@@ -348,6 +387,45 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
 
     return { integrityOk: integrity.ok, integrityExceptions: integrity.exceptions, brokenRefs, cashExceptions, holdingExceptions, reconciliation, repairSuggestions, queue };
   }, [appDataCtx]);
+
+  const sarPerUsdHealth = useMemo(
+    () => resolveSarPerUsd(appDataCtx?.data ?? null, exchangeRate),
+    [appDataCtx?.data, exchangeRate]
+  );
+
+  const healthAiContext = useMemo((): SystemHealthAiContext => {
+    const serviceLines = services
+      .map((s) => {
+        const ms = Number.isFinite(s.responseTime) ? ` (${s.responseTime} ms)` : '';
+        const err = s.error ? ` — ${s.error}` : '';
+        return `- ${s.name}: ${s.status}${ms}${err}`;
+      })
+      .join('\n');
+    const integritySummaryLine = integritySummary
+      ? `Queued ${integritySummary.queue?.length ?? 0} · Reconciliation ${integritySummary.reconciliation.length} · integrityOk=${integritySummary.integrityOk}`
+      : 'Financial data not loaded — open Accounts after sign-in.';
+    return {
+      overallStatus,
+      healthScore,
+      degradedCount: smartInsights.degraded,
+      outageCount: smartInsights.outages,
+      avgLatencyMs: smartInsights.avgLatency,
+      serviceLines,
+      integritySummaryLine,
+      sarPerUsd: sarPerUsdHealth,
+      lastCheckedLabel: lastCheckedAt ? new Date(lastCheckedAt).toLocaleString() : undefined,
+    };
+  }, [
+    services,
+    overallStatus,
+    healthScore,
+    smartInsights.degraded,
+    smartInsights.outages,
+    smartInsights.avgLatency,
+    integritySummary,
+    lastCheckedAt,
+    sarPerUsdHealth,
+  ]);
 
   const OverallStatusCard: React.FC<{ status: ServiceStatus }> = ({ status }) => {
     const { text, icon } = getStatusInfo(status);
@@ -382,7 +460,10 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       <div className="flex flex-wrap justify-between items-center gap-3">
         <div>
           <h1 className="text-3xl font-bold text-dark">System & APIs Health</h1>
-          <p className="text-sm text-slate-500 mt-1">Fully automated reliability center with continuous checks, incident memory, and smart recommendations.</p>
+          <p className="text-sm text-slate-500 mt-1">
+            Automated probes for Supabase, AI proxy (no full LLM on each tick), and Finnhub. Data checks use your <strong>personal</strong> ledger. FX reference for the app:{' '}
+            <span className="font-mono tabular-nums">1 USD = {sarPerUsdHealth.toFixed(4)} SAR</span>.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs px-2 py-1 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700">Auto refresh in {nextRefreshIn}s</span>
@@ -440,7 +521,11 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
               <p className="text-xs font-semibold text-slate-500 mb-2">Repair suggestions</p>
               <ul className="space-y-1 text-sm text-slate-700">
                 {integritySummary.repairSuggestions.map((s, i) => (
-                  <li key={`repair-${i}`}>{s.action}{s.entityId ? ` (${s.entityId})` : ''}</li>
+                  <li key={`repair-${i}`}>
+                    {s.action}
+                    {s.detail ? ` — ${s.detail}` : ''}
+                    {s.entityId ? ` · id ${s.entityId}` : ''}
+                  </li>
                 ))}
               </ul>
             </div>
@@ -479,12 +564,22 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
         </div>
       )}
 
+      <AIAdvisor
+        pageContext="systemHealth"
+        contextData={healthAiContext}
+        title="AI system brief"
+        subtitle="Operational summary · English / العربية"
+        buttonLabel="Summarize system health"
+      />
+
       <div className="bg-blue-50 border-l-4 border-blue-400 text-blue-800 p-4 rounded-r-lg shadow-sm">
         <div className="flex">
           <div className="py-1"><LightBulbIcon className="h-6 w-6 text-blue-500 mr-3" /></div>
           <div>
             <p className="font-bold">AI Service Troubleshooting</p>
-            <p className="text-sm mt-1">For AI features to work, a Netlify Function acts as a secure proxy. An "Outage" status usually means this function isn't deployed or the `GEMINI_API_KEY` is missing. Live market API outages are commonly due to a missing/invalid `VITE_FINNHUB_API_KEY`.</p>
+            <p className="text-sm mt-1">
+              The health check calls the same proxy as the app with a lightweight <code className="text-xs bg-blue-100 px-1 rounded">health</code> ping (no full model generation). An &quot;Outage&quot; usually means the function is not deployed or no provider key is configured. Market rows use <code className="text-xs bg-blue-100 px-1 rounded">VITE_FINNHUB_API_KEY</code>.
+            </p>
             <a href="https://docs.netlify.com/functions/overview/" target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-blue-600 hover:underline mt-2 inline-block">
               Learn about Netlify Functions &rarr;
             </a>

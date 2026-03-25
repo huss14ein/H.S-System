@@ -633,8 +633,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             return;
         }
 
-        // Calculate session expiry (24 hours from now)
-        const expiryTime = Date.now() + (24 * 60 * 60 * 1000);
+        // Prefer provider-issued expiry time; fallback to 24h if unavailable.
+        const sessionExpiryMs = Number((session as any)?.expires_at) > 0
+            ? Number((session as any).expires_at) * 1000
+            : Date.now() + (24 * 60 * 60 * 1000);
+        const expiryTime = sessionExpiryMs;
         setSessionExpiryTime(expiryTime);
 
         // Check session expiry every minute
@@ -647,9 +650,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             if (timeLeft < 5 * 60 * 1000 && timeLeft > 0) {
                 setIsSessionExpiring(true);
             } else if (timeLeft <= 0) {
-                setIsSessionExpiring(false);
-                // Auto-logout when session expires
-                logout();
+                // Do not force a local auto-logout loop on background/visibility changes.
+                // Supabase auth state will naturally transition on invalid session.
+                setIsSessionExpiring(true);
+                setTimeUntilExpiry(0);
             } else {
                 setIsSessionExpiring(false);
             }

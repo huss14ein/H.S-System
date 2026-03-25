@@ -1,21 +1,39 @@
+import { recordSarPerUsdForCalendarDay } from './fxDailySeries';
+
 const KEY = 'finova_nw_snapshots_v1';
 const MAX = 36;
 
 export interface NetWorthSnapshot {
   at: string;
   netWorth: number;
+  /** SAR per 1 USD at capture — feeds historical FX series for charts/KPIs. */
+  sarPerUsd?: number;
+  buckets?: {
+    cash: number;
+    investments: number;
+    physicalAndCommodities: number;
+    receivables: number;
+    liabilities: number;
+  };
 }
 
-export function pushNetWorthSnapshot(netWorth: number): void {
+export function pushNetWorthSnapshot(
+  netWorth: number,
+  buckets?: NetWorthSnapshot['buckets'],
+  sarPerUsd?: number,
+): void {
   try {
     const raw = localStorage.getItem(KEY);
     const arr: NetWorthSnapshot[] = raw ? JSON.parse(raw) : [];
     const last = arr[0];
     const today = new Date().toISOString().slice(0, 10);
+    const at = new Date().toISOString();
+    const fx = typeof sarPerUsd === 'number' && Number.isFinite(sarPerUsd) && sarPerUsd > 0 ? sarPerUsd : undefined;
+    if (fx != null) recordSarPerUsdForCalendarDay(today, fx);
     if (last && last.at.slice(0, 10) === today) {
-      arr[0] = { at: new Date().toISOString(), netWorth };
+      arr[0] = { at, netWorth, sarPerUsd: fx ?? last.sarPerUsd, buckets: buckets ?? last.buckets };
     } else {
-      arr.unshift({ at: new Date().toISOString(), netWorth });
+      arr.unshift({ at, netWorth, sarPerUsd: fx, buckets });
     }
     localStorage.setItem(KEY, JSON.stringify(arr.slice(0, MAX)));
   } catch {}
@@ -31,8 +49,12 @@ export function listNetWorthSnapshots(): NetWorthSnapshot[] {
 }
 
 /** Create a snapshot (e.g. month-end); same as pushNetWorthSnapshot. */
-export function createMonthlySnapshot(netWorth: number): void {
-  pushNetWorthSnapshot(netWorth);
+export function createMonthlySnapshot(
+  netWorth: number,
+  buckets?: NetWorthSnapshot['buckets'],
+  sarPerUsd?: number,
+): void {
+  pushNetWorthSnapshot(netWorth, buckets, sarPerUsd);
 }
 
 /** Compare two snapshots by date; returns NW change. */

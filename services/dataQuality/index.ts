@@ -21,4 +21,5 @@ export {
   STALE_MARKET_HOURS_LIVE,
   STALE_MARKET_HOURS_SIM,
   type StaleMarketSummary,
+  type GetStaleQuoteSymbolsOptions,
 } from './marketDataStale';

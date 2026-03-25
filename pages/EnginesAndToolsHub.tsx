@@ -3,8 +3,15 @@
  * Fully wired to DataContext, useFinancialEnginesIntegration. URL hash sync, visibility refresh.
  */
 
-import React, { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useContext, lazy, Suspense } from 'react';
 import { Page } from '../types';
+import { DataContext } from '../context/DataContext';
+import { useCurrency } from '../context/CurrencyContext';
+import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
+import { netCashFlowForMonthSar, savingsRateSar } from '../services/financeMetrics';
+import { resolveSarPerUsd } from '../utils/currencyMath';
+import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { CubeIcon } from '../components/icons/CubeIcon';
@@ -101,6 +108,21 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
   const [dataTick, setDataTick] = useState(0);
   const engines = useFinancialEnginesIntegration();
   const { trackAction } = useSelfLearning();
+  const { data, getAvailableCashForAccount } = useContext(DataContext)!;
+  const { exchangeRate } = useCurrency();
+  const { formatCurrencyString } = useFormatCurrency();
+
+  const moneyToolsKpis = useMemo(() => {
+    if (!data) return null;
+    const sar = resolveSarPerUsd(data, exchangeRate);
+    const nw = computePersonalNetWorthSAR(data, sar, { getAvailableCashForAccount });
+    const accounts = getPersonalAccounts(data);
+    const txs = getPersonalTransactions(data);
+    const ref = new Date();
+    const { income, expenses, net } = netCashFlowForMonthSar(txs, accounts, ref, sar);
+    const sr = savingsRateSar(txs, accounts, ref, sar);
+    return { nw, income, expenses, net, sr };
+  }, [data, exchangeRate, getAvailableCashForAccount, dataTick]);
 
   const statusStrip = useMemo(() => {
     const alerts = engines.analysis?.alerts ?? [];
@@ -255,6 +277,28 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
           </div>
         </div>
       </div>
+
+      {moneyToolsKpis && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[
+            { label: 'Net worth (SAR eq.)', value: formatCurrencyString(moneyToolsKpis.nw, { inCurrency: 'SAR' }) },
+            { label: 'Month income', value: formatCurrencyString(moneyToolsKpis.income, { inCurrency: 'SAR' }) },
+            { label: 'Month expenses', value: formatCurrencyString(moneyToolsKpis.expenses, { inCurrency: 'SAR' }) },
+            {
+              label: 'Month net · savings %',
+              value: `${formatCurrencyString(moneyToolsKpis.net, { inCurrency: 'SAR' })} · ${moneyToolsKpis.sr.toFixed(1)}%`,
+            },
+          ].map((k) => (
+            <div
+              key={k.label}
+              className="rounded-xl border border-slate-200/90 bg-white px-4 py-3 shadow-sm"
+            >
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{k.label}</p>
+              <p className="mt-1 text-base font-semibold tabular-nums text-slate-900">{k.value}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       <CollapsibleSection
         title="Quick guide"

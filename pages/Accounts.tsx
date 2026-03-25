@@ -28,12 +28,15 @@ import AddButton from '../components/AddButton';
 import InfoHint from '../components/InfoHint';
 import OwnerBadge from '../components/OwnerBadge';
 import PageLayout from '../components/PageLayout';
+import SectionCard from '../components/SectionCard';
 import { useCurrency } from '../context/CurrencyContext';
-import { tradableCashBucketToSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { tradableCashBucketToSAR, resolveSarPerUsd, toSAR, fromSAR } from '../utils/currencyMath';
 import { reconcileCashAccountBalance, type CashAccountReconciliation } from '../services/dataQuality';
 import { usePrivacyMask } from '../context/PrivacyContext';
+import { accountBookCurrency } from '../utils/cashAccountDisplay';
 import { isInternalTransferTransaction } from '../services/transactionFilters';
 import { useSelfLearning } from '../context/SelfLearningContext';
+import AIAdvisor from '../components/AIAdvisor';
 
 type SharedAccountRow = Account & { ownerEmail?: string; owner_user_id?: string; account_id?: string; show_balance?: boolean };
 
@@ -290,8 +293,9 @@ const AccountCardComponent: React.FC<{
                 {(() => {
                     const sharedAccount = account as SharedAccountRow;
                     const canShowBalance = !readOnly || sharedAccount.show_balance !== false;
+                    const accountCurrency = account.currency === 'USD' ? 'USD' : 'SAR';
                     return canShowBalance ? (
-                        <p className={`metric-value text-xl font-bold tabular-nums mt-0.5 ${account.balance >= 0 ? 'text-dark' : 'text-danger'}`}>{maskBalance(formatCurrencyString(account.balance))}</p>
+                        <p className={`metric-value text-xl font-bold tabular-nums mt-0.5 ${account.balance >= 0 ? 'text-dark' : 'text-danger'}`}>{maskBalance(formatCurrencyString(account.balance, { inCurrency: accountCurrency }))}</p>
                     ) : (
                         <p className="metric-value text-sm text-slate-400 mt-0.5">Balance hidden</p>
                     );
@@ -307,10 +311,10 @@ const AccountCardComponent: React.FC<{
                     <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-900">
                         <p className="font-semibold">Balance check</p>
                         <p className="mt-0.5">
-                            Recorded transactions net to <strong>{formatCurrencyString(cashReconciliation.transactionNet)}</strong>
-                            {' '}vs balance <strong>{formatCurrencyString(cashReconciliation.storedBalance)}</strong>
+                            Recorded transactions net to <strong>{formatCurrencyString(cashReconciliation.transactionNet, { inCurrency: accountBookCurrency(account) })}</strong>
+                            {' '}vs balance <strong>{formatCurrencyString(cashReconciliation.storedBalance, { inCurrency: accountBookCurrency(account) })}</strong>
                             {cashReconciliation.txCount > 0 && (
-                                <> (drift {formatCurrencyString(cashReconciliation.drift)}). May mean opening balance or missing entries.</>
+                                <> (drift {formatCurrencyString(cashReconciliation.drift, { inCurrency: accountBookCurrency(account) })}). May mean opening balance or missing entries.</>
                             )}
                         </p>
                     </div>
@@ -403,8 +407,14 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         const credit = accounts.filter((a: { type?: string }) => a.type === 'Credit');
         const investmentAccountsList = accounts.filter((a: { type?: string }) => a.type === 'Investment');
 
-        const totalCash = cash.reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
-        const totalCredit = credit.reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
+        const totalCash = cash.reduce((sum: number, acc: { balance?: number; currency?: 'SAR' | 'USD' }) => {
+            const cur = acc.currency === 'USD' ? 'USD' : 'SAR';
+            return sum + toSAR(Number(acc.balance) || 0, cur, sarPerUsd);
+        }, 0);
+        const totalCredit = credit.reduce((sum: number, acc: { balance?: number; currency?: 'SAR' | 'USD' }) => {
+            const cur = acc.currency === 'USD' ? 'USD' : 'SAR';
+            return sum + toSAR(Number(acc.balance) || 0, cur, sarPerUsd);
+        }, 0);
 
         /** Tradable cash per investment platform (investment transaction ledger), not holdings market value. */
         const investmentsWithTradableBalance = investmentAccountsList.map((acc: { id: string; [k: string]: unknown }) => {
@@ -424,7 +434,8 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             if (acc.type === 'Investment') {
                 return tradableCashBucketToSAR(getAvailableCashForAccount(acc.id), sarPerUsd);
             }
-            return Math.max(0, acc.balance ?? 0);
+            const cur = acc.currency === 'USD' ? 'USD' : 'SAR';
+            return Math.max(0, toSAR(acc.balance ?? 0, cur, sarPerUsd));
         },
         [sarPerUsd, getAvailableCashForAccount],
     );
@@ -442,6 +453,16 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     }, [orderedCashAccounts, data?.transactions, (data as any)?.personalTransactions]);
     const orderedCreditAccounts = useMemo(() => [...creditAccounts].sort((a, b) => a.name.localeCompare(b.name)), [creditAccounts]);
     const orderedInvestmentAccounts = useMemo(() => [...investmentAccounts].sort((a, b) => a.name.localeCompare(b.name)), [investmentAccounts]);
+    const accountValidationWarnings = useMemo(() => {
+        const warnings: string[] = [];
+        if (cashAccounts.length === 0) warnings.push('No cash accounts found. Emergency fund and transfers require Checking/Savings accounts.');
+        const negativeCash = cashAccounts.filter((a: Account) => Number(a.balance) < 0);
+        if (negativeCash.length > 0) warnings.push(`${negativeCash.length} cash account(s) have negative balances.`);
+        const orphanPlatforms = orderedInvestmentAccounts.filter((a) => (a.linkedAccountIds ?? []).length === 0);
+        if (orphanPlatforms.length > 0) warnings.push(`${orphanPlatforms.length} investment platform(s) have no linked cash accounts.`);
+        if (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0) warnings.push('Invalid SAR/USD rate detected; fallback rate may be in use.');
+        return warnings;
+    }, [cashAccounts, orderedInvestmentAccounts, sarPerUsd]);
 
     const scheduledTransferPairs = useMemo((): ScheduledTransferPair[] => {
         const recurring = data?.recurringTransactions ?? [];
@@ -512,8 +533,25 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 description: (exp.description ?? '').replace(/^Transfer to .+?:\s*/i, '').trim() || undefined,
             });
         }
-        return pairs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    }, [data?.transactions, (data as any)?.personalTransactions]);
+        const investmentLinkedTransfers = ((data as any)?.personalInvestmentTransactions ?? data?.investmentTransactions ?? [])
+            .filter((t: any) => (t.type === 'deposit' || t.type === 'withdrawal') && !!(t.linkedCashAccountId ?? t.linked_cash_account_id))
+            .map((t: any) => {
+                const linkedCashAccountId = t.linkedCashAccountId ?? t.linked_cash_account_id;
+                const platformAccountId = t.accountId ?? t.account_id ?? '';
+                const absAmt = Math.abs(Number(t.total ?? 0));
+                if (!linkedCashAccountId || !platformAccountId || !Number.isFinite(absAmt) || absAmt <= 0) return null;
+                return {
+                    fromAccountId: t.type === 'deposit' ? linkedCashAccountId : platformAccountId,
+                    toAccountId: t.type === 'deposit' ? platformAccountId : linkedCashAccountId,
+                    amount: absAmt,
+                    date: String(t.date ?? ''),
+                    description: t.type === 'deposit' ? 'Transfer to investment platform' : 'Transfer from investment platform',
+                } as TransferHistoryItem;
+            })
+            .filter((v: TransferHistoryItem | null): v is TransferHistoryItem => v !== null);
+        const merged = [...pairs, ...investmentLinkedTransfers];
+        return merged.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    }, [data?.transactions, (data as any)?.personalTransactions, data?.investmentTransactions, (data as any)?.personalInvestmentTransactions]);
 
     const filteredTransferHistory = useMemo(() => {
         return transferHistory.filter((p) => {
@@ -586,12 +624,26 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             alert('Selected accounts not found.');
             return;
         }
-        const availableFrom = spendableBalanceSar(fromAccount);
-        if (availableFrom < amount) {
-            alert(`Insufficient balance. Available: ${formatCurrencyString(availableFrom)}`);
+        const fromCurrency = fromAccount.type === 'Investment'
+            ? ((toAccount.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD')
+            : ((fromAccount.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD');
+        const toCurrency = toAccount.type === 'Investment'
+            ? ((fromAccount.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD')
+            : ((toAccount.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD');
+        const availableFromInInputCurrency = fromAccount.type === 'Investment'
+            ? fromSAR(spendableBalanceSar(fromAccount), fromCurrency, sarPerUsd)
+            : Math.max(0, Number(fromAccount.balance) || 0);
+        if (availableFromInInputCurrency < amount) {
+            alert(`Insufficient balance. Available: ${formatCurrencyString(availableFromInInputCurrency, { inCurrency: fromCurrency })}`);
             return;
         }
-        if (!window.confirm(`Transfer ${formatCurrencyString(amount)} from ${fromAccount.name} to ${toAccount.name}?`)) {
+        const convertedForDestination = fromCurrency === toCurrency
+            ? amount
+            : fromSAR(toSAR(amount, fromCurrency, sarPerUsd), toCurrency, sarPerUsd);
+        const conversionNote = fromCurrency === toCurrency
+            ? ''
+            : `\nConverted amount to destination: ${formatCurrencyString(convertedForDestination, { inCurrency: toCurrency })}`;
+        if (!window.confirm(`Transfer ${formatCurrencyString(amount, { inCurrency: fromCurrency })} from ${fromAccount.name} to ${toAccount.name}?${conversionNote}`)) {
             return;
         }
         try {
@@ -651,7 +703,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 dayOfMonth: day,
                 enabled: true,
             });
-            alert(`Recurring transfer set: ${formatCurrencyString(amount)} from ${fromAcc.name} to ${toAcc.name} on day ${day} of each month. You can edit or disable it under Transactions → Recurring.`);
+            alert(`Recurring transfer set: ${formatCurrencyString(amount, { inCurrency: accountBookCurrency(fromAcc), showSecondary: true })} from ${fromAcc.name} to ${toAcc.name} on day ${day} of each month. You can edit or disable it under Transactions → Recurring.`);
             setIsRecurringTransferModalOpen(false);
             setRecurringFromId('');
             setRecurringToId('');
@@ -750,10 +802,19 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             }
         >
             <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
-                 <Card title="Total Cash Balance" value={maskBalance(formatCurrencyString(totalCash))} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of Checking and Savings (liquid cash). This is your emergency fund base." />
-                 <Card title="Total Credit Balance" value={maskBalance(formatCurrencyString(totalCredit))} indicatorColor="red" valueColor="text-rose-700" icon={<CreditCardIcon className="h-5 w-5 text-rose-600" />} tooltip="Total balance across all credit accounts (amount owed)." />
-                 <Card title="Tradable cash (platforms)" value={maskBalance(formatCurrencyString(totalInvestmentTradableCash))} indicatorColor="yellow" valueColor="text-indigo-700" icon={<ArrowTrendingUpIcon className="h-5 w-5 text-indigo-600" />} tooltip="Cash available for trading on investment platforms (from deposits, sells, dividends minus buys & withdrawals)—not portfolio market value." />
+                 <Card title="Total Cash Balance (SAR eq.)" value={maskBalance(formatCurrencyString(totalCash))} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of Checking and Savings converted to SAR equivalent using current FX rate." />
+                 <Card title="Total Credit Balance (SAR eq.)" value={maskBalance(formatCurrencyString(totalCredit))} indicatorColor="red" valueColor="text-rose-700" icon={<CreditCardIcon className="h-5 w-5 text-rose-600" />} tooltip="Total amount owed across all credit accounts, converted to SAR equivalent." />
+                 <Card title="Tradable cash (platforms, SAR eq.)" value={maskBalance(formatCurrencyString(totalInvestmentTradableCash))} indicatorColor="yellow" valueColor="text-indigo-700" icon={<ArrowTrendingUpIcon className="h-5 w-5 text-indigo-600" />} tooltip="Cash available for trading on investment platforms (from deposits, sells, dividends minus buys & withdrawals), converted to SAR equivalent." />
             </div>
+            {accountValidationWarnings.length > 0 && (
+                <SectionCard title="Accounts validation checks" collapsible collapsibleSummary="Data quality and wiring checks" defaultExpanded className="mt-4">
+                    <ul className="space-y-1 text-sm text-amber-800">
+                        {accountValidationWarnings.map((w, idx) => (
+                            <li key={`aw-${idx}`}>- {w}</li>
+                        ))}
+                    </ul>
+                </SectionCard>
+            )}
 
             <div className="section-card border-l-4 border-emerald-500/50 mt-4">
                 <h3 className="section-title text-base">Emergency fund (liquid cash)</h3>
@@ -936,7 +997,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                                                 <span className="font-medium text-slate-800 truncate">{toAcc?.name ?? pair.toAccountId}</span>
                                             </div>
                                             <div className="flex items-center gap-3 mt-2 text-sm text-slate-600">
-                                                <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(pair.amount)}</span>
+                                                <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(pair.amount, { inCurrency: accountBookCurrency(fromAcc), showSecondary: true })}</span>
                                                 <span className="text-slate-400">/ month</span>
                                                 <span className="flex items-center gap-1 text-slate-500">
                                                     <CalendarDaysIcon className="h-4 w-4" /> Day {pair.dayOfMonth}
@@ -1013,7 +1074,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                                         <ArrowsRightLeftIcon className="h-4 w-4 text-slate-400 shrink-0" />
                                         <span className="font-medium text-slate-800 truncate">{toAcc?.name ?? item.toAccountId}</span>
                                     </div>
-                                    <span className="font-semibold text-slate-900 tabular-nums shrink-0">{formatCurrencyString(item.amount)}</span>
+                                    <span className="font-semibold text-slate-900 tabular-nums shrink-0">{formatCurrencyString(item.amount, { inCurrency: accountBookCurrency(fromAcc), showSecondary: true })}</span>
                                     <span className="text-sm text-slate-500 shrink-0">{new Date(item.date).toLocaleDateString()}</span>
                                 </div>
                             );
@@ -1140,6 +1201,25 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
 
             <Modal isOpen={isTransferModalOpen} onClose={() => setIsTransferModalOpen(false)} title="Transfer Between Accounts">
                 <form onSubmit={(e) => { e.preventDefault(); handleTransfer(); }} className="space-y-4">
+                    {transferFromAccount && transferToAccount && (() => {
+                        const fromAcc = (data?.accounts ?? []).find(a => a.id === transferFromAccount);
+                        const toAcc = (data?.accounts ?? []).find(a => a.id === transferToAccount);
+                        if (!fromAcc || !toAcc) return null;
+                        const fromCur = fromAcc.type === 'Investment'
+                            ? (toAcc.currency === 'USD' ? 'USD' : 'SAR')
+                            : (fromAcc.currency === 'USD' ? 'USD' : 'SAR');
+                        const toCur = toAcc.type === 'Investment'
+                            ? (fromAcc.currency === 'USD' ? 'USD' : 'SAR')
+                            : (toAcc.currency === 'USD' ? 'USD' : 'SAR');
+                        if (fromCur === toCur) return null;
+                        const amt = Number(transferAmount) || 0;
+                        const converted = amt > 0 ? fromSAR(toSAR(amt, fromCur, sarPerUsd), toCur, sarPerUsd) : 0;
+                        return (
+                            <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+                                Cross-currency transfer: amount is entered in source currency ({fromCur}). Destination receives approximately {formatCurrencyString(converted, { inCurrency: toCur })}.
+                            </div>
+                        );
+                    })()}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
                             From Account <InfoHint text="Account to withdraw funds from" />
@@ -1153,15 +1233,26 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             <option value="">Select source account</option>
                             {(data?.accounts ?? []).filter(a => a.type !== 'Credit').map(acc => (
                                 <option key={acc.id} value={acc.id}>
-                                    {acc.name} ({formatCurrencyString(spendableBalanceSar(acc))})
+                                    {acc.name} ({formatCurrencyString(
+                                        acc.type === 'Investment'
+                                            ? fromSAR(spendableBalanceSar(acc), ((data?.accounts ?? []).find(a => a.id === transferToAccount)?.currency === 'USD' ? 'USD' : 'SAR'), sarPerUsd)
+                                            : Math.max(0, Number(acc.balance) || 0),
+                                        { inCurrency: acc.type === 'Investment' ? (((data?.accounts ?? []).find(a => a.id === transferToAccount)?.currency === 'USD') ? 'USD' : 'SAR') : (acc.currency === 'USD' ? 'USD' : 'SAR') },
+                                    )})
                                 </option>
                             ))}
                         </select>
                         {transferFromAccount && (() => {
                             const acc = (data?.accounts ?? []).find(a => a.id === transferFromAccount);
+                            const cur = acc?.type === 'Investment'
+                                ? (((data?.accounts ?? []).find(a => a.id === transferToAccount)?.currency === 'USD') ? 'USD' : 'SAR')
+                                : (acc?.currency === 'USD' ? 'USD' : 'SAR');
                             return acc && (
                                 <p className="text-xs text-slate-500 mt-1">
-                                    Available{acc.type === 'Investment' ? ' for trading' : ' balance'}: {formatCurrencyString(spendableBalanceSar(acc))}
+                                    Available{acc.type === 'Investment' ? ' for trading' : ' balance'}: {formatCurrencyString(
+                                        acc.type === 'Investment' ? fromSAR(spendableBalanceSar(acc), cur, sarPerUsd) : Math.max(0, Number(acc.balance) || 0),
+                                        { inCurrency: cur },
+                                    )}
                                 </p>
                             );
                         })()}
@@ -1179,14 +1270,19 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             <option value="">Select destination account</option>
                             {(data?.accounts ?? []).filter(a => a.id !== transferFromAccount && a.type !== 'Credit').map(acc => (
                                 <option key={acc.id} value={acc.id}>
-                                    {acc.name} ({maskBalance(formatCurrencyString(spendableBalanceSar(acc)))})
+                                    {acc.name} ({maskBalance(formatCurrencyString(
+                                        acc.type === 'Investment'
+                                            ? fromSAR(spendableBalanceSar(acc), ((data?.accounts ?? []).find(a => a.id === transferFromAccount))?.currency === 'USD' ? 'USD' : 'SAR', sarPerUsd)
+                                            : Math.max(0, Number(acc.balance) || 0),
+                                        { inCurrency: acc.type === 'Investment' ? (((data?.accounts ?? []).find(a => a.id === transferFromAccount)?.currency === 'USD') ? 'USD' : 'SAR') : (acc.currency === 'USD' ? 'USD' : 'SAR') },
+                                    ))})
                                 </option>
                             ))}
                         </select>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
-                            Amount <InfoHint text="Amount to transfer" />
+                            Amount <InfoHint text="Amount in source account currency. If source/destination currencies differ, conversion is applied automatically." />
                         </label>
                         <input
                             type="number"
@@ -1216,6 +1312,13 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                     </button>
                 </form>
             </Modal>
+            <AIAdvisor
+                pageContext="cashflow"
+                contextData={{ transactions: (data as any)?.personalTransactions ?? data?.transactions ?? [], budgets: data?.budgets ?? [] }}
+                title="Accounts AI Advisor"
+                subtitle="Cash positioning, transfer patterns, and account health insights."
+                buttonLabel="Get AI Insights"
+            />
         </PageLayout>
     );
 };
