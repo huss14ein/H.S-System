@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useContext, useEffect, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
-import { getAIFeedInsights, formatAiError } from '../services/geminiService';
+import { getAIFeedInsights, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { LightBulbIcon } from './icons/LightBulbIcon';
 import { PiggyBankIcon } from './icons/PiggyBankIcon';
@@ -10,6 +10,8 @@ import { ExclamationTriangleIcon } from './icons/ExclamationTriangleIcon';
 import { FeedItem } from '../types';
 import SafeMarkdownRenderer from './SafeMarkdownRenderer';
 import { useAI } from '../context/AiContext';
+
+const FEED_AI_LANG_KEY = 'finova_default_ai_lang_v1';
 
 const FeedItemIcon: React.FC<{ type: FeedItem['type'] }> = ({ type }) => {
     const iconClass = "h-6 w-6";
@@ -26,6 +28,15 @@ const AIFeed: React.FC = () => {
     const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [displayLang, setDisplayLang] = useState<'en' | 'ar'>(() => {
+        try {
+            return localStorage.getItem(FEED_AI_LANG_KEY) === 'ar' ? 'ar' : 'en';
+        } catch {
+            return 'en';
+        }
+    });
+    const [arItems, setArItems] = useState<{ title: string; description: string }[] | null>(null);
+    const [translating, setTranslating] = useState(false);
     const { data } = useContext(DataContext)!;
     const { isAiAvailable } = useAI();
     const dataRef = useRef(data);
@@ -34,9 +45,48 @@ const AIFeed: React.FC = () => {
         dataRef.current = data;
     }, [data]);
 
+    useEffect(() => {
+        try {
+            localStorage.setItem(FEED_AI_LANG_KEY, displayLang);
+        } catch {
+            /* ignore */
+        }
+    }, [displayLang]);
+
+    useEffect(() => {
+        if (displayLang !== 'ar' || feedItems.length === 0 || !isAiAvailable) return;
+        if (arItems && arItems.length === feedItems.length) return;
+        let cancelled = false;
+        (async () => {
+            setTranslating(true);
+            setError(null);
+            try {
+                const translated = await Promise.all(
+                    feedItems.map(async (item) => ({
+                        title: await translateFinancialInsightToArabic(item.title),
+                        description: await translateFinancialInsightToArabic(item.description),
+                    })),
+                );
+                if (!cancelled) setArItems(translated);
+            } catch (err) {
+                console.error('AI Feed translation failed:', err);
+                if (!cancelled) {
+                    setError(formatAiError(err));
+                    setDisplayLang('en');
+                }
+            } finally {
+                if (!cancelled) setTranslating(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [displayLang, feedItems, arItems, isAiAvailable]);
+
     const handleGenerate = useCallback(async () => {
         setIsLoading(true);
         setFeedItems([]);
+        setArItems(null);
         setError(null);
         try {
             const items = await getAIFeedInsights(dataRef.current);
@@ -48,6 +98,11 @@ const AIFeed: React.FC = () => {
         setIsLoading(false);
     }, []);
 
+    const handleLangToggle = useCallback(() => {
+        if (feedItems.length === 0) return;
+        setDisplayLang((prev) => (prev === 'ar' ? 'en' : 'ar'));
+    }, [feedItems.length]);
+
     return (
         <div className="bg-white p-6 rounded-lg shadow-md">
             <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
@@ -58,6 +113,7 @@ const AIFeed: React.FC = () => {
                     </div>
                     <p className="text-xs text-slate-500 mt-0.5">From your expert financial advisor</p>
                 </div>
+                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
                 <button
                   type="button"
                   onClick={handleGenerate}
@@ -68,6 +124,16 @@ const AIFeed: React.FC = () => {
                     <SparklesIcon className="h-5 w-5 mr-2" />
                     {isLoading ? 'Thinking...' : 'Refresh Feed'}
                 </button>
+                <button
+                  type="button"
+                  onClick={handleLangToggle}
+                  disabled={isLoading || translating || feedItems.length === 0 || !isAiAvailable}
+                  title={displayLang === 'ar' ? 'Show English' : 'Translate feed to Arabic'}
+                  className="w-full sm:w-auto flex items-center justify-center px-4 py-2 border border-slate-300 text-slate-800 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+                >
+                    {translating ? '…' : displayLang === 'ar' ? 'English' : 'العربية'}
+                </button>
+                </div>
             </div>
             {isLoading && (
                  <div className="space-y-4">
@@ -82,6 +148,10 @@ const AIFeed: React.FC = () => {
                     ))}
                 </div>
             )}
+
+            {translating && feedItems.length > 0 && !isLoading && (
+                <p className="text-xs text-slate-500 mb-2" dir="rtl">جاري الترجمة…</p>
+            )}
             
             {error && !isLoading && (
                 <div className="bg-red-50 border-l-4 border-red-400 text-red-800 p-4 rounded-r-lg">
@@ -92,7 +162,9 @@ const AIFeed: React.FC = () => {
 
             {feedItems.length > 0 && !isLoading && !error && (
                  <div className="space-y-2">
-                    {feedItems.map((item, index) => (
+                    {feedItems.map((item, index) => {
+                        const ar = displayLang === 'ar' && arItems?.[index];
+                        return (
                         <div
                             key={index}
                             className={`flex items-start space-x-4 p-3 rounded-lg border-l-4 hover:bg-gray-50/80 ${
@@ -102,16 +174,17 @@ const AIFeed: React.FC = () => {
                                 item.type === 'SAVINGS' ? 'border-green-500 bg-green-50/30' :
                                 'border-primary/50 bg-primary/5'
                             }`}
+                            dir={displayLang === 'ar' ? 'rtl' : 'ltr'}
                         >
                             <div className="flex-shrink-0 w-10 h-10 bg-white rounded-full flex items-center justify-center text-xl shadow-sm border border-gray-100">
                                 {item.emoji || <FeedItemIcon type={item.type} />}
                             </div>
                             <div>
-                                <h4 className="font-semibold text-dark">{item.title}</h4>
-                                <p className="text-sm text-gray-600">{item.description}</p>
+                                <h4 className="font-semibold text-dark">{ar ? ar.title : item.title}</h4>
+                                <p className="text-sm text-gray-600 whitespace-pre-wrap">{ar ? ar.description : item.description}</p>
                             </div>
                         </div>
-                    ))}
+                    );})}
                 </div>
             )}
 

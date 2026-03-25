@@ -2,6 +2,15 @@ import React from 'react';
 import { useCurrency } from '../context/CurrencyContext';
 import type { TradeCurrency } from '../types';
 
+/**
+ * Currency display helpers.
+ *
+ * When `inCurrency` is omitted, values are interpreted as **SAR-normalized** (same basis as KPIs and
+ * cross-account totals): the hook applies the user’s display currency (SAR vs USD) by converting from that basis.
+ * For raw fields stored in a **specific account’s book currency** (e.g. `transaction.amount`, `account.balance`
+ * for cash/credit), pass `{ inCurrency: 'SAR' | 'USD' }` so the figure is not double-converted.
+ */
+
 interface FormatCurrencyOptions {
     digits?: number;
     colorize?: boolean;

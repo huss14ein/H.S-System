@@ -5,8 +5,9 @@ import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from './chartTheme';
 import ChartContainer from './ChartContainer';
 import { useCurrency } from '../../context/CurrencyContext';
-import { resolveSarPerUsd } from '../../utils/currencyMath';
+import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from '../../services/fxDailySeries';
 import { computePersonalNetWorthChartBucketsSAR } from '../../services/personalNetWorth';
+import { listNetWorthSnapshots } from '../../services/netWorthSnapshot';
 
 type TimePeriod = '1Y' | '3Y' | 'All';
 
@@ -20,55 +21,72 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
 
     const chartData = useMemo(() => {
         if (!data) return [];
-        const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
-        const fullHistoricalData: Array<Record<string, string | number>> = [];
-        const now = new Date();
+        const snapshots = listNetWorthSnapshots();
+        const oldestDay = snapshots.reduce<string | undefined>((min, s) => {
+            const d = typeof s.at === 'string' ? s.at.slice(0, 10) : '';
+            if (d.length !== 10) return min;
+            if (!min || d < min) return d;
+            return min;
+        }, undefined);
+        hydrateSarPerUsdDailySeries(data, exchangeRate, {
+            horizonDays: 4000,
+            earliestCalendarDay: oldestDay,
+        });
+        const todayKey = new Date().toISOString().slice(0, 10);
+        const fxToday = getSarPerUsdForCalendarDay(todayKey, data, exchangeRate);
+        const buckets = computePersonalNetWorthChartBucketsSAR(data, fxToday, { getAvailableCashForAccount });
+        const monthly = new Map<string, {
+            date: string;
+            netWorth: number;
+            cash: number;
+            investments: number;
+            physical: number;
+            receivables: number;
+            liabilities: number;
+        }>();
 
-        const buckets = computePersonalNetWorthChartBucketsSAR(data, sarPerUsd, { getAvailableCashForAccount });
-
-        const transactions = (data as { personalTransactions?: { date: string; amount?: number }[] }).personalTransactions ?? data.transactions ?? [];
-        const monthlyNetFlows = new Map<string, number>();
-        transactions.forEach((t) => {
-            const monthKey = t.date.slice(0, 7);
-            const currentFlow = monthlyNetFlows.get(monthKey) || 0;
-            monthlyNetFlows.set(monthKey, currentFlow + (Number(t.amount) || 0));
+        snapshots.forEach((s) => {
+            const key = s.at.slice(0, 7);
+            const existing = monthly.get(key);
+            if (existing && existing.date >= s.at) return;
+            const b = s.buckets;
+            const hasBuckets = !!b;
+            monthly.set(key, {
+                date: s.at,
+                netWorth: Number(s.netWorth) || 0,
+                cash: hasBuckets ? (Number(b!.cash) || 0) : 0,
+                investments: hasBuckets ? (Number(b!.investments) || 0) : 0,
+                physical: hasBuckets ? (Number(b!.physicalAndCommodities) || 0) : 0,
+                receivables: hasBuckets ? (Number(b!.receivables) || 0) : 0,
+                liabilities: hasBuckets ? (Number(b!.liabilities) || 0) : 0,
+            });
         });
 
-        let cash = buckets.cash;
-        let invVal = buckets.investments;
-        let physical = buckets.physicalAndCommodities;
-        let recVal = buckets.receivables;
-        let liabVal = buckets.liabilities;
+        // Ensure the latest current month point is always present from live data.
+        const currentDate = new Date().toISOString();
+        const currentKey = currentDate.slice(0, 7);
+        monthly.set(currentKey, {
+            date: currentDate,
+            netWorth: Math.round(buckets.netWorth),
+            cash: Math.round(buckets.cash),
+            investments: Math.round(buckets.investments),
+            physical: Math.round(buckets.physicalAndCommodities),
+            receivables: Math.round(buckets.receivables),
+            liabilities: Math.round(buckets.liabilities),
+        });
 
-        const monthsToGoBack = 60;
-
-        for (let i = 0; i <= monthsToGoBack; i++) {
-            const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-            const monthKey = date.toISOString().slice(0, 7);
-
-            const netWorth = cash + invVal + physical + recVal + liabVal;
-
-            fullHistoricalData.push({
-                date: date.toISOString(),
-                name: date.toLocaleString('en-US', { month: 'short', year: '2-digit' }),
-                'Net Worth': Math.round(netWorth),
-                Cash: Math.round(cash),
-                Investments: Math.round(invVal),
-                Physical: Math.round(physical),
-                Receivables: Math.round(recVal),
-                Liabilities: Math.round(liabVal),
-            });
-
-            const netFlowThisMonth = monthlyNetFlows.get(monthKey) || 0;
-            cash -= netFlowThisMonth;
-            invVal /= 1 + 0.07 / 12;
-            physical /= 1.003;
-            if (liabVal < -500000) {
-                liabVal += 4500;
-            }
-        }
-
-        const finalData = fullHistoricalData.reverse();
+        const finalData = Array.from(monthly.values())
+            .sort((a, b) => a.date.localeCompare(b.date))
+            .map((x) => ({
+                date: x.date,
+                name: new Date(x.date).toLocaleString('en-US', { month: 'short', year: '2-digit' }),
+                'Net Worth': Math.round(x.netWorth),
+                Cash: Math.round(x.cash),
+                Investments: Math.round(x.investments),
+                Physical: Math.round(x.physical),
+                Receivables: Math.round(x.receivables),
+                Liabilities: Math.round(x.liabilities),
+            }));
 
         const nowFilter = new Date();
         const nowCopy1 = new Date(nowFilter);
@@ -96,7 +114,7 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
                 <div className="min-w-0">
                     <h3 className="text-lg font-semibold text-dark">{title}</h3>
                     <p className="text-xs text-slate-500 mt-1 max-w-xl">
-                        The latest month uses your full personal balance sheet (same as net worth above). Earlier months are a simplified backward model, not stored history.
+                        Historical rows use stored monthly snapshots (SAR at capture). The latest month is recomputed from your books using today’s rate from the SAR/USD daily series (Wealth Ultra / snapshots, forward-filled). The series is hydrated back to your oldest snapshot so past days don’t fall back to a single spot.
                     </p>
                 </div>
                 <div className="flex space-x-1 bg-slate-100 p-1 rounded-lg shrink-0">

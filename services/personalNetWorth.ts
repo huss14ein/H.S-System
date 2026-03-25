@@ -1,5 +1,5 @@
 import type { FinancialData } from '../types';
-import { getAllInvestmentsValueInSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { getPersonalAccounts, getPersonalAssets, getPersonalLiabilities, getPersonalCommodityHoldings, getPersonalInvestments } from '../utils/wealthScope';
 
 export type PersonalNetWorthOptions = {
@@ -43,10 +43,16 @@ function accumulatePersonalBalanceSheet(
   );
   const cashAndSavingsPositive = cashSavingsAccounts
     .filter((a: { balance?: number }) => (a.balance ?? 0) > 0)
-    .reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
+    .reduce((sum: number, acc: { balance?: number; currency?: string }) => {
+      const cur = acc.currency === 'USD' ? 'USD' : 'SAR';
+      return sum + toSAR(acc.balance ?? 0, cur as 'SAR' | 'USD', exchangeRate);
+    }, 0);
   const cashAndSavingsNegative = cashSavingsAccounts
     .filter((a: { balance?: number }) => (a.balance ?? 0) < 0)
-    .reduce((sum: number, acc: { balance?: number }) => sum + Math.abs(acc.balance ?? 0), 0);
+    .reduce((sum: number, acc: { balance?: number; currency?: string }) => {
+      const cur = acc.currency === 'USD' ? 'USD' : 'SAR';
+      return sum + Math.abs(toSAR(acc.balance ?? 0, cur as 'SAR' | 'USD', exchangeRate));
+    }, 0);
 
   const totalDebt =
     liabilities

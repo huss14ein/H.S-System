@@ -153,6 +153,8 @@ const MarketSimulator: React.FC = () => {
             setIsLive(liveStatus);
             touchQuoteTimestamps(Object.keys(newPrices));
 
+            // currentValue is stored in portfolio book currency (USD or SAR); live quotes are typically USD notional.
+            // Mixed books: display/metrics convert via getSarPerUsd; DB persistence may still hold raw USD notional until normalized.
             (allHoldings as { id?: string; symbol?: string; quantity?: number; holdingType?: string }[]).forEach((holding) => {
                 if (!holdingUsesLiveQuote(holding as { holdingType?: string; holding_type?: string })) return;
                 const sym = holding.symbol;

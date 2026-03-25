@@ -13,6 +13,8 @@ interface LayoutProps {
   activePage: Page;
   setActivePage: (page: Page) => void;
   triggerPageAction: (page: Page, action: string) => void;
+  /** Deep-link into a page (e.g. Notifications → tasks tab) */
+  triggerPageActionPair?: (page: Page, action: string) => void;
 }
 
 const Layout: React.FC<LayoutProps> = ({
@@ -20,6 +22,7 @@ const Layout: React.FC<LayoutProps> = ({
   activePage,
   setActivePage,
   triggerPageAction,
+  triggerPageActionPair,
 }) => {
   useTrackPageVisit(activePage);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
@@ -62,6 +65,7 @@ const Layout: React.FC<LayoutProps> = ({
         setActivePage={setActivePage}
         onOpenLiveAdvisor={() => setIsLiveAdvisorOpen(true)}
         onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+        triggerPageActionPair={triggerPageActionPair}
       />
 
       <main

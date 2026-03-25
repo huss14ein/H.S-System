@@ -8,19 +8,48 @@ import {
     getAITransactionAnalysis,
     getAIGoalStrategyAnalysis,
     getAIAnalysisPageInsights,
+    getAILogicEnginesInsight,
+    getAINotificationsDigest,
+    getAISettingsGuidance,
+    getAISystemHealthDigest,
+    getAICommoditiesInsight,
+    getAIExecutionHistoryDigest,
+    getAIWealthUltraInsight,
+    type CommoditiesAiContext,
+    type ExecutionHistoryAiContext,
+    type WealthUltraAiContext,
+    type InvestmentHubAiMeta,
+    type LogicEnginesAiContext,
+    type NotificationDigestItem,
+    type SettingsGuidanceContext,
+    type SystemHealthAiContext,
     formatAiError,
     translateFinancialInsightToArabic,
 } from '../services/geminiService';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { LightBulbIcon } from './icons/LightBulbIcon';
-import { FinancialData } from '../types';
+import { FinancialData, type Holding } from '../types';
 import { useAI } from '../context/AiContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { getAllInvestmentsValueInSAR, resolveSarPerUsd, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { computePersonalNetWorthBreakdownSAR } from '../services/personalNetWorth';
 import { computeLiquidNetWorth } from '../services/liquidNetWorth';
 
-type AIContext = 'dashboard' | 'investments' | 'plan' | 'summary' | 'cashflow' | 'goals' | 'analysis';
+type AIContext =
+    | 'dashboard'
+    | 'investments'
+    | 'plan'
+    | 'summary'
+    | 'cashflow'
+    | 'goals'
+    | 'analysis'
+    | 'engines'
+    | 'notifications'
+    | 'settings'
+    | 'systemHealth'
+    | 'commodities'
+    | 'executionHistory'
+    | 'wealthUltra';
 
 type InsightSectionVariant = 'info' | 'success' | 'warning' | 'danger' | 'neutral';
 
@@ -150,8 +179,32 @@ const getAnalysisForPage = (
             const summary = { netWorth, roi, assetMix: [], liquidNetWorth, liabilitiesCoverage: totalDebt, monthlyIncome: 0, monthlyExpenses: 0, monthlyPnL: 0, budgetVariance: 0 };
             return getAIAnalysis(summary);
         }
-        case 'investments':
-            return getInvestmentAIAnalysis(((data as any)?.personalInvestments ?? data?.investments ?? []).flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []));
+        case 'investments': {
+            const holdings = ((data as any)?.personalInvestments ?? data?.investments ?? []).flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []) as Holding[];
+            const meta = contextData as InvestmentHubAiMeta | undefined;
+            return getInvestmentAIAnalysis(holdings, meta);
+        }
+        case 'commodities': {
+            const ctx = contextData as CommoditiesAiContext | undefined;
+            if (!ctx || typeof ctx.totalValueSar !== 'number' || typeof ctx.sarPerUsd !== 'number') {
+                return Promise.resolve('Not enough commodity context. Reload the page or add a holding, then try again.');
+            }
+            return getAICommoditiesInsight(ctx);
+        }
+        case 'executionHistory': {
+            const ctx = contextData as ExecutionHistoryAiContext | undefined;
+            if (!ctx || typeof ctx.total !== 'number') {
+                return Promise.resolve('Not enough execution history. Open this tab after running a plan, or reload.');
+            }
+            return getAIExecutionHistoryDigest(ctx);
+        }
+        case 'wealthUltra': {
+            const ctx = contextData as WealthUltraAiContext | undefined;
+            if (!ctx || typeof ctx.totalPortfolioValueUsd !== 'number') {
+                return Promise.resolve('Not enough Wealth Ultra context. Reload the page and try again.');
+            }
+            return getAIWealthUltraInsight(ctx);
+        }
         case 'plan':
              if (contextData?.householdEngine) {
                 return getAIHouseholdEngineAnalysis(contextData.householdEngine, contextData?.scenarios);
@@ -175,16 +228,54 @@ const getAnalysisForPage = (
                 return getAIAnalysisPageInsights(contextData.spendingData, contextData.trendData, contextData.compositionData);
             }
             return Promise.resolve("Not enough data for a full analysis.");
+        case 'engines': {
+            const ctx = contextData as LogicEnginesAiContext | undefined;
+            if (!ctx || typeof ctx.netWorthSar !== 'number') {
+                return Promise.resolve('Not enough context for Money Tools AI. Refresh data and try again.');
+            }
+            return getAILogicEnginesInsight(ctx);
+        }
+        case 'notifications': {
+            const raw = contextData?.notificationItems as NotificationDigestItem[] | undefined;
+            const items = Array.isArray(raw) ? raw : [];
+            const unreadCount = typeof contextData?.unreadCount === 'number' ? contextData.unreadCount : 0;
+            return getAINotificationsDigest(items, { unreadCount, sarPerUsd });
+        }
+        case 'settings': {
+            const ctx = contextData as SettingsGuidanceContext | undefined;
+            if (!ctx || typeof ctx.profileSetupPct !== 'number') {
+                return Promise.resolve('Not enough settings context. Reload the page and try again.');
+            }
+            return getAISettingsGuidance(ctx);
+        }
+        case 'systemHealth': {
+            const ctx = contextData as SystemHealthAiContext | undefined;
+            if (!ctx || typeof ctx.healthScore !== 'number') {
+                return Promise.resolve('Not enough system health context. Run checks first.');
+            }
+            return getAISystemHealthDigest(ctx);
+        }
         default:
             return Promise.resolve("AI analysis for this section is not configured yet.");
     }
 };
 
 
+const DEFAULT_AI_LANG_KEY = 'finova_default_ai_lang_v1';
+
+function readDefaultAiLang(): 'en' | 'ar' {
+    try {
+        if (typeof localStorage === 'undefined') return 'en';
+        return localStorage.getItem(DEFAULT_AI_LANG_KEY) === 'ar' ? 'ar' : 'en';
+    } catch {
+        return 'en';
+    }
+}
+
 const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title = 'Financial Advisor', subtitle = 'Expert financial & investment insights', buttonLabel = 'Get AI Insights' }) => {
     const [insightEn, setInsightEn] = useState<string>('');
     const [insightAr, setInsightAr] = useState<string | null>(null);
-    const [displayLang, setDisplayLang] = useState<'en' | 'ar'>('en');
+    const [displayLang, setDisplayLang] = useState<'en' | 'ar'>(readDefaultAiLang);
     const [isLoading, setIsLoading] = useState(false);
     const [isTranslating, setIsTranslating] = useState(false);
     const [translateError, setTranslateError] = useState<string | null>(null);
@@ -213,7 +304,12 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
     }, [activeText]);
 
     useEffect(() => {
-        if (displayLang !== 'ar' || !insightEn || insightAr != null || !isAiAvailable) return;
+        if (displayLang !== 'ar' || !insightEn || insightAr != null) return;
+        if (!isAiAvailable) {
+            setTranslateError('Arabic translation uses the same AI service as insights. Configure your API key in settings, or switch to English.');
+            setIsTranslating(false);
+            return;
+        }
         let cancelled = false;
         (async () => {
             setIsTranslating(true);
@@ -249,7 +345,12 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
 
     const handleLangChange = (lang: 'en' | 'ar') => {
         setDisplayLang(lang);
-        if (lang === 'ar') setTranslateError(null);
+        try {
+            localStorage.setItem(DEFAULT_AI_LANG_KEY, lang);
+        } catch {
+            /* ignore */
+        }
+        if (lang === 'en') setTranslateError(null);
     };
 
     return (
@@ -275,9 +376,8 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
                             <button
                                 type="button"
                                 onClick={() => handleLangChange('ar')}
-                                disabled={!isAiAvailable}
-                                title={!isAiAvailable ? 'Configure AI to enable Arabic translation' : 'عرض بالعربية'}
-                                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${displayLang === 'ar' ? 'bg-white text-primary shadow-sm' : 'text-slate-600 hover:text-slate-900'} disabled:opacity-40 disabled:cursor-not-allowed`}
+                                title={!isAiAvailable ? 'Translation needs AI — you will see a note if the service is off' : 'عرض بالعربية'}
+                                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${displayLang === 'ar' ? 'bg-white text-primary shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
                             >
                                 العربية
                             </button>

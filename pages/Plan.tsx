@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useContext, useEffect, useRef } from 'react';
-import { Page } from '../types';
+import { Page, Account } from '../types';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { supabase } from '../services/supabaseClient';
@@ -14,6 +14,11 @@ import Modal from '../components/Modal';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import PageActionsDropdown from '../components/PageActionsDropdown';
+import SectionCard from '../components/SectionCard';
+import { useCurrency } from '../context/CurrencyContext';
+import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
+import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from '../components/charts/chartTheme';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
@@ -115,6 +120,11 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const { data, loading } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
+    const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => {
+        if (data) hydrateSarPerUsdDailySeries(data, exchangeRate);
+        return resolveSarPerUsd(data, exchangeRate);
+    }, [data, exchangeRate]);
     const [year, setYear] = useState(new Date().getFullYear());
     const [householdAdults, setHouseholdAdults] = useState(2);
     const [householdKids, setHouseholdKids] = useState(0);
@@ -376,10 +386,20 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         // Monthly investment: from Investment Plan (planned) + Investment Transactions (actual buys)
         const monthlyInvestment = Number(investmentPlan?.monthlyBudget) || 0;
         const investmentActuals = Array(12).fill(0);
-        investmentTransactions.forEach((tx: { date: string; type: string; total?: number }) => {
+        const invPortfolios = data?.investments ?? [];
+        const invAccounts = data?.accounts ?? [];
+        investmentTransactions.forEach((tx: { date: string; type: string; total?: number; accountId?: string; currency?: string }) => {
             const date = new Date(tx.date);
             if (date.getFullYear() === year && tx.type === 'buy') {
-                investmentActuals[date.getMonth()] += Number(tx.total) || 0;
+                const cur = inferInvestmentTransactionCurrency(
+                    { accountId: tx.accountId ?? '', currency: tx.currency as 'SAR' | 'USD' | undefined },
+                    invAccounts as Account[],
+                    invPortfolios as any[],
+                );
+                const day = (tx.date ?? '').slice(0, 10);
+                const dayRate =
+                    data && day.length === 10 ? getSarPerUsdForCalendarDay(day, data, exchangeRate) : sarPerUsd;
+                investmentActuals[date.getMonth()] += toSAR(Number(tx.total) || 0, cur, dayRate);
             }
         });
         const investmentRow: PlanRow = {
@@ -389,7 +409,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             monthly_actual: investmentActuals,
         };
         setPlanData([incomeRow, ...expenseRows, investmentRow]);
-    }, [budgets, transactions, year, investmentPlan, investmentTransactions, recurringTransactions, expectedMonthlySalary, householdOverrides]);
+    }, [budgets, transactions, year, investmentPlan, investmentTransactions, recurringTransactions, expectedMonthlySalary, householdOverrides, data?.investments, data?.accounts, data, exchangeRate, sarPerUsd]);
     
     const processedPlanData: PlanRow[] = useMemo(() => {
         let baseData: PlanRow[] = JSON.parse(JSON.stringify(planData));
@@ -433,26 +453,72 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         const income = processedPlanData.find((r: PlanRow) => r.type === 'income');
         const totalPlannedIncome = income?.monthly_planned.reduce((a: number, b: number) => a + b, 0) || 0;
         const totalActualIncome = income?.monthly_actual.reduce((a: number, b: number) => a + b, 0) || 0;
-        
+
         const totalPlannedExpenses = processedPlanData.filter((r: PlanRow) => r.type === 'expense').reduce((sum: number, row: PlanRow) => sum + row.monthly_planned.reduce((a: number,b: number) => a + b, 0), 0);
         const totalActualExpenses = processedPlanData.filter((r: PlanRow) => r.type === 'expense').reduce((sum: number, row: PlanRow) => sum + row.monthly_actual.reduce((a: number,b: number) => a + b, 0), 0);
 
         const projectedNet = totalPlannedIncome - totalPlannedExpenses;
-        const actualNet = totalActualIncome - totalActualExpenses;
-        const variancePct = projectedNet !== 0 ? ((actualNet - projectedNet) / Math.abs(projectedNet)) * 100 : 0;
+        const actualNetFullYear = totalActualIncome - totalActualExpenses;
+        const variancePctFullYear = projectedNet !== 0 ? ((actualNetFullYear - projectedNet) / Math.abs(projectedNet)) * 100 : 0;
 
-        return { totalPlannedIncome, totalPlannedExpenses, totalActualIncome, totalActualExpenses, projectedNet, actualNet, variancePct };
-    }, [processedPlanData]);
+        const now = new Date();
+        const curY = now.getFullYear();
+        const curM = now.getMonth();
+        let endIdx = 11;
+        if (year > curY) endIdx = -1;
+        else if (year === curY) endIdx = curM;
+        else endIdx = 11;
+
+        const sliceSum = (arr: number[] | undefined, end: number) => {
+            if (!arr || end < 0) return 0;
+            return arr.slice(0, end + 1).reduce((a: number, b: number) => a + b, 0);
+        };
+
+        const ytdPlannedIncome = sliceSum(income?.monthly_planned, endIdx);
+        const ytdActualIncome = sliceSum(income?.monthly_actual, endIdx);
+        let ytdPlannedExpenses = 0;
+        let ytdActualExpenses = 0;
+        processedPlanData.filter((r: PlanRow) => r.type === 'expense').forEach((row: PlanRow) => {
+            ytdPlannedExpenses += sliceSum(row.monthly_planned, endIdx);
+            ytdActualExpenses += sliceSum(row.monthly_actual, endIdx);
+        });
+        const ytdProjectedNet = ytdPlannedIncome - ytdPlannedExpenses;
+        const ytdActualNet = ytdActualIncome - ytdActualExpenses;
+        const ytdVariancePct = ytdProjectedNet !== 0 ? ((ytdActualNet - ytdProjectedNet) / Math.abs(ytdProjectedNet)) * 100 : 0;
+
+        return {
+            totalPlannedIncome,
+            totalPlannedExpenses,
+            totalActualIncome,
+            totalActualExpenses,
+            projectedNet,
+            actualNet: actualNetFullYear,
+            variancePct: variancePctFullYear,
+            ytdPlannedIncome,
+            ytdActualIncome,
+            ytdPlannedExpenses,
+            ytdActualExpenses,
+            ytdProjectedNet,
+            ytdActualNet,
+            ytdVariancePct,
+            planProgressEndIdx: endIdx,
+        };
+    }, [processedPlanData, year]);
 
     const insights = useMemo((): { monthsOverBudget: number; worst: { category: string; month: string; pct: number } | null; ytdPlannedIncome: number; ytdActualIncome: number } => {
         const income = processedPlanData.find((r: PlanRow) => r.type === 'income');
         let monthsOverBudget = 0;
         let worst: { category: string; month: string; pct: number } | null = null;
         processedPlanData.filter((r: PlanRow) => r.type === 'expense').forEach((row: PlanRow) => {
+            const isInvestment = row.category === 'Monthly investment';
             row.monthly_planned.forEach((plan: number, mi: number) => {
                 const actual = row.monthly_actual[mi];
-                if (plan > 0 && actual > plan) monthsOverBudget++;
-                const pct = plan > 0 ? ((actual - plan) / plan) * 100 : 0;
+                const over =
+                    isInvestment
+                        ? actual > plan + 1e-6
+                        : plan > 0 && actual > plan + 1e-6;
+                if (over) monthsOverBudget++;
+                const pct = plan > 0 ? ((actual - plan) / plan) * 100 : actual > 0 ? 100 : 0;
                 if (pct > 0 && (!worst || pct > worst.pct)) worst = { category: row.category, month: MONTHS[mi], pct };
             });
         });
@@ -603,13 +669,43 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         }
     }, [(data as any)?.settings?.riskProfile]);
 
-     const planChartData = useMemo(() => {
+    const planChartData = useMemo(() => {
         return MONTHS.map((month, index) => {
-            const income = processedPlanData.find((r: PlanRow) => r.type === 'income')?.monthly_planned[index] || 0;
-            const expenses = processedPlanData.filter((r: PlanRow) => r.type === 'expense').reduce((sum: number, r: PlanRow) => sum + r.monthly_planned[index], 0);
-            return { name: month, Income: income, Expenses: expenses, "Net Savings": income - expenses };
+            const incPlanned = Number(processedPlanData.find((r: PlanRow) => r.type === 'income')?.monthly_planned[index] ?? 0);
+            const incActual = Number(processedPlanData.find((r: PlanRow) => r.type === 'income')?.monthly_actual[index] ?? 0);
+            const expPlanned = processedPlanData
+                .filter((r: PlanRow) => r.type === 'expense')
+                .reduce((sum: number, r: PlanRow) => sum + Number(r.monthly_planned[index] ?? 0), 0);
+            const expActual = processedPlanData
+                .filter((r: PlanRow) => r.type === 'expense')
+                .reduce((sum: number, r: PlanRow) => sum + Number(r.monthly_actual[index] ?? 0), 0);
+            return {
+                name: month,
+                Income: incPlanned,
+                Expenses: expPlanned,
+                'Net Savings': incPlanned - expPlanned,
+                IncomeActual: incActual,
+                ExpensesActual: expActual,
+                'Net actual': incActual - expActual,
+            };
         });
     }, [processedPlanData]);
+
+    const planChartHasPlannedSeries = useMemo(
+        () => planChartData.some((d) => (d.Income ?? 0) !== 0 || (d.Expenses ?? 0) !== 0),
+        [planChartData],
+    );
+
+    const planValidationWarnings = useMemo(() => {
+        const warnings: string[] = [];
+        if (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0) warnings.push('FX rate is invalid; investment actuals in SAR may be off.');
+        if (processedPlanData.length === 0) warnings.push('Plan grid is still loading or no data for this year.');
+        const curY = new Date().getFullYear();
+        if (year === curY && totals && totals.ytdActualIncome < 1 && totals.ytdPlannedIncome > 100) {
+            warnings.push('No income transactions YTD in this year—actual income is SAR 0 while planned uses salary/baseline. Add income on Transactions or set expected salary.');
+        }
+        return warnings;
+    }, [sarPerUsd, processedPlanData.length, year, totals]);
 
     const handlePlanEdit = (rowIndex: number, monthIndex: number, newValue: number) => {
         const newData = [...planData];
@@ -779,12 +875,15 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             {accounts.length > 0 && (() => {
                 const liquidCash = accounts
                     .filter((a: { type: string }) => a.type === 'Checking' || a.type === 'Savings')
-                    .reduce((sum: number, a: { balance?: number }) => sum + (Number(a.balance) || 0), 0);
+                    .reduce((sum: number, a: Account) => {
+                        const cur = a.currency === 'USD' ? 'USD' : 'SAR';
+                        return sum + Math.max(0, toSAR(Number(a.balance) || 0, cur, sarPerUsd));
+                    }, 0);
                 return liquidCash !== 0 ? (
                     <div className="p-4 rounded-xl border-2 border-emerald-200 bg-emerald-50/50 min-w-0 overflow-hidden flex flex-col">
                         <p className="metric-label text-xs font-medium text-emerald-800 uppercase tracking-wide w-full">Liquid cash (Checking + Savings)</p>
-                        <p className="metric-value text-xl font-bold text-emerald-800 tabular-nums mt-0.5 w-full">{formatCurrencyString(liquidCash, { digits: 0 })}</p>
-                        <p className="text-xs text-slate-600 mt-0.5">From Accounts.</p>
+                        <p className="metric-value text-xl font-bold text-emerald-800 tabular-nums mt-0.5 w-full">{formatCurrencyString(liquidCash, { inCurrency: 'SAR', digits: 0 })}</p>
+                        <p className="text-xs text-slate-600 mt-0.5">From Accounts (SAR equivalent).</p>
                         {setActivePage && (
                             <button type="button" onClick={() => setActivePage('Accounts')} className="mt-2 text-xs font-medium text-primary hover:underline inline-flex items-center gap-1">Accounts →</button>
                         )}
@@ -814,37 +913,61 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             )}
 
             {/* Executive summary */}
-            {totals && (
+            {totals && (() => {
+                const curY = new Date().getFullYear();
+                const isFutureYear = year > curY;
+                const isPastYear = year < curY;
+                const summaryActualNet = isFutureYear ? null : isPastYear ? totals.actualNet : totals.ytdActualNet;
+                const summaryVariancePct =
+                    isFutureYear ? null : isPastYear ? totals.variancePct : totals.ytdVariancePct;
+                const summaryCompareLabel =
+                    isFutureYear ? 'Future year — no actuals yet' : isPastYear ? 'Full-year actual vs full-year plan' : 'YTD actual vs YTD plan';
+                return (
                 <div className="mt-4 cards-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div className={`p-4 rounded-xl border-2 min-w-0 overflow-hidden flex flex-col ${totals.projectedNet >= 0 ? 'bg-emerald-50/80 border-emerald-200' : 'bg-rose-50/80 border-rose-200'}`}>
                         <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">Projected surplus</p>
                         <p className={`metric-value text-xl font-bold tabular-nums w-full ${totals.projectedNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                            {formatCurrencyString(totals.projectedNet, { digits: 0 })}
+                            {formatCurrencyString(totals.projectedNet, { inCurrency: 'SAR', digits: 0 })}
                         </p>
-                        <p className="text-xs text-gray-600 mt-0.5">Income − expenses (plan)</p>
+                        <p className="text-xs text-gray-600 mt-0.5">Full year: planned income − planned expenses (incl. investment)</p>
                     </div>
                     <div className="p-4 rounded-xl border-2 border-slate-200 bg-slate-50/50 min-w-0 overflow-hidden flex flex-col">
-                        <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">Actual net (YTD)</p>
-                        <p className={`metric-value text-xl font-bold tabular-nums w-full ${totals.actualNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                            {formatCurrencyString(totals.actualNet, { digits: 0 })}
+                        <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">
+                            {isPastYear ? 'Actual net (year)' : 'Actual net (YTD)'}
                         </p>
-                        <p className="text-xs text-gray-600 mt-0.5">From transactions this year</p>
+                        <p className={`metric-value text-xl font-bold tabular-nums w-full ${summaryActualNet != null && summaryActualNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {summaryActualNet != null ? formatCurrencyString(summaryActualNet, { inCurrency: 'SAR', digits: 0 }) : '—'}
+                        </p>
+                        <p className="text-xs text-gray-600 mt-0.5">From transactions &amp; investment buys (SAR eq.)</p>
                     </div>
                     <div className="p-4 rounded-xl border-2 border-blue-200 bg-blue-50/30 min-w-0 overflow-hidden flex flex-col">
                         <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">Vs plan</p>
-                        <p className={`metric-value text-xl font-bold tabular-nums w-full ${totals.variancePct >= 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
-                            {totals.projectedNet !== 0 ? `${totals.variancePct >= 0 ? '+' : ''}${totals.variancePct.toFixed(0)}%` : '—'}
+                        <p className={`metric-value text-xl font-bold tabular-nums w-full ${(summaryVariancePct ?? 0) >= 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                            {summaryVariancePct != null && (isPastYear ? totals.projectedNet !== 0 : totals.ytdProjectedNet !== 0)
+                                ? `${summaryVariancePct >= 0 ? '+' : ''}${summaryVariancePct.toFixed(0)}%`
+                                : '—'}
                         </p>
-                        <p className="text-xs text-gray-600 mt-0.5">Actual vs projected</p>
+                        <p className="text-xs text-gray-600 mt-0.5">{summaryCompareLabel}</p>
                     </div>
                     <div className="p-4 rounded-xl border-2 border-amber-200 bg-amber-50/30 min-w-0 overflow-hidden flex flex-col">
                         <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">Months over budget</p>
                         <p className={`metric-value text-xl font-bold tabular-nums w-full ${insights.monthsOverBudget === 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
                             {insights.monthsOverBudget}
                         </p>
-                        <p className="text-xs text-gray-600 mt-0.5">Category-months above plan</p>
+                        <p className="text-xs text-gray-600 mt-0.5">Category-months above plan (investment counts if actual &gt; planned)</p>
                     </div>
                 </div>
+                );
+            })()}
+
+            {planValidationWarnings.length > 0 && (
+                <SectionCard title="Plan validation checks" collapsible collapsibleSummary="Data quality and wiring" defaultExpanded className="mt-4">
+                    <ul className="space-y-1 text-sm text-amber-800">
+                        {planValidationWarnings.slice(0, 8).map((w, i) => (
+                            <li key={`pv-${i}`}>- {w}</li>
+                        ))}
+                    </ul>
+                </SectionCard>
             )}
 
             {/* Progress vs plan: same months as the grid; planned from budgets/recurring/plan, actual from transactions */}
@@ -931,8 +1054,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 </div>
             )}
 
-            {/* Smart insights */}
-            {(insights.worst || insights.monthsOverBudget > 0) && (
+            {/* Smart insights — show whenever the plan has expense rows so “no overages” is visible too */}
+            {processedPlanData.some((r: PlanRow) => r.type === 'expense') && (
                 <div className="mt-4 flex flex-wrap gap-3 p-4 rounded-xl bg-slate-100/80 border border-slate-200">
                     {insights.monthsOverBudget > 0 ? (
                         <span className="inline-flex items-center gap-1.5 text-sm text-amber-800">
@@ -1045,37 +1168,71 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 )}
             </div>
             
-             <div className="section-card flex flex-col h-[400px]">
-                <h3 className="section-title mb-4">Annual Plan Overview</h3>
-                <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <ComposedChart data={planChartData} margin={{ ...CHART_MARGIN, right: 20, left: 10, bottom: 5 }}>
+             <div className="section-card flex flex-col min-h-[400px] h-[420px]">
+                <h3 className="section-title mb-2">Annual Plan Overview</h3>
+                <p className="text-xs text-slate-500 mb-2">Solid lines / bar = planned; dashed = actual from transactions (SAR basis).</p>
+                {!planChartHasPlannedSeries && (
+                    <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
+                        No planned income or expenses in the grid for this year—set budgets, recurring items, or expected salary so the chart can render.
+                    </p>
+                )}
+                <div className="flex-1 min-h-[280px] rounded-lg overflow-hidden w-full">
+                    <ResponsiveContainer width="100%" height="100%" minHeight={280}>
+                        <ComposedChart data={planChartData} margin={{ ...CHART_MARGIN, right: 24, left: 12, bottom: 8 }}>
                             <CartesianGrid strokeDasharray={CHART_GRID_STROKE} stroke={CHART_GRID_COLOR} />
                             <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
-                            <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} width={48} />
+                            <YAxis
+                                tickFormatter={(v) => formatAxisNumber(Number(v))}
+                                stroke={CHART_AXIS_COLOR}
+                                fontSize={12}
+                                tickLine={false}
+                                width={52}
+                                domain={['auto', 'auto']}
+                            />
                             <Tooltip
-                                formatter={(val: number) => formatCurrencyString(val, { digits: 0 })}
+                                formatter={(val: number) => formatCurrencyString(Number(val), { inCurrency: 'SAR', digits: 0 })}
                                 contentStyle={{ backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' }}
                             />
-                            <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                            <Bar dataKey="Expenses" fill={CHART_COLORS.negative} name="Planned Expenses" radius={[4, 4, 0, 0]} />
-                            <Line type="monotone" dataKey="Income" stroke={CHART_COLORS.positive} strokeWidth={2} name="Planned Income" dot={false} />
-                            <Line type="monotone" dataKey="Net Savings" stroke={CHART_COLORS.primary} strokeWidth={2} name="Projected Net Savings" dot={false} />
+                            <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+                            <Bar dataKey="Expenses" fill={CHART_COLORS.negative} name="Planned expenses" radius={[4, 4, 0, 0]} />
+                            <Bar dataKey="ExpensesActual" fill="#fca5a5" name="Actual expenses" radius={[4, 4, 0, 0]} />
+                            <Line type="monotone" dataKey="Income" stroke={CHART_COLORS.positive} strokeWidth={2} name="Planned income" dot={false} />
+                            <Line type="monotone" dataKey="IncomeActual" stroke={CHART_COLORS.positive} strokeWidth={2} strokeDasharray="6 4" name="Actual income" dot={false} />
+                            <Line type="monotone" dataKey="Net Savings" stroke={CHART_COLORS.primary} strokeWidth={2} name="Planned net" dot={false} />
+                            <Line type="monotone" dataKey="Net actual" stroke="#6366f1" strokeWidth={2} strokeDasharray="6 4" name="Actual net" dot={false} />
                         </ComposedChart>
                     </ResponsiveContainer>
                 </div>
             </div>
             
             {/* Plan vs actual summary */}
-            {totals && (
+            {totals && (() => {
+                const curY = new Date().getFullYear();
+                const isFuture = year > curY;
+                const isPast = year < curY;
+                const an = isFuture ? null : isPast ? totals.actualNet : totals.ytdActualNet;
+                const pn = isFuture ? null : isPast ? totals.projectedNet : totals.ytdProjectedNet;
+                const pct =
+                    pn != null && pn != 0 && an != null
+                        ? ((an - pn) / Math.abs(pn)) * 100
+                        : null;
+                return (
                 <div className="flex flex-wrap gap-4 p-3 bg-white rounded-lg shadow border border-gray-100">
-                    <span className="font-medium text-dark">Plan vs actual (year):</span>
-                    <span className={totals.actualNet >= totals.projectedNet ? 'text-green-700' : 'text-amber-700'}>
-                        Projected net: {formatCurrencyString(totals.projectedNet, { digits: 0 })} · Actual net: {formatCurrencyString(totals.actualNet, { digits: 0 })}
-                        {totals.projectedNet !== 0 && ` (${((totals.actualNet - totals.projectedNet) / Math.abs(totals.projectedNet) * 100).toFixed(0)}% vs plan)`}
+                    <span className="font-medium text-dark">Plan vs actual ({isPast ? 'full year' : isFuture ? 'future' : 'YTD'}):</span>
+                    <span className={(an ?? 0) >= (pn ?? 0) ? 'text-green-700' : 'text-amber-700'}>
+                        {isFuture ? (
+                            <span className="text-slate-600">Select the current or a past year to compare actuals.</span>
+                        ) : (
+                            <>
+                                Planned net: {formatCurrencyString(pn ?? 0, { inCurrency: 'SAR', digits: 0 })} · Actual net:{' '}
+                                {formatCurrencyString(an ?? 0, { inCurrency: 'SAR', digits: 0 })}
+                                {pct != null && Number.isFinite(pct) && ` (${pct >= 0 ? '+' : ''}${pct.toFixed(0)}% vs plan)`}
+                            </>
+                        )}
                     </span>
                 </div>
-            )}
+                );
+            })()}
 
             {/* Scenario Controls */}
             <div className="section-card">
@@ -1149,13 +1306,21 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                  </div>
             </div>
 
-             <AIAdvisor pageContext="plan" contextData={{ totals, scenarios: { incomeShock, expenseStress }, householdEngine: householdBudgetEngine }} />
+             <AIAdvisor
+                pageContext="plan"
+                contextData={{ totals, scenarios: { incomeShock, expenseStress }, householdEngine: householdBudgetEngine }}
+                title="Plan AI Advisor"
+                subtitle="Annual plan, surplus, and scenario context. After insights load, use English / العربية for Arabic."
+                buttonLabel="Get AI Plan Insights"
+            />
 
              <SinkingFunds />
             
             {/* Plan Grid: actuals from Transactions, planned from Budgets + recurring; investment from Investment Plan */}
             <div className="space-y-2">
-                <p className="text-xs text-slate-500">Grid: <span className="text-gray-600">top</span> = actual (Transactions) · <span className="font-medium text-slate-700">bottom</span> = planned (Budgets + recurring). Investment row planned from Investment Plan, actual from buy trades.</p>
+                <p className="text-xs text-slate-500">
+                    Grid (each month): <span className="text-gray-600">top</span> = actual (transactions &amp; investment buys, SAR eq.) · <span className="font-medium text-slate-700">bottom</span> = planned (budgets + recurring + salary baseline). Investment actuals converted with account/trade currency.
+                </p>
                 <div className="bg-white shadow rounded-lg overflow-x-auto">
                 <table className="min-w-full text-sm">
                     <thead className="bg-gray-100 text-dark">

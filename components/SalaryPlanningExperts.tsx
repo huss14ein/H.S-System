@@ -12,6 +12,7 @@ import {
     getInvestmentAutomationExpert,
     getFinancialIndependenceExpert,
     getLifestyleUpgradeExpert,
+    translateFinancialInsightToArabic,
     formatAiError,
 } from '../services/geminiService';
 import { useAI } from '../context/AiContext';
@@ -21,9 +22,11 @@ import { CheckIcon } from './icons/CheckIcon';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { lookupHintForTitle } from '../content/sectionInfoHints';
 import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
+import { getPersonalAccounts, getPersonalLiabilities, getPersonalTransactions, getPersonalInvestments } from '../utils/wealthScope';
 
 const DEFAULT_EXPERT_RESULT_HINT =
     'Markdown from the AI for this expert. Review numbers and assumptions; tables are illustrative. Not financial advice.';
@@ -70,30 +73,53 @@ const SalaryPlanningExperts: React.FC = () => {
     const [loadingId, setLoadingId] = useState<string | null>(null);
     const [result, setResult] = useState<{ expertId: string; markdown: string } | null>(null);
     const [copiedId, setCopiedId] = useState<string | null>(null);
+    const [displayLang, setDisplayLang] = useState<'en' | 'ar'>('en');
+    const [translatedResult, setTranslatedResult] = useState<string | null>(null);
+    const [translatingResult, setTranslatingResult] = useState(false);
+    const [translateError, setTranslateError] = useState<string | null>(null);
+
+    const sarPerUsd = React.useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+    const personalAccounts = React.useMemo(() => getPersonalAccounts(data ?? null), [data]);
+    const personalTransactions = React.useMemo(() => getPersonalTransactions(data ?? null), [data]);
+    const personalLiabilities = React.useMemo(() => getPersonalLiabilities(data ?? null), [data]);
+    const personalInvestments = React.useMemo(() => getPersonalInvestments(data ?? null), [data]);
+    const accountCurrencyById = React.useMemo(() => {
+        const map = new Map<string, 'SAR' | 'USD'>();
+        personalAccounts.forEach((a) => {
+            map.set(a.id, a.currency === 'USD' ? 'USD' : 'SAR');
+        });
+        return map;
+    }, [personalAccounts]);
+    const amountToSar = React.useCallback(
+        (amount: number, accountId?: string): number => {
+            const currency = accountCurrencyById.get(accountId ?? '') ?? 'SAR';
+            return toSAR(Number(amount) || 0, currency, sarPerUsd);
+        },
+        [accountCurrencyById, sarPerUsd],
+    );
 
     const suggestedSalary = React.useMemo(() => {
-        const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
         const incomeByMonth = Array(12).fill(0);
-        transactions.forEach((t: { date: string; type?: string; amount?: number }) => {
+        personalTransactions.forEach((t) => {
             const d = new Date(t.date);
-            if (d.getFullYear() !== new Date().getFullYear() || (t as any).type !== 'income') return;
-            incomeByMonth[d.getMonth()] += Math.max(0, Number((t as any).amount) || 0);
+            if (d.getFullYear() !== new Date().getFullYear() || t.type !== 'income') return;
+            incomeByMonth[d.getMonth()] += Math.max(0, amountToSar(Number(t.amount) || 0, t.accountId));
         });
         const withData = incomeByMonth.filter((v) => v > 0);
         return withData.length > 0 ? Math.round(withData.reduce((a, b) => a + b, 0) / withData.length) : 0;
-    }, [data?.transactions]);
+    }, [personalTransactions, amountToSar]);
 
     const suggestedSavings = React.useMemo(() => {
-        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-        const cash = accounts.filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: { balance?: number }) => s + Math.max(0, (a.balance ?? 0)), 0);
+        const cash = personalAccounts
+            .filter((a) => a.type === 'Checking' || a.type === 'Savings')
+            .reduce((s, a) => s + Math.max(0, toSAR(Number(a.balance) || 0, a.currency, sarPerUsd)), 0);
         return cash;
-    }, [data?.accounts, (data as any)?.personalAccounts]);
+    }, [personalAccounts, sarPerUsd]);
 
     /** Same formula as Summary / Dashboard (investments, brokerage cash, commodities, assets, liabilities). */
     const liveNetWorthSAR = React.useMemo(() => {
-        const fx = resolveSarPerUsd(data, exchangeRate);
-        return computePersonalNetWorthSAR(data ?? null, fx, { getAvailableCashForAccount });
-    }, [data, exchangeRate, getAvailableCashForAccount]);
+        return computePersonalNetWorthSAR(data ?? null, sarPerUsd, { getAvailableCashForAccount });
+    }, [data, sarPerUsd, getAvailableCashForAccount]);
 
     // Fixed expenses: from Budgets (sum limits current month) or Transactions (fixed expenses, last 3 months avg)
     const { suggestedFixedExpenses, suggestedFixedExpensesSource } = React.useMemo(() => {
@@ -106,18 +132,17 @@ const SalaryPlanningExperts: React.FC = () => {
             .reduce((s, b) => s + Math.max(0, Number(b.limit) ?? 0), 0);
         if (budgetSum > 0) return { suggestedFixedExpenses: Math.round(budgetSum), suggestedFixedExpensesSource: 'Budgets' };
 
-        const transactions = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as { date: string; type?: string; amount?: number; transactionNature?: string }[];
         const threeMonthsAgo = new Date();
         threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-        const fixedExpenses = transactions.filter(
-            (t) => countsAsExpenseForCashflowKpi(t) && (t as any).transactionNature === 'Fixed' && new Date(t.date) >= threeMonthsAgo
+        const fixedExpenses = personalTransactions.filter(
+            (t) => countsAsExpenseForCashflowKpi(t) && t.transactionNature === 'Fixed' && new Date(t.date) >= threeMonthsAgo
         );
-        const total = fixedExpenses.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0);
+        const total = fixedExpenses.reduce((s, t) => s + Math.abs(amountToSar(Number(t.amount) || 0, t.accountId)), 0);
         const monthsWithData = new Set(fixedExpenses.map((t) => `${new Date(t.date).getFullYear()}-${new Date(t.date).getMonth()}`)).size;
         const avg = monthsWithData > 0 ? total / monthsWithData : 0;
         if (avg > 0) return { suggestedFixedExpenses: Math.round(avg), suggestedFixedExpensesSource: 'Transactions (fixed)' };
         return { suggestedFixedExpenses: 0, suggestedFixedExpensesSource: '' };
-    }, [data?.budgets, data?.transactions]);
+    }, [data?.budgets, personalTransactions, amountToSar]);
 
     // Expense breakdown: from Budgets (category: limit) or Transactions grouped by category
     const { suggestedExpenseBreakdown, suggestedExpenseBreakdownSource } = React.useMemo(() => {
@@ -130,14 +155,13 @@ const SalaryPlanningExperts: React.FC = () => {
             const lines = forMonth.map((b) => `${b.category || 'Other'}: ${Math.round(Number(b.limit) || 0)}`).join(', ');
             return { suggestedExpenseBreakdown: lines, suggestedExpenseBreakdownSource: 'Budgets' };
         }
-        const transactions = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as { date: string; type?: string; amount?: number; category?: string; budgetCategory?: string }[];
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-        const expenses = transactions.filter((t) => countsAsExpenseForCashflowKpi(t) && new Date(t.date) >= sixMonthsAgo);
+        const expenses = personalTransactions.filter((t) => countsAsExpenseForCashflowKpi(t) && new Date(t.date) >= sixMonthsAgo);
         const byCategory = new Map<string, number>();
         expenses.forEach((t) => {
             const cat = (t.budgetCategory || t.category || 'Other').trim() || 'Other';
-            const amt = Math.abs(Number(t.amount) || 0);
+            const amt = Math.abs(amountToSar(Number(t.amount) || 0, t.accountId));
             byCategory.set(cat, (byCategory.get(cat) ?? 0) + amt);
         });
         if (byCategory.size > 0) {
@@ -149,7 +173,7 @@ const SalaryPlanningExperts: React.FC = () => {
             return { suggestedExpenseBreakdown: lines, suggestedExpenseBreakdownSource: 'Transactions (avg/month)' };
         }
         return { suggestedExpenseBreakdown: '', suggestedExpenseBreakdownSource: '' };
-    }, [data?.budgets, data?.transactions, (data as any)?.personalTransactions]);
+    }, [data?.budgets, personalTransactions, amountToSar]);
 
     // Monthly investment: from Investment Plan or from investment transactions (avg monthly buy, personal accounts only)
     const { suggestedMonthlyInvestment, suggestedMonthlyInvestmentSource } = React.useMemo(() => {
@@ -157,7 +181,7 @@ const SalaryPlanningExperts: React.FC = () => {
         if (plan?.monthlyBudget != null && Number(plan.monthlyBudget) > 0)
             return { suggestedMonthlyInvestment: Math.round(Number(plan.monthlyBudget)), suggestedMonthlyInvestmentSource: 'Investment Plan' };
 
-        const personalAccountIds = new Set(((data as any)?.personalAccounts ?? data?.accounts ?? []).map((a: { id: string }) => a.id));
+        const personalAccountIds = new Set(personalAccounts.map((a) => a.id));
         const allTxns = (data?.investmentTransactions ?? []) as { date: string; type?: string; accountId?: string; total?: number; quantity?: number; price?: number }[];
         const txns = allTxns.filter((t) => personalAccountIds.has(t.accountId ?? ''));
         const buys = txns.filter((t) => t.type === 'buy');
@@ -170,7 +194,8 @@ const SalaryPlanningExperts: React.FC = () => {
             const n = (rawTotal != null && Number.isFinite(Number(rawTotal)))
                 ? Number(rawTotal)
                 : (Number(t.quantity) || 0) * (Number(t.price) || 0);
-            return s + Math.max(0, Number.isFinite(n) ? n : 0);
+            const currency = inferInvestmentTransactionCurrency(t as any, personalAccounts, personalInvestments);
+            return s + Math.max(0, Number.isFinite(n) ? toSAR(n, currency, sarPerUsd) : 0);
         }, 0);
         const byMonth = new Set(recent.map((t) => `${new Date(t.date).getFullYear()}-${new Date(t.date).getMonth()}`)).size;
         const avg = byMonth > 0 ? total / byMonth : 0;
@@ -180,17 +205,11 @@ const SalaryPlanningExperts: React.FC = () => {
             return { suggestedMonthlyInvestment: v, suggestedMonthlyInvestmentSource: '10% of salary (suggested)' };
         }
         return { suggestedMonthlyInvestment: 0, suggestedMonthlyInvestmentSource: '' };
-    }, [data?.investmentPlan, data?.investmentTransactions, data?.accounts, (data as any)?.personalAccounts, suggestedSalary]);
+    }, [data?.investmentPlan, data?.investmentTransactions, personalAccounts, personalInvestments, suggestedSalary, sarPerUsd]);
 
     /** Finova: amount < 0 = debt you owe; amount > 0 = receivable (owed to you). */
     const { suggestedDebtList, suggestedDebtListSource, suggestedReceivableList, suggestedReceivableListSource } = React.useMemo(() => {
-        const liabilities = ((data as any)?.personalLiabilities ?? data?.liabilities ?? []) as {
-            name?: string;
-            amount?: number;
-            type?: string;
-            status?: string;
-        }[];
-        const active = liabilities.filter((l) => (l.status || 'Active') === 'Active');
+        const active = personalLiabilities.filter((l) => (l.status || 'Active') === 'Active');
         const debts = active.filter((l) => Number(l.amount) < 0);
         const receivables = active.filter((l) => Number(l.amount) > 0);
         const debtLines =
@@ -207,7 +226,7 @@ const SalaryPlanningExperts: React.FC = () => {
             suggestedReceivableList: recvLines,
             suggestedReceivableListSource: 'Liabilities (owed to you)',
         };
-    }, [data?.liabilities, (data as any)?.personalLiabilities]);
+    }, [personalLiabilities]);
 
     // Primary goal: from Goals (first or highest priority)
     const { suggestedGoal, suggestedGoalSource } = React.useMemo(() => {
@@ -225,11 +244,10 @@ const SalaryPlanningExperts: React.FC = () => {
 
     // Monthly / current expenses: from Transactions (expense total, last 6 months avg)
     const { suggestedMonthlyExpenses, suggestedCurrentExpenses, suggestedCurrentExpensesSource } = React.useMemo(() => {
-        const transactions = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as { date: string; type?: string; amount?: number }[];
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-        const expenses = transactions.filter((t) => countsAsExpenseForCashflowKpi(t) && new Date(t.date) >= sixMonthsAgo);
-        const total = expenses.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0);
+        const expenses = personalTransactions.filter((t) => countsAsExpenseForCashflowKpi(t) && new Date(t.date) >= sixMonthsAgo);
+        const total = expenses.reduce((s, t) => s + Math.abs(amountToSar(Number(t.amount) || 0, t.accountId)), 0);
         const months = new Set(expenses.map((t) => `${new Date(t.date).getFullYear()}-${new Date(t.date).getMonth()}`)).size;
         const avg = months > 0 ? Math.round(total / months) : 0;
         return {
@@ -237,7 +255,7 @@ const SalaryPlanningExperts: React.FC = () => {
             suggestedCurrentExpenses: avg,
             suggestedCurrentExpensesSource: avg > 0 ? 'Transactions (avg/month)' : '',
         };
-    }, [data?.transactions, (data as any)?.personalTransactions]);
+    }, [personalTransactions, amountToSar]);
 
     const suggestedCurrentPortfolioSource = 'Live (same as Summary / Dashboard)';
 
@@ -307,6 +325,14 @@ const SalaryPlanningExperts: React.FC = () => {
         return '';
     };
 
+    const dataWarnings = React.useMemo(() => {
+        const warnings: string[] = [];
+        if (personalTransactions.length === 0) warnings.push('No personal transactions found; salary and expense suggestions may be incomplete.');
+        if (suggestedSalary <= 0) warnings.push('No income transactions detected for this year; review Transactions/account mapping.');
+        if (suggestedMonthlyExpenses <= 0) warnings.push('No expense history found for the last 6 months; some expert suggestions are fallback-only.');
+        return warnings;
+    }, [personalTransactions.length, suggestedSalary, suggestedMonthlyExpenses]);
+
     const buildPromptText = (expert: typeof EXPERTS[0]): string => {
         const s = (k: string, suggested: string | number = '') => String(formValues[k] ?? suggested ?? '').trim();
         const sal = () => String(formValues.salary || suggestedSalary || '');
@@ -346,6 +372,9 @@ const SalaryPlanningExperts: React.FC = () => {
         }
         setLoadingId(expert.id);
         setResult(null);
+        setTranslatedResult(null);
+        setDisplayLang('en');
+        setTranslateError(null);
         try {
             let text = '';
             switch (expert.id) {
@@ -410,6 +439,24 @@ const SalaryPlanningExperts: React.FC = () => {
         setLoadingId(null);
     };
 
+    const handleTranslateResult = async () => {
+        if (!result?.markdown || translatedResult || translatingResult || !isAiAvailable) {
+            if (!isAiAvailable) setTranslateError('Configure AI to enable Arabic translation.');
+            return;
+        }
+        setTranslateError(null);
+        setTranslatingResult(true);
+        try {
+            const ar = await translateFinancialInsightToArabic(result.markdown);
+            setTranslatedResult(ar);
+            setDisplayLang('ar');
+        } catch (err) {
+            setTranslateError(formatAiError(err));
+        } finally {
+            setTranslatingResult(false);
+        }
+    };
+
     return (
         <SectionCard title="Salary & Planning Experts" className="overflow-visible">
             <p className="text-sm text-slate-600 mb-6 max-w-2xl">
@@ -418,6 +465,16 @@ const SalaryPlanningExperts: React.FC = () => {
             {!isAiAvailable && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 mb-6">
                     AI is disabled. Configure your API key in Settings to use these experts.
+                </div>
+            )}
+            {dataWarnings.length > 0 && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 mb-6">
+                    <p className="font-medium mb-1">Input validation warnings</p>
+                    <ul className="list-disc pl-5 space-y-1">
+                        {dataWarnings.map((w) => (
+                            <li key={w}>{w}</li>
+                        ))}
+                    </ul>
                 </div>
             )}
             <div className="space-y-3">
@@ -651,11 +708,41 @@ const SalaryPlanningExperts: React.FC = () => {
                                                     }
                                                 />
                                             </h4>
+                                            <div className="mb-3 flex flex-wrap items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setDisplayLang('en')}
+                                                    className={`px-2.5 py-1 text-xs rounded-md border ${displayLang === 'en' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300'}`}
+                                                >
+                                                    English
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        if (translatedResult) {
+                                                            setDisplayLang('ar');
+                                                            return;
+                                                        }
+                                                        void handleTranslateResult();
+                                                    }}
+                                                    disabled={!isAiAvailable || translatingResult}
+                                                    className={`px-2.5 py-1 text-xs rounded-md border ${displayLang === 'ar' && translatedResult ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300'} disabled:opacity-60`}
+                                                    title={!isAiAvailable ? 'Configure AI to enable Arabic translation' : 'عرض بالعربية'}
+                                                >
+                                                    {translatingResult ? 'Translating…' : 'العربية'}
+                                                </button>
+                                            </div>
                                             <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
                                                 <div className="prose prose-sm max-w-none text-slate-800">
-                                                    <SafeMarkdownRenderer content={result.markdown} />
+                                                    <SafeMarkdownRenderer content={displayLang === 'ar' && translatedResult ? translatedResult : result.markdown} />
                                                 </div>
                                             </div>
+                                            {displayLang === 'ar' && !translatedResult && (
+                                                <p className="mt-2 text-xs text-slate-500">Arabic translation was not generated yet. Tap العربية to translate.</p>
+                                            )}
+                                            {displayLang === 'ar' && translateError && (
+                                                <p className="mt-2 text-xs text-rose-700">{translateError}</p>
+                                            )}
                                             {expert.id === 'salary-allocation' && (
                                                 <div className="mt-4 pt-3 border-t border-slate-100">
                                                     <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2 flex flex-wrap items-center gap-1">

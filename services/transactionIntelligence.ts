@@ -1,5 +1,6 @@
-import type { Transaction } from '../types';
+import type { Account, Transaction } from '../types';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi, isInternalTransferTransaction } from './transactionFilters';
+import { toSAR } from '../utils/currencyMath';
 
 /** Normalize merchant from bank-style descriptions. */
 export function normalizeMerchant(description: string): string {
@@ -69,6 +70,51 @@ export function detectSalaryIncome(transactions: Transaction[], monthsLookback =
     detected: true,
     estimatedMonthly: Math.round(avg),
     label: `~${Math.round(avg).toLocaleString()}/mo from largest monthly credits`,
+    confidence,
+  };
+}
+
+/**
+ * Like {@link detectSalaryIncome} but credits are converted to **SAR** using each transaction account's currency.
+ */
+export function detectSalaryIncomeSar(
+  transactions: Transaction[],
+  accounts: Account[],
+  sarPerUsd: number,
+  monthsLookback = 6
+): SalaryDetection {
+  const accById = new Map(accounts.map((a) => [a.id, a]));
+  const start = new Date();
+  start.setMonth(start.getMonth() - monthsLookback);
+  const income = transactions.filter(
+    (t) => t.type === 'income' && !isInternalTransferTransaction(t) && new Date(t.date) >= start
+  );
+  const byMonth = new Map<string, number[]>();
+  income.forEach((t) => {
+    const d = new Date(t.date);
+    const k = `${d.getFullYear()}-${d.getMonth()}`;
+    const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
+    const amtSar = toSAR(Math.abs(Number(t.amount) || 0), cur, sarPerUsd);
+    const arr = byMonth.get(k) || [];
+    arr.push(amtSar);
+    byMonth.set(k, arr);
+  });
+  const salaries: number[] = [];
+  byMonth.forEach((amounts) => {
+    const sorted = [...amounts].sort((a, b) => b - a);
+    if (sorted[0] >= 2000) salaries.push(sorted[0]);
+  });
+  if (salaries.length < 2) {
+    return { detected: false, estimatedMonthly: 0, label: 'Not enough recurring large credits (SAR)', confidence: 'low' };
+  }
+  const avg = salaries.reduce((a, b) => a + b, 0) / salaries.length;
+  const variance = salaries.reduce((s, x) => s + (x - avg) ** 2, 0) / salaries.length;
+  const cv = avg > 0 ? Math.sqrt(variance) / avg : 1;
+  const confidence = cv < 0.15 ? 'high' : cv < 0.35 ? 'medium' : 'low';
+  return {
+    detected: true,
+    estimatedMonthly: Math.round(avg),
+    label: `~${Math.round(avg).toLocaleString()} SAR/mo from largest monthly credits`,
     confidence,
   };
 }

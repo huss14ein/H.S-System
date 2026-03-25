@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useContext } from 'react';
+import { DataContext } from '../context/DataContext';
 import { useStatementProcessing } from '../context/StatementProcessingContext';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
@@ -7,17 +8,23 @@ import { MagnifyingGlassIcon } from '../components/icons';
 import { ArrowDownTrayIcon } from '../components/icons/ArrowDownTrayIcon';
 import { StatementIcons, getStatementIcon } from '../constants/statementIcons';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import type { Page } from '../types';
+import { accountBookCurrency } from '../utils/cashAccountDisplay';
+import type { Account, Page } from '../types';
 
 interface StatementHistoryViewProps {
   setActivePage?: (page: Page) => void;
 }
 
 const StatementHistoryView: React.FC<StatementHistoryViewProps> = ({ setActivePage }) => {
+  const { data } = useContext(DataContext)!;
   const { statements, getStatementById, deleteStatement, exportTransactions, reconcileTransactions, getStatementDownloadUrl } =
     useStatementProcessing();
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const { formatCurrencyString } = useFormatCurrency();
+  const accountsById = useMemo(() => {
+    const list = (data as { personalAccounts?: Account[] } | undefined)?.personalAccounts ?? data?.accounts ?? [];
+    return new Map<string, Account>(list.map((a) => [a.id, a]));
+  }, [data?.accounts, (data as { personalAccounts?: Account[] } | undefined)?.personalAccounts]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'failed' | 'reviewing'>('all');
   const [isReconciliationModalOpen, setIsReconciliationModalOpen] = useState(false);
@@ -187,7 +194,9 @@ const StatementHistoryView: React.FC<StatementHistoryViewProps> = ({ setActivePa
             </div>
           ) : (
             <div className="space-y-4">
-              {filteredStatements.map((statement) => (
+              {filteredStatements.map((statement) => {
+                const book = accountBookCurrency(accountsById.get(statement.accountId ?? ''));
+                return (
                 <div
                   key={statement.id}
                   className="border-2 rounded-xl p-5 bg-white hover:shadow-lg transition-shadow"
@@ -286,20 +295,20 @@ const StatementHistoryView: React.FC<StatementHistoryViewProps> = ({ setActivePa
                       <div>
                         <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Total Credits</p>
                         <p className="text-lg font-bold text-emerald-700">
-                          {formatCurrencyString(statement.summary.totalCredits, { digits: 0 })}
+                          {formatCurrencyString(statement.summary.totalCredits, { digits: 0, inCurrency: book, showSecondary: true })}
                         </p>
                       </div>
                       <div>
                         <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Total Debits</p>
                         <p className="text-lg font-bold text-rose-700">
-                          {formatCurrencyString(statement.summary.totalDebits, { digits: 0 })}
+                          {formatCurrencyString(statement.summary.totalDebits, { digits: 0, inCurrency: book, showSecondary: true })}
                         </p>
                       </div>
                       <div>
                         <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Net Change</p>
                         <p className={`text-lg font-bold ${statement.summary.netChange >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                           {statement.summary.netChange >= 0 ? '+' : ''}
-                          {formatCurrencyString(statement.summary.netChange, { digits: 0 })}
+                          {formatCurrencyString(statement.summary.netChange, { digits: 0, inCurrency: book, showSecondary: true })}
                         </p>
                       </div>
                       <div>
@@ -339,7 +348,7 @@ const StatementHistoryView: React.FC<StatementHistoryViewProps> = ({ setActivePa
                                 </div>
                                 <span className={`font-bold ${tx.amount >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                                   {tx.amount >= 0 ? '+' : ''}
-                                  {formatCurrencyString(tx.amount, { digits: 2 })}
+                                  {formatCurrencyString(tx.amount, { digits: 2, inCurrency: book, showSecondary: true })}
                                 </span>
                               </div>
                             ))}
@@ -352,7 +361,8 @@ const StatementHistoryView: React.FC<StatementHistoryViewProps> = ({ setActivePa
                         </div>
                       )}
                 </div>
-              ))}
+              );
+              })}
             </div>
           )}
         </SectionCard>

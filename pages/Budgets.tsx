@@ -6,6 +6,7 @@ import { Budget, type Page } from '../types';
 import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { useCurrency } from '../context/CurrencyContext';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { CreditCardIcon } from '../components/icons/CreditCardIcon';
@@ -35,7 +36,7 @@ const BUDGET_CATEGORY_HINTS: Record<string, string> = {
     ...KSA_EXPENSE_CATEGORY_HINTS,
     Food: 'Groceries, dining out, and household food spending. Track all food-related expenses here.',
     Transportation: 'Fuel, public transport, ride-share, and vehicle costs. Petrol, metro, Uber/Careem, or car maintenance.',
-    Housing: 'Rent, mortgage, or housing-related payments. One budget per housing type (e.g. monthly vs semi-annual rent).',
+    Housing: 'Rent, mortgage, or housing-related payments. Prefer a single yearly Housing Rent budget from the household engine.',
     Utilities: 'Electricity, water, gas, and similar bills. Note: electricity often spikes in summer.',
     Shopping: 'General retail and non-essential purchases. Clothing, household items, or discretionary shopping.',
     Entertainment: 'Subscriptions, dining out, and leisure. Restaurants, streaming (Netflix/Shahid), cinema, and hobbies.',
@@ -67,6 +68,8 @@ import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesInte
 import { learnAndAutoAdjust } from '../services/aiBudgetAutomation';
 import { getPersonalTransactions } from '../utils/wealthScope';
 import { useSelfLearning } from '../context/SelfLearningContext';
+import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import AIAdvisor from '../components/AIAdvisor';
 
 
 
@@ -210,6 +213,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const auth = useContext(AuthContext);
     const { trackSuggestionFeedback } = useSelfLearning();
     const { formatCurrencyString } = useFormatCurrency();
+    const { exchangeRate } = useCurrency();
     const [isAdmin, setIsAdmin] = useState(false);
     const [permittedCategories, setPermittedCategories] = useState<string[]>([]);
     const [newCategoryName, setNewCategoryName] = useState('');
@@ -251,6 +255,21 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const [sharedTxCategoryFilter, setSharedTxCategoryFilter] = useState<string>('All');
     const [showKsaExpenseRef, setShowKsaExpenseRef] = useState(false);
     const [suggestedAdjustments, setSuggestedAdjustments] = useState<Array<{ orig: Budget; proposed: Budget }> | null>(null);
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+    const accountCurrencyById = useMemo(() => {
+        const map = new Map<string, 'SAR' | 'USD'>();
+        (((data as any)?.personalAccounts ?? data?.accounts ?? []) as Array<{ id: string; currency?: string }>).forEach((a) => {
+            map.set(a.id, a.currency === 'USD' ? 'USD' : 'SAR');
+        });
+        return map;
+    }, [data]);
+    const txAmountSar = (tx: any): number => {
+        const raw = Math.abs(Number(tx?.amount) || 0);
+        const txCur = tx?.currency === 'USD' ? 'USD' : tx?.currency === 'SAR' ? 'SAR' : undefined;
+        const accId = String(tx?.accountId ?? tx?.account_id ?? '');
+        const fallbackCur = accountCurrencyById.get(accId) ?? 'SAR';
+        return toSAR(raw, txCur ?? fallbackCur, sarPerUsd);
+    };
 
     // Update shared transaction month filter when current month changes
     useEffect(() => {
@@ -273,8 +292,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
 
     /** Map household engine bucket keys to budget category names (for merging engine projection with template). */
     const ENGINE_BUCKET_TO_CATEGORY: Record<string, string> = useMemo(() => ({
-        housing: 'Housing Rent (Monthly)',
-        housingSemiAnnual: 'Housing Rent (Semi-Annual)',
+        housing: 'Housing Rent',
         groceries: 'Groceries & Supermarket',
         utilities: 'Utilities',
         telecommunications: 'Telecommunications',
@@ -313,8 +331,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
 
     /** Engine buckets are stored as monthly (or monthly-equivalent sinking). Multiplier converts to stored limit for that category's period. */
     const ENGINE_BUCKET_TO_STORED_MULTIPLIER: Record<string, number> = useMemo(() => ({
-        housing: 1,
-        housingSemiAnnual: 6,
+        /** Engine bucket is monthly rent; template stores yearly total. */
+        housing: 12,
         groceries: 1,
         utilities: 1,
         telecommunications: 1,
@@ -366,6 +384,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const [bulkAddSelectedCategories, setBulkAddSelectedCategories] = useState<string[]>([]);
     /** Previous bulk-add template category order; used to merge user checkbox state when salary/family/profile/month updates. */
     const bulkAddPrevSuggestionNamesRef = useRef<string[]>([]);
+    /** After first non-empty template sync, empty `bulkAddSelectedCategories` means the user chose “deselect all”, not the initial pre-effect frame. */
+    const bulkAddTemplateSyncedRef = useRef(false);
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
 
@@ -760,7 +780,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             .filter((t: { type?: string; status?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && (t.status ?? 'Approved') === 'Approved' && !!t.budgetCategory)
             .forEach((t: { date: string; amount?: number; budgetCategory?: string }) => {
                 const txDate = new Date(t.date);
-                const amount = Math.abs(t.amount ?? 0);
+                const amount = txAmountSar(t);
                 if (txDate >= rangeStart && txDate <= rangeEnd) {
                     spending.set(t.budgetCategory!, (spending.get(t.budgetCategory!) || 0) + amount);
                 }
@@ -776,7 +796,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             if (!(d >= rangeStart && d <= rangeEnd)) return;
             const cat = String(tx.budget_category || '').trim();
             if (!cat) return;
-            const amount = Math.abs(Number(tx.amount) || 0);
+            const amount = txAmountSar(tx);
             spending.set(cat, (spending.get(cat) || 0) + amount);
         });
 
@@ -864,7 +884,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 else if (percentage > 90) colorClass = 'bg-warning';
                 return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
             }).sort((a,b) => b.spent - a.spent);
-    }, [data?.transactions, (data as any)?.personalTransactions, data?.budgets, data?.budgetRequests, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id]);
+    }, [data?.transactions, (data as any)?.personalTransactions, data?.budgets, data?.budgetRequests, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id, sarPerUsd, accountCurrencyById]);
 
     // Admin Approved Budgets Overview: data for the selected month/year (for filters and period display)
     const adminApprovedOverviewRaw = useMemo<BudgetRow[]>(() => {
@@ -879,7 +899,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             if (!(d >= rangeStart && d <= rangeEnd)) return;
             const cat = String((tx as { budget_category?: string }).budget_category || tx.budgetCategory || '').trim();
             if (!cat) return;
-            spending.set(cat, (spending.get(cat) || 0) + Math.abs(Number(tx.amount) || 0));
+            spending.set(cat, (spending.get(cat) || 0) + txAmountSar(tx));
         });
         ownerSharedTransactions
             .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
@@ -888,7 +908,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 if (!(d >= rangeStart && d <= rangeEnd)) return;
                 const cat = String(tx.budget_category || '').trim();
                 if (!cat) return;
-                spending.set(cat, (spending.get(cat) || 0) + Math.abs(Number(tx.amount) || 0));
+                spending.set(cat, (spending.get(cat) || 0) + txAmountSar(tx));
             });
         const budgetsForMonth = (data?.budgets ?? []).filter(
             (b) => b.month === mo && b.year === yr || (b.period === 'yearly' && b.year === yr)
@@ -904,7 +924,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
         });
         return rows.sort((a, b) => b.spent - a.spent);
-    }, [data?.budgets, data?.transactions, (data as any)?.personalTransactions, approvedOverviewMonth, approvedOverviewYear, ownerSharedTransactions]);
+    }, [data?.budgets, data?.transactions, (data as any)?.personalTransactions, approvedOverviewMonth, approvedOverviewYear, ownerSharedTransactions, sarPerUsd, accountCurrencyById]);
 
     const adminApprovedOverviewFiltered = useMemo(() => {
         let list = adminApprovedOverviewRaw;
@@ -958,6 +978,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             : (suggestedMonthlySalary && suggestedMonthlySalary > 0 ? suggestedMonthlySalary : 0);
         const monthlySalary = Number.isFinite(salary) && salary > 0 ? salary : fallback;
         if (!monthlySalary || monthlySalary <= 0 || bulkAddSuggestedCategories.length === 0) return bulkAddSuggestedCategories;
+        // After sync, “nothing selected” should show 0 limits (not full template), so limits don’t look like they “snap back” with no selection.
+        if (
+            bulkAddTemplateSyncedRef.current &&
+            bulkAddSelectedCategories.length === 0 &&
+            bulkAddSuggestedCategories.length > 0
+        ) {
+            return bulkAddSuggestedCategories.map((c) => ({ ...c, limit: 0 }));
+        }
         return computeBulkAddLimitsForSelection(
             bulkAddSuggestedCategories,
             bulkAddSelectedCategories,
@@ -974,9 +1002,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
         const names = bulkAddSuggestedCategories.map((c) => c.category);
         if (names.length === 0) {
             bulkAddPrevSuggestionNamesRef.current = [];
+            bulkAddTemplateSyncedRef.current = false;
             setBulkAddSelectedCategories([]);
             return;
         }
+        bulkAddTemplateSyncedRef.current = true;
 
         const prevNames = bulkAddPrevSuggestionNamesRef.current;
         const prevSet = new Set(prevNames);
@@ -1067,7 +1097,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 if (!(d >= rangeStart && d <= rangeEnd)) return;
                 const category = String(tx.budget_category || '').trim();
                 if (!category) return;
-                const amount = Math.abs(Number(tx.amount) || 0);
+                const amount = txAmountSar(tx);
                 const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || 'owner');
                 spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
             });
@@ -1079,7 +1109,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 if (!(d >= rangeStart && d <= rangeEnd)) return;
                 const category = String(tx.budget_category || '').trim();
                 if (!category) return;
-                const amount = Math.abs(Number(tx.amount) || 0);
+                const amount = txAmountSar(tx);
                 const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || auth?.user?.id || 'owner');
                 spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
             });
@@ -1166,7 +1196,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 };
             })
             .sort((a, b) => b.spent - a.spent);
-    }, [sharedBudgets, mySharedBudgetTransactions, ownerSharedTransactions, sharedConsumedByOwnerCategory, budgetView, currentYear, currentMonth, auth?.user?.id]);
+    }, [sharedBudgets, mySharedBudgetTransactions, ownerSharedTransactions, sharedConsumedByOwnerCategory, budgetView, currentYear, currentMonth, auth?.user?.id, sarPerUsd, accountCurrencyById]);
 
     const sharedBudgetOwnerByCardId = useMemo(() => {
         return new Map(
@@ -1205,6 +1235,29 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
 
         return { totalLimit, totalSpent, totalSavedFromBudget, healthyCount, watchCount, criticalCount, topChange };
     }, [budgetData]);
+
+    const budgetValidationWarnings = useMemo(() => {
+        const warnings: string[] = [];
+        if (!Number.isFinite(budgetInsights.totalLimit) || !Number.isFinite(budgetInsights.totalSpent)) {
+            warnings.push('Budget totals contain invalid values.');
+        }
+        if (budgetData.length > 0 && budgetData.every((b) => (b.monthlyLimit ?? 0) <= 0)) {
+            warnings.push('All visible budgets have zero limits.');
+        }
+        const uncategorizedExpenses = ((data as any)?.personalTransactions ?? data?.transactions ?? [])
+            .filter((t: any) => countsAsExpenseForCashflowKpi(t) && (t.status ?? 'Approved') === 'Approved' && !String(t.budgetCategory ?? '').trim()).length;
+        if (uncategorizedExpenses > 0) {
+            warnings.push(`${uncategorizedExpenses} approved expense transaction(s) are not mapped to budget categories.`);
+        }
+        if (isAdmin && budgetRequests.some((r) => r.status === 'Pending') && budgetData.length === 0) {
+            warnings.push('Pending requests exist while no budget cards are visible for this filter/month.');
+        }
+        const [fy, fm] = String(sharedTxMonthFilter || '').split('-').map(Number);
+        if (!(Number.isFinite(fy) && Number.isFinite(fm) && fm >= 1 && fm <= 12)) {
+            warnings.push('Shared transaction month filter is invalid; defaulting to all months.');
+        }
+        return warnings;
+    }, [budgetInsights, budgetData, data?.transactions, (data as any)?.personalTransactions, budgetRequests, isAdmin, sharedTxMonthFilter]);
 
     const updateMonthlyOverride = (month: number, patch: Partial<HouseholdMonthlyOverride>) => {
         setHouseholdOverrides((prev) => {
@@ -1734,6 +1787,16 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 </div>
             </SectionCard>
 
+            {budgetValidationWarnings.length > 0 && (
+                <SectionCard title="Budget validation checks" collapsible collapsibleSummary="Data quality checks" defaultExpanded>
+                    <ul className="space-y-1 text-sm text-amber-800">
+                        {budgetValidationWarnings.slice(0, 6).map((w, i) => (
+                            <li key={`bw-${i}`}>- {w}</li>
+                        ))}
+                    </ul>
+                </SectionCard>
+            )}
+
             <SectionCard title="Budget Intelligence" collapsible collapsibleSummary="Portfolio, spend, attention" defaultExpanded>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm min-w-0">
                     <div className="rounded-lg border bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
@@ -1788,6 +1851,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                     </ul>
                 </SectionCard>
             )}
+
+            <AIAdvisor
+                pageContext="cashflow"
+                contextData={{ transactions: (data as any)?.personalTransactions ?? data?.transactions ?? [], budgets: data?.budgets ?? [] }}
+                title="Budget AI Advisor"
+                subtitle="Budget drift, category pressure, and optimization insights."
+                buttonLabel="Get AI Budget Insights"
+            />
 
             {!isAdmin && (() => {
                 const selectedCategoryName = (() => {
@@ -2925,7 +2996,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                     {formatCurrencyString(
                                         ownerSharedTransactions
                                             .filter(tx => (tx.status ?? 'Approved') === 'Approved')
-                                            .reduce((sum, tx) => sum + Math.abs(Number(tx.amount) || 0), 0),
+                                            .reduce((sum, tx) => sum + txAmountSar(tx), 0),
                                         { digits: 0 }
                                     )}
                                 </p>
@@ -2961,7 +3032,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                                                 {tx.status ?? 'Approved'}
                                                             </span>
                                                         </td>
-                                                        <td className="px-3 py-2 text-right tabular-nums font-medium">{formatCurrencyString(Math.abs(Number(tx.amount) || 0), { digits: 0 })}</td>
+                                                        <td className="px-3 py-2 text-right tabular-nums font-medium">{formatCurrencyString(txAmountSar(tx), { digits: 0 })}</td>
                                                         <td className="px-3 py-2 text-center">
                                                             <span className={`text-xs ${isApproved ? 'text-emerald-600 font-medium' : 'text-slate-400'}`}>
                                                                 {isApproved ? 'Yes' : 'No'}
@@ -3036,9 +3107,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                         {/* Stats Cards */}
                         {(() => {
                             const [filterYear, filterMonth] = sharedTxMonthFilter.split('-').map(Number);
+                            const monthValid = Number.isFinite(filterYear) && Number.isFinite(filterMonth) && filterMonth >= 1 && filterMonth <= 12;
                             const filteredTxs = (ownerSharedTransactions.length > 0 ? ownerSharedTransactions : mySharedBudgetTransactions).filter((tx) => {
                                 const txDate = new Date(tx.transaction_date || tx.date);
-                                const matchesMonth = txDate.getFullYear() === filterYear && txDate.getMonth() + 1 === filterMonth;
+                                const matchesMonth = monthValid ? (txDate.getFullYear() === filterYear && txDate.getMonth() + 1 === filterMonth) : true;
                                 const matchesStatus = sharedTxStatusFilter === 'All' || (tx.status ?? 'Approved') === sharedTxStatusFilter;
                                 const matchesCategory = sharedTxCategoryFilter === 'All' || tx.budget_category === sharedTxCategoryFilter;
                                 return matchesMonth && matchesStatus && matchesCategory;
@@ -3046,10 +3118,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                             
                             const approvedTotal = filteredTxs
                                 .filter(tx => (tx.status ?? 'Approved') === 'Approved')
-                                .reduce((sum, tx) => sum + Math.abs(Number(tx.amount) || 0), 0);
+                                .reduce((sum, tx) => sum + txAmountSar(tx), 0);
                             const pendingTotal = filteredTxs
                                 .filter(tx => (tx.status ?? 'Approved') === 'Pending')
-                                .reduce((sum, tx) => sum + Math.abs(Number(tx.amount) || 0), 0);
+                                .reduce((sum, tx) => sum + txAmountSar(tx), 0);
                             
                             return (
                                 <>
@@ -3110,7 +3182,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                                                         {isApproved ? 'Yes' : 'No'}
                                                                     </span>
                                                                 </td>
-                                                                <td className="px-3 py-2 text-right tabular-nums font-medium">{formatCurrencyString(Math.abs(Number(tx.amount) || 0), { digits: 0 })}</td>
+                                                                <td className="px-3 py-2 text-right tabular-nums font-medium">{formatCurrencyString(txAmountSar(tx), { digits: 0 })}</td>
                                                             </tr>
                                                         );
                                                     })

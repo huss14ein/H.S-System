@@ -9,6 +9,8 @@ import {
   journalOutcomeReview,
   type ThesisRecord,
 } from '../services/thesisJournalEngine';
+import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { ResolvedSymbolLabel, formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
 
 const KEY = 'finova_financial_journal_v1';
 const THESIS_KEY = 'finova_thesis_records_v1';
@@ -77,6 +79,9 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
   const [catalystDates, setCatalystDates] = useState('');
   const [invalidationPoint, setInvalidationPoint] = useState('');
   const [reviewDate, setReviewDate] = useState('');
+
+  const thesisSymbols = useMemo(() => theses.map((t) => t.symbol).filter((s): s is string => !!s && s.length >= 2), [theses]);
+  const { names: thesisCompanyNames } = useCompanyNames(thesisSymbols);
 
   const addThesis = () => {
     trackAction('add-thesis', 'Engines & Tools');
@@ -259,7 +264,9 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
                   <label className="block text-sm font-medium text-slate-700 mb-1">Which one did you sell?</label>
                   <select className="input-base w-full" value={outcomeSymbol} onChange={(e) => setOutcomeSymbol(e.target.value)}>
                     {theses.map((t) => (
-                      <option key={t.symbol} value={t.symbol}>{t.symbol}</option>
+                      <option key={t.symbol} value={t.symbol}>
+                        {formatSymbolWithCompany(t.symbol, undefined, thesisCompanyNames)}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -287,7 +294,15 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <p className="text-xs text-slate-400">Created: {new Date(t.createdAt).toLocaleDateString()}</p>
-                        <p className="font-semibold text-slate-900">{t.symbol}</p>
+                        <div className="font-semibold text-slate-900 max-w-md">
+                          <ResolvedSymbolLabel
+                            symbol={t.symbol}
+                            names={thesisCompanyNames}
+                            layout="stacked"
+                            symbolClassName="font-semibold text-slate-900"
+                            companyClassName="text-sm text-slate-600 font-normal"
+                          />
+                        </div>
                       </div>
                       <span className={`text-xs px-2 py-1 rounded-full font-semibold ${validity.valid ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
                         {validity.valid ? 'On track' : 'Time to review'}

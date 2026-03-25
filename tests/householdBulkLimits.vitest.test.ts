@@ -46,4 +46,20 @@ describe('computeBulkAddLimitsForSelection', () => {
     const aggr = computeBulkAddLimitsForSelection(base, pick, 25_000, 'Aggressive', 3, 2);
     expect(sumMonthlyForCategories(aggr, pick)).toBeGreaterThan(sumMonthlyForCategories(cons, pick) * 1.05);
   });
+
+  it('treats selection as “all categories” when every template row is checked even if stale names remain in the array', () => {
+    const base = generateHouseholdBudgetCategories(2, 0, 15_000, 'Moderate');
+    const allNames = base.map((c) => c.category);
+    const withStale = [...allNames, 'Housing Rent (Monthly)', 'Housing Rent (Semi-Annual)'];
+    const out = computeBulkAddLimitsForSelection(base, withStale, 15_000, 'Moderate', 2, 0);
+    expect(out.map((c) => c.limit)).toEqual(base.map((c) => c.limit));
+  });
+
+  it('Growth profile uses a tighter bulk envelope than Aggressive for the same selection', () => {
+    const base = generateHouseholdBudgetCategories(2, 1, 20_000, 'Moderate');
+    const pick = base.slice(0, 5).map((c) => c.category);
+    const growth = computeBulkAddLimitsForSelection(base, pick, 20_000, 'Growth', 2, 1);
+    const aggr = computeBulkAddLimitsForSelection(base, pick, 20_000, 'Aggressive', 2, 1);
+    expect(sumMonthlyForCategories(aggr, pick)).toBeGreaterThan(sumMonthlyForCategories(growth, pick) * 1.02);
+  });
 });

@@ -4,6 +4,7 @@ import { finnhubFetch, toFinnhubSymbol, fromFinnhubSymbol, canonicalQuoteLookupK
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { capitalizeCategoryName } from '../utils/categoryFormat';
 import { DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
+import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 
 // --- Model Constants ---
 const FAST_MODEL = 'gemini-3-flash-preview';
@@ -473,6 +474,54 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
     throw (lastError || new Error('AI proxy invocation failed for all known endpoints.'));
 }
 
+/** Lightweight proxy ping — no LLM call. Matches `AiContext` health body. */
+export async function probeGeminiProxyHealth(): Promise<{
+    ok: boolean;
+    ms: number;
+    error?: string;
+    configured?: boolean;
+}> {
+    const endpoints = ['/api/gemini-proxy', '/.netlify/functions/gemini-proxy'];
+    const start = performance.now();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    try {
+        for (const endpoint of endpoints) {
+            try {
+                const t0 = performance.now();
+                const res = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ health: true }),
+                    signal: controller.signal,
+                });
+                const ms = Math.round(performance.now() - t0);
+                if (!res.ok) continue;
+                const json = await res.json().catch(() => ({}));
+                const configured = Boolean((json as { anyProviderConfigured?: boolean })?.anyProviderConfigured);
+                if (!configured) {
+                    return {
+                        ok: false,
+                        ms,
+                        configured: false,
+                        error: 'Proxy reachable but no AI provider key configured (GEMINI_API_KEY / backup env).',
+                    };
+                }
+                return { ok: true, ms, configured: true };
+            } catch {
+                continue;
+            }
+        }
+        return {
+            ok: false,
+            ms: Math.round(performance.now() - start),
+            error: 'Could not reach AI proxy. Deploy Netlify functions or run local API.',
+        };
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
 // Unified AI invocation function. Proxy-only for security (prevents client-bundle key exposure).
 // Do not send systemInstruction with responseMimeType application/json + responseSchema — Gemini returns 400 when both are set.
 // For JSON structured responses, prepend PERSONAL_WEALTH_SCOPE to string prompts so scope is preserved without systemInstruction.
@@ -696,6 +745,235 @@ Markdown only.`;
     setToCache(cacheKey, result);
     return result;
 
+  } catch (error) {
+    return formatAiError(error);
+  }
+};
+
+export type LogicEnginesAiContext = {
+  netWorthSar: number;
+  monthlyIncomeSar: number;
+  monthlyExpensesSar: number;
+  monthlyNetSar: number;
+  savingsRatePct: number;
+  portfolioSnapshotReturnPct: number;
+  runwayMonths: number;
+  emergencyMonthsCovered: number;
+  usdToSarRate: number;
+  alertCount: number;
+  symbolCount: number;
+};
+
+/** Money Tools / “Behind the numbers” — concise insight from live engine snapshot (SAR-normalized). */
+export const getAILogicEnginesInsight = async (ctx: LogicEnginesAiContext): Promise<string> => {
+  const cacheKey = `getAILogicEnginesInsight:${JSON.stringify(ctx)}`;
+  const cached = getFromCache(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const prompt = `You are Finova AI advisor. Money Tools snapshot (amounts in SAR).
+Net worth: ~${Math.round(ctx.netWorthSar).toLocaleString()} SAR
+This month — income ~${Math.round(ctx.monthlyIncomeSar).toLocaleString()}, expenses ~${Math.round(ctx.monthlyExpensesSar).toLocaleString()}, net ~${Math.round(ctx.monthlyNetSar).toLocaleString()}
+Savings rate (month): ${ctx.savingsRatePct.toFixed(1)}%
+Net worth snapshot simple return (last two device snapshots): ${ctx.portfolioSnapshotReturnPct.toFixed(2)}%
+Liquidity runway: ${ctx.runwayMonths.toFixed(1)} months
+Emergency fund (months of core spend covered): ${ctx.emergencyMonthsCovered.toFixed(1)}
+App FX rate: 1 USD = ${ctx.usdToSarRate.toFixed(4)} SAR
+Cross-engine alerts: ${ctx.alertCount} · Tracked symbols (holdings/watchlist): ${ctx.symbolCount}
+
+Write concise Markdown only:
+### Snapshot
+One sentence on overall position.
+
+### Verify
+Two bullets: what the user should cross-check in Transactions, Accounts, or Settings.
+
+### Next step
+One actionable bullet.
+
+End with a single short line: not personalized financial advice.`;
+
+    const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+    const result = response.text || 'Could not retrieve insight.';
+    setToCache(cacheKey, result);
+    return result;
+  } catch (error) {
+    return formatAiError(error);
+  }
+};
+
+export type NotificationDigestItem = {
+  category: string;
+  severity?: string;
+  message: string;
+  actionHint?: string;
+};
+
+/** Prioritize and explain the current in-app notification feed (English; use translateFinancialInsightToArabic in UI). */
+export const getAINotificationsDigest = async (
+  items: NotificationDigestItem[],
+  meta: { unreadCount: number; sarPerUsd: number }
+): Promise<string> => {
+  const slice = items.slice(0, 18);
+  const cacheKey = `getAINotificationsDigest:${meta.unreadCount}:${slice.map((i) => i.message).join('|').slice(0, 400)}`;
+  const cached = getFromCache(cacheKey);
+  if (cached) return cached;
+
+  if (slice.length === 0) {
+    const empty =
+      '### Summary\n- No items in your notification feed right now.\n\n### Verify\n- Import recent transactions if you expect alerts.\n- Refresh live prices if you hold market symbols.\n\n### Next step\n- Revisit after your next statement upload or budget change.\n\n_Not personalized financial advice._';
+    setToCache(cacheKey, empty);
+    return empty;
+  }
+
+  try {
+    const lines = slice.map(
+      (i, idx) =>
+        `${idx + 1}. [${i.category}] (${i.severity || 'info'}) ${i.message}${i.actionHint ? ` — Suggested: ${i.actionHint}` : ''}`,
+    );
+    const prompt = `${DEFAULT_SYSTEM_INSTRUCTION}
+
+Notifications digest. Personal Finova user. Amounts and runway logic use **SAR**; FX assumption **1 USD = ${meta.sarPerUsd.toFixed(4)} SAR**.
+Unread count in feed: ${meta.unreadCount}.
+
+Alerts:
+${lines.join('\n')}
+
+Output Markdown only:
+### Top priorities
+- 2–3 bullets: what to handle first and why (reference exact alert text).
+
+### Cross-checks
+- Two bullets: which screens to open (Accounts, Budgets, Investments, Plan) and what to validate.
+
+### If everything is noise
+- One line on when to dismiss vs. when to act.
+
+Last line exactly: Not personalized financial advice.`;
+
+    const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+    const result = response.text?.trim() || 'Could not summarize notifications.';
+    setToCache(cacheKey, result);
+    return result;
+  } catch (error) {
+    return formatAiError(error);
+  }
+};
+
+export type SettingsGuidanceContext = {
+  sarPerUsd: number;
+  displayCurrency: 'SAR' | 'USD';
+  riskProfile: string;
+  budgetThresholdPct: number;
+  driftThresholdPct: number;
+  profileSetupPct: number;
+  accountsSetupPct: number;
+  personalAccountCount: number;
+  preferencesDone: number;
+  preferencesTotal: number;
+  activePriceAlerts: number;
+  portfolioDriftFlag: number;
+  sleeveDriftPct: number | null;
+  trackedSymbols: number;
+  inAppFeedCount: number;
+  unreadNotifications: number;
+  enableWeeklyEmail: boolean;
+  inAppSoundEnabled: boolean;
+  liquidCashSarApprox: number;
+};
+
+/** Settings page coaching from live metrics (English in model; UI can translate to Arabic). */
+export const getAISettingsGuidance = async (ctx: SettingsGuidanceContext): Promise<string> => {
+  const cacheKey = `getAISettingsGuidance:${ctx.displayCurrency}:${ctx.riskProfile}:${ctx.inAppFeedCount}:${ctx.unreadNotifications}`;
+  const cached = getFromCache(cacheKey);
+  if (cached) return cached;
+
+  const driftLine =
+    ctx.sleeveDriftPct == null ? 'Sleeve drift: not computed (add holdings / Wealth Ultra targets).' : `Sleeve drift (max abs): ~${ctx.sleeveDriftPct}%. Threshold: ${ctx.driftThresholdPct}%.`;
+
+  try {
+    const prompt = `${DEFAULT_SYSTEM_INSTRUCTION}
+
+Finova **Settings** coaching. Data is live snapshot for this user.
+Display currency: **${ctx.displayCurrency}**. FX: **1 USD = ${ctx.sarPerUsd.toFixed(4)} SAR**.
+
+- Risk: ${ctx.riskProfile}; budget alert at ${ctx.budgetThresholdPct}%; drift alert at ${ctx.driftThresholdPct}%.
+- Profile readiness: ${ctx.profileSetupPct}%; accounts readiness: ${ctx.accountsSetupPct}% (${ctx.personalAccountCount} personal accounts).
+- Preferences checklist: ${ctx.preferencesDone}/${ctx.preferencesTotal}.
+- ${driftLine}
+- Active **price alerts**: ${ctx.activePriceAlerts}; portfolio drift **attention flag**: ${ctx.portfolioDriftFlag}.
+- Tracked symbols (holdings + watchlist): ${ctx.trackedSymbols}.
+- In-app notification **feed** size: ${ctx.inAppFeedCount}; **unread**: ${ctx.unreadNotifications}.
+- Weekly email summaries: ${ctx.enableWeeklyEmail ? 'on' : 'off'}; in-app sound: ${ctx.inAppSoundEnabled ? 'on' : 'off'}.
+- Liquid cash (checking/savings, SAR-normalized): ~${Math.round(ctx.liquidCashSarApprox).toLocaleString()} SAR.
+
+Markdown only:
+### What looks healthy
+- 1–2 bullets with numbers.
+
+### Tune next
+- 2 bullets: settings or data to adjust (risk, drift, gold/Zakat, alerts).
+
+### Where to tap
+- One line each: Accounts, Investments, Notifications pages if relevant.
+
+Last line exactly: Not personalized financial advice.`;
+
+    const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+    const result = response.text?.trim() || 'Could not generate settings guidance.';
+    setToCache(cacheKey, result);
+    return result;
+  } catch (error) {
+    return formatAiError(error);
+  }
+};
+
+export type SystemHealthAiContext = {
+  overallStatus: string;
+  healthScore: number;
+  degradedCount: number;
+  outageCount: number;
+  avgLatencyMs: number;
+  serviceLines: string;
+  integritySummaryLine: string;
+  sarPerUsd: number;
+  lastCheckedLabel?: string;
+};
+
+export const getAISystemHealthDigest = async (ctx: SystemHealthAiContext): Promise<string> => {
+  const cacheKey = `getAISystemHealthDigest:${ctx.overallStatus}:${ctx.healthScore}:${ctx.outageCount}`;
+  const cached = getFromCache(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const prompt = `${DEFAULT_SYSTEM_INSTRUCTION}
+
+System & APIs Health digest for Finova operator. FX reference: **1 USD = ${ctx.sarPerUsd.toFixed(4)} SAR** (for data-drift context only).
+
+Overall: **${ctx.overallStatus}** · Health score **${ctx.healthScore}/100** · Degraded: ${ctx.degradedCount} · Outages: ${ctx.outageCount} · Avg probe latency: ${ctx.avgLatencyMs} ms
+${ctx.lastCheckedLabel ? `Last check: ${ctx.lastCheckedLabel}` : ''}
+
+Services:
+${ctx.serviceLines}
+
+Data / reconciliation: ${ctx.integritySummaryLine}
+
+Markdown only:
+### What this page means
+- 2 bullets: probes vs. your ledger data.
+
+### Fix first
+- 2 bullets ordered by severity.
+
+### Noise vs. real issues
+- 1 bullet (e.g. single-user deployments).
+
+Last line exactly: Not personalized financial advice.`;
+
+    const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+    const result = response.text?.trim() || 'Could not generate system health digest.';
+    setToCache(cacheKey, result);
+    return result;
   } catch (error) {
     return formatAiError(error);
   }
@@ -1003,17 +1281,176 @@ export const getAIExecutiveSummary = async (data: FinancialData): Promise<string
 }
 
 
-export const getInvestmentAIAnalysis = async (holdings: Holding[]): Promise<string> => {
-  const cacheKey = `getInvestmentAIAnalysis:${holdings.map(h => (h.symbol ?? '') + h.quantity).join(',')}`;
+export interface InvestmentHubAiMeta {
+  activeTab?: string;
+  portfolioCount?: number;
+  holdingCount?: number;
+  watchlistCount?: number;
+  totalValueSAR?: number;
+  commoditiesValueSAR?: number;
+  appDisplayCurrency?: string;
+  executionLogCount?: number;
+}
+
+export const getInvestmentAIAnalysis = async (holdings: Holding[], meta?: InvestmentHubAiMeta): Promise<string> => {
+  const symKey = holdings.map((h) => (h.symbol ?? '') + h.quantity).join(',');
+  const metaKey = meta
+    ? `${meta.activeTab ?? ''}|${meta.portfolioCount ?? ''}|${meta.holdingCount ?? ''}|${meta.watchlistCount ?? ''}|${meta.totalValueSAR ?? ''}|${meta.commoditiesValueSAR ?? ''}|${meta.executionLogCount ?? ''}`
+    : '';
+  const cacheKey = `getInvestmentAIAnalysis:${symKey}:${metaKey}`;
   const cached = getFromCache(cacheKey);
   if (cached) return cached;
   try {
-    const prompt = `You are Finova AI, a very clever expert investment advisor. Based on these holdings, provide a brief analysis on diversification and concentration risk in Markdown format. Be direct and insightful; do not give specific buy/sell advice. No HTML. Holdings: ${holdings.map(h => h.symbol ?? '').join(', ')}`;
+    const hub =
+      meta && (meta.activeTab || meta.portfolioCount != null)
+        ? `Workspace context: user is on the "${meta.activeTab ?? 'Investments'}" tab. Personal portfolios: ${meta.portfolioCount ?? 'n/a'}, listed holdings: ${meta.holdingCount ?? 'n/a'}, watchlist symbols: ${meta.watchlistCount ?? 'n/a'}. Approximate total invested book value in SAR (platforms + commodities): ${typeof meta.totalValueSAR === 'number' ? meta.totalValueSAR.toFixed(0) : 'n/a'}; commodities portion (SAR): ${typeof meta.commoditiesValueSAR === 'number' ? meta.commoditiesValueSAR.toFixed(0) : 'n/a'}. App display currency label: ${meta.appDisplayCurrency ?? 'SAR'}. Stored execution log rows: ${typeof meta.executionLogCount === 'number' ? meta.executionLogCount : 'n/a'}. `
+        : '';
+    const prompt = `You are Finova AI, a very clever expert investment advisor. ${hub}Based on these equity/fund holdings (symbols only), give a brief Markdown analysis with ### sections: Diversification, Concentration risk, How this tab fits their workflow (one short paragraph). Be direct; educational tone; no specific buy/sell orders. No HTML. Holdings: ${holdings.map((h) => h.symbol ?? '').filter(Boolean).join(', ') || '(none)'}`;
     const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
-    const result = response.text || "Could not retrieve analysis.";
+    const result = response.text || 'Could not retrieve analysis.';
     setToCache(cacheKey, result);
     return result;
-  } catch (error) { return formatAiError(error); }
+  } catch (error) {
+    return formatAiError(error);
+  }
+};
+
+export interface CommoditiesAiContextItem {
+  name: string;
+  quantity: number;
+  unit: string;
+  zakahClass?: string;
+  currentValue?: number;
+  unrealizedGain?: number;
+  owner?: string | null;
+}
+
+export interface CommoditiesAiContext {
+  items: CommoditiesAiContextItem[];
+  totalValueSar: number;
+  sarPerUsd: number;
+  holdingCount: number;
+}
+
+export interface ExecutionHistoryAiContext {
+  total: number;
+  success: number;
+  failure: number;
+  other: number;
+  /** Current UI filter so the model knows the user may be looking at a subset. */
+  filterLabel: string;
+  sampleLines: string[];
+}
+
+export const getAIExecutionHistoryDigest = async (ctx: ExecutionHistoryAiContext): Promise<string> => {
+  const cacheKey = `getAIExecutionHistoryDigest:${ctx.total}:${ctx.success}:${ctx.failure}:${ctx.filterLabel}:${ctx.sampleLines.join(';').slice(0, 240)}`;
+  const cached = getFromCache(cacheKey);
+  if (cached) return cached;
+  try {
+    const lines =
+      ctx.sampleLines.length > 0
+        ? ctx.sampleLines.join('\n')
+        : '(no sample rows)';
+    const prompt = `You are Finova AI. The user reviews automated investment plan execution logs (simulation / journaling — not guaranteed real broker fills).\nCounts (all stored runs): ${ctx.total} total, ${ctx.success} success, ${ctx.failure} failed, ${ctx.other} other/unknown.\nUI filter active: "${ctx.filterLabel}".\nRecent sample lines (dates + status + trade count hints):\n${lines}\n\nReturn short Markdown with ### Hygiene, ### When failures matter, ### Next checks. Operational tone; no buy/sell advice. No HTML.`;
+    const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+    const result = response.text || 'Could not retrieve analysis.';
+    setToCache(cacheKey, result);
+    return result;
+  } catch (error) {
+    return formatAiError(error);
+  }
+};
+
+/** Context for Wealth Ultra plain-language digest (engine uses USD for portfolio math; plan budget may be SAR). */
+export interface WealthUltraAiContext {
+  totalPortfolioValueUsd: number;
+  deployableCashUsd: number;
+  totalPlannedBuyCostUsd: number;
+  monthlyDeployUsd: number;
+  monthlyBudgetTotal: number;
+  monthlyBudgetCurrency: string;
+  sarPerUsd: number;
+  portfolioHealthLabel: string;
+  portfolioHealthScore: number;
+  alertCount: number;
+  buyOrderCount: number;
+  positionCount: number;
+  investmentPortfolioCount: number;
+  universeTickerCount: number;
+  cashPlannerStatus: string;
+}
+
+export const getAIWealthUltraInsight = async (ctx: WealthUltraAiContext): Promise<string> => {
+  const sig = [
+    ctx.totalPortfolioValueUsd,
+    ctx.deployableCashUsd,
+    ctx.monthlyBudgetTotal,
+    ctx.portfolioHealthScore,
+    ctx.alertCount,
+    ctx.buyOrderCount,
+  ].join(':');
+  const cacheKey = `getAIWealthUltraInsight:${sig}`;
+  const cached = getFromCache(cacheKey);
+  if (cached) return cached;
+  try {
+    const budgetLine =
+      ctx.monthlyBudgetTotal > 0
+        ? `Combined monthly investment plan budget (from your plan): ${ctx.monthlyBudgetTotal.toFixed(2)} ${ctx.monthlyBudgetCurrency}.`
+        : 'No positive monthly investment plan budget is set across portfolios — deployment targets use engine defaults until you set budgets in Investments.';
+    const prompt = `You are Finova AI. Write for someone who is NOT a finance professional.
+
+Facts (do not invent numbers or time windows):
+- Wealth Ultra engine values positions and suggested orders in **USD** (US dollars), using prices from holdings and market data.
+- Conversion reference: **${ctx.sarPerUsd.toFixed(4)} SAR = 1 USD** (used so SAR and USD labels stay consistent elsewhere in the app).
+- Total portfolio value (USD): ${ctx.totalPortfolioValueUsd.toFixed(2)}
+- Deployable cash passed into the engine (USD): ${ctx.deployableCashUsd.toFixed(2)}
+- Planned buy cost of suggested orders (USD): ${ctx.totalPlannedBuyCostUsd.toFixed(2)}
+- Monthly deployment suggestion (USD): ${ctx.monthlyDeployUsd.toFixed(2)}
+- ${budgetLine}
+- Portfolio health: "${ctx.portfolioHealthLabel}" (score ${ctx.portfolioHealthScore}/100).
+- Alerts: ${ctx.alertCount}. Suggested BUY orders: ${ctx.buyOrderCount}. Open positions in engine: ${ctx.positionCount}. Investment portfolios (accounts): ${ctx.investmentPortfolioCount}. Universe tickers: ${ctx.universeTickerCount}.
+- Cash plan vs orders: ${ctx.cashPlannerStatus}
+
+Return Markdown with:
+### What this screen is doing (plain English)
+### What to look at first (based on alerts and cash plan)
+### Currency note (USD vs SAR — one short paragraph, no jargon)
+
+No buy/sell recommendations. No "48 hours" or fake deadlines. No HTML.`;
+    const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+    const result = response.text || 'Could not retrieve analysis.';
+    setToCache(cacheKey, result);
+    return result;
+  } catch (error) {
+    return formatAiError(error);
+  }
+};
+
+export const getAICommoditiesInsight = async (ctx: CommoditiesAiContext): Promise<string> => {
+  const sig = ctx.items
+    .map((i) => `${i.name}:${i.quantity}:${i.zakahClass ?? ''}:${Math.round(i.currentValue ?? 0)}`)
+    .join('|');
+  const cacheKey = `getAICommoditiesInsight:${ctx.holdingCount}:${Math.round(ctx.totalValueSar)}:${ctx.sarPerUsd.toFixed(4)}:${sig.slice(0, 200)}`;
+  const cached = getFromCache(cacheKey);
+  if (cached) return cached;
+  try {
+    const rows =
+      ctx.items.length === 0
+        ? 'No rows yet.'
+        : ctx.items
+            .map(
+              (i) =>
+                `${i.name} ${i.quantity} ${i.unit}${i.owner ? ` (owner: ${i.owner})` : ''} · Zakat: ${i.zakahClass ?? 'n/a'} · ~${Math.round(i.currentValue ?? 0)} SAR · unrealized Δ ~${Math.round(i.unrealizedGain ?? 0)} SAR`,
+            )
+            .join('\n');
+    const prompt = `You are Finova AI. The user tracks physical/digital commodities in Finova; values are in SAR and USD spot prices are converted using USD→SAR = ${ctx.sarPerUsd}.\nTotal SAR (personal rows): ${Math.round(ctx.totalValueSar)} across ${ctx.holdingCount} row(s).\nHoldings:\n${rows}\n\nReturn concise Markdown with ### Snapshot, ### Zakat & reporting (educational, not a religious ruling), ### Concentration & volatility (metals vs crypto). No buy/sell instructions. No HTML.`;
+    const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+    const result = response.text || 'Could not retrieve analysis.';
+    setToCache(cacheKey, result);
+    return result;
+  } catch (error) {
+    return formatAiError(error);
+  }
 };
 
 export const getPlatformPerformanceAnalysis = async (holdings: (Holding & { gainLoss: number; gainLossPercent: number; })[]): Promise<string> => {
@@ -1074,37 +1511,67 @@ export interface TradeAnalysisContext {
     tradeActivitySummary?: string;
     /** ISO date for "as of" grounding. */
     asOfDate?: string;
+    /** Oldest / newest trade date in the analyzed batch (ISO YYYY-MM-DD). */
+    txDateOldest?: string;
+    txDateNewest?: string;
+    /** Human note e.g. "Last 20 trades by date (preferring last 90 days)." */
+    tradeSelectionNote?: string;
 }
 
 export const getAITradeAnalysis = async (
     transactions: InvestmentTransaction[],
     context?: TradeAnalysisContext
 ): Promise<string> => {
-    const txList = transactions
-        .slice(0, 20)
+    const MS_90D = 90 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const sorted = [...(transactions ?? [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const within90 = sorted.filter((t) => now - new Date(t.date).getTime() <= MS_90D);
+    const picked = (within90.length > 0 ? within90 : sorted).slice(0, 20);
+    const dates = picked.map((t) => new Date(t.date)).filter((d) => !isNaN(d.getTime()));
+    const minD = dates.length ? new Date(Math.min(...dates.map((d) => d.getTime()))) : null;
+    const maxD = dates.length ? new Date(Math.max(...dates.map((d) => d.getTime()))) : null;
+    const iso = (d: Date | null) => (d && !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : undefined);
+
+    const txList = picked
         .map(
             (t) =>
                 `${t.type} ${t.symbol} qty=${t.quantity} @ ${t.price} total=${t.total} ${t.currency ?? ''} acct=${t.accountId?.slice(0, 8) ?? '—'}… on ${t.date}`,
         )
         .join('\n');
-    const contextBlock = context
+    const mergedContext: TradeAnalysisContext = {
+        ...context,
+        txDateOldest: context?.txDateOldest ?? iso(minD),
+        txDateNewest: context?.txDateNewest ?? iso(maxD),
+        tradeSelectionNote:
+            context?.tradeSelectionNote ??
+            (picked.length
+                ? `Analyzing ${picked.length} trade row(s), preferring the last 90 days when available. Oldest trade date in this batch: ${iso(minD) ?? 'n/a'}; newest: ${iso(maxD) ?? 'n/a'}.`
+                : undefined),
+    };
+
+    const contextBlock = mergedContext
         ? `
 Current context (use to tailor feedback; educational only):
-${context.asOfDate ? `As-of date: ${context.asOfDate}` : ''}
-${context.riskProfile ? `User risk profile (from settings): ${context.riskProfile}` : ''}
-${context.holdingsSummary ? `Holdings (approx. SAR book): ${context.holdingsSummary}` : ''}
-${context.watchlistSymbols?.length ? `Watchlist symbols: ${context.watchlistSymbols.join(', ')}` : ''}
-${context.planBudget != null ? `Monthly plan budget: ${context.planBudget} ${context.planBudgetCurrency ?? ''}`.trim() : ''}
-${context.planExecutionCurrency ? `Plan execution currency: ${context.planExecutionCurrency}` : ''}
-${context.corePct != null ? `Core/Upside sleeve split: ${(context.corePct * 100).toFixed(0)}% / ${((context.upsidePct ?? 0) * 100).toFixed(0)}%` : ''}
-${context.tradeActivitySummary ? `Recent activity summary: ${context.tradeActivitySummary}` : ''}
+${mergedContext.asOfDate ? `Report run date: ${mergedContext.asOfDate}` : ''}
+${mergedContext.txDateOldest || mergedContext.txDateNewest ? `Trade dates in this batch: ${mergedContext.txDateOldest ?? '?'} → ${mergedContext.txDateNewest ?? '?'}` : ''}
+${mergedContext.tradeSelectionNote ? `Selection: ${mergedContext.tradeSelectionNote}` : ''}
+${mergedContext.riskProfile ? `User risk profile (from settings): ${mergedContext.riskProfile}` : ''}
+${mergedContext.holdingsSummary ? `Holdings (values aggregated in SAR for comparison): ${mergedContext.holdingsSummary}` : ''}
+${mergedContext.watchlistSymbols?.length ? `Watchlist symbols: ${mergedContext.watchlistSymbols.join(', ')}` : ''}
+${mergedContext.planBudget != null && mergedContext.planBudget > 0 ? `Monthly plan budget: ${mergedContext.planBudget} ${mergedContext.planBudgetCurrency ?? ''}`.trim() : 'Monthly plan budget: not set or zero in app — do not assume a monthly cap.'}
+${mergedContext.planExecutionCurrency ? `Plan execution currency: ${mergedContext.planExecutionCurrency}` : ''}
+${mergedContext.corePct != null ? `Core/Upside sleeve split: ${(mergedContext.corePct * 100).toFixed(0)}% / ${((mergedContext.upsidePct ?? 0) * 100).toFixed(0)}%` : ''}
+${mergedContext.tradeActivitySummary ? `Activity summary: ${mergedContext.tradeActivitySummary}` : ''}
 `.trim()
         : '';
 
     const prompt = `You are Finova AI, an expert investment and trading advisor. Analyze these transactions and return direct, educational feedback in Markdown only (no HTML). Use ### for each section. Be specific and actionable; reference symbols and amounts where relevant.
+
+CRITICAL: Use only the trade rows and dates below. If dates span weeks, months, or years, say that clearly. Do **not** claim trades happened in "the last 48 hours" or a short window unless every listed trade date is within that window of the report run date. Mixed USD/SAR amounts appear on rows—describe them as recorded; do not invent conversions.
+
 ${contextBlock ? '\n' + contextBlock + '\n' : ''}
 
-Transactions:
+Transactions (most recent first; amounts as stored per row):
 ${txList || 'None.'}
 
 Respond with exactly these ### sections in order (one short paragraph or 2-3 bullets each; be specific):
@@ -1284,31 +1751,57 @@ One sentence: health of their goal strategy.
     } catch (error) { return formatAiError(error); }
 };
 
-const buildRuleBasedRebalancingPlan = (holdings: Holding[], riskProfile: 'Conservative' | 'Moderate' | 'Aggressive'): string => {
+/** Same shape as MarketDataContext simulated prices — used so AI math matches the Investments UI. */
+export type RebalancingSimulatedPrices = Record<string, { price?: number; change?: number } | undefined>;
+
+export interface RebalancingPlanMeta {
+    bookCurrency: TradeCurrency;
+    sarPerUsd: number;
+    portfolioName?: string;
+    simulatedPrices: RebalancingSimulatedPrices;
+}
+
+function formatBookCurrencyAmount(amount: number, bookCurrency: TradeCurrency): string {
+    const code = bookCurrency === 'USD' ? 'USD' : 'SAR';
+    try {
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: code, maximumFractionDigits: 0 }).format(amount);
+    } catch {
+        return `${amount.toFixed(0)} ${code}`;
+    }
+}
+
+function normalizeHoldingsForRebalancer(holdings: Holding[], meta: RebalancingPlanMeta) {
+    const { bookCurrency, sarPerUsd, simulatedPrices } = meta;
+    return holdings
+        .map((h) => {
+            const value = effectiveHoldingValueInBookCurrency(h, bookCurrency, simulatedPrices, sarPerUsd);
+            return {
+                ...h,
+                value,
+                assetClass: (h.assetClass || 'Other') as string,
+            };
+        })
+        .filter((h) => Number.isFinite(h.value) && h.value > 0);
+}
+
+const buildRuleBasedRebalancingPlan = (
+    holdings: Holding[],
+    riskProfile: 'Conservative' | 'Moderate' | 'Aggressive',
+    meta: RebalancingPlanMeta,
+): string => {
     const targetByRisk: Record<'Conservative' | 'Moderate' | 'Aggressive', { stocks: number; sukuk: number; other: number }> = {
         Conservative: { stocks: 45, sukuk: 45, other: 10 },
         Moderate: { stocks: 60, sukuk: 30, other: 10 },
         Aggressive: { stocks: 75, sukuk: 15, other: 10 },
     };
 
-    const normalized = holdings
-        .map((h) => {
-            const qty = Number(h.quantity || 0);
-            const avgCost = Number(h.avgCost || 0);
-            const marketValue = Number(h.currentValue || 0);
-            const fallback = qty > 0 && avgCost > 0 ? qty * avgCost : 0;
-            const value = marketValue > 0 ? marketValue : fallback;
-            return {
-                ...h,
-                value,
-                assetClass: h.assetClass || 'Other',
-            };
-        })
-        .filter((h) => Number.isFinite(h.value) && h.value > 0);
+    const { bookCurrency, sarPerUsd, portfolioName } = meta;
+    const curLabel = bookCurrency === 'USD' ? 'USD' : 'SAR';
+    const normalized = normalizeHoldingsForRebalancer(holdings, meta);
 
     const totalValue = normalized.reduce((sum, h) => sum + h.value, 0);
     if (totalValue <= 0) {
-        return `### Current Portfolio Analysis\n- We could not detect positive holding market values to analyze concentration.\n- Add or refresh holdings prices, then run rebalancing again.\n\n### Target Allocation (${riskProfile})\n- Stocks: ${targetByRisk[riskProfile].stocks}%\n- Sukuk/Bonds: ${targetByRisk[riskProfile].sukuk}%\n- Other assets: ${targetByRisk[riskProfile].other}%\n\n### Rebalancing Suggestions\n- Update market values first so concentration and sizing are computed accurately.\n- Then run rebalancing and execute via Investment Plan for budgeted, controlled allocation changes.`;
+        return `### Current Portfolio Analysis\n- We could not detect positive holding values for **${portfolioName || 'this portfolio'}** (add positions or refresh live prices on the **Portfolios** tab).\n- Amounts are meant to be in **${curLabel}** (your portfolio's currency).\n\n### Target Allocation (${riskProfile})\n- Stocks: ${targetByRisk[riskProfile].stocks}%\n- Sukuk/Bonds: ${targetByRisk[riskProfile].sukuk}%\n- Other assets: ${targetByRisk[riskProfile].other}%\n\n### Rebalancing Suggestions\n- Enter quantities and latest prices so market values update.\n- Then run this tool again; use **Investment Plan** for budgeted changes.\n\n_Generated with resilient rule-based logic (AI fallback mode)._`;
     }
 
     const equityLike = new Set(['Stock', 'ETF', 'Mutual Fund', 'REIT']);
@@ -1330,44 +1823,70 @@ const buildRuleBasedRebalancingPlan = (holdings: Holding[], riskProfile: 'Conser
     const topHolding = normalized.slice().sort((a, b) => b.value - a.value)[0];
     const topPct = topHolding ? toPct(topHolding.value) : 0;
     const target = targetByRisk[riskProfile];
+    const fivePct = totalValue * 0.05;
+    const fmt = (n: number) => formatBookCurrencyAmount(n, bookCurrency);
 
     return `### Current Portfolio Analysis
-- Portfolio value analyzed: **${totalValue.toLocaleString('en-US', { maximumFractionDigits: 0 })}**.
-- Concentration is ${topPct > 35 ? '**high**' : topPct > 20 ? '**moderate**' : '**controlled**'} with top holding **${topHolding?.symbol || 'N/A'} (${topPct.toFixed(1)}%)**.
-- Current mix is **Stocks ${current.stocks.toFixed(1)}% · Sukuk/Bonds ${current.sukuk.toFixed(1)}% · Other ${current.other.toFixed(1)}%**.
+- **${portfolioName || 'Portfolio'}** total (holdings only): **${fmt(totalValue)}** — all figures in **${curLabel}** (1 USD = ${sarPerUsd.toFixed(4)} SAR for reference).
+- Concentration is ${topPct > 35 ? '**high**' : topPct > 20 ? '**moderate**' : '**controlled**'}; largest line is **${topHolding?.symbol || 'N/A'}** at **${topPct.toFixed(1)}%** of holdings.
+- Current mix: **Stocks ${current.stocks.toFixed(1)}% · Sukuk/Bonds ${current.sukuk.toFixed(1)}% · Other ${current.other.toFixed(1)}%**.
 
 ### Target Allocation (${riskProfile})
-- Stocks: **${target.stocks}%**
-- Sukuk/Bonds: **${target.sukuk}%**
-- Other assets: **${target.other}%**
+- Stocks: **${target.stocks}%** · Sukuk/Bonds: **${target.sukuk}%** · Other: **${target.other}%** (illustrative split for this risk level).
 
 ### Rebalancing Suggestions
-- Adjust in small monthly steps to reduce drift: prioritize buckets furthest from target (current vs target gap).
-- Cap single-position adds when top holding exceeds 25% until diversification improves.
-- Execute changes through **Investment Plan / Execute & Results** so amounts remain budgeted and traceable.
+- Move toward the target mix in **small steps** (e.g. monthly), focusing on the bucket that is furthest from its target.
+- As a rule of thumb, consider keeping any **single stock** below roughly **${fmt(fivePct)}** (~5% of this portfolio) unless you intentionally concentrate.
+- Record trades under **Investment Plan** so amounts stay within your budget.
 
 _Generated with resilient rule-based logic (AI fallback mode)._`;
 };
 
-export const getAIRebalancingPlan = async (holdings: Holding[], riskProfile: 'Conservative' | 'Moderate' | 'Aggressive'): Promise<string> => {
+export const getAIRebalancingPlan = async (
+    holdings: Holding[],
+    riskProfile: 'Conservative' | 'Moderate' | 'Aggressive',
+    meta: RebalancingPlanMeta,
+): Promise<string> => {
+    const normalized = normalizeHoldingsForRebalancer(holdings, meta);
+    const { bookCurrency, sarPerUsd, portfolioName } = meta;
+    const curLabel = bookCurrency === 'USD' ? 'USD' : 'SAR';
+    const totalValue = normalized.reduce((s, h) => s + h.value, 0);
+    if (normalized.length === 0 || totalValue <= 0) {
+        return buildRuleBasedRebalancingPlan(holdings, riskProfile, meta);
+    }
+    const lines = normalized
+        .slice()
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 24)
+        .map((h) => `${h.symbol ?? '—'}: ${formatBookCurrencyAmount(h.value, bookCurrency)} (${h.assetClass || 'Other'}, ${totalValue > 0 ? ((h.value / totalValue) * 100).toFixed(1) : '0'}%)`);
+    const holdingsSummary = lines.join('; ') || '(no priced positions)';
+
     try {
-        const holdingsSummary = holdings.map(h => `${h.symbol}: ${h.currentValue.toFixed(0)} SAR (${h.assetClass})`).join(', ');
-        const prompt = `You are Finova AI, a very clever expert investment advisor specializing in portfolio construction. User risk profile: ${riskProfile}. Holdings: ${holdingsSummary}. Return a short rebalancing analysis in Markdown only (no HTML). Use ### for each section. Be direct and specific.
+        const prompt = `${DEFAULT_SYSTEM_INSTRUCTION}
+
+Portfolio: **${portfolioName || 'Selected portfolio'}**.
+All **monetary amounts in this analysis are in ${curLabel}** (portfolio book currency). Reference FX: **1 USD = ${sarPerUsd.toFixed(4)} SAR** (do not convert line items to the other currency unless showing an approximate secondary figure in parentheses).
+Holdings value total (**${curLabel}**): **${formatBookCurrencyAmount(totalValue, bookCurrency)}**.
+Risk profile: **${riskProfile}**.
+Line items: ${holdingsSummary}
+
+Return a short rebalancing analysis in Markdown only (no HTML). Use ### for each section. Be direct; use only the numbers above (do not invent SAR if the book currency is USD).
 
 ### Current Portfolio Analysis
-- One sentence on concentration/diversification; one on risk level.
+- Two bullets: diversification/concentration, and whether risk seems aligned with **${riskProfile}** for this mix.
 
 ### Target Allocation (${riskProfile})
-- 2-3 bullets on how a ${riskProfile} investor might allocate. Use numbers if possible.
+- 2–3 bullets: educational allocation ideas for this profile. Reference **${curLabel}** where you mention amounts.
 
 ### Rebalancing Suggestions
-- 2-3 concrete, educational steps (no buy/sell advice). One sentence each.
+- 3 bullets: practical, educational steps (no specific buy/sell orders). Mention position sizing in **${curLabel}** using ~5% of **${formatBookCurrencyAmount(totalValue * 0.05, bookCurrency)}** as an example cap for a single name only if relevant.
+
 Markdown only.`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
-        return response.text || buildRuleBasedRebalancingPlan(holdings, riskProfile);
+        return response.text || buildRuleBasedRebalancingPlan(holdings, riskProfile, meta);
     } catch (error) {
         console.warn('[getAIRebalancingPlan] AI unavailable, using deterministic fallback.', error);
-        return buildRuleBasedRebalancingPlan(holdings, riskProfile);
+        return buildRuleBasedRebalancingPlan(holdings, riskProfile, meta);
     }
 };
 

@@ -4,6 +4,7 @@ import { AuthContext } from './AuthContext';
 import { Page, Transaction } from '../types';
 import { DataContext } from './DataContext';
 import { useMarketData } from './MarketDataContext';
+import { useCurrency } from './CurrencyContext';
 import {
   reconcileCashAccountBalance,
   detectStaleMarketData,
@@ -11,9 +12,13 @@ import {
   collectTrackedSymbols,
   getStaleQuoteSymbols,
 } from '../services/dataQuality';
-import { normalizedMonthlyExpense, cashRunwayMonths } from '../services/financeMetrics';
-import { salaryToExpenseCoverage } from '../services/salaryExpenseCoverage';
+import { normalizedMonthlyExpenseSar, cashRunwayMonths } from '../services/financeMetrics';
+import { salaryToExpenseCoverageSar } from '../services/salaryExpenseCoverage';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
+import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
+import { useTodosOptional } from './TodosContext';
+import { computeTaskCounts } from '../services/todoModel';
 
 const READ_STORAGE_KEY = 'h.s.notifications.read';
 
@@ -66,6 +71,8 @@ const severityScore: Record<'info' | 'warning' | 'urgent', number> = {
 export function NotificationsProvider({ children }: { children: React.ReactNode }) {
   const { data } = useContext(DataContext) ?? {};
   const auth = useContext(AuthContext);
+  const todosOpt = useTodosOptional();
+  const { exchangeRate } = useCurrency();
   const { simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt } = useMarketData();
   const [readIds, setReadIds] = useState<Set<string>>(loadReadIds);
   const [pendingBudgetRequestCount, setPendingBudgetRequestCount] = useState(0);
@@ -230,30 +237,22 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       });
     }
 
-    if (pendingBudgetRequestCount > 0) {
-      push({
-        id: 'budget-requests-pending',
-        category: 'Budget',
-        message: `${pendingBudgetRequestCount} budget request(s) are waiting for review.`,
-        date: now.toISOString(),
-        isRead: false,
-        pageLink: 'Budgets',
-        severity: pendingBudgetRequestCount >= 3 ? 'urgent' : 'warning',
-        actionHint: 'Finalize pending requests to keep budget workflow moving.',
-      });
-    }
-
-    // Cash runway automation (checking+savings vs avg monthly expense) — use personal wealth only
-    const accountsForRunway = (data as any)?.personalAccounts ?? data.accounts ?? [];
-    const transactionsForRunway = (data as any)?.personalTransactions ?? data.transactions ?? [];
-    const liquidCash = accountsForRunway
-      .filter((a: any) => a.type === 'Checking' || a.type === 'Savings')
-      .reduce((sum: number, a: any) => sum + Math.max(0, Number(a.balance) || 0), 0);
-    const avgMonthlyExpense = normalizedMonthlyExpense(transactionsForRunway as { date: string; type?: string; category?: string; amount?: number }[], {
+    // Cash runway — personal checking/savings in SAR vs SAR-normalized avg monthly expense
+    const accountsForRunway = getPersonalAccounts(data);
+    const transactionsForRunway = getPersonalTransactions(data);
+    const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+    const liquidCashSar = accountsForRunway
+      .filter((a) => a.type === 'Checking' || a.type === 'Savings')
+      .reduce((sum, a) => {
+        const bal = Math.max(0, Number(a.balance) || 0);
+        const cur = a.currency === 'USD' ? 'USD' : 'SAR';
+        return sum + toSAR(bal, cur, sarPerUsd);
+      }, 0);
+    const avgMonthlyExpenseSar = normalizedMonthlyExpenseSar(transactionsForRunway, accountsForRunway, sarPerUsd, {
       monthsLookback: 6,
     });
-    const runwayMonths = cashRunwayMonths(liquidCash, avgMonthlyExpense);
-    if (avgMonthlyExpense > 0 && runwayMonths > 0 && runwayMonths < 2) {
+    const runwayMonths = cashRunwayMonths(liquidCashSar, avgMonthlyExpenseSar);
+    if (avgMonthlyExpenseSar > 0 && runwayMonths > 0 && runwayMonths < 2) {
       push({
         id: 'cash-runway-low',
         category: 'System',
@@ -262,16 +261,16 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         isRead: false,
         pageLink: 'Accounts',
         severity: runwayMonths < 1 ? 'urgent' : 'warning',
-        actionHint: 'Reduce discretionary expenses or increase income buffers.',
+        actionHint: 'Reduce discretionary expenses or increase income buffers (amounts use SAR and your FX rate).',
       });
     }
 
-    const salCov = salaryToExpenseCoverage(transactionsForRunway as Transaction[], 6);
+    const salCov = salaryToExpenseCoverageSar(transactionsForRunway, accountsForRunway, sarPerUsd, 6);
     if (salCov.ratio != null && salCov.ratio < 1 && salCov.ratio >= 0.2) {
       push({
         id: 'salary-vs-spend-heuristic',
         category: 'System',
-        message: `Salary signal vs avg spend: ${salCov.ratio.toFixed(2)}× (under 1×). Review budget or income.`,
+        message: `Salary signal vs avg spend (SAR): ${salCov.ratio.toFixed(2)}× (under 1×). Review budget or income.`,
         date: now.toISOString(),
         isRead: false,
         pageLink: 'Analysis',
@@ -304,9 +303,9 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     }
 
     const hasMarketExposure =
-      ((data.investments ?? []).length > 0 ||
+      (getPersonalInvestments(data).length > 0 ||
         (data.watchlist ?? []).length > 0 ||
-        (data.commodityHoldings ?? []).length > 0);
+        getPersonalCommodityHoldings(data).length > 0);
     if (hasMarketExposure) {
       const staleM = detectStaleMarketData(lastUpdated, isLive);
       if (staleM.isStale) {
@@ -322,8 +321,14 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         });
       }
       const tracked = collectTrackedSymbols(data as Parameters<typeof collectTrackedSymbols>[0]);
-      const staleSyms = getStaleQuoteSymbols(tracked, symbolQuoteUpdatedAt, isLive);
-      if (isLive && Object.keys(symbolQuoteUpdatedAt).length > 0 && staleSyms.length > 0) {
+      const hoursSinceGlobal = lastUpdated != null && !Number.isNaN(lastUpdated.getTime())
+        ? (Date.now() - lastUpdated.getTime()) / 3600000
+        : 999;
+      const globalFresh = hoursSinceGlobal < 2;
+      const staleSyms = getStaleQuoteSymbols(tracked, symbolQuoteUpdatedAt, isLive, {
+        countMissingTimestampAsStale: !globalFresh,
+      });
+      if (isLive && staleSyms.length > 0) {
         push({
           id: 'market-symbols-stale',
           category: 'System',
@@ -398,13 +403,16 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       }
     });
 
-    // Smart monthly digest (external expenses only)
+    // Smart monthly digest (external expenses only, SAR-normalized per account currency)
+    const accByIdRunway = new Map(accountsForRunway.map((a) => [a.id, a]));
     const monthlyExpensesByKey = new Map<string, number>();
-    transactionsForRunway.forEach((t: any) => {
+    transactionsForRunway.forEach((t) => {
       if (!countsAsExpenseForCashflowKpi(t) || !t.date) return;
       const d = new Date(t.date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      monthlyExpensesByKey.set(key, (monthlyExpensesByKey.get(key) || 0) + Math.abs(Number(t.amount) || 0));
+      const cur = accByIdRunway.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
+      const add = toSAR(Math.abs(Number(t.amount) || 0), cur, sarPerUsd);
+      monthlyExpensesByKey.set(key, (monthlyExpensesByKey.get(key) || 0) + add);
     });
     const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -420,15 +428,45 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         isRead: false,
         pageLink: 'Plan',
         severity: 'warning',
-        actionHint: 'Open Plan to inspect categories driving the spike.',
+        actionHint: 'Open Plan to inspect categories driving the spike (compare like-for-like in SAR).',
       });
+    }
+
+    const todayYmd = now.toISOString().slice(0, 10);
+    const tdList = todosOpt?.todos;
+    if (tdList?.length) {
+      const { overdue, dueToday } = computeTaskCounts(tdList, todayYmd);
+      if (dueToday > 0) {
+        push({
+          id: `todo-digest-due-${todayYmd}`,
+          category: 'System',
+          message: `You have ${dueToday} task${dueToday === 1 ? '' : 's'} due today.`,
+          date: now.toISOString(),
+          isRead: false,
+          pageLink: 'Notifications',
+          severity: 'warning',
+          actionHint: 'Open My tasks on the Tasks & alerts page.',
+        });
+      }
+      if (overdue > 0) {
+        push({
+          id: `todo-digest-overdue-${todayYmd}`,
+          category: 'System',
+          message: `You have ${overdue} overdue task${overdue === 1 ? '' : 's'}.`,
+          date: now.toISOString(),
+          isRead: false,
+          pageLink: 'Notifications',
+          severity: 'urgent',
+          actionHint: 'Complete, snooze, or reschedule from My tasks.',
+        });
+      }
     }
 
     // Prioritize smarter, keep feed concise
     return list
       .sort((a, b) => (b.score || 0) - (a.score || 0) || new Date(b.date).getTime() - new Date(a.date).getTime())
       .slice(0, 40);
-  }, [data, simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt, pendingBudgetRequestCount, pendingTransactionApprovalCount, isAdmin, auth?.user?.id]);
+  }, [data, simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt, exchangeRate, pendingBudgetRequestCount, pendingTransactionApprovalCount, isAdmin, auth?.user?.id, todosOpt?.todos]);
 
   const notificationsWithRead = useMemo(
     () => notifications.map((n) => ({ ...n, isRead: readIds.has(n.id) })),

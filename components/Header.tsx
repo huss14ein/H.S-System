@@ -1,5 +1,5 @@
 import React, { useState, useContext, useMemo, useRef, useEffect } from 'react';
-import { Page } from '../types';
+import { Page, TradeCurrency, Account } from '../types';
 import { NAVIGATION_ITEMS, PAGE_DISPLAY_NAMES } from '../constants';
 import { HSLogo } from './icons/HSLogo';
 import { AuthContext } from '../context/AuthContext';
@@ -15,17 +15,22 @@ import { HeadsetIcon } from './icons/HeadsetIcon';
 import { CheckIcon } from './icons/CheckIcon';
 import { useMarketData } from '../context/MarketDataContext';
 import { useNotifications } from '../context/NotificationsContext';
+import { useTodosOptional } from '../context/TodosContext';
+import { ClipboardDocumentListIcon } from './icons/ClipboardDocumentListIcon';
 import { ArrowPathIcon } from './icons/ArrowPathIcon';
 import { usePrivacyMask } from '../context/PrivacyContext';
-
+import { resolveSarPerUsd } from '../utils/currencyMath';
+import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
+import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 interface HeaderProps {
   activePage: Page;
   setActivePage: (page: Page) => void;
   onOpenLiveAdvisor: () => void;
   onOpenCommandPalette?: () => void;
+  triggerPageActionPair?: (page: Page, action: string) => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAdvisor, onOpenCommandPalette }) => {
+const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAdvisor, onOpenCommandPalette, triggerPageActionPair }) => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isCurrencyOpen, setIsCurrencyOpen] = useState(false);
@@ -33,7 +38,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   
   const auth = useContext(AuthContext);
   const { data } = useContext(DataContext)!;
-  const { currency, setCurrency } = useCurrency();
+  const { currency, setCurrency, exchangeRate } = useCurrency();
   const { refreshPrices, isRefreshing, lastUpdated, isLive } = useMarketData();
   const [pricesStatusLabel, setPricesStatusLabel] = useState('');
   const lastUpdatedRef = useRef(lastUpdated);
@@ -62,6 +67,9 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
 
   const notificationsContext = useNotifications();
   const notificationCount = notificationsContext?.unreadCount ?? 0;
+  const todosOpt = useTodosOptional();
+  const todoActive = todosOpt?.activeCount ?? 0;
+  const todoOverdue = todosOpt?.overdueCount ?? 0;
   const { playNotificationSound: soundEnabled } = usePrivacyMask();
 
   const prevNotificationCountRef = useRef(notificationCount);
@@ -94,7 +102,13 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
 
   const handleBellClick = () => {
     if (soundEnabled && notificationCount > 0) playBeepRef.current();
-    setActivePage('Notifications');
+    if (triggerPageActionPair) triggerPageActionPair('Notifications', 'notifications-tab:alerts');
+    else setActivePage('Notifications');
+  };
+
+  const handleTasksShortcut = () => {
+    if (triggerPageActionPair) triggerPageActionPair('Notifications', 'notifications-tab:tasks');
+    else setActivePage('Notifications');
   };
 
   const navGroups = useMemo(() => [
@@ -116,21 +130,39 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
 
   const investmentProgress = useMemo(() => {
     if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0 };
+    const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+    const plan = data.investmentPlan;
+    const planCurrency: TradeCurrency = (plan.budgetCurrency as TradeCurrency) || 'SAR';
+    const convertAmount = (amount: number, from: TradeCurrency, to: TradeCurrency) => {
+      if (!Number.isFinite(amount) || amount <= 0) return 0;
+      if (from === to) return amount;
+      if (from === 'USD' && to === 'SAR') return amount * sarPerUsd;
+      if (from === 'SAR' && to === 'USD') return amount / sarPerUsd;
+      return amount;
+    };
     const currentMonth = new Date().getMonth();
     const currentYear = new Date().getFullYear();
+    const personalAccountIds = new Set(getPersonalAccounts(data).map((a: Account) => a.id));
+    const accounts = data?.accounts ?? [];
+    const investments = getPersonalInvestments(data);
     const monthlyInvested = (data?.investmentTransactions ?? [])
-      .filter(t => {
+      .filter((t) => {
+        const aid = t.accountId ?? (t as { account_id?: string }).account_id ?? '';
+        if (!aid || !personalAccountIds.has(aid)) return false;
         const d = new Date(t.date);
         return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy';
       })
-      .reduce((sum, t) => sum + (t.total ?? 0), 0);
-    const plan = data?.investmentPlan;
+      .reduce((sum, t) => {
+        const c = inferInvestmentTransactionCurrency(t, accounts, investments);
+        return sum + convertAmount(t.total ?? 0, c, planCurrency);
+      }, 0);
+    const target = Math.max(0, Number(plan?.monthlyBudget) || 0);
     return {
-      percent: Math.min((monthlyInvested / (plan?.monthlyBudget || 1)) * 100, 100),
+      percent: target > 0 ? Math.min((monthlyInvested / target) * 100, 100) : 0,
       amount: monthlyInvested,
-      target: plan?.monthlyBudget ?? 0
+      target,
     };
-  }, [data]);
+  }, [data, exchangeRate]);
 
   return (
     <header className="bg-white border-b border-gray-100 sticky top-0 z-30 shadow-sm">
@@ -247,6 +279,27 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                 )}
               </div>
               
+              <button
+                type="button"
+                onClick={handleTasksShortcut}
+                className="relative flex p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all"
+                title={todoOverdue > 0 ? `${todoOverdue} overdue tasks` : 'My tasks'}
+                aria-label={`My tasks${todoActive > 0 ? `, ${todoActive} open` : ''}`}
+              >
+                <ClipboardDocumentListIcon className="h-6 w-6" />
+                {todoActive > 0 && (
+                  <span className="absolute top-1.5 right-1.5 flex h-4 min-w-[1rem] px-0.5">
+                    <span
+                      className={`relative inline-flex rounded-full min-w-[1rem] h-4 px-1 text-white text-[10px] items-center justify-center font-bold ${
+                        todoOverdue > 0 ? 'bg-rose-500' : 'bg-primary'
+                      }`}
+                    >
+                      {todoActive > 99 ? '99+' : todoActive}
+                    </span>
+                  </span>
+                )}
+              </button>
+
               <button onClick={handleBellClick} className="relative p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all" aria-label={`Notifications${notificationCount > 0 ? `, ${notificationCount} unread` : ''}`}>
                   <BellIcon className="h-6 w-6" />
                   {notificationCount > 0 && (

@@ -1,50 +1,99 @@
-import React, { useMemo, useContext, useState, useCallback } from 'react';
+import React, { useMemo, useContext, useState, useCallback, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 import AllocationPieChart from '../components/charts/AllocationPieChart';
 import { Holding } from '../types';
 import AllocationBarChart from '../components/charts/AllocationBarChart';
-import { getAIInvestmentOverviewAnalysis, formatAiError } from '../services/geminiService';
+import { getAIInvestmentOverviewAnalysis, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { useCurrency } from '../context/CurrencyContext';
-import { toSAR, resolveSarPerUsd, tradableCashBucketToSAR } from '../utils/currencyMath';
-import { getPersonalWealthData } from '../utils/wealthScope';
+import { useMarketData } from '../context/MarketDataContext';
+import { quoteNotionalInBookCurrency, resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
+import { holdingUsesLiveQuote } from '../utils/holdingValuation';
+import { getPersonalCommodityHoldings, getPersonalInvestments, getPersonalWealthData } from '../utils/wealthScope';
 import type { Account } from '../types';
+import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import {
+    ResolvedSymbolLabel,
+    formatSymbolWithCompany,
+    symbolsFromHoldings,
+} from '../components/SymbolWithCompanyName';
 
 type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
+
+const SWOT_AI_LANG_KEY = 'finova_default_ai_lang_v1';
+
+function holdingValueInBookCurrency(
+    h: Holding,
+    bookCurrency: 'USD' | 'SAR',
+    simulatedPrices: Record<string, { price?: number; change?: number } | undefined>,
+    sarPerUsd: number,
+): number {
+    const qty = Number(h.quantity || 0);
+    const avgCost = Number(h.avgCost || 0);
+    const sym = (h.symbol || '').trim().toUpperCase();
+    const priceInfo = holdingUsesLiveQuote(h) ? simulatedPrices[sym] : undefined;
+    if (priceInfo && Number.isFinite(priceInfo.price) && qty > 0) {
+        return quoteNotionalInBookCurrency(priceInfo.price as number, qty, sym, bookCurrency, sarPerUsd);
+    }
+    const marketValue = Number(h.currentValue || 0);
+    const costValue = avgCost * qty;
+    return marketValue > 0 ? marketValue : costValue > 0 ? costValue : 0;
+}
 
 const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => void }> = ({ setActiveTab }) => {
     const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
     const { isAiAvailable } = useAI();
     const { exchangeRate } = useCurrency();
+    const { simulatedPrices } = useMarketData();
 
-    const { allHoldingsWithGains, assetClassAllocation, portfolioAllocation, tradableCashSAR } = useMemo(() => {
+    const { allHoldingsWithGains, assetClassAllocation, portfolioAllocation, tradableCashSAR, commoditiesSAR } = useMemo(() => {
         const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
-        const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        const investments = getPersonalInvestments(data);
         const { personalAccounts } = getPersonalWealthData(data);
         const tradableCashSAR = (personalAccounts as Account[])
             .filter((a) => a.type === 'Investment')
             .reduce((s, a) => s + tradableCashBucketToSAR(getAvailableCashForAccount(a.id), sarPerUsd), 0);
-        const allHoldings: (Holding & { portfolioCurrency?: 'USD' | 'SAR' })[] = investments.flatMap((p: { holdings?: Holding[]; currency?: 'USD' | 'SAR' }) =>
-            (p.holdings || []).map((h: Holding) => ({ ...h, portfolioCurrency: p.currency })),
+
+        const allCommodities = getPersonalCommodityHoldings(data);
+        let commoditiesSAR = 0;
+        for (const ch of allCommodities) {
+            const sym = (ch.symbol || '').trim().toUpperCase();
+            const px = simulatedPrices[sym];
+            const raw =
+                px && Number.isFinite(px.price) ? px.price * (ch.quantity ?? 0) : (ch.currentValue ?? 0);
+            commoditiesSAR += toSAR(raw, 'USD', sarPerUsd);
+        }
+
+        const allHoldings: (Holding & { portfolioCurrency?: 'USD' | 'SAR' })[] = investments.flatMap(
+            (p: { holdings?: Holding[]; currency?: 'USD' | 'SAR' }) =>
+                (p.holdings || []).map((h: Holding) => ({ ...h, portfolioCurrency: p.currency })),
         );
 
         const allHoldingsWithGains = allHoldings
             .map((h) => {
                 const qty = Number(h.quantity || 0);
                 const avgCost = Number(h.avgCost || 0);
-                const marketValue = Number(h.currentValue || 0);
-                const costValue = avgCost * qty;
-                const effectiveValue = marketValue > 0 ? marketValue : (costValue > 0 ? costValue : 0);
-                const effectiveValueSar = toSAR(effectiveValue, h.portfolioCurrency, sarPerUsd);
-                const costValueSar = toSAR(costValue, h.portfolioCurrency, sarPerUsd);
-                const gainLossSar = effectiveValueSar - costValueSar;
-                const gainLossPercentSar = costValueSar > 0 ? (gainLossSar / costValueSar) * 100 : 0;
-                return { ...h, currentValue: effectiveValueSar, gainLoss: gainLossSar, gainLossPercent: gainLossPercentSar };
+                const book = (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR';
+                const effectiveInBook = holdingValueInBookCurrency(h, book, simulatedPrices, sarPerUsd);
+                const costInBook = avgCost * qty;
+                const gainLossBook = effectiveInBook - costInBook;
+                const gainLossPercent = costInBook > 0 ? (gainLossBook / costInBook) * 100 : 0;
+                const valueSar = toSAR(effectiveInBook, book, sarPerUsd);
+                return {
+                    ...h,
+                    currentValue: valueSar,
+                    currentValueSar: valueSar,
+                    currentValueBook: effectiveInBook,
+                    portfolioCurrency: book,
+                    costBasisBook: costInBook,
+                    gainLoss: gainLossBook,
+                    gainLossPercent,
+                };
             })
             .filter((h) => Number.isFinite(h.currentValue) && h.currentValue > 0);
 
@@ -56,37 +105,73 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
         if (tradableCashSAR > 0) {
             assetAllocationMap.set('Cash', (assetAllocationMap.get('Cash') || 0) + tradableCashSAR);
         }
+        if (commoditiesSAR > 0) {
+            assetAllocationMap.set('Commodities', (assetAllocationMap.get('Commodities') || 0) + commoditiesSAR);
+        }
         const assetClassAllocation = Array.from(assetAllocationMap, ([name, value]: [string, number]) => ({ name, value }))
             .filter((x: { name: string; value: number }) => Number.isFinite(x.value) && x.value > 0)
             .sort((a: { value: number }, b: { value: number }) => b.value - a.value);
 
         const portfolioRows = investments
-            .map((p: { name?: string; currency?: string; holdings?: { quantity?: number; avgCost?: number; currentValue?: number }[] }) => {
-                const portfolioValue = (p.holdings || []).reduce((sum: number, h: { quantity?: number; avgCost?: number; currentValue?: number }) => {
-                    const qty = Number(h.quantity || 0);
-                    const avgCost = Number(h.avgCost || 0);
-                    const marketValue = Number(h.currentValue || 0);
-                    const fallbackValue = avgCost * qty;
-                    const effectiveValue = marketValue > 0 ? marketValue : (fallbackValue > 0 ? fallbackValue : 0);
-                    return sum + effectiveValue;
-                }, 0);
-                return { name: p.name, value: toSAR(portfolioValue, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd) };
+            .map((p: { name?: string; currency?: string; holdings?: Holding[] }) => {
+                const cur = (p.currency ?? 'USD') as 'USD' | 'SAR';
+                let sumNative = 0;
+                for (const h of p.holdings || []) {
+                    sumNative += holdingValueInBookCurrency(h, cur, simulatedPrices, sarPerUsd);
+                }
+                return { name: p.name ?? 'Portfolio', value: toSAR(sumNative, cur, sarPerUsd) };
             })
-            .filter((x: { name?: string; value: number }) => Number.isFinite(x.value) && x.value > 0);
+            .filter((x: { name: string; value: number }) => Number.isFinite(x.value) && x.value > 0);
         const cashRow =
             tradableCashSAR > 0 ? [{ name: 'Uninvested cash (platforms)', value: tradableCashSAR }] : [];
-        const portfolioAllocation = [...portfolioRows, ...cashRow].sort((a: { value: number }, b: { value: number }) => b.value - a.value);
+        const commodityRow = commoditiesSAR > 0 ? [{ name: 'Commodities', value: commoditiesSAR }] : [];
+        const portfolioAllocation = [...portfolioRows, ...cashRow, ...commodityRow].sort(
+            (a: { value: number }, b: { value: number }) => b.value - a.value,
+        );
 
-        return { allHoldingsWithGains, assetClassAllocation, portfolioAllocation, tradableCashSAR };
-    }, [data, exchangeRate, getAvailableCashForAccount]);
+        return { allHoldingsWithGains, assetClassAllocation, portfolioAllocation, tradableCashSAR, commoditiesSAR };
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
 
-    const [aiAnalysis, setAiAnalysis] = useState('');
+    const holdingSymbolsForNames = useMemo(() => symbolsFromHoldings(allHoldingsWithGains), [allHoldingsWithGains]);
+    const { names: companyNameMap } = useCompanyNames(holdingSymbolsForNames);
+
+    const [swotEn, setSwotEn] = useState('');
+    const [swotAr, setSwotAr] = useState<string | null>(null);
+    const [swotDisplayLang, setSwotDisplayLang] = useState<'en' | 'ar'>(() => {
+        try {
+            return typeof localStorage !== 'undefined' && localStorage.getItem(SWOT_AI_LANG_KEY) === 'ar' ? 'ar' : 'en';
+        } catch {
+            return 'en';
+        }
+    });
+    const [isTranslatingSwot, setIsTranslatingSwot] = useState(false);
+    const [swotTranslateError, setSwotTranslateError] = useState<string | null>(null);
     const [aiError, setAiError] = useState<string | null>(null);
     const [isAiLoading, setIsAiLoading] = useState(false);
 
+    useEffect(() => {
+        if (swotDisplayLang !== 'ar' || !swotEn.trim() || swotAr != null || !isAiAvailable) return;
+        let cancelled = false;
+        (async () => {
+            setIsTranslatingSwot(true);
+            setSwotTranslateError(null);
+            try {
+                const ar = await translateFinancialInsightToArabic(swotEn);
+                if (!cancelled) setSwotAr(ar);
+            } catch (e) {
+                if (!cancelled) setSwotTranslateError(formatAiError(e));
+            } finally {
+                if (!cancelled) setIsTranslatingSwot(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [swotDisplayLang, swotEn, swotAr, isAiAvailable]);
+
     const diversification = useMemo(() => {
         const totalValue =
-            allHoldingsWithGains.reduce((s, h) => s + h.currentValue, 0) + tradableCashSAR;
+            allHoldingsWithGains.reduce((s, h) => s + h.currentValue, 0) + tradableCashSAR + commoditiesSAR;
         const topHolding = [...allHoldingsWithGains].sort((a, b) => b.currentValue - a.currentValue)[0];
         const topHoldingPct = totalValue > 0 && topHolding ? (topHolding.currentValue / totalValue) * 100 : 0;
         const topAssetClass = assetClassAllocation[0];
@@ -117,22 +202,32 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
             warnings,
             status,
         };
-    }, [allHoldingsWithGains, assetClassAllocation, tradableCashSAR]);
+    }, [allHoldingsWithGains, assetClassAllocation, tradableCashSAR, commoditiesSAR]);
 
     const handleGenerateAnalysis = useCallback(async () => {
         setIsAiLoading(true);
         setAiError(null);
+        setSwotTranslateError(null);
+        setSwotEn('');
+        setSwotAr(null);
         try {
             const topHoldings = [...allHoldingsWithGains].sort((a, b) => b.gainLossPercent - a.gainLossPercent);
-            const result = await getAIInvestmentOverviewAnalysis(portfolioAllocation, assetClassAllocation, topHoldings.map(h => ({ name: h.name || h.symbol, gainLossPercent: h.gainLossPercent })));
-            setAiAnalysis(result);
+            const result = await getAIInvestmentOverviewAnalysis(
+                portfolioAllocation,
+                assetClassAllocation,
+                topHoldings.map((h) => ({
+                    name: formatSymbolWithCompany(h.symbol, h.name, companyNameMap),
+                    gainLossPercent: h.gainLossPercent,
+                })),
+            );
+            setSwotEn(result);
         } catch (err) {
             setAiError(formatAiError(err));
-            setAiAnalysis('');
+            setSwotEn('');
         } finally {
             setIsAiLoading(false);
         }
-    }, [allHoldingsWithGains, portfolioAllocation, assetClassAllocation]);
+    }, [allHoldingsWithGains, portfolioAllocation, assetClassAllocation, companyNameMap]);
 
     if (loading || !data) {
         return (
@@ -200,7 +295,19 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                 <div className="rounded-xl border border-slate-200 bg-white p-4">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Top holding</p>
-                    <p className="text-lg font-bold text-slate-900 mt-1">{diversification.topHolding?.symbol || '—'}</p>
+                    <div className="text-lg font-bold text-slate-900 mt-1">
+                        {diversification.topHolding?.symbol ? (
+                            <ResolvedSymbolLabel
+                                symbol={diversification.topHolding.symbol}
+                                storedName={diversification.topHolding.name}
+                                names={companyNameMap}
+                                layout="stacked"
+                                symbolClassName="text-lg font-bold text-slate-900"
+                            />
+                        ) : (
+                            '—'
+                        )}
+                    </div>
                     <p className="text-sm tabular-nums text-slate-600">{diversification.topHoldingPct.toFixed(1)}%</p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-white p-4">
@@ -234,7 +341,17 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                                 const pct = diversification.totalValue > 0 ? (h.currentValue / diversification.totalValue) * 100 : 0;
                                 return (
                                     <div key={h.id}>
-                                        <div className="flex items-center justify-between text-xs text-slate-600"><span>{h.symbol}</span><span className="tabular-nums">{pct.toFixed(1)}%</span></div>
+                                        <div className="flex items-center justify-between gap-2 text-xs text-slate-600 min-w-0">
+                                            <ResolvedSymbolLabel
+                                                symbol={h.symbol}
+                                                storedName={h.name}
+                                                names={companyNameMap}
+                                                layout="inline"
+                                                symbolClassName="font-medium text-slate-700 truncate"
+                                                className="min-w-0"
+                                            />
+                                            <span className="tabular-nums shrink-0">{pct.toFixed(1)}%</span>
+                                        </div>
                                         <div className="h-2 rounded-full bg-slate-100"><div className={`h-2 rounded-full ${pct > 20 ? 'bg-rose-500' : pct > 12 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, pct)}%` }} /></div>
                                     </div>
                                 );
@@ -256,27 +373,67 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
             </div>
 
             <div className="section-card">
-                <div className="flex justify-between items-center mb-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center mb-4">
                     <div><h3 className="section-title !mb-1">SWOT Analysis</h3><p className="text-xs text-slate-500 mt-0.5">From your expert investment advisor</p></div>
-                    <button onClick={handleGenerateAnalysis} disabled={isAiLoading} className="btn-primary disabled:opacity-60 disabled:cursor-not-allowed" title={'Generate SWOT Analysis'}>
-                        <SparklesIcon className="h-4 w-4 mr-2" />
-                        {isAiLoading ? 'Analyzing...' : 'Generate SWOT Analysis'}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                        {swotEn.trim() && (
+                            <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs font-semibold">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setSwotDisplayLang('en');
+                                        try { localStorage.setItem(SWOT_AI_LANG_KEY, 'en'); } catch { /* ignore */ }
+                                    }}
+                                    className={`rounded-md px-2.5 py-1.5 ${swotDisplayLang === 'en' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}
+                                >
+                                    English
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setSwotDisplayLang('ar');
+                                        setSwotAr(null);
+                                        setSwotTranslateError(null);
+                                        try { localStorage.setItem(SWOT_AI_LANG_KEY, 'ar'); } catch { /* ignore */ }
+                                    }}
+                                    disabled={!swotEn.trim()}
+                                    className={`rounded-md px-2.5 py-1.5 ${swotDisplayLang === 'ar' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'} disabled:opacity-50`}
+                                >
+                                    العربية
+                                </button>
+                            </div>
+                        )}
+                        <button onClick={handleGenerateAnalysis} disabled={isAiLoading} className="btn-primary disabled:opacity-60 disabled:cursor-not-allowed" title={'Generate SWOT Analysis'}>
+                            <SparklesIcon className="h-4 w-4 mr-2" />
+                            {isAiLoading ? 'Analyzing...' : 'Generate SWOT Analysis'}
+                        </button>
+                    </div>
                 </div>
                 {!isAiAvailable && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">AI provider is currently unavailable. SWOT will still run using deterministic fallback guidance.</div>}
                 {aiError && <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm"><SafeMarkdownRenderer content={aiError} /><button type="button" onClick={handleGenerateAnalysis} className="mt-2 px-3 py-1.5 text-sm font-medium bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200">Retry</button></div>}
+                {swotTranslateError && (
+                    <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">{swotTranslateError}</div>
+                )}
                 {isAiLoading && <p className="text-sm text-center text-slate-500 py-4">Performing strategic analysis on your portfolio...</p>}
-                {!isAiLoading && aiAnalysis && <SafeMarkdownRenderer content={aiAnalysis} />}
-                {!isAiLoading && !aiAnalysis && !aiError && <p className="text-sm text-center text-slate-500 py-4">Click "Generate SWOT Analysis" for an expert strategic overview of your investments.</p>}
+                {isTranslatingSwot && swotDisplayLang === 'ar' && <p className="text-sm text-center text-slate-500 py-2">Translating to Arabic…</p>}
+                {!isAiLoading && swotDisplayLang === 'ar' && !isAiAvailable && !swotAr && swotEn.trim() && (
+                    <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">Arabic translation needs the AI service. Switch to English or enable AI in settings.</p>
+                )}
+                {!isAiLoading && (swotDisplayLang === 'ar' ? (swotAr ?? swotEn) : swotEn) && (
+                    <div dir={swotDisplayLang === 'ar' ? 'rtl' : 'ltr'}>
+                        <SafeMarkdownRenderer content={swotDisplayLang === 'ar' ? (swotAr ?? swotEn) : swotEn} />
+                    </div>
+                )}
+                {!isAiLoading && !swotEn.trim() && !aiError && <p className="text-sm text-center text-slate-500 py-4">Click &quot;Generate SWOT Analysis&quot; for an expert strategic overview of your investments.</p>}
             </div>
             
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
                 <div className="section-card flex flex-col min-h-[460px] border border-slate-200 shadow-sm">
                     <h3 className="section-title mb-1">Portfolio Allocation</h3>
                     <p className="text-sm text-slate-500 mb-4">How your total investment value is distributed across portfolios.</p>
-                    <div className="flex-1 min-h-[320px] rounded-lg overflow-hidden flex items-center justify-center">
+                    <div className="w-full h-[320px] min-h-[320px] rounded-lg overflow-hidden">
                         {portfolioAllocation?.length ? (
-                            <div className="w-full h-full">
+                            <div className="w-full h-full min-h-[320px]">
                                 <AllocationPieChart data={portfolioAllocation} />
                             </div>
                         ) : (
@@ -292,7 +449,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                 <div className="section-card flex flex-col min-h-[460px] border border-slate-200 shadow-sm">
                     <h3 className="section-title mb-1">Allocation by Asset Class</h3>
                     <p className="text-sm text-slate-500 mb-4">The mix of asset types across all your investments.</p>
-                    <div className="flex-1 min-h-[320px] rounded-lg overflow-hidden">
+                    <div className="w-full h-[320px] min-h-[320px] rounded-lg overflow-hidden">
                         <AllocationBarChart data={assetClassAllocation} />
                     </div>
                 </div>
@@ -300,9 +457,9 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
             <div className="section-card flex flex-col min-h-[460px] border border-slate-200 shadow-sm">
                 <h3 className="section-title mb-1">Consolidated Holdings Performance</h3>
                 <p className="text-sm text-slate-500 mb-4">Size represents market value; color represents performance (unrealized gain/loss %).</p>
-                <div className="flex-1 min-h-[320px] rounded-lg overflow-hidden">
+                <div className="w-full h-[320px] min-h-[320px] rounded-lg overflow-hidden">
                     {allHoldingsWithGains.length > 0 ? (
-                        <PerformanceTreemap data={allHoldingsWithGains} />
+                        <PerformanceTreemap data={allHoldingsWithGains} companyNames={companyNameMap} />
                     ) : (
                         <div className="flex flex-col items-center justify-center h-full text-slate-500 text-sm empty-state gap-3">
                             <span>No holdings to display in the treemap.</span>

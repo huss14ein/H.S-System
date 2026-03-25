@@ -1,0 +1,15 @@
+---
+description: Implement directly; do not ask permission or offer opt-in for work the user requested
+alwaysApply: true
+---
+
+# Implement without asking
+
+When the user asks for a fix, feature, refactor, or audit:
+
+- **Implement it** in the codebase: run commands, edit files, and verify (typecheck/tests) as appropriate.
+- **Do not** ask whether they want you to proceed, whether to create a file, or whether to run a command—do the work unless blocked by environment limits.
+- **Do not** end with engagement prompts like “Want me to do X next?” unless the user explicitly asked for options or a plan only.
+- If something is **ambiguous**, make a **reasonable default**, implement it, and state what you assumed in one short sentence—still ship the change.
+
+Exception: if a request is **impossible** or **unsafe** (e.g. destructive data loss), refuse briefly and say why—no permission dance.

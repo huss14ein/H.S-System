@@ -17,6 +17,9 @@ import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { fetchLiveGoldPriceSarPerGram } from '../utils/commodityLiveValue';
 import { summarizeZakatableInvestmentsForZakat } from '../services/zakatInvestmentValuation';
 import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestments, getPersonalLiabilities } from '../utils/wealthScope';
+import AIAdvisor from '../components/AIAdvisor';
+import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 
 const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => void }> = ({ isOpen, onClose, onSave }) => {
     const [amount, setAmount] = useState('');
@@ -25,7 +28,16 @@ const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        onSave({ amount: parseFloat(amount) || 0, date, notes });
+        const amt = parseFloat(amount);
+        if (!Number.isFinite(amt) || amt <= 0) {
+            alert('Payment amount must be a positive number.');
+            return;
+        }
+        if (!date || Number.isNaN(new Date(date).getTime())) {
+            alert('Please provide a valid payment date.');
+            return;
+        }
+        onSave({ amount: amt, date, notes: notes.trim() });
         setAmount('');
         setDate(new Date().toISOString().split('T')[0]);
         setNotes('');
@@ -113,6 +125,19 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
         return { cash, investments: invValue, commodities, total, investmentLines };
     }, [data, sarPerUsd]);
 
+    const zakatInvSymbols = useMemo(
+        () =>
+            Array.from(
+                new Set(
+                    zakatableAssets.investmentLines
+                        .map((r: { symbol?: string }) => (r.symbol || '').trim())
+                        .filter((s: string) => s.length >= 2),
+                ),
+            ),
+        [zakatableAssets.investmentLines],
+    );
+    const { names: zakatCompanyNames } = useCompanyNames(zakatInvSymbols);
+
     const deductibleLiabilities = useMemo(() => {
         const accounts = getPersonalAccounts(data);
         const liabilities = getPersonalLiabilities(data);
@@ -129,7 +154,19 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
     const isNisabMet = useMemo(() => netZakatableWealth >= nisab, [netZakatableWealth, nisab]);
     const zakatDue = useMemo(() => isNisabMet ? netZakatableWealth * 0.025 : 0, [isNisabMet, netZakatableWealth]);
     const totalPaid = useMemo(() => (data?.zakatPayments ?? []).reduce((sum, p) => sum + p.amount, 0), [data?.zakatPayments]);
-    const outstandingZakat = useMemo(() => zakatDue - totalPaid, [zakatDue, totalPaid]);
+    const outstandingZakat = useMemo(() => Math.max(0, zakatDue - totalPaid), [zakatDue, totalPaid]);
+    const overpaidZakat = useMemo(() => Math.max(0, totalPaid - zakatDue), [totalPaid, zakatDue]);
+    const zakatValidationWarnings = useMemo(() => {
+        const warnings: string[] = [];
+        if (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0) warnings.push('FX rate is invalid. Default conversion may be applied.');
+        if (Number(otherDebts) < 0) warnings.push('Other short-term debts should not be negative.');
+        if (!Number.isFinite(nisab) || nisab <= 0) warnings.push('Nisab threshold is invalid.');
+        if ((data?.zakatPayments ?? []).some((p) => !Number.isFinite(Number(p.amount)) || Number(p.amount) <= 0)) {
+            warnings.push('Some recorded payments have invalid amounts.');
+        }
+        if (overpaidZakat > 0) warnings.push(`Payments exceed current due by ${formatCurrencyString(overpaidZakat, { inCurrency: 'SAR', digits: 0 })}.`);
+        return warnings;
+    }, [sarPerUsd, otherDebts, nisab, data?.zakatPayments, overpaidZakat, formatCurrencyString]);
 
     const handleFetchLiveGold = async () => {
         setGoldLiveNotice(null);
@@ -201,9 +238,18 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-slate-100">
-                                                {zakatableAssets.investmentLines.map((row, idx) => (
+                                                {zakatableAssets.investmentLines.map((row: { portfolioId: string; symbol: string; portfolioName: string; name?: string; valueSar: number }, idx: number) => (
                                                     <tr key={`${row.portfolioId}-${row.symbol}-${idx}`} className="text-slate-800">
-                                                        <td className="py-1.5 px-2 font-medium">{row.symbol}</td>
+                                                        <td className="py-1.5 px-2 font-medium min-w-0 max-w-[140px]">
+                                                            <ResolvedSymbolLabel
+                                                                symbol={row.symbol}
+                                                                storedName={row.name}
+                                                                names={zakatCompanyNames}
+                                                                layout="stacked"
+                                                                symbolClassName="font-medium text-slate-800"
+                                                                companyClassName="text-[10px] text-slate-500"
+                                                            />
+                                                        </td>
                                                         <td className="py-1.5 px-2 text-slate-600 truncate max-w-[120px]" title={row.portfolioName}>{row.portfolioName}</td>
                                                         <td className="py-1.5 px-2 text-right tabular-nums">{formatCurrencyString(row.valueSar, { inCurrency: 'SAR', digits: 0 })}</td>
                                                     </tr>
@@ -234,7 +280,7 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                             <div className="flex justify-between text-sm"><span className="text-gray-600">Tracked Liabilities (Active)</span><span>{formatCurrencyString(deductibleLiabilities.trackedLiabilities, { inCurrency: 'SAR', digits: 0 })}</span></div>
                             <div>
                                 <label htmlFor="other-debts" className="block text-sm font-medium text-gray-700">Other Short-Term Debts</label>
-                                <input type="number" id="other-debts" value={otherDebts} onChange={e => setOtherDebts(parseFloat(e.target.value) || 0)} placeholder="Enter value" className="input-base mt-1" />
+                                <input type="number" id="other-debts" min="0" step="0.01" value={otherDebts} onChange={e => setOtherDebts(Math.max(0, parseFloat(e.target.value) || 0))} placeholder="Enter value" className="input-base mt-1" />
                             </div>
                             <div className="border-t pt-2 mt-2 flex justify-between font-bold"><span>Total Liabilities</span><span>{formatCurrencyString(deductibleLiabilities.total, { inCurrency: 'SAR', digits: 0 })}</span></div>
                         </div>
@@ -288,6 +334,16 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                     </div>
                     <Card title="Total Zakat Due (2.5%)" value={formatCurrencyString(zakatDue, { inCurrency: 'SAR', digits: 0 })} />
                 </SectionCard>
+
+                {zakatValidationWarnings.length > 0 && (
+                    <SectionCard title="Zakat validation checks" collapsible collapsibleSummary="Data quality checks" defaultExpanded>
+                        <ul className="space-y-1 text-sm text-amber-800">
+                            {zakatValidationWarnings.slice(0, 6).map((w, i) => (
+                                <li key={`zw-${i}`}>- {w}</li>
+                            ))}
+                        </ul>
+                    </SectionCard>
+                )}
                 
                  {/* Column 3: Payment Ledger */}
                 <div className="bg-white p-6 rounded-lg shadow space-y-4">
@@ -306,9 +362,14 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                         </div>
                         <Card 
                             title="Outstanding Zakat" 
-                            value={formatCurrencyString(outstandingZakat)}
+                            value={formatCurrencyString(outstandingZakat, { inCurrency: 'SAR', digits: 0 })}
                             valueColor={outstandingZakat > 0 ? "text-danger" : "text-success"}
                         />
+                        {overpaidZakat > 0 && (
+                            <p className="text-xs text-emerald-700">
+                                Overpaid this cycle: {formatCurrencyString(overpaidZakat, { inCurrency: 'SAR', digits: 0 })}
+                            </p>
+                        )}
                     </div>
                     
                     <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
@@ -328,6 +389,30 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                     </div>
                 </div>
             </div>
+
+            <AIAdvisor
+                pageContext="analysis"
+                contextData={{
+                    spendingData: [
+                        { category: 'Zakatable Assets', value: zakatableAssets.total },
+                        { category: 'Deductible Liabilities', value: deductibleLiabilities.total },
+                        { category: 'Net Zakatable Wealth', value: netZakatableWealth },
+                        { category: 'Outstanding Zakat', value: outstandingZakat },
+                    ],
+                    trendData: (data?.zakatPayments ?? [])
+                        .slice()
+                        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                        .map((p) => ({ month: String(p.date).slice(0, 7), value: Number(p.amount) || 0 })),
+                    compositionData: [
+                        { name: 'Cash', value: zakatableAssets.cash },
+                        { name: 'Investments', value: zakatableAssets.investments },
+                        { name: 'Commodities', value: zakatableAssets.commodities },
+                    ],
+                }}
+                title="Zakat AI Advisor"
+                subtitle="Nisab readiness, payment planning, and Zakat composition insights."
+                buttonLabel="Get AI Zakat Insights"
+            />
 
             <ZakatPaymentModal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} onSave={addZakatPayment} />
         </PageLayout>

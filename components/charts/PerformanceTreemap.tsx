@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ResponsiveContainer, Treemap, Tooltip } from 'recharts';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
+import { formatSymbolWithCompany, type SymbolNamesMap } from '../SymbolWithCompanyName';
 
 const CustomizedContent: React.FC<any> = ({ depth, x, y, width, height, name, gainLossPercent, color }) => {
     const textColor = 'white';
@@ -49,7 +50,7 @@ const TreemapTooltip: React.FC<{ active?: boolean; payload?: any[]; formatValue?
     return null;
 };
 
-const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
+const PerformanceTreemap: React.FC<{ data: any[]; companyNames?: SymbolNamesMap }> = ({ data, companyNames = {} }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -131,15 +132,19 @@ const PerformanceTreemap: React.FC<{ data: any[] }> = ({ data }) => {
 
                 if (size <= 0) return null;
 
+                const sym = item.symbol || '';
+                const label = sym
+                    ? formatSymbolWithCompany(sym, item.name, companyNames)
+                    : item.name || 'Unknown';
                 return {
-                    name: item.symbol || item.name || 'Unknown',
+                    name: label,
                     size,
                     gainLossPercent: Number.isFinite(item.gainLossPercent) ? item.gainLossPercent : 0,
                     color: getColor(item.gainLossPercent),
                 };
             })
             .filter((item): item is { name: string; size: number; gainLossPercent: number; color: string } => Boolean(item))
-    ), [data]);
+    ), [data, companyNames]);
 
     const enableAnimation = processedData.length <= 60 && !prefersReducedMotion;
 

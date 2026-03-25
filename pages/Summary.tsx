@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
-import { getAIFinancialPersona, formatAiError } from '../services/geminiService';
+import { getAIFinancialPersona, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 import { PiggyBankIcon } from '../components/icons/PiggyBankIcon';
@@ -11,6 +11,7 @@ import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import Card from '../components/Card';
 import CollapsibleSection from '../components/CollapsibleSection';
+import SectionCard from '../components/SectionCard';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import NetWorthCompositionChart from '../components/charts/NetWorthCompositionChart';
@@ -26,6 +27,7 @@ import { inferIsAdmin } from '../utils/role';
 import type { Page } from '../types';
 import { SHOCK_TEMPLATES } from '../services/shockDrillEngine';
 import { computeWealthSummaryReportModel } from '../services/wealthSummaryReportModel';
+import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { attributeNetWorthWithFlows } from '../services/portfolioAttribution';
@@ -84,6 +86,8 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { formatCurrencyString } = useFormatCurrency();
     const [analysis, setAnalysis] = useState<PersonaAnalysis | null>(null);
+    const [analysisEn, setAnalysisEn] = useState<PersonaAnalysis | null>(null);
+    const [analysisLanguage, setAnalysisLanguage] = useState<'en' | 'ar'>('en');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [isAdmin, setIsAdmin] = useState(false);
@@ -131,6 +135,8 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         setIsLoading(true);
         setError(null);
         setAnalysis(null);
+        setAnalysisEn(null);
+        setAnalysisLanguage('en');
         try {
             const result = await getAIFinancialPersona(
                 Number(fm.savingsRate) || 0,
@@ -139,11 +145,45 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                 String(fm.investmentStyle ?? 'Balanced')
             );
             setAnalysis(result ?? null);
+            setAnalysisEn(result ?? null);
         } catch (err) {
             setError(formatAiError(err));
         }
         setIsLoading(false);
     }, [reportModel?.financialMetricsWithEf, trackAction]);
+
+    const handleTranslateAdvisorToArabic = useCallback(async () => {
+        if (!analysisEn) return;
+        setIsLoading(true);
+        setError(null);
+        try {
+            const [titleAr, descAr, reportAr] = await Promise.all([
+                translateFinancialInsightToArabic(analysisEn.persona.title),
+                translateFinancialInsightToArabic(analysisEn.persona.description),
+                Promise.all((analysisEn.reportCard ?? []).map(async (item) => ({
+                    ...item,
+                    metric: await translateFinancialInsightToArabic(item.metric),
+                    value: await translateFinancialInsightToArabic(item.value),
+                    analysis: await translateFinancialInsightToArabic(item.analysis),
+                    suggestion: await translateFinancialInsightToArabic(item.suggestion),
+                }))),
+            ]);
+            setAnalysis({
+                persona: { title: titleAr, description: descAr },
+                reportCard: reportAr,
+            });
+            setAnalysisLanguage('ar');
+        } catch (err) {
+            setError(formatAiError(err));
+        }
+        setIsLoading(false);
+    }, [analysisEn]);
+
+    const handleAdvisorEnglish = useCallback(() => {
+        if (!analysisEn) return;
+        setAnalysis(analysisEn);
+        setAnalysisLanguage('en');
+    }, [analysisEn]);
 
     const downloadTextFile = useCallback((fileName: string, contents: string, mimeType: string) => {
         const blob = new Blob([contents], { type: mimeType });
@@ -212,6 +252,20 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         shockDrill,
         liquidNw,
     } = reportModel;
+
+    const summaryMonthlyKpis = useMemo(
+        () => computeMonthlyReportFinancialKpis(data, sarPerUsd, getAvailableCashForAccount),
+        [data, sarPerUsd, getAvailableCashForAccount]
+    );
+    const summaryValidationWarnings = useMemo(() => {
+        const out: string[] = [];
+        if (!Number.isFinite(financialMetricsWithEf.netWorth)) out.push('Net worth is invalid.');
+        if (!Number.isFinite(financialMetricsWithEf.monthlyIncome)) out.push('Monthly income is invalid.');
+        if (!Number.isFinite(financialMetricsWithEf.monthlyExpenses)) out.push('Monthly expenses are invalid.');
+        if (!Number.isFinite(summaryMonthlyKpis.budgetVariance)) out.push('Budget variance could not be computed.');
+        if (!Number.isFinite(summaryMonthlyKpis.roi)) out.push('ROI could not be computed.');
+        return out;
+    }, [financialMetricsWithEf, summaryMonthlyKpis]);
 
     return (
         <PageLayout 
@@ -286,6 +340,14 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                     />
                 </div>
             </div>
+
+            {summaryValidationWarnings.length > 0 && (
+                <SectionCard title="Summary validation checks" collapsible collapsibleSummary="Data quality and wiring checks" defaultExpanded className="mb-4">
+                    <ul className="text-xs text-amber-800 space-y-1">
+                        {summaryValidationWarnings.slice(0, 8).map((w, i) => <li key={`sv-${i}`}>- {w}</li>)}
+                    </ul>
+                </SectionCard>
+            )}
 
             <CollapsibleSection title="Liquid net worth (simplified)" summary={maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))} className="border border-slate-200 bg-slate-50/50">
                 <p className="text-2xl font-extrabold text-primary mb-4">{maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))}</p>
@@ -431,10 +493,22 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
             <div className="section-card max-w-full">
                 <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
                     <div className="flex flex-col"><div className="flex items-center space-x-2"><LightBulbIcon className="h-6 w-6 text-yellow-500" /><h2 className="text-xl font-semibold text-dark">Financial Advisor</h2></div><p className="text-xs text-slate-500 mt-0.5">Direct, summarized guidance with a report card</p></div>
-                    <button onClick={handleGenerateAnalysis} disabled={isLoading} className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
-                        <SparklesIcon className="h-5 w-5 mr-2" />
-                        {isLoading ? 'Analyzing...' : (analysis ? 'Refresh Advisor Summary' : 'Generate Advisor Summary')}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                        <button onClick={handleGenerateAnalysis} disabled={isLoading} className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
+                            <SparklesIcon className="h-5 w-5 mr-2" />
+                            {isLoading ? 'Analyzing...' : (analysis ? 'Refresh Advisor Summary' : 'Generate Advisor Summary')}
+                        </button>
+                        {analysis && (
+                            <>
+                                <button type="button" onClick={handleAdvisorEnglish} disabled={analysisLanguage === 'en' || isLoading} className="px-3 py-2 text-xs rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                                    English
+                                </button>
+                                <button type="button" onClick={handleTranslateAdvisorToArabic} disabled={analysisLanguage === 'ar' || isLoading} className="px-3 py-2 text-xs rounded border border-violet-300 bg-violet-100 text-violet-800 hover:bg-violet-200 disabled:opacity-50">
+                                    Translate to Arabic
+                                </button>
+                            </>
+                        )}
+                    </div>
                 </div>
                 {isLoading && <div className="text-center p-8 text-gray-500">Crafting your personal financial summary...</div>}
                 {!isLoading && error && (

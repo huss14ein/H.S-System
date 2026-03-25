@@ -62,7 +62,15 @@ export interface ReconciliationException {
 
 /** Aggregate exceptions from cash, holdings, dividends, liabilities. */
 export function reconciliationExceptionReport(args: {
-  cashExceptions: { accountId: string; drift: number; showWarning: boolean }[];
+  cashExceptions: {
+    accountId: string;
+    drift: number;
+    showWarning: boolean;
+    /** Checking/Savings book currency for the drift amount. */
+    bookCurrency?: string;
+    /** Display name for the account. */
+    accountLabel?: string;
+  }[];
   holdingExceptions: { symbol: string; drift: number }[];
   dividendExceptions?: { accountId: string; drift: number }[];
   liabilityExceptions?: { liabilityId: string; drift: number }[];
@@ -70,10 +78,12 @@ export function reconciliationExceptionReport(args: {
   const out: ReconciliationException[] = [];
   (args.cashExceptions ?? []).forEach((c) => {
     if (!c.showWarning) return;
+    const cur = c.bookCurrency ?? 'book ccy';
+    const lab = c.accountLabel ? `${c.accountLabel} (${c.accountId})` : c.accountId;
     out.push({
       type: 'cash',
       id: c.accountId,
-      message: `Cash balance drift: ${c.drift.toFixed(2)}`,
+      message: `Cash balance drift: ${c.drift.toFixed(2)} ${cur} — ${lab}`,
       severity: Math.abs(c.drift) > 500 ? 'error' : 'warning',
     });
   });

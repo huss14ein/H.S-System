@@ -1,6 +1,13 @@
 import React, { useMemo, useState, useCallback, useContext, useEffect, lazy, Suspense } from 'react';
 import { DataContext } from '../context/DataContext';
-import { getAIStockAnalysis, buildFallbackAnalystReport, executeInvestmentPlanStrategy, formatAiError, getSuggestedAnalystEligibility } from '../services/geminiService';
+import {
+    getAIStockAnalysis,
+    buildFallbackAnalystReport,
+    executeInvestmentPlanStrategy,
+    formatAiError,
+    getSuggestedAnalystEligibility,
+    translateFinancialInsightToArabic,
+} from '../services/geminiService';
 import { InvestmentPortfolio, Holding, HoldingAssetClass, HOLDING_ASSET_CLASS_OPTIONS, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog, UniverseTicker, TradeCurrency } from '../types';
 import type { Page } from '../types';
 import Modal from '../components/Modal';
@@ -32,6 +39,7 @@ import { LinkIcon } from '../components/icons/LinkIcon';
 import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
 import Card from '../components/Card';
 import SectionCard from '../components/SectionCard';
+import AIAdvisor from '../components/AIAdvisor';
 import LoadingSpinner from '../components/LoadingSpinner';
 import LivePricesStatus from '../components/LivePricesStatus';
 import { CurrencyDollarIcon } from '../components/icons/CurrencyDollarIcon';
@@ -52,11 +60,31 @@ import { sellScore } from '../services/decisionEngine';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import type { Transaction } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
-import { resolveSarPerUsd, totalLiquidCashSARFromAccounts, tradableCashBucketToSAR } from '../utils/currencyMath';
+import {
+    resolveSarPerUsd,
+    toSAR,
+    totalLiquidCashSARFromAccounts,
+    tradableCashBucketToSAR,
+    availableTradableCashInLedgerCurrency,
+    inferInstrumentCurrencyFromSymbol,
+    convertBetweenTradeCurrencies,
+    quoteNotionalInBookCurrency,
+    quoteDailyPnLInBookCurrency,
+} from '../utils/currencyMath';
 import { holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
-import { getPersonalAccounts, getPersonalWealthData } from '../utils/wealthScope';
-import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
-import { computePlatformCardMetrics } from '../services/investmentPlatformCardMetrics';
+import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestments, getPersonalWealthData } from '../utils/wealthScope';
+import {
+    inferInvestmentTransactionCurrency,
+    portfolioBelongsToAccount,
+    resolveCanonicalAccountId,
+} from '../utils/investmentLedgerCurrency';
+import {
+    computePersonalCommoditiesContributionSAR,
+    computePersonalPlatformsRollupSAR,
+    computePlatformCardMetrics,
+} from '../services/investmentPlatformCardMetrics';
+import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
+import { aggregateMonthlyBudgetAcrossPortfolios, getEffectivePlanForPortfolio } from '../utils/investmentPlanPerPortfolio';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -125,7 +153,19 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
 
     const investmentProgress = useMemo(() => {
-        if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0, corePct: 0.7, upsidePct: 0.3, specPct: 0, planCurrency: 'SAR' as TradeCurrency };
+        if (!data?.investmentPlan) {
+            return {
+                percent: 0,
+                amount: 0,
+                target: 0,
+                corePct: 0.7,
+                upsidePct: 0.3,
+                specPct: 0,
+                planCurrency: 'SAR' as TradeCurrency,
+                hasBudgetTarget: false,
+                wealthReferenceInPlan: null as number | null,
+            };
+        }
 
         const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
             if (!Number.isFinite(amount) || amount <= 0) return 0;
@@ -140,6 +180,8 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
         const plan = data?.investmentPlan;
         const planCurrency: TradeCurrency = (plan?.budgetCurrency as TradeCurrency) || 'SAR';
         const personalAccountIds = new Set(getPersonalAccounts(data).map((a) => a.id));
+        const accounts = getPersonalAccounts(data);
+        const investments = getPersonalInvestments(data);
 
         const monthlyInvested = (data?.investmentTransactions ?? [])
             .filter(t => {
@@ -149,22 +191,32 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
                 return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy';
             })
             .reduce((sum, t) => {
-                const txCurrency: TradeCurrency = t.currency === 'USD' || t.currency === 'SAR' ? t.currency : planCurrency;
+                const txCurrency = inferInvestmentTransactionCurrency(t, accounts, investments);
                 return sum + convertAmount(t.total || 0, txCurrency, planCurrency);
             }, 0);
 
         const corePct = plan?.coreAllocation ?? 0.7;
         const upsidePct = plan?.upsideAllocation ?? 0.3;
         const specPct = Math.max(0, 1 - corePct - upsidePct);
-        const target = plan?.monthlyBudget || 0;
+        const portfolioIds = investments.map((p) => p.id).filter(Boolean);
+        const agg = aggregateMonthlyBudgetAcrossPortfolios(plan, portfolioIds, plan);
+        const target = Number.isFinite(agg.total) ? agg.total : 0;
+        const hasBudgetTarget = target > 0;
+        const wealthRefUsd = Number(data?.wealthUltraConfig?.monthlyDeposit);
+        const wealthReferenceInPlan =
+            !hasBudgetTarget && Number.isFinite(wealthRefUsd) && wealthRefUsd > 0
+                ? convertAmount(wealthRefUsd, 'USD', planCurrency)
+                : null;
         return {
-            percent: target > 0 ? Math.min((monthlyInvested / target) * 100, 100) : 0,
+            percent: hasBudgetTarget ? Math.min((monthlyInvested / target) * 100, 100) : 0,
             amount: monthlyInvested,
             target,
             corePct,
             upsidePct,
             specPct,
             planCurrency,
+            hasBudgetTarget,
+            wealthReferenceInPlan,
         };
     }, [data, sarPerUsd]);
 
@@ -183,22 +235,73 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
                             <button type="button" onClick={onEditPlan} className="text-sm font-medium text-primary hover:underline">Edit plan</button>
                         )}
                     </div>
-                    <p className="text-sm text-gray-500 mb-4">Your monthly strategy is set to invest <span className="font-bold text-dark">{formatCurrencyString(investmentProgress.target, { inCurrency: investmentProgress.planCurrency })}</span> with a {(investmentProgress.corePct * 100).toFixed(0)}% Core, {(investmentProgress.upsidePct * 100).toFixed(0)}% High-Upside{investmentProgress.specPct > 0.001 ? ` and ${(investmentProgress.specPct * 100).toFixed(0)}% Spec` : ''} split. Progress counts <strong>buy</strong> trades this month on <strong>your</strong> investment accounts only.</p>
+                    {!investmentProgress.hasBudgetTarget && (
+                        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-sm text-amber-950">
+                            <span className="font-semibold">No monthly investment target saved.</span>{' '}
+                            Open <strong>Investment Plan</strong>, enter how much you want to invest <strong>per month</strong>, and save. Until then, the bar below shows <strong>only what you bought this month</strong> (buys on your accounts)—not progress toward a goal.
+                            {Number(data?.investmentPlan?.monthlyBudget) === 0 && (
+                                <span className="block mt-1 text-xs text-amber-900/90">
+                                    Your plan currently has <strong>0</strong> as the monthly amount—raise it if you intend to follow a monthly cap.
+                                </span>
+                            )}
+                            {investmentProgress.wealthReferenceInPlan != null && investmentProgress.wealthReferenceInPlan > 0 && (
+                                <span className="block mt-1 text-xs text-amber-900/90">
+                                    Reference from Wealth Ultra defaults: ~{formatCurrencyString(investmentProgress.wealthReferenceInPlan, { inCurrency: investmentProgress.planCurrency })} / month (not used until you save a plan budget).
+                                </span>
+                            )}
+                        </div>
+                    )}
+                    <p className="text-sm text-gray-500 mb-4">
+                        {investmentProgress.hasBudgetTarget ? (
+                            <>
+                                Combined monthly targets across your portfolios:{' '}
+                                <span className="font-bold text-dark">{formatCurrencyString(investmentProgress.target, { inCurrency: investmentProgress.planCurrency })}</span>
+                                {' '}(sum of per-portfolio budgets in <strong>Investment Plan</strong>). Sleeve mix shown uses your plan defaults: {(investmentProgress.corePct * 100).toFixed(0)}% Core, {(investmentProgress.upsidePct * 100).toFixed(0)}% High-Upside
+                                {investmentProgress.specPct > 0.001 ? ` and ${(investmentProgress.specPct * 100).toFixed(0)}% Spec` : ''}. Progress counts <strong>buy</strong> trades this month on <strong>your</strong> investment accounts only (amounts converted with your FX rate).
+                            </>
+                        ) : (
+                            <>
+                                Sleeve split is {(investmentProgress.corePct * 100).toFixed(0)}% Core, {(investmentProgress.upsidePct * 100).toFixed(0)}% High-Upside
+                                {investmentProgress.specPct > 0.001 ? ` and ${(investmentProgress.specPct * 100).toFixed(0)}% Spec` : ''}. Set a monthly budget to see targets and a progress percentage.
+                            </>
+                        )}
+                    </p>
                     
                     <div className="space-y-2">
                         <div className="flex justify-between text-xs font-bold uppercase tracking-wider text-gray-400">
                             <span>Monthly Progress</span>
-                            <span>{investmentProgress.percent.toFixed(0)}%</span>
+                            <span>{investmentProgress.hasBudgetTarget ? `${investmentProgress.percent.toFixed(0)}%` : '—'}</span>
                         </div>
                         <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
                             <div 
                                 className="h-full bg-primary transition-all duration-1000 ease-out" 
-                                style={{ width: `${investmentProgress.percent}%` }}
+                                style={{ width: `${investmentProgress.hasBudgetTarget ? investmentProgress.percent : 0}%` }}
                             />
                         </div>
                         <div className="flex justify-between text-xs text-gray-500">
-                            <span>Invested: {formatCurrencyString(investmentProgress.amount, { inCurrency: investmentProgress.planCurrency })}</span>
-                            <span>Remaining: {formatCurrencyString(Math.max(0, investmentProgress.target - investmentProgress.amount), { inCurrency: investmentProgress.planCurrency })}</span>
+                            <span>
+                                Bought this month:{' '}
+                                <strong className="text-gray-700">{formatCurrencyString(investmentProgress.amount, { inCurrency: investmentProgress.planCurrency })}</strong>
+                                <span className="block text-[10px] font-normal text-gray-400 mt-0.5">Buy trades only, converted to plan currency</span>
+                            </span>
+                            <span className="text-right">
+                                {investmentProgress.hasBudgetTarget ? (
+                                    <>
+                                        Remaining:{' '}
+                                        <strong className="text-gray-700">
+                                            {formatCurrencyString(Math.max(0, investmentProgress.target - investmentProgress.amount), { inCurrency: investmentProgress.planCurrency })}
+                                        </strong>
+                                        {investmentProgress.amount >= investmentProgress.target && investmentProgress.target > 0 && (
+                                            <span className="block text-[10px] font-medium text-emerald-700 mt-0.5">Target met for this month</span>
+                                        )}
+                                    </>
+                                ) : (
+                                    <>
+                                        Remaining: <span className="font-medium text-gray-600">—</span>
+                                        <span className="block text-[10px] font-normal text-gray-400 mt-0.5">Set a monthly amount to see what&apos;s left</span>
+                                    </>
+                                )}
+                            </span>
                         </div>
                     </div>
                 </div>
@@ -206,23 +309,98 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
                 <div className={`grid gap-3 min-w-[240px] ${investmentProgress.specPct > 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
                     <div className="p-3 rounded-xl border border-indigo-100 bg-indigo-50/50 text-center min-w-0 overflow-hidden flex flex-col items-center">
                         <p className="metric-label text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-1 w-full">Core Target</p>
-                        <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.corePct, { inCurrency: investmentProgress.planCurrency })}</p>
+                        <p className="metric-value text-sm font-bold text-dark w-full">
+                            {investmentProgress.hasBudgetTarget
+                                ? formatCurrencyString(investmentProgress.target * investmentProgress.corePct, { inCurrency: investmentProgress.planCurrency })
+                                : '—'}
+                        </p>
                         <p className="metric-value text-[10px] text-gray-500 w-full">{(investmentProgress.corePct * 100).toFixed(0)}%</p>
                     </div>
                     <div className="p-3 rounded-xl border border-violet-100 bg-violet-50/50 text-center min-w-0 overflow-hidden flex flex-col items-center">
                         <p className="metric-label text-[10px] font-bold text-violet-600 uppercase tracking-wider mb-1 w-full">Upside Target</p>
-                        <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.upsidePct, { inCurrency: investmentProgress.planCurrency })}</p>
+                        <p className="metric-value text-sm font-bold text-dark w-full">
+                            {investmentProgress.hasBudgetTarget
+                                ? formatCurrencyString(investmentProgress.target * investmentProgress.upsidePct, { inCurrency: investmentProgress.planCurrency })
+                                : '—'}
+                        </p>
                         <p className="metric-value text-[10px] text-gray-500 w-full">{(investmentProgress.upsidePct * 100).toFixed(0)}%</p>
                     </div>
                     {investmentProgress.specPct > 0 && (
                         <div className="p-3 rounded-xl border border-amber-100 bg-amber-50/50 text-center min-w-0 overflow-hidden flex flex-col items-center">
                             <p className="metric-label text-[10px] font-bold text-amber-600 uppercase tracking-wider mb-1 w-full">Spec Target</p>
-                            <p className="metric-value text-sm font-bold text-dark w-full">{formatCurrencyString(investmentProgress.target * investmentProgress.specPct, { inCurrency: investmentProgress.planCurrency })}</p>
+                            <p className="metric-value text-sm font-bold text-dark w-full">
+                                {investmentProgress.hasBudgetTarget
+                                    ? formatCurrencyString(investmentProgress.target * investmentProgress.specPct, { inCurrency: investmentProgress.planCurrency })
+                                    : '—'}
+                            </p>
                             <p className="metric-value text-[10px] text-gray-500 w-full">{(investmentProgress.specPct * 100).toFixed(0)}%</p>
                         </div>
                     )}
                 </div>
             </div>
+        </div>
+    );
+};
+
+/** Surfaces the largest retirement-named goal (if any) so long-term progress is visible on Investments. */
+const RetirementGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGoals }) => {
+    const { data } = useContext(DataContext)!;
+    const { formatCurrencyString } = useFormatCurrency();
+    const retirementGoals = useMemo(() => {
+        return (data?.goals ?? []).filter((g) => /retirement|تقاعد|pension|معاش|retire/i.test(g.name || ''));
+    }, [data?.goals]);
+    if (!retirementGoals.length) return null;
+    const g = [...retirementGoals].sort((a, b) => (Number(b.targetAmount) || 0) - (Number(a.targetAmount) || 0))[0];
+    const target = Math.max(0, Number(g.targetAmount) || 0);
+    const current = Math.max(0, Number(g.currentAmount) || 0);
+    const pct = target > 0 ? Math.min(100, (current / target) * 100) : 0;
+    const remaining = Math.max(0, target - current);
+    return (
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-indigo-100 mb-6">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                        <ClipboardDocumentListIcon className="h-5 w-5 text-indigo-600 shrink-0" />
+                        <h3 className="text-lg font-bold text-dark">Retirement & long-term goals</h3>
+                    </div>
+                    <p className="text-sm text-gray-600 mb-3">
+                        Tracking <span className="font-semibold text-dark">{g.name}</span> from your Goals page. Amounts are in SAR (goal fields).
+                    </p>
+                    <div className="space-y-2">
+                        <div className="flex justify-between text-xs font-bold uppercase tracking-wider text-gray-400">
+                            <span>Progress to target</span>
+                            <span>{target > 0 ? `${pct.toFixed(1)}%` : '—'}</span>
+                        </div>
+                        <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-indigo-600 transition-all duration-700 ease-out" style={{ width: `${target > 0 ? pct : 0}%` }} />
+                        </div>
+                        <div className="flex flex-wrap justify-between gap-2 text-xs text-gray-600">
+                            <span>Current: {formatCurrencyString(current, { inCurrency: 'SAR', digits: 0 })}</span>
+                            <span>Target: {formatCurrencyString(target, { inCurrency: 'SAR', digits: 0 })}</span>
+                            <span>Remaining: {target > 0 ? formatCurrencyString(remaining, { inCurrency: 'SAR', digits: 0 }) : '—'}</span>
+                        </div>
+                    </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 lg:min-w-[280px]">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-center">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Saved</p>
+                        <p className="text-sm font-bold text-slate-900 tabular-nums">{formatCurrencyString(current, { inCurrency: 'SAR', digits: 0 })}</p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-center">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Target</p>
+                        <p className="text-sm font-bold text-slate-900 tabular-nums">{formatCurrencyString(target, { inCurrency: 'SAR', digits: 0 })}</p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-center">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Deadline</p>
+                        <p className="text-sm font-bold text-slate-900">{g.deadline ? new Date(g.deadline).toLocaleDateString() : '—'}</p>
+                    </div>
+                </div>
+            </div>
+            {onOpenGoals && (
+                <button type="button" onClick={onOpenGoals} className="mt-4 text-sm font-medium text-indigo-700 hover:underline">
+                    Edit in Goals →
+                </button>
+            )}
         </div>
     );
 };
@@ -234,6 +412,8 @@ const RecordTradeModal: React.FC<{
     onSave: (trade: any, executedPlanId?: string) => void;
     investmentAccounts: Account[];
     portfolios: InvestmentPortfolio[];
+    /** Simulated/live quote by symbol — used to suggest price when the field is empty. */
+    simulatedPrices?: { [symbol: string]: { price: number; change: number; changePercent: number } };
     initialData?: Partial<{
         tradeType: 'buy' | 'sell';
         symbol: string;
@@ -247,7 +427,7 @@ const RecordTradeModal: React.FC<{
         portfolioId: string;
         reason?: string;
     }> | null;
-}> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, initialData }) => {
+}> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, simulatedPrices = {}, initialData }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
     const { currency: appCurrency, exchangeRate } = useCurrency();
@@ -272,6 +452,8 @@ const RecordTradeModal: React.FC<{
     const [t1ConfirmChecked, setT1ConfirmChecked] = useState(false);
     const [policyBuyOverrideAck, setPolicyBuyOverrideAck] = useState(false);
     const [largeSellAck, setLargeSellAck] = useState(false);
+    /** Commissions/fees in portfolio base currency (same as quantity × price). Rolled into cash ledger total, not into per-share cost basis. */
+    const [fees, setFees] = useState('');
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -296,7 +478,11 @@ const RecordTradeModal: React.FC<{
         () => (portfolioId ? portfolios.find(p => p.id === portfolioId) : null),
         [portfolioId, portfolios]
     );
-    const availableCashInTradeCurrency = (tradeCurrency === 'SAR' ? availableCashByCurrency.SAR : availableCashByCurrency.USD) ?? 0;
+    /** Same pooling as `recordTrade` (SAR+USD at configured SAR/USD). */
+    const availableCashInLedgerCurrency = useMemo(
+        () => availableTradableCashInLedgerCurrency(availableCashByCurrency, tradeCurrency, sarPerUsd),
+        [availableCashByCurrency, tradeCurrency, sarPerUsd]
+    );
 
     const portfoliosForAccount = useMemo(() => accountId ? portfolios.filter(p => p.accountId === accountId) : [], [accountId, portfolios]);
     
@@ -332,6 +518,7 @@ const RecordTradeModal: React.FC<{
         setTradeCurrency(appCurrency);
         setExecutedPlanId(undefined);
         setAmountToInvest(null);
+        setFees('');
         setOrderType('LIMIT');
         setTif('GTC');
         setT1ConfirmChecked(false);
@@ -409,24 +596,90 @@ const RecordTradeModal: React.FC<{
     }, [portfolioId, portfolios, initialData]);
     
     const brokerConstraints = data?.investmentPlan?.brokerConstraints;
+    const fractionalOpts = useMemo(
+        () => ({
+            allowFractional: brokerConstraints?.allowFractionalShares ?? true,
+            minimumOrderSize: brokerConstraints?.minimumOrderSize ?? 1,
+            roundingRule: brokerConstraints?.roundingRule ?? 'round',
+            decimalPlaces: 6,
+        }),
+        [brokerConstraints?.allowFractionalShares, brokerConstraints?.minimumOrderSize, brokerConstraints?.roundingRule]
+    );
+
+    /** Transfer amount ↔ qty/price: skip for manual funds (units are not share-like). */
+    const amountDrivesTradeSizing = Boolean(
+        amountToInvest && type === 'buy' && !manualValuation && !isManualExisting
+    );
+
+    const syncQuantityFromAmountAndPriceStr = useCallback(
+        (priceStr: string) => {
+            if (!amountDrivesTradeSizing || !amountToInvest) return;
+            const numPrice = parseFloat(priceStr);
+            if (!Number.isFinite(numPrice) || numPrice <= 0) return;
+            const qty = dollarToShareQuantity(amountToInvest, numPrice, fractionalOpts);
+            setQuantity(qty.toFixed(6).replace(/\.?0+$/, '') || '0');
+        },
+        [amountDrivesTradeSizing, amountToInvest, fractionalOpts]
+    );
+
+    const syncPriceFromAmountAndQuantityStr = useCallback(
+        (quantityStr: string) => {
+            if (!amountDrivesTradeSizing || !amountToInvest) return;
+            const numQty = parseFloat(quantityStr);
+            if (!Number.isFinite(numQty) || numQty <= 0) return;
+            const p = amountToInvest / numQty;
+            if (!Number.isFinite(p) || p <= 0) return;
+            setPrice(p.toFixed(8).replace(/\.?0+$/, '') || '0');
+        },
+        [amountDrivesTradeSizing, amountToInvest]
+    );
+
+    const handleQuantityChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const v = e.target.value;
+        setQuantity(v);
+        syncPriceFromAmountAndQuantityStr(v);
+    };
+
+    const handlePriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const v = e.target.value;
+        setPrice(v);
+        syncQuantityFromAmountAndPriceStr(v);
+    };
+
+    const tradeNotional = useMemo(() => {
+        const q = parseFloat(quantity);
+        const p = parseFloat(price);
+        if (!Number.isFinite(q) || !Number.isFinite(p) || q <= 0 || p <= 0) return null;
+        return q * p;
+    }, [quantity, price]);
+
+    const feeAmount = useMemo(() => {
+        const f = parseFloat(fees);
+        return Number.isFinite(f) && f >= 0 ? f : 0;
+    }, [fees]);
+
+    const netCashImpact = useMemo(() => {
+        if (tradeNotional == null) return null;
+        if (type === 'buy') return tradeNotional + feeAmount;
+        if (type === 'sell') return Math.max(0, tradeNotional - feeAmount);
+        return tradeNotional;
+    }, [tradeNotional, feeAmount, type]);
+
+    // Suggest price from market when the field is empty — convert quote to portfolio ledger currency.
     useEffect(() => {
-        if (amountToInvest && price && type === 'buy') {
-            const numPrice = parseFloat(price);
-            if (numPrice > 0) {
-                const qty = dollarToShareQuantity(
-                    amountToInvest,
-                    numPrice,
-                    {
-                        allowFractional: brokerConstraints?.allowFractionalShares ?? true,
-                        minimumOrderSize: brokerConstraints?.minimumOrderSize ?? 1,
-                        roundingRule: brokerConstraints?.roundingRule ?? 'round',
-                        decimalPlaces: 6,
-                    }
-                );
-                setQuantity(qty.toFixed(6).replace(/\.?0+$/, '') || '0');
-            }
-        }
-    }, [amountToInvest, price, type, brokerConstraints?.allowFractionalShares, brokerConstraints?.minimumOrderSize, brokerConstraints?.roundingRule]);
+        if (!isOpen || manualValuation || isManualExisting) return;
+        const sym = symbol.trim().toUpperCase();
+        if (sym.length < 2) return;
+        if (price.trim() !== '') return;
+        const live = simulatedPrices[sym]?.price;
+        if (live == null || !Number.isFinite(live) || live <= 0) return;
+        const quoteCcy = inferInstrumentCurrencyFromSymbol(sym);
+        const inLedger = convertBetweenTradeCurrencies(live, quoteCcy, tradeCurrency, sarPerUsd);
+        if (!Number.isFinite(inLedger) || inLedger <= 0) return;
+        const pStr = Number(inLedger.toFixed(8)).toString().replace(/\.?0+$/, '') || String(inLedger);
+        setPrice(pStr);
+        syncQuantityFromAmountAndPriceStr(pStr);
+    }, [isOpen, symbol, manualValuation, isManualExisting, price, simulatedPrices, syncQuantityFromAmountAndPriceStr, tradeCurrency, sarPerUsd]);
 
     // Auto-fill company name when symbol is set (new holding): debounced lookup; refresh when ticker changes
     useEffect(() => {
@@ -501,10 +754,22 @@ const RecordTradeModal: React.FC<{
         const pr = parseFloat(price);
         if (!Number.isFinite(q) || !Number.isFinite(pr) || q <= 0 || pr <= 0) return { allowed: true as const };
         const notional = q * pr;
-        const totalSec = (p.holdings ?? []).reduce((s, h) => s + (Number(h.currentValue) || 0), 0);
+        const book = ((p.currency as TradeCurrency) || 'USD') as TradeCurrency;
+        const effVal = (h: Holding) => {
+            const s = (h.symbol || '').toUpperCase().trim();
+            const qty = Number(h.quantity ?? 0);
+            if (holdingUsesLiveQuote(h) && s) {
+                const pi = simulatedPrices[s];
+                if (pi && Number.isFinite(pi.price) && qty > 0) {
+                    return quoteNotionalInBookCurrency(pi.price, qty, s, book, sarPerUsd);
+                }
+            }
+            return Number.isFinite(h.currentValue) ? Number(h.currentValue) : 0;
+        };
+        const totalSec = (p.holdings ?? []).reduce((s, h) => s + effVal(h), 0);
         const norm = symbol.toUpperCase().trim();
         const h = p.holdings.find((x) => x.symbol.toUpperCase().trim() === norm);
-        const curSym = Number(h?.currentValue) || 0;
+        const curSym = h ? effVal(h) : 0;
         const afterSym = curSym + notional;
         const denom = totalSec + notional;
         const posPct = denom > 0 ? (afterSym / denom) * 100 : 0;
@@ -514,7 +779,7 @@ const RecordTradeModal: React.FC<{
             monthlyNetLast30d,
             positionWeightAfterBuyPct: posPct,
         });
-    }, [type, portfolioId, quantity, price, symbol, portfolios, tradingPolicy, runwayMonthsForBuyPolicy, monthlyNetLast30d]);
+    }, [type, portfolioId, quantity, price, symbol, portfolios, tradingPolicy, runwayMonthsForBuyPolicy, monthlyNetLast30d, simulatedPrices, sarPerUsd]);
 
     const sellRuleScore = useMemo(() => {
         if (type !== 'sell' || !portfolioId) return null;
@@ -523,9 +788,21 @@ const RecordTradeModal: React.FC<{
         const norm = symbol.toUpperCase().trim();
         const h = p.holdings.find((x) => x.symbol.toUpperCase().trim() === norm);
         if (!h) return null;
-        const totalSec = (p.holdings ?? []).reduce((s, x) => s + (Number(x.currentValue) || 0), 0);
+        const book = ((p.currency as TradeCurrency) || 'USD') as TradeCurrency;
+        const effVal = (x: Holding) => {
+            const s = (x.symbol || '').toUpperCase().trim();
+            const qty = Number(x.quantity ?? 0);
+            if (holdingUsesLiveQuote(x) && s) {
+                const pi = simulatedPrices[s];
+                if (pi && Number.isFinite(pi.price) && qty > 0) {
+                    return quoteNotionalInBookCurrency(pi.price, qty, s, book, sarPerUsd);
+                }
+            }
+            return Number.isFinite(x.currentValue) ? Number(x.currentValue) : 0;
+        };
+        const totalSec = (p.holdings ?? []).reduce((s, x) => s + effVal(x), 0);
         if (totalSec <= 0) return null;
-        const w = ((Number(h.currentValue) || 0) / totalSec) * 100;
+        const w = (effVal(h) / totalSec) * 100;
         const q = parseFloat(quantity);
         const pr = parseFloat(price);
         const notional = Number.isFinite(q) && Number.isFinite(pr) ? q * pr : 0;
@@ -533,7 +810,7 @@ const RecordTradeModal: React.FC<{
             ...sellScore({ aboveTargetWeightPct: Math.max(0, w - 15), needCash: w > 20 }),
             notional,
         };
-    }, [type, portfolioId, symbol, portfolios, quantity, price]);
+    }, [type, portfolioId, symbol, portfolios, quantity, price, simulatedPrices, sarPerUsd]);
 
     const largeSellNeedsAck = Boolean(
         type === 'sell' &&
@@ -586,14 +863,20 @@ const RecordTradeModal: React.FC<{
             if (!holding) return 'Cannot sell: holding not found in selected portfolio.';
             if (holding.quantity < parsedQuantity) return `Cannot sell ${parsedQuantity}. Available quantity is ${holding.quantity}.`;
         }
+        const gross = parsedQuantity * parsedPrice;
+        if (fees.trim() !== '' && !Number.isFinite(parseFloat(fees))) return 'Fees must be a valid number (or leave blank for zero).';
+        if (!Number.isFinite(feeAmount) || feeAmount < 0) return 'Fees must be zero or a positive number.';
+        if (type === 'sell' && feeAmount > gross + 1e-9) {
+            return `Fees cannot exceed gross proceeds (${formatCurrencyString(gross, { inCurrency: tradeCurrency, digits: 2 })}).`;
+        }
         if (type === 'buy') {
-            const notional = parsedQuantity * parsedPrice;
-            if (notional > availableCashInTradeCurrency + 1e-9) {
-                return `Insufficient platform cash in ${tradeCurrency}. Needed ${formatCurrencyString(notional, { inCurrency: tradeCurrency, digits: 0 })}, available ${formatCurrencyString(availableCashInTradeCurrency, { inCurrency: tradeCurrency, digits: 0 })}. Transfer funds from Checking/Savings first.`;
+            const cashNeeded = gross + feeAmount;
+            if (cashNeeded > availableCashInLedgerCurrency + 1e-9) {
+                return `Insufficient platform cash in ${tradeCurrency}. Needed ${formatCurrencyString(cashNeeded, { inCurrency: tradeCurrency, digits: 0 })} (gross ${formatCurrencyString(gross, { inCurrency: tradeCurrency, digits: 0 })} + fees), available ${formatCurrencyString(availableCashInLedgerCurrency, { inCurrency: tradeCurrency, digits: 0 })} (SAR ${formatCurrencyString(availableCashByCurrency.SAR, { inCurrency: 'SAR', digits: 0 })} + USD ${formatCurrencyString(availableCashByCurrency.USD, { inCurrency: 'USD', digits: 0 })} pooled at ${sarPerUsd.toFixed(4)} SAR/USD). Transfer funds from Checking/Savings first.`;
             }
         }
         return null;
-    }, [portfolioId, quantity, price, symbol, type, isNewHolding, holdingName, manualValuation, manualCurrentValue, isManualExisting, tradeCurrency, portfolios, availableCashInTradeCurrency, formatCurrencyString]);
+    }, [portfolioId, quantity, price, symbol, type, isNewHolding, holdingName, manualValuation, manualCurrentValue, isManualExisting, tradeCurrency, portfolios, availableCashInLedgerCurrency, availableCashByCurrency.SAR, availableCashByCurrency.USD, sarPerUsd, formatCurrencyString, feeAmount]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -648,6 +931,7 @@ const RecordTradeModal: React.FC<{
                 price: parseFloat(price) || 0,
                 date,
                 currency: tradeCurrency,
+                ...(feeAmount > 0 ? { fees: feeAmount } : {}),
                 ...(goalId && { goalId }),
                 ...(type === 'buy' && isNewHolding ? { assetClass: holdingAssetClass } : {}),
                 ...(useManualFund ? { holdingType: 'manual_fund' } : {}),
@@ -687,8 +971,13 @@ const RecordTradeModal: React.FC<{
                     <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 space-y-1">
                         <p>Available cash in this platform (by currency):</p>
                         <p className="font-medium">SAR: <span className="font-semibold">{formatCurrencyString(availableCashByCurrency.SAR, { inCurrency: 'SAR', digits: 0 })}</span> · USD: <span className="font-semibold">{formatCurrencyString(availableCashByCurrency.USD, { inCurrency: 'USD', digits: 0 })}</span></p>
+                        <p className="text-xs text-slate-700 mt-1">
+                            Available for trades in <strong>{tradeCurrency}</strong> (ledger):{' '}
+                            <span className="font-semibold tabular-nums">{formatCurrencyString(availableCashInLedgerCurrency, { inCurrency: tradeCurrency, digits: 2 })}</span>
+                            <span className="text-slate-500"> — uses {sarPerUsd.toFixed(4)} SAR/USD when pooling buckets (same rule as save).</span>
+                        </p>
                         {selectedPortfolio && (
-                            <p className="text-xs text-slate-600">Quantity and price are in <strong>{selectedPortfolio.currency || 'USD'}</strong> (portfolio base). Funds must exist in that currency on this platform—transfer from Checking/Savings first; buys debit and sells credit the platform cash ledger automatically.</p>
+                            <p className="text-xs text-slate-600">Quantity and price are in <strong>{selectedPortfolio.currency || 'USD'}</strong> (portfolio base). Buys debit and sells credit the platform cash ledger; SAR and USD balances are pooled at the rate above for limit checks.</p>
                         )}
                     </div>
                  )}
@@ -846,15 +1135,81 @@ const RecordTradeModal: React.FC<{
                         <label htmlFor="quantity" className="block text-sm font-medium text-gray-700">
                             {(isNewHolding && manualValuation) || isManualExisting ? 'Units (use 1 for a single plan/account)' : 'Quantity'}
                         </label>
-                        <input type="number" id="quantity" value={quantity} onChange={e => setQuantity(e.target.value)} required min="0" step="any" className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                        <input type="number" id="quantity" value={quantity} onChange={handleQuantityChange} required min="0" step="any" className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
                     </div>
                      <div>
                         <label htmlFor="price" className="block text-sm font-medium text-gray-700">
                             {(isNewHolding && manualValuation) || isManualExisting ? 'Cost per unit' : 'Price per Share'}
                         </label>
-                        <input type="number" id="price" value={price} onChange={e => setPrice(e.target.value)} required min="0" step="any" className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
+                        <input type="number" id="price" value={price} onChange={handlePriceChange} required min="0" step="any" className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
                     </div>
                 </div>
+                <div>
+                    <label htmlFor="trade-fees" className="block text-sm font-medium text-gray-700">
+                        Fees / commission (optional)
+                    </label>
+                    <input
+                        type="number"
+                        id="trade-fees"
+                        min="0"
+                        step="any"
+                        value={fees}
+                        onChange={(e) => setFees(e.target.value)}
+                        className="mt-1 w-full p-2 border border-gray-300 rounded-md"
+                        placeholder="0"
+                    />
+                    <p className="mt-1 text-xs text-slate-500">
+                        In <strong>{tradeCurrency}</strong> (portfolio base). Buys: cash out = gross + fees. Sells: cash in = gross − fees. Per-share cost basis still uses price × quantity only.
+                    </p>
+                </div>
+                {tradeNotional != null && netCashImpact != null && (
+                    <div className="text-sm text-slate-600 -mt-1 space-y-1 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2">
+                        <p className="flex flex-wrap items-center gap-1">
+                            <span>Gross notional (qty × price):</span>
+                            <span className="font-semibold tabular-nums">{formatCurrencyString(tradeNotional, { inCurrency: tradeCurrency, digits: 2 })}</span>
+                            <InfoHint
+                                text="This is the value of the shares before fees. It is not the same as cash out: on a buy you also pay fees."
+                                hintId="record-trade-gross-notional"
+                                hintPage="Investments"
+                            />
+                            {amountDrivesTradeSizing && amountToInvest != null && (
+                                <span className="text-slate-500"> (transfer target: {amountToInvest.toLocaleString()} {tradeCurrency})</span>
+                            )}
+                        </p>
+                        {feeAmount > 0 && (
+                            <p>
+                                Fees: <span className="font-medium tabular-nums">{formatCurrencyString(feeAmount, { inCurrency: tradeCurrency, digits: 2 })}</span>
+                            </p>
+                        )}
+                        <p className="flex flex-wrap items-center gap-1">
+                            <span className="font-medium text-slate-800">
+                                {type === 'buy' ? 'Net cash out of platform' : 'Net cash into platform'}:
+                            </span>
+                            <span className="font-semibold tabular-nums">{formatCurrencyString(netCashImpact, { inCurrency: tradeCurrency, digits: 2 })}</span>
+                            <InfoHint
+                                text={
+                                    type === 'buy'
+                                        ? 'Buy: you pay the share cost plus fees, so this is what leaves your broker cash balance.'
+                                        : 'Sell: you receive share proceeds minus fees, so this is what adds to your broker cash balance.'
+                                }
+                                hintId="record-trade-net-cash"
+                                hintPage="Investments"
+                            />
+                        </p>
+                        <p className="text-xs text-slate-500 tabular-nums">
+                            Same amount in the other currency (FX {sarPerUsd.toFixed(4)} SAR/USD):{' '}
+                            {tradeCurrency === 'USD'
+                                ? formatCurrencyString(convertBetweenTradeCurrencies(netCashImpact, 'USD', 'SAR', sarPerUsd), {
+                                      inCurrency: 'SAR',
+                                      digits: 2,
+                                  })
+                                : formatCurrencyString(convertBetweenTradeCurrencies(netCashImpact, 'SAR', 'USD', sarPerUsd), {
+                                      inCurrency: 'USD',
+                                      digits: 2,
+                                  })}
+                        </p>
+                    </div>
+                )}
                 {showManualCurrentValueField && (
                     <div>
                         <label htmlFor="manual-current-value" className="block text-sm font-medium text-gray-700">
@@ -916,12 +1271,25 @@ const RecordTradeModal: React.FC<{
 // ... other modals ...
 
 // #region Portfolio View Components
+const STOCK_ANALYST_LANG_KEY = 'finova_default_ai_lang_v1';
+
 const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holding: (Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number }) | null; portfolio: InvestmentPortfolio | null }> = ({ isOpen, onClose, holding, portfolio }) => {
     const { data } = useContext(DataContext)!;
+    const { isAiAvailable } = useAI();
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const [aiAnalysis, setAiAnalysis] = useState('');
+    const [analystAr, setAnalystAr] = useState<string | null>(null);
+    const [analystDisplayLang, setAnalystDisplayLang] = useState<'en' | 'ar'>(() => {
+        try {
+            return typeof localStorage !== 'undefined' && localStorage.getItem(STOCK_ANALYST_LANG_KEY) === 'ar' ? 'ar' : 'en';
+        } catch {
+            return 'en';
+        }
+    });
+    const [isTranslatingAnalyst, setIsTranslatingAnalyst] = useState(false);
+    const [analystTranslateError, setAnalystTranslateError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [aiAnalysisError, setAiAnalysisError] = useState<string | null>(null);
     const [groundingChunks, setGroundingChunks] = useState<any[]>([]);
@@ -936,6 +1304,8 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
         if (!holding) return;
         setIsLoading(true);
         setAiAnalysisError(null);
+        setAnalystTranslateError(null);
+        setAnalystAr(null);
         setGroundingChunks([]);
         try {
             const { content, groundingChunks: chunks } = await getAIStockAnalysis(holding, { forceRefresh });
@@ -953,7 +1323,27 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
         } finally {
             setIsLoading(false);
         }
-    }, [holding]);
+    }, [holding, analystDisplayLang]);
+
+    useEffect(() => {
+        if (analystDisplayLang !== 'ar' || !aiAnalysis.trim() || analystAr != null || !isAiAvailable) return;
+        let cancelled = false;
+        (async () => {
+            setIsTranslatingAnalyst(true);
+            setAnalystTranslateError(null);
+            try {
+                const ar = await translateFinancialInsightToArabic(aiAnalysis);
+                if (!cancelled) setAnalystAr(ar);
+            } catch (e) {
+                if (!cancelled) setAnalystTranslateError(formatAiError(e));
+            } finally {
+                if (!cancelled) setIsTranslatingAnalyst(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [analystDisplayLang, aiAnalysis, analystAr, isAiAvailable]);
 
     useEffect(() => {
         if (holding && isOpen && !aiAnalysis && !isLoading) {
@@ -979,6 +1369,8 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     const holdingKey = holding ? `${holding.id ?? holding.symbol}-${holding.symbol}` : '';
     useEffect(() => {
         setAiAnalysis('');
+        setAnalystAr(null);
+        setAnalystTranslateError(null);
         setAiAnalysisError(null);
         setGroundingChunks([]);
         setAnalystGeneratedAt(null);
@@ -1253,23 +1645,76 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                                 {analystSource === 'live' ? 'Live AI report' : analystSource === 'fallback' ? 'Fallback report' : 'Ready to generate'}{analystGeneratedAgo ? ` · ${analystGeneratedAgo}` : ''}
                             </p>
                         </div>
-                        <button
-                            type="button"
-                            onClick={() => handleGetAIAnalysis(true)}
-                            disabled={isLoading}
-                            className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary rounded-xl hover:bg-secondary disabled:opacity-60 disabled:cursor-not-allowed transition-colors shrink-0"
-                        >
-                            <SparklesIcon className="h-4 w-4" />
-                            {isLoading ? 'Generating...' : 'Refresh AI Report'}
-                        </button>
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                            {aiAnalysis.trim() && !isLoading && (
+                                <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs font-semibold">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setAnalystDisplayLang('en');
+                                            try {
+                                                localStorage.setItem(STOCK_ANALYST_LANG_KEY, 'en');
+                                            } catch {
+                                                /* ignore */
+                                            }
+                                        }}
+                                        className={`rounded-md px-2.5 py-1.5 ${analystDisplayLang === 'en' ? 'bg-slate-100 text-slate-900' : 'text-slate-600'}`}
+                                    >
+                                        English
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setAnalystAr(null);
+                                            setAnalystTranslateError(null);
+                                            setAnalystDisplayLang('ar');
+                                            try {
+                                                localStorage.setItem(STOCK_ANALYST_LANG_KEY, 'ar');
+                                            } catch {
+                                                /* ignore */
+                                            }
+                                        }}
+                                        className={`rounded-md px-2.5 py-1.5 ${analystDisplayLang === 'ar' ? 'bg-slate-100 text-slate-900' : 'text-slate-600'}`}
+                                    >
+                                        العربية
+                                    </button>
+                                </div>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => handleGetAIAnalysis(true)}
+                                disabled={isLoading}
+                                className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary rounded-xl hover:bg-secondary disabled:opacity-60 disabled:cursor-not-allowed transition-colors shrink-0"
+                            >
+                                <SparklesIcon className="h-4 w-4" />
+                                {isLoading ? 'Generating...' : 'Refresh AI Report'}
+                            </button>
+                        </div>
                     </div>
                     {isLoading && <div className="text-center py-8 text-sm text-slate-500">Generating analysis...</div>}
                     {aiAnalysisError && !isLoading && (
                         <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-2">AI analyst service is temporarily unavailable ({aiAnalysisError}). We loaded a resilient fallback report below. Use Refresh AI Report to retry live AI analysis.</p>
                     )}
+                    {analystTranslateError && (
+                        <p className="text-xs text-rose-800 bg-rose-50 border border-rose-200 rounded-lg p-2 mt-2">{analystTranslateError}</p>
+                    )}
+                    {isTranslatingAnalyst && analystDisplayLang === 'ar' && (
+                        <p className="text-sm text-center text-slate-500 py-2">Translating to Arabic…</p>
+                    )}
+                    {analystDisplayLang === 'ar' && !isAiAvailable && !analystAr && aiAnalysis.trim() && !isLoading && (
+                        <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+                            Arabic translation needs the AI service. Switch to English or enable AI.
+                        </p>
+                    )}
                     {aiAnalysis && !isLoading && (
-                        <div className="prose prose-sm max-w-none mt-3 text-slate-700 min-w-0 overflow-hidden break-words">
-                            <SafeMarkdownRenderer content={aiAnalysis} />
+                        <div
+                            className="prose prose-sm max-w-none mt-3 text-slate-700 min-w-0 overflow-hidden break-words"
+                            dir={analystDisplayLang === 'ar' ? 'rtl' : 'ltr'}
+                            lang={analystDisplayLang === 'ar' ? 'ar' : 'en'}
+                        >
+                            <SafeMarkdownRenderer
+                                content={analystDisplayLang === 'ar' ? (analystAr ?? aiAnalysis) : aiAnalysis}
+                            />
                         </div>
                     )}
                     {groundingChunks.length > 0 && (
@@ -1504,6 +1949,8 @@ const TransactionHistoryModal: React.FC<{ isOpen: boolean, onClose: () => void, 
 const PlatformCard: React.FC<{ 
     platform: Account;
     portfolios: InvestmentPortfolio[];
+    /** If set, card headline / ROI use only these portfolios (e.g. personal); `portfolios` still drives the holdings tables. */
+    metricsPortfolios?: InvestmentPortfolio[];
     transactions: InvestmentTransaction[];
     goals: Goal[];
     sarPerUsd: number;
@@ -1517,65 +1964,88 @@ const PlatformCard: React.FC<{
     onEditHolding: (holding: Holding) => void;
     simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
 }> = (props) => {
-    const { platform, portfolios, transactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices } = props;
+    const { platform, portfolios, metricsPortfolios, transactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices } = props;
+    const portfoliosForMetrics = metricsPortfolios ?? portfolios;
+    const showPersonalScopeNote = portfolios.length > portfoliosForMetrics.length;
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const { data: dataCtx } = useContext(DataContext)!;
     const [isTxnModalOpen, setIsTxnModalOpen] = useState(false);
+    const investmentsForInfer = useMemo(() => {
+        if (!dataCtx) return [] as InvestmentPortfolio[];
+        const pi = getPersonalInvestments(dataCtx);
+        return pi.length > 0 ? pi : (dataCtx.investments ?? []);
+    }, [dataCtx]);
 
     const platformCurrency = useMemo(() => {
-        const currencies = [...new Set(portfolios.map(p => p.currency || 'USD'))];
+        const currencies = [...new Set(portfoliosForMetrics.map(p => p.currency || 'USD'))];
         return currencies.length === 1 ? (currencies[0] as TradeCurrency) : undefined;
-    }, [portfolios]);
-    const hasMixedCurrencies = platformCurrency === undefined && portfolios.length > 1;
+    }, [portfoliosForMetrics]);
+    const hasMixedCurrencies = platformCurrency === undefined && portfoliosForMetrics.length > 1;
 
-    const { totalValue, totalValueInSAR, totalGainLoss, dailyPnL, totalInvested, totalWithdrawn, roi, totalAvailable } = useMemo(
+    const {
+        totalValueInSAR,
+        totalGainLossSAR,
+        dailyPnLSAR,
+        totalInvestedSAR,
+        totalWithdrawnSAR,
+        roi,
+    } = useMemo(
         () =>
             computePlatformCardMetrics({
-                portfolios,
+                portfolios: portfoliosForMetrics,
                 transactions,
                 accounts: dataCtx?.accounts ?? [],
-                allInvestments: dataCtx?.investments ?? [],
+                allInvestments: investmentsForInfer,
                 sarPerUsd,
                 availableCashByCurrency,
                 simulatedPrices,
                 platformCurrency,
             }),
-        [portfolios, transactions, simulatedPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx?.accounts, dataCtx?.investments],
+        [portfoliosForMetrics, transactions, simulatedPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx?.accounts, investmentsForInfer],
     );
 
-    const holdingsWithGains = (holdings: Holding[]) => holdings.map(h => {
-        const totalCost = h.avgCost * h.quantity;
-        let liveValue: number;
-        if (holdingUsesLiveQuote(h)) {
-            const priceInfo = simulatedPrices[h.symbol];
-            const currentMktPrice = priceInfo ? priceInfo.price : (h.currentValue / (h.quantity || 1));
-            liveValue = currentMktPrice * h.quantity;
-        } else {
-            liveValue = Number.isFinite(h.currentValue) ? h.currentValue : 0;
-        }
-        const gainLoss = liveValue - totalCost;
-        return { ...h, currentValue: liveValue, totalCost, gainLoss };
-    }).sort((a,b) => b.currentValue - a.currentValue);
+    const holdingsWithGains = (holdings: Holding[], bookCurrency: TradeCurrency) =>
+        holdings
+            .map((h) => {
+                const qty = Number(h.quantity ?? 0);
+                const totalCost = (h.avgCost ?? 0) * qty;
+                const sym = (h.symbol || '').trim().toUpperCase();
+                let liveValue: number;
+                if (holdingUsesLiveQuote(h)) {
+                    const priceInfo = simulatedPrices[sym];
+                    if (priceInfo && Number.isFinite(priceInfo.price) && qty > 0) {
+                        liveValue = quoteNotionalInBookCurrency(priceInfo.price, qty, sym, bookCurrency, sarPerUsd);
+                    } else {
+                        const currentMktPrice =
+                            qty > 0 ? (Number(h.currentValue) || 0) / qty : 0;
+                        liveValue = currentMktPrice * qty;
+                    }
+                } else {
+                    liveValue = Number.isFinite(h.currentValue) ? Number(h.currentValue) : 0;
+                }
+                if (liveValue <= 0 && totalCost > 0) liveValue = totalCost;
+                const gainLoss = liveValue - totalCost;
+                return { ...h, currentValue: liveValue, totalCost, gainLoss };
+            })
+            .sort((a, b) => b.currentValue - a.currentValue);
     
     const getGoalName = (goalId?: string) => goalId ? goals.find(g => g.id === goalId)?.name : undefined;
 
     const symbolsNeedingName = useMemo(() => {
         const set = new Set<string>();
-        portfolios.forEach((p) => (p.holdings || []).forEach((h) => {
-            if (!(h.name || (h as any).name)) set.add(h.symbol.trim().toUpperCase());
-        }));
+        portfolios.forEach((p) =>
+            (p.holdings || []).forEach((h) => {
+                const s = (h.symbol || '').trim();
+                if (s.length >= 2) set.add(s);
+            }),
+        );
         return Array.from(set);
     }, [portfolios]);
     const { names: symbolNames } = useCompanyNames(symbolsNeedingName);
 
-    const displayName = (h: Holding) => {
-        const n = h.name || (h as any).name;
-        if (n) return n;
-        const key = h.symbol.trim().toUpperCase();
-        return symbolNames[key] ?? null;
-    };
-
     const totalHoldings = portfolios.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
+    const metricsHoldingsCount = portfoliosForMetrics.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
+    const availableCashSAR = tradableCashBucketToSAR(availableCashByCurrency, sarPerUsd);
 
     return (
         <article className="platform-card bg-white rounded-xl shadow-md flex flex-col overflow-hidden border border-slate-200 hover:shadow-lg transition-shadow duration-300 ease-in-out min-w-0">
@@ -1592,8 +2062,30 @@ const PlatformCard: React.FC<{
                                     <button type="button" onClick={() => onDeletePlatform(platform)} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors" title="Remove platform" aria-label="Remove platform"><TrashIcon className="h-4 w-4" /></button>
                                 </span>
                             </div>
-                            <p className="text-2xl sm:text-3xl font-bold text-primary mt-1 tabular-nums break-words" title={platformCurrency ? formatCurrencyString(totalValue, { inCurrency: platformCurrency, showSecondary: true }) : formatCurrencyString(totalValueInSAR, { inCurrency: 'SAR' })}>{platformCurrency ? formatCurrencyString(totalValue, { inCurrency: platformCurrency }) : formatCurrencyString(totalValueInSAR, { inCurrency: 'SAR' })}</p>
-                            <p className="text-xs text-slate-500 mt-1 font-medium">{hasMixedCurrencies ? 'Mixed SAR/USD · ' : ''}Contains {portfolios.length} portfolio{portfolios.length !== 1 ? 's' : ''} · {totalHoldings} holding{totalHoldings !== 1 ? 's' : ''}</p>
+                            <p
+                                className="text-2xl sm:text-3xl font-bold text-primary mt-1 tabular-nums break-words"
+                                title={formatCurrencyString(totalValueInSAR, {
+                                    digits: 2,
+                                    showSecondary: true,
+                                })}
+                            >
+                                {formatCurrencyString(totalValueInSAR, {
+                                    digits: 2,
+                                    showSecondary: true,
+                                })}
+                            </p>
+                            <p className="text-xs text-slate-500 mt-1 font-medium">
+                                {hasMixedCurrencies ? 'Mixed SAR/USD portfolios · ' : ''}
+                                Totals use each portfolio&apos;s base currency, then your app display currency above.{' '}
+                                Contains {portfolios.length} portfolio{portfolios.length !== 1 ? 's' : ''} · {totalHoldings} holding
+                                {totalHoldings !== 1 ? 's' : ''}
+                                {showPersonalScopeNote ? ` · Headline uses your ${portfoliosForMetrics.length} portfolio${portfoliosForMetrics.length !== 1 ? 's' : ''} (${metricsHoldingsCount} holding${metricsHoldingsCount !== 1 ? 's' : ''})` : ''}
+                            </p>
+                            {showPersonalScopeNote ? (
+                                <p className="text-[11px] text-amber-800 bg-amber-50/90 border border-amber-200/80 rounded-lg px-2 py-1.5 mt-2 leading-snug">
+                                    Managed portfolios on this platform are listed below; totals above reflect <strong>your</strong> portfolios and this account&apos;s cash only.
+                                </p>
+                            ) : null}
                         </div>
                     </div>
                     <button type="button" onClick={() => setIsTxnModalOpen(true)} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-primary rounded-xl border-2 border-primary/30 hover:bg-primary/5 shrink-0 w-full sm:w-auto transition-colors">
@@ -1602,28 +2094,26 @@ const PlatformCard: React.FC<{
                 </div>
                 <dl className="platform-metrics grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3.5" aria-label="Platform metrics">
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
-                        <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Available Cash</dt>
+                        <dt
+                            className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight"
+                            title="Money sitting on this broker ready to buy investments (SAR and USD buckets; pooled at your FX rate for buying power)."
+                        >
+                            Available Cash
+                        </dt>
                         <dd className="metric-value w-full mt-1.5 text-base sm:text-lg font-bold text-slate-900 tabular-nums leading-tight">
                             {availableCashByCurrency.SAR === 0 && availableCashByCurrency.USD === 0 ? (
                                 <span className="text-slate-500">—</span>
                             ) : (
                                 <>
                                     <span className="block">
-                                        {platformCurrency
-                                            ? formatCurrencyString(totalAvailable, {
-                                                  inCurrency: platformCurrency,
-                                                  digits: 0,
-                                                  showSecondary:
-                                                      availableCashByCurrency.SAR > 0 && availableCashByCurrency.USD > 0,
-                                              })
-                                            : formatCurrencyString(totalAvailable, {
-                                                  inCurrency: 'SAR',
-                                                  digits: 0,
-                                                  showSecondary:
-                                                      availableCashByCurrency.SAR > 0 && availableCashByCurrency.USD > 0,
-                                              })}
+                                        {formatCurrencyString(availableCashSAR, {
+                                            digits: 0,
+                                            showSecondary:
+                                                availableCashByCurrency.SAR > 0 && availableCashByCurrency.USD > 0,
+                                        })}
                                     </span>
                                     <span className="mt-1 block text-[11px] font-medium text-slate-500">
+                                        Ledger:{' '}
                                         {formatCurrencyString(availableCashByCurrency.SAR, {
                                             inCurrency: 'SAR',
                                             digits: 0,
@@ -1639,24 +2129,48 @@ const PlatformCard: React.FC<{
                         </dd>
                     </div>
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
-                        <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Unrealized P/L</dt>
-                        <dd className="metric-value w-full mt-1.5 font-bold text-lg tabular-nums">{platformCurrency ? formatCurrency(totalGainLoss, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(totalGainLoss, { colorize: true, digits: 0 })}</dd>
+                        <dt
+                            className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight"
+                            title="Paper profit or loss: current value minus deposits and withdrawals on this platform (not tax until you sell)."
+                        >
+                            Unrealized P/L
+                        </dt>
+                        <dd className="metric-value w-full mt-1.5 font-bold text-lg tabular-nums">
+                            {formatCurrency(totalGainLossSAR, { colorize: true, digits: 0 })}
+                        </dd>
                     </div>
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
                         <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Daily P/L</dt>
-                        <dd className="metric-value w-full mt-1.5 font-bold text-lg tabular-nums">{platformCurrency ? formatCurrency(dailyPnL, { inCurrency: platformCurrency, colorize: true, digits: 0 }) : formatCurrency(dailyPnL, { colorize: true, digits: 0 })}</dd>
+                        <dd className="metric-value w-full mt-1.5 font-bold text-lg tabular-nums">
+                            {formatCurrency(dailyPnLSAR, { colorize: true, digits: 0 })}
+                        </dd>
                     </div>
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
-                        <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">ROI</dt>
+                        <dt
+                            className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight"
+                            title="Return on net capital you moved in vs out of this platform, including today’s portfolio value."
+                        >
+                            ROI
+                        </dt>
                         <dd className={`metric-value w-full mt-1.5 font-bold text-lg tabular-nums ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{roi.toFixed(1)}%</dd>
                     </div>
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
                         <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Invested</dt>
-                        <dd className="metric-value w-full mt-1.5 font-bold text-slate-800 text-lg tabular-nums" title={platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalInvested, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalInvested, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalInvested, { digits: 0 })}</dd>
+                        <dd
+                            className="metric-value w-full mt-1.5 font-bold text-slate-800 text-lg tabular-nums"
+                            title={formatCurrencyString(totalInvestedSAR, { digits: 0, showSecondary: true })}
+                        >
+                            {formatCurrencyString(totalInvestedSAR, { digits: 0 })}
+                        </dd>
                     </div>
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
                         <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Withdrawn</dt>
-                        <dd className="metric-value w-full mt-1.5 font-bold text-slate-800 text-lg tabular-nums" title={platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0, showSecondary: true }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}>{platformCurrency ? formatCurrencyString(totalWithdrawn, { inCurrency: platformCurrency, digits: 0 }) : formatCurrencyString(totalWithdrawn, { digits: 0 })}</dd>
+                        <dd
+                            className="metric-value w-full mt-1.5 font-bold text-slate-800 text-lg tabular-nums"
+                            title={formatCurrencyString(totalWithdrawnSAR, { digits: 0, showSecondary: true })}
+                        >
+                            {formatCurrencyString(totalWithdrawnSAR, { digits: 0 })}
+                        </dd>
                     </div>
                 </dl>
             </header>
@@ -1687,7 +2201,7 @@ const PlatformCard: React.FC<{
                 ) : null}
                 {portfolios.map(portfolio => {
                     const portfolioCurrency = (portfolio.currency as TradeCurrency) || 'USD';
-                    const portfolioHoldings = holdingsWithGains(portfolio.holdings || []);
+                    const portfolioHoldings = holdingsWithGains(portfolio.holdings || [], portfolioCurrency);
                     const portfolioValue = portfolioHoldings.reduce((sum, h) => sum + h.currentValue, 0);
                     const fmt = (val: number, opts?: { digits?: number; showSecondary?: boolean }) => formatCurrencyString(val, { inCurrency: portfolioCurrency, ...opts });
                     const fmtPerUnit = (val: number) => fmt(val, { digits: HOLDING_PER_UNIT_DECIMALS });
@@ -1747,9 +2261,16 @@ const PlatformCard: React.FC<{
                                             </thead>
                                             <tbody className="divide-y divide-slate-100">
                                                 {portfolioHoldings.map(h => {
+                                                    const hSym = (h.symbol || '').trim().toUpperCase();
                                                     const allocationPct = portfolioValue > 0 ? (h.currentValue / portfolioValue) * 100 : 0;
-                                                    const dailyPnL = holdingUsesLiveQuote(h)
-                                                        ? (simulatedPrices[h.symbol]?.change ?? 0) * (h.quantity || 0)
+                                                    const rowDailyPnL = holdingUsesLiveQuote(h)
+                                                        ? quoteDailyPnLInBookCurrency(
+                                                              simulatedPrices[hSym]?.change ?? 0,
+                                                              h.quantity || 0,
+                                                              hSym,
+                                                              portfolioCurrency,
+                                                              sarPerUsd,
+                                                          )
                                                         : 0;
                                                     const gainLossPct = (h.totalCost && h.totalCost > 0) ? (h.gainLoss / h.totalCost) * 100 : 0;
                                                     return (
@@ -1758,13 +2279,17 @@ const PlatformCard: React.FC<{
                                                                 <div className="flex items-center gap-2 min-w-0">
                                                                     <button
                                                                         type="button"
-                                                                        onClick={() => onHoldingClick({ ...h, gainLossPercent: gainLossPct, priceChangePercent: holdingUsesLiveQuote(h) ? (simulatedPrices[h.symbol]?.changePercent ?? 0) : 0 }, portfolio)}
+                                                                        onClick={() => onHoldingClick({ ...h, gainLossPercent: gainLossPct, priceChangePercent: holdingUsesLiveQuote(h) ? (simulatedPrices[hSym]?.changePercent ?? 0) : 0 }, portfolio)}
                                                                         className="text-left rounded-lg py-0.5 pr-1 -ml-1 hover:bg-slate-100/80 transition-colors min-w-0 flex-1 overflow-hidden"
                                                                     >
-                                                                        <span className="metric-value font-bold text-slate-900 block w-full" title={h.symbol}>{h.symbol}</span>
-                                                                        {displayName(h) && displayName(h) !== h.symbol && (
-                                                                            <span className="metric-value text-xs text-slate-500 block w-full" title={displayName(h)!}>{displayName(h)}</span>
-                                                                        )}
+                                                                        <ResolvedSymbolLabel
+                                                                            symbol={h.symbol}
+                                                                            storedName={h.name}
+                                                                            names={symbolNames}
+                                                                            layout="stacked"
+                                                                            symbolClassName="metric-value font-bold text-slate-900 block w-full"
+                                                                            companyClassName="metric-value text-xs text-slate-500 block w-full"
+                                                                        />
                                                                     </button>
                                                                     {h.goalId && <span title={getGoalName(h.goalId)}><LinkIcon className="h-3.5 w-3.5 text-emerald-500 shrink-0" aria-hidden /></span>}
                                                                 </div>
@@ -1817,7 +2342,7 @@ const PlatformCard: React.FC<{
                                                                 </span>
                                                             </td>
                                                             <td className="px-3 py-3 text-center">
-                                                                <span className={`text-sm font-medium tabular-nums ${dailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmtColor(dailyPnL, { digits: 0 })}</span>
+                                                                <span className={`text-sm font-medium tabular-nums ${rowDailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmtColor(rowDailyPnL, { digits: 0 })}</span>
                                                             </td>
                                                             <td className="px-3 py-3 text-center">
                                                                 <span className={`inline-block px-2 py-0.5 text-[10px] font-semibold rounded-full ${h.zakahClass === 'Zakatable' ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-600'}`}>{h.zakahClass === 'Zakatable' ? 'Zak.' : 'Non'}</span>
@@ -1864,49 +2389,35 @@ const PlatformView: React.FC<{
     const { setActivePage, setActiveTab, onOpenAddPortfolio } = props;
 
     const platformsData = useMemo(() => {
-        const accounts = data?.accounts ?? [];
-        const investments = data?.investments ?? [];
+        const accounts = getPersonalAccounts(data);
+        const accList = data?.accounts ?? [];
+        const invList = data?.investments ?? [];
+        const personalInv = getPersonalInvestments(data);
         const investmentTransactions = data?.investmentTransactions ?? [];
-        const investmentAccounts = accounts.filter(acc => acc.type === 'Investment').sort((a,b) => a.name.localeCompare(b.name));
-        return investmentAccounts.map(account => ({
+        const investmentAccounts = accounts.filter((acc) => acc.type === 'Investment').sort((a, b) => a.name.localeCompare(b.name));
+        return investmentAccounts.map((account) => ({
             account,
-            portfolios: investments.filter(p => (p.accountId ?? (p as any).account_id) === account.id),
-            transactions: investmentTransactions.filter(t => (t.accountId ?? (t as any).account_id) === account.id).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+            portfoliosAll: invList.filter((p) => portfolioBelongsToAccount(p, account, accList)),
+            portfoliosPersonal: personalInv.filter((p) => portfolioBelongsToAccount(p, account, accList)),
+            transactions: investmentTransactions
+                .filter((t) => {
+                    const raw = t.accountId ?? (t as { account_id?: string }).account_id ?? '';
+                    const canon = resolveCanonicalAccountId(raw, accList);
+                    return canon === account.id || raw === account.id;
+                })
+                .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
             availableCashByCurrency: getAvailableCashForAccount(account.id),
         }));
-    }, [data?.accounts, data?.investments, data?.investmentTransactions, getAvailableCashForAccount]);
+    }, [data, getAvailableCashForAccount]);
 
     const totalPlatforms = platformsData.length;
-    const totalPortfolios = platformsData.reduce((sum, p) => sum + p.portfolios.length, 0);
+    const totalPortfolios = platformsData.reduce((sum, p) => sum + p.portfoliosAll.length, 0);
     const aggregateValue = useMemo(() => {
-        const toSar = (amount: number, currency?: string) => {
-            if (!Number.isFinite(amount) || amount <= 0) return 0;
-            const c = (currency === 'USD' || currency === 'SAR') ? currency : 'USD';
-            return c === 'USD' ? amount * sarPerUsd : amount;
-        };
-
-        return platformsData.reduce((sum, p) => {
-            const cashSar = tradableCashBucketToSAR(p.availableCashByCurrency, sarPerUsd);
-            const platformTotalSar = p.portfolios.reduce((portfolioSum, portfolio) => {
-                const portfolioCurrency = portfolio.currency === 'SAR' || portfolio.currency === 'USD' ? portfolio.currency : 'USD';
-                const holdingsTotalSar = (portfolio.holdings || []).reduce((holdingSum, h) => {
-                    const symbol = (h.symbol || '').trim().toUpperCase();
-                    const priceInfo = holdingUsesLiveQuote(h) ? props.simulatedPrices[symbol] : undefined;
-                    if (priceInfo && Number.isFinite(priceInfo.price) && (h.quantity ?? 0) > 0) {
-                        const live = priceInfo.price * (h.quantity || 0);
-                        if (!Number.isFinite(live) || live <= 0) return holdingSum;
-                        return holdingSum + (portfolioCurrency === 'SAR' ? live : live * sarPerUsd);
-                    }
-                    const fallbackValue = Number.isFinite(h.currentValue) ? (h.currentValue as number) : 0;
-                    return holdingSum + toSar(fallbackValue, portfolioCurrency);
-                }, 0);
-                return portfolioSum + holdingsTotalSar;
-            }, 0) + cashSar;
-            return sum + platformTotalSar;
-        }, 0);
-    }, [platformsData, props.simulatedPrices, sarPerUsd]);
+        if (!data) return 0;
+        return computePersonalPlatformsRollupSAR(data, sarPerUsd, props.simulatedPrices, getAvailableCashForAccount).subtotalSAR;
+    }, [data, sarPerUsd, props.simulatedPrices, getAvailableCashForAccount]);
     const hasAnyPlatforms = totalPlatforms > 0;
-    const hasAnyPortfolios = totalPortfolios > 0;
+    const hasAnyPortfolios = platformsData.some((p) => p.portfoliosAll.length > 0);
 
     return (
         <div className="space-y-6 mt-2">
@@ -1952,8 +2463,10 @@ const PlatformView: React.FC<{
                     <div className="mt-5 pt-5 border-t border-slate-200">
                         <div className="flex flex-wrap items-center gap-4 sm:gap-6">
                             <div className="flex items-baseline gap-2">
-                                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total value (holdings + cash)</span>
-                                <span className="text-xl sm:text-2xl font-bold text-primary tabular-nums tracking-tight">{formatCurrencyString(aggregateValue)}</span>
+                                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Your platforms total (holdings + cash, SAR)</span>
+                                <span className="text-xl sm:text-2xl font-bold text-primary tabular-nums tracking-tight">
+                                    {formatCurrencyString(aggregateValue, { inCurrency: 'SAR', digits: 2 })}
+                                </span>
                             </div>
                             <div className="flex items-center gap-2 sm:gap-4">
                                 <div className="flex items-center gap-1.5 rounded-lg bg-slate-100/80 px-3 py-1.5">
@@ -2005,7 +2518,8 @@ const PlatformView: React.FC<{
                     <PlatformCard
                         key={p.account.id}
                         platform={p.account}
-                        portfolios={p.portfolios}
+                        portfolios={p.portfoliosAll}
+                        metricsPortfolios={p.portfoliosPersonal}
                         transactions={p.transactions}
                         goals={data?.goals ?? []}
                         sarPerUsd={sarPerUsd}
@@ -2068,8 +2582,15 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     }), [planFromData]);
 
     const [plan, setPlan] = useState<InvestmentPlanSettings>(planWithAnalystDefaults);
+    const personalPortfolios = useMemo(() => getPersonalInvestments(data ?? null), [data]);
+    const [selectedPortfolioId, setSelectedPortfolioId] = useState<string | null>(null);
+    const universePortfolioId = selectedPortfolioId ?? personalPortfolios[0]?.id ?? null;
     const [newTicker, setNewTicker] = useState({ ticker: '', name: '' });
-    const hasSyncedFromServerRef = React.useRef(false);
+    useEffect(() => {
+        if (personalPortfolios.length > 0 && selectedPortfolioId === null) {
+            setSelectedPortfolioId(personalPortfolios[0].id);
+        }
+    }, [personalPortfolios, selectedPortfolioId]);
     useEffect(() => {
         const sym = newTicker.ticker.trim().toUpperCase();
         if (!sym || sym.length < 2) return;
@@ -2093,19 +2614,19 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const [universeFilter, setUniverseFilter] = useState<'all' | 'Core' | 'High-Upside' | 'Watchlist' | 'Needs mapping'>('all');
     const [universeSort, setUniverseSort] = useState<'ticker' | 'status' | 'weight'>('ticker');
 
-    // Sync plan from server only on first load (or when data first becomes available), so refetches don't overwrite unsaved edits
     useEffect(() => {
-        const dataJustLoaded = planFromData && !hasSyncedFromServerRef.current;
-        if (dataJustLoaded) {
-            setPlan(planWithAnalystDefaults);
-            hasSyncedFromServerRef.current = true;
-        }
-    }, [planWithAnalystDefaults, planFromData]);
+        if (!planFromData || !universePortfolioId) return;
+        setPlan(getEffectivePlanForPortfolio(planFromData, universePortfolioId, planWithAnalystDefaults));
+    }, [planFromData, universePortfolioId, planWithAnalystDefaults]);
 
     const unifiedUniverse = useMemo(() => {
         const universeMap = new Map<string, UniverseTicker & { source?: string }>();
-        const portfolioUniverse = data?.portfolioUniverse ?? [];
-        const investments = data?.investments ?? [];
+        const portfolioUniverse = (data?.portfolioUniverse ?? []).filter(
+            (t) => !t.portfolioId || t.portfolioId === universePortfolioId,
+        );
+        const investments = universePortfolioId
+            ? getPersonalInvestments(data ?? null).filter((p) => p.id === universePortfolioId)
+            : [];
         const watchlist = data?.watchlist ?? [];
         const plannedTrades = data?.plannedTrades ?? [];
 
@@ -2165,7 +2686,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         });
         
         return Array.from(universeMap.values());
-    }, [data?.portfolioUniverse, data?.investments, data?.watchlist, data?.plannedTrades]);
+    }, [data?.portfolioUniverse, data?.investments, data?.watchlist, data?.plannedTrades, universePortfolioId]);
 
     const universeHealth = useMemo(() => {
         const actionable = unifiedUniverse.filter(t => t.status === 'Core' || t.status === 'High-Upside');
@@ -2192,12 +2713,6 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         else if (universeSort === 'weight') list = [...list].sort((a, b) => (b.monthly_weight ?? 0) - (a.monthly_weight ?? 0));
         return list;
     }, [unifiedUniverse, universeFilter, universeSort]);
-
-    useEffect(() => {
-        if (data?.investmentPlan) {
-            setPlan(data.investmentPlan);
-        }
-    }, [data?.investmentPlan]);
 
     // Auto-derive suggested monthly budget from recent buy activity (last 6 months) with source label
     const { suggestedMonthlyBudget, suggestedBudgetSource } = useMemo(() => {
@@ -2244,7 +2759,12 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         const toAdd = unifiedUniverse.filter(t => t.source !== 'Universe' && !t.source?.includes('Universe'));
         for (const t of toAdd) {
             try {
-                await addUniverseTicker({ ticker: t.ticker, name: t.name, status: t.status });
+                await addUniverseTicker({
+                    ticker: t.ticker,
+                    name: t.name,
+                    status: t.status,
+                    portfolioId: universePortfolioId ?? undefined,
+                });
             } catch (_) {
                 // Skip duplicates or errors
             }
@@ -2327,7 +2847,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const handleAddNewTicker = async () => {
         if (!newTicker.ticker || !newTicker.name) return;
         try {
-            await addUniverseTicker({ ...newTicker, status: 'Watchlist' });
+            await addUniverseTicker({ ...newTicker, status: 'Watchlist', portfolioId: universePortfolioId ?? undefined });
             setNewTicker({ ticker: '', name: '' });
         } catch (error) {
             // Error already alerted in DataContext
@@ -2433,8 +2953,11 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     }, [plan, allocationWarning, universeHealth, minOrderWarning, noActionableWarning]);
 
     const syncPlanFromUniverse = () => {
-        const core = (data?.portfolioUniverse ?? []).filter(t => t.status === 'Core').map(t => ({ ticker: t.ticker, weight: t.monthly_weight ?? 0 }));
-        const upside = (data?.portfolioUniverse ?? []).filter(t => t.status === 'High-Upside').map(t => ({ ticker: t.ticker, weight: t.monthly_weight ?? 0 }));
+        const scoped = (data?.portfolioUniverse ?? []).filter(
+            (t) => !t.portfolioId || t.portfolioId === universePortfolioId,
+        );
+        const core = scoped.filter(t => t.status === 'Core').map(t => ({ ticker: t.ticker, weight: t.monthly_weight ?? 0 }));
+        const upside = scoped.filter(t => t.status === 'High-Upside').map(t => ({ ticker: t.ticker, weight: t.monthly_weight ?? 0 }));
         setPlan(prev => ({ ...prev, corePortfolio: core, upsideSleeve: upside }));
     };
 
@@ -2535,7 +3058,7 @@ Save anyway?`)) return;
         setSaveError(null);
         setIsSavingPlan(true);
         try {
-            await saveInvestmentPlan(plan);
+            await saveInvestmentPlan(plan, universePortfolioId ?? undefined);
             setSaveMessage('Plan saved. You can view allocation & orders in Wealth Ultra.');
             setTimeout(() => setSaveMessage(null), 6000);
         } catch (err) {
@@ -2556,7 +3079,9 @@ Save anyway?`)) return;
     };
 
     const autoConfigureUniverseWeights = useCallback(async () => {
-        const universe = [...(data?.portfolioUniverse ?? [])];
+        const universe = [...(data?.portfolioUniverse ?? [])].filter(
+            (t) => !t.portfolioId || t.portfolioId === universePortfolioId,
+        );
         if (universe.length === 0) return;
 
         const actionable = universe.filter(t => isActionableUniverseStatus(t.status));
@@ -2592,7 +3117,7 @@ Save anyway?`)) return;
 
         setSaveMessage('Universe weights auto-configured for actionable tickers.');
         setTimeout(() => setSaveMessage(null), 5000);
-    }, [data?.portfolioUniverse, updateUniverseTickerStatus]);
+    }, [data?.portfolioUniverse, updateUniverseTickerStatus, universePortfolioId]);
 
     const handleStatusUpdate = async (ticker: UniverseTicker & { source?: string }, newStatus: TickerStatus) => {
         if (isUniverseTicker(ticker)) {
@@ -2609,7 +3134,8 @@ Save anyway?`)) return;
             await addUniverseTicker({
                 ticker: ticker.ticker,
                 name: ticker.name,
-                status: newStatus
+                status: newStatus,
+                portfolioId: universePortfolioId ?? undefined,
             });
             setSaveMessage('Ticker added to universe. Click Auto-configure weights to distribute defaults.');
             setTimeout(() => setSaveMessage(null), 5000);
@@ -2650,7 +3176,19 @@ Save anyway?`)) return;
         const amountInTradeCurrency = tradeCurrency === planCurrency
             ? trade.amount
             : (typeof trade.amountInTradeCurrency === 'number' ? trade.amountInTradeCurrency : trade.amount);
-        const suggestedPrice = simulatedPrices[symbol]?.price || holdingPriceFallbackMap[symbol] || 0;
+        const rawQuote = simulatedPrices[symbol]?.price;
+        let suggestedPrice = 0;
+        if (rawQuote != null && Number.isFinite(rawQuote) && rawQuote > 0) {
+            suggestedPrice = convertBetweenTradeCurrencies(
+                rawQuote,
+                inferInstrumentCurrencyFromSymbol(symbol),
+                tradeCurrency,
+                sarPerUsd,
+            );
+        } else {
+            const fb = holdingPriceFallbackMap[symbol];
+            if (fb != null && Number.isFinite(fb) && fb > 0) suggestedPrice = fb;
+        }
         const suggestedQuantity = suggestedPrice > 0 ? amountInTradeCurrency / suggestedPrice : undefined;
         return {
             tradeCurrency,
@@ -2658,7 +3196,7 @@ Save anyway?`)) return;
             suggestedPrice: suggestedPrice > 0 ? suggestedPrice : undefined,
             suggestedQuantity,
         };
-    }, [planCurrency, simulatedPrices, holdingPriceFallbackMap]);
+    }, [planCurrency, simulatedPrices, holdingPriceFallbackMap, sarPerUsd]);
 
 
     const addOnOpportunities = useMemo(() => {
@@ -2681,7 +3219,11 @@ Save anyway?`)) return;
         };
 
         const actionableStatuses: TickerStatus[] = ['Core', 'High-Upside'];
-        const mapBySymbol = new Map((data?.portfolioUniverse ?? []).map((t) => [(t.ticker || '').trim().toUpperCase(), t]));
+        const mapBySymbol = new Map(
+            (data?.portfolioUniverse ?? [])
+                .filter((t) => !t.portfolioId || t.portfolioId === universePortfolioId)
+                .map((t) => [(t.ticker || '').trim().toUpperCase(), t]),
+        );
         const candidates: AddOnCandidate[] = [];
 
         const fx = sarPerUsd;
@@ -2696,22 +3238,35 @@ Save anyway?`)) return;
         const addOnPoolBudget = monthlyBudget > 0 ? Math.round(monthlyBudget * 0.2) : 0;
         if (addOnPoolBudget <= 0) return [];
 
-        (data?.investments ?? []).forEach((portfolio) => {
+        getPersonalInvestments(data ?? null).forEach((portfolio) => {
+            const book = ((portfolio.currency as TradeCurrency) || 'USD') as TradeCurrency;
             const holdings = portfolio.holdings || [];
             const liveHoldingValues = holdings.map((holding) => {
                 const symbol = (holding.symbol || '').trim().toUpperCase();
                 const useLive = holdingUsesLiveQuote(holding as Holding);
+                const qty = holding.quantity || 0;
                 let livePrice: number;
                 let liveValue: number;
                 if (useLive) {
-                    livePrice =
-                        simulatedPrices[symbol]?.price
-                        || (holding.quantity > 0 ? holding.currentValue / holding.quantity : 0)
-                        || holding.avgCost
-                        || 0;
-                    if (!Number.isFinite(livePrice)) livePrice = 0;
-                    liveValue =
-                        livePrice > 0 ? livePrice * (holding.quantity || 0) : (holding.currentValue || 0);
+                    const rawPx = simulatedPrices[symbol]?.price;
+                    if (rawPx != null && Number.isFinite(rawPx) && rawPx > 0 && qty > 0) {
+                        liveValue = quoteNotionalInBookCurrency(rawPx, qty, symbol, book, fx);
+                        livePrice = convertBetweenTradeCurrencies(
+                            rawPx,
+                            inferInstrumentCurrencyFromSymbol(symbol),
+                            book,
+                            fx,
+                        );
+                    } else {
+                        const fromStored = qty > 0 ? (holding.currentValue || 0) / qty : 0;
+                        livePrice =
+                            Number.isFinite(fromStored) && fromStored > 0
+                                ? fromStored
+                                : (holding.avgCost || 0);
+                        if (!Number.isFinite(livePrice)) livePrice = 0;
+                        liveValue =
+                            livePrice > 0 ? livePrice * qty : (holding.currentValue || 0);
+                    }
                 } else {
                     liveValue = Number.isFinite(holding.currentValue) ? holding.currentValue : 0;
                     livePrice =
@@ -2797,7 +3352,10 @@ Save anyway?`)) return;
             .slice(0, 6);
 
         return allocated;
-    }, [data?.investments, data?.portfolioUniverse, sarPerUsd, plan.monthlyBudget, planCurrency, simulatedPrices, tickerCurrencyMap]);
+    }, [data, data?.portfolioUniverse, sarPerUsd, plan.monthlyBudget, planCurrency, simulatedPrices, tickerCurrencyMap, universePortfolioId]);
+
+    const addOnSymbols = useMemo(() => addOnOpportunities.map((o) => o.symbol), [addOnOpportunities]);
+    const { names: addOnCompanyNames } = useCompanyNames(addOnSymbols);
 
     const handleExecutePlan = async (forceRuleBased = false) => {
         setIsExecuting(true);
@@ -2874,6 +3432,37 @@ Save anyway?`)) return;
                     </div>
                 </div>
             </section>
+            {personalPortfolios.length > 0 && (
+                <section className="rounded-2xl border border-indigo-200 bg-indigo-50/60 p-4 sm:p-5">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <h2 className="text-sm font-bold text-indigo-950 uppercase tracking-wide">Portfolio for this plan</h2>
+                            <p className="text-sm text-indigo-900/90 mt-1">
+                                Monthly budget, allocations, and universe weights below are saved <strong>per portfolio</strong>. Switch to configure another account.
+                            </p>
+                        </div>
+                        <label className="flex flex-col gap-1 min-w-[12rem]">
+                            <span className="text-xs font-semibold text-indigo-800">Investment portfolio</span>
+                            <select
+                                value={selectedPortfolioId ?? personalPortfolios[0]?.id ?? ''}
+                                onChange={(e) => setSelectedPortfolioId(e.target.value || null)}
+                                className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm"
+                            >
+                                {personalPortfolios.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                        {p.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    </div>
+                </section>
+            )}
+            {personalPortfolios.length === 0 && (
+                <section className="rounded-2xl border border-amber-200 bg-amber-50/80 p-4 text-sm text-amber-950">
+                    Create an <strong>investment portfolio</strong> under Portfolios first—then you can set a plan and universe for each one.
+                </section>
+            )}
             {saveError && (
                 <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm flex items-center justify-between" role="alert" aria-live="polite">
                     <span>{saveError}</span>
@@ -3281,7 +3870,7 @@ Save anyway?`)) return;
                             <h2 className="text-xl font-semibold text-dark flex items-center gap-2 min-w-0">
                                 <span>Portfolio Universe & Weights</span>
                                 <span className="inline-flex items-center flex-shrink-0">
-                                    <InfoHint text="Tickers and their status (Core, High-Upside, Speculative, etc.) with optional monthly weights. Core and High-Upside drive allocation; weights define how the monthly budget is split between them. Sync from Watchlist or add manually." hintId="plan-universe-tickers" hintPage="Investments" />
+                                    <InfoHint text="Scoped to the portfolio selected above. Tickers and their status (Core, High-Upside, Speculative, etc.) with optional monthly weights. Core and High-Upside drive allocation; weights define how this portfolio’s monthly budget is split. Sync from Watchlist or add manually." hintId="plan-universe-tickers" hintPage="Investments" />
                                 </span>
                             </h2>
                             <p className="text-sm text-gray-500 mt-1">Define your assets, their status, and their monthly investment weights. Core and High-Upside assets will be invested according to these weights.</p>
@@ -3459,8 +4048,15 @@ Save anyway?`)) return;
                                     <tbody>
                                         {addOnOpportunities.map((o) => (
                                             <tr key={`${o.symbol}-${o.portfolioName}`} className="border-b border-slate-100 last:border-0 align-top hover:bg-slate-50/40">
-                                                <td className="px-3 py-2">
-                                                    <div className="font-semibold text-slate-800">{o.symbol}</div>
+                                                <td className="px-3 py-2 min-w-0">
+                                                    <ResolvedSymbolLabel
+                                                        symbol={o.symbol}
+                                                        storedName={o.name}
+                                                        names={addOnCompanyNames}
+                                                        layout="stacked"
+                                                        symbolClassName="font-semibold text-slate-800"
+                                                        companyClassName="text-xs text-slate-600"
+                                                    />
                                                     <div className="text-[11px] text-slate-500 truncate">{o.portfolioName} · {o.status}</div>
                                                 </td>
                                                 <td className="px-3 py-2">
@@ -3551,45 +4147,49 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
   const [portfolioToEdit, setPortfolioToEdit] = useState<InvestmentPortfolio|null>(null);
   const [currentAccountId, setCurrentAccountId] = useState<string|null>(null);
 
-  const { exchangeRate } = useCurrency();
-  const { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage } = useMemo(() => {
-    if (!data) return { totalValue: 0, totalGainLoss: 0, roi: 0, totalDailyPnL: 0, trendPercentage: 0 };
-    const portfolios = (data as any)?.personalInvestments ?? data?.investments ?? [];
-    const allCommodities = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
-    const personalAccountIds = new Set(((data as any)?.personalAccounts ?? data?.accounts ?? []).map((a: { id: string }) => a.id));
+  const { exchangeRate, currency: appDisplayCurrency } = useCurrency();
+  const { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage, platformsRollupSAR, commoditiesValueSAR } = useMemo(() => {
+    if (!data) {
+      return {
+        totalValue: 0,
+        totalGainLoss: 0,
+        roi: 0,
+        totalDailyPnL: 0,
+        trendPercentage: 0,
+        platformsRollupSAR: 0,
+        commoditiesValueSAR: 0,
+      };
+    }
+    const portfolios = getPersonalInvestments(data);
+    const allCommodities = getPersonalCommodityHoldings(data);
+    const accountsFull = data?.accounts ?? [];
+    const personalAccountIds = new Set(getPersonalAccounts(data).map((a) => a.id));
+    const txHitsPersonalInvestment = (t: InvestmentTransaction) => {
+      const raw = (t.accountId ?? (t as { account_id?: string }).account_id ?? '').trim();
+      if (!raw) return false;
+      const canon = resolveCanonicalAccountId(raw, accountsFull);
+      return personalAccountIds.has(canon) || personalAccountIds.has(raw);
+    };
     const rate = resolveSarPerUsd(data, exchangeRate);
-    let valueSAR = 0, valueUSD = 0;
-    portfolios.forEach((p: InvestmentPortfolio) => {
-        const cur = (p.currency || 'USD') as TradeCurrency;
-        (p.holdings || []).forEach((h: Holding) => {
-            const sym = (h.symbol || '').trim().toUpperCase();
-            const priceInfo = holdingUsesLiveQuote(h) ? simulatedPrices[sym] : undefined;
-            if (priceInfo && Number.isFinite(priceInfo.price) && (h.quantity ?? 0) > 0) {
-                const live = priceInfo.price * (h.quantity || 0);
-                if (cur === 'SAR') valueSAR += live;
-                else valueUSD += live;
-            } else {
-                const fallback = Number.isFinite(h.currentValue) ? (h.currentValue as number) : 0;
-                if (cur === 'SAR') valueSAR += fallback; else valueUSD += fallback;
-            }
-        });
-    });
-    const totalInvestmentsValueSAR = valueSAR + valueUSD * rate;
-    const invAccounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []).filter(
-        (a: { id: string; type?: string }) => personalAccountIds.has(a.id) && a.type === 'Investment',
-    ) as { id: string }[];
-    const invTradableCashSAR = invAccounts.reduce(
-        (s, a) => s + tradableCashBucketToSAR(getAvailableCashForAccount(a.id), rate),
-        0,
+    const { subtotalSAR: platformsRollupSAR, dailyPnLSAR: platformsDailyPnL } = computePersonalPlatformsRollupSAR(
+      data,
+      rate,
+      simulatedPrices,
+      getAvailableCashForAccount,
     );
-    const totalCommoditiesValue = allCommodities.reduce((sum: number, ch: { symbol?: string; quantity?: number; currentValue?: number }) => sum + (simulatedPrices[ch.symbol!] ? simulatedPrices[ch.symbol!].price * (ch.quantity ?? 0) : (ch.currentValue ?? 0)), 0);
-    const totalValue = totalInvestmentsValueSAR + totalCommoditiesValue + invTradableCashSAR;
+    const { valueSAR: commoditiesValueSAR, dailyDeltaSAR: commoditiesDailySAR } = computePersonalCommoditiesContributionSAR(
+      data,
+      rate,
+      simulatedPrices,
+    );
+    const totalValue = platformsRollupSAR + commoditiesValueSAR;
+    const totalDailyPnL = platformsDailyPnL + commoditiesDailySAR;
 
-    // Capital flows: use deposit/withdrawal for personal accounts only
-    const invTxs = (data?.investmentTransactions ?? []).filter((t: { accountId?: string; type?: string }) => personalAccountIds.has(t.accountId ?? '') && t.type === 'deposit');
-    const wdrTxs = (data?.investmentTransactions ?? []).filter((t: { accountId?: string; type?: string }) => personalAccountIds.has(t.accountId ?? '') && t.type === 'withdrawal');
+    // Capital flows: deposit/withdrawal on personal investment platforms (canonical account id)
+    const invTxs = (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => txHitsPersonalInvestment(t) && t.type === 'deposit');
+    const wdrTxs = (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => txHitsPersonalInvestment(t) && t.type === 'withdrawal');
     const accList = data?.accounts ?? [];
-    const invPortfolios = data?.investments ?? [];
+    const invPortfolios = portfolios;
     let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0;
     invTxs.forEach((t: InvestmentTransaction) => {
         const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
@@ -3603,32 +4203,43 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     });
     const totalInvestedSAR = invSAR + invUSD * rate;
     const totalWithdrawnSAR = wdrSAR + wdrUSD * rate;
-    const commodityCost = allCommodities.reduce((sum: number, ch: { purchaseValue?: number }) => sum + (ch.purchaseValue ?? 0), 0);
+    const commodityCost = allCommodities.reduce((sum: number, ch: { purchaseValue?: number }) => sum + toSAR(ch.purchaseValue ?? 0, 'USD', rate), 0);
     const netCapital = totalInvestedSAR - totalWithdrawnSAR + commodityCost;
     const totalGainLoss = totalValue - netCapital;
     const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
 
-    let totalDailyPnL = 0;
-    portfolios.forEach((p: InvestmentPortfolio) => {
-        const cur = (p.currency || 'USD') as TradeCurrency;
-        (p.holdings || []).forEach((h: Holding) => {
-            const sym = (h.symbol || '').trim().toUpperCase();
-            const info = holdingUsesLiveQuote(h) ? simulatedPrices[sym] : undefined;
-            if (!info || !Number.isFinite(info.change) || (h.quantity ?? 0) <= 0) return;
-            const d = info.change * (h.quantity ?? 0);
-            totalDailyPnL += cur === 'SAR' ? d : d * rate;
-        });
-    });
-    totalDailyPnL += allCommodities.reduce(
-        (sum: number, ch: { symbol?: string; quantity?: number }) =>
-            sum + (simulatedPrices[ch.symbol!] ? simulatedPrices[ch.symbol!].change * (ch.quantity ?? 0) : 0),
-        0,
-    );
     const previousTotalValue = totalValue - totalDailyPnL;
     const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
 
-    return { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage };
-  }, [data?.investments, data?.investmentTransactions, data?.commodityHoldings, data?.accounts, (data as any)?.personalInvestments, (data as any)?.personalAccounts, (data as any)?.personalCommodityHoldings, data?.wealthUltraConfig, simulatedPrices, exchangeRate, getAvailableCashForAccount]);
+    return {
+      totalValue,
+      totalGainLoss,
+      roi,
+      totalDailyPnL,
+      trendPercentage,
+      platformsRollupSAR,
+      commoditiesValueSAR,
+    };
+  }, [data, simulatedPrices, exchangeRate, getAvailableCashForAccount]);
+
+  const investmentsHubAiContext = useMemo(() => {
+    if (!data) return undefined;
+    const portfolios = getPersonalInvestments(data);
+    const holdings = portfolios.flatMap((p) => p.holdings ?? []);
+    const wl = data.watchlist ?? [];
+    const logsRaw = data.executionLogs;
+    const executionLogCount = Array.isArray(logsRaw) ? logsRaw.length : 0;
+    return {
+      activeTab,
+      portfolioCount: portfolios.length,
+      holdingCount: holdings.length,
+      watchlistCount: wl.length,
+      totalValueSAR: totalValue,
+      commoditiesValueSAR,
+      appDisplayCurrency,
+      executionLogCount,
+    };
+  }, [data, activeTab, totalValue, commoditiesValueSAR, appDisplayCurrency]);
 
   const getTrendString = (trend: number) => {
     return `${trend >= 0 ? '+' : ''}${trend.toFixed(2)}%`;
@@ -3699,7 +4310,11 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     }
   }, [pageAction, clearPageAction, data?.investments, setActiveTab, triggerPageAction]);
 
-  const investmentAccounts = useMemo(() => (data?.accounts ?? []).filter(acc => acc.type === 'Investment'), [data?.accounts]);
+  const investmentAccounts = useMemo(
+    () => getPersonalAccounts(data).filter((acc) => acc.type === 'Investment'),
+    [data],
+  );
+  const portfoliosForTrade = useMemo(() => getPersonalInvestments(data ?? null), [data]);
 
   const handleHoldingClick = (holding: (Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number; }), portfolio: InvestmentPortfolio) => { setSelectedHolding(holding); setSelectedPortfolio(portfolio); setIsHoldingModalOpen(true); };
   const handleOpenHoldingEditModal = (holding: Holding) => {
@@ -3882,21 +4497,21 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         <section className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4" aria-label="Investment summary">
             <Card
                 title="Total Value"
-                value={formatCurrencyString(totalValue)}
+                value={formatCurrencyString(totalValue, { inCurrency: 'SAR', showSecondary: true })}
                 density="compact"
                 indicatorColor="green"
                 valueColor="text-emerald-700"
                 icon={<ChartPieIcon className="h-5 w-5 text-emerald-600" aria-hidden />}
-                tooltip="Holdings at current prices, plus tradable cash on investment platforms (SAR/USD per ledger), plus commodities."
+                tooltip="Everything you have invested right now: stocks and funds at today's prices, idle cash sitting on your broker accounts, and commodities. US-listed prices are converted into riyals using your FX rate so the number matches your net worth view."
             />
             <Card
                 title="Unrealized P/L"
-                value={formatCurrency(totalGainLoss, { colorize: true })}
+                value={formatCurrency(totalGainLoss, { colorize: true, inCurrency: 'SAR', showSecondary: true })}
                 density="compact"
                 indicatorColor={totalGainLoss >= 0 ? 'green' : 'red'}
                 valueColor={totalGainLoss >= 0 ? 'text-emerald-700' : 'text-rose-700'}
                 icon={<ArrowsRightLeftIcon className={`h-5 w-5 ${totalGainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
-                tooltip="Unrealized gain or loss on holdings (cost basis vs current value)."
+                tooltip="Paper profit or loss: current value minus money you moved in (deposits) and out (withdrawals) of investment platforms, including commodities cost. It updates when prices refresh; it is not tax or realized gain until you sell."
             />
             <Card
                 title="Portfolio ROI"
@@ -3905,22 +4520,32 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 density="compact"
                 indicatorColor={roi >= 0 ? 'green' : 'red'}
                 icon={<ArrowTrendingUpIcon className={`h-5 w-5 ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
-                tooltip="Return on investment based on total capital invested across portfolios."
+                tooltip="Simple return: unrealized profit or loss divided by net capital you put in (deposits minus withdrawals, plus commodity purchase cost). Positive means your portfolio is worth more than that net input."
             />
             <Card
                 title="Daily P/L"
-                value={formatCurrency(totalDailyPnL, { colorize: true, digits: 2 })}
+                value={formatCurrency(totalDailyPnL, { colorize: true, digits: 2, inCurrency: 'SAR', showSecondary: true })}
                 trend={getTrendString(trendPercentage)}
-                tooltip="Total profit or loss for all investments based on today's simulated market changes."
+                tooltip="Estimated change today from price moves on your holdings (live or simulated quotes). Converted the same way as total value so it lines up with your portfolio currency and FX settings."
                 density="compact"
                 indicatorColor={totalDailyPnL >= 0 ? 'green' : 'red'}
                 valueColor={totalDailyPnL >= 0 ? 'text-emerald-700' : 'text-rose-700'}
                 icon={<ArrowsRightLeftIcon className={`h-5 w-5 ${totalDailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
             />
         </section>
+        {(platformsRollupSAR > 0 || commoditiesValueSAR > 0) && (
+            <p className="text-xs text-slate-500 -mt-2 px-0.5 leading-relaxed" role="note">
+                KPIs aggregate personal portfolios in <strong>each portfolio&apos;s base currency</strong> (USD or SAR), convert to SAR using your FX settings, then show amounts in your app currency ({appDisplayCurrency}). Commodities are valued in USD and converted consistently.
+                <span className="tabular-nums block mt-1">
+                    SAR breakdown: {formatCurrencyString(platformsRollupSAR, { inCurrency: 'SAR', digits: 0 })} platforms + tradable cash;{' '}
+                    {formatCurrencyString(commoditiesValueSAR, { inCurrency: 'SAR', digits: 0 })} commodities.
+                </span>
+            </p>
+        )}
 
         <PlanSummary onEditPlan={() => setActiveTab('Investment Plan')} />
-      
+        <RetirementGoalsStrip onOpenGoals={setActivePage ? () => setActivePage('Goals') : undefined} />
+
         <nav className="rounded-2xl border border-slate-200 bg-white p-2" aria-label="Investment sections">
             <div className="flex gap-1 overflow-x-auto scrollbar-thin">
               {INVESTMENT_SUB_PAGES.map(tab => (
@@ -3948,6 +4573,14 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         </div>
       </InvestmentTabErrorBoundary>
 
+      <AIAdvisor
+        pageContext="investments"
+        contextData={investmentsHubAiContext}
+        title="Investments workspace coach"
+        subtitle={`Current tab: ${activeTab} · Holdings & watchlist-aware · English / العربية`}
+        buttonLabel="Insights for this workspace"
+      />
+
       <HoldingDetailModal isOpen={isHoldingModalOpen} onClose={() => { setIsHoldingModalOpen(false); setSelectedHolding(null); setSelectedPortfolio(null); }} holding={selectedHolding} portfolio={selectedPortfolio} />
       <HoldingEditModal isOpen={isHoldingEditModalOpen} onClose={() => setIsHoldingEditModalOpen(false)} onSave={handleSaveHolding} holding={holdingToEdit} />
       <PlatformModal isOpen={isPlatformModalOpen} onClose={() => setIsPlatformModalOpen(false)} onSave={handleSavePlatform} platformToEdit={platformToEdit} />
@@ -3966,7 +4599,8 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         onClose={handleCloseTradeModal} 
         onSave={recordTrade} 
         investmentAccounts={investmentAccounts} 
-        portfolios={data?.investments ?? []}
+        portfolios={portfoliosForTrade}
+        simulatedPrices={simulatedPrices}
         initialData={tradeInitialData}
       />
     </div>

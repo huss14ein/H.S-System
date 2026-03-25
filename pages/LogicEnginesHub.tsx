@@ -3,8 +3,10 @@ import { DataContext } from '../context/DataContext';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import AIAdvisor from '../components/AIAdvisor';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
-import type { Account, Budget, FinancialData, Goal, Page, Transaction } from '../types';
+import type { LogicEnginesAiContext } from '../services/geminiService';
+import type { Account, Budget, FinancialData, Goal, Liability, Page, Transaction } from '../types';
 
 import {
   simpleReturn,
@@ -20,7 +22,7 @@ import {
   suggestCashSweep,
   type CashBucket,
 } from '../services/cashAllocationEngine';
-import { convertToBaseCurrency, portfolioFXAllocation } from '../services/fxEngine';
+import { portfolioFXAllocation } from '../services/fxEngine';
 import {
   seasonalityAdjustedExpense,
   buildDefaultSeasonalityEvents,
@@ -51,13 +53,30 @@ import { buildUnifiedFinancialContext, runCrossEngineAnalysis } from '../service
 import { lifestyleGuardrailCheck, discretionarySpendApproval } from '../services/lifestyleGuardrailEngine';
 import { monthlyProvisionNeeded } from '../services/provisionEngine';
 import { computeLiquidityRunwayFromData } from '../services/liquidityRunwayEngine';
-import { savingsRate, netCashFlowForMonth } from '../services/financeMetrics';
+import { savingsRateSar, netCashFlowForMonthSarDated } from '../services/financeMetrics';
+import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { debtStressScore } from '../services/debtEngines';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useCurrency } from '../context/CurrencyContext';
 import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
+import { getPersonalInvestments } from '../utils/wealthScope';
+
+function estimateMonthlyDebtServiceSar(liabilities: Liability[]): number {
+  let sum = 0;
+  for (const l of liabilities) {
+    if ((l.status || 'Active') !== 'Active') continue;
+    const bal = Number(l.amount) || 0;
+    if (bal >= 0) continue;
+    const p = Math.abs(bal);
+    if (l.type === 'Credit Card') sum += p * 0.025;
+    else if (l.type === 'Mortgage') sum += p / 300;
+    else sum += p * 0.02;
+  }
+  return sum;
+}
 
 function getScopedData(d: FinancialData | null) {
   if (!d) {
@@ -168,28 +187,57 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
     ],
     [ef.emergencyCash, ef.targetAmount, netWorth]
   );
+  const monthlyCashflowSar = useMemo(() => {
+    if (data) hydrateSarPerUsdDailySeries(data, exchangeRate);
+    return netCashFlowForMonthSarDated(scoped.txs, scoped.accounts, new Date(), data ?? null, exchangeRate);
+  }, [scoped.txs, scoped.accounts, data, exchangeRate]);
+  const bucketAllocInput = useMemo(() => {
+    const surplus = Math.max(0, monthlyCashflowSar.net);
+    const fromLiquid = Math.max(0, ef.emergencyCash * 0.08);
+    const blended = surplus > 0 ? Math.min(surplus, fromLiquid, 200_000) : Math.min(fromLiquid, 50_000);
+    return Math.round(Math.max(500, blended || Math.min(5000, Math.max(0, netWorth) * 0.005)));
+  }, [monthlyCashflowSar.net, ef.emergencyCash, netWorth]);
   const bucketAlloc = useMemo(
     () =>
-      allocateCashAcrossBuckets(5000, [
-        { id: 'res', targetMin: 2000, targetMax: 8000, priority: 1 },
-        { id: 'goal', targetMin: 1000, priority: 2 },
+      allocateCashAcrossBuckets(bucketAllocInput, [
+        { id: 'res', targetMin: Math.min(2000, bucketAllocInput), targetMax: Math.max(bucketAllocInput, ef.targetAmount * 0.25 || 8000), priority: 1 },
+        { id: 'goal', targetMin: Math.min(1000, Math.floor(bucketAllocInput * 0.2)), priority: 2 },
         { id: 'inv', targetMin: 0, priority: 3 },
       ]),
-    []
+    [bucketAllocInput, ef.targetAmount]
   );
   const idleCash = useMemo(() => detectIdleCash(scoped.accounts, { minBalance: 1000 }), [scoped.accounts]);
   const liqRanked = useMemo(() => rankLiquiditySources(scoped.accounts), [scoped.accounts]);
   const sweeps = useMemo(() => suggestCashSweep(cashBuckets, Math.max(0, netWorth * 0.01)), [cashBuckets, netWorth]);
 
-  const fxPositions = useMemo(() => {
-    const base = 'SAR';
-    return scoped.accounts.map((a) => ({
-      currency: base,
-      valueInBase: Math.max(0, a.balance ?? 0),
-    }));
-  }, [scoped.accounts]);
-  const fxAlloc = useMemo(() => portfolioFXAllocation(fxPositions), [fxPositions]);
-  const fxConverted = useMemo(() => convertToBaseCurrency(1000, 'USD', 'SAR', 3.75), []);
+  const fxBreakdown = useMemo(() => {
+    let sarNative = 0;
+    let usdAsSar = 0;
+    for (const a of scoped.accounts) {
+      if (a.type !== 'Checking' && a.type !== 'Savings') continue;
+      const bal = Math.max(0, Number(a.balance) || 0);
+      if (a.currency === 'USD') usdAsSar += toSAR(bal, 'USD', sarPerUsd);
+      else sarNative += toSAR(bal, 'SAR', sarPerUsd);
+    }
+    let invSarBook = 0;
+    let invUsdAsSar = 0;
+    const portfolios = getPersonalInvestments(data ?? null);
+    for (const p of portfolios) {
+      const ccy = resolveInvestmentPortfolioCurrency(p);
+      for (const h of p.holdings ?? []) {
+        const v = Math.max(0, Number(h.currentValue) || 0);
+        if (ccy === 'USD') invUsdAsSar += toSAR(v, 'USD', sarPerUsd);
+        else invSarBook += toSAR(v, 'SAR', sarPerUsd);
+      }
+    }
+    const positions = [
+      { currency: 'SAR', valueInBase: sarNative + invSarBook },
+      { currency: 'USD', valueInBase: usdAsSar + invUsdAsSar },
+    ].filter((p) => p.valueInBase > 0.01);
+    return { positions, sarNative, usdAsSar, invSarBook, invUsdAsSar };
+  }, [scoped.accounts, data, sarPerUsd]);
+  const fxAlloc = useMemo(() => portfolioFXAllocation(fxBreakdown.positions), [fxBreakdown.positions]);
+  const usdThousandInSar = useMemo(() => toSAR(1000, 'USD', sarPerUsd), [sarPerUsd]);
 
   const monthNow = new Date().getMonth() + 1;
   const seasonEvents = useMemo(() => buildDefaultSeasonalityEvents(), []);
@@ -197,7 +245,19 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
     () => seasonalityAdjustedExpense({ baseMonthlyExpense: ef.monthlyCoreExpenses || 3000, month: monthNow, events: seasonEvents }),
     [ef.monthlyCoreExpenses, monthNow, seasonEvents]
   );
-  const annualProv = useMemo(() => annualExpenseMonthlyProvision({ annualAmount: 12000, dueMonth: 12 }), []);
+  const annualProv = useMemo(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const yearly = scoped.budgets.filter((b) => b.period === 'yearly' && b.year === y);
+    if (yearly.length > 0) {
+      const total = yearly.reduce((s, b) => s + (Number(b.limit) || 0), 0);
+      return { amount: total / 12, label: 'From yearly budgets (÷12)' as const };
+    }
+    return {
+      amount: annualExpenseMonthlyProvision({ annualAmount: 12_000, dueMonth: 12 }),
+      label: 'Illustrative — add yearly budgets in Budgets for accuracy' as const,
+    };
+  }, [scoped.budgets]);
   const stressMonth = useMemo(
     () => eventMonthStressCheck({ adjustedMonthlyExpense: seasonAdj, baselineMonthlyExpense: ef.monthlyCoreExpenses || 3000 }),
     [seasonAdj, ef.monthlyCoreExpenses]
@@ -208,7 +268,7 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
       futureMonthlyNeed: Math.max(2000, (ef.monthlyCoreExpenses || 3000) * 1.2),
       inflationRatePct: 3,
       yearsToRetirement: 25,
-      currentCorpus: Math.max(0, netWorth * 0.35),
+      currentCorpus: Math.max(0, netWorth),
       safeWithdrawalRatePct: 3.5,
     }),
     [ef.monthlyCoreExpenses, netWorth]
@@ -347,15 +407,19 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
 
   const riskLane = useMemo(() => computeRiskLaneFromData(data ?? null, ef.monthsCovered), [data, ef.monthsCovered]);
 
-  const { income, expenses } = useMemo(() => netCashFlowForMonth(scoped.txs, new Date()), [scoped.txs]);
-  const srPct = useMemo(() => savingsRate(scoped.txs, new Date()), [scoped.txs]);
+  const income = monthlyCashflowSar.income;
+  const expenses = monthlyCashflowSar.expenses;
+  const srPct = useMemo(() => savingsRateSar(scoped.txs, scoped.accounts, new Date(), sarPerUsd), [scoped.txs, scoped.accounts, sarPerUsd]);
   const monthlyDebt = useMemo(
-    () => scoped.liabilities.filter((l: { status?: string }) => l.status === 'Active').reduce((s: number, l: { monthlyPayment?: number }) => s + (l.monthlyPayment ?? 0), 0),
+    () => estimateMonthlyDebtServiceSar(scoped.liabilities as Liability[]),
     [scoped.liabilities]
   );
   const liquid = useMemo(
-    () => scoped.accounts.filter((a) => a.type === 'Checking' || a.type === 'Savings').reduce((s, a) => s + Math.max(0, a.balance ?? 0), 0),
-    [scoped.accounts]
+    () =>
+      scoped.accounts
+        .filter((a) => a.type === 'Checking' || a.type === 'Savings')
+        .reduce((s, a) => s + toSAR(Math.max(0, a.balance ?? 0), a.currency === 'USD' ? 'USD' : 'SAR', sarPerUsd), 0),
+    [scoped.accounts, sarPerUsd]
   );
   const debtStress = useMemo(() => debtStressScore(monthlyDebt, Math.max(1, income), liquid), [monthlyDebt, income, liquid]);
 
@@ -395,6 +459,63 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
     }
   }, [scoped.txs, scoped.accounts, scoped.budgets, scoped.goals, scoped.investmentsFlat]);
 
+  const trackedSymbolCount = useMemo(() => {
+    const w = (data?.watchlist ?? [])
+      .map((x: { symbol?: string }) => (x.symbol ?? '').trim().toUpperCase())
+      .filter((s: string): s is string => Boolean(s));
+    const h = getPersonalInvestments(data ?? null).flatMap((p) =>
+      (p.holdings ?? []).map((x) => (x.symbol ?? '').trim().toUpperCase()).filter((s: string): s is string => Boolean(s))
+    );
+    return new Set([...w, ...h]).size;
+  }, [data]);
+
+  const enginesAiContext: LogicEnginesAiContext = useMemo(
+    () => ({
+      netWorthSar: netWorth,
+      monthlyIncomeSar: monthlyCashflowSar.income,
+      monthlyExpensesSar: monthlyCashflowSar.expenses,
+      monthlyNetSar: monthlyCashflowSar.net,
+      savingsRatePct: srPct,
+      portfolioSnapshotReturnPct: portfolioReturnPct,
+      runwayMonths: liquidityRunway?.monthsOfRunway ?? 0,
+      emergencyMonthsCovered: ef.monthsCovered,
+      usdToSarRate: sarPerUsd,
+      alertCount: unified?.alerts?.length ?? 0,
+      symbolCount: trackedSymbolCount,
+    }),
+    [
+      netWorth,
+      monthlyCashflowSar.income,
+      monthlyCashflowSar.expenses,
+      monthlyCashflowSar.net,
+      srPct,
+      portfolioReturnPct,
+      liquidityRunway?.monthsOfRunway,
+      ef.monthsCovered,
+      sarPerUsd,
+      unified?.alerts?.length,
+      trackedSymbolCount,
+    ]
+  );
+
+  const logicValidationWarnings = useMemo(() => {
+    const w: string[] = [];
+    if (snaps.length < 2) w.push('Add at least two device net worth snapshots to see a meaningful simple return between snapshots.');
+    if (!ef.hasEssentialExpenseEstimate) w.push('Core monthly expenses are uncertain — classify core expenses or add essential budgets.');
+    if (monthlyCashflowSar.income === 0 && monthlyCashflowSar.expenses > 0) {
+      w.push('This month has expenses but no recorded income in SAR — verify Transactions and account currencies.');
+    }
+    if (
+      scoped.liabilities.some((l: Liability) => (l.status || 'Active') === 'Active' && Number(l.amount) < 0)
+    ) {
+      w.push('Debt stress uses estimated monthly payments (Liabilities have no dedicated monthly payment field).');
+    }
+    if (fxBreakdown.positions.length === 0) {
+      w.push('No checking/savings or investment holdings found for FX exposure.');
+    }
+    return w;
+  }, [snaps.length, ef.hasEssentialExpenseEstimate, monthlyCashflowSar.income, scoped.txs, scoped.liabilities, fxBreakdown.positions.length]);
+
   const lifestyle = useMemo(
     () =>
       lifestyleGuardrailCheck({
@@ -405,22 +526,39 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
       }),
     [ef.monthsCovered, liquidityRunway, srPct, firstGoal]
   );
+  const discretionaryProbeAmount = useMemo(
+    () =>
+      Math.max(
+        500,
+        Math.min(
+          50_000,
+          monthlyCashflowSar.net > 0 ? monthlyCashflowSar.net * 0.25 : (ef.monthlyCoreExpenses || 0) * 0.15 || 2000
+        )
+      ),
+    [monthlyCashflowSar.net, ef.monthlyCoreExpenses]
+  );
   const discretionary = useMemo(
     () =>
       discretionarySpendApproval({
         emergencyFundMonths: ef.monthsCovered,
         runwayMonths: liquidityRunway?.monthsOfRunway ?? ef.monthsCovered,
         savingsRatePct: srPct,
-        discretionaryProposedAmount: 2000,
+        discretionaryProposedAmount: discretionaryProbeAmount,
         goalSlippagePct: firstGoal && firstGoal.targetAmount > 0 ? (1 - firstGoal.currentAmount / firstGoal.targetAmount) * 100 : 0,
       }),
-    [ef.monthsCovered, liquidityRunway, srPct, firstGoal]
+    [ef.monthsCovered, liquidityRunway, srPct, firstGoal, discretionaryProbeAmount]
   );
 
-  const provisionDemo = useMemo(
-    () => monthlyProvisionNeeded({ events: [{ amount: 6000, dueMonth: 6 }], monthsToProvision: 6 }),
-    []
-  );
+  const provisionDemo = useMemo(() => {
+    const yearlySum = scoped.budgets.filter((b) => b.period === 'yearly').reduce((s, b) => s + (Number(b.limit) || 0), 0);
+    if (yearlySum > 0) {
+      return { amount: monthlyProvisionNeeded({ events: [{ amount: yearlySum, dueMonth: 12 }], monthsToProvision: 6 }), label: 'From yearly budget total' };
+    }
+    return {
+      amount: monthlyProvisionNeeded({ events: [{ amount: 6000, dueMonth: 6 }], monthsToProvision: 6 }),
+      label: 'Illustrative event' as const,
+    };
+  }, [scoped.budgets]);
 
   if (loading && !data) {
     return (
@@ -438,9 +576,20 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
       <div className="space-y-6">
         <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
           <p className="text-sm text-slate-700">
-            <strong className="text-slate-900">What is this?</strong> A behind-the-scenes view of how Finova calculates things like returns, runway, and retirement projections. Each section uses your real data. Use the (?) next to section titles for more detail.
+            <strong className="text-slate-900">What is this?</strong> A behind-the-scenes view of how Finova calculates things like returns, runway, and retirement projections. Cash flows, liquid balances, and FX examples are normalized to <strong>SAR</strong> using your accounts’ currencies and the app USD→SAR rate (Settings / Wealth Ultra FX when set).
           </p>
         </div>
+
+        {logicValidationWarnings.length > 0 && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+            <p className="font-semibold mb-1">Validation</p>
+            <ul className="list-disc pl-5 space-y-1 text-xs">
+              {logicValidationWarnings.map((msg) => (
+                <li key={msg}>{msg}</li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <SectionCard title="Quick links" collapsible collapsibleSummary="Jump to Safety, Forecast, Settings" defaultExpanded>
           <p className="text-sm text-gray-600 mb-3">
@@ -467,13 +616,13 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
 
         <SectionCard title="Returns & benchmarks" infoHint="How your portfolio performed compared to a simple benchmark. Uses your saved net worth snapshots." collapsible collapsibleSummary="TWR, attribution, benchmark" defaultExpanded>
           <ul className="text-sm space-y-1 text-gray-700">
-            <li>Simple return (last two snapshots): {portfolioReturnPct.toFixed(2)}%</li>
-            <li>Annualized (demo 2y on 10%): {annualizedReturn(10, 2).toFixed(2)}%</li>
-            <li>TWRR link (demo sub-periods): {twrDemo.toFixed(2)}%</li>
+            <li>Simple return (last two device net worth snapshots): {portfolioReturnPct.toFixed(2)}%</li>
+            <li>Illustrative annualized return (engine example: 10% over 2y): {annualizedReturn(10, 2).toFixed(2)}%</li>
+            <li>Illustrative TWRR link (engine example sub-periods): {twrDemo.toFixed(2)}%</li>
             <li>vs 8% benchmark: {benchmarkCmp.outperforming ? 'Outperforming' : 'Behind'} (excess {benchmarkCmp.excess.toFixed(2)} pp)</li>
             <li>
-              Attribution demo: price {attrDemo.price}% + div {attrDemo.dividend}% + FX {attrDemo.fx}% + contrib {attrDemo.contribution}% ={' '}
-              {attrDemo.total.toFixed(2)}%
+              Illustrative attribution mix (engine demo, not your portfolio): price {attrDemo.price}% + div {attrDemo.dividend}% + FX {attrDemo.fx}%
+              % + contrib {attrDemo.contribution}% = {attrDemo.total.toFixed(2)}%
             </li>
           </ul>
         </SectionCard>
@@ -491,11 +640,18 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
         </SectionCard>
 
         <SectionCard title="Cash & liquidity" collapsible collapsibleSummary="Runway, buckets, idle cash">
-          <p className="text-xs text-gray-500 mb-2">cashAllocationEngine + liquidityRunwayEngine</p>
+          <p className="text-xs text-gray-500 mb-2">cashAllocationEngine + liquidityRunwayEngine · amounts in SAR equivalent</p>
           <ul className="text-sm space-y-1 text-gray-700">
+            <li>
+              This month cashflow (SAR): income {formatCurrencyString(income)} · expenses {formatCurrencyString(expenses)} · net{' '}
+              {formatCurrencyString(monthlyCashflowSar.net)}
+            </li>
             <li>Runway: {(liquidityRunway?.monthsOfRunway ?? 0).toFixed(1)} mo — {liquidityRunway?.status ?? '—'}</li>
-            <li>Sample bucket allocation (SAR 5k): {bucketAlloc.map((b) => `${b.bucketId}:${b.amount}`).join(', ')}</li>
-            <li>Idle cash accounts (≥1000): {idleCash.length}</li>
+            <li>
+              Bucket allocation example ({formatCurrencyString(bucketAllocInput)}):{' '}
+              {bucketAlloc.map((b) => `${b.bucketId}: ${formatCurrencyString(b.amount, { digits: 0 })}`).join(', ')}
+            </li>
+            <li>Idle cash accounts (≥1000 book): {idleCash.length}</li>
             <li>Top liquid account: {liqRanked[0]?.name ?? '—'}</li>
             <li>Sweep ideas: {sweeps.length ? sweeps.map((s) => s.reason).join('; ') : 'None'}</li>
           </ul>
@@ -503,15 +659,27 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
 
         <SectionCard title="FX" collapsible collapsibleSummary="Portfolio FX allocation">
           <ul className="text-sm text-gray-700 space-y-1">
-            <li>Portfolio by currency (balances as base): {fxAlloc.map((f) => `${f.currency} ${f.allocationPct.toFixed(0)}%`).join(', ') || '—'}</li>
-            <li>Demo convert 1000 USD→SAR @3.75: {fxConverted.toFixed(2)} SAR</li>
+            <li>
+              Cash — SAR-denominated (SAR eq.): {formatCurrencyString(fxBreakdown.sarNative)} · USD accounts (SAR eq.):{' '}
+              {formatCurrencyString(fxBreakdown.usdAsSar)}
+            </li>
+            <li>
+              Holdings — SAR book (SAR eq.): {formatCurrencyString(fxBreakdown.invSarBook)} · USD book (SAR eq.):{' '}
+              {formatCurrencyString(fxBreakdown.invUsdAsSar)}
+            </li>
+            <li>Share of cash + listed holdings by currency bucket: {fxAlloc.map((f) => `${f.currency} ${f.allocationPct.toFixed(0)}%`).join(', ') || '—'}</li>
+            <li>
+              Reference: 1,000 USD → {formatCurrencyString(usdThousandInSar)} at {sarPerUsd.toFixed(4)} SAR per USD (app rate).
+            </li>
           </ul>
         </SectionCard>
 
         <SectionCard title="Seasonality" collapsible collapsibleSummary="Adjusted expense, provision">
           <ul className="text-sm text-gray-700 space-y-1">
             <li>This month adjusted expense: {formatCurrencyString(seasonAdj)}</li>
-            <li>Annual cost monthly provision (demo): {formatCurrencyString(annualProv)}</li>
+            <li>
+              Annual-cost monthly provision ({annualProv.label}): {formatCurrencyString(annualProv.amount)}
+            </li>
             <li>Stress month: {stressMonth.isStressMonth ? 'Yes' : 'No'} (threshold {formatCurrencyString(stressMonth.threshold)})</li>
           </ul>
         </SectionCard>
@@ -520,6 +688,9 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
           title="Retirement & sensitivity"
         >
           <ul className="text-sm text-gray-700 space-y-1">
+            <li className="text-xs text-gray-500">
+              Starting corpus uses full net worth (SAR); refine in Forecast / Goals for dedicated retirement buckets.
+            </li>
             <li>
               {swr.label} → target corpus {formatCurrencyString(retGap.targetCorpus)}; gap {formatCurrencyString(retGap.gap)}
             </li>
@@ -692,10 +863,22 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
         <SectionCard title="Lifestyle guardrails & provisioning" collapsible collapsibleSummary="Guardrails, provision">
           <ul className="text-sm text-gray-700 space-y-1">
             <li>Guardrail: {lifestyle.ok ? 'OK' : 'Flags: ' + lifestyle.flags.join(', ')}</li>
-            <li>Discretionary sample: {discretionary.allowed ? 'Approved' : discretionary.reason}</li>
-            <li>Demo monthly provision (6k over 6mo): {formatCurrencyString(provisionDemo)}</li>
+            <li>
+              Discretionary probe ({formatCurrencyString(discretionaryProbeAmount)}): {discretionary.allowed ? 'Approved' : discretionary.reason}
+            </li>
+            <li>
+              Monthly provision ({provisionDemo.label}): {formatCurrencyString(provisionDemo.amount)}
+            </li>
           </ul>
         </SectionCard>
+
+        <AIAdvisor
+          pageContext="engines"
+          contextData={enginesAiContext}
+          title="AI — Money Tools snapshot"
+          subtitle="SAR-normalized metrics from this page. After insight loads, use English / العربية."
+          buttonLabel="Get AI insight"
+        />
       </div>
     </PageLayout>
   );

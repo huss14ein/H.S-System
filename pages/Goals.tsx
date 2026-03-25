@@ -29,6 +29,9 @@ import { projectedGoalCompletionDate, goalFundingGap as goalGapShared } from '..
 import { DEFAULT_BONUS_RULES } from '../services/goalWaterfall';
 import { detectGoalConflict, goalFeasibilityCheck, type GoalConflict } from '../services/goalConflictEngine';
 import { useSelfLearning } from '../context/SelfLearningContext';
+import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
+import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
 
 // A more visual progress bar specific for goals
 const GoalProgressBar: React.FC<{ progress: number; colorClass: string }> = ({ progress, colorClass }) => {
@@ -85,9 +88,23 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, onSave, goalToEd
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        const parsedTarget = parseFloat(targetAmount) || 0;
+        const deadlineDate = new Date(deadline);
+        if (!name.trim()) {
+            alert('Goal name is required.');
+            return;
+        }
+        if (!Number.isFinite(parsedTarget) || parsedTarget <= 0) {
+            alert('Target amount must be a positive number.');
+            return;
+        }
+        if (!deadline || Number.isNaN(deadlineDate.getTime())) {
+            alert('Please provide a valid deadline date.');
+            return;
+        }
         const goalData = {
-            name,
-            targetAmount: parseFloat(targetAmount) || 0,
+            name: name.trim(),
+            targetAmount: parsedTarget,
             deadline,
             priority,
         };
@@ -205,6 +222,19 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
     const [aiPlan, setAiPlan] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
 
+    const goalLinkSymbols = useMemo(() => {
+        const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        const syms: string[] = [];
+        investments.forEach((p: { goalId?: string; holdings?: { goalId?: string; symbol?: string }[] }) => {
+            (p.holdings ?? []).forEach((h: { goalId?: string; symbol?: string }) => {
+                const resolvedGoalId = h.goalId || p.goalId;
+                if (resolvedGoalId === goal.id && h.goalId && h.symbol) syms.push((h.symbol || '').trim());
+            });
+        });
+        return Array.from(new Set(syms.filter((s) => s.length >= 2)));
+    }, [data?.investments, goal.id]);
+    const { names: goalHoldingNames } = useCompanyNames(goalLinkSymbols);
+
     const { linkedAssets, calculatedCurrentAmount } = useMemo(() => {
         const linkedItems: { name: string, value: number }[] = [];
         const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
@@ -214,22 +244,30 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
             linkedItems.push({ name: a.name ?? '—', value: a.value ?? 0 });
         });
 
-        investments.forEach((p: { goalId?: string; name?: string; currency?: string; holdings?: { goalId?: string; symbol?: string; currentValue?: number }[] }) => {
+        investments.forEach((p: { goalId?: string; name?: string; currency?: string; holdings?: { goalId?: string; symbol?: string; currentValue?: number; name?: string }[] }) => {
             const holdings = p.holdings ?? [];
-            if (p.goalId === goal.id) {
-                const portfolioValue = holdings.reduce((sum: number, h: { currentValue?: number }) => sum + toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd), 0);
-                linkedItems.push({ name: `Portfolio: ${p.name}`, value: portfolioValue });
-            } else {
-                holdings.filter((h: { goalId?: string }) => h.goalId === goal.id).forEach((h: { symbol?: string; currentValue?: number }) => {
-                    linkedItems.push({ name: `${p.name}: ${h.symbol}`, value: toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd) });
-                });
+            let portfolioResidualForGoal = 0;
+            holdings.forEach((h: { goalId?: string; symbol?: string; name?: string; currentValue?: number }) => {
+                const resolvedGoalId = h.goalId || p.goalId;
+                if (resolvedGoalId !== goal.id) return;
+                const valueSar = toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd);
+                // Holding goal link has priority; otherwise the platform goal applies.
+                if (h.goalId) {
+                    linkedItems.push({
+                        name: `${p.name}: ${formatSymbolWithCompany(h.symbol ?? '', h.name, goalHoldingNames)}`,
+                        value: valueSar,
+                    });
+                } else portfolioResidualForGoal += valueSar;
+            });
+            if (portfolioResidualForGoal > 0) {
+                linkedItems.push({ name: `Portfolio: ${p.name}`, value: portfolioResidualForGoal });
             }
         });
 
         const totalValue = linkedItems.reduce((sum, item) => sum + (item.value ?? 0), 0);
 
         return { linkedAssets: linkedItems, calculatedCurrentAmount: totalValue };
-    }, [data?.assets, data?.investments, goal.id, sarPerUsd]);
+    }, [data?.assets, data?.investments, goal.id, sarPerUsd, goalHoldingNames]);
 
     const handleGetAIPlan = useCallback(async () => {
         setIsLoading(true);
@@ -255,10 +293,10 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
             status = 'On Track';
         } else if (monthsLeft <= 0) {
             status = 'At Risk';
-        } else if (projectedMonthlyContribution > 0 && projectedMonthlyContribution < requiredMonthlyContribution * 0.8) {
-            status = 'Needs Attention';
         } else if (projectedMonthlyContribution > 0 && projectedMonthlyContribution < requiredMonthlyContribution * 0.5) {
             status = 'At Risk';
+        } else if (projectedMonthlyContribution > 0 && projectedMonthlyContribution < requiredMonthlyContribution * 0.8) {
+            status = 'Needs Attention';
         }
         
         const color = progressPercent < 33 ? 'bg-danger' : progressPercent < 66 ? 'bg-warning' : 'bg-success';
@@ -439,11 +477,13 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
-        ((data as any)?.personalTransactions ?? data?.transactions ?? []).filter((t: { date: string }) => new Date(t.date) > sixMonthsAgo).forEach((t: { date: string; amount?: number }) => {
+        ((data as any)?.personalTransactions ?? data?.transactions ?? [])
+            .filter((t: { date: string; type?: string; category?: string }) => new Date(t.date) > sixMonthsAgo && (countsAsIncomeForCashflowKpi(t) || countsAsExpenseForCashflowKpi(t)))
+            .forEach((t: { date: string; amount?: number }) => {
             const monthKey = t.date.slice(0, 7); // YYYY-MM
             const currentNet = monthlyNet.get(monthKey) || 0;
             monthlyNet.set(monthKey, currentNet + (Number(t.amount) ?? 0)); // amount is positive for income, negative for expense
-        });
+            });
         
         if (monthlyNet.size === 0) return 7500; // Default if no recent transactions
         
@@ -494,7 +534,8 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
     const projectedAnnualSurplus = useMemo(() => {
         const monthlyNet = new Map<string, number>();
         const year = new Date().getFullYear();
-        ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach((t: { date: string; amount?: number }) => {
+        ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach((t: { date: string; amount?: number; type?: string; category?: string }) => {
+            if (!(countsAsIncomeForCashflowKpi(t) || countsAsExpenseForCashflowKpi(t))) return;
             const d = new Date(t.date);
             if (d.getFullYear() !== year) return;
             const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -560,6 +601,20 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
     };
 
     const efGoals = useEmergencyFund(data ?? null);
+    const goalValidationWarnings = useMemo(() => {
+        const warnings: string[] = [];
+        const goals = data?.goals ?? [];
+        const now = new Date();
+        const overdueUnfunded = goals.filter((g) => new Date(g.deadline) < now && (goalCurrentAmountByGoalId[g.id] ?? 0) < (g.targetAmount ?? 0)).length;
+        if (overdueUnfunded > 0) warnings.push(`${overdueUnfunded} goal(s) are past deadline and still under target.`);
+        const invalidTargets = goals.filter((g) => !Number.isFinite(Number(g.targetAmount)) || Number(g.targetAmount) <= 0).length;
+        if (invalidTargets > 0) warnings.push(`${invalidTargets} goal(s) have invalid target amounts.`);
+        if (totalAllocation > 100) warnings.push('Savings allocation exceeds 100%.');
+        const unallocatedGoals = goals.filter((g) => (allocations[g.id] ?? 0) <= 0).length;
+        if (goals.length > 0 && unallocatedGoals === goals.length) warnings.push('No goal currently receives a savings allocation.');
+        if (!Number.isFinite(averageMonthlySavings)) warnings.push('Average monthly savings calculation is invalid.');
+        return warnings;
+    }, [data?.goals, goalCurrentAmountByGoalId, totalAllocation, allocations, averageMonthlySavings]);
 
     if (loading || !data) {
         return (
@@ -605,6 +660,16 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
             </div>
         </div>
       </SectionCard>
+
+      {goalValidationWarnings.length > 0 && (
+        <SectionCard title="Goal validation checks" collapsible collapsibleSummary="Data quality checks" defaultExpanded>
+          <ul className="space-y-1 text-sm text-amber-800">
+            {goalValidationWarnings.slice(0, 6).map((w, i) => (
+              <li key={`gw-${i}`}>- {w}</li>
+            ))}
+          </ul>
+        </SectionCard>
+      )}
 
       <SectionCard title="Savings Allocation Strategy" className="bg-gradient-to-br from-white via-slate-50 to-primary/5 border-slate-100" collapsible collapsibleSummary="Allocate %" defaultExpanded>
         <p className="text-sm text-gray-500 mb-4">Allocate your average monthly savings of <span className="font-bold text-dark">{formatCurrencyString(averageMonthlySavings)}</span> across your goals.</p>

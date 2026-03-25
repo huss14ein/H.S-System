@@ -39,6 +39,8 @@ export interface FinancialStatement {
   status: 'uploading' | 'processing' | 'completed' | 'failed' | 'reviewing';
   bankName?: string;
   accountNumber?: string;
+  /** Linked app account when upload was tied to a cash account (book currency for extracted amounts). */
+  accountId?: string | null;
   accountType?: 'checking' | 'savings' | 'credit' | 'investment';
   statementPeriod: {
     startDate: Date;
@@ -218,6 +220,7 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
                 status: s.status as FinancialStatement['status'],
                 bankName: s.bank_name,
                 accountNumber: s.account_number,
+                accountId: s.account_id ?? undefined,
                 accountType: s.account_type as FinancialStatement['accountType'],
                 statementPeriod: {
                   startDate: s.statement_period_start ? new Date(s.statement_period_start) : new Date(),

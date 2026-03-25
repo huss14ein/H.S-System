@@ -2,11 +2,14 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 
 export type ToastVariant = 'success' | 'error' | 'info' | 'default';
 
+export type ToastAction = { label: string; onAction: () => void };
+
 export interface ToastItem {
   id: string;
   message: string;
   variant: ToastVariant;
   duration: number;
+  action?: ToastAction;
 }
 
 const TOAST_EVENT = 'finova-toast';
@@ -15,11 +18,12 @@ interface ToastEventDetail {
   message: string;
   variant?: ToastVariant;
   duration?: number;
+  action?: ToastAction;
 }
 
 const ToastContext = createContext<{
   toasts: ToastItem[];
-  showToast: (message: string, variant?: ToastVariant, duration?: number) => void;
+  showToast: (message: string, variant?: ToastVariant, duration?: number, action?: ToastAction) => void;
 } | null>(null);
 
 export function useToast() {
@@ -45,9 +49,9 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const showToast = useCallback((message: string, variant: ToastVariant = 'default', duration = 4000) => {
+  const showToast = useCallback((message: string, variant: ToastVariant = 'default', duration = 4000, action?: ToastAction) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const item: ToastItem = { id, message, variant, duration };
+    const item: ToastItem = { id, message, variant, duration, action };
     setToasts((prev) => [...prev.slice(-4), item]);
     const t = setTimeout(() => removeToast(id), duration);
     timersRef.current.set(id, t);
@@ -56,7 +60,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     const handler = (e: Event) => {
       const d = (e as CustomEvent<ToastEventDetail>).detail;
-      if (d?.message) showToast(d.message, d.variant ?? 'default', d.duration ?? 4000);
+      if (d?.message) showToast(d.message, d.variant ?? 'default', d.duration ?? 4000, d.action);
     };
     window.addEventListener(TOAST_EVENT, handler);
     return () => window.removeEventListener(TOAST_EVENT, handler);
@@ -116,6 +120,21 @@ function ToastItem({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
           </svg>
         </button>
       </div>
+      {item.action && (
+        <button
+          type="button"
+          className="mt-2 text-xs font-bold uppercase tracking-wide underline opacity-95 hover:opacity-100"
+          onClick={() => {
+            try {
+              item.action!.onAction();
+            } finally {
+              onDismiss();
+            }
+          }}
+        >
+          {item.action.label}
+        </button>
+      )}
     </div>
   );
 }

@@ -1,4 +1,6 @@
-import { toSAR } from '../utils/currencyMath';
+import type { FinancialData } from '../types';
+import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { getSarPerUsdForCalendarDay } from './fxDailySeries';
 
 /**
  * Simple money-weighted return (IRR) via bisection on periodic cashflows.
@@ -56,6 +58,31 @@ export function flowsFromInvestmentTransactionsInSAR(
     const sar = toSAR(x, (t.currency ?? 'USD') as 'USD' | 'SAR', exchangeRate);
     if (t.type === 'buy' || t.type === 'deposit') out.push({ date: t.date, amount: -sar });
     if (t.type === 'sell' || t.type === 'withdrawal') out.push({ date: t.date, amount: sar });
+    /** Cash dividends are investor inflows (same sign as sell for MWRR math). */
+    if (t.type === 'dividend') out.push({ date: t.date, amount: sar });
+  });
+  return out;
+}
+
+/**
+ * Converts each flow to SAR using `getSarPerUsdForCalendarDay` for that transaction’s calendar day
+ * (after `hydrateSarPerUsdDailySeries`, so Wealth Ultra / snapshot series align with KPIs).
+ */
+export function flowsFromInvestmentTransactionsInSARWithDatedFx(
+  txs: { date: string; type: string; total?: number; currency?: string }[],
+  data: FinancialData | null | undefined,
+  uiExchangeRate: number,
+): { date: string; amount: number }[] {
+  const spot = resolveSarPerUsd(data, uiExchangeRate);
+  const out: { date: string; amount: number }[] = [];
+  txs.forEach((t) => {
+    const x = Math.abs(Number(t.total) || 0);
+    const day = (t.date ?? '').slice(0, 10);
+    const r = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, uiExchangeRate) : spot;
+    const sar = toSAR(x, (t.currency ?? 'USD') as 'USD' | 'SAR', r);
+    if (t.type === 'buy' || t.type === 'deposit') out.push({ date: t.date, amount: -sar });
+    if (t.type === 'sell' || t.type === 'withdrawal') out.push({ date: t.date, amount: sar });
+    if (t.type === 'dividend') out.push({ date: t.date, amount: sar });
   });
   return out;
 }

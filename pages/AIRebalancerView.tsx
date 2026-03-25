@@ -1,6 +1,6 @@
-import React, { useState, useMemo, useCallback, useContext } from 'react';
+import React, { useState, useMemo, useCallback, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
-import { getAIRebalancingPlan, formatAiError } from '../services/geminiService';
+import { getAIRebalancingPlan, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
 import AllocationPieChart from '../components/charts/AllocationPieChart';
 import InfoHint from '../components/InfoHint';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
@@ -10,10 +10,19 @@ import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { getTargetAllocationForProfile, meanVarianceOptimization } from '../services/portfolioConstruction';
-import type { Page } from '../types';
+import type { Holding, Page } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
+import { useMarketData } from '../context/MarketDataContext';
+import { useCurrency } from '../context/CurrencyContext';
+import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { resolveSarPerUsd } from '../utils/currencyMath';
+import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
+import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 
 type RiskProfile = 'Conservative' | 'Moderate' | 'Aggressive';
+
+const AI_REBALANCER_LANG_KEY = 'finova_ai_rebalancer_lang_v1';
+const LEGACY_AI_LANG_KEY = 'finova_default_ai_lang_v1';
 
 interface AIRebalancerViewProps {
   onNavigateToTab?: (tab: string) => void;
@@ -25,32 +34,84 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
   const { data, loading } = useContext(DataContext)!;
   const { isAiAvailable } = useAI();
   const { trackAction } = useSelfLearning();
-  const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>(data?.investments?.[0]?.id ?? '');
+  const { simulatedPrices } = useMarketData();
+  const { exchangeRate } = useCurrency();
+  const { formatCurrencyString } = useFormatCurrency();
+  const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>('');
   const [riskProfile, setRiskProfile] = useState<RiskProfile>('Moderate');
   const [rebalancingPlan, setRebalancingPlan] = useState<string>('');
   const [planError, setPlanError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [rebalDisplayLang, setRebalDisplayLang] = useState<'en' | 'ar'>(() => {
+    try {
+      if (typeof localStorage === 'undefined') return 'en';
+      const v = localStorage.getItem(AI_REBALANCER_LANG_KEY) ?? localStorage.getItem(LEGACY_AI_LANG_KEY);
+      return v === 'ar' ? 'ar' : 'en';
+    } catch {
+      return 'en';
+    }
+  });
+  const [rebalAr, setRebalAr] = useState<string | null>(null);
+  const [rebalTranslateError, setRebalTranslateError] = useState<string | null>(null);
+  const [isTranslatingRebal, setIsTranslatingRebal] = useState(false);
 
   const portfolios = (data as any)?.personalInvestments ?? data?.investments ?? [];
+  const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+
+  useEffect(() => {
+    if (!portfolios.length) return;
+    const valid = portfolios.some((p: { id: string }) => p.id === selectedPortfolioId);
+    if (!selectedPortfolioId || !valid) {
+      setSelectedPortfolioId(portfolios[0].id);
+    }
+  }, [portfolios, selectedPortfolioId]);
+
   const selectedPortfolio = useMemo(() => {
     return portfolios.find((p: { id: string }) => p.id === selectedPortfolioId) ?? portfolios[0];
   }, [selectedPortfolioId, portfolios]);
 
+  const portfolioBookCurrency = useMemo(
+    () => (selectedPortfolio ? resolveInvestmentPortfolioCurrency(selectedPortfolio) : 'SAR'),
+    [selectedPortfolio],
+  );
+
+  const currentAllocation = useMemo(() => {
+    if (!selectedPortfolio?.holdings?.length) return [];
+    const book = resolveInvestmentPortfolioCurrency(selectedPortfolio);
+    return (selectedPortfolio.holdings ?? [])
+      .map((h: Holding) => {
+        const v = effectiveHoldingValueInBookCurrency(h, book, simulatedPrices, sarPerUsd);
+        return { name: h.symbol ?? '', value: v };
+      })
+      .filter((row: { name: string; value: number }) => Number.isFinite(row.value) && row.value > 0);
+  }, [selectedPortfolio, simulatedPrices, sarPerUsd]);
+
+  const totalPortfolioValueBook = useMemo(
+    () => currentAllocation.reduce((s: number, r: { name: string; value: number }) => s + r.value, 0),
+    [currentAllocation],
+  );
+
+  const canGeneratePlan = Boolean(
+    selectedPortfolio && currentAllocation.length > 0 && totalPortfolioValueBook > 0 && !isLoading,
+  );
+
   const handleGeneratePlan = useCallback(async () => {
     trackAction('generate-plan', 'AI Rebalancer');
-    if (!selectedPortfolio) {
-      alert('Please select a portfolio first.');
-      return;
-    }
-    if (!selectedPortfolio.holdings || selectedPortfolio.holdings.length === 0) {
-      alert('Selected portfolio has no holdings. Add holdings first.');
+    if (!selectedPortfolio?.holdings?.length || totalPortfolioValueBook <= 0) {
       return;
     }
     setIsLoading(true);
     setRebalancingPlan('');
     setPlanError(null);
+    setRebalAr(null);
+    setRebalTranslateError(null);
     try {
-      const plan = await getAIRebalancingPlan(selectedPortfolio.holdings, riskProfile);
+      const plan = await getAIRebalancingPlan(selectedPortfolio.holdings ?? [], riskProfile, {
+        bookCurrency: portfolioBookCurrency,
+        sarPerUsd,
+        portfolioName: selectedPortfolio.name,
+        simulatedPrices,
+      });
       if (!plan || plan.trim().length === 0) {
         setPlanError('AI returned an empty plan. Please try again.');
       } else {
@@ -61,38 +122,65 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
     } finally {
       setIsLoading(false);
     }
-  }, [selectedPortfolio, riskProfile, trackAction]);
+  }, [selectedPortfolio, riskProfile, trackAction, portfolioBookCurrency, sarPerUsd, simulatedPrices, totalPortfolioValueBook]);
+
+  const runArabicTranslation = useCallback(async () => {
+    if (!rebalancingPlan.trim()) return;
+    setIsTranslatingRebal(true);
+    setRebalTranslateError(null);
+    try {
+      const ar = await translateFinancialInsightToArabic(rebalancingPlan);
+      setRebalAr(ar || null);
+    } catch (e) {
+      setRebalTranslateError(formatAiError(e));
+    } finally {
+      setIsTranslatingRebal(false);
+    }
+  }, [rebalancingPlan]);
+
+  useEffect(() => {
+    if (rebalDisplayLang !== 'ar' || !rebalancingPlan.trim() || rebalAr != null) return;
+    let cancelled = false;
+    (async () => {
+      setIsTranslatingRebal(true);
+      setRebalTranslateError(null);
+      try {
+        const ar = await translateFinancialInsightToArabic(rebalancingPlan);
+        if (!cancelled) setRebalAr(ar);
+      } catch (e) {
+        if (!cancelled) setRebalTranslateError(formatAiError(e));
+      } finally {
+        if (!cancelled) setIsTranslatingRebal(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rebalDisplayLang, rebalancingPlan, rebalAr]);
 
   const targetAssetMix = useMemo(() => getTargetAllocationForProfile(riskProfile), [riskProfile]);
 
   const mvoResult = useMemo(() => {
     if (!selectedPortfolio?.holdings?.length) return null;
-    const holdings = (selectedPortfolio.holdings ?? []).filter((h: { currentValue?: number }) => Number(h.currentValue ?? 0) > 0);
-    if (holdings.length < 2) return null;
-    const total = holdings.reduce((s: number, h: { currentValue?: number }) => s + Number(h.currentValue ?? 0), 0);
+    const book = resolveInvestmentPortfolioCurrency(selectedPortfolio);
+    const withVal = (selectedPortfolio.holdings ?? [])
+      .map((h: Holding) => ({
+        h,
+        v: effectiveHoldingValueInBookCurrency(h, book, simulatedPrices, sarPerUsd),
+      }))
+      .filter((x: { h: Holding; v: number }) => x.v > 0);
+    if (withVal.length < 2) return null;
+    const holdings = withVal.map((x: { h: Holding; v: number }) => x.h);
+    const total = withVal.reduce((s: number, x: { h: Holding; v: number }) => s + x.v, 0);
     if (total <= 0) return null;
     const expectedReturns = holdings.map(() => 0.07 / 12);
     const n = holdings.length;
     const cov = Array(n).fill(0).map(() => Array(n).fill(0));
     for (let i = 0; i < n; i++) cov[i][i] = 0.04 / 12;
     const res = meanVarianceOptimization({ expectedReturns, covarianceMatrix: cov, riskFreeRate: 0.04 / 12 });
-    const labels = holdings.map((h: { symbol?: string }) => h.symbol ?? '');
+    const labels = holdings.map((h: Holding) => h.symbol ?? '');
     return { ...res, labels };
-  }, [selectedPortfolio?.holdings]);
-
-  const currentAllocation = useMemo(() => {
-    if (!selectedPortfolio) return [];
-    return (selectedPortfolio?.holdings ?? [])
-      .map((h: { quantity?: number; avgCost?: number; currentValue?: number; symbol?: string }) => {
-        const quantity = Number(h.quantity || 0);
-        const avgCost = Number(h.avgCost || 0);
-        const marketValue = Number(h.currentValue || 0);
-        const fallbackValue = quantity > 0 && avgCost > 0 ? quantity * avgCost : 0;
-        const effectiveValue = marketValue > 0 ? marketValue : fallbackValue;
-        return { name: h.symbol ?? '', value: effectiveValue };
-      })
-      .filter((row: { name: string; value: number }) => Number.isFinite(row.value) && row.value > 0);
-  }, [selectedPortfolio]);
+  }, [selectedPortfolio, simulatedPrices, sarPerUsd]);
 
   // Loading state
   if (loading || !data) {
@@ -134,7 +222,9 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
             </div>
             <div>
               <h2 className="text-3xl font-bold text-slate-900">AI Portfolio Rebalancer</h2>
-              <p className="text-lg text-slate-600 mt-2">Educational portfolio analysis and rebalancing suggestions</p>
+              <p className="text-lg text-slate-600 mt-2">
+                Plain-language view of how concentrated your holdings are versus a risk style you pick. Not buy/sell advice—ideas to discuss with a professional.
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -172,8 +262,8 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
             <div className="w-3 h-3 bg-indigo-500 rounded-full animate-pulse"></div>
           </div>
           <p className="text-sm font-bold text-indigo-800 uppercase tracking-wider mb-2">Selected Holdings</p>
-          <p className="text-4xl font-black text-indigo-900 tabular-nums">{selectedPortfolio?.holdings?.length ?? 0}</p>
-          <p className="text-sm text-indigo-600 mt-2">Current positions</p>
+          <p className="text-4xl font-black text-indigo-900 tabular-nums">{currentAllocation.length}</p>
+          <p className="text-sm text-indigo-600 mt-2">Priced positions (excludes zero-value lines)</p>
         </div>
         <div className="bg-gradient-to-br from-emerald-50 to-green-50 border-2 border-emerald-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
           <div className="flex items-center justify-between mb-4">
@@ -279,6 +369,18 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                 <div className="h-64 w-full">
                   <AllocationPieChart data={currentAllocation} />
                 </div>
+                <p className="mt-3 text-sm font-semibold text-slate-800 tabular-nums">
+                  Total (holdings):{' '}
+                  {formatCurrencyString(totalPortfolioValueBook, { inCurrency: portfolioBookCurrency, showSecondary: true })}
+                </p>
+                <p className="text-xs text-slate-500 mt-1">
+                  Uses the same prices as <strong>Portfolios</strong> (live quote when available). Currency is this portfolio&apos;s book currency ({portfolioBookCurrency}).
+                </p>
+                {totalPortfolioValueBook <= 0 && (
+                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mt-2">
+                    Add holdings with quantity and price, or refresh quotes, so we can compute a total.
+                  </p>
+                )}
               </div>
 
               {/* Risk Profile Selection */}
@@ -306,18 +408,21 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                 </div>
                 {Object.keys(targetAssetMix).length > 0 && (
                   <p className="text-xs text-slate-600 mt-2">
-                    Target allocation: {Object.entries(targetAssetMix).map(([sym, w]) => `${sym} ${(w * 100).toFixed(0)}%`).join(', ')}
+                    <span className="font-medium text-slate-700">Example US broad ETF mix</span> (illustrative):{' '}
+                    {Object.entries(targetAssetMix).map(([sym, w]) => `${sym} ${(w * 100).toFixed(0)}%`).join(', ')}.
+                    <InfoHint text="VTI/BND are common US-listed examples. Your real targets may differ—see Investment Plan and your broker." />
                   </p>
                 )}
                 {mvoResult && mvoResult.optimalWeights.length > 0 && (
                   <div className="mt-3 pt-3 border-t border-slate-200">
-                    <p className="text-xs font-medium text-slate-700 mb-1">MVO suggested weights (Efficient Frontier)</p>
+                    <p className="text-xs font-medium text-slate-700 mb-1">Illustrative weights (math demo)</p>
                     <p className="text-xs text-slate-600">
                       {mvoResult.labels.map((label: string, i: number) => `${label} ${(mvoResult!.optimalWeights[i] * 100).toFixed(0)}%`).join(', ')}
                       {mvoResult.sharpeRatio != null && (
-                        <span className="block mt-1 text-slate-500">Sharpe {mvoResult.sharpeRatio.toFixed(2)}</span>
+                        <span className="block mt-1 text-slate-500">Sharpe {mvoResult.sharpeRatio.toFixed(2)} (simplified model)</span>
                       )}
                     </p>
+                    <p className="text-[11px] text-slate-500 mt-1">Not a recommendation—uses placeholder risk/return data for demonstration.</p>
                   </div>
                 )}
               </div>
@@ -326,7 +431,14 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
               <button
                 type="button"
                 onClick={handleGeneratePlan}
-                disabled={isLoading}
+                disabled={!canGeneratePlan}
+                title={
+                  !selectedPortfolio
+                    ? 'Select a portfolio'
+                    : totalPortfolioValueBook <= 0
+                      ? 'Need at least one holding with a value (refresh prices on Portfolios if needed)'
+                      : 'Generate educational rebalancing notes'
+                }
                 className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed font-bold text-lg shadow-lg hover:shadow-xl transition-all duration-200"
               >
                 <ScaleIcon className="h-6 w-6" />
@@ -339,7 +451,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
         {/* Enhanced Results Section */}
         <div className="lg:col-span-2">
           <div className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-purple-50 p-8 shadow-lg hover:shadow-xl transition-all duration-300 min-h-[600px]">
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
                   <LightBulbIcon className="h-6 w-6 text-white" />
@@ -349,11 +461,45 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                   <p className="text-sm text-indigo-600 mt-1">From your expert investment advisor</p>
                 </div>
               </div>
-              {!isAiAvailable && !isLoading && (
-                <div className="px-3 py-1.5 rounded-lg bg-amber-100 text-amber-800 text-xs font-bold">
-                  AI Fallback Active
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Report</span>
+                <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try {
+                        localStorage.setItem(AI_REBALANCER_LANG_KEY, 'en');
+                      } catch {
+                        /* ignore */
+                      }
+                      setRebalDisplayLang('en');
+                    }}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-md ${rebalDisplayLang === 'en' ? 'bg-indigo-100 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    English
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try {
+                        localStorage.setItem(AI_REBALANCER_LANG_KEY, 'ar');
+                      } catch {
+                        /* ignore */
+                      }
+                      setRebalDisplayLang('ar');
+                      setRebalAr(null);
+                    }}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-md ${rebalDisplayLang === 'ar' ? 'bg-indigo-100 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    العربية
+                  </button>
                 </div>
-              )}
+                {!isAiAvailable && !isLoading && (
+                  <div className="px-3 py-1.5 rounded-lg bg-amber-100 text-amber-800 text-xs font-bold">
+                    AI Fallback Active
+                  </div>
+                )}
+              </div>
             </div>
             
             {!isAiAvailable && !isLoading && (
@@ -401,8 +547,29 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
             
             {rebalancingPlan && !isLoading && (
               <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-8 border border-indigo-100">
-                <div className="prose prose-sm max-w-none text-slate-700">
-                  <SafeMarkdownRenderer content={rebalancingPlan} />
+                {rebalDisplayLang === 'ar' && isTranslatingRebal && (
+                  <p className="text-sm text-center text-slate-500 py-2">Translating to Arabic…</p>
+                )}
+                {rebalDisplayLang === 'ar' && rebalancingPlan.trim() && !isTranslatingRebal && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <p className="text-xs text-slate-600">
+                      Arabic uses the same translation step as other Finova AI reports. If it fails, retry or switch to English.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={runArabicTranslation}
+                      disabled={isTranslatingRebal}
+                      className="shrink-0 px-3 py-1.5 text-xs font-semibold rounded-lg border border-indigo-200 bg-white text-indigo-800 hover:bg-indigo-50 disabled:opacity-50"
+                    >
+                      {rebalAr ? 'Refresh Arabic' : rebalTranslateError ? 'Retry Arabic' : 'Translate to Arabic'}
+                    </button>
+                  </div>
+                )}
+                {rebalTranslateError && rebalDisplayLang === 'ar' && (
+                  <p className="text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2 mb-3">{rebalTranslateError}</p>
+                )}
+                <div className="prose prose-sm max-w-none text-slate-700" dir={rebalDisplayLang === 'ar' ? 'rtl' : 'ltr'}>
+                  <SafeMarkdownRenderer content={rebalDisplayLang === 'ar' ? (rebalAr ?? rebalancingPlan) : rebalancingPlan} />
                 </div>
               </div>
             )}

@@ -154,8 +154,15 @@ export function validateCommodityHolding(input: { name?: string; quantity?: unkn
   return { valid: errors.length === 0, errors };
 }
 
-/** Validate investment trade (buy/sell) */
-export function validateTrade(input: { type?: string; quantity?: unknown; price?: unknown; total?: unknown; symbol?: string }): { valid: boolean; errors: string[] } {
+/** Validate investment trade (buy/sell/dividend) */
+export function validateTrade(input: {
+  type?: string;
+  quantity?: unknown;
+  price?: unknown;
+  total?: unknown;
+  symbol?: string;
+  date?: string;
+}): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
   const type = input.type;
   const isCashFlow = type === 'deposit' || type === 'withdrawal';
@@ -163,6 +170,14 @@ export function validateTrade(input: { type?: string; quantity?: unknown; price?
   if (isCashFlow) {
     const total = safeNumber(input.total, NaN);
     if (Number.isNaN(total) || total <= 0) errors.push('Deposit/withdrawal amount must be a positive number.');
+  } else if (type === 'dividend') {
+    const total = safeNumber(input.total, NaN);
+    if (Number.isNaN(total) || total <= 0) errors.push('Dividend cash amount must be a positive number.');
+    const sym = String(input.symbol ?? '').trim().toUpperCase();
+    if (!sym || sym === 'CASH') errors.push('Symbol is required for dividend entries.');
+    if (input.date && String(input.date).trim() !== '' && !isValidYearRange(input.date)) {
+      errors.push('Dividend date year must be between 1990 and 2100.');
+    }
   } else {
     const qty = safeNumber(input.quantity, NaN);
     if (Number.isNaN(qty) || qty <= 0) errors.push('Trade quantity must be greater than zero.');

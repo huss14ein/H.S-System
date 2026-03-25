@@ -1,4 +1,4 @@
-import React, { useState, useRef, useContext, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useContext, useCallback, useEffect, useMemo } from 'react';
 import Modal from './Modal';
 import { Type, FunctionDeclaration, Content, Part, FunctionCall } from '@google/genai';
 import { DataContext } from '../context/DataContext';
@@ -12,6 +12,8 @@ import { SparklesIcon } from './icons/SparklesIcon';
 import { SendIcon } from './icons/SendIcon';
 import SafeMarkdownRenderer from './SafeMarkdownRenderer';
 
+const ADVISOR_LANG_KEY = 'finova_default_ai_lang_v1';
+
 const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({ isOpen, onClose }) => {
     const { data, addWatchlistItem, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
@@ -19,7 +21,23 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
     const [userInput, setUserInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [view, setView] = useState<'welcome' | 'chat'>('welcome');
+    const [replyLang, setReplyLang] = useState<'en' | 'ar'>(() => {
+        try {
+            return typeof localStorage !== 'undefined' && localStorage.getItem(ADVISOR_LANG_KEY) === 'ar' ? 'ar' : 'en';
+        } catch {
+            return 'en';
+        }
+    });
     const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    const systemInstruction = useMemo(() => {
+        const base =
+            "You are Finova AI, a very clever expert financial and investment advisor. Be ultra direct: lead with the answer in one sentence, then 2-3 short bullets. Use Markdown: ### for sections, ** for emphasis. Use tools when the user asks about their data; cite specific numbers from tool results. Speak with authority and insight. No HTML. No filler. Important: All data from tools (net worth, budgets, transactions) is the user's personal wealth only—do not reference or mix in any third-party or managed wealth; respond only about the user's personal finances.";
+        if (replyLang === 'ar') {
+            return `${base} Always write your entire reply in Modern Standard Arabic. Keep numbers, percentages, dates, and currency labels (SAR, USD) exactly as in the data; keep Latin ticker symbols unchanged.`;
+        }
+        return base;
+    }, [replyLang]);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -29,12 +47,13 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
     
     useEffect(() => {
         if (isOpen && view === 'chat' && history.length === 0) {
-            // Set initial message
-            setHistory([
-                { role: 'model', parts: [{ text: "Hello! I'm **Finova AI**, your expert financial and investment advisor. I can help with net worth, budgets, investments, goals, and recent transactions. What would you like to look at?" }] }
-            ]);
+            const welcome =
+                replyLang === 'ar'
+                    ? 'مرحباً! أنا **Finova AI**، مستشارك المالي. يمكنني المساعدة في صافي الثروة، الميزانيات، الاستثمارات، الأهداف، والمعاملات الأخيرة. ما الذي تريد الاطلاع عليه؟'
+                    : "Hello! I'm **Finova AI**, your expert financial and investment advisor. I can help with net worth, budgets, investments, goals, and recent transactions. What would you like to look at?";
+            setHistory([{ role: 'model', parts: [{ text: welcome }] }]);
         }
-    }, [isOpen, view, history]);
+    }, [isOpen, view, history, replyLang]);
 
     // Function definitions
     const getNetWorth_ = useCallback(() => {
@@ -92,10 +111,10 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
             const response = await invokeAI({
                 model: 'gemini-3-flash-preview',
                 contents: chatHistory,
-                config: { 
+                config: {
                     tools: [{ functionDeclarations }],
-                    systemInstruction: "You are Finova AI, a very clever expert financial and investment advisor. Be ultra direct: lead with the answer in one sentence, then 2-3 short bullets. Use Markdown: ### for sections, ** for emphasis. Use tools when the user asks about their data; cite specific numbers from tool results. Speak with authority and insight. No HTML. No filler. Important: All data from tools (net worth, budgets, transactions) is the user's personal wealth only—do not reference or mix in any third-party or managed wealth; respond only about the user's personal finances."
-                }
+                    systemInstruction,
+                },
             });
 
             if (response.functionCalls) {
@@ -178,6 +197,39 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                 </div>
             ) : (
                 <div className="flex flex-col h-[70vh]">
+                    <div className="flex flex-wrap items-center justify-end gap-2 pb-2">
+                        <span className="text-xs text-gray-500 mr-auto">Reply language</span>
+                        <div className="flex rounded-lg border border-gray-200 bg-white p-0.5 text-xs font-semibold">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setReplyLang('en');
+                                    try {
+                                        localStorage.setItem(ADVISOR_LANG_KEY, 'en');
+                                    } catch {
+                                        /* ignore */
+                                    }
+                                }}
+                                className={`rounded-md px-2.5 py-1 ${replyLang === 'en' ? 'bg-primary text-white' : 'text-gray-600'}`}
+                            >
+                                English
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setReplyLang('ar');
+                                    try {
+                                        localStorage.setItem(ADVISOR_LANG_KEY, 'ar');
+                                    } catch {
+                                        /* ignore */
+                                    }
+                                }}
+                                className={`rounded-md px-2.5 py-1 ${replyLang === 'ar' ? 'bg-primary text-white' : 'text-gray-600'}`}
+                            >
+                                العربية
+                            </button>
+                        </div>
+                    </div>
                     <div className="flex-grow bg-gray-100 rounded-lg p-4 overflow-y-auto space-y-4">
                         {history.map((msg, index) => (
                             (msg.role === 'user' || msg.role === 'model') && msg.parts?.map((part, pIndex) => (

@@ -5,8 +5,11 @@
  * Run: `npm run verify:investment-sar-flow` or `npx vitest run tests/investmentSarFlowMetrics.vitest.test.ts`
  */
 import { describe, it, expect } from 'vitest';
-import type { Account, Holding, InvestmentPortfolio, InvestmentTransaction } from '../types';
-import { computePlatformCardMetrics } from '../services/investmentPlatformCardMetrics';
+import type { Account, FinancialData, Holding, InvestmentPortfolio, InvestmentTransaction } from '../types';
+import {
+  computePersonalPlatformsRollupSAR,
+  computePlatformCardMetrics,
+} from '../services/investmentPlatformCardMetrics';
 
 const SAR_PER_USD = 3.75;
 const PLATFORM_ID = 'platform-inv-1';
@@ -156,6 +159,34 @@ describe('SAR platform: transfer, buy context, P&L (PlatformCard metrics)', () =
     expect(m.totalGainLoss).toBeCloseTo(500, 5);
   });
 
+  it('US-listed ticker live quote converts into SAR book (FX) for value and daily P/L', () => {
+    const holding: Holding = {
+      id: 'h-aapl',
+      symbol: 'AAPL',
+      quantity: 10,
+      avgCost: 100,
+      currentValue: 1000,
+      zakahClass: 'Zakatable',
+      realizedPnL: 0,
+    };
+    const portfolios = [basePortfolio({ currency: 'SAR' as const, holdings: [holding] })];
+    const accounts = [baseAccount()];
+    const transactions: InvestmentTransaction[] = [tx({ id: 'd1', type: 'deposit', total: 50_000, currency: 'SAR' })];
+    const m = computePlatformCardMetrics({
+      portfolios,
+      transactions,
+      accounts,
+      allInvestments: portfolios,
+      sarPerUsd: SAR_PER_USD,
+      availableCashByCurrency: { SAR: 50_000, USD: 0 },
+      simulatedPrices: { AAPL: { price: 110, change: 2 } },
+      platformCurrency: 'SAR',
+    });
+    const stockSar = 110 * 10 * SAR_PER_USD;
+    expect(m.totalValueInSAR).toBeCloseTo(50_000 + stockSar, 4);
+    expect(m.dailyPnLSAR).toBeCloseTo(2 * 10 * SAR_PER_USD, 4);
+  });
+
   it('deposit without explicit currency infers SAR from single SAR portfolio on platform', () => {
     const portfolios = [basePortfolio()];
     const accounts = [baseAccount()];
@@ -171,5 +202,30 @@ describe('SAR platform: transfer, buy context, P&L (PlatformCard metrics)', () =
       platformCurrency: 'SAR',
     });
     expect(m.totalInvested).toBeCloseTo(5_000, 5);
+  });
+});
+
+describe('Personal platforms rollup (KPI alignment)', () => {
+  it('sums tradable cash across personal investment accounts in SAR', () => {
+    const plat2 = 'platform-inv-2';
+    const getCash = (id: string) =>
+      id === PLATFORM_ID ? { SAR: 4_000, USD: 0 } : { SAR: 6_000, USD: 0 };
+    const data = {
+      accounts: [baseAccount(), { id: plat2, name: 'Second', type: 'Investment', balance: 0 } as Account],
+      investments: [
+        basePortfolio({ id: 'p1', accountId: PLATFORM_ID }),
+        basePortfolio({ id: 'p2', accountId: plat2 }),
+      ],
+      investmentTransactions: [],
+      transactions: [],
+      goals: [],
+      commodityHoldings: [],
+      assets: [],
+      liabilities: [],
+    } as unknown as FinancialData;
+
+    const rollup = computePersonalPlatformsRollupSAR(data, SAR_PER_USD, {}, getCash);
+    expect(rollup.subtotalSAR).toBeCloseTo(10_000, 5);
+    expect(rollup.dailyPnLSAR).toBe(0);
   });
 });

@@ -121,7 +121,7 @@ describe('monthly report and portfolio review export', () => {
     const m = String(now.getMonth() + 1).padStart(2, '0');
     const d = `${y}-${m}-15`;
     const data = {
-      budgets: [{ category: 'Food', limit: 3000, period: 'monthly' }],
+      budgets: [{ category: 'Food', limit: 3000, period: 'monthly', month: now.getMonth() + 1, year: now.getFullYear() }],
       transactions: [{ date: d, type: 'expense', category: 'Food', amount: -1000 }],
       accounts: [{ id: 'a1', type: 'Checking', balance: 5000 }],
       investments: [],

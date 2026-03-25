@@ -23,7 +23,7 @@ Use this checklist when wiring or auditing AI features.
 | Dividend analysis | `services/geminiService.ts` (`getAIDividendAnalysis`) | Dividend txs + YTD / projected totals |
 | Trade insights | `getAITradeAnalysis` | Last 20 personal `investmentTransactions` + holdings (SAR) + watchlist + plan + `riskProfile` + **as-of** date |
 | Watchlist tips | `getAIWatchlistAdvice` | Symbol list only |
-| Rebalancer | `getAIRebalancingPlan` | Selected portfolio holdings + risk profile label |
+| Rebalancer | `getAIRebalancingPlan` | Holdings valued like **Portfolios** (`effectiveHoldingValueInBookCurrency` + `simulatedPrices`), **portfolio book currency** (USD/SAR), `sarPerUsd`, risk profile |
 | Statement / SMS / trading parse | `invokeAI` in parser paths | Extracted rows + user account mapping (no full PAN) |
 | Research / commodity / hybrid categorization | `geminiService.ts` | Varies by caller; prefer aggregates |
 | Reconciliation hints | `StatementProcessingContext` | Discrepancy list + statement metadata |

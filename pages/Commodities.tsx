@@ -20,6 +20,7 @@ import { parseMoneyInput, roundQuantity } from '../utils/money';
 import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
 import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd } from '../utils/currencyMath';
+import AIAdvisor from '../components/AIAdvisor';
 
 const CommodityHoldingModal: React.FC<{
     isOpen: boolean;
@@ -249,6 +250,24 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
         return commodityRows.reduce((sum: number, h: { currentValue?: number }) => sum + (h.currentValue ?? 0), 0);
     }, [commodityRows]);
 
+    const commoditiesAiContext = useMemo(
+        () => ({
+            items: (commodityRows as CommodityHolding[]).map((h) => ({
+                name: h.name,
+                quantity: h.quantity,
+                unit: h.unit,
+                zakahClass: h.zakahClass,
+                currentValue: h.currentValue,
+                unrealizedGain: (h.currentValue ?? 0) - (h.purchaseValue ?? 0),
+                owner: h.owner,
+            })),
+            totalValueSar: totalCommodityValue,
+            sarPerUsd,
+            holdingCount: commodityRows.length,
+        }),
+        [commodityRows, totalCommodityValue, sarPerUsd],
+    );
+
     const handleOpenCommodityModal = (holding: CommodityHolding | null = null) => { setCommodityToEdit(holding); setIsCommodityModalOpen(true); };
     const handleSaveCommodity = async (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => {
         if ('id' in holding) {
@@ -328,6 +347,14 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
                     {commodityRows.length === 0 && <p className="text-sm text-gray-500 md:col-span-2 xl:col-span-3 text-center py-8">No commodities added yet.</p>}
                 </div>
             </div>
+
+            <AIAdvisor
+                pageContext="commodities"
+                contextData={commoditiesAiContext}
+                title="Metals & crypto coach"
+                subtitle="SAR valuations, Zakat flags, and concentration — English / العربية"
+                buttonLabel="Summarize my commodities"
+            />
             
             <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} sarPerUsd={sarPerUsd} />
             <DeleteConfirmationModal isOpen={!!commodityToDelete} onClose={() => setCommodityToDelete(null)} onConfirm={handleConfirmCommodityDelete} itemName={commodityToDelete?.name || ''} />

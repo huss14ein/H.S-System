@@ -4,8 +4,9 @@ import { PriceAlert, PriceAlertCurrency, WatchlistItem, type Page } from '../typ
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { getExchangeAndCurrencyForSymbol, getStockCandles1M, type CandlePoint, getHoldingFundamentals, type HoldingFundamentals } from '../services/finnhubService';
-import { getAITradeAnalysis, getAIWatchlistAdvice, formatAiError } from '../services/geminiService';
-import { fetchCompanyNameForSymbol } from '../hooks/useSymbolCompanyName';
+import { getAITradeAnalysis, getAIWatchlistAdvice, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
+import { fetchCompanyNameForSymbol, useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { ResolvedSymbolLabel, formatSymbolWithCompany, type SymbolNamesMap } from '../components/SymbolWithCompanyName';
 import Modal from '../components/Modal';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
@@ -25,9 +26,40 @@ import { XMarkIcon } from '../components/icons';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { rsi, rsiSignal, zScore, zScoreSignal, bollingerBands, shortTermCrossoverSignal } from '../services/technicalIndicators';
 import { rankWatchlistIdeas } from '../services/decisionEngine';
+import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
+import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useSelfLearning } from '../context/SelfLearningContext';
 
+/** Merge live/simulated quote with daily-candle close when quote is missing (e.g. stale Tadawul). */
+function resolveWatchlistPriceInfo(
+    _symbol: string,
+    sim: { price: number; change: number; changePercent: number } | undefined,
+    candles: CandlePoint[] | null | undefined,
+): { price: number; change: number; changePercent: number; source: 'live' | 'candle_close' | 'none' } {
+    const live = sim?.price;
+    if (sim && Number.isFinite(live) && (live as number) > 0) {
+        return {
+            price: live as number,
+            change: Number.isFinite(sim.change) ? sim.change : 0,
+            changePercent: Number.isFinite(sim.changePercent) ? sim.changePercent : 0,
+            source: 'live',
+        };
+    }
+    const c = candles ?? [];
+    if (c.length >= 1) {
+        const last = c[c.length - 1]?.price;
+        const prev = c.length >= 2 ? c[c.length - 2]?.price : last;
+        if (Number.isFinite(last) && (last as number) > 0) {
+            const lastN = last as number;
+            const prevN = Number.isFinite(prev) ? (prev as number) : lastN;
+            const change = lastN - prevN;
+            const changePercent = prevN > 0 ? (change / prevN) * 100 : 0;
+            return { price: lastN, change, changePercent, source: 'candle_close' };
+        }
+    }
+    return { price: 0, change: 0, changePercent: 0, source: 'none' };
+}
 
 interface WatchlistBucket {
     id: string;
@@ -281,7 +313,8 @@ const AddWatchlistItemModal: React.FC<{
 
 const WatchlistItemRow: React.FC<{
     item: WatchlistItem;
-    priceInfo: { price: number; change: number; changePercent: number };
+    companyNames: SymbolNamesMap;
+    priceInfo: { price: number; change: number; changePercent: number; source?: 'live' | 'candle_close' | 'none' };
     activeAlerts: PriceAlert[];
     historical1M?: CandlePoint[] | null;
     fundamentals?: HoldingFundamentals | null;
@@ -290,7 +323,8 @@ const WatchlistItemRow: React.FC<{
     exchangeRate: number;
     onOpenAlertModal: (item: WatchlistItem) => void;
     onOpenDeleteModal: (item: WatchlistItem) => void;
-}> = ({ item, priceInfo, activeAlerts, historical1M, fundamentals, fundamentalsLoading, preferredCurrency, exchangeRate, onOpenAlertModal, onOpenDeleteModal }) => {
+}> = ({ item, companyNames, priceInfo, activeAlerts, historical1M, fundamentals, fundamentalsLoading, preferredCurrency, exchangeRate, onOpenAlertModal, onOpenDeleteModal }) => {
+    const quoteSource = priceInfo.source ?? (priceInfo.price > 0 ? 'live' : 'none');
     const market = getExchangeAndCurrencyForSymbol(item.symbol);
     const priceCurrency: 'USD' | 'SAR' = (market?.currency === 'SAR' ? 'SAR' : 'USD');
     const displayCurrency: 'USD' | 'SAR' = preferredCurrency || priceCurrency;
@@ -383,15 +417,36 @@ const WatchlistItemRow: React.FC<{
 
     return (
         <tr className={`transition-colors duration-1000 ${flashClass}`}>
-            <td className="px-4 py-2 whitespace-nowrap">
-                <div className="font-medium text-gray-900">{item.symbol}</div>
-                <div className="text-xs text-gray-500 break-words max-w-[220px]">{item.name}{market ? ` · ${market.exchange}` : ''}</div>
+            <td className="px-4 py-2 whitespace-nowrap min-w-0 max-w-[240px]">
+                <ResolvedSymbolLabel
+                    symbol={item.symbol}
+                    storedName={item.name}
+                    names={companyNames}
+                    layout="stacked"
+                    symbolClassName="font-medium text-gray-900"
+                    companyClassName="text-xs text-gray-500 break-words"
+                />
+                {market ? (
+                    <div className="text-[10px] text-gray-400 mt-0.5">{market.exchange}</div>
+                ) : null}
             </td>
             <td className="px-4 py-2 w-36">
                 <MiniPriceChart symbol={item.symbol} currentPrice={priceInfo.price} changePercent={priceInfo.changePercent} formatPrice={formatPrice} showIllustrativeLabel historicalData={historical1M} realDataOnly />
             </td>
             <td className="px-4 py-2 text-right font-semibold text-dark whitespace-nowrap tabular-nums">
-                {formatInCurrency(displayPrice, displayCurrency)}
+                {quoteSource === 'none' ? (
+                    <>
+                        <span className="text-slate-400">—</span>
+                        <span className="block text-[10px] text-amber-800 font-normal mt-0.5">No live quote</span>
+                    </>
+                ) : (
+                    <>
+                        {formatInCurrency(displayPrice, displayCurrency)}
+                        {quoteSource === 'candle_close' && (
+                            <span className="block text-[10px] text-slate-500 font-normal">Daily close (backup)</span>
+                        )}
+                    </>
+                )}
                 {market && <span className="block text-[10px] text-slate-500 font-normal">{market.exchange}</span>}
                 {fundamentals?.priceContext &&
                     (fundamentals.priceContext.week52High != null || fundamentals.priceContext.week52Low != null) && (
@@ -411,9 +466,18 @@ const WatchlistItemRow: React.FC<{
                         </span>
                     )}
             </td>
-            <td className={`px-4 py-2 text-right font-medium text-sm whitespace-nowrap tabular-nums ${priceInfo.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {priceInfo.change >= 0 ? '+' : ''}{formatInCurrency(displayChange, displayCurrency)} ({priceInfo.changePercent.toFixed(2)}%)
-                <span className="block text-[10px] text-slate-500 font-normal">Period: 1D</span>
+            <td className={`px-4 py-2 text-right font-medium text-sm whitespace-nowrap tabular-nums ${quoteSource === 'none' ? 'text-slate-400' : priceInfo.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {quoteSource === 'none' ? (
+                    <span className="text-slate-400">—</span>
+                ) : (
+                    <>
+                        {priceInfo.change >= 0 ? '+' : ''}
+                        {formatInCurrency(displayChange, displayCurrency)} ({priceInfo.changePercent.toFixed(2)}%)
+                    </>
+                )}
+                <span className="block text-[10px] text-slate-500 font-normal">
+                    {quoteSource === 'live' ? 'Period: 1D' : quoteSource === 'candle_close' ? 'vs prior close' : '—'}
+                </span>
             </td>
             <td className="px-4 py-2 text-left align-top whitespace-nowrap text-xs text-slate-600 max-w-[200px]">
                 {techSignals && (
@@ -522,6 +586,8 @@ type WatchlistViewProps = {
   setActivePage?: (page: Page) => void;
 };
 
+const WATCHLIST_AI_LANG_KEY = 'finova_default_ai_lang_v1';
+
 const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActivePage: _setActivePage }) => {
     const { data, loading, addWatchlistItem, deleteWatchlistItem, addPriceAlert, deletePriceAlert } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
@@ -542,6 +608,17 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
     const [aiWatchlistTips, setAiWatchlistTips] = useState('');
     const [aiWatchlistLoading, setAiWatchlistLoading] = useState(false);
     const [aiWatchlistError, setAiWatchlistError] = useState<string | null>(null);
+    const [watchlistAiLang, setWatchlistAiLang] = useState<'en' | 'ar'>(() => {
+        try {
+            return typeof localStorage !== 'undefined' && localStorage.getItem(WATCHLIST_AI_LANG_KEY) === 'ar' ? 'ar' : 'en';
+        } catch {
+            return 'en';
+        }
+    });
+    const [tradeAnalysisAr, setTradeAnalysisAr] = useState<string | null>(null);
+    const [watchlistTipsAr, setWatchlistTipsAr] = useState<string | null>(null);
+    const [tradeTranslating, setTradeTranslating] = useState(false);
+    const [tipsTranslating, setTipsTranslating] = useState(false);
     const [historicalBySymbol, setHistoricalBySymbol] = useState<Record<string, CandlePoint[] | null>>({});
     const [fundamentalsBySymbol, setFundamentalsBySymbol] = useState<Record<string, HoldingFundamentals | null>>({});
     const [fundamentalsLoading, setFundamentalsLoading] = useState(false);
@@ -670,26 +747,38 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
     }, [data?.watchlist, searchQuery, marketFilter, activeBucket]);
 
     const watchlistInsights = useMemo(() => {
-        const rows = (data?.watchlist ?? []).map((item) => ({
-            ...item,
-            priceInfo: simulatedPrices[item.symbol ?? ''] || { price: 0, change: 0, changePercent: 0 },
-            activeAlerts: (data?.priceAlerts ?? []).filter(a => (a.symbol || '').toUpperCase() === (item.symbol || '').toUpperCase() && a.status === 'active'),
-        }));
+        const rows = (data?.watchlist ?? []).map((item) => {
+            const sym = (item.symbol ?? '').trim().toUpperCase();
+            const resolved = resolveWatchlistPriceInfo(sym, simulatedPrices[sym], historicalBySymbol[sym]);
+            return {
+                ...item,
+                priceInfo: { price: resolved.price, change: resolved.change, changePercent: resolved.changePercent, source: resolved.source },
+                activeAlerts: (data?.priceAlerts ?? []).filter(a => (a.symbol || '').toUpperCase() === (item.symbol || '').toUpperCase() && a.status === 'active'),
+            };
+        });
         const positiveMovers = rows.filter(r => r.priceInfo.changePercent > 0).length;
         const negativeMovers = rows.filter(r => r.priceInfo.changePercent < 0).length;
         const alertCoverage = rows.filter(r => r.activeAlerts.length > 0).length;
         return { positiveMovers, negativeMovers, alertCoverage, total: rows.length };
-    }, [data?.watchlist, data?.priceAlerts, simulatedPrices]);
+    }, [data?.watchlist, data?.priceAlerts, simulatedPrices, historicalBySymbol]);
 
     const ideaRanks = useMemo(() => {
         const items = (data?.watchlist ?? []).map((w) => {
             const sym = (w.symbol ?? '').toUpperCase();
-            const ch = simulatedPrices[sym]?.changePercent ?? 0;
+            const resolved = resolveWatchlistPriceInfo(sym, simulatedPrices[sym], historicalBySymbol[sym]);
+            const ch = resolved.source === 'none' ? 0 : resolved.changePercent;
             const signalScore = Math.max(0, Math.min(100, 50 + ch * 3));
             return { symbol: sym, userScore: 50, signalScore };
         });
         return rankWatchlistIdeas(items);
-    }, [data?.watchlist, simulatedPrices]);
+    }, [data?.watchlist, simulatedPrices, historicalBySymbol]);
+
+    const watchlistSymbolsForNames = useMemo(() => {
+        const wl = (data?.watchlist ?? []).map((w) => (w.symbol || '').trim()).filter((s) => s.length >= 2);
+        const ir = ideaRanks.map((r) => r.symbol).filter(Boolean);
+        return Array.from(new Set([...wl, ...ir]));
+    }, [data?.watchlist, ideaRanks]);
+    const { names: wlCompanyNames } = useCompanyNames(watchlistSymbolsForNames);
 
     const handleOpenDeleteModal = (item: WatchlistItem) => { setItemToDelete(item); setIsDeleteModalOpen(true); };
     const handleConfirmDelete = () => {
@@ -706,16 +795,24 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
             alert(`Failed to delete item: ${error instanceof Error ? error.message : String(error)}`);
         }
     };
-    const handleOpenAlertModal = (item: WatchlistItem) => { const sym = item.symbol ?? ''; setStockForAlert({ ...item, symbol: sym, price: simulatedPrices[sym]?.price || 0 }); setIsAlertModalOpen(true); };
+    const personalAccountsLedger = useMemo(() => getPersonalAccounts(data), [data]);
+    const personalInvestmentsLedger = useMemo(() => getPersonalInvestments(data), [data]);
+
+    const handleOpenAlertModal = (item: WatchlistItem) => {
+        const sym = (item.symbol ?? '').trim().toUpperCase();
+        const r = resolveWatchlistPriceInfo(sym, simulatedPrices[sym], historicalBySymbol[sym]);
+        const price = r.price > 0 ? r.price : simulatedPrices[sym]?.price ?? 0;
+        setStockForAlert({ ...item, symbol: sym, price });
+        setIsAlertModalOpen(true);
+    };
 
     const recentTransactionsForAnalysis = useMemo(() => {
-        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-        const personalAccountIds = new Set(accounts.map((a: { id: string }) => a.id));
+        const personalAccountIds = new Set(personalAccountsLedger.map((a) => a.id));
         return (data?.investmentTransactions ?? [])
             .filter((t) => personalAccountIds.has(t.accountId ?? ''))
             .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
             .slice(0, 20);
-    }, [data?.investmentTransactions, (data as any)?.personalAccounts, data?.accounts]);
+    }, [data?.investmentTransactions, personalAccountsLedger]);
 
     const tradeActivitySummary = useMemo(() => {
         const list = recentTransactionsForAnalysis;
@@ -750,11 +847,46 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
             tradeActivitySummary,
             asOfDate: new Date().toISOString().slice(0, 10),
         };
-    }, [data?.investments, (data as any)?.personalInvestments, data?.watchlist, data?.investmentPlan, data?.settings, sarPerUsd, tradeActivitySummary]);
+    }, [data?.investments, (data as any)?.personalInvestments, data?.watchlist, data?.investmentPlan, data?.settings, exchangeRate, tradeActivitySummary]);
+
+    useEffect(() => {
+        if (watchlistAiLang !== 'ar' || !aiTradeAnalysis.trim() || tradeAnalysisAr != null || !isAiAvailable) return;
+        let cancelled = false;
+        (async () => {
+            setTradeTranslating(true);
+            try {
+                const ar = await translateFinancialInsightToArabic(aiTradeAnalysis);
+                if (!cancelled) setTradeAnalysisAr(ar);
+            } finally {
+                if (!cancelled) setTradeTranslating(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [watchlistAiLang, aiTradeAnalysis, tradeAnalysisAr, isAiAvailable]);
+
+    useEffect(() => {
+        if (watchlistAiLang !== 'ar' || !aiWatchlistTips.trim() || watchlistTipsAr != null || !isAiAvailable) return;
+        let cancelled = false;
+        (async () => {
+            setTipsTranslating(true);
+            try {
+                const ar = await translateFinancialInsightToArabic(aiWatchlistTips);
+                if (!cancelled) setWatchlistTipsAr(ar);
+            } finally {
+                if (!cancelled) setTipsTranslating(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [watchlistAiLang, aiWatchlistTips, watchlistTipsAr, isAiAvailable]);
 
     const handleAnalyzeTrades = useCallback(async () => {
         setAiTradeError(null);
         setAiTradeLoading(true);
+        setTradeAnalysisAr(null);
         try {
             const analysis = await getAITradeAnalysis(recentTransactionsForAnalysis, analysisContext);
             setAiTradeAnalysis(analysis);
@@ -773,6 +905,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
         }
         setAiWatchlistError(null);
         setAiWatchlistLoading(true);
+        setWatchlistTipsAr(null);
         try {
             const tips = await getAIWatchlistAdvice((data?.watchlist ?? []).map(w => w.symbol ?? ''));
             setAiWatchlistTips(tips);
@@ -837,7 +970,9 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
         const csv = [
             ['Symbol', 'Name', 'Price', 'Change', 'Change %', 'Target Price', 'Status'].join(','),
             ...filteredWatchlist.map(item => {
-                const priceInfo = simulatedPrices[item.symbol ?? ''] || { price: 0, change: 0, changePercent: 0 };
+                const symK = (item.symbol ?? '').trim().toUpperCase();
+                const r = resolveWatchlistPriceInfo(symK, simulatedPrices[symK], historicalBySymbol[symK]);
+                const priceInfo = { price: r.price, change: r.change, changePercent: r.changePercent };
                 const activeAlerts = (data?.priceAlerts ?? []).filter(a => (a.symbol || '').toUpperCase() === (item.symbol || '').toUpperCase() && a.status === 'active');
                 const targetPrice = activeAlerts.length > 0 ? (activeAlerts[0].targetPrice ?? 0) : 0;
                 const market = getExchangeAndCurrencyForSymbol(item.symbol ?? '');
@@ -938,7 +1073,9 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
                     <ol className="flex flex-wrap gap-2 text-sm list-none p-0 m-0">
                         {ideaRanks.slice(0, 12).map((r, i) => (
                             <li key={r.symbol} className="rounded-lg bg-white border border-violet-100 px-2.5 py-1 font-medium text-slate-800">
-                                #{i + 1} {r.symbol} <span className="text-violet-600 text-xs">({r.rank.toFixed(0)})</span>
+                                #{i + 1}{' '}
+                                {formatSymbolWithCompany(r.symbol, undefined, wlCompanyNames)}{' '}
+                                <span className="text-violet-600 text-xs">({r.rank.toFixed(0)})</span>
                             </li>
                         ))}
                     </ol>
@@ -979,13 +1116,15 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
                     <thead className="bg-gray-50"><tr><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase align-middle"><span className="inline-flex items-center gap-1 flex-nowrap whitespace-nowrap">1M trend <InfoHint placement="bottom" text="When available, the chart and percentage show real 1-month daily history from market data. Otherwise an illustrative curve is shown." /></span></th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase"><span className="inline-flex items-center gap-1">1D Change <InfoHint placement="bottom" text="Latest session/1-day move from live price feed." /></span></th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Signals</th><th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Next event</th><th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Target</th><th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th></tr></thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                         {filteredWatchlist.map((item) => {
-                            const priceInfo = simulatedPrices[item.symbol] || { price: 0, change: 0, changePercent: 0 };
-                            const activeAlerts = (data?.priceAlerts ?? []).filter(a => (a.symbol || '').toUpperCase() === (item.symbol || '').toUpperCase() && a.status === 'active');
                             const symKey = item.symbol.trim().toUpperCase();
+                            const r = resolveWatchlistPriceInfo(symKey, simulatedPrices[symKey], historicalBySymbol[symKey]);
+                            const priceInfo = { price: r.price, change: r.change, changePercent: r.changePercent, source: r.source };
+                            const activeAlerts = (data?.priceAlerts ?? []).filter(a => (a.symbol || '').toUpperCase() === (item.symbol || '').toUpperCase() && a.status === 'active');
                             return (
                                <WatchlistItemRow
                                   key={item.symbol}
                                   item={item}
+                                  companyNames={wlCompanyNames}
                                   priceInfo={priceInfo}
                                   activeAlerts={activeAlerts}
                                   historical1M={historicalBySymbol[symKey] ?? undefined}
@@ -1013,6 +1152,41 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
             </div>
 
             <div className="lg:col-span-1 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">AI insight language</span>
+                    <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                try {
+                                    localStorage.setItem(WATCHLIST_AI_LANG_KEY, 'en');
+                                } catch {
+                                    /* ignore */
+                                }
+                                setWatchlistAiLang('en');
+                            }}
+                            className={`px-2.5 py-1 text-xs font-semibold rounded-md ${watchlistAiLang === 'en' ? 'bg-violet-100 text-violet-900' : 'text-slate-600'}`}
+                        >
+                            English
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                try {
+                                    localStorage.setItem(WATCHLIST_AI_LANG_KEY, 'ar');
+                                } catch {
+                                    /* ignore */
+                                }
+                                setWatchlistAiLang('ar');
+                                setTradeAnalysisAr(null);
+                                setWatchlistTipsAr(null);
+                            }}
+                            className={`px-2.5 py-1 text-xs font-semibold rounded-md ${watchlistAiLang === 'ar' ? 'bg-violet-100 text-violet-900' : 'text-slate-600'}`}
+                        >
+                            العربية
+                        </button>
+                    </div>
+                </div>
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm border-t-4 border-t-violet-500">
                     <h4 className="font-semibold text-slate-800 flex items-center gap-2 mb-1 flex-wrap">
                         <SparklesIcon className="h-5 w-5 text-primary" aria-hidden />
@@ -1030,16 +1204,19 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
                             <div className="rounded-lg border border-slate-200 bg-slate-50/80 mb-3 overflow-hidden">
                                 <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 px-2 py-1.5 border-b border-slate-200 bg-white/80">Recent trades (preview)</p>
                                 <ul className="max-h-[140px] overflow-y-auto divide-y divide-slate-100 text-xs">
-                                    {recentTransactionsForAnalysis.slice(0, 8).map((t) => (
+                                    {recentTransactionsForAnalysis.slice(0, 8).map((t) => {
+                                        const txCur = inferInvestmentTransactionCurrency(t, personalAccountsLedger, personalInvestmentsLedger);
+                                        return (
                                         <li key={t.id} className="px-2 py-1.5 flex justify-between gap-2">
                                             <span className="font-medium text-slate-800 truncate">
                                                 {(t.symbol ?? '—').toUpperCase()}{' '}
                                                 <span className="font-normal text-slate-500">{t.type}</span>
                                             </span>
                                             <span className="text-slate-600 tabular-nums shrink-0">{t.date}</span>
-                                            <span className="text-slate-700 tabular-nums shrink-0">{formatCurrencyString(t.total ?? 0)}</span>
+                                            <span className="text-slate-700 tabular-nums shrink-0">{formatCurrencyString(t.total ?? 0, { inCurrency: txCur })}</span>
                                         </li>
-                                    ))}
+                                        );
+                                    })}
                                 </ul>
                             </div>
                             <div className="flex flex-col gap-2">
@@ -1061,8 +1238,14 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
                                 </div>
                             )}
                             {aiTradeAnalysis && (
-                                <div className="mt-3 prose prose-sm max-w-none text-left max-h-[min(420px,55vh)] overflow-y-auto rounded-lg bg-violet-50/80 p-3 border border-violet-100">
-                                    <SafeMarkdownRenderer content={aiTradeAnalysis} />
+                                <div className="mt-3 prose prose-sm max-w-none text-left max-h-[min(420px,55vh)] overflow-y-auto rounded-lg bg-violet-50/80 p-3 border border-violet-100" dir={watchlistAiLang === 'ar' ? 'rtl' : 'ltr'}>
+                                    {watchlistAiLang === 'ar' && tradeTranslating && (
+                                        <p className="text-xs text-slate-500 mb-2">Translating to Arabic…</p>
+                                    )}
+                                    {watchlistAiLang === 'ar' && !isAiAvailable && !tradeAnalysisAr && aiTradeAnalysis.trim() && !tradeTranslating && (
+                                        <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">Arabic needs AI enabled. Showing English.</p>
+                                    )}
+                                    <SafeMarkdownRenderer content={watchlistAiLang === 'ar' ? (tradeAnalysisAr ?? aiTradeAnalysis) : aiTradeAnalysis} />
                                 </div>
                             )}
                         </>
@@ -1084,7 +1267,17 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
                         <SparklesIcon className="h-4 w-4" /> {aiWatchlistLoading ? 'Generating...' : 'Get Recommendations'}
                     </button>
                     {aiWatchlistError && <div className="mt-2"><p className="text-xs text-red-600">{aiWatchlistError}</p><button type="button" onClick={handleGetWatchlistTips} className="mt-1 text-xs font-medium text-primary hover:underline">Retry</button></div>}
-                    {aiWatchlistTips && <div className="mt-3 prose prose-sm max-w-none text-left max-h-[220px] overflow-y-auto rounded-lg bg-amber-50/80 p-3 border border-amber-100"><SafeMarkdownRenderer content={aiWatchlistTips} /></div>}
+                    {aiWatchlistTips && (
+                        <div className="mt-3 prose prose-sm max-w-none text-left max-h-[220px] overflow-y-auto rounded-lg bg-amber-50/80 p-3 border border-amber-100" dir={watchlistAiLang === 'ar' ? 'rtl' : 'ltr'}>
+                            {watchlistAiLang === 'ar' && tipsTranslating && (
+                                <p className="text-xs text-slate-500 mb-2">Translating to Arabic…</p>
+                            )}
+                            {watchlistAiLang === 'ar' && !isAiAvailable && !watchlistTipsAr && aiWatchlistTips.trim() && !tipsTranslating && (
+                                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">Arabic needs AI enabled. Showing English.</p>
+                            )}
+                            <SafeMarkdownRenderer content={watchlistAiLang === 'ar' ? (watchlistTipsAr ?? aiWatchlistTips) : aiWatchlistTips} />
+                        </div>
+                    )}
                 </div>
                 {!isAiAvailable && <p className="text-xs text-amber-700">AI is currently unavailable. Actions still run with deterministic fallback logic.</p>}<p className="text-[10px] text-slate-500">Not financial advice. For education only.</p>
             </div>
