@@ -574,6 +574,28 @@ const PROFILE_BULK_ENVELOPE_PCT: Partial<Record<string, number>> = {
   Growth: 0.58 * ENVELOPE_BASE_BUMP,
 };
 
+/** Integer halalas (2 dp) proportional split so row sums match the envelope exactly. */
+function distributeMonthlyHalalasByLargestRemainder(weights: number[], targetHalalas: number): number[] {
+  const n = weights.length;
+  if (n === 0) return [];
+  const sumW = weights.reduce((a, b) => a + b, 0);
+  if (sumW <= 0 || targetHalalas <= 0) {
+    return weights.map(() => 0);
+  }
+  const raw = weights.map((w) => (targetHalalas * w) / sumW);
+  const floors = raw.map((r) => Math.floor(r));
+  let rem = targetHalalas - floors.reduce((a, b) => a + b, 0);
+  const order = raw
+    .map((r, i) => ({ i, frac: r - Math.floor(r) }))
+    .sort((a, b) => b.frac - a.frac);
+  const out = [...floors];
+  for (let k = 0; k < rem; k++) {
+    const idx = order[k % order.length]?.i ?? 0;
+    out[idx] = (out[idx] ?? 0) + 1;
+  }
+  return out;
+}
+
 /**
  * When **all** categories are selected, returns the base suggestions unchanged (engine-merged template).
  * When **fewer** are selected, reallocates `salary × envelope(profile)` across **selected** rows only; **unselected**
@@ -609,18 +631,23 @@ export function computeBulkAddLimitsForSelection(
   const headScale = householdConsumptionScale(adults, kids);
   const envelopePct = Math.min(0.74, basePct * Math.min(1.14, headScale / 1.02));
   const envelope = salary * envelopePct;
+  const targetHalalas = Math.max(0, Math.round(envelope * 100));
 
   const weights = selectedRows.map((c) => monthlyEquivalentFromBudgetLimit(c.limit, c.period));
   const sumW = weights.reduce((a, b) => a + b, 0);
 
-  const allocatedMonthly: number[] =
+  const allocatedHalalas: number[] =
     sumW > 0
-      ? weights.map((w) => (envelope * w) / sumW)
-      : selectedRows.map(() => envelope / selectedRows.length);
+      ? distributeMonthlyHalalasByLargestRemainder(weights, targetHalalas)
+      : distributeMonthlyHalalasByLargestRemainder(
+          selectedRows.map(() => 1),
+          targetHalalas,
+        );
 
   const limitByCategory = new Map<string, number>();
   selectedRows.forEach((c, i) => {
-    limitByCategory.set(c.category, budgetLimitFromMonthlyEquivalent(allocatedMonthly[i], c.period));
+    const monthlySar = (allocatedHalalas[i] ?? 0) / 100;
+    limitByCategory.set(c.category, budgetLimitFromMonthlyEquivalent(monthlySar, c.period));
   });
 
   return baseSuggestions.map((c) => {

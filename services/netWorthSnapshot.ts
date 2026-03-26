@@ -1,7 +1,9 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { recordSarPerUsdForCalendarDay } from './fxDailySeries';
 
 const KEY = 'finova_nw_snapshots_v1';
-const MAX = 36;
+/** ~6 years of monthly points at one snapshot per month (cap prevents unbounded localStorage growth). */
+const MAX = 72;
 
 export interface NetWorthSnapshot {
   at: string;
@@ -17,10 +19,91 @@ export interface NetWorthSnapshot {
   };
 }
 
+export type NetWorthSyncContext = {
+  supabase: SupabaseClient;
+  userId: string;
+};
+
+function snapshotDayFromAt(iso: string): string {
+  return iso.slice(0, 10);
+}
+
+/** Upsert one snapshot row (one row per user per calendar day). */
+export async function upsertNetWorthSnapshotServer(
+  client: SupabaseClient,
+  userId: string,
+  snap: NetWorthSnapshot,
+): Promise<void> {
+  const day = snapshotDayFromAt(snap.at);
+  const { error } = await client.from('net_worth_snapshots').upsert(
+    {
+      user_id: userId,
+      snapshot_day: day,
+      captured_at: snap.at,
+      net_worth: snap.netWorth,
+      buckets: snap.buckets ?? null,
+      sar_per_usd: snap.sarPerUsd ?? null,
+    },
+    { onConflict: 'user_id,snapshot_day' },
+  );
+  if (error) console.warn('net_worth_snapshots upsert:', error.message);
+}
+
+function serverRowToSnapshot(row: {
+  snapshot_day: string;
+  captured_at: string;
+  net_worth: number;
+  buckets?: unknown;
+  sar_per_usd?: number | null;
+}): NetWorthSnapshot {
+  return {
+    at: row.captured_at || `${row.snapshot_day}T12:00:00.000Z`,
+    netWorth: Number(row.net_worth),
+    sarPerUsd: row.sar_per_usd != null && Number.isFinite(Number(row.sar_per_usd)) ? Number(row.sar_per_usd) : undefined,
+    buckets: row.buckets as NetWorthSnapshot['buckets'],
+  };
+}
+
+function mergeSnapshotsByDay(snapshots: NetWorthSnapshot[]): NetWorthSnapshot[] {
+  const byDay = new Map<string, NetWorthSnapshot>();
+  for (const s of snapshots) {
+    const day = snapshotDayFromAt(s.at);
+    const prev = byDay.get(day);
+    if (!prev) {
+      byDay.set(day, s);
+      continue;
+    }
+    const tNew = new Date(s.at).getTime();
+    const tPrev = new Date(prev.at).getTime();
+    if (tNew >= tPrev) byDay.set(day, s);
+  }
+  return Array.from(byDay.values()).sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+}
+
+/** Pull server history and merge into localStorage (dedupe by day, keep latest capture). */
+export async function mergeNetWorthSnapshotsFromServer(client: SupabaseClient, userId: string): Promise<void> {
+  try {
+    const local = listNetWorthSnapshots();
+    const { data, error } = await client
+      .from('net_worth_snapshots')
+      .select('snapshot_day,captured_at,net_worth,buckets,sar_per_usd')
+      .eq('user_id', userId)
+      .order('captured_at', { ascending: false })
+      .limit(500);
+    if (error || !data?.length) return;
+    const remote = (data as any[]).map((row) => serverRowToSnapshot(row));
+    const merged = mergeSnapshotsByDay([...local, ...remote]);
+    localStorage.setItem(KEY, JSON.stringify(merged.slice(0, MAX)));
+  } catch (e) {
+    console.warn('mergeNetWorthSnapshotsFromServer:', e);
+  }
+}
+
 export function pushNetWorthSnapshot(
   netWorth: number,
   buckets?: NetWorthSnapshot['buckets'],
   sarPerUsd?: number,
+  sync?: NetWorthSyncContext | null,
 ): void {
   try {
     const raw = localStorage.getItem(KEY);
@@ -30,12 +113,18 @@ export function pushNetWorthSnapshot(
     const at = new Date().toISOString();
     const fx = typeof sarPerUsd === 'number' && Number.isFinite(sarPerUsd) && sarPerUsd > 0 ? sarPerUsd : undefined;
     if (fx != null) recordSarPerUsdForCalendarDay(today, fx);
+    let final: NetWorthSnapshot;
     if (last && last.at.slice(0, 10) === today) {
-      arr[0] = { at, netWorth, sarPerUsd: fx ?? last.sarPerUsd, buckets: buckets ?? last.buckets };
+      final = { at, netWorth, sarPerUsd: fx ?? last.sarPerUsd, buckets: buckets ?? last.buckets };
+      arr[0] = final;
     } else {
-      arr.unshift({ at, netWorth, sarPerUsd: fx, buckets });
+      final = { at, netWorth, sarPerUsd: fx, buckets };
+      arr.unshift(final);
     }
     localStorage.setItem(KEY, JSON.stringify(arr.slice(0, MAX)));
+    if (sync?.supabase && sync.userId) {
+      void upsertNetWorthSnapshotServer(sync.supabase, sync.userId, final);
+    }
   } catch {}
 }
 
@@ -53,8 +142,9 @@ export function createMonthlySnapshot(
   netWorth: number,
   buckets?: NetWorthSnapshot['buckets'],
   sarPerUsd?: number,
+  sync?: NetWorthSyncContext | null,
 ): void {
-  pushNetWorthSnapshot(netWorth, buckets, sarPerUsd);
+  pushNetWorthSnapshot(netWorth, buckets, sarPerUsd, sync);
 }
 
 /** Compare two snapshots by date; returns NW change. */

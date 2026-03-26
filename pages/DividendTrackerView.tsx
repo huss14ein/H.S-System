@@ -55,7 +55,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { formatCurrencyString } = useFormatCurrency();
     const { showToast } = useToast();
-    const { isAiAvailable } = useAI();
+    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [aiError, setAiError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
@@ -401,7 +401,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
     }, [dividendIncomeYTD, projectedAnnualIncome, trailing12mDividendActual, topPayers]);
 
     useEffect(() => {
-        if (divDisplayLang !== 'ar' || !aiAnalysis.trim() || aiAnalysisAr != null || !isAiAvailable) return;
+        if (divDisplayLang !== 'ar' || !aiAnalysis.trim() || aiAnalysisAr != null || !aiActionsEnabled) return;
         let cancelled = false;
         (async () => {
             setIsTranslatingDiv(true);
@@ -415,7 +415,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
         return () => {
             cancelled = true;
         };
-    }, [divDisplayLang, aiAnalysis, aiAnalysisAr, isAiAvailable]);
+    }, [divDisplayLang, aiAnalysis, aiAnalysisAr, aiActionsEnabled]);
 
     const runFinnhubSync = useCallback(
         async (isManual: boolean) => {
@@ -658,7 +658,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                                 العربية
                             </button>
                         </div>
-                        <button onClick={handleGetAnalysis} disabled={isLoading || !isAiAvailable} className="btn-primary disabled:opacity-50">
+                        <button onClick={handleGetAnalysis} disabled={isLoading || !aiActionsEnabled} className="btn-primary disabled:opacity-50">
                             <SparklesIcon className="h-5 w-5" />
                             {isLoading ? 'Analyzing...' : 'Generate Analysis'}
                         </button>
@@ -686,7 +686,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         {divDisplayLang === 'ar' && isTranslatingDiv && (
                             <p className="text-sm text-violet-800 mb-2">جاري الترجمة…</p>
                         )}
-                        {divDisplayLang === 'ar' && !isAiAvailable && !aiAnalysisAr && aiAnalysis.trim() && !isTranslatingDiv && (
+                        {divDisplayLang === 'ar' && aiHealthChecked && !isAiAvailable && !aiAnalysisAr && aiAnalysis.trim() && !isTranslatingDiv && (
                             <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
                                 Arabic needs the AI service enabled. Switch to English or add an API key.
                             </p>

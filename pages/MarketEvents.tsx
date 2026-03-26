@@ -326,7 +326,7 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
 const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
   const { data, loading } = useContext(DataContext)!;
   const { exchangeRate } = useCurrency();
-  const { isAiAvailable } = useAI();
+  const { aiActionsEnabled } = useAI();
   const [categoryFilter, setCategoryFilter] = useState<'All' | EventCategory>('All');
   const [impactFilter, setImpactFilter] = useState<'All' | Impact>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -789,7 +789,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
 
   const handleGenerateAiInsight = async () => {
     if (!aiTargetEvent) return;
-    if (!isAiAvailable) {
+    if (!aiActionsEnabled) {
       setAiError('Configure AI to enable market event insights.');
       return;
     }
@@ -823,7 +823,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   const handleAiLangChange = async (lang: 'en' | 'ar') => {
     setAiLang(lang);
     if (lang !== 'ar') return;
-    if (!isAiAvailable) {
+    if (!aiActionsEnabled) {
       setAiTranslateError('Configure AI to enable Arabic translation.');
       return;
     }
@@ -1191,7 +1191,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
                 onClick={() => void handleAiLangChange('ar')}
                 className={`px-2.5 py-1 text-xs rounded-md border ${aiLang === 'ar' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300'}`}
                 disabled={aiTranslating || !aiInsightEn}
-                title={!isAiAvailable ? 'Configure AI to enable Arabic translation' : 'عرض بالعربية'}
+                title={!aiActionsEnabled ? 'Configure AI to enable Arabic translation' : 'عرض بالعربية'}
               >
                 {aiTranslating ? 'Translating…' : 'العربية'}
               </button>

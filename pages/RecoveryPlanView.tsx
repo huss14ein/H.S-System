@@ -88,7 +88,8 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
-  const { isAiAvailable } = useAI();
+  const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
+  const aiOptimizeDisabled = !aiActionsEnabled;
 
   const allHoldingsWithPortfolio = useMemo(() => {
     const list: { holding: Holding; portfolioName: string; bookCurrency: TradeCurrency; accountId?: string }[] = [];
@@ -556,7 +557,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }, [selected, selectedPlan, sarPerUsd, formatCurrencyString]);
 
   useEffect(() => {
-    if (recoveryDisplayLang !== 'ar' || !isAiAvailable) {
+    if (recoveryDisplayLang !== 'ar' || !aiActionsEnabled) {
       setRecoveryBriefAr(null);
       setRecoveryNotesAr(null);
       setRecoveryTranslateErr(null);
@@ -591,7 +592,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     return () => {
       cancelled = true;
     };
-  }, [recoveryDisplayLang, isAiAvailable, selectedRecoveryBrief, selected?.aiNotes, selected?.holding?.id]);
+  }, [recoveryDisplayLang, aiActionsEnabled, selectedRecoveryBrief, selected?.aiNotes, selected?.holding?.id]);
 
   const refreshAiRecoveryConfig = useCallback(async () => {
     if (!selected) return;
@@ -717,17 +718,17 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }
 
   return (
-    <div className="page-container min-h-[40rem] space-y-10 sm:space-y-12">
+    <div className="page-container min-h-[40rem] space-y-8 sm:space-y-10">
       {/* Hero */}
       <section className="section-card p-6 sm:p-8">
-        <div className="flex flex-col gap-6">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 bg-gradient-to-br from-primary to-secondary rounded-2xl flex items-center justify-center shadow-lg">
+        <div className="flex flex-col gap-8">
+          <div className="flex flex-wrap items-center gap-5">
+            <div className="flex items-center gap-4 min-w-0">
+              <div className="w-16 h-16 bg-gradient-to-br from-primary to-secondary rounded-2xl flex items-center justify-center shadow-lg shrink-0">
                 <span className="text-white font-bold text-xl">R</span>
               </div>
-              <div>
-                <h2 className="text-3xl font-bold text-slate-900 flex items-center gap-3">
+              <div className="min-w-0">
+                <h2 className="text-3xl font-bold text-slate-900 flex flex-wrap items-center gap-2">
                   Recovery Plan (Averaging / Correction Engine)
                   <InfoHint text="Controlled workflow for positions in loss: only activates when loss exceeds your trigger (e.g. 20%). Builds a limited buy ladder (1–3 orders), predicts new average cost, and can generate exit targets. Safe guardrails prevent over-spending." />
                 </h2>
@@ -735,11 +736,34 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-3 ml-auto">
-              <span className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold shadow-md ${
-                isAiAvailable ? 'bg-gradient-to-r from-emerald-100 to-emerald-200 text-emerald-800 border border-emerald-300' : 
-                'bg-gradient-to-r from-amber-100 to-amber-200 text-amber-800 border border-amber-300'
-              }`}>
-                {isAiAvailable ? <CheckCircleIcon className="h-5 w-5" /> : <ExclamationTriangleIcon className="h-5 w-5" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}
+              <span
+                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold shadow-md border ${
+                  !aiHealthChecked
+                    ? 'bg-slate-100 text-slate-700 border-slate-200'
+                    : isAiAvailable
+                      ? 'bg-gradient-to-r from-emerald-100 to-emerald-200 text-emerald-800 border-emerald-300'
+                      : 'bg-gradient-to-r from-amber-100 to-amber-200 text-amber-800 border-amber-300'
+                }`}
+              >
+                {!aiHealthChecked ? (
+                  <>
+                    <span className="h-2 w-2 rounded-full bg-slate-400 animate-pulse" aria-hidden />
+                    Checking AI…
+                    <InfoHint text="Status unknown until the app finishes talking to the AI proxy. This is not the same as “off”—wait a moment, or confirm Netlify env keys if it stays here." />
+                  </>
+                ) : isAiAvailable ? (
+                  <>
+                    <CheckCircleIcon className="h-5 w-5 shrink-0" />
+                    AI ready
+                    <InfoHint text="At least one backend AI provider is configured (e.g. Gemini, Claude, OpenAI, Grok). Optional AI optimize buttons can call the model; the ladder and guardrails still work without AI." />
+                  </>
+                ) : (
+                  <>
+                    <ExclamationTriangleIcon className="h-5 w-5 shrink-0" />
+                    AI unavailable
+                    <InfoHint text="No AI provider key reported by the proxy, or all providers failed. Configure GEMINI_API_KEY, OPENAI_API_KEY, or similar in Netlify. Recovery math and rules still run without AI." />
+                  </>
+                )}
               </span>
               {recoveryStats && recoveryStats.totalExecutions > 0 && (
                 <button
@@ -752,7 +776,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               )}
             </div>
           </div>
-          <div className="bg-slate-50 rounded-xl p-6 border border-slate-200">
+          <div className="bg-slate-50 rounded-xl p-5 sm:p-6 border border-slate-200">
             <p className="text-slate-700 leading-relaxed">
               Positions in loss are listed below. When a position qualifies, you can generate a recovery ladder and optional exit targets. Integrated with your Portfolios and Investment Plan; never runs if over budget, spec breach, or per-ticker cap exceeded.
             </p>
@@ -1160,9 +1184,9 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                       /* ignore */
                     }
                   }}
-                  disabled={!isAiAvailable}
+                  disabled={aiOptimizeDisabled}
                   className={`rounded-md px-2.5 py-1.5 ${recoveryDisplayLang === 'ar' ? 'bg-slate-100 text-slate-900' : 'text-slate-600'} disabled:opacity-50`}
-                                title={!isAiAvailable ? 'Enable AI for Arabic translation' : 'Translate AI summary to Arabic'}
+                                title={aiOptimizeDisabled ? 'Wait for AI check or configure AI for Arabic translation' : 'Translate AI summary to Arabic'}
                 >
                   العربية
                 </button>
@@ -1170,16 +1194,18 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               <button 
                 type="button" 
                 onClick={refreshAiRecoveryConfig} 
-                disabled={isAiRecoveryLoading} 
+                disabled={aiOptimizeDisabled || isAiRecoveryLoading} 
                 className="px-4 py-2.5 rounded-xl border-2 border-primary/30 text-primary text-sm font-bold hover:bg-primary/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-sm hover:shadow-md"
+                title={aiOptimizeDisabled ? 'Configure AI in Netlify or wait for health check' : 'Run AI on selected position'}
               >
                 {isAiRecoveryLoading ? 'Optimizing…' : 'AI optimize selected'}
               </button>
               <button 
                 type="button" 
                 onClick={applyAiToAllQualifiedPositions} 
-                disabled={isBulkAiRecoveryLoading || qualifiedPositions.length === 0} 
+                disabled={aiOptimizeDisabled || isBulkAiRecoveryLoading || qualifiedPositions.length === 0} 
                 className="px-4 py-2.5 rounded-xl border-2 border-emerald-300 text-emerald-700 text-sm font-bold hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-sm hover:shadow-md"
+                title={aiOptimizeDisabled ? 'Configure AI in Netlify or wait for health check' : 'Run AI on all qualifying positions'}
               >
                 {isBulkAiRecoveryLoading ? 'Optimizing all…' : `AI optimize all (${qualifiedPositions.length})`}
               </button>
@@ -1259,15 +1285,15 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               <p className="text-2xl font-black text-blue-900 tabular-nums">{formatCurrencyString(alternateCurrencyDeployableCash, { inCurrency: (selected?.bookCurrency === 'USD' ? 'SAR' : 'USD') as TradeCurrency })}</p>
             </div>
           </div>
-          {!isAiAvailable && (
-            <div className="rounded-2xl border-2 border-amber-200 bg-gradient-to-r from-amber-50 to-yellow-50 p-6 shadow-lg">
+          {aiHealthChecked && !isAiAvailable && (
+            <div className="rounded-2xl border-2 border-amber-200 bg-gradient-to-r from-amber-50 to-yellow-50 p-5 sm:p-6 shadow-lg">
               <div className="flex items-start gap-3">
                 <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-yellow-600 rounded-lg flex items-center justify-center flex-shrink-0">
                   <span className="text-white font-bold text-sm">⚠</span>
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-amber-800 mb-1">AI Currently Unavailable</p>
-                  <p className="text-sm text-amber-700 leading-relaxed">Recovery plan still runs with deterministic guardrails, dual-currency checks, and clear trigger logic.</p>
+                  <p className="text-sm font-bold text-amber-800 mb-1">AI not configured</p>
+                  <p className="text-sm text-amber-700 leading-relaxed">Optional AI tuning is off until you add an API key on the server. The recovery ladder, budgets, and guardrails still run with rule-based parameters—use the page normally.</p>
                 </div>
               </div>
             </div>

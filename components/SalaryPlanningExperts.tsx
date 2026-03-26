@@ -67,7 +67,7 @@ const SalaryPlanningExperts: React.FC = () => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
-    const { isAiAvailable } = useAI();
+    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>(initialExpertsExpanded);
     const [formValues, setFormValues] = useState<Record<string, string>>({} as Record<string, string>);
     const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -366,7 +366,7 @@ const SalaryPlanningExperts: React.FC = () => {
     };
 
     const handleRun = async (expert: typeof EXPERTS[0]) => {
-        if (!isAiAvailable) {
+        if (!aiActionsEnabled) {
             setResult({ expertId: expert.id, markdown: formatAiError(new Error('AI is not available. Configure your API key in settings.')) });
             return;
         }
@@ -440,8 +440,8 @@ const SalaryPlanningExperts: React.FC = () => {
     };
 
     const handleTranslateResult = async () => {
-        if (!result?.markdown || translatedResult || translatingResult || !isAiAvailable) {
-            if (!isAiAvailable) setTranslateError('Configure AI to enable Arabic translation.');
+        if (!result?.markdown || translatedResult || translatingResult || !aiActionsEnabled) {
+            if (!aiActionsEnabled) setTranslateError('Configure AI to enable Arabic translation.');
             return;
         }
         setTranslateError(null);
@@ -462,7 +462,7 @@ const SalaryPlanningExperts: React.FC = () => {
             <p className="text-sm text-slate-600 mb-6 max-w-2xl">
                 Choose an expert, fill in your numbers (SAR), and run AI-powered plans. Logic and prompts are aligned with essentials-first, savings protection, and long-term wealth.
             </p>
-            {!isAiAvailable && (
+            {aiHealthChecked && !isAiAvailable && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 mb-6">
                     AI is disabled. Configure your API key in Settings to use these experts.
                 </div>
@@ -679,7 +679,7 @@ const SalaryPlanningExperts: React.FC = () => {
                                     <div className="flex flex-wrap items-center gap-3 pt-1">
                                         <button
                                             type="button"
-                                            disabled={!isAiAvailable || loadingId === expert.id}
+                                            disabled={!aiActionsEnabled || loadingId === expert.id}
                                             onClick={() => handleRun(expert)}
                                             className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary text-white rounded-xl text-sm font-medium hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                                         >
@@ -725,9 +725,9 @@ const SalaryPlanningExperts: React.FC = () => {
                                                         }
                                                         void handleTranslateResult();
                                                     }}
-                                                    disabled={!isAiAvailable || translatingResult}
+                                                    disabled={!aiActionsEnabled || translatingResult}
                                                     className={`px-2.5 py-1 text-xs rounded-md border ${displayLang === 'ar' && translatedResult ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300'} disabled:opacity-60`}
-                                                    title={!isAiAvailable ? 'Configure AI to enable Arabic translation' : 'عرض بالعربية'}
+                                                    title={!aiActionsEnabled ? 'Configure AI to enable Arabic translation' : 'عرض بالعربية'}
                                                 >
                                                     {translatingResult ? 'Translating…' : 'العربية'}
                                                 </button>

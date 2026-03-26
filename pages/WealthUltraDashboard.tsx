@@ -68,7 +68,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
   const { exchangeRate } = useCurrency();
-  const { isAiAvailable } = useAI();
+  const { isAiAvailable, aiHealthChecked } = useAI();
 
   const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
 
@@ -1272,7 +1272,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
               ))}
             </select>
           </label>
-          <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>{isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Operational' : 'Unavailable'}</span>
+          <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${!aiHealthChecked ? 'bg-slate-100 text-slate-600 border border-slate-200' : isAiAvailable ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>{!aiHealthChecked ? 'Checking…' : <>{isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Operational' : 'Unavailable'}</>}</span>
           <PageActionsDropdown
             ariaLabel="Wealth Ultra actions"
             actions={[

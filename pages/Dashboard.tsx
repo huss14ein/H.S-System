@@ -67,7 +67,7 @@ interface ExtendedBudget extends Budget {
 
 const AIExecutiveSummary: React.FC = () => {
     const { data } = useContext(DataContext)!;
-    const { isAiAvailable } = useAI();
+    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { trackAction } = useSelfLearning();
     const [summary, setSummary] = useState<string>('');
     const [summaryEn, setSummaryEn] = useState<string>('');
@@ -143,8 +143,8 @@ const AIExecutiveSummary: React.FC = () => {
                 <button
                     type="button"
                     onClick={handleGenerate}
-                    disabled={!isAiAvailable || isLoading}
-                    title={!isAiAvailable ? "AI features are disabled" : "Generate a new summary"}
+                    disabled={!aiActionsEnabled || isLoading}
+                    title={!aiActionsEnabled ? "AI features are disabled or still checking" : "Generate a new summary"}
                     className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-slate-400 disabled:cursor-not-allowed transition-colors"
                 >
                     <ArrowPathIcon className={`h-5 w-5 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
@@ -162,7 +162,7 @@ const AIExecutiveSummary: React.FC = () => {
                 </div>
             )}
 
-            {!isAiAvailable ? (
+            {aiHealthChecked && !isAiAvailable ? (
                 <div className="text-center p-4 text-slate-500 bg-slate-50 rounded-md">
                     <p className="font-semibold">AI Features Disabled</p>
                     <p className="text-sm">Please set your Gemini API key to enable this feature.</p>
@@ -612,11 +612,11 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
     }, [data, exchangeRate, getAvailableCashForAccount]);
 
     useEffect(() => {
-        if (!isAdmin) return;
-        const nw = (kpiSummary as { netWorth?: number }).netWorth;
+        if (!auth?.user || !data) return;
+        const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+        const b = computePersonalNetWorthChartBucketsSAR(data, sarPerUsd, { getAvailableCashForAccount });
+        const nw = typeof b.netWorth === 'number' && Number.isFinite(b.netWorth) ? b.netWorth : (kpiSummary as { netWorth?: number }).netWorth;
         if (typeof nw === 'number' && Number.isFinite(nw)) {
-            const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
-            const b = computePersonalNetWorthChartBucketsSAR(data, sarPerUsd, { getAvailableCashForAccount });
             pushNetWorthSnapshot(
                 nw,
                 {
@@ -627,9 +627,10 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                     liabilities: b.liabilities,
                 },
                 sarPerUsd,
+                supabase && auth.user?.id ? { supabase, userId: auth.user.id } : null,
             );
         }
-    }, [isAdmin, kpiSummary, data, exchangeRate, getAvailableCashForAccount]);
+    }, [auth?.user, kpiSummary, data, exchangeRate, getAvailableCashForAccount]);
 
     const subsIntel = useMemo(() => {
         if (!data) return { monthlyEstimate: 0, count: 0 };

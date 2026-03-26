@@ -25,6 +25,18 @@ const PERIOD_LABELS: Record<TimePeriod, string> = {
 
 const RECEIVABLES_COLOR = CHART_COLORS.categorical[1];
 
+type DailyNwRow = {
+  date: string;
+  dayKey: string;
+  name: string;
+  'Net Worth': number;
+  Cash: number;
+  Investments: number;
+  Physical: number;
+  Receivables: number;
+  Liabilities: number;
+};
+
 function monthKeyFromDate(input: string | Date): string {
     const d = new Date(input);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -35,11 +47,75 @@ function monthLabelFromKey(monthKey: string): string {
     return new Date(y, (m || 1) - 1, 1).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
 }
 
+/** Local calendar YYYY-MM-DD for grouping snapshot instants. */
+function localDayKeyFromInstant(iso: string): string {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
+function localTodayKey(): string {
+    const n = new Date();
+    const y = n.getFullYear();
+    const m = String(n.getMonth() + 1).padStart(2, '0');
+    const day = String(n.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
+function parseLocalDayKey(dayKey: string): Date {
+    const [y, m, d] = dayKey.split('-').map(Number);
+    return new Date(y, (m || 1) - 1, d || 1);
+}
+
+function shortDayLabel(dayKey: string): string {
+    const t = parseLocalDayKey(dayKey);
+    return t.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function startOfLocalDay(d: Date): Date {
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/** Rolling calendar windows from start of today (local). */
+function filterRowsByTimePeriod(rows: DailyNwRow[], period: TimePeriod): DailyNwRow[] {
+    if (period === 'All') return rows;
+    const todayStart = startOfLocalDay(new Date());
+    const cutoff = new Date(todayStart);
+    switch (period) {
+        case 'Day':
+            cutoff.setDate(cutoff.getDate() - 1);
+            break;
+        case 'Week':
+            cutoff.setDate(cutoff.getDate() - 7);
+            break;
+        case 'Month':
+            cutoff.setDate(cutoff.getDate() - 30);
+            break;
+        case '6M':
+            cutoff.setMonth(cutoff.getMonth() - 6);
+            break;
+        case '1Y':
+            cutoff.setFullYear(cutoff.getFullYear() - 1);
+            break;
+        case '3Y':
+            cutoff.setFullYear(cutoff.getFullYear() - 3);
+            break;
+        default:
+            return rows;
+    }
+    return rows.filter((r) => parseLocalDayKey(r.dayKey) >= cutoff);
+}
+
 const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const [timePeriod, setTimePeriod] = useState<TimePeriod>('All');
+    /** When snapshots are sparse, optionally build a 12‑month line from ledger cashflow (can diverge from true balance‑sheet NW). */
+    const [useLedgerEstimateWhenSparse, setUseLedgerEstimateWhenSparse] = useState(true);
 
     const chartData = useMemo(() => {
         if (!data) return [];
@@ -57,7 +133,7 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
         const todayKey = new Date().toISOString().slice(0, 10);
         const fxToday = getSarPerUsdForCalendarDay(todayKey, data, exchangeRate);
         const buckets = computePersonalNetWorthChartBucketsSAR(data, fxToday, { getAvailableCashForAccount });
-        const monthly = new Map<string, {
+        const byLocalDay = new Map<string, {
             date: string;
             netWorth: number;
             cash: number;
@@ -68,12 +144,12 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
         }>();
 
         snapshots.forEach((s) => {
-            const key = s.at.slice(0, 7);
-            const existing = monthly.get(key);
+            const dayKey = localDayKeyFromInstant(s.at);
+            const existing = byLocalDay.get(dayKey);
             if (existing && existing.date >= s.at) return;
             const b = s.buckets;
             const hasBuckets = !!b;
-            monthly.set(key, {
+            byLocalDay.set(dayKey, {
                 date: s.at,
                 netWorth: Number(s.netWorth) || 0,
                 cash: hasBuckets ? (Number(b!.cash) || 0) : 0,
@@ -84,10 +160,9 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
             });
         });
 
-        // Ensure the latest current month point is always present from live data.
+        const todayLocal = localTodayKey();
         const currentDate = new Date().toISOString();
-        const currentKey = currentDate.slice(0, 7);
-        monthly.set(currentKey, {
+        byLocalDay.set(todayLocal, {
             date: currentDate,
             netWorth: Math.round(buckets.netWorth),
             cash: Math.round(buckets.cash),
@@ -97,11 +172,12 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
             liabilities: Math.round(buckets.liabilities),
         });
 
-        let finalData = Array.from(monthly.values())
-            .sort((a, b) => a.date.localeCompare(b.date))
-            .map((x) => ({
+        let finalData: DailyNwRow[] = Array.from(byLocalDay.entries())
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([dayKey, x]) => ({
                 date: x.date,
-                name: monthLabelFromKey(x.date.slice(0, 7)),
+                dayKey,
+                name: shortDayLabel(dayKey),
                 'Net Worth': Math.round(x.netWorth),
                 Cash: Math.round(x.cash),
                 Investments: Math.round(x.investments),
@@ -110,8 +186,8 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
                 Liabilities: Math.round(x.liabilities),
             }));
 
-        // If snapshots are sparse, synthesize a monthly growth line from ledger cashflow so the chart always shows a trend.
-        if (finalData.length < 2) {
+        // If snapshots are sparse, optionally synthesize a monthly line from ledger cashflow (cashflow-only; not full NW).
+        if (useLedgerEstimateWhenSparse && finalData.length < 2) {
             const txs = data.transactions ?? [];
             const now = new Date();
             const keys: string[] = [];
@@ -134,8 +210,10 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
             finalData = keys.map((k, idx) => {
                 rolling += monthFlows[idx] || 0;
                 const netWorth = Math.round(rolling);
+                const dayKey = `${k}-01`;
                 return {
-                    date: `${k}-01T00:00:00.000Z`,
+                    date: `${k}-01T12:00:00.000Z`,
+                    dayKey,
                     name: monthLabelFromKey(k),
                     'Net Worth': netWorth,
                     Cash: netWorth,
@@ -147,37 +225,8 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
             });
         }
 
-        const nowFilter = new Date();
-        switch (timePeriod) {
-            case 'Day': {
-                return finalData.slice(-3);
-            }
-            case 'Week': {
-                return finalData.slice(-6);
-            }
-            case 'Month': {
-                return finalData.slice(-12);
-            }
-            case '6M': {
-                const target = new Date(nowFilter);
-                target.setMonth(target.getMonth() - 6);
-                return finalData.filter((d) => new Date(d.date as string) >= target);
-            }
-            case '1Y': {
-                const targetDate = new Date(nowFilter);
-                targetDate.setFullYear(targetDate.getFullYear() - 1);
-                return finalData.filter((d) => new Date(d.date as string) >= targetDate);
-            }
-            case '3Y': {
-                const targetDate = new Date(nowFilter);
-                targetDate.setFullYear(targetDate.getFullYear() - 3);
-                return finalData.filter((d) => new Date(d.date as string) >= targetDate);
-            }
-            case 'All':
-            default:
-                return finalData;
-        }
-    }, [data, timePeriod, exchangeRate, getAvailableCashForAccount]);
+        return filterRowsByTimePeriod(finalData, timePeriod);
+    }, [data, timePeriod, exchangeRate, getAvailableCashForAccount, useLedgerEstimateWhenSparse]);
 
     const isEmpty = !chartData?.length;
 
@@ -189,12 +238,21 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
                         {title}
                         <InfoHint
                             placement="bottom"
-                            text="This chart is monthly-cadence wealth growth. Day/Week/Month buttons show recent monthly windows (3/6/12 points) so trends stay visible."
+                            text="Filters use your local calendar: Day ≈ yesterday–today, Week = today and the prior 7 days, Month = last 31 days. Longer ranges cut off from the start of today. Data comes from one snapshot per day (when you use the app) plus today’s live books."
                         />
                     </h3>
                     <p className="text-xs text-slate-500 mt-1 max-w-xl">
-                        Historical rows use stored monthly snapshots (SAR at capture). When snapshots are sparse, the chart auto-builds monthly trend points from your ledger cashflow so you still get a continuous growth line. Latest month is recomputed from your current books using today’s SAR/USD rate.
+                        Snapshots keep one row per <strong>calendar day</strong> (local time) with the same bucket model as your dashboard; today is always refreshed from live data. Sparse history can use a <strong>ledger cashflow estimate</strong> (monthly-only trend—not true daily net worth).
                     </p>
+                    <label className="mt-2 flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none">
+                        <input
+                            type="checkbox"
+                            className="rounded border-slate-300 text-primary focus:ring-primary"
+                            checked={useLedgerEstimateWhenSparse}
+                            onChange={(e) => setUseLedgerEstimateWhenSparse(e.target.checked)}
+                        />
+                        Use ledger cashflow estimate when history is sparse (fewer than two months)
+                    </label>
                 </div>
                 <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-lg shrink-0 max-w-full justify-end">
                     {(['Day', 'Week', 'Month', '6M', '1Y', '3Y', 'All'] as TimePeriod[]).map((period) => (

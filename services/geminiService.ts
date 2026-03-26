@@ -90,7 +90,10 @@ export function formatAiError(error: any): string {
         return AI_QUOTA_MESSAGE;
     }
     if (/GEMINI_API_KEY not set|No AI providers configured/i.test(mergedMessage)) {
-        return `AI not configured. Set at least one in Netlify env: GEMINI_API_KEY, GEMINI_API_KEY_BACKUP, ANTHROPIC_API_KEY, GROK_API_KEY, or OPENAI_API_KEY.`;
+        return `AI not configured. Set at least one in Netlify env: GEMINI_API_KEY, GEMINI_API_KEY_BACKUP, ANTHROPIC_API_KEY, OPENAI_API_KEY, or GROK_API_KEY (Grok is tried last; use another provider if Grok has no credits).`;
+    }
+    if (/GROK_ACCOUNT_NOT_USABLE|Grok \(xAI\)|xAI Grok returned|console\.x\.ai|no credits or licenses|does not have permission to execute/i.test(mergedMessage)) {
+        return `Grok (xAI) isn’t usable for this team yet (credits or license). Add billing at https://console.x.ai or set GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY in Netlify so AI runs on another provider. You can also set GROK_DISABLED=1 to skip Grok without removing the key.`;
     }
     if (/API key not valid/i.test(mergedMessage)) {
         return "The AI service API key is not valid. Please check the backend configuration.";
@@ -423,11 +426,17 @@ const getStooqLivePrices = async (symbols: string[]): Promise<{ [symbol: string]
 };
 
 // Helper function to securely invoke the Gemini API via a Netlify Function.
-async function invokeGeminiProxy(payload: { model: string, contents: any, config?: any }): Promise<any> {
-    const blockedReason = sessionStorage.getItem('finova_ai_proxy_block_reason');
-    if (blockedReason) {
-        throw new Error(`AI provider unavailable: ${blockedReason}`);
+/** Clears legacy client block (older builds set this after Grok/credit errors). Safe to call from Settings. */
+export function clearAiProxySessionBlock(): void {
+    try {
+        sessionStorage.removeItem('finova_ai_proxy_block_reason');
+    } catch {
+        /* ignore */
     }
+}
+
+async function invokeGeminiProxy(payload: { model: string, contents: any, config?: any }): Promise<any> {
+    clearAiProxySessionBlock();
     const endpoints = ['/api/gemini-proxy', '/.netlify/functions/gemini-proxy'];
     let lastError: Error | null = null;
 
@@ -460,9 +469,6 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
                 if (endpointMissing) {
                     lastError = new Error(`${errorMessage} Tried endpoint: ${endpoint}`);
                     continue;
-                }
-                if (response.status === 403 || /does not have permission|no credits|licenses/i.test(errorMessage)) {
-                    try { sessionStorage.setItem('finova_ai_proxy_block_reason', 'provider credits/permission issue'); } catch { /* ignore */ }
                 }
                 throw new Error(errorMessage);
             }

@@ -232,7 +232,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
     const [translateError, setTranslateError] = useState<string | null>(null);
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
-    const { isAiAvailable } = useAI();
+    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
 
     const insightSource = useMemo(() => {
         const text = (insightEn || '').toLowerCase();
@@ -256,7 +256,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
 
     useEffect(() => {
         if (displayLang !== 'ar' || !insightEn || insightAr != null) return;
-        if (!isAiAvailable) {
+        if (!aiActionsEnabled) {
             setTranslateError('Arabic translation uses the same AI service as insights. Configure your API key in settings, or switch to English.');
             setIsTranslating(false);
             return;
@@ -327,7 +327,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
                             <button
                                 type="button"
                                 onClick={() => handleLangChange('ar')}
-                                title={!isAiAvailable ? 'Translation needs AI — you will see a note if the service is off' : 'عرض بالعربية'}
+                                title={!aiActionsEnabled ? 'Translation needs AI — you will see a note if the service is off' : 'عرض بالعربية'}
                                 className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${displayLang === 'ar' ? 'bg-white text-primary shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
                             >
                                 العربية
@@ -337,8 +337,8 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
                     <button
                         type="button"
                         onClick={handleGenerate}
-                        disabled={!isAiAvailable || isLoading}
-                        title={!isAiAvailable ? "AI features are disabled. Please configure your API key." : "Get AI Insights"}
+                        disabled={!aiActionsEnabled || isLoading}
+                        title={!aiActionsEnabled ? "AI features are disabled. Please configure your API key." : "Get AI Insights"}
                         className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-slate-400 disabled:cursor-not-allowed transition-colors"
                     >
                         <SparklesIcon className="h-5 w-5 mr-2 shrink-0" />
@@ -406,7 +406,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
                 </div>
             )}
 
-            {!isAiAvailable ? (
+            {aiHealthChecked && !isAiAvailable ? (
                  <div className="text-center p-4 text-slate-600 bg-amber-50/80 border border-amber-200 rounded-lg mt-2" role="alert">
                     <p className="font-semibold text-amber-950">AI غير مفعّل / AI disabled</p>
                     <p className="text-sm mt-1">Set your Gemini (or other) API key in environment variables to enable insights and Arabic translation.</p>

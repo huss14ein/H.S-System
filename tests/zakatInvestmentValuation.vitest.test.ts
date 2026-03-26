@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { holdingBookValueForZakat, summarizeZakatableInvestmentsForZakat } from '../services/zakatInvestmentValuation';
 import { getPortfolioHoldingsValueInSAR } from '../utils/currencyMath';
-import type { Holding, InvestmentPortfolio } from '../types';
+import type { Holding, InvestmentPortfolio, InvestmentTransaction } from '../types';
 
 describe('zakatInvestmentValuation', () => {
   it('infers SAR book currency for Tadawul symbols when portfolio.currency missing', () => {
@@ -24,6 +24,8 @@ describe('zakatInvestmentValuation', () => {
     const { totalSar, lines } = summarizeZakatableInvestmentsForZakat([p], 3.75);
     expect(lines[0]?.bookCurrency).toBe('SAR');
     expect(totalSar).toBe(350);
+    expect(lines[0]?.grossValueSar).toBe(350);
+    expect(lines[0]?.zakatableValueSar).toBe(350);
   });
 
   it('uses cost basis when currentValue is zero', () => {
@@ -106,5 +108,82 @@ describe('zakatInvestmentValuation', () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]?.symbol).toBe('B');
     expect(totalSar).toBe(20);
+  });
+
+  it('defers zakatable amount until hawl when earliest buy is recent', () => {
+    const asOf = new Date('2030-06-15T12:00:00.000Z');
+    const p: InvestmentPortfolio = {
+      id: 'p1',
+      name: 'X',
+      accountId: 'a1',
+      currency: 'SAR',
+      holdings: [
+        {
+          id: 'h1',
+          symbol: 'AAA',
+          quantity: 1,
+          avgCost: 100,
+          currentValue: 100,
+          zakahClass: 'Zakatable',
+          realizedPnL: 0,
+        } as Holding,
+      ],
+    };
+    const txs: InvestmentTransaction[] = [
+      {
+        id: 't1',
+        accountId: 'a1',
+        portfolioId: 'p1',
+        date: '2030-04-01',
+        type: 'buy',
+        symbol: 'AAA',
+        quantity: 1,
+        price: 100,
+        total: 100,
+        currency: 'SAR',
+      },
+    ];
+    const { totalSar, lines } = summarizeZakatableInvestmentsForZakat([p], 3.75, txs, asOf);
+    expect(lines[0]?.hawlSource).toBe('buy');
+    expect(lines[0]?.zakatableValueSar).toBe(0);
+    expect(totalSar).toBe(0);
+  });
+
+  it('counts zakatable amount after hawl when earliest buy is old enough', () => {
+    const asOf = new Date('2030-06-15T12:00:00.000Z');
+    const p: InvestmentPortfolio = {
+      id: 'p1',
+      name: 'X',
+      accountId: 'a1',
+      currency: 'SAR',
+      holdings: [
+        {
+          id: 'h1',
+          symbol: 'BBB',
+          quantity: 1,
+          avgCost: 100,
+          currentValue: 100,
+          zakahClass: 'Zakatable',
+          realizedPnL: 0,
+        } as Holding,
+      ],
+    };
+    const txs: InvestmentTransaction[] = [
+      {
+        id: 't1',
+        accountId: 'a1',
+        portfolioId: 'p1',
+        date: '2028-01-01',
+        type: 'buy',
+        symbol: 'BBB',
+        quantity: 1,
+        price: 100,
+        total: 100,
+        currency: 'SAR',
+      },
+    ];
+    const { totalSar, lines } = summarizeZakatableInvestmentsForZakat([p], 3.75, txs, asOf);
+    expect(lines[0]?.zakatableValueSar).toBe(100);
+    expect(totalSar).toBe(100);
   });
 });

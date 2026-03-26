@@ -23,6 +23,17 @@
   to = "/index.html"
   status = 200
 
+# SPA shell must revalidate so clients don’t keep an old index that references deleted hashed JS chunks (dynamic import failures).
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
 # Security headers for production
 [[headers]]
   for = "/*"

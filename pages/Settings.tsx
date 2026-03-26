@@ -28,6 +28,7 @@ import { useNotifications } from '../context/NotificationsContext';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import AIAdvisor from '../components/AIAdvisor';
+import { clearAiProxySessionBlock } from '../services/geminiService';
 import {
   computeProfileSetupPercent,
   computeAccountsSetupPercent,
@@ -853,8 +854,21 @@ const hasData = accountsForEmptyCheck.length > 0;
 
             <SectionCard id="ai-settings" title="AI insights" collapsible collapsibleSummary="English ↔ العربية" defaultExpanded>
                 <p className="text-sm text-slate-600 mb-3">
-                    Uses the same Gemini stack as the rest of Finova. Default language for new insight panels is saved when you pick **العربية** or English in any AI box.
+                    AI runs when you use an AI action (buttons, optional workflows)—not on every navigation. The Netlify proxy tries providers in order: <strong>Gemini</strong> (primary + backup), <strong>Claude</strong>, <strong>OpenAI</strong>, then <strong>Grok</strong>. If Grok has no credits, add <code className="text-xs bg-slate-100 px-1 rounded">GEMINI_API_KEY</code> or <code className="text-xs bg-slate-100 px-1 rounded">OPENAI_API_KEY</code> in Netlify, or set <code className="text-xs bg-slate-100 px-1 rounded">GROK_DISABLED=1</code> to skip Grok. Default language for new panels follows the language you pick in any AI box.
                 </p>
+                <div className="flex flex-wrap items-center gap-2 mb-4">
+                    <button
+                        type="button"
+                        className="btn-outline text-sm"
+                        onClick={() => {
+                            clearAiProxySessionBlock();
+                            showToast('AI session reset. Try an AI button again.', 'success');
+                        }}
+                    >
+                        Reset AI session (browser)
+                    </button>
+                    <span className="text-xs text-slate-500">Clears a rare client block after provider errors.</span>
+                </div>
                 <AIAdvisor pageContext="settings" contextData={settingsAiContext} title="Settings coach" subtitle="Validate your setup with SAR-aware context · English / Arabic" buttonLabel="Review my settings" />
             </SectionCard>
 

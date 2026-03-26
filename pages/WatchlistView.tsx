@@ -595,7 +595,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { formatCurrencyString } = useFormatCurrency();
     const { simulatedPrices } = useMarketData();
-    const { isAiAvailable } = useAI();
+    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
 
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -852,7 +852,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
     }, [data?.investments, (data as any)?.personalInvestments, data?.watchlist, data?.investmentPlan, data?.settings, exchangeRate, tradeActivitySummary]);
 
     useEffect(() => {
-        if (watchlistAiLang !== 'ar' || !aiTradeAnalysis.trim() || tradeAnalysisAr != null || !isAiAvailable) return;
+        if (watchlistAiLang !== 'ar' || !aiTradeAnalysis.trim() || tradeAnalysisAr != null || !aiActionsEnabled) return;
         let cancelled = false;
         (async () => {
             setTradeTranslating(true);
@@ -866,10 +866,10 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
         return () => {
             cancelled = true;
         };
-    }, [watchlistAiLang, aiTradeAnalysis, tradeAnalysisAr, isAiAvailable]);
+    }, [watchlistAiLang, aiTradeAnalysis, tradeAnalysisAr, aiActionsEnabled]);
 
     useEffect(() => {
-        if (watchlistAiLang !== 'ar' || !aiWatchlistTips.trim() || watchlistTipsAr != null || !isAiAvailable) return;
+        if (watchlistAiLang !== 'ar' || !aiWatchlistTips.trim() || watchlistTipsAr != null || !aiActionsEnabled) return;
         let cancelled = false;
         (async () => {
             setTipsTranslating(true);
@@ -883,7 +883,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
         return () => {
             cancelled = true;
         };
-    }, [watchlistAiLang, aiWatchlistTips, watchlistTipsAr, isAiAvailable]);
+    }, [watchlistAiLang, aiWatchlistTips, watchlistTipsAr, aiActionsEnabled]);
 
     const handleAnalyzeTrades = useCallback(async () => {
         setAiTradeError(null);
@@ -1026,7 +1026,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
         <div className="mt-6 space-y-6">
             {/* Hero */}
             <section className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-5 sm:p-6">
-                <div className="flex flex-wrap items-center gap-3"><h2 className="text-xl font-bold text-slate-800">Watchlist</h2><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}</span></div>
+                <div className="flex flex-wrap items-center gap-3"><h2 className="text-xl font-bold text-slate-800">Watchlist</h2><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${!aiHealthChecked ? 'bg-slate-100 text-slate-600' : isAiAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{!aiHealthChecked ? 'Checking…' : <>{isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}</>}</span></div>
                 <p className="text-sm text-slate-600 mt-1 max-w-2xl">
                     Track symbols, prices, and 1M trend. Set price alerts and get AI trade insights and watchlist tips. Sync tickers with <strong>Investment Plan</strong> and <strong>Portfolio Universe</strong> for allocation.
                 </p>
@@ -1244,7 +1244,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
                                     {watchlistAiLang === 'ar' && tradeTranslating && (
                                         <p className="text-xs text-slate-500 mb-2">Translating to Arabic…</p>
                                     )}
-                                    {watchlistAiLang === 'ar' && !isAiAvailable && !tradeAnalysisAr && aiTradeAnalysis.trim() && !tradeTranslating && (
+                                    {watchlistAiLang === 'ar' && aiHealthChecked && !isAiAvailable && !tradeAnalysisAr && aiTradeAnalysis.trim() && !tradeTranslating && (
                                         <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">Arabic needs AI enabled. Showing English.</p>
                                     )}
                                     <SafeMarkdownRenderer content={watchlistAiLang === 'ar' ? (tradeAnalysisAr ?? aiTradeAnalysis) : aiTradeAnalysis} />
@@ -1281,7 +1281,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
                         </div>
                     )}
                 </div>
-                {!isAiAvailable && <p className="text-xs text-amber-700">AI is currently unavailable. Actions still run with deterministic fallback logic.</p>}<p className="text-[10px] text-slate-500">Not financial advice. For education only.</p>
+                {aiHealthChecked && !isAiAvailable && <p className="text-xs text-amber-700">AI is currently unavailable. Actions still run with deterministic fallback logic.</p>}<p className="text-[10px] text-slate-500">Not financial advice. For education only.</p>
             </div>
             </div>
 

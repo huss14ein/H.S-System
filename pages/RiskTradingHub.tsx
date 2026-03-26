@@ -1,5 +1,7 @@
 import React, { useContext, useEffect, useMemo, useState, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
+import { AuthContext } from '../context/AuthContext';
+import { supabase } from '../services/supabaseClient';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
@@ -41,6 +43,7 @@ const RiskTradingHub: React.FC<{
   embedded?: boolean;
 }> = ({ setActivePage, triggerPageAction, embedded = false }) => {
   const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
+  const auth = useContext(AuthContext);
   const marketData = useContext(MarketDataContext);
   const ef = useEmergencyFund(data ?? null);
   const { formatCurrencyString } = useFormatCurrency();
@@ -239,7 +242,12 @@ const RiskTradingHub: React.FC<{
               const nw = currentNetWorth;
               if (typeof nw === 'number' && Number.isFinite(nw)) {
                 hydrateSarPerUsdDailySeries(data, exchangeRate);
-                createMonthlySnapshot(nw, undefined, sarPerUsd);
+                createMonthlySnapshot(
+                  nw,
+                  undefined,
+                  sarPerUsd,
+                  supabase && auth?.user?.id ? { supabase, userId: auth.user.id } : null,
+                );
                 setCompareFrom('');
                 setCompareTo('');
                 setRestoreDate('');

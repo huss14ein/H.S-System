@@ -32,7 +32,7 @@ interface AIRebalancerViewProps {
 
 const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, onOpenWealthUltra, setActivePage: _setActivePage }) => {
   const { data, loading } = useContext(DataContext)!;
-  const { isAiAvailable } = useAI();
+  const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
   const { trackAction } = useSelfLearning();
   const { simulatedPrices } = useMarketData();
   const { exchangeRate } = useCurrency();
@@ -132,7 +132,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
   }, [selectedPortfolio, riskProfile, trackAction, portfolioBookCurrency, sarPerUsd, simulatedPrices, totalPortfolioValueBook]);
 
   const runArabicTranslation = useCallback(async () => {
-    if (!rebalancingPlan.trim()) return;
+    if (!rebalancingPlan.trim() || !aiActionsEnabled) return;
     setIsTranslatingRebal(true);
     setRebalTranslateError(null);
     try {
@@ -143,10 +143,10 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
     } finally {
       setIsTranslatingRebal(false);
     }
-  }, [rebalancingPlan]);
+  }, [rebalancingPlan, aiActionsEnabled]);
 
   useEffect(() => {
-    if (rebalDisplayLang !== 'ar' || !rebalancingPlan.trim() || rebalAr != null) return;
+    if (rebalDisplayLang !== 'ar' || !rebalancingPlan.trim() || rebalAr != null || !aiActionsEnabled) return;
     let cancelled = false;
     (async () => {
       setIsTranslatingRebal(true);
@@ -163,7 +163,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
     return () => {
       cancelled = true;
     };
-  }, [rebalDisplayLang, rebalancingPlan, rebalAr]);
+  }, [rebalDisplayLang, rebalancingPlan, rebalAr, aiActionsEnabled]);
 
   const targetAssetMix = useMemo(() => getTargetAllocationForProfile(riskProfile), [riskProfile]);
 
@@ -247,10 +247,14 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <span
               className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
-                isAiAvailable ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-50 text-amber-900 border border-amber-200'
+                !aiHealthChecked
+                  ? 'bg-slate-100 text-slate-600 border border-slate-200'
+                  : isAiAvailable
+                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                    : 'bg-amber-50 text-amber-900 border border-amber-200'
               }`}
             >
-              {isAiAvailable ? 'AI enabled' : 'Rule-based fallback if AI unavailable'}
+              {!aiHealthChecked ? 'Checking…' : isAiAvailable ? 'AI enabled' : 'Rule-based fallback if AI unavailable'}
             </span>
             {onOpenWealthUltra && (
               <button type="button" onClick={onOpenWealthUltra} className="btn-ghost text-sm">
@@ -470,7 +474,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
               </div>
             </div>
 
-            {!isAiAvailable && !isLoading && (
+            {aiHealthChecked && !isAiAvailable && !isLoading && (
               <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 mb-4 flex gap-3 items-start">
                 <ExclamationTriangleIcon className="h-5 w-5 text-amber-700 shrink-0 mt-0.5" />
                 <p className="text-sm text-amber-900">
@@ -508,7 +512,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                     <button
                       type="button"
                       onClick={runArabicTranslation}
-                      disabled={isTranslatingRebal}
+                      disabled={isTranslatingRebal || !aiActionsEnabled}
                       className="shrink-0 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-800 hover:bg-slate-50 disabled:opacity-50"
                     >
                       {rebalAr ? 'Refresh Arabic' : rebalTranslateError ? 'Retry Arabic' : 'Translate to Arabic'}

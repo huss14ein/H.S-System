@@ -1414,7 +1414,7 @@ const STOCK_ANALYST_LANG_KEY = 'finova_default_ai_lang_v1';
 
 const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holding: (Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number }) | null; portfolio: InvestmentPortfolio | null }> = ({ isOpen, onClose, holding, portfolio }) => {
     const { data } = useContext(DataContext)!;
-    const { isAiAvailable } = useAI();
+    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
@@ -1465,7 +1465,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     }, [holding, analystDisplayLang]);
 
     useEffect(() => {
-        if (analystDisplayLang !== 'ar' || !aiAnalysis.trim() || analystAr != null || !isAiAvailable) return;
+        if (analystDisplayLang !== 'ar' || !aiAnalysis.trim() || analystAr != null || !aiActionsEnabled) return;
         let cancelled = false;
         (async () => {
             setIsTranslatingAnalyst(true);
@@ -1482,7 +1482,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
         return () => {
             cancelled = true;
         };
-    }, [analystDisplayLang, aiAnalysis, analystAr, isAiAvailable]);
+    }, [analystDisplayLang, aiAnalysis, analystAr, aiActionsEnabled]);
 
     useEffect(() => {
         if (holding && isOpen && !aiAnalysis && !isLoading) {
@@ -1600,7 +1600,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     const hasReliableDividendEstimate = Boolean(projectedAnnualDividend && projectedAnnualDividend > 0 && projectedAnnualDividend < holding.currentValue * 0.25);
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`${holding.symbol} — Share details`}>
+        <Modal isOpen={isOpen} onClose={onClose} title={`${holding.symbol} — Share details`} maxWidthClass="max-w-5xl">
             <div className="space-y-6 min-w-0">
                 {/* Hero: symbol, name, price, change — centered with stronger hierarchy */}
                 <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-100/70 px-5 py-6 sm:px-6 sm:py-7 min-w-0 shadow-sm">
@@ -1840,7 +1840,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                     {isTranslatingAnalyst && analystDisplayLang === 'ar' && (
                         <p className="text-sm text-center text-slate-500 py-2">Translating to Arabic…</p>
                     )}
-                    {analystDisplayLang === 'ar' && !isAiAvailable && !analystAr && aiAnalysis.trim() && !isLoading && (
+                    {analystDisplayLang === 'ar' && aiHealthChecked && !isAiAvailable && !analystAr && aiAnalysis.trim() && !isLoading && (
                         <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
                             Arabic translation needs the AI service. Switch to English or enable AI.
                         </p>
@@ -1884,6 +1884,7 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
     const [zakahClass, setZakahClass] = useState<'Zakatable' | 'Non-Zakatable'>('Zakatable');
     const [assetClass, setAssetClass] = useState<HoldingAssetClass>('Stock');
     const [goalId, setGoalId] = useState<string | undefined>();
+    const [acquisitionDate, setAcquisitionDate] = useState('');
     
     useEffect(() => {
         if (holding) {
@@ -1892,6 +1893,7 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
             setZakahClass(holding.zakahClass);
             setAssetClass((holding.assetClass as HoldingAssetClass) || 'Stock');
             setGoalId(holding.goalId);
+            setAcquisitionDate(holding.acquisitionDate ?? (holding as { acquisition_date?: string }).acquisition_date ?? '');
             if (!currentName.trim() && holding.symbol.trim().length >= 2) {
                 fetchCompanyNameForSymbol(holding.symbol).then((apiName) => {
                     if (apiName) setName(apiName);
@@ -1903,7 +1905,8 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (holding) {
-            onSave({ ...holding, name, zakahClass, assetClass, goalId });
+            const ad = acquisitionDate.trim();
+            onSave({ ...holding, name, zakahClass, assetClass, goalId, acquisitionDate: ad ? ad.slice(0, 10) : undefined });
             onClose();
         }
     };
@@ -1934,6 +1937,17 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
                         <option value="none">-- Not Linked --</option>
                         {(data?.goals ?? []).map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                     </select>
+                </div>
+                <div>
+                    <label htmlFor="holding-acq" className="block text-sm font-medium text-gray-700">Acquisition date (optional)</label>
+                    <p className="text-xs text-slate-500 mt-0.5 mb-1">Zakat lunar hawl (~354 days) from this date. If empty, earliest buy in this portfolio is used when available.</p>
+                    <input
+                        id="holding-acq"
+                        type="date"
+                        value={acquisitionDate}
+                        onChange={(e) => setAcquisitionDate(e.target.value)}
+                        className="mt-1 w-full p-2 border border-gray-300 rounded-md"
+                    />
                 </div>
                 <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Changes</button>
             </form>
@@ -2757,7 +2771,7 @@ const ANALYST_DEFAULTS = {
 const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => void; onOpenWealthUltra?: () => void; onOpenRecordTrade?: (trade: { ticker: string; amount: number; reason?: string; price?: number; quantity?: number; tradeCurrency?: TradeCurrency }) => void }> = ({ onNavigateToTab, onOpenWealthUltra, onOpenRecordTrade }) => {
     const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const { isAiAvailable } = useAI();
+    const { isAiAvailable, aiHealthChecked } = useAI();
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { simulatedPrices } = useMarketData();
@@ -3648,8 +3662,8 @@ Save anyway?`)) return;
                             <li className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2"><span className="font-bold text-primary">2</span> Universe weights (per ticker)</li>
                             <li className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2"><span className="font-bold text-primary">3</span> Execute → record trades</li>
                         </ol>
-                        <span className={`mt-3 inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
-                            Execution AI {isAiAvailable ? 'available' : 'off — rule-based only'}
+                        <span className={`mt-3 inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${!aiHealthChecked ? 'bg-slate-100 text-slate-600 border border-slate-200' : isAiAvailable ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                            Execution AI {!aiHealthChecked ? 'checking…' : isAiAvailable ? 'available' : 'off — rule-based only'}
                         </span>
                     </div>
                     <button type="button" onClick={handleSave} disabled={isSavingPlan} className="shrink-0 px-6 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors font-semibold disabled:opacity-60 disabled:cursor-not-allowed shadow-sm" aria-busy={isSavingPlan}>
@@ -3960,13 +3974,13 @@ Save anyway?`)) return;
                                 <h2 className="text-xl font-bold text-slate-800 mb-1">Execute & Results</h2>
                                 <p className="text-sm text-slate-600">Run AI-assisted execution and instantly review the allocation, trades, and audit log.</p>
                             </div>
-                            <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                                {isAiAvailable ? 'AI ready' : 'AI unavailable'}
+                            <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${!aiHealthChecked ? 'bg-slate-100 text-slate-600' : isAiAvailable ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                {!aiHealthChecked ? 'Checking…' : isAiAvailable ? 'AI ready' : 'AI unavailable'}
                             </span>
                         </div>
                     </div>
                     <div className="p-6">
-                        {!isAiAvailable && (
+                        {aiHealthChecked && !isAiAvailable && (
                             <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">
                                 AI provider is temporarily unavailable. Execute with AI will automatically switch to deterministic rule-based logic and still return results.
                             </div>
@@ -4162,15 +4176,15 @@ Save anyway?`)) return;
                             <input type="text" placeholder="Company Name" value={newTicker.name} onChange={e => setNewTicker(p => ({...p, name: e.target.value}))} className="flex-grow min-w-[120px] p-2 border border-slate-200 rounded-lg" />
                             <button onClick={handleAddNewTicker} className="p-2 bg-primary text-white rounded-lg hover:bg-secondary"><PlusIcon className="h-5 w-5" /></button>
                         </div>
-                        <div className="max-h-60 overflow-y-auto">
-                            <table className="min-w-full divide-y divide-gray-200 text-sm">
+                        <div className="max-h-[28rem] overflow-auto rounded-lg border border-slate-100">
+                            <table className="min-w-[1100px] w-full divide-y divide-gray-200 text-sm">
                                 <thead className="bg-gray-50 sticky top-0"><tr>
                                     <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle">Ticker</th>
                                     <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle">Name</th>
                                     <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle">
                                         <span className="inline-flex items-center gap-1 whitespace-nowrap">Status <InfoHint text="Core and High-Upside get allocation; Speculative gets a small share; Quarantine/Excluded get none." hintId="plan-universe-status" hintPage="Investments" /></span>
                                     </th>
-                                    <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle max-w-[9rem]">
+                                    <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle min-w-[12rem] max-w-[16rem]">
                                         <span className="inline-flex items-center gap-1">Plan role <InfoHint text="Derived from status: shows how the system treats this ticker in monthly execution (no manual entry)." hintId="plan-universe-role" hintPage="Investments" /></span>
                                     </th>
                                     <th className="px-3 py-2 text-center font-medium text-gray-500 align-middle">
@@ -4382,7 +4396,7 @@ interface InvestmentsProps {
 
 const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
   const { data, loading, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, getAvailableCashForAccount } = useContext(DataContext)!;
-  const { isAiAvailable } = useAI();
+  const { isAiAvailable, aiHealthChecked } = useAI();
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
   const { trackAction } = useSelfLearning();
@@ -4746,8 +4760,8 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                     <p className="mt-2 max-w-2xl text-sm text-slate-600">Track every portfolio, evaluate share-level insights, and run AI workflows from one professional command center.</p>
                     <div className="mt-4 flex flex-wrap items-center gap-3">
                         <LivePricesStatus variant="inline" className="flex-shrink-0 text-slate-700" />
-                        <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${isAiAvailable ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
-                            {isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${!aiHealthChecked ? 'bg-slate-100 text-slate-600' : isAiAvailable ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                            {!aiHealthChecked ? 'Checking…' : <>{isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}</>}
                         </span>
                     </div>
                 </div>

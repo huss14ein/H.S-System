@@ -561,7 +561,7 @@ interface AssetsProps { pageAction?: string | null; clearPageAction?: () => void
 
 const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const { data, loading, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
-    const { isAiAvailable } = useAI();
+    const { isAiAvailable, aiHealthChecked } = useAI();
     const { formatCurrencyString } = useFormatCurrency();
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
@@ -840,7 +840,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                         <span className="mt-0.5 shrink-0"><InfoHint text="Pricing uses AI when available; otherwise Finnhub or Stooq. If one provider fails, the system retries with alternatives." /></span>
                     </div>
                 </div>
-                {!isAiAvailable && commodityList.length > 0 && (
+                {aiHealthChecked && !isAiAvailable && commodityList.length > 0 && (
                     <div className="alert-warning mb-4 rounded-lg">
                         <p>AI is disabled. Prices will be updated from Finnhub (crypto & metals) when available.</p>
                     </div>

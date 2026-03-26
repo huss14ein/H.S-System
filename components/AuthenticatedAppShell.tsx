@@ -19,6 +19,8 @@ import { PrivacyProvider } from '../context/PrivacyContext';
 import { ToastProvider } from '../context/ToastContext';
 import { SelfLearningProvider } from '../context/SelfLearningContext';
 import { PAGE_DISPLAY_NAMES, INVESTMENT_SUB_NAV_PAGE_NAMES } from '../constants';
+/** Eager: avoids a second dynamic chunk fetch (often 404 after deploy when index.html is cached but hashed assets changed). */
+import WealthUltraDashboard from '../pages/WealthUltraDashboard';
 
 const Dashboard = lazy(() => import('../pages/Dashboard'));
 const Summary = lazy(() => import('../pages/Summary'));
@@ -39,7 +41,6 @@ const MarketEvents = lazy(() => import('../pages/MarketEvents'));
 const SystemHealth = lazy(() => import('../pages/SystemHealth'));
 const StatementUpload = lazy(() => import('../pages/StatementUpload'));
 const StatementHistoryView = lazy(() => import('../pages/StatementHistoryView'));
-const WealthUltraDashboard = lazy(() => import('../pages/WealthUltraDashboard'));
 const EnginesAndToolsHub = lazy(() => import('../pages/EnginesAndToolsHub'));
 
 const VALID_PAGES: Page[] = [

@@ -47,7 +47,7 @@ function holdingValueInBookCurrency(
 
 const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => void }> = ({ setActiveTab }) => {
     const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
-    const { isAiAvailable } = useAI();
+    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { exchangeRate } = useCurrency();
     const { simulatedPrices } = useMarketData();
 
@@ -150,7 +150,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
     const [isAiLoading, setIsAiLoading] = useState(false);
 
     useEffect(() => {
-        if (swotDisplayLang !== 'ar' || !swotEn.trim() || swotAr != null || !isAiAvailable) return;
+        if (swotDisplayLang !== 'ar' || !swotEn.trim() || swotAr != null || !aiActionsEnabled) return;
         let cancelled = false;
         (async () => {
             setIsTranslatingSwot(true);
@@ -167,7 +167,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
         return () => {
             cancelled = true;
         };
-    }, [swotDisplayLang, swotEn, swotAr, isAiAvailable]);
+    }, [swotDisplayLang, swotEn, swotAr, aiActionsEnabled]);
 
     const diversification = useMemo(() => {
         const totalValue =
@@ -258,8 +258,16 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                 </div>
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 border-l-4 border-l-emerald-500">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">AI Engine Status</p>
-                    <p className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                        {isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} {isAiAvailable ? 'Operational' : 'Offline'}
+                    <p className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
+                        !aiHealthChecked ? 'bg-slate-100 text-slate-600' : isAiAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                    }`}>
+                        {!aiHealthChecked ? (
+                            <>Checking…</>
+                        ) : isAiAvailable ? (
+                            <><CheckCircleIcon className="h-4 w-4" /> Operational</>
+                        ) : (
+                            <><ExclamationTriangleIcon className="h-4 w-4" /> Offline</>
+                        )}
                     </p>
                 </div>
             </div>
@@ -425,14 +433,14 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                         </button>
                     </div>
                 </div>
-                {!isAiAvailable && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">AI provider is currently unavailable. SWOT will still run using deterministic fallback guidance.</div>}
+                {aiHealthChecked && !isAiAvailable && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">AI provider is currently unavailable. SWOT will still run using deterministic fallback guidance.</div>}
                 {aiError && <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm"><SafeMarkdownRenderer content={aiError} /><button type="button" onClick={handleGenerateAnalysis} className="mt-2 px-3 py-1.5 text-sm font-medium bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200">Retry</button></div>}
                 {swotTranslateError && (
                     <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">{swotTranslateError}</div>
                 )}
                 {isAiLoading && <p className="text-sm text-center text-slate-500 py-4">Performing strategic analysis on your portfolio...</p>}
                 {isTranslatingSwot && swotDisplayLang === 'ar' && <p className="text-sm text-center text-slate-500 py-2">Translating to Arabic…</p>}
-                {!isAiLoading && swotDisplayLang === 'ar' && !isAiAvailable && !swotAr && swotEn.trim() && (
+                {!isAiLoading && swotDisplayLang === 'ar' && aiHealthChecked && !isAiAvailable && !swotAr && swotEn.trim() && (
                     <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">Arabic translation needs the AI service. Switch to English or enable AI in settings.</p>
                 )}
                 {!isAiLoading && (swotDisplayLang === 'ar' ? (swotAr ?? swotEn) : swotEn) && (

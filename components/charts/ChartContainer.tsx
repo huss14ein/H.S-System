@@ -23,12 +23,16 @@ const ChartContainer: React.FC<ChartContainerProps> = ({
   isEmpty = false,
   className = '',
 }) => {
-  const style =
+  /**
+   * Recharts `ResponsiveContainer` uses height: 100%; the parent must have a **definite** height.
+   * `min-height` alone does not establish percentage resolution, so charts were invisible (0px tall).
+   */
+  const style: React.CSSProperties =
     typeof height === 'number'
-      ? { minHeight: height }
+      ? { width: '100%', minHeight: height, height }
       : height === '100%'
-        ? { minHeight: 200, height: '100%' }
-        : { minHeight: height };
+        ? { width: '100%', minHeight: 200, height: '100%' }
+        : { width: '100%', minHeight: height, height };
 
   if (isEmpty) {
     return (
