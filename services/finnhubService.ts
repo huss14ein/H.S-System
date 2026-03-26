@@ -355,6 +355,41 @@ export interface QuoteWith52W {
   low52?: number;
 }
 
+/** Lightweight quote fallback from Stooq CSV endpoint (`q/l`). */
+async function getStooqQuote(symbol: string): Promise<QuoteWith52W | null> {
+  const stooqSym = toStooqSymbol(symbol);
+  try {
+    const url = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSym)}&f=sd2t2ohlcvcp&h&e=csv`;
+    const res = await fetchStooq(url);
+    if (!res.ok) return null;
+    const csv = await res.text();
+    const lines = csv.trim().split('\n');
+    if (lines.length < 2) return null;
+    const cols = lines[1]?.split(',') ?? [];
+    // Stooq header order for this `f=` selection: Symbol,Date,Time,Open,High,Low,Close,Volume,Change
+    const open = Number(cols[3]);
+    const high = Number(cols[4]);
+    const low = Number(cols[5]);
+    const close = Number(cols[6]);
+    const prevClose = Number(cols[8]);
+    if (!Number.isFinite(close) || close <= 0) return null;
+    const pc = Number.isFinite(prevClose) && prevClose > 0 ? prevClose : close;
+    const d = close - pc;
+    const dp = pc > 0 ? (d / pc) * 100 : 0;
+    return {
+      c: close,
+      d,
+      dp,
+      h: Number.isFinite(high) && high > 0 ? high : close,
+      l: Number.isFinite(low) && low > 0 ? low : close,
+      o: Number.isFinite(open) && open > 0 ? open : close,
+      pc,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** US, TADAWUL, etc. — session from Finnhub: pre-market | regular | post-market | closed */
 export interface ExchangeMarketStatus {
   exchange: string;
@@ -384,10 +419,10 @@ export async function getQuote(symbol: string): Promise<QuoteWith52W | null> {
     const data = await get<QuoteWith52W & { p?: number }>('/quote', { symbol: toFinnhubSymbol(symbol) });
     if (!data) return null;
     const price = Number(data.c ?? data.pc ?? data.p);
-    if (!Number.isFinite(price) || price <= 0) return null;
+    if (!Number.isFinite(price) || price <= 0) return getStooqQuote(symbol);
     return { ...data, c: price, d: Number(data.d ?? 0), dp: Number(data.dp ?? 0), h: Number(data.h ?? price), l: Number(data.l ?? price), o: Number(data.o ?? price), pc: Number(data.pc ?? price) };
   } catch {
-    return null;
+    return getStooqQuote(symbol);
   }
 }
 
