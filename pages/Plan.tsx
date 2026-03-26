@@ -250,7 +250,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         () => (basePlanRows.length > 0 ? formatAnnualPlanIncomeHint(incomeMeta, formatCurrencyString) : null),
         [basePlanRows.length, incomeMeta, formatCurrencyString],
     );
-
+    
     const processedPlanData: PlanRow[] = useMemo(() => {
         const baseData: PlanRow[] = JSON.parse(JSON.stringify(basePlanRows));
         const incomeRow = baseData.find((r: PlanRow) => r.type === 'income');
@@ -527,7 +527,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         }
         return warnings;
     }, [sarPerUsd, processedPlanData.length, year, totals]);
-
+    
     const renderCell = (value: number, limit: number) => {
         const percentage = limit > 0 ? (value / limit) * 100 : 0;
         let statusColor = 'bg-green-500';
@@ -684,10 +684,10 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 const liquidCash =
                     accounts.length > 0
                         ? accounts
-                              .filter((a: { type: string }) => a.type === 'Checking' || a.type === 'Savings')
-                              .reduce((sum: number, a: Account) => {
-                                  const cur = a.currency === 'USD' ? 'USD' : 'SAR';
-                                  return sum + Math.max(0, toSAR(Number(a.balance) || 0, cur, sarPerUsd));
+                    .filter((a: { type: string }) => a.type === 'Checking' || a.type === 'Savings')
+                    .reduce((sum: number, a: Account) => {
+                        const cur = a.currency === 'USD' ? 'USD' : 'SAR';
+                        return sum + Math.max(0, toSAR(Number(a.balance) || 0, cur, sarPerUsd));
                               }, 0)
                         : 0;
                 const totalDebt =
@@ -705,12 +705,12 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                             key="liquid"
                             className={`p-4 rounded-xl border-2 border-emerald-200 bg-emerald-50/50 min-w-0 overflow-hidden flex flex-col justify-between ${showDebt ? '' : 'sm:col-span-2 max-w-2xl'}`}
                         >
-                            <p className="metric-label text-xs font-medium text-emerald-800 uppercase tracking-wide w-full">Liquid cash (Checking + Savings)</p>
-                            <p className="metric-value text-xl font-bold text-emerald-800 tabular-nums mt-0.5 w-full">{formatCurrencyString(liquidCash, { inCurrency: 'SAR', digits: 0 })}</p>
-                            <p className="text-xs text-slate-600 mt-0.5">From Accounts (SAR equivalent).</p>
-                            {setActivePage && (
-                                <button type="button" onClick={() => setActivePage('Accounts')} className="mt-2 text-xs font-medium text-primary hover:underline inline-flex items-center gap-1">Accounts →</button>
-                            )}
+                        <p className="metric-label text-xs font-medium text-emerald-800 uppercase tracking-wide w-full">Liquid cash (Checking + Savings)</p>
+                        <p className="metric-value text-xl font-bold text-emerald-800 tabular-nums mt-0.5 w-full">{formatCurrencyString(liquidCash, { inCurrency: 'SAR', digits: 0 })}</p>
+                        <p className="text-xs text-slate-600 mt-0.5">From Accounts (SAR equivalent).</p>
+                        {setActivePage && (
+                            <button type="button" onClick={() => setActivePage('Accounts')} className="mt-2 text-xs font-medium text-primary hover:underline inline-flex items-center gap-1">Accounts →</button>
+                        )}
                         </div>,
                     );
                 }
@@ -720,15 +720,15 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                             key="debt"
                             className={`p-4 rounded-xl border-2 border-slate-200 bg-slate-50/50 min-w-0 overflow-hidden flex flex-col justify-between ${showLiquid ? '' : 'sm:col-span-2 max-w-2xl'}`}
                         >
-                            <p className="metric-label text-xs font-medium text-slate-700 uppercase tracking-wide w-full flex items-center gap-1 flex-wrap">
-                                Total debt (Liabilities)
-                                <InfoHint text="Sum of absolute amounts on liability rows except type Receivable. Matches Liabilities page context for annual planning." />
-                            </p>
-                            <p className="metric-value text-xl font-bold text-slate-800 tabular-nums mt-0.5 w-full">{formatCurrencyString(totalDebt, { digits: 0 })}</p>
-                            <p className="text-xs text-slate-600 mt-0.5">From Liabilities.</p>
-                            {setActivePage && (
-                                <button type="button" onClick={() => setActivePage('Liabilities')} className="mt-2 text-xs font-medium text-primary hover:underline inline-flex items-center gap-1">Liabilities →</button>
-                            )}
+                        <p className="metric-label text-xs font-medium text-slate-700 uppercase tracking-wide w-full flex items-center gap-1 flex-wrap">
+                            Total debt (Liabilities)
+                            <InfoHint text="Sum of absolute amounts on liability rows except type Receivable. Matches Liabilities page context for annual planning." />
+                        </p>
+                        <p className="metric-value text-xl font-bold text-slate-800 tabular-nums mt-0.5 w-full">{formatCurrencyString(totalDebt, { digits: 0 })}</p>
+                        <p className="text-xs text-slate-600 mt-0.5">From Liabilities.</p>
+                        {setActivePage && (
+                            <button type="button" onClick={() => setActivePage('Liabilities')} className="mt-2 text-xs font-medium text-primary hover:underline inline-flex items-center gap-1">Liabilities →</button>
+                        )}
                         </div>,
                     );
                 }
@@ -1121,7 +1121,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                            <span className="text-sm">%</span>
                         </div>
                      </div>
-                 </div>
+                        </div>
                  <p className="text-xs text-slate-500 mt-2">One-time scenarios belong in <strong>Forecast</strong>; this grid stays tied to your saved data only.</p>
             </div>
 
