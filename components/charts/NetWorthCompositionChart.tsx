@@ -8,6 +8,7 @@ import { useCurrency } from '../../context/CurrencyContext';
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from '../../services/fxDailySeries';
 import { computePersonalNetWorthChartBucketsSAR } from '../../services/personalNetWorth';
 import { listNetWorthSnapshots } from '../../services/netWorthSnapshot';
+import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../../services/transactionFilters';
 import InfoHint from '../InfoHint';
 
 type TimePeriod = 'Day' | 'Week' | 'Month' | '6M' | '1Y' | '3Y' | 'All';
@@ -23,6 +24,16 @@ const PERIOD_LABELS: Record<TimePeriod, string> = {
 };
 
 const RECEIVABLES_COLOR = CHART_COLORS.categorical[1];
+
+function monthKeyFromDate(input: string | Date): string {
+    const d = new Date(input);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function monthLabelFromKey(monthKey: string): string {
+    const [y, m] = monthKey.split('-').map(Number);
+    return new Date(y, (m || 1) - 1, 1).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+}
 
 const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
@@ -86,11 +97,11 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
             liabilities: Math.round(buckets.liabilities),
         });
 
-        const finalData = Array.from(monthly.values())
+        let finalData = Array.from(monthly.values())
             .sort((a, b) => a.date.localeCompare(b.date))
             .map((x) => ({
                 date: x.date,
-                name: new Date(x.date).toLocaleString('en-US', { month: 'short', year: '2-digit' }),
+                name: monthLabelFromKey(x.date.slice(0, 7)),
                 'Net Worth': Math.round(x.netWorth),
                 Cash: Math.round(x.cash),
                 Investments: Math.round(x.investments),
@@ -99,26 +110,53 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
                 Liabilities: Math.round(x.liabilities),
             }));
 
+        // If snapshots are sparse, synthesize a monthly growth line from ledger cashflow so the chart always shows a trend.
+        if (finalData.length < 2) {
+            const txs = data.transactions ?? [];
+            const now = new Date();
+            const keys: string[] = [];
+            for (let i = 11; i >= 0; i--) {
+                const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                keys.push(monthKeyFromDate(d));
+            }
+            const netByMonth = new Map<string, number>(keys.map((k) => [k, 0]));
+            for (const t of txs) {
+                const k = monthKeyFromDate(t.date);
+                if (!netByMonth.has(k)) continue;
+                const amt = Number(t.amount) || 0;
+                if (countsAsIncomeForCashflowKpi(t)) netByMonth.set(k, (netByMonth.get(k) || 0) + Math.max(0, amt));
+                if (countsAsExpenseForCashflowKpi(t)) netByMonth.set(k, (netByMonth.get(k) || 0) - Math.abs(amt));
+            }
+            const monthFlows = keys.map((k) => netByMonth.get(k) || 0);
+            const currentNw = Math.round(Number(buckets.netWorth) || 0);
+            const startNw = Math.round(currentNw - monthFlows.reduce((a, b) => a + b, 0));
+            let rolling = startNw;
+            finalData = keys.map((k, idx) => {
+                rolling += monthFlows[idx] || 0;
+                const netWorth = Math.round(rolling);
+                return {
+                    date: `${k}-01T00:00:00.000Z`,
+                    name: monthLabelFromKey(k),
+                    'Net Worth': netWorth,
+                    Cash: netWorth,
+                    Investments: 0,
+                    Physical: 0,
+                    Receivables: 0,
+                    Liabilities: 0,
+                };
+            });
+        }
+
         const nowFilter = new Date();
-        const startOfToday = new Date(nowFilter.getFullYear(), nowFilter.getMonth(), nowFilter.getDate());
         switch (timePeriod) {
             case 'Day': {
-                const start = new Date(startOfToday);
-                start.setDate(start.getDate() - 1);
-                return finalData.filter((d) => new Date(d.date as string) >= start);
+                return finalData.slice(-3);
             }
             case 'Week': {
-                const start = new Date(startOfToday);
-                start.setDate(start.getDate() - 7);
-                return finalData.filter((d) => new Date(d.date as string) >= start);
+                return finalData.slice(-6);
             }
             case 'Month': {
-                const y = nowFilter.getFullYear();
-                const m = nowFilter.getMonth();
-                return finalData.filter((d) => {
-                    const dt = new Date(d.date as string);
-                    return dt.getFullYear() === y && dt.getMonth() === m;
-                });
+                return finalData.slice(-12);
             }
             case '6M': {
                 const target = new Date(nowFilter);
@@ -151,11 +189,11 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
                         {title}
                         <InfoHint
                             placement="bottom"
-                            text="History is stored as monthly snapshot points. Shorter ranges (day/week/month) filter those points; very short windows may show one month until more history exists."
+                            text="This chart is monthly-cadence wealth growth. Day/Week/Month buttons show recent monthly windows (3/6/12 points) so trends stay visible."
                         />
                     </h3>
                     <p className="text-xs text-slate-500 mt-1 max-w-xl">
-                        Historical rows use stored monthly snapshots (SAR at capture). The latest month is recomputed from your books using today’s rate from the SAR/USD daily series (Wealth Ultra / snapshots, forward-filled). The series is hydrated back to your oldest snapshot so past days don’t fall back to a single spot.
+                        Historical rows use stored monthly snapshots (SAR at capture). When snapshots are sparse, the chart auto-builds monthly trend points from your ledger cashflow so you still get a continuous growth line. Latest month is recomputed from your current books using today’s SAR/USD rate.
                     </p>
                 </div>
                 <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-lg shrink-0 max-w-full justify-end">

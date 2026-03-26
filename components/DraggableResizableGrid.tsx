@@ -45,7 +45,7 @@ export interface DraggableResizableGridProps {
   handlesOnHoverOnly?: boolean;
   /** CSS selector for the drag handle element. If set, only that element starts a drag; clicking the rest of the item won't trigger drag (e.g. so card clicks can navigate). */
   draggableHandle?: string;
-  /** Vertical overflow behavior for each grid item wrapper. Defaults to 'auto' (scrolls when content exceeds tile). */
+  /** Vertical overflow behavior for each grid item wrapper. Defaults to 'visible' (no internal card scroll). */
   itemOverflowY?: 'auto' | 'visible' | 'hidden';
 }
 
@@ -106,7 +106,7 @@ export const DraggableResizableGrid: React.FC<DraggableResizableGridProps> = ({
   isResizable = true,
   handlesOnHoverOnly = false,
   draggableHandle,
-  itemOverflowY = 'auto',
+  itemOverflowY = 'visible',
 }) => {
   const { width, containerRef, mounted } = useContainerWidth({
     measureBeforeMount: false,

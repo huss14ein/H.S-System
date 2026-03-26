@@ -11,6 +11,8 @@ const BASE = 'https://finnhub.io/api/v1';
 
 /** Avoid spamming the console when Finnhub returns 403 on premium-only endpoints (e.g. /stock/dividend). */
 let warnedFinnhubDividendForbidden = false;
+let warnedFinnhubForbiddenGlobal = false;
+let finnhubForbiddenUntil = 0;
 
 /** Min gap between requests (ms) to stay under 60/min (~1.1s = ~54/min). */
 const MIN_GAP_MS = 1100;
@@ -65,6 +67,9 @@ async function processQueue(): Promise<void> {
  * and handle 429 (retry once after Retry-After or 60s).
  */
 export function finnhubFetch(url: string, options?: RequestInit): Promise<Response> {
+  if (finnhubForbiddenUntil > Date.now()) {
+    return Promise.reject(new Error('Finnhub temporarily disabled after repeated 403 responses.'));
+  }
   return new Promise((resolve, reject) => {
     pending.push({ url, options, resolve, reject });
     processQueue();
@@ -81,6 +86,14 @@ function get<T>(path: string, params: Record<string, string> = {}): Promise<T> {
   const token = getToken();
   const q = new URLSearchParams({ ...params, token });
   return finnhubFetch(`${BASE}${path}?${q}`).then((r) => {
+    if (r.status === 403) {
+      finnhubForbiddenUntil = Date.now() + 10 * 60_000;
+      if (!warnedFinnhubForbiddenGlobal) {
+        warnedFinnhubForbiddenGlobal = true;
+        console.warn('Finnhub returned 403 (plan/key restriction). Falling back to alternative data sources for 10 minutes.');
+      }
+      throw new Error(`Finnhub ${path}: 403`);
+    }
     if (r.status === 429) throw new Error('Finnhub rate limit (60/min). Wait a minute and try again.');
     if (!r.ok) throw new Error(`Finnhub ${path}: ${r.status}`);
     return r.json();
@@ -314,12 +327,7 @@ export async function getCompanyProfile(symbol: string): Promise<CompanyProfile 
     const data = await get<CompanyProfile>('/stock/profile2', { symbol: resolved });
     if (!data?.name) return null;
     // Finnhub may return ticker as bare "2222" or "REITF" while we queried TADAWUL:… — still the same listing.
-    if (data.ticker) {
-      const apiResolved = toFinnhubSymbol(data.ticker);
-      if (apiResolved !== resolved && canonicalQuoteLookupKey(data.ticker) !== canonicalQuoteLookupKey(symbol)) {
-        console.warn(`[Finnhub] profile2 ticker may not match "${symbol}": requested ${resolved}, profile ticker ${data.ticker} (keeping profile if name is set)`);
-      }
-    }
+    // Finnhub may canonicalize listing symbols differently; keep valid named profile silently.
     return data;
   } catch {
     return null;

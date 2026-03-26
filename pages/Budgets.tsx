@@ -23,10 +23,12 @@ import {
     buildHouseholdBudgetPlan,
     buildHouseholdEngineInputFromData,
     computeBulkAddLimitsForSelection,
+    deriveEngineProfileFromRiskProfile,
     HOUSEHOLD_ENGINE_PROFILES,
     HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS,
     generateHouseholdBudgetCategories,
     KSA_EXPENSE_CATEGORY_HINTS,
+    monthlyEquivalentFromBudgetLimit,
     type HouseholdEngineProfile,
     type HouseholdMonthlyOverride,
 } from '../services/householdBudgetEngine';
@@ -579,11 +581,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const { household: householdConstraints } = useFinancialEnginesIntegration();
 
     React.useEffect(() => {
-        const riskProfile = String((data as any)?.settings?.riskProfile || '').toLowerCase();
-        if (engineProfile === 'Moderate') {
-            if (riskProfile.includes('conservative')) setEngineProfile('Conservative');
-            if (riskProfile.includes('aggressive') || riskProfile.includes('growth')) setEngineProfile('Growth');
-        }
+        const next = deriveEngineProfileFromRiskProfile(
+            engineProfile,
+            String((data as any)?.settings?.riskProfile || '')
+        );
+        if (next !== engineProfile) setEngineProfile(next);
     }, [(data as any)?.settings?.riskProfile]);
 
     const categoryNameById = useMemo(() => new Map(governanceCategories.map((c) => [c.id, c.name])), [governanceCategories]);
@@ -985,6 +987,25 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             householdKids
         );
     }, [bulkAddSuggestedCategories, bulkAddSelectedCategories, bulkAddSalary, expectedMonthlySalary, suggestedMonthlySalary, engineProfile, householdAdults, householdKids]);
+
+    const bulkAddDisplayCategorySet = useMemo(
+        () => new Set(bulkAddDisplayCategories.map((c) => c.category)),
+        [bulkAddDisplayCategories]
+    );
+    const bulkAddSelectedCategoriesNormalized = useMemo(
+        () => Array.from(new Set(bulkAddSelectedCategories)).filter((n) => bulkAddDisplayCategorySet.has(n)),
+        [bulkAddSelectedCategories, bulkAddDisplayCategorySet]
+    );
+    const bulkAddSelectedMonthlyEquivalent = useMemo(() => {
+        if (bulkAddSelectedCategoriesNormalized.length === 0) return 0;
+        const selectedSet = new Set(bulkAddSelectedCategoriesNormalized);
+        return Math.round(
+            bulkAddDisplayCategories.reduce((sum, c) => {
+                if (!selectedSet.has(c.category)) return sum;
+                return sum + monthlyEquivalentFromBudgetLimit(c.limit, c.period as 'monthly' | 'weekly' | 'yearly' | 'daily');
+            }, 0)
+        );
+    }, [bulkAddDisplayCategories, bulkAddSelectedCategoriesNormalized]);
 
     // Keep checkbox selection stable when only limits change; add new template rows as selected; drop removed rows.
     // (Old logic reset to “all selected” whenever length differed — that wiped unchecks on adults/kids/profile/salary/month changes.)
@@ -2039,7 +2060,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                             <div className="flex items-center justify-between mb-2">
                                 <h3 className="text-sm font-semibold text-violet-800">Request History</h3>
                                 <button type="button" onClick={() => setHistoryCollapsed(!historyCollapsed)} className="text-xs text-violet-600 hover:text-violet-800">
-                                    {historyCollapsed ? '▼ Expand' : '▲ Collapse'}
+                                    {historyCollapsed ? 'Expand' : 'Collapse'}
                                 </button>
                             </div>
                             {!historyCollapsed && (
@@ -2260,14 +2281,19 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                     <div className="flex items-center justify-between gap-2">
                                         <span className="text-xs font-medium text-slate-600">Select categories to create or update (limits sync with salary, profile & selection):</span>
                                         <span className="flex gap-2">
-                                            <button type="button" onClick={() => setBulkAddSelectedCategories(bulkAddSuggestedCategories.map((c) => c.category))} className="text-xs text-emerald-600 hover:text-emerald-800 font-medium">Select all</button>
+                                            <button type="button" onClick={() => setBulkAddSelectedCategories(bulkAddDisplayCategories.map((c) => c.category))} className="text-xs text-emerald-600 hover:text-emerald-800 font-medium">Select all</button>
                                             <span className="text-slate-300">|</span>
                                             <button type="button" onClick={() => setBulkAddSelectedCategories([])} className="text-xs text-emerald-600 hover:text-emerald-800 font-medium">Deselect all</button>
                                         </span>
                                     </div>
+                                    <div className="text-xs text-slate-600">
+                                        Selected: <span className="font-semibold text-slate-800">{bulkAddSelectedCategoriesNormalized.length}</span>
+                                        {' '}categories · Monthly equivalent:{' '}
+                                        <span className="font-semibold text-slate-800">{formatCurrencyString(bulkAddSelectedMonthlyEquivalent, { digits: 0 })}/mo</span>
+                                    </div>
                                     <div className="max-h-48 overflow-y-auto rounded border border-slate-200 bg-white p-2 space-y-1.5">
                                         {bulkAddDisplayCategories.map((cat) => {
-                                            const selected = bulkAddSelectedCategories.includes(cat.category);
+                                            const selected = bulkAddSelectedCategoriesNormalized.includes(cat.category);
                                             const periodLabel = cat.period === 'yearly' ? '/yr' : cat.period === 'weekly' ? '/wk' : cat.period === 'daily' ? '/day' : '/mo';
                                             return (
                                                 <label key={cat.category} className="flex items-center gap-2 py-1 px-2 rounded hover:bg-slate-50 cursor-pointer">
@@ -2276,7 +2302,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                                         checked={selected}
                                                         onChange={() => {
                                                             if (selected) setBulkAddSelectedCategories((prev) => prev.filter((n) => n !== cat.category));
-                                                            else setBulkAddSelectedCategories((prev) => [...prev, cat.category]);
+                                                            else setBulkAddSelectedCategories((prev) => (prev.includes(cat.category) ? prev : [...prev, cat.category]));
                                                         }}
                                                         className="rounded border-slate-300 text-emerald-600"
                                                     />
@@ -2292,7 +2318,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                     </div>
                                     <button
                                         type="button"
-                                        disabled={!isAdmin || bulkAddSelectedCategories.length === 0}
+                                        disabled={!isAdmin || bulkAddSelectedCategoriesNormalized.length === 0}
                                         onClick={async () => {
                                             if (!isAdmin) { alert('Only admins can create budgets from the household engine.'); return; }
                                             const salary = Number(bulkAddSalary);
@@ -2302,7 +2328,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                                 alert('Enter a monthly salary or use the value from the table above.');
                                                 return;
                                             }
-                                            const selectedSet = new Set(bulkAddSelectedCategories);
+                                            const selectedSet = new Set(bulkAddSelectedCategoriesNormalized);
                                             const categories = bulkAddDisplayCategories.filter((c) => selectedSet.has(c.category));
                                             if (!window.confirm(`Create or update ${categories.length} budgets for ${MONTHS[bulkAddTargetMonth - 1]} ${bulkAddTargetYear}? Existing budgets for that month will be updated.`)) return;
                                             const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === bulkAddTargetYear && b.month === bulkAddTargetMonth);
@@ -2326,7 +2352,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                         }}
                                         className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
-                                        Create/update {bulkAddSelectedCategories.length} selected for {MONTHS[bulkAddTargetMonth - 1]} {bulkAddTargetYear}
+                                        Create/update {bulkAddSelectedCategoriesNormalized.length} selected for {MONTHS[bulkAddTargetMonth - 1]} {bulkAddTargetYear}
                                     </button>
                                 </>
                             )}

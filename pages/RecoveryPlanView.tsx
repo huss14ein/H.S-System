@@ -1059,7 +1059,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       {selected && selectedPlan && (
         <SectionCard
           title={`${selected.holding.symbol ? formatSymbolWithCompany(selected.holding.symbol, selected.holding.name, recoveryCompanyNames) : 'Holding'} — Recovery Plan`}
-          className="space-y-5"
+          className="space-y-7"
           collapsible
           collapsibleSummary="Ladder, targets"
           defaultExpanded
@@ -1239,7 +1239,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           )}
 
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 p-6 shadow-lg hover:shadow-xl transition-all duration-300">
               <div className="flex items-center justify-between mb-4">
                 <p className="text-sm font-bold text-slate-700 uppercase tracking-wider">Deployable cash ({selected.bookCurrency ?? 'USD'})</p>
@@ -1273,7 +1273,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-7">
             <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 p-6 shadow-lg hover:shadow-xl transition-all duration-300">
               <div className="flex items-center justify-between mb-4">
                 <p className="text-sm font-bold text-slate-700 uppercase tracking-wider">Current Position</p>

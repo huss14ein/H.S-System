@@ -750,7 +750,7 @@ const InvestmentPlanView: React.FC<{
 
         const ratio = Math.abs((currentPrice - plannedPrice) / plannedPrice);
         if (ratio <= 0.01) return 'Near plan';
-        if (plan.tradeType === 'buy') return currentPrice <= plannedPrice ? 'Favorable' : 'Expensive';
+        if (plan.tradeType === 'buy') return currentPrice <= plannedPrice ? 'Favorable' : 'Above trigger';
         return currentPrice >= plannedPrice ? 'Favorable' : 'Below plan';
     };
 
@@ -1544,7 +1544,12 @@ const InvestmentPlanView: React.FC<{
                                         </td>
                                         <td className="px-6 py-4 align-top">{renderCondition(plan)}</td>
                                         <td className="px-6 py-4">
-                                            <span className={`px-3 py-1 inline-flex text-xs font-semibold rounded-full ${getPriceSignalClass(plan)}`}>
+                                            <span
+                                                className={`px-3 py-1 inline-flex text-xs font-semibold rounded-full ${getPriceSignalClass(plan)}`}
+                                                title={plan.tradeType === 'buy'
+                                                    ? 'For buy plans: Favorable means current price is at/below trigger; Above trigger means current price is still above your buy trigger.'
+                                                    : 'For sell plans: Favorable means current price is at/above trigger; Below plan means current price has not reached your sell trigger yet.'}
+                                            >
                                                 {getPriceSignalLabel(plan)}
                                             </span>
                                         </td>

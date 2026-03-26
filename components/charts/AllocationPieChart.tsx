@@ -6,6 +6,7 @@ import ChartContainer from './ChartContainer';
 
 interface AllocationPieChartProps {
   data: { name: string; value: number }[];
+  showLegend?: boolean;
 }
 
 const COLORS = CHART_COLORS.categorical;
@@ -49,7 +50,7 @@ const formatCompactAmount = (value: number): string => {
   return value.toFixed(0);
 };
 
-const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
+const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data, showLegend = true }) => {
   const { formatCurrencyString } = useFormatCurrency();
   const chartHostRef = useRef<HTMLDivElement | null>(null);
   const [chartSize, setChartSize] = useState({ width: 0, height: 0 });
@@ -113,7 +114,7 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
               wrapperStyle={{ pointerEvents: 'none' }}
             />
           )}
-          {sanitizedData.length > 1 && <Legend iconType="circle" verticalAlign="bottom" align="center" wrapperStyle={{ paddingTop: 8 }} />}
+          {showLegend && sanitizedData.length > 1 && <Legend iconType="circle" verticalAlign="bottom" align="center" wrapperStyle={{ paddingTop: 8 }} />}
         </PieChart>
       </ResponsiveContainer>
       </div>

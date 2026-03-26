@@ -436,8 +436,8 @@
 }
 
 .interactive-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+  transform: none;
+  box-shadow: inherit;
 }
 
 .interactive-card:active {

@@ -304,9 +304,9 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
         title="Quick guide"
         summary="What each colored tool does"
         card={false}
-        className="!rounded-xl border border-slate-200 bg-slate-50/50"
+        className="!rounded-xl !p-3 border border-slate-200 bg-slate-50/50"
       >
-        <p className="text-sm leading-relaxed text-slate-700">
+        <p className="text-sm leading-relaxed text-slate-700 m-0">
           <strong className="text-slate-900">Indigo — Logic:</strong> transparency into calculations.{' '}
           <strong className="text-emerald-800">Green — Safety:</strong> runway and rules.{' '}
           <strong className="text-amber-900">Amber — Sell priority:</strong> what to trim first.{' '}

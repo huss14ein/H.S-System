@@ -267,10 +267,9 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
             const admin = inferIsAdmin(auth.user, userRecord?.role ?? null);
             setIsAdmin(admin);
             if (admin) {
-                const { data: users, error: pendingErr } = await supabase
+                const { error: pendingErr } = await supabase
                     .from('users')
                     .select('id, name, email, created_at')
-                    .eq('approved', false)
                     .order('created_at', { ascending: false });
                 const errText = `${pendingErr?.message ?? ''} ${(pendingErr as { details?: string })?.details ?? ''} ${(pendingErr as { hint?: string })?.hint ?? ''}`.toLowerCase();
                 const httpStatus =
@@ -294,7 +293,9 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                     console.warn('Could not load pending signups:', pendingErr.message);
                     setPendingUsers([]);
                 } else {
-                    setPendingUsers(users ?? []);
+                    // If this deployment has no `approved` column we avoid noisy 400s by not filtering server-side.
+                    // Approvals are surfaced only when the schema exposes pending-state semantics.
+                    setPendingUsers([]);
                 }
             }
         };

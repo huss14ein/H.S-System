@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeBulkAddLimitsForSelection,
+  deriveEngineProfileFromRiskProfile,
   generateHouseholdBudgetCategories,
   householdConsumptionScale,
   monthlyEquivalentFromBudgetLimit,
@@ -76,5 +77,19 @@ describe('computeBulkAddLimitsForSelection', () => {
     const picked = out.find((c) => c.category === pick[0]);
     expect(picked != null && picked.limit > 0).toBe(true);
     expect(out.filter((c) => !pick.includes(c.category)).every((c) => c.limit === 0)).toBe(true);
+  });
+});
+
+describe('deriveEngineProfileFromRiskProfile', () => {
+  it('maps aggressive risk profile to Aggressive', () => {
+    expect(deriveEngineProfileFromRiskProfile('Moderate', 'Aggressive')).toBe('Aggressive');
+  });
+
+  it('maps growth risk profile to Growth', () => {
+    expect(deriveEngineProfileFromRiskProfile('Moderate', 'Growth')).toBe('Growth');
+  });
+
+  it('does not override manual non-default profile', () => {
+    expect(deriveEngineProfileFromRiskProfile('Conservative', 'Aggressive')).toBe('Conservative');
   });
 });

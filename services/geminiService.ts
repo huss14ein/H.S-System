@@ -270,6 +270,9 @@ const getFinnhubApiKey = (): string => {
     if (!apiKey) throw new Error('Finnhub API key is missing. Set VITE_FINNHUB_API_KEY.');
     return apiKey;
 };
+const isFinnhub403 = (error: unknown): boolean =>
+    /\b403\b|forbidden|plan\/key restriction|premium|not available/i.test(error instanceof Error ? error.message : String(error ?? ''));
+let warnedFinnhub403InGeminiService = false;
 
 const getFinnhubLivePrices = async (symbols: string[]): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {
     if (symbols.length === 0) return {};
@@ -299,7 +302,14 @@ const getFinnhubLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
             }
             for (const k of keys) mapped[k] = quote;
         } catch (error) {
-            console.warn(`Finnhub quote failed for ${rawSymbol}:`, error);
+            if (isFinnhub403(error)) {
+                if (!warnedFinnhub403InGeminiService) {
+                    warnedFinnhub403InGeminiService = true;
+                    console.warn('Finnhub returned 403 for this key; quote research fallback will use other sources.');
+                }
+            } else {
+                console.warn(`Finnhub quote failed for ${rawSymbol}:`, error);
+            }
         }
     }
 
@@ -334,7 +344,7 @@ const getFinnhubCompanyNews = async (symbols: string[]): Promise<Array<{ symbol:
                 });
             });
         } catch (error) {
-            console.warn(`Finnhub company news failed for ${rawSymbol}:`, error);
+            if (!isFinnhub403(error)) console.warn(`Finnhub company news failed for ${rawSymbol}:`, error);
         }
     }
 
@@ -414,6 +424,10 @@ const getStooqLivePrices = async (symbols: string[]): Promise<{ [symbol: string]
 
 // Helper function to securely invoke the Gemini API via a Netlify Function.
 async function invokeGeminiProxy(payload: { model: string, contents: any, config?: any }): Promise<any> {
+    const blockedReason = sessionStorage.getItem('finova_ai_proxy_block_reason');
+    if (blockedReason) {
+        throw new Error(`AI provider unavailable: ${blockedReason}`);
+    }
     const endpoints = ['/api/gemini-proxy', '/.netlify/functions/gemini-proxy'];
     let lastError: Error | null = null;
 
@@ -447,12 +461,15 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
                     lastError = new Error(`${errorMessage} Tried endpoint: ${endpoint}`);
                     continue;
                 }
+                if (response.status === 403 || /does not have permission|no credits|licenses/i.test(errorMessage)) {
+                    try { sessionStorage.setItem('finova_ai_proxy_block_reason', 'provider credits/permission issue'); } catch { /* ignore */ }
+                }
                 throw new Error(errorMessage);
             }
 
             return await response.json();
         } catch (error) {
-            console.error(`Error invoking AI proxy endpoint ${endpoint}:`, error);
+            console.warn(`AI proxy endpoint ${endpoint} failed:`, error instanceof Error ? error.message : String(error));
             if (error instanceof DOMException && error.name === 'AbortError') {
                 lastError = new Error('AI request timed out while waiting for proxy response.');
                 continue;

@@ -120,39 +120,53 @@ const AssetLiabilityChart: React.FC = () => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
+    const toFiniteMoney = (value: unknown): number => {
+        const n = Number(value);
+        return Number.isFinite(n) ? Math.max(0, n) : 0;
+    };
     const chartData = useMemo(() => {
         const fx = resolveSarPerUsd(data, exchangeRate);
         const buckets = computeAllNetWorthChartBucketsSAR(data, fx, { getAvailableCashForAccount });
 
         return [
-            { name: 'Investments', value: buckets.investments },
-            { name: 'Cash', value: buckets.cash },
-            { name: 'Physical Assets', value: buckets.physicalAndCommodities },
-            { name: 'Receivables', value: buckets.receivables },
-            { name: 'Debt', value: Math.abs(buckets.liabilities) },
+            { name: 'Investments', value: toFiniteMoney(buckets.investments) },
+            { name: 'Cash', value: toFiniteMoney(buckets.cash) },
+            { name: 'Physical Assets', value: toFiniteMoney(buckets.physicalAndCommodities) },
+            { name: 'Receivables', value: toFiniteMoney(buckets.receivables) },
+            { name: 'Debt', value: toFiniteMoney(Math.abs(buckets.liabilities)) },
         ];
     }, [data, exchangeRate, getAvailableCashForAccount]);
 
-    const hasSignal = chartData.some((x) => x.value > 0);
+    const hasSignal = chartData.some((x) => Number.isFinite(x.value) && x.value > 0);
     const isEmpty = !hasSignal;
     const getBarColor = (name: string) => name === 'Debt' ? CHART_COLORS.liability : name === 'Receivables' ? CHART_COLORS.positive : CHART_COLORS.primary;
 
     return (
-        <ChartContainer height={300} isEmpty={isEmpty} emptyMessage="No assets/liabilities available yet.">
-            <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray={CHART_GRID_STROKE} stroke={CHART_GRID_COLOR} />
-                    <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
-                    <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
-                    <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })} contentStyle={TOOLTIP_STYLE} />
-                    <Bar dataKey="value" name="Value" radius={[4, 4, 0, 0]}>
-                        {chartData.map((entry) => (
-                            <Cell key={`cell-${entry.name}`} fill={getBarColor(entry.name)} />
-                        ))}
-                    </Bar>
-                </BarChart>
-            </ResponsiveContainer>
-        </ChartContainer>
+        <div className="space-y-3">
+            <ChartContainer height={300} isEmpty={isEmpty} emptyMessage="No assets/liabilities available yet.">
+                <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray={CHART_GRID_STROKE} stroke={CHART_GRID_COLOR} />
+                        <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
+                        <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
+                        <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })} contentStyle={TOOLTIP_STYLE} />
+                        <Bar dataKey="value" name="Value" radius={[4, 4, 0, 0]}>
+                            {chartData.map((entry) => (
+                                <Cell key={`cell-${entry.name}`} fill={getBarColor(entry.name)} />
+                            ))}
+                        </Bar>
+                    </BarChart>
+                </ResponsiveContainer>
+            </ChartContainer>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                {chartData.map((row) => (
+                    <div key={`summary-${row.name}`} className="flex items-center justify-between rounded-md bg-slate-50 px-2 py-1.5">
+                        <span className="text-slate-600">{row.name}</span>
+                        <span className="font-semibold text-slate-800 tabular-nums">{formatCurrencyString(row.value, { digits: 0 })}</span>
+                    </div>
+                ))}
+            </div>
+        </div>
     );
 };
 

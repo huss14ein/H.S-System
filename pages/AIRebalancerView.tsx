@@ -322,8 +322,23 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                   />
                 </h4>
                 <div className="h-64 w-full mx-auto">
-                  <AllocationPieChart data={currentAllocation} />
+                  <AllocationPieChart data={currentAllocation} showLegend={false} />
                 </div>
+                {currentAllocation.length > 0 && (
+                  <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px] sm:text-xs">
+                    {currentAllocation.slice(0, 10).map((item, idx) => {
+                      const palette = ['bg-indigo-500', 'bg-cyan-500', 'bg-emerald-500', 'bg-amber-500', 'bg-violet-500', 'bg-rose-500'];
+                      return (
+                        <div key={`${item.name}-${idx}`} className="flex items-center gap-1.5 min-w-0">
+                          <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${palette[idx % palette.length]}`} aria-hidden />
+                          <span className="truncate text-slate-700" title={`${item.name}: ${item.value.toFixed(1)}%`}>
+                            {item.name}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 <p className="mt-4 text-sm font-semibold text-slate-800 tabular-nums">
                   Total (holdings):{' '}
                   <span className="text-primary">

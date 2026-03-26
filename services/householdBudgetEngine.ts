@@ -130,6 +130,22 @@ export const HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS: Array<{
   },
 ];
 
+/**
+ * Risk-profile -> household-engine profile mapping used by Budgets auto-sync.
+ * Applies only while user profile is still default "Moderate" (manual override should stick).
+ */
+export function deriveEngineProfileFromRiskProfile(
+  currentEngineProfile: HouseholdEngineProfile,
+  riskProfileRaw: string
+): HouseholdEngineProfile {
+  if (currentEngineProfile !== 'Moderate') return currentEngineProfile;
+  const riskProfile = String(riskProfileRaw || '').toLowerCase();
+  if (riskProfile.includes('conservative')) return 'Conservative';
+  if (riskProfile.includes('aggressive')) return 'Aggressive';
+  if (riskProfile.includes('growth')) return 'Growth';
+  return currentEngineProfile;
+}
+
 export function mapGoalsForRouting(goals: Array<{ id?: string; name?: string; targetAmount?: number; currentAmount?: number; deadline?: string }>): GoalForRouting[] {
   return (goals || []).map((g) => ({
     id: String(g.id ?? ''),

@@ -233,9 +233,9 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                                     summary={`${zakatableAssets.investmentLines.length} symbol(s)`}
                                     defaultExpanded={false}
                                     card={false}
-                                    className="ml-6"
+                                    className="mt-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2"
                                 >
-                                    <div className="max-h-40 overflow-y-auto">
+                                    <div className="rounded-lg border border-slate-200 bg-white">
                                         <table className="w-full text-xs text-left">
                                             <thead className="sticky top-0 bg-slate-100 text-slate-600 uppercase tracking-wide">
                                                 <tr>
@@ -244,10 +244,10 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                                                     <th className="py-1.5 px-2 font-semibold text-right">SAR</th>
                                                 </tr>
                                             </thead>
-                                            <tbody className="divide-y divide-slate-100 bg-white">
+                                            <tbody className="divide-y divide-slate-100 bg-white leading-relaxed">
                                                 {zakatableAssets.investmentLines.map((row: { portfolioId: string; symbol: string; portfolioName: string; name?: string; valueSar: number }, idx: number) => (
                                                     <tr key={`${row.portfolioId}-${row.symbol}-${idx}`} className="text-slate-800">
-                                                        <td className="py-1.5 px-2 font-medium min-w-0 max-w-[140px]">
+                                                        <td className="py-2 px-2 font-medium min-w-0 max-w-[140px] align-top">
                                                             <ResolvedSymbolLabel
                                                                 symbol={row.symbol}
                                                                 storedName={row.name}
@@ -257,14 +257,14 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                                                                 companyClassName="text-[10px] text-slate-500"
                                                             />
                                                         </td>
-                                                        <td className="py-1.5 px-2 text-slate-600 truncate max-w-[120px]" title={row.portfolioName}>{row.portfolioName}</td>
-                                                        <td className="py-1.5 px-2 text-right tabular-nums">{formatCurrencyString(row.valueSar, { inCurrency: 'SAR', digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-slate-600 truncate max-w-[120px] align-top" title={row.portfolioName}>{row.portfolioName}</td>
+                                                        <td className="py-2 px-2 text-right tabular-nums align-top">{formatCurrencyString(row.valueSar, { inCurrency: 'SAR', digits: 0 })}</td>
                                                     </tr>
                                                 ))}
                                             </tbody>
                                         </table>
                                     </div>
-                                    <p className="text-[11px] text-slate-500 px-2 py-1.5 border-t border-slate-200 bg-slate-50/80">
+                                    <p className="text-[11px] leading-5 text-slate-500 px-2 py-2 border-t border-slate-200 bg-slate-50/80">
                                         Value = market value when set; otherwise quantity × average cost. Non‑Zakatable positions excluded.
                                     </p>
                                 </CollapsibleSection>
@@ -333,11 +333,24 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                             </div>
                         )}
                     </div>
-                    <div className="flex justify-between text-sm"><span className="text-gray-600">Nisab Threshold</span><span className="font-medium text-dark">{formatCurrencyString(nisab, { inCurrency: 'SAR', digits: 0 })}</span></div>
-                    <hr/>
-                    <div className="flex justify-between text-sm"><span className="text-gray-600">Total Zakatable Assets</span><span className="font-medium text-dark">{formatCurrencyString(zakatableAssets.total, { inCurrency: 'SAR', digits: 0 })}</span></div>
-                    <div className="flex justify-between text-sm"><span className="text-gray-600">Deductible Liabilities</span><span className="font-medium text-dark">-{formatCurrencyString(deductibleLiabilities.total, { inCurrency: 'SAR', digits: 0 })}</span></div>
-                    <div className="flex justify-between text-base font-semibold p-2 bg-gray-100 rounded-md"><span className="text-gray-800">Net Zakatable Wealth</span><span className="text-dark">{formatCurrencyString(netZakatableWealth, { inCurrency: 'SAR', digits: 0 })}</span></div>
+                    <div className="space-y-1 border-t border-slate-200 pt-3">
+                        <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm leading-6">
+                            <span className="text-gray-600">Nisab Threshold</span>
+                            <span className="min-w-[130px] text-right font-medium tabular-nums text-dark">{formatCurrencyString(nisab, { inCurrency: 'SAR', digits: 0 })}</span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm leading-6">
+                            <span className="text-gray-600">Total Zakatable Assets</span>
+                            <span className="min-w-[130px] text-right font-medium tabular-nums text-dark">{formatCurrencyString(zakatableAssets.total, { inCurrency: 'SAR', digits: 0 })}</span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm leading-6">
+                            <span className="text-gray-600">Deductible Liabilities</span>
+                            <span className="min-w-[130px] text-right font-medium tabular-nums text-dark">-{formatCurrencyString(deductibleLiabilities.total, { inCurrency: 'SAR', digits: 0 })}</span>
+                        </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 text-base font-semibold p-2.5 bg-gray-100 rounded-md">
+                        <span className="text-gray-800">Net Zakatable Wealth</span>
+                        <span className="min-w-[150px] text-right tabular-nums text-dark">{formatCurrencyString(netZakatableWealth, { inCurrency: 'SAR', digits: 0 })}</span>
+                    </div>
                      <div className="flex items-center justify-center space-x-2 pt-2">
                         {isNisabMet ? ( <><CheckCircleIcon className="h-6 w-6 text-green-500" /><span className="font-semibold text-green-600">Nisab Threshold Met</span></> ) : ( <><XCircleIcon className="h-6 w-6 text-red-500" /><span className="font-semibold text-red-500">Nisab Threshold Not Met</span></> )}
                     </div>
