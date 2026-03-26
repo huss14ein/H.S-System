@@ -28,6 +28,7 @@ Run **`supabase/migrations/add_optional_schema_extras.sql`** once (idempotent) �
 
 - **budgets.destination_account_id** — optional routing / surplus account link.
 - **holdings.holding_type** — `'ticker'` | `'manual_fund'` (matches `Holding.holdingType` in the app).
+- **goals.priority** — `'High' | 'Medium' | 'Low'`. Same change is in **`add_goals_priority.sql`** (run that migration if you use Supabase CLI migrations only; running both is safe — idempotent).
 
 Or add manually:
 
@@ -38,5 +39,10 @@ Or add manually:
 - **holdings.holding_type** (text): Used when persisting holdings (e.g. `'ticker'` | `'manual_fund'`). Add if your schema uses it:
   ```sql
   alter table public.holdings add column if not exists holding_type text default 'ticker';
+  ```
+- **goals.priority** (text): `'High' | 'Medium' | 'Low'`. Prefer running `supabase/migrations/add_goals_priority.sql`; or add manually if missing:
+  ```sql
+  alter table public.goals add column if not exists priority text not null default 'Medium'
+    check (priority in ('High', 'Medium', 'Low'));
   ```
 - **budget_requests**: Table and RLS are defined in `supabase/multi_user_governance.sql` and `supabase/all_db_changes_and_enhancements.sql`. Run one of those for governance/request workflows.

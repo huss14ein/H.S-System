@@ -3,20 +3,30 @@
  * Personal finance score, investment score, trading score.
  */
 
-/** Personal finance health: liquidity, savings, debt, goal progress, expense control. */
+/** Personal finance health: liquidity, savings, debt, goal progress, expense control, cashflow momentum. */
 export function personalFinanceHealthScore(args: {
-  liquidityScore: number;   // 0-100
+  liquidityScore: number; // 0-100
   savingsRatePct: number;
   debtPressureScore: number; // 0-100, high = bad
   goalProgressScore: number; // 0-100
   expenseControlScore: number; // 0-100
+  /** 0-100: recent PnL trend vs prior month (50 = flat). Omit to use neutral 50. */
+  cashflowMomentumScore?: number;
 }): number {
   const l = Math.max(0, Math.min(100, args.liquidityScore ?? 50));
   const s = Math.max(0, Math.min(100, (args.savingsRatePct ?? 0) * 2)); // 50% savings = 100
   const d = Math.max(0, Math.min(100, 100 - (args.debtPressureScore ?? 0)));
   const g = Math.max(0, Math.min(100, args.goalProgressScore ?? 50));
   const e = Math.max(0, Math.min(100, args.expenseControlScore ?? 50));
-  return Math.round((l * 0.25 + s * 0.2 + d * 0.2 + g * 0.2 + e * 0.15));
+  const m = Math.max(0, Math.min(100, args.cashflowMomentumScore ?? 50));
+  return Math.round(l * 0.22 + s * 0.18 + d * 0.18 + g * 0.18 + e * 0.14 + m * 0.1);
+}
+
+/** Map month-on-month PnL change (%) to a 0-100 momentum score (50 = neutral). */
+export function cashflowMomentumFromPnlTrend(pnlTrendPct: number): number {
+  if (!Number.isFinite(pnlTrendPct)) return 50;
+  const t = Math.max(-80, Math.min(80, pnlTrendPct));
+  return Math.max(0, Math.min(100, 50 + t * 0.45));
 }
 
 /** Investment composite: quality, valuation, growth, financial strength, risk, timing, portfolio fit. */

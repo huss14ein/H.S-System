@@ -17,6 +17,7 @@ import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 import { reconcileCashAccountBalance } from '../services/dataQuality';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { reconcileHoldings, reconciliationExceptionReport } from '../services/reconciliationEngine';
+import DashboardKpiQualityPanel from '../components/DashboardKpiQualityPanel';
 import {
   validateSystemIntegrity,
   detectBrokenReferences,
@@ -475,6 +476,8 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       </div>
 
       <OverallStatusCard status={overallStatus} />
+
+      {appDataCtx?.data && <DashboardKpiQualityPanel />}
 
       {integritySummary && (
         <div className="bg-white shadow rounded-lg p-4 border border-slate-200">

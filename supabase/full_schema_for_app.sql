@@ -238,6 +238,15 @@ begin
     alter table public.execution_logs add column if not exists log_details text;
     alter table public.execution_logs add column if not exists created_at timestamptz default now();
   end if;
+
+  -- goals (priority persists Goal.priority; same as supabase/migrations/add_goals_priority.sql)
+  if exists (select 1 from information_schema.tables where table_schema = 'public' and table_name = 'goals') then
+    if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'goals' and column_name = 'priority') then
+      alter table public.goals
+        add column priority text not null default 'Medium'
+          check (priority in ('High', 'Medium', 'Low'));
+    end if;
+  end if;
 end $$;
 
 -- 9. Ensure indexes exist on existing tables (idempotent)

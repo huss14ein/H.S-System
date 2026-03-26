@@ -5,7 +5,12 @@
  * Rate limit: 60 calls/min on free tier; requests are throttled and 429 is retried once.
  */
 
+import { fetchStooq } from './stooqClient';
+
 const BASE = 'https://finnhub.io/api/v1';
+
+/** Avoid spamming the console when Finnhub returns 403 on premium-only endpoints (e.g. /stock/dividend). */
+let warnedFinnhubDividendForbidden = false;
 
 /** Min gap between requests (ms) to stay under 60/min (~1.1s = ~54/min). */
 const MIN_GAP_MS = 1100;
@@ -82,11 +87,12 @@ function get<T>(path: string, params: Record<string, string> = {}): Promise<T> {
   });
 }
 
-/** Saudi Tadawul symbols use .SR suffix. Returns exchange and currency for display. */
+/** Saudi Tadawul symbols use .SR / .SA / .SE (some feeds use .SE for the same listings). */
 export function getExchangeAndCurrencyForSymbol(symbol: string): { exchange: string; currency: string } | null {
   const s = (symbol || '').trim().toUpperCase();
   if (/\.SR$/i.test(s)) return { exchange: 'Tadawul', currency: 'SAR' };
   if (/\.SA$/i.test(s)) return { exchange: 'Saudi', currency: 'SAR' };
+  if (/\.SE$/i.test(s) && /^[0-9]{4,6}\.SE$/i.test(s)) return { exchange: 'Tadawul', currency: 'SAR' };
   return null;
 }
 
@@ -102,7 +108,8 @@ export function toFinnhubSymbol(symbol: string): string {
   // Earnings/calendar often return Saudi listings as bare digits (e.g. 2222) — same Finnhub prefix as 2222.SR.
   if (/^[0-9]{4,6}$/.test(upper)) return `TADAWUL:${upper}`;
   // Tadawul: numeric (2222.SR) and letter tickers (REITF.SR) both use TADAWUL: prefix on Finnhub.
-  const tadawulMatch = upper.match(/^([A-Z0-9]{1,8})\.(SR|SA)$/);
+  // Some data vendors use .SE for the same Saudi listings — map like .SR/.SA.
+  const tadawulMatch = upper.match(/^([A-Z0-9]{1,8})\.(SR|SA|SE)$/);
   if (tadawulMatch) return `TADAWUL:${tadawulMatch[1]}`;
   // US class shares: Finnhub uses hyphen (e.g. BRK-B), not a dot — but not .SR/.SA (handled above).
   const usClass = upper.match(/^([A-Z]{1,5})\.([A-Z])$/);
@@ -132,20 +139,25 @@ export interface CandlePoint {
   price: number;
 }
 
-/** Stooq symbol for historical CSV: Saudi 2222.SR -> 2222.sr, US AAPL -> aapl.us, BRK.A -> brk-a */
-function toStooqSymbol(symbol: string): string {
+/**
+ * Stooq symbol for historical CSV: Saudi tickers use `2222.sr` (also works for .SA / .SE aliases).
+ * US: `aapl.us`; class shares: `brk-a.us`.
+ */
+export function toStooqSymbol(symbol: string): string {
   const s = (symbol || '').trim();
-  if (/\.(SR|SA)$/i.test(s)) return s.toLowerCase();
+  const tadawul = s.match(/^([A-Z0-9]{1,8})\.(SR|SA|SE)$/i);
+  if (tadawul) return `${tadawul[1].toLowerCase()}.sr`;
   const hadDot = s.includes('.');
   const lower = s.toLowerCase().replace(/\./g, '-');
-  return hadDot ? lower : lower + '.us';
+  return hadDot ? lower : `${lower}.us`;
 }
 
 /** Fetch ~1 month of daily close prices from Stooq (no API key). Used when Finnhub has no data (e.g. Tadawul). */
 async function getStooqCandles1M(symbol: string): Promise<CandlePoint[]> {
   const stooqSym = toStooqSymbol(symbol);
   try {
-    const res = await fetch(`https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSym)}&i=d`);
+    const stooqUrl = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSym)}&i=d`;
+    const res = await fetchStooq(stooqUrl);
     if (!res.ok) return [];
     const csv = await res.text();
     const lines = csv.trim().split('\n');
@@ -170,8 +182,12 @@ async function getStooqCandles1M(symbol: string): Promise<CandlePoint[]> {
   }
 }
 
-/** Fetch last ~30 calendar days of daily candles for a symbol. Returns array of { day, price } for chart. Uses Finnhub first; falls back to Stooq when Finnhub returns no data (Saudi .SR/.SA or any symbol). */
+/** Fetch last ~30 calendar days of daily candles for a symbol. Uses Finnhub when `VITE_FINNHUB_API_KEY` is set; otherwise Stooq only. Falls back to Stooq when Finnhub has no rows (common for Tadawul). */
 export async function getStockCandles1M(symbol: string): Promise<CandlePoint[]> {
+  const hasFinnhub = Boolean(import.meta.env.VITE_FINNHUB_API_KEY?.trim());
+  if (!hasFinnhub) {
+    return getStooqCandles1M(symbol);
+  }
   try {
     const finnhubSymbol = toFinnhubSymbol(symbol);
     const to = Math.floor(Date.now() / 1000);
@@ -459,7 +475,17 @@ export async function fetchStockDividendHistory(
     });
     return parseDividendRows(raw);
   } catch (e) {
-    console.warn('Finnhub stock/dividend failed:', symbol, e);
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/\b403\b/.test(msg)) {
+      if (!warnedFinnhubDividendForbidden) {
+        warnedFinnhubDividendForbidden = true;
+        console.warn(
+          'Finnhub /stock/dividend is not available for this API key (403 — often a paid-tier endpoint). Dividend history will stay empty unless you upgrade Finnhub or use a key with access.',
+        );
+      }
+    } else {
+      console.warn('Finnhub stock/dividend failed:', symbol, e);
+    }
     return [];
   }
 }

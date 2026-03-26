@@ -1,7 +1,6 @@
 import React, { useMemo, useContext, useState, useCallback, useEffect } from 'react';
 import Card from '../components/Card';
 import DraggableResizableGrid from '../components/DraggableResizableGrid';
-import SectionCard from '../components/SectionCard';
 import { Transaction, Page, Budget, Account } from '../types';
 import ProgressBar from '../components/ProgressBar';
 import CashflowChart from '../components/charts/CashflowChart';
@@ -33,7 +32,7 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR, toSAR, tradableCashBucketToSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { toSAR, tradableCashBucketToSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
@@ -46,18 +45,19 @@ import { computeTaskCounts, compareActionableTodos, isTaskSnoozed, todayIsoDate 
 import type { TodoItem } from '../types';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import { usePrivacyMask } from '../context/PrivacyContext';
-import { savingsRate } from '../services/financeMetrics';
+import { savingsRateSar } from '../services/financeMetrics';
 import { debtStressScore } from '../services/debtEngines';
-import { personalFinanceHealthScore } from '../services/decisionScoringEngine';
+import { cashflowMomentumFromPnlTrend, personalFinanceHealthScore } from '../services/decisionScoringEngine';
+import { computeDashboardKpiSnapshot, averageSavingsRateSarRolling } from '../services/dashboardKpiSnapshot';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
-import { computePersonalNetWorthChartBucketsSAR, computePersonalNetWorthSAR } from '../services/personalNetWorth';
+import { computePersonalNetWorthChartBucketsSAR } from '../services/personalNetWorth';
 import { computeMonthlyReportFinancialKpis, computeWealthSummaryReportModel } from '../services/wealthSummaryReportModel';
 import { reconcileDashboardVsSummaryKpis } from '../services/kpiReconciliation';
-import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
-import { logKpiReconciliationDrift, listRecentKpiReconciliationDrift, type KpiDriftEvent } from '../services/kpiDriftTelemetry';
+import { logKpiReconciliationDrift } from '../services/kpiDriftTelemetry';
 import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { BoltIcon } from '../components/icons/BoltIcon';
+import { useDashboardReconciliationPrefs } from '../hooks/useDashboardReconciliationPrefs';
 
 interface ExtendedBudget extends Budget {
     spent: number;
@@ -393,7 +393,6 @@ const RECON_KEY_TO_CARD: Record<string, KpiCardKey> = {
     investmentRoi: 'investmentRoi',
     emergencyFundMonths: 'emergencyFund',
 };
-const RECON_PREFS_KEY = 'finova_dashboard_recon_prefs_v1';
 const AI_SUMMARY_LANG_KEY = 'finova_dashboard_ai_summary_lang_v1';
 
 const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
@@ -406,10 +405,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
     const { maskBalance } = usePrivacyMask();
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
     const [isAdmin, setIsAdmin] = useState(false);
-    const [strictReconciliationMode, setStrictReconciliationMode] = useState(true);
-    const [hardBlockOnMismatch, setHardBlockOnMismatch] = useState(true);
-    const [recentDriftEvents, setRecentDriftEvents] = useState<KpiDriftEvent[]>([]);
-    const [isDriftEventsLoading, setIsDriftEventsLoading] = useState(false);
+    const { strictReconciliationMode, hardBlockOnMismatch } = useDashboardReconciliationPrefs(auth?.user?.id);
     const lastTelemetrySignatureRef = React.useRef<string>('');
     const kpiDensity = 'compact' as const;
     const todosOpt = useTodosOptional();
@@ -424,27 +420,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         const items = [...actionable].sort(compareActionableTodos).slice(0, 5);
         return { items, overdue: counts.overdue, dueToday: counts.dueToday, open: counts.active };
     }, [todosOpt?.todos]);
-
-    useEffect(() => {
-        if (!auth?.user?.id) return;
-        try {
-            const raw = localStorage.getItem(`${RECON_PREFS_KEY}:${auth.user.id}`);
-            if (!raw) return;
-            const parsed = JSON.parse(raw);
-            if (typeof parsed?.strictReconciliationMode === 'boolean') setStrictReconciliationMode(parsed.strictReconciliationMode);
-            if (typeof parsed?.hardBlockOnMismatch === 'boolean') setHardBlockOnMismatch(parsed.hardBlockOnMismatch);
-        } catch {}
-    }, [auth?.user?.id]);
-
-    useEffect(() => {
-        if (!auth?.user?.id) return;
-        try {
-            localStorage.setItem(
-                `${RECON_PREFS_KEY}:${auth.user.id}`,
-                JSON.stringify({ strictReconciliationMode, hardBlockOnMismatch }),
-            );
-        } catch {}
-    }, [auth?.user?.id, strictReconciliationMode, hardBlockOnMismatch]);
 
     /** Investment rows: tradable cash (ledger), not DB balance or holdings. */
     const accountsForOverview = useMemo(() => {
@@ -511,13 +486,10 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
 
             const now = new Date();
             const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-            const firstDayOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-
             const d = data as any;
             const transactions = d?.personalTransactions ?? data?.transactions ?? [];
             const accounts = d?.personalAccounts ?? data?.accounts ?? [];
             const investments = d?.personalInvestments ?? data?.investments ?? [];
-            const personalAccountIds = new Set(accounts.map((a: { id: string }) => a.id));
             const accountsById = new Map(accounts.map((a: Account) => [a.id, a]));
             const txBudgetCategory = (t: { budgetCategory?: string; category?: string }) => String(t.budgetCategory ?? t.category ?? '').trim();
 
@@ -531,46 +503,24 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 return toSAR(raw, 'USD', r);
             };
 
-            // Current Month Calculations (personal only)
+            // Current month txs + KPI snapshot (single source: `services/dashboardKpiSnapshot.ts`)
             const monthlyTransactions = transactions.filter((t: { date: string }) => new Date(t.date) >= firstDayOfMonth);
-            const monthlyIncome = monthlyTransactions
-                .filter((t: { type?: string; category?: string }) => countsAsIncomeForCashflowKpi(t))
-                .reduce((sum: number, t: Transaction) => sum + txCashflowSar(t), 0);
-            const monthlyExpenses = monthlyTransactions
-                .filter((t: { type?: string; category?: string }) => countsAsExpenseForCashflowKpi(t))
-                .reduce((sum: number, t: Transaction) => sum + txCashflowSar(t), 0);
-            const monthlyPnL = monthlyIncome - monthlyExpenses;
             const budgetToMonthly = (b: { limit: number; period?: string }) => b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
             const currentMonthBudgets = (data?.budgets ?? []).filter((b) => b.month === (now.getMonth() + 1) && b.year === now.getFullYear());
-            const totalBudget = currentMonthBudgets.reduce((sum, b) => sum + budgetToMonthly(b), 0);
-            const budgetVariance = totalBudget - monthlyExpenses;
-
-            // Previous Month P&L for trend
-            const lastMonthTransactions = transactions.filter((t: { date: string }) => {
-                const date = new Date(t.date);
-                return date >= firstDayOfLastMonth && date < firstDayOfMonth;
-            });
-            const lastMonthIncome = lastMonthTransactions
-                .filter((t: { type?: string; category?: string }) => countsAsIncomeForCashflowKpi(t))
-                .reduce((sum: number, t: Transaction) => sum + txCashflowSar(t), 0);
-            const lastMonthExpenses = lastMonthTransactions
-                .filter((t: { type?: string; category?: string }) => countsAsExpenseForCashflowKpi(t))
-                .reduce((sum: number, t: Transaction) => sum + txCashflowSar(t), 0);
-            const lastMonthPnL = lastMonthIncome - lastMonthExpenses;
-
-            // Net worth — shared with Summary / Risk hub (`services/personalNetWorth.ts`)
-            const netWorth = computePersonalNetWorthSAR(data, sarPerUsd, { getAvailableCashForAccount });
-            const holdingsValueSAR = getAllInvestmentsValueInSAR(investments, sarPerUsd);
-            /** Cash at broker (deposits not yet invested) must count toward portfolio value or ROI reads as -100% with deposits only. */
-            let brokerageCashSAR = 0;
-            accounts.forEach((acc: Account) => {
-                if (acc.type === 'Investment' && personalAccountIds.has(acc.id)) {
-                    brokerageCashSAR += tradableCashBucketToSAR(getAvailableCashForAccount(acc.id), sarPerUsd);
-                }
-            });
-            const totalInvestmentsValue = holdingsValueSAR + brokerageCashSAR;
-            const netWorthPrevMonth = netWorth - monthlyPnL;
-            const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
+            const snap = computeDashboardKpiSnapshot(data, exchangeRate, getAvailableCashForAccount);
+            if (!snap) {
+                return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
+            }
+            const {
+                netWorth,
+                monthlyPnL,
+                budgetVariance,
+                roi,
+                netWorthTrend,
+                pnlTrend,
+                liquidCashSar,
+                avgMonthlyIncomeSar6Mo,
+            } = snap;
 
             // Investment data (personal portfolios only)
             const allHoldings = investments.flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []);
@@ -580,35 +530,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                  const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
                  return { ...h, gainLoss, gainLossPercent };
             });
-            const invTx = (data?.investmentTransactions ?? []).filter((t: { accountId?: string }) => personalAccountIds.has(t.accountId ?? ''));
-            const totalInvestedSar = invTx
-                .filter((t: { type?: string }) => t.type === 'deposit')
-                .reduce((sum: number, t: { total?: number; currency?: string; accountId?: string; date?: string }) => {
-                    const c = inferInvestmentTransactionCurrency(
-                        { accountId: t.accountId ?? '', currency: t.currency as 'SAR' | 'USD' | undefined },
-                        accounts as Account[],
-                        investments as any,
-                    );
-                    const day = (t.date ?? '').slice(0, 10);
-                    const r = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, exchangeRate) : sarPerUsd;
-                    return sum + toSAR(t.total ?? 0, c, r);
-                }, 0);
-            const totalWithdrawnSar = invTx
-                .filter((t: { type?: string }) => t.type === 'withdrawal')
-                .reduce((sum: number, t: { total?: number; currency?: string; accountId?: string; date?: string }) => {
-                    const c = inferInvestmentTransactionCurrency(
-                        { accountId: t.accountId ?? '', currency: t.currency as 'SAR' | 'USD' | undefined },
-                        accounts as Account[],
-                        investments as any,
-                    );
-                    const day = (t.date ?? '').slice(0, 10);
-                    const r = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, exchangeRate) : sarPerUsd;
-                    return sum + toSAR(t.total ?? 0, c, r);
-                }, 0);
-            const netCapital = totalInvestedSar - totalWithdrawnSar;
-            const totalGainLoss = totalInvestmentsValue - netCapital;
-            const roi = netCapital > 0 ? (totalGainLoss / netCapital) : 0;
-            
             const monthlySpending = new Map<string, number>();
             monthlyTransactions
                 .filter((t: { type?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && txBudgetCategory(t))
@@ -667,8 +588,14 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
 
             return {
                 kpiSummary: {
-                    netWorth, monthlyPnL, budgetVariance, roi, netWorthTrend,
-                    pnlTrend: lastMonthPnL !== 0 ? ((monthlyPnL - lastMonthPnL) / Math.abs(lastMonthPnL)) * 100 : monthlyPnL > 0 ? 100 : 0,
+                    netWorth,
+                    monthlyPnL,
+                    budgetVariance,
+                    roi,
+                    netWorthTrend,
+                    pnlTrend,
+                    liquidCashSar,
+                    avgMonthlyIncomeSar6Mo,
                 },
                 projectedCash30d,
                 currentCash,
@@ -727,42 +654,52 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         });
     }, [data, emergencyFund.monthsCovered]);
 
-    const financialHealthScore = useMemo(() => {
-        if (!data) return null;
-        const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
-        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+    const financialHealth = useMemo(() => {
+        if (!data) return { score: null as number | null, parts: null as Record<string, number> | null };
+        const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
+        const accounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []) as Account[];
         const liabilities = (data as any)?.personalLiabilities ?? data?.liabilities ?? [];
         const goals = data?.goals ?? [];
-        const sixMoAgo = new Date(); sixMoAgo.setMonth(sixMoAgo.getMonth() - 6);
-        const incomeTx = txs.filter((t: { date: string; type?: string; category?: string; amount?: number }) =>
-            countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= sixMoAgo);
-        const liquidAssets = accounts
-            .filter((a: { type?: string }) => ['Checking', 'Savings'].includes(a.type ?? ''))
-            .reduce((s: number, a: { balance?: number }) => s + Math.max(0, a.balance ?? 0), 0);
         const goalTotalTarget = goals.reduce((s: number, g: { targetAmount?: number }) => s + (g.targetAmount ?? 0), 0);
-
-        const hasSufficientData = liquidAssets > 0 || incomeTx.length > 0 || goalTotalTarget > 0;
-        if (!hasSufficientData) return null;
+        const liquidCashSar = Number((kpiSummary as { liquidCashSar?: number }).liquidCashSar ?? 0);
+        const avgMonthlyIncomeSar6Mo = Number((kpiSummary as { avgMonthlyIncomeSar6Mo?: number }).avgMonthlyIncomeSar6Mo ?? 0);
+        const hasSufficientData = liquidCashSar > 0 || avgMonthlyIncomeSar6Mo > 0 || goalTotalTarget > 0;
+        if (!hasSufficientData) return { score: null, parts: null };
 
         const liquidityScore = Math.min(100, (emergencyFund.monthsCovered / EMERGENCY_FUND_TARGET_MONTHS) * 100);
-        const savingsRatePct = savingsRate(txs);
+        hydrateSarPerUsdDailySeries(data, exchangeRate);
+        const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+        const now = new Date();
+        const savingsThisMonth = savingsRateSar(txs, accounts, now, sarPerUsd);
+        const savingsRolling = averageSavingsRateSarRolling(txs, accounts, data, exchangeRate, 3);
+        const savingsRatePct = (savingsThisMonth + savingsRolling) / 2;
         const totalMonthlyDebt = liabilities.reduce((s: number, l: { monthlyPayment?: number }) => s + (l.monthlyPayment ?? 0), 0);
-        const grossMonthlyIncome = incomeTx.length > 0
-            ? incomeTx.reduce((s: number, t: { amount?: number }) => s + (Number(t.amount) ?? 0), 0) / 6
-            : 1;
-        const debtResult = debtStressScore(totalMonthlyDebt, grossMonthlyIncome, liquidAssets);
+        const grossMonthlyIncome = avgMonthlyIncomeSar6Mo > 0 ? avgMonthlyIncomeSar6Mo : 1;
+        const debtResult = debtStressScore(totalMonthlyDebt, grossMonthlyIncome, liquidCashSar);
         const goalTotalCurrent = goals.reduce((s: number, g: { currentAmount?: number }) => s + (g.currentAmount ?? 0), 0);
         const goalProgressScore = goalTotalTarget > 0 ? Math.min(100, (goalTotalCurrent / goalTotalTarget) * 100) : 100;
         const budgetVariance = (kpiSummary as { budgetVariance?: number }).budgetVariance ?? 0;
         const expenseControlScore = budgetVariance >= 0 ? Math.min(100, 50 + budgetVariance / 100) : Math.max(0, 50 + budgetVariance / 100);
-        return personalFinanceHealthScore({
+        const pnlTrend = Number((kpiSummary as { pnlTrend?: number }).pnlTrend ?? 0);
+        const cashflowMomentumScore = cashflowMomentumFromPnlTrend(pnlTrend);
+        const score = personalFinanceHealthScore({
             liquidityScore,
             savingsRatePct,
             debtPressureScore: debtResult.score,
             goalProgressScore,
             expenseControlScore: Number.isFinite(expenseControlScore) ? expenseControlScore : 50,
+            cashflowMomentumScore,
         });
-    }, [data, emergencyFund.monthsCovered, kpiSummary]);
+        const parts = {
+            liquidity: Math.round(liquidityScore),
+            savings: Math.round(Math.max(0, Math.min(100, savingsRatePct * 2))),
+            debtRelief: Math.round(Math.max(0, Math.min(100, 100 - debtResult.score))),
+            goals: Math.round(goalProgressScore),
+            expenses: Math.round(Number.isFinite(expenseControlScore) ? expenseControlScore : 50),
+            momentum: Math.round(cashflowMomentumScore),
+        };
+        return { score, parts };
+    }, [data, emergencyFund.monthsCovered, kpiSummary, exchangeRate]);
 
     const summaryModelForReconciliation = useMemo(() => {
         if (!data) return null;
@@ -788,31 +725,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             summaryMonthlyExtras: summaryMonthlyKpisForReconciliation,
         });
     }, [summaryModelForReconciliation, summaryMonthlyKpisForReconciliation, kpiSummary, emergencyFund.monthsCovered]);
-
-    const dashboardValidationWarnings = useMemo(() => {
-        const warnings: string[] = [];
-        const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
-        const budgets = data?.budgets ?? [];
-        const accounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []) as Account[];
-        const month = new Date().getMonth() + 1;
-        const year = new Date().getFullYear();
-
-        if (!Number.isFinite(kpiSummary.netWorth ?? 0)) warnings.push('Net worth calculation returned an invalid number.');
-        if (!Number.isFinite(kpiSummary.monthlyPnL ?? 0)) warnings.push("This month's P&L is invalid.");
-        if (!Number.isFinite(kpiSummary.budgetVariance ?? 0)) warnings.push('Budget variance is invalid.');
-        if (!Number.isFinite(kpiSummary.roi ?? 0)) warnings.push('Investment ROI is invalid.');
-
-        const uncategorizedExpenseCount = txs.filter((t) => countsAsExpenseForCashflowKpi(t) && !((t as any).budgetCategory ?? t.category)).length;
-        if (uncategorizedExpenseCount > 0) warnings.push(`${uncategorizedExpenseCount} expense transaction(s) are uncategorized.`);
-
-        const currentMonthBudgetCount = budgets.filter((b) => b.month === month && b.year === year).length;
-        if (currentMonthBudgetCount === 0 && txs.length > 0) warnings.push('No budgets found for the current month.');
-
-        const negativeCashAccounts = accounts.filter((a) => (a.type === 'Checking' || a.type === 'Savings') && (Number(a.balance) || 0) < 0).length;
-        if (negativeCashAccounts > 0) warnings.push(`${negativeCashAccounts} cash account(s) have negative balances.`);
-
-        return warnings;
-    }, [data, kpiSummary]);
 
     const getTrendString = (trend: number = 0) => trend.toFixed(1) + '%';
     const visibleKpiOrder: KpiCardKey[] = isAdmin ? KPI_CARD_ORDER : KPI_CARD_ORDER.filter((k) => k !== 'netWorth');
@@ -847,26 +759,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             })),
         });
     }, [strictReconciliationMode, hardBlockOnMismatch, kpiReconciliation, auth?.user?.id]);
-
-    useEffect(() => {
-        let cancelled = false;
-        const loadDriftEvents = async () => {
-            setIsDriftEventsLoading(true);
-            const events = await listRecentKpiReconciliationDrift(6);
-            if (!cancelled) {
-                setRecentDriftEvents(events);
-                setIsDriftEventsLoading(false);
-            }
-        };
-        void loadDriftEvents();
-        const timer = window.setInterval(() => {
-            void loadDriftEvents();
-        }, 60000);
-        return () => {
-            cancelled = true;
-            window.clearInterval(timer);
-        };
-    }, [auth?.user?.id, strictReconciliationMode, hardBlockOnMismatch, kpiReconciliation?.mismatchCount]);
 
     const kpiCards = useMemo(() => {
         const cardProps = { density: kpiDensity as 'compact' | 'comfortable' };
@@ -944,109 +836,14 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 </div>
             )}
 
-            {dashboardValidationWarnings.length > 0 && (
-                <SectionCard title="Dashboard validation checks" collapsible collapsibleSummary="Data quality and wiring checks" defaultExpanded className="mb-4">
-                    <ul className="space-y-1 text-xs text-amber-800">
-                        {dashboardValidationWarnings.slice(0, 8).map((w, i) => (
-                            <li key={`warn-${i}`}>- {w}</li>
-                        ))}
-                    </ul>
-                </SectionCard>
-            )}
-
-            <div className={`mb-4 rounded-xl border p-3 ${strictReconciliationMode && kpiReconciliation && !kpiReconciliation.ok ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-slate-50'}`}>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                        <p className="text-sm font-semibold text-slate-900">KPI reconciliation mode</p>
-                        <p className="text-xs text-slate-600">Strict cross-check: Dashboard vs Summary for shared KPI formulas.</p>
-                    </div>
-                    <label className="inline-flex items-center gap-2 text-xs text-slate-700">
-                        <input
-                            type="checkbox"
-                            checked={strictReconciliationMode}
-                            onChange={(e) => setStrictReconciliationMode(e.target.checked)}
-                            className="rounded border-slate-300 text-primary focus:ring-primary"
-                        />
-                        Strict mode
-                    </label>
-                    <label className="inline-flex items-center gap-2 text-xs text-slate-700">
-                        <input
-                            type="checkbox"
-                            checked={hardBlockOnMismatch}
-                            onChange={(e) => setHardBlockOnMismatch(e.target.checked)}
-                            className="rounded border-slate-300 text-primary focus:ring-primary"
-                        />
-                        Hard block on mismatch
-                    </label>
-                </div>
-                {kpiReconciliation && (
-                    <>
-                        <p className={`mt-2 text-xs font-medium ${kpiReconciliation.ok ? 'text-emerald-700' : 'text-red-700'}`}>
-                            {kpiReconciliation.ok
-                                ? 'All reconciled KPIs are within thresholds.'
-                                : `${kpiReconciliation.mismatchCount} KPI mismatch(es) detected automatically.`}
-                        </p>
-                        <div className="mt-2 space-y-1.5">
-                            {kpiReconciliation.rows.map((r) => (
-                                <div key={r.key} className={`rounded-md border px-2.5 py-1.5 text-xs ${r.withinThreshold ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-800'}`}>
-                                    <span className="font-semibold">{r.label}:</span>{' '}
-                                    Dashboard {r.key === 'investmentRoi' ? `${(r.dashboardValue * 100).toFixed(2)}%` : r.key === 'emergencyFundMonths' ? `${r.dashboardValue.toFixed(2)} mo` : formatCurrencyString(r.dashboardValue, { digits: 2 })} vs Summary {r.key === 'investmentRoi' ? `${(r.summaryValue * 100).toFixed(2)}%` : r.key === 'emergencyFundMonths' ? `${r.summaryValue.toFixed(2)} mo` : formatCurrencyString(r.summaryValue, { digits: 2 })}{' '}
-                                    (delta {r.key === 'investmentRoi' ? `${(r.deltaAbs * 100).toFixed(2)}%` : r.key === 'emergencyFundMonths' ? `${r.deltaAbs.toFixed(2)} mo` : formatCurrencyString(r.deltaAbs, { digits: 2 })}, {(r.deltaPct * 100).toFixed(2)}%)
-                                </div>
-                            ))}
-                        </div>
-                    </>
-                )}
-            </div>
-
-            <div className="mb-4 rounded-xl border border-slate-200 bg-white p-3">
-                <div className="flex items-center justify-between gap-2">
-                    <div>
-                        <p className="text-sm font-semibold text-slate-900">System Health</p>
-                        <p className="text-xs text-slate-600">Recent KPI reconciliation drift diagnostics</p>
-                    </div>
-                    {recentDriftEvents.length > 0 && (
-                        <span className={`text-xs font-semibold px-2 py-1 rounded-full ${recentDriftEvents.some((e) => e.mismatchCount > 0) ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
-                            {recentDriftEvents.some((e) => e.mismatchCount > 0) ? 'Attention' : 'Healthy'}
-                        </span>
-                    )}
-                </div>
-                {isDriftEventsLoading ? (
-                    <p className="mt-2 text-xs text-slate-500">Loading diagnostics…</p>
-                ) : recentDriftEvents.length === 0 ? (
-                    <p className="mt-2 text-xs text-slate-500">No recent drift events logged.</p>
-                ) : (
-                    <div className="mt-2 space-y-1.5">
-                        {recentDriftEvents.map((event, idx) => (
-                            <div
-                                key={`${event.at}-${idx}`}
-                                className={`rounded-md border px-2.5 py-1.5 text-xs ${event.mismatchCount > 0 ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}
-                            >
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <span className="font-medium">
-                                        {new Date(event.at).toLocaleString()} • {event.page}
-                                    </span>
-                                    <span>
-                                        mismatches: <strong>{event.mismatchCount}</strong>
-                                    </span>
-                                </div>
-                                <div className="mt-0.5 text-[11px]">
-                                    mode: {event.strictMode ? 'strict' : 'normal'} / {event.hardBlock ? 'hard-block' : 'warn-only'}
-                                    {event.keys.length > 0 ? ` • keys: ${event.keys.join(', ')}` : ''}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-
-            {strictReconciliationMode && hardBlockOnMismatch && kpiReconciliation && !kpiReconciliation.ok && (
-                <div className="mb-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3">
-                    <p className="text-sm font-semibold text-red-800">Critical KPI mismatch detected</p>
-                    <p className="text-xs text-red-700 mt-1">
-                        Affected KPI cards are temporarily blocked to prevent decisions based on inconsistent data.
-                        Resolve flagged mismatches in reconciliation mode first.
+            {blockedKpiCards.size > 0 && (
+                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm text-amber-950">
+                        <strong>{blockedKpiCards.size}</strong> KPI card(s) blocked due to reconciliation mismatch (strict + hard block).
                     </p>
+                    <button type="button" onClick={() => setActivePage('System & APIs Health')} className="text-sm font-medium text-primary hover:underline shrink-0">
+                        Open data quality and KPI checks →
+                    </button>
                 </div>
             )}
 
@@ -1196,21 +993,31 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 </div>
             )}
 
-            <div className="mb-4 flex flex-wrap items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200 text-sm">
-                <span className="font-medium text-slate-700">Financial health score:</span>
-                {financialHealthScore != null ? (
-                    <>
-                        <span className={`font-bold tabular-nums ${financialHealthScore >= 70 ? 'text-green-700' : financialHealthScore >= 50 ? 'text-amber-700' : 'text-red-700'}`}>
-                            {financialHealthScore}/100
-                        </span>
-                        <span className="text-slate-500 text-xs" title="Liquidity, savings rate, debt pressure, goal progress, expense control">
-                            (liquidity, savings, debt, goals, expenses)
-                        </span>
-                    </>
-                ) : (
-                    <span className="text-slate-500 text-xs">
-                        Add account balances, transactions, or goals to see your score.
-                    </span>
+            <div className="mb-4 p-3 rounded-xl bg-slate-50 border border-slate-200 text-sm space-y-2">
+                <div className="flex flex-wrap items-center gap-3">
+                    <span className="font-medium text-slate-700">Financial health score</span>
+                    {financialHealth.score != null ? (
+                        <>
+                            <span className={`font-bold tabular-nums text-lg ${financialHealth.score >= 70 ? 'text-green-700' : financialHealth.score >= 50 ? 'text-amber-700' : 'text-red-700'}`}>
+                                {financialHealth.score}/100
+                            </span>
+                            <span className="text-slate-500 text-xs max-w-xl">
+                                Blends emergency liquidity, SAR-based savings rate (this month + 3-mo avg), debt pressure, goal progress, budget control, and month-on-month PnL momentum—updates as transactions and balances change.
+                            </span>
+                        </>
+                    ) : (
+                        <span className="text-slate-500 text-xs">Add account balances, transactions, or goals to see your score.</span>
+                    )}
+                </div>
+                {financialHealth.parts && (
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600 border-t border-slate-200/80 pt-2">
+                        <span title="Emergency fund vs target months">Liquidity {financialHealth.parts.liquidity}</span>
+                        <span title="From blended savings rate">Savings {financialHealth.parts.savings}</span>
+                        <span title="100 − debt stress">Debt {financialHealth.parts.debtRelief}</span>
+                        <span title="Goal funding progress">Goals {financialHealth.parts.goals}</span>
+                        <span title="Budget variance">Expenses {financialHealth.parts.expenses}</span>
+                        <span title="PnL vs prior month">Momentum {financialHealth.parts.momentum}</span>
+                    </div>
                 )}
             </div>
 
@@ -1330,14 +1137,14 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 </div>
             )}
 
-            <div className="cards-grid grid grid-cols-1 lg:grid-cols-5">
-                 <div className="lg:col-span-3 section-card-hover flex flex-col" onClick={() => setActivePage('Transactions')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Transactions')}>
+            <div className="cards-grid grid grid-cols-1 gap-4">
+                 <div className="section-card-hover flex flex-col min-h-[300px]" onClick={() => setActivePage('Transactions')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Transactions')}>
                     <h3 className="section-title">Monthly Cash Flow</h3>
                     <div className="flex-1 min-h-[280px] rounded-lg overflow-hidden"><CashflowChart data={monthlyCashflowData} /></div>
                  </div>
-                 <div className="lg:col-span-2 section-card-hover flex flex-col" onClick={() => setActivePage('Investments')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Investments')}>
+                 <div className="section-card-hover flex flex-col min-h-[320px]" onClick={() => setActivePage('Investments')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Investments')}>
                     <h3 className="section-title">Investment Allocation & Performance</h3>
-                    <div className="flex-1 min-h-[280px] rounded-lg overflow-hidden">
+                    <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden w-full">
                         {investmentTreemapData.length > 0 ? (
                             <PerformanceTreemap data={investmentTreemapData} />
                         ) : (

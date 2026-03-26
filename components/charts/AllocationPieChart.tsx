@@ -80,13 +80,14 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
   const tooltipPosition = chartSize.width >= 640
     ? { x: Math.max(8, chartSize.width - 220), y: Math.max(10, Math.round(chartSize.height * 0.24)) }
     : undefined;
-  const pieCenterX = chartSize.width >= 640 ? '38%' : '50%';
+  /** Keep the donut centered so the overlay label lines up with the hole (was 38% on wide screens, which skewed the total). */
+  const pieCenterX = '50%';
 
   return (
     <ChartContainer className="w-full h-full min-h-[200px] relative" isEmpty={isEmpty}>
       <div ref={chartHostRef} className="w-full h-full">
       <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
+        <PieChart margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
           <Pie
             data={sanitizedData}
             cx={pieCenterX}
@@ -117,7 +118,7 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data }) => {
       </ResponsiveContainer>
       </div>
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-4">
-        <div className="rounded-xl bg-white/97 border border-slate-200 shadow-sm px-4 py-2.5 text-center max-w-[82%]">
+        <div className="rounded-xl bg-white/97 border border-slate-200 shadow-sm px-4 py-2.5 text-center max-w-[min(88%,14rem)] mx-auto">
           <p className="text-[11px] sm:text-xs font-semibold text-gray-500 uppercase tracking-[0.12em]">Total Value</p>
           <p className="text-xl sm:text-2xl font-bold text-dark tabular-nums mt-1 whitespace-nowrap overflow-hidden text-ellipsis" title={totalFull}>{totalDisplay}</p>
           {sanitizedData.length === 1 && <p className="text-xs text-slate-500 mt-0.5">{sanitizedData[0].name}</p>}

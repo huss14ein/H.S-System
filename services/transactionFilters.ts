@@ -11,11 +11,15 @@ export function isInternalTransferTransaction(t: {
   return c === 'transfer' || c === 'transfers';
 }
 
+function normalizedTxType(t: { type?: string }): string {
+  return String(t.type ?? '').trim().toLowerCase();
+}
+
 export function countsAsExpenseForCashflowKpi(t: {
   type?: string;
   category?: string;
 }): boolean {
-  return t.type === 'expense' && !isInternalTransferTransaction(t);
+  return normalizedTxType(t) === 'expense' && !isInternalTransferTransaction(t);
 }
 
 /** Income with category Transfer/Transfers is treated as an internal move, not earned cashflow. */
@@ -23,5 +27,5 @@ export function countsAsIncomeForCashflowKpi(t: {
   type?: string;
   category?: string;
 }): boolean {
-  return t.type === 'income' && !isInternalTransferTransaction(t);
+  return normalizedTxType(t) === 'income' && !isInternalTransferTransaction(t);
 }

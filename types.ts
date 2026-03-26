@@ -277,6 +277,8 @@ export interface InvestmentTransaction {
   id: string;
   user_id?: string;
   accountId: string;
+  /** When present (e.g. DB column), ties the row to a portfolio for scoping. */
+  portfolioId?: string;
   date: string;
   type: 'buy' | 'sell' | 'dividend' | 'deposit' | 'withdrawal';
   symbol: string;

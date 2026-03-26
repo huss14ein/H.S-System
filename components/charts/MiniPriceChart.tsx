@@ -55,6 +55,25 @@ const MiniPriceChart: React.FC<MiniPriceChartProps> = ({ symbol, currentPrice, c
     const isRealData = Boolean(historicalData && historicalData.length > 0);
     const trendPct = startPrice > 0 && data.length >= 2 ? ((endPrice - startPrice) / startPrice) * 100 : null;
 
+    if (realDataOnly && data.length === 0) {
+        return (
+            <div className="w-full min-w-[120px]">
+                <div className="flex items-center justify-between text-xs mb-0.5 gap-1 flex-wrap">
+                    <span className="text-[10px] text-slate-400 font-medium" title="No daily history returned for this symbol">
+                        1M unavailable
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-medium">—</span>
+                </div>
+                <div
+                    className="flex h-14 w-full items-center justify-center rounded border border-dashed border-slate-200 bg-slate-50/80 text-[10px] text-slate-400"
+                    aria-hidden
+                >
+                    No series
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="w-full min-w-[120px]">
             <div className="flex items-center justify-between text-xs mb-0.5 gap-1 flex-wrap">

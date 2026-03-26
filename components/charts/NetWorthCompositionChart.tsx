@@ -8,8 +8,19 @@ import { useCurrency } from '../../context/CurrencyContext';
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from '../../services/fxDailySeries';
 import { computePersonalNetWorthChartBucketsSAR } from '../../services/personalNetWorth';
 import { listNetWorthSnapshots } from '../../services/netWorthSnapshot';
+import InfoHint from '../InfoHint';
 
-type TimePeriod = '1Y' | '3Y' | 'All';
+type TimePeriod = 'Day' | 'Week' | 'Month' | '6M' | '1Y' | '3Y' | 'All';
+
+const PERIOD_LABELS: Record<TimePeriod, string> = {
+  Day: 'Day',
+  Week: 'Week',
+  Month: 'Month',
+  '6M': '6 mo',
+  '1Y': '1Y',
+  '3Y': '3Y',
+  All: 'All',
+};
 
 const RECEIVABLES_COLOR = CHART_COLORS.categorical[1];
 
@@ -89,15 +100,39 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
             }));
 
         const nowFilter = new Date();
-        const nowCopy1 = new Date(nowFilter);
-        const nowCopy2 = new Date(nowFilter);
+        const startOfToday = new Date(nowFilter.getFullYear(), nowFilter.getMonth(), nowFilter.getDate());
         switch (timePeriod) {
+            case 'Day': {
+                const start = new Date(startOfToday);
+                start.setDate(start.getDate() - 1);
+                return finalData.filter((d) => new Date(d.date as string) >= start);
+            }
+            case 'Week': {
+                const start = new Date(startOfToday);
+                start.setDate(start.getDate() - 7);
+                return finalData.filter((d) => new Date(d.date as string) >= start);
+            }
+            case 'Month': {
+                const y = nowFilter.getFullYear();
+                const m = nowFilter.getMonth();
+                return finalData.filter((d) => {
+                    const dt = new Date(d.date as string);
+                    return dt.getFullYear() === y && dt.getMonth() === m;
+                });
+            }
+            case '6M': {
+                const target = new Date(nowFilter);
+                target.setMonth(target.getMonth() - 6);
+                return finalData.filter((d) => new Date(d.date as string) >= target);
+            }
             case '1Y': {
-                const targetDate = new Date(nowCopy1.setFullYear(nowCopy1.getFullYear() - 1));
+                const targetDate = new Date(nowFilter);
+                targetDate.setFullYear(targetDate.getFullYear() - 1);
                 return finalData.filter((d) => new Date(d.date as string) >= targetDate);
             }
             case '3Y': {
-                const targetDate = new Date(nowCopy2.setFullYear(nowCopy2.getFullYear() - 3));
+                const targetDate = new Date(nowFilter);
+                targetDate.setFullYear(targetDate.getFullYear() - 3);
                 return finalData.filter((d) => new Date(d.date as string) >= targetDate);
             }
             case 'All':
@@ -112,22 +147,28 @@ const NetWorthCompositionChart: React.FC<{ title: string }> = ({ title }) => {
         <div className="h-full flex flex-col min-w-0">
             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 mb-4 min-w-0">
                 <div className="min-w-0">
-                    <h3 className="text-lg font-semibold text-dark">{title}</h3>
+                    <h3 className="text-lg font-semibold text-dark inline-flex items-center gap-1.5 flex-wrap">
+                        {title}
+                        <InfoHint
+                            placement="bottom"
+                            text="History is stored as monthly snapshot points. Shorter ranges (day/week/month) filter those points; very short windows may show one month until more history exists."
+                        />
+                    </h3>
                     <p className="text-xs text-slate-500 mt-1 max-w-xl">
                         Historical rows use stored monthly snapshots (SAR at capture). The latest month is recomputed from your books using today’s rate from the SAR/USD daily series (Wealth Ultra / snapshots, forward-filled). The series is hydrated back to your oldest snapshot so past days don’t fall back to a single spot.
                     </p>
                 </div>
-                <div className="flex space-x-1 bg-slate-100 p-1 rounded-lg shrink-0">
-                    {(['1Y', '3Y', 'All'] as TimePeriod[]).map((period) => (
+                <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-lg shrink-0 max-w-full justify-end">
+                    {(['Day', 'Week', 'Month', '6M', '1Y', '3Y', 'All'] as TimePeriod[]).map((period) => (
                         <button
                             key={period}
                             type="button"
                             onClick={() => setTimePeriod(period)}
-                            className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
                                 timePeriod === period ? 'bg-white shadow text-primary' : 'text-slate-600 hover:bg-slate-200'
                             }`}
                         >
-                            {period}
+                            {PERIOD_LABELS[period]}
                         </button>
                     ))}
                 </div>

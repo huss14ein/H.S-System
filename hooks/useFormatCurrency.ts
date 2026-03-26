@@ -77,6 +77,45 @@ export const useFormatCurrency = () => {
         return formattedString;
     };
 
+    /**
+     * The other-currency equivalent for tooltips / hover (primary is from formatCurrencyString without showSecondary).
+     * When `inCurrency` is set, value is in that currency and the equivalent is the paired currency.
+     */
+    const formatSecondaryEquivalent = (value: number, options: Omit<FormatCurrencyOptions, 'colorize' | 'showSecondary'> = {}) => {
+        const locale = 'en-US';
+        const { digits = 2, forceUSD = false, inCurrency } = options;
+        if (forceUSD) {
+            const secondaryValue = value / exchangeRate;
+            if (!Number.isFinite(secondaryValue)) return null;
+            return new Intl.NumberFormat(locale, {
+                style: 'currency',
+                currency: 'USD',
+                minimumFractionDigits: digits,
+                maximumFractionDigits: digits,
+            }).format(secondaryValue);
+        }
+        if (inCurrency != null) {
+            const otherCurrency: TradeCurrency = inCurrency === 'USD' ? 'SAR' : 'USD';
+            const secondaryValue = inCurrency === 'USD' ? value * exchangeRate : value / exchangeRate;
+            if (!Number.isFinite(secondaryValue)) return null;
+            return new Intl.NumberFormat(locale, {
+                style: 'currency',
+                currency: otherCurrency,
+                minimumFractionDigits: digits,
+                maximumFractionDigits: digits,
+            }).format(secondaryValue);
+        }
+        const secondaryCurrency = currency === 'SAR' ? 'USD' : 'SAR';
+        const secondaryValue = currency === 'SAR' ? value / exchangeRate : value * exchangeRate;
+        if (!Number.isFinite(secondaryValue)) return null;
+        return new Intl.NumberFormat(locale, {
+            style: 'currency',
+            currency: secondaryCurrency,
+            minimumFractionDigits: digits,
+            maximumFractionDigits: digits,
+        }).format(secondaryValue);
+    };
+
     const formatCurrency = (value: number, options: FormatCurrencyOptions = {}) => {
         const { colorize = false, ...restOptions } = options;
 
@@ -91,5 +130,5 @@ export const useFormatCurrency = () => {
         return React.createElement('span', { className: colorClass }, formattedString);
     };
 
-    return { formatCurrency, formatCurrencyString };
+    return { formatCurrency, formatCurrencyString, formatSecondaryEquivalent };
 };

@@ -13,10 +13,8 @@ import {
     getAISettingsGuidance,
     getAISystemHealthDigest,
     getAICommoditiesInsight,
-    getAIExecutionHistoryDigest,
     getAIWealthUltraInsight,
     type CommoditiesAiContext,
-    type ExecutionHistoryAiContext,
     type WealthUltraAiContext,
     type InvestmentHubAiMeta,
     type LogicEnginesAiContext,
@@ -26,6 +24,7 @@ import {
     formatAiError,
     translateFinancialInsightToArabic,
 } from '../services/geminiService';
+import SafeMarkdownRenderer from './SafeMarkdownRenderer';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { LightBulbIcon } from './icons/LightBulbIcon';
 import { FinancialData, type Holding } from '../types';
@@ -48,7 +47,6 @@ type AIContext =
     | 'settings'
     | 'systemHealth'
     | 'commodities'
-    | 'executionHistory'
     | 'wealthUltra';
 
 type InsightSectionVariant = 'info' | 'success' | 'warning' | 'danger' | 'neutral';
@@ -107,46 +105,6 @@ const sectionLabel: Record<InsightSectionVariant, string> = {
     neutral: 'Note',
 };
 
-function renderBodyAsBlocks(body: string): React.ReactNode {
-    const lines = body.split('\n').filter((l) => l.trim() !== '');
-    if (lines.length === 0) return null;
-    const bullets: string[] = [];
-    const paragraphs: string[] = [];
-    for (const line of lines) {
-        const t = line.trim();
-        const bullet = /^[-*]\s+(.+)$/.exec(t);
-        if (bullet) bullets.push(bullet[1]);
-        else paragraphs.push(t);
-    }
-    return (
-        <div className="space-y-2 text-sm leading-relaxed">
-            {paragraphs.map((p, i) => (
-                <p key={`p-${i}`} className="whitespace-pre-wrap">
-                    {stripSimpleMarkdownBold(p)}
-                </p>
-            ))}
-            {bullets.length > 0 && (
-                <ul className="list-disc ps-5 space-y-1.5 marker:text-slate-400">
-                    {bullets.map((b, i) => (
-                        <li key={`b-${i}`} className="whitespace-pre-wrap">
-                            {stripSimpleMarkdownBold(b)}
-                        </li>
-                    ))}
-                </ul>
-            )}
-        </div>
-    );
-}
-
-function stripSimpleMarkdownBold(s: string): React.ReactNode {
-    const parts = s.split(/(\*\*[^*]+\*\*)/g);
-    return parts.map((part, i) => {
-        const m = /^\*\*([^*]+)\*\*$/.exec(part);
-        if (m) return <strong key={i} className="font-semibold text-slate-900">{m[1]}</strong>;
-        return <span key={i}>{part}</span>;
-    });
-}
-
 // This is a simplified router for demonstration. A real app might have more complex logic.
 const getAnalysisForPage = (
     context: AIContext,
@@ -190,13 +148,6 @@ const getAnalysisForPage = (
                 return Promise.resolve('Not enough commodity context. Reload the page or add a holding, then try again.');
             }
             return getAICommoditiesInsight(ctx);
-        }
-        case 'executionHistory': {
-            const ctx = contextData as ExecutionHistoryAiContext | undefined;
-            if (!ctx || typeof ctx.total !== 'number') {
-                return Promise.resolve('Not enough execution history. Open this tab after running a plan, or reload.');
-            }
-            return getAIExecutionHistoryDigest(ctx);
         }
         case 'wealthUltra': {
             const ctx = contextData as WealthUltraAiContext | undefined;
@@ -445,7 +396,9 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
                                             <h3 className="text-sm font-bold text-slate-900">{sec.title}</h3>
                                         </div>
                                     )}
-                                    {renderBodyAsBlocks(sec.body)}
+                                    {sec.body.trim() ? (
+                                        <SafeMarkdownRenderer content={sec.body} className="!prose-sm" />
+                                    ) : null}
                                 </div>
                             );
                         })}

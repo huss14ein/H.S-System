@@ -384,8 +384,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const [bulkAddSelectedCategories, setBulkAddSelectedCategories] = useState<string[]>([]);
     /** Previous bulk-add template category order; used to merge user checkbox state when salary/family/profile/month updates. */
     const bulkAddPrevSuggestionNamesRef = useRef<string[]>([]);
-    /** After first non-empty template sync, empty `bulkAddSelectedCategories` means the user chose “deselect all”, not the initial pre-effect frame. */
-    const bulkAddTemplateSyncedRef = useRef(false);
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
 
@@ -978,14 +976,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             : (suggestedMonthlySalary && suggestedMonthlySalary > 0 ? suggestedMonthlySalary : 0);
         const monthlySalary = Number.isFinite(salary) && salary > 0 ? salary : fallback;
         if (!monthlySalary || monthlySalary <= 0 || bulkAddSuggestedCategories.length === 0) return bulkAddSuggestedCategories;
-        // After sync, “nothing selected” should show 0 limits (not full template), so limits don’t look like they “snap back” with no selection.
-        if (
-            bulkAddTemplateSyncedRef.current &&
-            bulkAddSelectedCategories.length === 0 &&
-            bulkAddSuggestedCategories.length > 0
-        ) {
-            return bulkAddSuggestedCategories.map((c) => ({ ...c, limit: 0 }));
-        }
         return computeBulkAddLimitsForSelection(
             bulkAddSuggestedCategories,
             bulkAddSelectedCategories,
@@ -1002,11 +992,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
         const names = bulkAddSuggestedCategories.map((c) => c.category);
         if (names.length === 0) {
             bulkAddPrevSuggestionNamesRef.current = [];
-            bulkAddTemplateSyncedRef.current = false;
             setBulkAddSelectedCategories([]);
             return;
         }
-        bulkAddTemplateSyncedRef.current = true;
 
         const prevNames = bulkAddPrevSuggestionNamesRef.current;
         const prevSet = new Set(prevNames);
@@ -2272,7 +2260,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                     <div className="flex items-center justify-between gap-2">
                                         <span className="text-xs font-medium text-slate-600">Select categories to create or update (limits sync with salary, profile & selection):</span>
                                         <span className="flex gap-2">
-                                            <button type="button" onClick={() => setBulkAddSelectedCategories(bulkAddDisplayCategories.map((c) => c.category))} className="text-xs text-emerald-600 hover:text-emerald-800 font-medium">Select all</button>
+                                            <button type="button" onClick={() => setBulkAddSelectedCategories(bulkAddSuggestedCategories.map((c) => c.category))} className="text-xs text-emerald-600 hover:text-emerald-800 font-medium">Select all</button>
                                             <span className="text-slate-300">|</span>
                                             <button type="button" onClick={() => setBulkAddSelectedCategories([])} className="text-xs text-emerald-600 hover:text-emerald-800 font-medium">Deselect all</button>
                                         </span>

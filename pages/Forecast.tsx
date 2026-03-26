@@ -410,79 +410,87 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 </p>
             </CollapsibleSection>
 
-            <div className="cards-grid grid grid-cols-1 lg:grid-cols-4 items-start gap-6 lg:gap-8">
-                <SectionCard
-                    title="Forecast Assumptions"
-                    className="lg:col-span-1 sticky top-24 space-y-4"
-                    collapsible
-                    collapsibleSummary="Presets, horizon, run"
-                    defaultExpanded
-                >
-                    <p className="text-xs text-gray-600 flex items-center gap-1"><InfoHint text="Presets set growth and savings increase; run each to compare scenarios in the table." /> Scenario presets:</p>
-                    <div className="flex flex-wrap gap-2">
-                        {(['Conservative', 'Base', 'Aggressive'] as const).map((preset) => (
-                            <button
-                                key={preset}
-                                onClick={() => applyScenarioPreset(preset)}
-                                className={`px-2.5 py-1 text-xs rounded-full border ${scenarioPreset === preset ? 'bg-primary text-white border-primary' : 'bg-white text-gray-700 border-gray-300 hover:border-primary'}`}
-                            >
-                                {preset}
-                            </button>
-                        ))}
-                        <span className="inline-flex items-center gap-1">
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setMonthlySavingsTouched(true);
-                                    setMonthlySavings(Math.max(0, savingsAnalytics.medianMonthlyNet));
-                                    handleManualIncomeGrowthChange(Number(savingsAnalytics.incomeGrowthSuggestion.toFixed(1)));
-                                }}
-                                className="px-2.5 py-1 text-xs rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100"
-                                title="Sets monthly savings to your 12-month median and savings growth to a suggested rate from history"
-                            >
-                                Auto-fill from history
-                            </button>
-                            <InfoHint text="Uses your last 12 months of external cash flow (income minus expenses, transfers excluded): median net flow seeds the monthly contribution (floored at zero for this model) and a suggested savings growth rate." />
-                        </span>
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-4 gap-6 lg:gap-8 lg:items-start">
+                <div className="lg:col-span-1 min-w-0 w-full lg:self-start">
+                    <div className="lg:sticky lg:top-24">
+                        <SectionCard
+                            title="Forecast Assumptions"
+                            className="w-full"
+                            collapsible
+                            collapsibleSummary="Presets, horizon, run"
+                            defaultExpanded
+                        >
+                            <div className="space-y-5">
+                                <p className="text-xs text-gray-600 flex items-center gap-1.5 flex-wrap"><InfoHint text="Presets set growth and savings increase; run each to compare scenarios in the table." /> Scenario presets:</p>
+                                <div className="flex flex-wrap gap-2">
+                                    {(['Conservative', 'Base', 'Aggressive'] as const).map((preset) => (
+                                        <button
+                                            key={preset}
+                                            onClick={() => applyScenarioPreset(preset)}
+                                            className={`px-2.5 py-1 text-xs rounded-full border ${scenarioPreset === preset ? 'bg-primary text-white border-primary' : 'bg-white text-gray-700 border-gray-300 hover:border-primary'}`}
+                                        >
+                                            {preset}
+                                        </button>
+                                    ))}
+                                    <span className="inline-flex items-center gap-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setMonthlySavingsTouched(true);
+                                                setMonthlySavings(Math.max(0, savingsAnalytics.medianMonthlyNet));
+                                                handleManualIncomeGrowthChange(Number(savingsAnalytics.incomeGrowthSuggestion.toFixed(1)));
+                                            }}
+                                            className="px-2.5 py-1 text-xs rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100"
+                                            title="Sets monthly savings to your 12-month median and savings growth to a suggested rate from history"
+                                        >
+                                            Auto-fill from history
+                                        </button>
+                                        <InfoHint text="Uses your last 12 months of external cash flow (income minus expenses, transfers excluded): median net flow seeds the monthly contribution (floored at zero for this model) and a suggested savings growth rate." />
+                                    </span>
+                                </div>
+                                <div>
+                                    <label htmlFor="horizon" className="block text-sm font-medium text-gray-700 flex items-center">Forecast Horizon: {horizon} years <InfoHint text="Number of years to project net worth and savings growth." /></label>
+                                    <input type="range" id="horizon" min="1" max="30" value={horizon} onChange={e => setHorizon(Number(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
+                                </div>
+                                <div>
+                                    <label htmlFor="monthly-savings" className="block text-sm font-medium text-gray-700 flex items-center">Monthly Savings Contribution <InfoHint text="Amount you save per month; used to project future wealth. Default uses your calculated average." /></label>
+                                    <input
+                                        type="number"
+                                        id="monthly-savings"
+                                        value={monthlySavings}
+                                        onChange={(e) => {
+                                            setMonthlySavingsTouched(true);
+                                            setMonthlySavings(Number(e.target.value));
+                                        }}
+                                        className="input-base mt-1"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        12M median net cash flow {formatCurrencyString(savingsAnalytics.medianMonthlyNet)}; average {formatCurrencyString(savingsAnalytics.averageMonthlyNet)}. Model adds only non‑negative amounts to wealth each month.
+                                    </p>
+                                </div>
+                                <div>
+                                    <label htmlFor="investment-growth" className="block text-sm font-medium text-gray-700 flex items-center">Annual Investment Growth (%) <InfoHint text="Expected yearly return on investments; affects projected net worth." /></label>
+                                    <input type="number" id="investment-growth" value={investmentGrowth} onChange={e => handleManualInvestmentGrowthChange(Number(e.target.value))} className="input-base mt-1" />
+                                </div>
+                                <div>
+                                    <label htmlFor="income-growth" className="block text-sm font-medium text-gray-700 flex items-center">Annual Savings Increase (%) <InfoHint text="Annual rate applied smoothly each month (compound), not one jump per calendar year—see Forecast methodology." /></label>
+                                    <input type="number" id="income-growth" value={incomeGrowth} onChange={e => handleManualIncomeGrowthChange(Number(e.target.value))} className="input-base mt-1" />
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2 pt-1">
+                                    <button type="button" onClick={handleRunForecast} disabled={isLoading} className="flex-1 min-w-[min(100%,11rem)] btn-primary inline-flex items-center justify-center gap-2 font-semibold disabled:opacity-50 py-2.5 px-4">
+                                        <SparklesIcon className="h-5 w-5 shrink-0" aria-hidden />
+                                        {isLoading ? 'Calculating...' : 'Run Forecast'}
+                                    </button>
+                                    <span className="inline-flex items-center shrink-0 text-slate-500">
+                                        <InfoHint text="Recalculates projections from current assumptions, personal-scope net worth baseline, and savings analytics. Results are educational—not a guarantee." />
+                                    </span>
+                                </div>
+                            </div>
+                        </SectionCard>
                     </div>
-                    <div>
-                        <label htmlFor="horizon" className="block text-sm font-medium text-gray-700 flex items-center">Forecast Horizon: {horizon} years <InfoHint text="Number of years to project net worth and savings growth." /></label>
-                        <input type="range" id="horizon" min="1" max="30" value={horizon} onChange={e => setHorizon(Number(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
-                    </div>
-                    <div>
-                        <label htmlFor="monthly-savings" className="block text-sm font-medium text-gray-700 flex items-center">Monthly Savings Contribution <InfoHint text="Amount you save per month; used to project future wealth. Default uses your calculated average." /></label>
-                        <input
-                            type="number"
-                            id="monthly-savings"
-                            value={monthlySavings}
-                            onChange={(e) => {
-                                setMonthlySavingsTouched(true);
-                                setMonthlySavings(Number(e.target.value));
-                            }}
-                            className="input-base mt-1"
-                        />
-                        <p className="text-xs text-gray-500 mt-1">
-                            12M median net cash flow {formatCurrencyString(savingsAnalytics.medianMonthlyNet)}; average {formatCurrencyString(savingsAnalytics.averageMonthlyNet)}. Model adds only non‑negative amounts to wealth each month.
-                        </p>
-                    </div>
-                    <div>
-                        <label htmlFor="investment-growth" className="block text-sm font-medium text-gray-700 flex items-center">Annual Investment Growth (%) <InfoHint text="Expected yearly return on investments; affects projected net worth." /></label>
-                        <input type="number" id="investment-growth" value={investmentGrowth} onChange={e => handleManualInvestmentGrowthChange(Number(e.target.value))} className="input-base mt-1" />
-                    </div>
-                    <div>
-                        <label htmlFor="income-growth" className="block text-sm font-medium text-gray-700 flex items-center">Annual Savings Increase (%) <InfoHint text="Annual rate applied smoothly each month (compound), not one jump per calendar year—see Forecast methodology." /></label>
-                        <input type="number" id="income-growth" value={incomeGrowth} onChange={e => handleManualIncomeGrowthChange(Number(e.target.value))} className="input-base mt-1" />
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <button type="button" onClick={handleRunForecast} disabled={isLoading} className="flex-1 btn-primary flex items-center justify-center gap-2 font-semibold disabled:opacity-50">
-                            <SparklesIcon className="h-5 w-5" aria-hidden />
-                            {isLoading ? 'Calculating...' : 'Run Forecast'}
-                        </button>
-                        <InfoHint text="Recalculates projections from current assumptions, personal-scope net worth baseline, and savings analytics. Results are educational—not a guarantee." />
-                    </div>
-                </SectionCard>
+                </div>
 
-                <div className="lg:col-span-3 space-y-6">
+                <div className="lg:col-span-3 min-w-0 w-full space-y-6 lg:self-start">
                     {isLoading && (
                         <div className="rounded-xl border border-slate-200 bg-white p-12 shadow-sm">
                             <LoadingSpinner message="Running projection…" />
@@ -545,8 +553,12 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                         </SectionCard>
                     ) : (
                          !isLoading && !summary && (
-                            <SectionCard title="Results" className="border-dashed border-slate-300 bg-slate-50/50" collapsible collapsibleSummary="Run forecast first">
-                                <p className="text-sm text-slate-600 text-center py-6">Set assumptions on the left, then run the forecast to see projections, the chart, and scenario comparison.</p>
+                            <SectionCard title="Results" className="w-full" collapsible collapsibleSummary="Run forecast first">
+                                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 min-h-[min(320px,42vh)] flex flex-col items-center justify-center px-4 py-10">
+                                    <p className="text-sm text-slate-600 text-center max-w-md leading-relaxed">
+                                        Set assumptions on the left, then run the forecast to see projections, the chart, and scenario comparison.
+                                    </p>
+                                </div>
                             </SectionCard>
                          )
                     )}

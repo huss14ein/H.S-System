@@ -27,16 +27,20 @@ export type PersonalNetWorthChartBucketsSAR = {
   netWorth: number;
 };
 
-function accumulatePersonalBalanceSheet(
-  data: FinancialData,
+type BalanceSheetSlices = {
+  accounts: ReturnType<typeof getPersonalAccounts>;
+  assets: ReturnType<typeof getPersonalAssets>;
+  liabilities: ReturnType<typeof getPersonalLiabilities>;
+  commodityHoldings: ReturnType<typeof getPersonalCommodityHoldings>;
+  investments: ReturnType<typeof getPersonalInvestments>;
+};
+
+function accumulateBalanceSheetSlices(
+  slices: BalanceSheetSlices,
   exchangeRate: number,
   options?: PersonalNetWorthOptions
 ) {
-  const accounts = getPersonalAccounts(data);
-  const assets = getPersonalAssets(data);
-  const liabilities = getPersonalLiabilities(data);
-  const commodityHoldings = getPersonalCommodityHoldings(data);
-  const investments = getPersonalInvestments(data);
+  const { accounts, assets, liabilities, commodityHoldings, investments } = slices;
 
   const cashSavingsAccounts = accounts.filter(
     (a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings'
@@ -92,6 +96,55 @@ function accumulatePersonalBalanceSheet(
     totalInvestmentsValue,
     brokerageCashSAR,
   };
+}
+
+function accumulatePersonalBalanceSheet(
+  data: FinancialData,
+  exchangeRate: number,
+  options?: PersonalNetWorthOptions
+) {
+  return accumulateBalanceSheetSlices(
+    {
+      accounts: getPersonalAccounts(data),
+      assets: getPersonalAssets(data),
+      liabilities: getPersonalLiabilities(data),
+      commodityHoldings: getPersonalCommodityHoldings(data),
+      investments: getPersonalInvestments(data),
+    },
+    exchangeRate,
+    options
+  );
+}
+
+/**
+ * Balance-sheet buckets for **all** accounts/assets (household-inclusive). Use for Analysis / full-ledger views.
+ */
+export function computeAllNetWorthChartBucketsSAR(
+  data: FinancialData | null | undefined,
+  exchangeRate: number,
+  options?: PersonalNetWorthOptions
+): PersonalNetWorthChartBucketsSAR {
+  if (!data) {
+    return { cash: 0, investments: 0, physicalAndCommodities: 0, receivables: 0, liabilities: 0, netWorth: 0 };
+  }
+  const b = accumulateBalanceSheetSlices(
+    {
+      accounts: data.accounts ?? [],
+      assets: data.assets ?? [],
+      liabilities: data.liabilities ?? [],
+      commodityHoldings: data.commodityHoldings ?? [],
+      investments: data.investments ?? [],
+    },
+    exchangeRate,
+    options
+  );
+  const cash = b.cashAndSavingsPositive;
+  const investments = b.totalInvestmentsValue + b.brokerageCashSAR;
+  const physicalAndCommodities = b.assetsSum + b.totalCommodities;
+  const receivables = b.totalReceivable;
+  const liabilities = -b.totalDebt;
+  const netWorth = cash + investments + physicalAndCommodities + receivables + liabilities;
+  return { cash, investments, physicalAndCommodities, receivables, liabilities, netWorth };
 }
 
 /**

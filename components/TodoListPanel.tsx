@@ -258,6 +258,7 @@ const TodoListPanel: React.FC<{
     setQuickTags(tpl.tags?.join(', ') ?? '');
     setQuickList(tpl.listId ?? '');
     setQuickRecurrence(tpl.recurrence ?? 'none');
+    setQuickLink(tpl.linkedPage ?? '');
     setShowAdvanced(true);
   }, []);
 

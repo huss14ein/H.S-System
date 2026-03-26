@@ -8,7 +8,6 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import InfoHint from '../components/InfoHint';
-import AIAdvisor from '../components/AIAdvisor';
 import type { TradeCurrency } from '../types';
 
 /** Align localStorage / API rows with the same numeric fields as DataContext.normalizeExecutionLog */
@@ -125,45 +124,24 @@ const ExecutionHistoryView: React.FC = () => {
     return { allExecutionLogs: sortedAll, executionLogs: filtered };
   }, [data?.executionLogs, filterStatus]);
 
-  const executionHistoryAiContext = useMemo(() => {
-    const total = allExecutionLogs.length;
+  const runStats = useMemo(() => {
     let success = 0;
     let failure = 0;
-    let other = 0;
     for (const log of allExecutionLogs) {
       const b = bucketExecutionStatus(log);
       if (b === 'success') success += 1;
       else if (b === 'failure') failure += 1;
-      else other += 1;
     }
-    const sampleLines = allExecutionLogs.slice(0, 8).map((log: any) => {
-      const executionDate = log.created_at || log.date || log.timestamp;
-      const ds = executionDate ? new Date(executionDate).toISOString().slice(0, 10) : '?';
-      const b = bucketExecutionStatus(log);
-      const st = b === 'success' ? 'success' : b === 'failure' ? 'failure' : 'other';
-      const trades = Array.isArray(log.trades) ? log.trades.length : 0;
-      return `${ds} · ${st} · ${trades} trade(s)`;
-    });
-    return {
-      total,
-      success,
-      failure,
-      other,
-      filterLabel: filterStatus,
-      sampleLines,
-      planCurrency,
-    };
-  }, [allExecutionLogs, filterStatus, planCurrency]);
+    return { total: allExecutionLogs.length, success, failure };
+  }, [allExecutionLogs]);
 
   if (loading || !data) {
     return (
-      <div className="space-y-6 min-h-[32rem] bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 rounded-2xl border border-slate-200 p-6" aria-busy="true">
-        <SectionCard title="Execution History" className="bg-white/80 border-slate-200" collapsible collapsibleSummary="Loading…">
-          <div className="flex items-center justify-center py-12 gap-3">
-            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" aria-label="Loading execution history" />
-            <span className="text-sm text-slate-600">Loading execution history…</span>
-          </div>
-        </SectionCard>
+      <div className="page-container flex items-center justify-center min-h-[24rem]" aria-busy="true">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin" aria-label="Loading execution history" />
+          <span className="text-sm text-slate-600">Loading execution history…</span>
+        </div>
       </div>
     );
   }
@@ -188,8 +166,10 @@ const ExecutionHistoryView: React.FC = () => {
         <div className="w-20 h-20 bg-gradient-to-br from-slate-100 to-slate-200 rounded-full mx-auto mb-6 flex items-center justify-center">
           <ClockIcon className="h-10 w-10 text-slate-400" />
         </div>
-        <p className="text-xl font-semibold text-slate-600 mb-2">No execution history yet</p>
-        <p className="text-slate-500 mb-4">Run your investment plan from Investment Plan to see results here.</p>
+        <p className="text-xl font-semibold text-slate-600 mb-2">No plan runs logged yet</p>
+        <p className="text-slate-500 mb-4 max-w-md mx-auto">
+          When you <strong>execute</strong> your monthly investment plan (Investment Plan tab), each run is stored here so you can review outcomes and errors.
+        </p>
         <button
           type="button"
           onClick={() => {
@@ -204,10 +184,7 @@ const ExecutionHistoryView: React.FC = () => {
       </div>
     ) : (
       <>
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs text-slate-500">
-            Amounts use your plan currency ({planCurrency}) from <strong>Investment Plan</strong>.
-          </p>
+        <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
           <button
             type="button"
             onClick={() => {
@@ -259,8 +236,8 @@ const ExecutionHistoryView: React.FC = () => {
             return (
               <div
                 key={log.id || index}
-                className={`rounded-2xl border-2 p-6 shadow-lg hover:shadow-xl transition-all duration-300 ${
-                  ok ? 'border-emerald-200 bg-gradient-to-br from-emerald-50 to-green-50' : 'border-rose-200 bg-gradient-to-br from-rose-50 to-red-50'
+                className={`rounded-xl border p-5 sm:p-6 ${
+                  ok ? 'border-emerald-200 bg-emerald-50/40' : 'border-rose-200 bg-rose-50/40'
                 }`}
               >
                 <div className="flex items-start justify-between gap-4 mb-4">
@@ -362,67 +339,83 @@ const ExecutionHistoryView: React.FC = () => {
     );
 
   return (
-    <div className="space-y-6 min-h-[32rem] bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 rounded-2xl border border-slate-200 p-6">
-      <SectionCard title="Execution History" className="bg-white/90 border-slate-200" collapsible collapsibleSummary="Planned trades executed" defaultExpanded>
-        <div className="mb-6">
-          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-4">
-            <div className="flex items-center gap-4 min-w-0">
-              <div className="w-14 h-14 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg shrink-0">
-                <ClockIcon className="h-7 w-7 text-white" />
-              </div>
-              <div>
-                <h2 className="text-2xl font-bold text-slate-900">Execution History</h2>
-                <p className="text-slate-600 mt-1">Each run records what the app proposed when you executed your investment plan. Dollar amounts match your plan currency.</p>
-              </div>
+    <div className="page-container space-y-6 min-h-[28rem]">
+      <section className="section-card p-6 sm:p-8">
+        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
+          <div className="flex items-start gap-4 min-w-0">
+            <div className="w-12 h-12 shrink-0 bg-primary/10 rounded-xl flex items-center justify-center">
+              <ClockIcon className="h-6 w-6 text-primary" />
             </div>
-            <div className="flex flex-col items-stretch sm:items-end gap-1 shrink-0">
-              <span className="text-[11px] text-slate-500 flex items-center gap-1 justify-end">
-                Filter list
-                <InfoHint text="Narrows the cards below. Export uses the same rows you see after filtering." />
-              </span>
-              <div className="flex flex-wrap gap-2 justify-end">
-                <button
-                  type="button"
-                  onClick={() => setFilterStatus('All')}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    filterStatus === 'All' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
-                >
-                  All
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFilterStatus('success')}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    filterStatus === 'success' ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
-                >
-                  Success
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFilterStatus('failure')}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    filterStatus === 'failure' ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
-                >
-                  Failed
-                </button>
-              </div>
+            <div className="min-w-0">
+              <h2 className="page-title text-2xl sm:text-3xl">Execution History</h2>
+              <p className="text-slate-600 mt-1 max-w-3xl">
+                A <strong>read-only log</strong> of monthly <strong>investment plan runs</strong>—each time the app generated proposed orders from your budget and universe (Investment Plan → execute / automate). Use it to see whether a run
+                finished, how much was allocated to Core vs High-Upside, and which tickers were proposed—not to replace your broker&apos;s trade confirmations.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-col items-stretch sm:items-end gap-2 shrink-0">
+            <span className="text-xs text-slate-500 flex items-center gap-1 justify-end">
+              Filter
+              <InfoHint text="Narrows the list below. CSV export includes only the rows you see after filtering." />
+            </span>
+            <div className="flex flex-wrap gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setFilterStatus('All')}
+                className={`px-3 py-2 rounded-xl text-sm font-semibold transition-colors ${
+                  filterStatus === 'All' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                All
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterStatus('success')}
+                className={`px-3 py-2 rounded-xl text-sm font-semibold transition-colors ${
+                  filterStatus === 'success' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                Success
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterStatus('failure')}
+                className={`px-3 py-2 rounded-xl text-sm font-semibold transition-colors ${
+                  filterStatus === 'failure' ? 'bg-rose-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                Failed
+              </button>
             </div>
           </div>
         </div>
 
-        <div className="mb-8">
-          <AIAdvisor
-            pageContext="executionHistory"
-            contextData={executionHistoryAiContext}
-            title="Execution history coach"
-            subtitle={`Plain-language summary · English / العربية · Plan currency: ${planCurrency}`}
-            buttonLabel="Summarize execution logs"
-          />
+        <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 text-sm text-slate-700 space-y-2">
+          <p className="font-semibold text-slate-800">Why this page exists</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li>
+              <strong>Audit</strong> plan automation: confirm which runs succeeded or failed, and read technical details when something breaks (e.g. API or AI provider).
+            </li>
+            <li>
+              <strong>Transparency</strong>: amounts are in your plan currency ({planCurrency}) and mirror the split the engine used (Core / High-Upside / speculative when present).
+            </li>
+            <li>
+              <strong>Not for</strong>: live dividend cash, cash balances, or broker fills—use <strong>Dividend Tracker</strong>, <strong>Portfolios</strong>, and your broker for those.
+            </li>
+          </ul>
+          {runStats.total > 0 && (
+            <p className="text-xs text-slate-600 pt-1 border-t border-slate-200/80 mt-2">
+              Logged runs: <span className="tabular-nums font-medium">{runStats.total}</span> ({runStats.success} succeeded, {runStats.failure} failed).
+            </p>
+          )}
         </div>
+      </section>
 
+      <SectionCard title="Runs" className="border-slate-200" collapsible collapsibleSummary="Execution log entries" defaultExpanded>
+        <p className="text-sm text-slate-600 mb-4">
+          Amounts are in your plan currency ({planCurrency}) from <strong>Investment Plan</strong>. Proposed trades are what the engine generated; placing orders at your broker is separate.
+        </p>
         {listBody}
       </SectionCard>
     </div>

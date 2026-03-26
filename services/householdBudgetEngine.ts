@@ -560,11 +560,9 @@ const PROFILE_BULK_ENVELOPE_PCT: Partial<Record<string, number>> = {
 
 /**
  * When **all** categories are selected, returns the base suggestions unchanged (engine-merged template).
- * When **fewer** are selected, reallocates `salary × envelope(profile)` across selected rows in proportion
- * to each row’s monthly-equivalent weight from the base list so limits stay synced with salary + profile + selection count.
- *
- * When **no** categories are selected, returns the base list unchanged (full template limits on every row).
- * The Budgets UI overrides that after the template has synced so “deselect all” shows zero limits instead of misleading full amounts.
+ * When **fewer** are selected, reallocates `salary × envelope(profile)` across **selected** rows only; **unselected**
+ * rows get `limit: 0` so bulk-add UI never shows full template amounts next to unchecked boxes.
+ * When **no** categories are selected, every row has `limit: 0` (nothing will be created until user selects rows).
  */
 export function computeBulkAddLimitsForSelection(
   baseSuggestions: HouseholdBudgetCategorySuggestion[],
@@ -585,8 +583,11 @@ export function computeBulkAddLimitsForSelection(
     baseSuggestions.length > 0 && baseSuggestions.every((c) => selected.has(c.category));
   if (allSelected) return baseSuggestions.map((c) => ({ ...c }));
 
+  if (selected.size === 0) {
+    return baseSuggestions.map((c) => ({ ...c, limit: 0 }));
+  }
+
   const selectedRows = baseSuggestions.filter((c) => selected.has(c.category));
-  if (selectedRows.length === 0) return baseSuggestions.map((c) => ({ ...c }));
 
   const basePct = PROFILE_BULK_ENVELOPE_PCT[String(profile)] ?? PROFILE_BULK_ENVELOPE_PCT.Moderate ?? 0.58 * ENVELOPE_BASE_BUMP;
   const headScale = householdConsumptionScale(adults, kids);
@@ -607,7 +608,7 @@ export function computeBulkAddLimitsForSelection(
   });
 
   return baseSuggestions.map((c) => {
-    if (!selected.has(c.category)) return { ...c };
+    if (!selected.has(c.category)) return { ...c, limit: 0 };
     const next = limitByCategory.get(c.category);
     return next != null ? { ...c, limit: next } : { ...c };
   });

@@ -63,7 +63,8 @@ Optionally run **`migrations/add_users_approved_metadata.sql`** afterward for a 
 | `migrations/add_transactions_note.sql` | **`transactions.note`** — memos + split-expense encoding (`__FINOVA_SPLITS__`). Recommended if you use split categories. |
 | `migrations/add_financial_statements_table.sql` | Statement history metadata + `extracted_transactions`. |
 | `migrations/add_financial_statements_storage.sql` | `financial_statements.storage_bucket` / `storage_path` for original files (see `docs/supabase_storage_financial_statements.md`). |
-| `migrations/add_optional_schema_extras.sql` | `budgets.destination_account_id`, `holdings.holding_type`. |
+| `migrations/add_optional_schema_extras.sql` | `budgets.destination_account_id`, `holdings.holding_type`, **`goals.priority`** (`High` / `Medium` / `Low`). |
+| `migrations/add_goals_priority.sql` | Same **`goals.priority`** column as above — dedicated migration if you do not re-run optional extras. Idempotent. |
 | `migrations/add_investment_plan_fx_rate_updated_at.sql` | `investment_plan.fx_rate_updated_at`. |
 | `migrations/add_owner_column_wealth_segmentation.sql` | `owner` on accounts, assets, liabilities, commodities, portfolios. |
 | `migrations/add_user_approval.sql` | See **[Approve signups](#approve-signups-settings--admin-pending-users)** above. |

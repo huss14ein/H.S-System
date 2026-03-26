@@ -12,6 +12,7 @@ import InfoHint from '../components/InfoHint';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import CollapsibleSection from '../components/CollapsibleSection';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { fetchLiveGoldPriceSarPerGram } from '../utils/commodityLiveValue';
@@ -227,7 +228,13 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                                 <span className="text-right font-medium tabular-nums">{formatCurrencyString(zakatableAssets.investments, { inCurrency: 'SAR', digits: 0 })}</span>
                             </div>
                             {zakatableAssets.investmentLines.length > 0 && (
-                                <div className="ml-6 rounded-lg border border-slate-200 bg-slate-50/80 overflow-hidden">
+                                <CollapsibleSection
+                                    title="Investment details"
+                                    summary={`${zakatableAssets.investmentLines.length} symbol(s)`}
+                                    defaultExpanded={false}
+                                    card={false}
+                                    className="ml-6"
+                                >
                                     <div className="max-h-40 overflow-y-auto">
                                         <table className="w-full text-xs text-left">
                                             <thead className="sticky top-0 bg-slate-100 text-slate-600 uppercase tracking-wide">
@@ -237,7 +244,7 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                                                     <th className="py-1.5 px-2 font-semibold text-right">SAR</th>
                                                 </tr>
                                             </thead>
-                                            <tbody className="divide-y divide-slate-100">
+                                            <tbody className="divide-y divide-slate-100 bg-white">
                                                 {zakatableAssets.investmentLines.map((row: { portfolioId: string; symbol: string; portfolioName: string; name?: string; valueSar: number }, idx: number) => (
                                                     <tr key={`${row.portfolioId}-${row.symbol}-${idx}`} className="text-slate-800">
                                                         <td className="py-1.5 px-2 font-medium min-w-0 max-w-[140px]">
@@ -257,8 +264,10 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                                             </tbody>
                                         </table>
                                     </div>
-                                    <p className="text-[11px] text-slate-500 px-2 py-1.5 border-t border-slate-200">Value = market value when set; otherwise quantity × average cost. Non‑Zakatable positions excluded.</p>
-                                </div>
+                                    <p className="text-[11px] text-slate-500 px-2 py-1.5 border-t border-slate-200 bg-slate-50/80">
+                                        Value = market value when set; otherwise quantity × average cost. Non‑Zakatable positions excluded.
+                                    </p>
+                                </CollapsibleSection>
                             )}
                              <div className="flex justify-between text-sm">
                                 <span className="text-gray-600 flex items-center"><CheckCircleIcon className="h-4 w-4 mr-2 text-green-500"/>Commodities</span>
@@ -346,7 +355,7 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                 )}
                 
                  {/* Column 3: Payment Ledger */}
-                <div className="bg-white p-6 rounded-lg shadow space-y-4">
+                <div className="section-card flex flex-col space-y-4">
                      <div className="flex justify-between items-center">
                         <h3 className="font-semibold text-dark">Payment Progress & Ledger</h3>
                         <button onClick={() => setIsPaymentModalOpen(true)} className="px-3 py-1 bg-primary text-white rounded-md hover:bg-secondary text-sm">Record Payment</button>

@@ -347,17 +347,86 @@ export function generateWealthSummaryReportHtml(input: WealthSummaryReportInput)
 }
 
 /**
- * Opens a full HTML document in a new window and triggers print after the document is ready.
- * Use `document.open()` before `write()` (required in several browsers) and defer `print()`
- * so the preview is not blank.
+ * Print a full HTML document. Prefers an in-page iframe so it does not depend on pop-ups.
+ * Fallback opens a new window **without** `noopener` — with `noopener`, Chromium/Firefox often
+ * return `null` from `window.open` (misread as “blocked”) even when pop-ups are allowed.
  */
 export function openHtmlForPrint(html: string): boolean {
-  const w = window.open('', '_blank', 'noopener,noreferrer,width=980,height=760');
+  if (typeof document === 'undefined') return false;
+
+  try {
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('title', 'Print preview');
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    iframe.style.opacity = '0';
+    iframe.style.pointerEvents = 'none';
+    document.body.appendChild(iframe);
+
+    const idoc = iframe.contentDocument;
+    const iwin = iframe.contentWindow;
+    if (!idoc || !iwin) {
+      iframe.remove();
+      return openHtmlForPrintInNewWindow(html);
+    }
+
+    idoc.open();
+    idoc.write(html);
+    idoc.close();
+
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      try {
+        iframe.remove();
+      } catch {
+        /* ignore */
+      }
+    };
+
+    const runPrint = () => {
+      try {
+        iwin.focus();
+        iwin.print();
+      } catch {
+        cleanup();
+      }
+    };
+
+    iwin.addEventListener('afterprint', cleanup, { once: true });
+    window.setTimeout(() => {
+      runPrint();
+      window.setTimeout(cleanup, 10_000);
+    }, 150);
+
+    return true;
+  } catch {
+    return openHtmlForPrintInNewWindow(html);
+  }
+}
+
+function openHtmlForPrintInNewWindow(html: string): boolean {
+  const w = window.open('', '_blank', 'width=980,height=760,scrollbars=yes');
   if (!w) return false;
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
-  w.focus();
+  try {
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+  } catch {
+    try {
+      w.close();
+    } catch {
+      /* ignore */
+    }
+    return false;
+  }
   window.setTimeout(() => {
     try {
       w.focus();

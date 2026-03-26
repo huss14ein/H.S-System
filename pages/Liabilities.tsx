@@ -439,8 +439,28 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
                 <Card title="Total debt" value={formatCurrencyString(totalDebt, { inCurrency: 'SAR', digits: 2 })} indicatorColor="red" valueColor="text-red-700" icon={<CreditCardIcon className="h-5 w-5 text-red-600" />} tooltip="Unpaid debt in SAR equivalent. Matches Summary / net worth personal scope." />
                 <Card title="Receivables" value={formatCurrencyString(totalReceivable, { inCurrency: 'SAR', digits: 2 })} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Money others owe you (active receivables), same basis as manual entries." />
-                <Card title="Net position" value={formatCurrencyString(netPosition, { inCurrency: 'SAR', digits: 2 })} indicatorColor={netPosition >= 0 ? 'green' : 'red'} valueColor={netPosition >= 0 ? 'text-emerald-700' : 'text-red-700'} tooltip="Receivables minus debt. Positive means you are owed more than you owe." />
-                <Card title="Debt vs assets" value={`${debtToAssetRatio.toFixed(2)}%`} tooltip="Total debt ÷ personal total assets (SAR, from net worth engine)." indicatorColor={debtToAssetRatio > 50 ? 'red' : debtToAssetRatio > 25 ? 'yellow' : 'green'} valueColor={debtToAssetRatio > 50 ? 'text-red-700' : debtToAssetRatio > 25 ? 'text-amber-700' : 'text-green-700'} />
+                <Card
+                    title="Net position"
+                    value={formatCurrencyString(netPosition, { inCurrency: 'SAR', digits: 2 })}
+                    indicatorColor={netPosition >= 0 ? 'green' : 'red'}
+                    valueColor={netPosition >= 0 ? 'text-emerald-700' : 'text-red-700'}
+                    icon={<BanknotesIcon className={`h-5 w-5 ${netPosition >= 0 ? 'text-emerald-600' : 'text-red-600'}`} />}
+                    tooltip="Receivables minus debt. Positive means you are owed more than you owe."
+                />
+                <Card
+                    title="Debt vs assets"
+                    value={`${debtToAssetRatio.toFixed(2)}%`}
+                    tooltip="Total debt ÷ personal total assets (SAR, from net worth engine)."
+                    indicatorColor={debtToAssetRatio > 50 ? 'red' : debtToAssetRatio > 25 ? 'yellow' : 'green'}
+                    valueColor={debtToAssetRatio > 50 ? 'text-red-700' : debtToAssetRatio > 25 ? 'text-amber-700' : 'text-green-700'}
+                    icon={
+                        <CreditCardIcon
+                            className={`h-5 w-5 ${
+                                debtToAssetRatio > 50 ? 'text-red-600' : debtToAssetRatio > 25 ? 'text-amber-600' : 'text-emerald-600'
+                            }`}
+                        />
+                    }
+                />
                 <Card
                     title="Cash vs debt"
                     value={liquidityRatioVal != null ? liquidityRatioVal.toFixed(2) : '—'}
@@ -454,6 +474,19 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                     }
                     valueColor={
                         liquidityRatioVal == null ? 'text-slate-600' : liquidityRatioVal >= 0.5 ? 'text-emerald-700' : liquidityRatioVal >= 0.2 ? 'text-amber-700' : 'text-red-700'
+                    }
+                    icon={
+                        <HomeIcon
+                            className={`h-5 w-5 ${
+                                liquidityRatioVal == null
+                                    ? 'text-slate-600'
+                                    : liquidityRatioVal >= 0.5
+                                      ? 'text-emerald-600'
+                                      : liquidityRatioVal >= 0.2
+                                        ? 'text-amber-600'
+                                        : 'text-red-600'
+                            }`}
+                        />
                     }
                 />
                 <Card
@@ -469,6 +502,19 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                     }
                     valueColor={
                         debtServicePct == null ? 'text-amber-700' : debtServicePct > 40 ? 'text-red-700' : debtServicePct > 25 ? 'text-amber-700' : 'text-slate-700'
+                    }
+                    icon={
+                        <ShieldCheckIcon
+                            className={`h-5 w-5 ${
+                                debtServicePct == null
+                                    ? 'text-amber-600'
+                                    : debtServicePct > 40
+                                      ? 'text-red-600'
+                                      : debtServicePct > 25
+                                        ? 'text-amber-600'
+                                        : 'text-emerald-600'
+                            }`}
+                        />
                     }
                 />
             </div>

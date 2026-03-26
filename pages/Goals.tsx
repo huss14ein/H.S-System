@@ -36,22 +36,23 @@ import { formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
 // A more visual progress bar specific for goals
 const GoalProgressBar: React.FC<{ progress: number; colorClass: string }> = ({ progress, colorClass }) => {
     const [width, setWidth] = useState(0);
+    const clampedProgress = Math.min(100, Math.max(0, Number(progress) || 0));
 
     useEffect(() => {
         // Animate the bar on load
-        const timer = setTimeout(() => setWidth(progress), 100);
+        const timer = setTimeout(() => setWidth(clampedProgress), 100);
         return () => clearTimeout(timer);
-    }, [progress]);
+    }, [clampedProgress]);
 
     return (
         <div className="relative h-5 bg-gray-200 rounded-full overflow-hidden">
             <div 
                 className={`absolute top-0 left-0 h-full rounded-full ${colorClass} transition-all duration-1000 ease-out`}
-                style={{ width: `${Math.min(Number(width) || 0, 100)}%` }}
+                style={{ width: `${Math.min(Math.max(Number(width) || 0, 0), 100)}%` }}
             ></div>
             <div className="absolute inset-0 flex items-center justify-center">
                 <span className="text-xs font-bold text-white" style={{ textShadow: '0 1px 1px rgba(0,0,0,0.5)' }}>
-                    {progress.toFixed(1)}% Complete
+                    {clampedProgress.toFixed(1)}% Complete
                 </span>
             </div>
         </div>
@@ -279,11 +280,18 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
 
     const { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution, borderColor } = useMemo(() => {
         const currentAmount = calculatedCurrentAmount;
-        const deadline = new Date(goal.deadline);
         const now = new Date();
-        const monthsLeft = Math.max(0, (deadline.getFullYear() - now.getFullYear()) * 12 + deadline.getMonth() - now.getMonth());
+        const MONTH_MS = 30.44 * 24 * 60 * 60 * 1000;
+        const deadline = goal.deadline ? new Date(goal.deadline) : null;
+        const monthsLeft = (() => {
+            if (!deadline || Number.isNaN(deadline.getTime())) return 0;
+            const diffMs = deadline.getTime() - now.getTime();
+            if (diffMs <= 0) return 0;
+            return Math.ceil(diffMs / MONTH_MS);
+        })();
         const targetAmt = goal.targetAmount ?? 0;
-        const progressPercent = targetAmt > 0 ? (currentAmount / targetAmt) * 100 : 0;
+        const progressPercentRaw = targetAmt > 0 ? (currentAmount / targetAmt) * 100 : 0;
+        const progressPercent = Math.min(100, Math.max(0, progressPercentRaw));
         const remainingAmount = Math.max(0, targetAmt - currentAmount);
         const requiredMonthlyContribution = monthsLeft > 0 ? remainingAmount / monthsLeft : remainingAmount;
         const projectedMonthlyContribution = monthlySavings * ((goal.savingsAllocationPercent || 0) / 100);
@@ -479,13 +487,15 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
 
         ((data as any)?.personalTransactions ?? data?.transactions ?? [])
             .filter((t: { date: string; type?: string; category?: string }) => new Date(t.date) > sixMonthsAgo && (countsAsIncomeForCashflowKpi(t) || countsAsExpenseForCashflowKpi(t)))
-            .forEach((t: { date: string; amount?: number }) => {
-            const monthKey = t.date.slice(0, 7); // YYYY-MM
-            const currentNet = monthlyNet.get(monthKey) || 0;
-            monthlyNet.set(monthKey, currentNet + (Number(t.amount) ?? 0)); // amount is positive for income, negative for expense
+            .forEach((t: { date: string; type?: string; category?: string; amount?: number }) => {
+                const monthKey = String(t.date).slice(0, 7); // YYYY-MM
+                const currentNet = monthlyNet.get(monthKey) || 0;
+                const absAmt = Math.abs(Number(t.amount) || 0);
+                const delta = countsAsIncomeForCashflowKpi(t) ? absAmt : countsAsExpenseForCashflowKpi(t) ? -absAmt : 0;
+                monthlyNet.set(monthKey, currentNet + delta);
             });
         
-        if (monthlyNet.size === 0) return 7500; // Default if no recent transactions
+        if (monthlyNet.size === 0) return 0;
         
         const totalNet = Array.from(monthlyNet.values()).reduce((sum, net) => sum + net, 0);
         return Math.max(0, totalNet / monthlyNet.size);
@@ -539,7 +549,9 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
             const d = new Date(t.date);
             if (d.getFullYear() !== year) return;
             const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-            monthlyNet.set(key, (monthlyNet.get(key) ?? 0) + (Number(t.amount) ?? 0));
+            const absAmt = Math.abs(Number(t.amount) || 0);
+            const delta = countsAsIncomeForCashflowKpi(t) ? absAmt : countsAsExpenseForCashflowKpi(t) ? -absAmt : 0;
+            monthlyNet.set(key, (monthlyNet.get(key) ?? 0) + delta);
         });
         if (monthlyNet.size === 0) return averageMonthlySavings * 12;
         const totalNet = Array.from(monthlyNet.values()).reduce((sum, v) => sum + v, 0);

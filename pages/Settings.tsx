@@ -272,10 +272,17 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                     .select('id, name, email, created_at')
                     .eq('approved', false)
                     .order('created_at', { ascending: false });
-                const errText = `${pendingErr?.message ?? ''} ${(pendingErr as { details?: string })?.details ?? ''}`.toLowerCase();
+                const errText = `${pendingErr?.message ?? ''} ${(pendingErr as { details?: string })?.details ?? ''} ${(pendingErr as { hint?: string })?.hint ?? ''}`.toLowerCase();
+                const httpStatus =
+                    (pendingErr as { status?: number; statusCode?: number } | null)?.status ??
+                    (pendingErr as { statusCode?: number } | null)?.statusCode;
+                const postgrest400ApprovalFilter =
+                    httpStatus === 400 && (/approved/.test(errText) || /users\.approved/.test(errText));
                 const missingApprovalColumn =
                     pendingErr &&
                     (pendingErr.code === '42703' ||
+                        pendingErr.code === 'PGRST204' ||
+                        postgrest400ApprovalFilter ||
                         (typeof pendingErr.message === 'string' &&
                             /approved/i.test(pendingErr.message) &&
                             /column|does not exist|schema/i.test(pendingErr.message)) ||
@@ -292,7 +299,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
             }
         };
         loadAdminAndPending();
-    }, [auth?.user]);
+    }, [auth?.user?.id]);
 
     const handleApproveUser = async (userId: string) => {
         if (!supabase) return;

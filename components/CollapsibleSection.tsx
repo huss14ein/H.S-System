@@ -32,8 +32,7 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
   icon,
   card = true,
 }) => {
-  void _defaultExpanded;
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(_defaultExpanded ?? true);
 
   const baseClass = card ? 'section-card' : 'rounded-lg border border-slate-200 bg-white';
   const headerClass = 'flex items-center justify-between gap-3 w-full text-left py-1 pr-1 cursor-pointer hover:bg-slate-50/80 rounded-lg transition-colors';
@@ -48,7 +47,8 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
           {icon}
-          <h3 className="section-title text-base font-semibold text-slate-800 truncate">{title}</h3>
+          {/* Use explicit `mb-0` instead of global `.section-title` margin to keep header rows aligned. */}
+          <h3 className="mb-0 text-base font-semibold text-slate-800 truncate">{title}</h3>
           {summary && !expanded && (
             <span className="hidden sm:inline text-sm text-slate-500 truncate ml-1">— {summary}</span>
           )}

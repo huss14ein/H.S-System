@@ -280,7 +280,7 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
     };
 
     loadStatements();
-  }, [auth?.user]);
+  }, [auth?.user?.id]);
 
   // Save statements to database (and localStorage as backup)
   useEffect(() => {
@@ -337,7 +337,7 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
     } catch (error) {
       console.error('Failed to save statements to localStorage:', error);
     }
-  }, [statements, auth?.user]);
+  }, [statements, auth?.user?.id]);
 
   const uploadStatement = async (file: File, bankInfo?: BankInfo): Promise<FinancialStatement> => {
     const statement: FinancialStatement = {

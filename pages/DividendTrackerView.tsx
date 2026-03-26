@@ -1,7 +1,14 @@
 import React, { useState, useContext, useMemo, useCallback, useEffect, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from '../components/charts/chartTheme';
+import {
+    CHART_MARGIN,
+    CHART_GRID_STROKE,
+    CHART_GRID_COLOR,
+    CHART_AXIS_COLOR,
+    formatAxisNumber,
+    CHART_COLORS,
+} from '../components/charts/chartTheme';
 import ChartContainer from '../components/charts/ChartContainer';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { getAIDividendAnalysis, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
@@ -31,10 +38,16 @@ import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScop
 import { resolveCanonicalAccountId, inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import InfoHint from '../components/InfoHint';
-import { syncFinnhubDividendsForHoldings, defaultDividendSyncWindow } from '../services/dividendFinnhubSync';
+import {
+    syncFinnhubDividendsForHoldings,
+    defaultDividendSyncWindow,
+    listDividendEligibleHoldings,
+} from '../services/dividendFinnhubSync';
 
 const DIVIDEND_AI_LANG_KEY = 'finova_default_ai_lang_v1';
 const FINNHUB_DIV_SYNC_KEY = 'finova_dividend_finnhub_last_sync_v1';
+/** Auto background sync at most this often unless we have no TTM dividends but do have eligible holdings (fill the ledger). */
+const AUTO_DIVIDEND_SYNC_COOLDOWN_MS = 60 * 60 * 1000;
 
 const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
     const { data, loading, recordTrade, getAvailableCashForAccount } = useContext(DataContext)!;
@@ -69,15 +82,24 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
         [personalAccounts],
     );
 
+    const personalPortfolioIds = useMemo(
+        () => new Set(personalInvestments.map((p) => p.id)),
+        [personalInvestments],
+    );
+
     const txHitsPersonalInvestment = useCallback(
         (t: InvestmentTransaction) => {
+            const ext = t as InvestmentTransaction & { portfolio_id?: string };
+            const pid = (t.portfolioId ?? ext.portfolio_id ?? '').trim();
+            if (pid && personalPortfolioIds.has(pid)) return true;
+
             const raw = (t.accountId ?? (t as { account_id?: string }).account_id ?? '').trim();
             if (!raw) return false;
             const canon = resolveCanonicalAccountId(raw, accountsFull);
             const ids = new Set(personalAccounts.map((a) => a.id));
             return ids.has(canon) || ids.has(raw);
         },
-        [accountsFull, personalAccounts],
+        [accountsFull, personalAccounts, personalPortfolioIds],
     );
 
     const invTxPersonal = useMemo(
@@ -88,6 +110,9 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const {
         dividendIncomeYTD,
         monthlyDividendsChartData,
+        platformStackKeys,
+        monthlyChartHasActivity,
+        trailing12mDividendActual,
         recentDividendTransactions,
         projectedAnnualIncome,
         averageYield,
@@ -105,25 +130,81 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 return sum + toSAR(t.total ?? 0, cur, sarPerUsd);
             }, 0);
 
-        const monthlyDividends = new Map<string, number>();
         const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
-        dividendTransactions
-            .filter((t) => new Date(t.date) >= twelveMonthsAgo)
-            .forEach((t) => {
-                const monthKey = t.date.slice(0, 7);
-                const cur = inferInvestmentTransactionCurrency(t, accountsFull, portfoliosAll);
-                monthlyDividends.set(
-                    monthKey,
-                    (monthlyDividends.get(monthKey) || 0) + toSAR(t.total ?? 0, cur, sarPerUsd),
-                );
-            });
+        const monthKeys: string[] = [];
+        for (let i = 11; i >= 0; i--) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            monthKeys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+        }
 
-        const monthlyDividendsChartData = Array.from(monthlyDividends.entries())
-            .sort((a, b) => a[0].localeCompare(b[0]))
-            .map(([key, value]) => ({
-                name: new Date(key + '-02').toLocaleString('default', { month: 'short', year: '2-digit' }),
-                'Dividend Income': value,
-            }));
+        const personalAccountIdSet = new Set(personalAccounts.map((a) => a.id));
+        const platformKey = (accountId: string) => `pf_${accountId.replace(/[^a-zA-Z0-9]/g, '_')}`;
+
+        const byAccountMonth = new Map<string, Map<string, number>>();
+        let trailing12mDividendActual = 0;
+
+        for (const t of dividendTransactions) {
+            const txDate = new Date(t.date);
+            if (isNaN(txDate.getTime()) || txDate < twelveMonthsAgo) continue;
+            const monthKey = t.date.slice(0, 7);
+            const cur = inferInvestmentTransactionCurrency(t, accountsFull, portfoliosAll);
+            const sar = toSAR(t.total ?? 0, cur, sarPerUsd);
+            trailing12mDividendActual += sar;
+
+            const aid = resolveCanonicalAccountId(t.accountId, accountsFull);
+            if (!personalAccountIdSet.has(aid)) continue;
+            if (!byAccountMonth.has(aid)) byAccountMonth.set(aid, new Map());
+            const m = byAccountMonth.get(aid)!;
+            m.set(monthKey, (m.get(monthKey) || 0) + sar);
+        }
+
+        const sumForAccount = (accountId: string) =>
+            [...(byAccountMonth.get(accountId)?.values() ?? [])].reduce((s, v) => s + v, 0);
+
+        const accountIdsFromTx = [...byAccountMonth.keys()].filter((id) => personalAccountIdSet.has(id));
+        accountIdsFromTx.sort((a, b) => sumForAccount(b) - sumForAccount(a));
+
+        const MAX_PLATFORMS = 8;
+        const displayAccountIds = accountIdsFromTx.slice(0, MAX_PLATFORMS);
+        const otherAccountIds = accountIdsFromTx.slice(MAX_PLATFORMS);
+
+        const accountLabel = (id: string) => {
+            const a = personalAccounts.find((x) => x.id === id);
+            return (a?.name?.trim() || 'Investment platform').slice(0, 36);
+        };
+
+        type StackKey = { key: string; label: string };
+        const platformStackKeys: StackKey[] = [
+            ...displayAccountIds.map((id) => ({ key: platformKey(id), label: accountLabel(id) })),
+            ...(otherAccountIds.length ? [{ key: platformKey('__other__'), label: 'Other platforms' }] : []),
+        ];
+
+        const monthlyDividendsChartData = monthKeys.map((mk) => {
+            const name = new Date(mk + '-02').toLocaleString('default', { month: 'short', year: '2-digit' });
+            const row: Record<string, string | number> = { name, monthKey: mk };
+            let total = 0;
+            if (platformStackKeys.length === 0) {
+                row.totalBar = 0;
+                return row;
+            }
+            for (const aid of displayAccountIds) {
+                const v = byAccountMonth.get(aid)?.get(mk) ?? 0;
+                row[platformKey(aid)] = v;
+                total += v;
+            }
+            let other = 0;
+            for (const aid of otherAccountIds) {
+                other += byAccountMonth.get(aid)?.get(mk) ?? 0;
+            }
+            if (otherAccountIds.length) {
+                row[platformKey('__other__')] = other;
+                total += other;
+            }
+            row.total = total;
+            return row;
+        });
+
+        const monthlyChartHasActivity = monthlyDividendsChartData.some((row) => Number(row.total ?? row.totalBar ?? 0) > 0.01);
 
         const recentDividendTransactions = dividendTransactions
             .filter((t) => {
@@ -222,6 +303,9 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
         return {
             dividendIncomeYTD,
             monthlyDividendsChartData,
+            platformStackKeys,
+            monthlyChartHasActivity,
+            trailing12mDividendActual,
             recentDividendTransactions,
             projectedAnnualIncome,
             averageYield,
@@ -236,6 +320,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
         accountsFull,
         portfoliosAll,
         sarPerUsd,
+        personalAccounts,
         personalInvestments,
         personalInvestmentAccountIds,
         getAvailableCashForAccount,
@@ -300,7 +385,12 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
         setAiError(null);
         setAiAnalysisAr(null);
         try {
-            const analysis = await getAIDividendAnalysis(dividendIncomeYTD, projectedAnnualIncome, topPayers);
+            const analysis = await getAIDividendAnalysis(
+                dividendIncomeYTD,
+                projectedAnnualIncome,
+                trailing12mDividendActual,
+                topPayers.map((p) => ({ name: p.name, symbol: p.symbol || '', projected: p.projected })),
+            );
             setAiAnalysis(analysis);
         } catch (err) {
             setAiError(formatAiError(err));
@@ -308,7 +398,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
         } finally {
             setIsLoading(false);
         }
-    }, [dividendIncomeYTD, projectedAnnualIncome, topPayers]);
+    }, [dividendIncomeYTD, projectedAnnualIncome, trailing12mDividendActual, topPayers]);
 
     useEffect(() => {
         if (divDisplayLang !== 'ar' || !aiAnalysis.trim() || aiAnalysisAr != null || !isAiAvailable) return;
@@ -330,6 +420,12 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const runFinnhubSync = useCallback(
         async (isManual: boolean) => {
             if (!data || syncBusy) return;
+            if (!import.meta.env.VITE_FINNHUB_API_KEY?.trim()) {
+                if (isManual) {
+                    showToast('Finnhub is not configured (VITE_FINNHUB_API_KEY). Add it to enable automatic dividend history.', 'error');
+                }
+                return;
+            }
             setSyncBusy(true);
             try {
                 const { fromIso, toIso } = defaultDividendSyncWindow();
@@ -379,8 +475,24 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
         let cancelled = false;
         (async () => {
             try {
+                if (!import.meta.env.VITE_FINNHUB_API_KEY?.trim()) return;
+                const eligible = listDividendEligibleHoldings(personalInvestments).length > 0;
+                if (!eligible) return;
+
+                const dividendTx = invTxPersonal.filter((t) => t.type === 'dividend');
+                const now = new Date();
+                const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+                const hasTtmDividends = dividendTx.some((t) => {
+                    const d = new Date(t.date);
+                    return !isNaN(d.getTime()) && d >= twelveMonthsAgo;
+                });
+
                 const last = localStorage.getItem(FINNHUB_DIV_SYNC_KEY);
-                if (last && Date.now() - Date.parse(last) < 24 * 60 * 60 * 1000) return;
+                const lastSync = last ? Date.parse(last) : 0;
+                const withinCooldown = last && Date.now() - lastSync < AUTO_DIVIDEND_SYNC_COOLDOWN_MS;
+                const bypassCooldown = !hasTtmDividends && eligible;
+                if (withinCooldown && !bypassCooldown) return;
+
                 if (cancelled) return;
                 await runFinnhubSync(false);
             } catch {
@@ -390,7 +502,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
         return () => {
             cancelled = true;
         };
-    }, [loading, data, runFinnhubSync]);
+    }, [loading, data, runFinnhubSync, personalInvestments, invTxPersonal]);
 
     const formatTxAmountSar = useCallback(
         (t: InvestmentTransaction) => {
@@ -434,12 +546,12 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                             className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-900 hover:bg-indigo-100 disabled:opacity-50"
                         >
                             <ArrowPathIcon className={`h-4 w-4 ${syncBusy ? 'animate-spin' : ''}`} aria-hidden />
-                            {syncBusy ? 'Syncing from Finnhub…' : 'Import dividends (Finnhub)'}
+                            {syncBusy ? 'Syncing from Finnhub…' : 'Refresh from market data'}
                         </button>
                     </div>
                 </div>
                 <p className="mt-4 text-sm text-slate-600 rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-3">
-                    <strong className="text-slate-800">How it works:</strong> Cash dividends from Finnhub are saved as investment transactions (same ledger as manual entries). We match your share counts per portfolio so amounts stay proportional. Requires{' '}
+                    <strong className="text-slate-800">Automation:</strong> When Finnhub is configured, this page pulls historical dividends for your open positions and writes them to each platform’s investment ledger—no import step required for ongoing updates. Use refresh only if you want to force a sync sooner. Requires{' '}
                     <code className="text-xs bg-white px-1 rounded">VITE_FINNHUB_API_KEY</code>.
                     <InfoHint text="Finnhub reports historical per-share payments; we multiply by your recorded quantity and book in each portfolio’s currency (USD or SAR), then show SAR using your FX setting." />
                 </p>
@@ -596,16 +708,18 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
             <div className="section-card">
                 <h3 className="section-title flex items-center gap-2">
                     Monthly Dividend Income
-                    <InfoHint text="Last 12 months from your dividend transactions, in SAR." />
+                    <InfoHint text="Rolling 12 months of dividend cash logged on each investment platform, converted to SAR. Stacked bars show which platform paid each month." />
                 </h3>
-                <p className="text-sm text-slate-500 mb-4">Based on recorded payments (imported or manual)</p>
+                <p className="text-sm text-slate-500 mb-2">
+                    Actual cash dividends from your investment ledger, attributed to each platform (broker) account. Updates when new dividend rows are recorded—including automatic Finnhub sync when configured.
+                </p>
+                {!monthlyChartHasActivity && (
+                    <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
+                        No dividend payments in the last 12 months yet. With Finnhub configured, opening this page syncs historical dividends into your ledgers automatically (throttled to limit API use).
+                    </p>
+                )}
                 <div className="h-[400px]">
-                    <ChartContainer
-                        height="100%"
-                        isEmpty={!monthlyDividendsChartData?.length}
-                        emptyMessage="No dividend transactions in the last 12 months. Use Import dividends (Finnhub) or add dividends from your broker."
-                        className="flex-1 min-h-0"
-                    >
+                    <ChartContainer height="100%" isEmpty={false} className="flex-1 min-h-0">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={monthlyDividendsChartData} margin={CHART_MARGIN}>
                                 <CartesianGrid strokeDasharray={CHART_GRID_STROKE} stroke={CHART_GRID_COLOR} />
@@ -628,7 +742,25 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                                     }}
                                 />
                                 <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                                <Bar dataKey="Dividend Income" fill={CHART_COLORS.secondary} name="Dividend Income" radius={[6, 6, 0, 0]} />
+                                {platformStackKeys.length > 0 ? (
+                                    platformStackKeys.map((pk, i) => (
+                                        <Bar
+                                            key={pk.key}
+                                            dataKey={pk.key}
+                                            stackId="div"
+                                            fill={CHART_COLORS.categorical[i % CHART_COLORS.categorical.length]}
+                                            name={pk.label}
+                                            radius={i === platformStackKeys.length - 1 ? [6, 6, 0, 0] : [0, 0, 0, 0]}
+                                        />
+                                    ))
+                                ) : (
+                                    <Bar
+                                        dataKey="totalBar"
+                                        fill={CHART_COLORS.secondary}
+                                        name="Dividend income (SAR)"
+                                        radius={[6, 6, 0, 0]}
+                                    />
+                                )}
                             </BarChart>
                         </ResponsiveContainer>
                     </ChartContainer>
@@ -679,7 +811,9 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     {recentDividendTransactions.length === 0 && (
                         <div className="text-center py-8">
                             <p className="text-slate-500 font-medium">No dividend transactions yet</p>
-                            <p className="text-sm text-slate-500 mt-2">Use Import dividends (Finnhub) or add them via Record Trade / statement upload.</p>
+                            <p className="text-sm text-slate-500 mt-2">
+                                With Finnhub configured, dividends sync into this ledger automatically. You can also add them via Record Trade or statement upload.
+                            </p>
                         </div>
                     )}
                     {recentDividendTransactions.length > 0 && (

@@ -504,6 +504,13 @@ function commodityHoldingToRow(holding: Partial<CommodityHolding> & { symbol: st
         purchase_value: roundMoney(Number(holding.purchaseValue ?? (holding as any).purchase_value ?? 0)),
         current_value: roundMoney(Number(holding.currentValue ?? (holding as any).current_value ?? 0)),
         zakah_class: holding.zakahClass ?? (holding as any).zakah_class ?? 'Zakatable',
+        // Persist goal linkage so it survives refresh. "Not linked" => NULL in DB.
+        goal_id:
+            holding.goalId != null && String(holding.goalId).trim() !== ''
+                ? holding.goalId
+                : (holding as any).goal_id != null && String((holding as any).goal_id).trim() !== ''
+                  ? (holding as any).goal_id
+                  : null,
     };
 }
 
@@ -593,6 +600,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return {
             ...transaction,
             accountId: transaction.accountId || transaction.account_id,
+            portfolioId: transaction.portfolioId ?? transaction.portfolio_id,
             currency,
             linkedCashAccountId: transaction.linkedCashAccountId ?? transaction.linked_cash_account_id,
         };
@@ -915,7 +923,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }, 8000);
         
         return () => clearTimeout(timeoutId);
-    }, [auth?.user]);
+        // Use user id only: `user` object reference changes on TOKEN_REFRESHED; refetching then caused global loading flashes.
+    }, [auth?.user?.id]);
 
     /** Keep a dense SAR/USD point per calendar day for charts/KPIs (spot + snapshot seed + forward-fill). */
     useEffect(() => {
@@ -1795,7 +1804,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         cashBalanceAccumulatorRef.current = {};
         return applied;
-    }, [data.recurringTransactions, addTransaction, supabase, auth?.user]);
+    }, [data.recurringTransactions, addTransaction, supabase, auth?.user?.id]);
 
     // Auto-apply recurring transactions due today (dayOfMonth === today, addManually === false), once per calendar day.
     // Intentionally omit data.transactions so the effect does not re-run when we add transactions (avoids effect loop); duplicate check uses transactionsRef.
@@ -1808,7 +1817,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         applyRecurringDueToday().catch(() => {
             if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(storageKey);
         });
-    }, [loading, auth?.user, data.recurringTransactions, applyRecurringDueToday]);
+    }, [loading, auth?.user?.id, data.recurringTransactions, applyRecurringDueToday]);
 
     // --- Accounts / Platforms ---
     const addPlatform = async (platform: Omit<Account, 'id' | 'user_id' | 'balance'> & { balance?: number }) => {

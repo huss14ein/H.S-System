@@ -341,21 +341,7 @@ const handler: Handler = async (event: HandlerEvent) => {
       }
     }
 
-    // 3) Try Grok (xAI) if available
-    if (process.env.GROK_API_KEY) {
-      try {
-        const result = await callGrok(contents, config);
-        return {
-          statusCode: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-          body: JSON.stringify(result),
-        };
-      } catch (grokError) {
-        lastError = grokError;
-      }
-    }
-
-    // 4) Try OpenAI if available
+    // 3) Try OpenAI before Grok — xAI keys often hit 403/team credits; prefer OpenAI when configured.
     if (process.env.OPENAI_API_KEY) {
       try {
         const result = await callOpenAI(contents, config);
@@ -366,6 +352,20 @@ const handler: Handler = async (event: HandlerEvent) => {
         };
       } catch (openaiError) {
         lastError = openaiError;
+      }
+    }
+
+    // 4) Grok (xAI) last — optional fallback when other providers fail or are unset.
+    if (process.env.GROK_API_KEY) {
+      try {
+        const result = await callGrok(contents, config);
+        return {
+          statusCode: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify(result),
+        };
+      } catch (grokError) {
+        lastError = grokError;
       }
     }
 

@@ -5,8 +5,7 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useCurrency } from '../context/CurrencyContext';
 import InfoHint from '../components/InfoHint';
 import SectionCard from '../components/SectionCard';
-import type { Holding, InvestmentPortfolio, TradeCurrency } from '../types';
-import type { RecoveryPositionConfig, RecoveryGlobalConfig, RecoveryOrderDraft } from '../types';
+import type { Holding, InvestmentPortfolio, PlannedTrade, RecoveryOrderDraft, RecoveryPositionConfig, RecoveryGlobalConfig, TradeCurrency } from '../types';
 import {
   buildRecoveryPlan,
   computeNewAverage,
@@ -41,6 +40,9 @@ import {
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import { ResolvedSymbolLabel, formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
 import { getPersonalInvestments } from '../utils/wealthScope';
+import { toast } from '../context/ToastContext';
+import { recoveryOrderDraftToPlannedTrade, plannedTradeMatchesRecoveryDraft } from '../services/recoveryToPlannedTrade';
+import { validatePlannedTrade } from '../services/dataQuality/validation';
 
 interface RecoveryPlanViewProps {
   onNavigateToTab?: (tab: string) => void;
@@ -80,7 +82,7 @@ const deriveDynamicPositionConfig = (
 };
 function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActivePage }: RecoveryPlanViewProps) {
   const ctx = useContext(DataContext)!;
-  const { data, loading, getAvailableCashForAccount } = ctx;
+  const { data, loading, getAvailableCashForAccount, addPlannedTrade } = ctx;
   const { exchangeRate } = useCurrency();
   const { trackAction } = useSelfLearning();
   const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
@@ -160,6 +162,10 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }), [deployableCashSAR]);
 
   const universe = data?.portfolioUniverse ?? [];
+  const planCurrency = useMemo(
+    () => (data?.investmentPlan?.budgetCurrency as TradeCurrency) || 'SAR',
+    [data?.investmentPlan?.budgetCurrency],
+  );
   const coreUpsideSpec = useMemo(() => {
     const coreTickers: string[] = [];
     const upsideTickers: string[] = [];
@@ -180,6 +186,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
   const [selectedHoldingId, setSelectedHoldingId] = useState<string | null>(null);
   const [draftOrders, setDraftOrders] = useState<RecoveryOrderDraft[] | null>(null);
+  const [insertingPlanKey, setInsertingPlanKey] = useState<string | null>(null);
   const [selectedFundamentals, setSelectedFundamentals] = useState<HoldingFundamentals | null>(null);
   const [isSelectedFundamentalsLoading, setIsSelectedFundamentalsLoading] = useState(false);
   const [selectedFundamentalsError, setSelectedFundamentalsError] = useState<string | null>(null);
@@ -407,6 +414,109 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     : deployableCashSAR / sarPerUsd;
   const isSelected = (holdingId: string) => selectedHoldingId === holdingId;
 
+  const resolveDisplayNameForDraft = useCallback(
+    (draft: RecoveryOrderDraft) => {
+      const sym = draft.symbol.toUpperCase();
+      const fromUniverse = universe.find((u: { ticker?: string }) => (u.ticker ?? '').toUpperCase() === sym)?.name;
+      if (fromUniverse && String(fromUniverse).trim()) return String(fromUniverse).trim();
+      if (selected?.holding?.symbol?.toUpperCase() === sym && selected.holding.name) return String(selected.holding.name).trim();
+      return sym;
+    },
+    [universe, selected],
+  );
+
+  const insertRecoveryDraftIntoInvestmentPlan = useCallback(
+    async (draft: RecoveryOrderDraft, index: number) => {
+      const key = `${draft.symbol}-${index}`;
+      setInsertingPlanKey(key);
+      try {
+        const displayName = resolveDisplayNameForDraft(draft);
+        const limitPriceCurrency = selected?.bookCurrency ?? 'USD';
+        const payload = recoveryOrderDraftToPlannedTrade(draft, {
+          displayName,
+          planCurrency,
+          sarPerUsd,
+          limitPriceCurrency,
+        });
+        if (plannedTradeMatchesRecoveryDraft(data?.plannedTrades ?? [], payload)) {
+          toast('This limit is already in Trade plans.', 'info');
+          return;
+        }
+        const v = validatePlannedTrade(payload);
+        if (!v.valid) {
+          toast(v.errors.join('\n'), 'error');
+          return;
+        }
+        await addPlannedTrade(payload);
+        toast(`${payload.symbol} added to Trade plans (Investment Plan tab).`, 'success');
+        trackAction('recovery-draft-to-investment-plan', 'Recovery Plan');
+      } catch (e) {
+        toast(e instanceof Error ? e.message : 'Could not add to Investment Plan.', 'error');
+      } finally {
+        setInsertingPlanKey(null);
+      }
+    },
+    [addPlannedTrade, data?.plannedTrades, planCurrency, resolveDisplayNameForDraft, sarPerUsd, selected?.bookCurrency, trackAction],
+  );
+
+  const insertAllRecoveryDraftsIntoInvestmentPlan = useCallback(async () => {
+    if (!draftOrders?.length) return;
+    setInsertingPlanKey('__all__');
+    let added = 0;
+    let skipped = 0;
+    try {
+      const seen = new Set<string>();
+      const existing = [...(data?.plannedTrades ?? [])];
+      for (let i = 0; i < draftOrders.length; i++) {
+        const d = draftOrders[i];
+        const displayName = resolveDisplayNameForDraft(d);
+        const limitPriceCurrency = selected?.bookCurrency ?? 'USD';
+        const payload = recoveryOrderDraftToPlannedTrade(d, {
+          displayName,
+          planCurrency,
+          sarPerUsd,
+          limitPriceCurrency,
+        });
+        const dedupeKey = `${payload.symbol}|${payload.tradeType}|${payload.targetValue}|${payload.quantity}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        if (plannedTradeMatchesRecoveryDraft(existing, payload)) {
+          skipped += 1;
+          continue;
+        }
+        const v = validatePlannedTrade(payload);
+        if (!v.valid) {
+          toast(`${payload.symbol}: ${v.errors[0] ?? 'Invalid plan'}`, 'error');
+          continue;
+        }
+        await addPlannedTrade(payload);
+        existing.push({ id: `local-${i}`, user_id: '', ...payload } as PlannedTrade);
+        added += 1;
+      }
+      if (added > 0) {
+        toast(`Added ${added} trade plan${added === 1 ? '' : 's'}.${skipped ? ` ${skipped} already existed.` : ''}`, 'success');
+        trackAction('recovery-draft-to-investment-plan-batch', 'Recovery Plan');
+        onNavigateToTab?.('Investment Plan');
+      } else if (skipped > 0) {
+        toast('All matching limits are already in Trade plans.', 'info');
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not add plans.', 'error');
+    } finally {
+      setInsertingPlanKey(null);
+    }
+  }, [
+    addPlannedTrade,
+    data?.plannedTrades,
+    draftOrders,
+    onNavigateToTab,
+    planCurrency,
+    resolveDisplayNameForDraft,
+    sarPerUsd,
+    selected?.bookCurrency,
+    trackAction,
+  ]);
+
   const whatIfSimulation = useMemo(() => {
     if (!selected || !selectedPlan) return null;
     const spend = parseFloat(whatIfSpend);
@@ -607,7 +717,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }
 
   return (
-    <div className="page-container min-h-[40rem]">
+    <div className="page-container min-h-[40rem] space-y-10 sm:space-y-12">
       {/* Hero */}
       <section className="section-card p-6 sm:p-8">
         <div className="flex flex-col gap-6">
@@ -1591,10 +1701,26 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       )}
 
       {draftOrders && draftOrders.length > 0 && (
-        <SectionCard title="Draft orders (export to broker)" className="space-y-3" collapsible collapsibleSummary="Limit orders">
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-sm text-slate-600">Copy or use these to place limit orders in your broker.</p>
-            <div className="flex gap-2">
+        <SectionCard
+          title="Draft orders (export to broker)"
+          className="space-y-3"
+          collapsible
+          collapsibleSummary="Limit orders"
+          infoHint="Each row is generated from the recovery ladder. Use Add to Trade plans to copy symbol, limit price, quantity, and notional into Investment Plan as price-triggered rules—no retyping. Buys trigger when price ≤ limit; sells when ≥ limit."
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
+            <p className="text-sm text-slate-600 max-w-2xl leading-relaxed">
+              Copy or export for your broker, or <span className="font-medium text-slate-800">insert into Trade plans</span> so the same limits appear under Investment Plan (scheduled rules), fully filled from this engine.
+            </p>
+            <div className="flex flex-wrap gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={insertAllRecoveryDraftsIntoInvestmentPlan}
+                disabled={insertingPlanKey !== null}
+                className="px-4 py-2 text-sm font-semibold rounded-lg bg-primary text-white hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {insertingPlanKey === '__all__' ? 'Adding…' : 'Add all to Trade plans'}
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -1645,34 +1771,47 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             {draftOrders.map((d, i) => (
               <div
                 key={i}
-                className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100 text-sm"
+                className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100 text-sm"
               >
-                <span className="font-semibold text-slate-800">
-                  {d.type} {d.symbol}
-                </span>
-                <span className="text-slate-600">Qty: {d.qty}</span>
-                <span className="text-slate-600">
-                  Limit:{' '}
-                  {formatCurrencyString(d.limitPrice, {
-                    inCurrency: selected?.bookCurrency ?? 'USD',
-                  })}
-                </span>
-                {d.label && <span className="text-slate-500">({d.label})</span>}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const text = `${d.type.toUpperCase()} ${d.symbol} - Qty: ${d.qty}, Limit: ${formatCurrencyString(d.limitPrice, { inCurrency: selected?.bookCurrency ?? 'USD' })}${d.label ? ` (${d.label})` : ''}`;
-                    navigator.clipboard.writeText(text).then(() => {
-                      // Visual feedback could be added here
-                    }).catch(() => {
-                      alert('Failed to copy to clipboard.');
-                    });
-                  }}
-                  className="ml-auto px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 rounded transition-colors"
-                  title="Copy this order"
-                >
-                  Copy
-                </button>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0 flex-1">
+                  <span className="font-semibold text-slate-800">
+                    {d.type} {d.symbol}
+                  </span>
+                  <span className="text-slate-600 tabular-nums">Qty: {d.qty}</span>
+                  <span className="text-slate-600">
+                    Limit:{' '}
+                    {formatCurrencyString(d.limitPrice, {
+                      inCurrency: selected?.bookCurrency ?? 'USD',
+                    })}
+                  </span>
+                  {d.label && <span className="text-slate-500">({d.label})</span>}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 sm:ml-auto shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => insertRecoveryDraftIntoInvestmentPlan(d, i)}
+                    disabled={insertingPlanKey !== null}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    title="Creates a Trade plan with this symbol, limit price, quantity, and notional (no manual entry)"
+                  >
+                    {insertingPlanKey === `${d.symbol}-${i}` ? 'Adding…' : 'Add to Trade plans'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const text = `${d.type.toUpperCase()} ${d.symbol} - Qty: ${d.qty}, Limit: ${formatCurrencyString(d.limitPrice, { inCurrency: selected?.bookCurrency ?? 'USD' })}${d.label ? ` (${d.label})` : ''}`;
+                      navigator.clipboard.writeText(text).then(() => {
+                        // Visual feedback could be added here
+                      }).catch(() => {
+                        alert('Failed to copy to clipboard.');
+                      });
+                    }}
+                    className="px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 rounded transition-colors"
+                    title="Copy this order"
+                  >
+                    Copy
+                  </button>
+                </div>
               </div>
             ))}
           </div>

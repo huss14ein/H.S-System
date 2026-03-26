@@ -630,15 +630,15 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
     const [newBucketCurrency, setNewBucketCurrency] = useState<PriceAlertCurrency>('USD');
 
     const watchlistSymbolKey = useMemo(() => (data?.watchlist ?? []).map((w) => (w.symbol ?? '').trim().toUpperCase()).filter(Boolean).join(','), [data?.watchlist]);
+    /** 1M candles: Finnhub when key is set, else Stooq (required for Tadawul / no-key dev). Throttled per symbol to respect Finnhub limits. */
     useEffect(() => {
-        if (!import.meta.env.VITE_FINNHUB_API_KEY) return;
         const symbols = watchlistSymbolKey ? watchlistSymbolKey.split(',') : [];
         if (symbols.length === 0) {
             setHistoricalBySymbol({});
             return;
         }
         let cancelled = false;
-        const delayMs = 1200;
+        const delayMs = import.meta.env.VITE_FINNHUB_API_KEY?.trim() ? 1200 : 400;
         (async () => {
             const next: Record<string, CandlePoint[] | null> = {};
             for (const symbol of symbols) {
@@ -653,7 +653,9 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
             }
             if (!cancelled) setHistoricalBySymbol((prev) => ({ ...prev, ...next }));
         })();
-        return () => { cancelled = true; };
+        return () => {
+            cancelled = true;
+        };
     }, [watchlistSymbolKey]);
 
     useEffect(() => {
