@@ -328,8 +328,8 @@ function validateAndSanitizeName(name: string): { isValid: boolean; sanitized: s
     return { isValid: false, sanitized: '', error: 'Name is too long (max 100 characters)' };
   }
   
-  // Check for valid characters (letters, spaces, hyphens, apostrophes)
-  const validNameRegex = /^[a-zA-Z\s\-'\.]+$/;
+  // Allow international names (Arabic/Latin/etc), spaces, hyphens, apostrophes, periods.
+  const validNameRegex = /^[\p{L}\p{M}\s\-'\.]+$/u;
   if (!validNameRegex.test(sanitized)) {
     return { isValid: false, sanitized: '', error: 'Name can only contain letters, spaces, hyphens (-), apostrophes (\'), and periods (.)' };
   }
@@ -918,7 +918,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 };
 
                 logSecurityEvent('signup_validation_failed', { email }, false);
-                return { error: { name: 'ValidationError', message: 'Validation failed' } as AuthError, user: null, validation };
+                const detail =
+                    nameValidation.error ||
+                    emailValidation.error ||
+                    passwordValidation.errors?.[0] ||
+                    'Please correct the highlighted fields.';
+                return { error: { name: 'ValidationError', message: detail } as AuthError, user: null, validation };
             }
 
             // Get device fingerprint
