@@ -356,6 +356,24 @@ function validateAndSanitizeName(name: string): { isValid: boolean; sanitized: s
   return { isValid: true, sanitized };
 }
 
+/** Normalize provider auth throttling / transient messages for better UX. */
+function normalizeAuthServiceErrorMessage(message: string | undefined | null): string {
+  const raw = String(message || '').trim();
+  const lower = raw.toLowerCase();
+  if (!raw) return 'Authentication service error. Please try again shortly.';
+  if (
+    lower.includes('email rate limit exceeded') ||
+    lower.includes('over_email_send_rate_limit') ||
+    (lower.includes('email') && lower.includes('rate'))
+  ) {
+    return 'Email sending is temporarily rate-limited. Please wait a few minutes before trying again.';
+  }
+  if (lower.includes('too many requests') || lower.includes('rate limit')) {
+    return 'Too many attempts in a short time. Please wait a few minutes and try again.';
+  }
+  return raw;
+}
+
 // Rate limiting check with persistent storage
 function checkRateLimit(identifier: string): { allowed: boolean; waitTime?: number; message?: string } {
   const now = Date.now();
@@ -804,7 +822,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
             if (error) {
                 logSecurityEvent('login_failed', { email, reason: error.message }, false);
-                return { error: { name: error.name, message: error.message } as AuthError };
+                return {
+                    error: {
+                        name: error.name,
+                        message: normalizeAuthServiceErrorMessage(error.message),
+                    } as AuthError,
+                };
             }
 
             if (data.user) {
@@ -921,7 +944,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 }
 
                 // Sanitize error messages to prevent user enumeration
-                let sanitizedError = error.message;
+                let sanitizedError = normalizeAuthServiceErrorMessage(error.message);
                 if (error.message.includes('User already registered')) {
                     sanitizedError = 'An account with this email already exists. Please sign in instead.';
                 } else if (
@@ -1078,7 +1101,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
             if (error) {
                 logSecurityEvent('verification_email_failed', { email, reason: error.message }, false);
-                return { error: { name: error.name, message: error.message } as AuthError };
+                return {
+                    error: {
+                        name: error.name,
+                        message: normalizeAuthServiceErrorMessage(error.message),
+                    } as AuthError,
+                };
             }
 
             logSecurityEvent('verification_email_sent', { email }, true);
