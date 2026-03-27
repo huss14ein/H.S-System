@@ -716,12 +716,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 setIsApproved(true);
                 return;
             }
-            const { data, error } = result as { data: { approved?: boolean } | null; error: { message?: string } | null };
+            const { data, error } = result as { data: Record<string, unknown> | null; error: { message?: string } | null };
             if (error) {
                 setIsApproved(true);
                 return;
             }
-            setIsApproved(data?.approved ?? true);
+            // No public.users row: do not grant access (signup trigger missing or race before insert completes).
+            if (data == null) {
+                setIsApproved(false);
+                return;
+            }
+            // Legacy DB without `approved` column: field absent → treat as approved.
+            const raw = data.approved;
+            const hasApprovedKey = Object.prototype.hasOwnProperty.call(data, 'approved');
+            setIsApproved(!hasApprovedKey ? true : Boolean(raw));
         } catch {
             setIsApproved(true);
         }
@@ -907,11 +915,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
             if (error) {
                 logSecurityEvent('signup_failed', { email, reason: error.message }, false);
-                
+                if (import.meta.env.DEV) {
+                    // eslint-disable-next-line no-console
+                    console.warn('[signup] Supabase error:', error.message, error);
+                }
+
                 // Sanitize error messages to prevent user enumeration
                 let sanitizedError = error.message;
                 if (error.message.includes('User already registered')) {
                     sanitizedError = 'An account with this email already exists. Please sign in instead.';
+                } else if (
+                    /database error|saving new user|new user/i.test(error.message) ||
+                    (error as { code?: string }).code === 'unexpected_failure'
+                ) {
+                    // Usually: public.users RLS blocks handle_new_user() trigger — apply
+                    // supabase/migrations/fix_signup_handle_new_user_bypass_rls.sql on the project DB.
+                    sanitizedError =
+                        'Signup could not complete (database rejected the new profile). This is often fixed by applying the latest Supabase migration for handle_new_user. If you are the project admin, run the migration in SQL Editor or ask support.';
                 }
 
                 return { 

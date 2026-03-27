@@ -263,41 +263,46 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
 
     useEffect(() => {
         const loadAdminAndPending = async () => {
-            if (!supabase || !auth?.user) return;
+            if (!supabase || !auth?.user) {
+                setIsAdmin(false);
+                setPendingUsers([]);
+                return;
+            }
             const { data: userRecord } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
             const admin = inferIsAdmin(auth.user, userRecord?.role ?? null);
             setIsAdmin(admin);
-            if (admin) {
-                const { error: pendingErr } = await supabase
-                    .from('users')
-                    .select('id, name, email, created_at')
-                    .order('created_at', { ascending: false });
-                const errText = `${pendingErr?.message ?? ''} ${(pendingErr as { details?: string })?.details ?? ''} ${(pendingErr as { hint?: string })?.hint ?? ''}`.toLowerCase();
-                const httpStatus =
-                    (pendingErr as { status?: number; statusCode?: number } | null)?.status ??
-                    (pendingErr as { statusCode?: number } | null)?.statusCode;
-                const postgrest400ApprovalFilter =
-                    httpStatus === 400 && (/approved/.test(errText) || /users\.approved/.test(errText));
-                const missingApprovalColumn =
-                    pendingErr &&
-                    (pendingErr.code === '42703' ||
-                        pendingErr.code === 'PGRST204' ||
-                        postgrest400ApprovalFilter ||
-                        (typeof pendingErr.message === 'string' &&
-                            /approved/i.test(pendingErr.message) &&
-                            /column|does not exist|schema/i.test(pendingErr.message)) ||
-                        (errText.includes('approved') &&
-                            (errText.includes('column') || errText.includes('does not exist') || errText.includes('schema'))));
-                if (missingApprovalColumn) {
-                    setPendingUsers([]);
-                } else if (pendingErr) {
-                    console.warn('Could not load pending signups:', pendingErr.message);
-                    setPendingUsers([]);
-                } else {
-                    // If this deployment has no `approved` column we avoid noisy 400s by not filtering server-side.
-                    // Approvals are surfaced only when the schema exposes pending-state semantics.
-                    setPendingUsers([]);
-                }
+            if (!admin) {
+                setPendingUsers([]);
+                return;
+            }
+            const { data: pendingData, error: pendingErr } = await supabase
+                .from('users')
+                .select('id, name, email, created_at, approved')
+                .eq('approved', false)
+                .order('created_at', { ascending: false });
+            const errText = `${pendingErr?.message ?? ''} ${(pendingErr as { details?: string })?.details ?? ''} ${(pendingErr as { hint?: string })?.hint ?? ''}`.toLowerCase();
+            const httpStatus =
+                (pendingErr as { status?: number; statusCode?: number } | null)?.status ??
+                (pendingErr as { statusCode?: number } | null)?.statusCode;
+            const postgrest400ApprovalFilter =
+                httpStatus === 400 && (/approved/.test(errText) || /users\.approved/.test(errText));
+            const missingApprovalColumn =
+                pendingErr &&
+                (pendingErr.code === '42703' ||
+                    pendingErr.code === 'PGRST204' ||
+                    postgrest400ApprovalFilter ||
+                    (typeof pendingErr.message === 'string' &&
+                        /approved/i.test(pendingErr.message) &&
+                        /column|does not exist|schema/i.test(pendingErr.message)) ||
+                    (errText.includes('approved') &&
+                        (errText.includes('column') || errText.includes('does not exist') || errText.includes('schema'))));
+            if (missingApprovalColumn) {
+                setPendingUsers([]);
+            } else if (pendingErr) {
+                console.warn('Could not load pending signups:', pendingErr.message);
+                setPendingUsers([]);
+            } else {
+                setPendingUsers((pendingData ?? []) as { id: string; name: string | null; email: string | null; created_at: string }[]);
             }
         };
         loadAdminAndPending();
@@ -306,27 +311,31 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     const handleApproveUser = async (userId: string) => {
         if (!supabase) return;
         setApprovalLoading(userId);
-        try {
-            await supabase.rpc('approve_signup_user', { p_user_id: userId });
-            setPendingUsers((prev) => prev.filter((u) => u.id !== userId));
-        } catch (e) {
-            console.error('Approve failed:', e);
-        } finally {
+        const { error } = await supabase.rpc('approve_signup_user', { p_user_id: userId });
+        if (error) {
+            console.error('Approve failed:', error.message);
+            showToast(error.message || 'Could not approve user', 'error');
             setApprovalLoading(null);
+            return;
         }
+        showToast('User approved. They can use the app after their next refresh or sign-in.', 'success');
+        setPendingUsers((prev) => prev.filter((u) => u.id !== userId));
+        setApprovalLoading(null);
     };
 
     const handleRejectUser = async (userId: string) => {
         if (!supabase) return;
         setApprovalLoading(userId);
-        try {
-            await supabase.rpc('reject_signup_user', { p_user_id: userId });
-            setPendingUsers((prev) => prev.filter((u) => u.id !== userId));
-        } catch (e) {
-            console.error('Reject failed:', e);
-        } finally {
+        const { error } = await supabase.rpc('reject_signup_user', { p_user_id: userId });
+        if (error) {
+            console.error('Reject failed:', error.message);
+            showToast(error.message || 'Could not update user', 'error');
             setApprovalLoading(null);
+            return;
         }
+        showToast('Signup rejected (user remains unapproved).', 'info');
+        setPendingUsers((prev) => prev.filter((u) => u.id !== userId));
+        setApprovalLoading(null);
     };
 
     const handleSettingChange = <K extends keyof typeof localSettings>(key: K, value: (typeof localSettings)[K]) => {
