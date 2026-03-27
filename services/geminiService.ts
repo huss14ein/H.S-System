@@ -1,4 +1,5 @@
-import { Type, FunctionDeclaration } from "@google/genai";
+import type { FunctionDeclaration } from '@google/genai';
+import { SchemaType } from './geminiSchemaTypes';
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult, ProposedTrade, TradeCurrency } from '../types';
 import { finnhubFetch, toFinnhubSymbol, fromFinnhubSymbol, canonicalQuoteLookupKey, toStooqSymbol } from './finnhubService';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
@@ -705,14 +706,14 @@ Each item: type (BUDGET|GOAL|INVESTMENT|SAVINGS), title (short), description (on
             config: {
                 responseMimeType: "application/json",
                 responseSchema: {
-                    type: Type.ARRAY,
+                    type: SchemaType.ARRAY,
                     items: {
-                        type: Type.OBJECT,
+                        type: SchemaType.OBJECT,
                         properties: {
-                            type: { type: Type.STRING, description: "Type of insight (BUDGET, GOAL, INVESTMENT, SAVINGS)" },
-                            title: { type: Type.STRING },
-                            description: { type: Type.STRING },
-                            emoji: { type: Type.STRING }
+                            type: { type: SchemaType.STRING, description: "Type of insight (BUDGET, GOAL, INVESTMENT, SAVINGS)" },
+                            title: { type: SchemaType.STRING },
+                            description: { type: SchemaType.STRING },
+                            emoji: { type: SchemaType.STRING }
                         }
                     }
                 }
@@ -1053,10 +1054,10 @@ export const getAIFinancialPersona = async (
             config: {
                 responseMimeType: "application/json",
                 responseSchema: {
-                    type: Type.OBJECT,
+                    type: SchemaType.OBJECT,
                     properties: {
-                        persona: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, description: { type: Type.STRING } } },
-                        reportCard: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { metric: { type: Type.STRING }, value: { type: Type.STRING }, rating: { type: Type.STRING }, analysis: { type: Type.STRING }, suggestion: { type: Type.STRING } } } }
+                        persona: { type: SchemaType.OBJECT, properties: { title: { type: SchemaType.STRING }, description: { type: SchemaType.STRING } } },
+                        reportCard: { type: SchemaType.ARRAY, items: { type: SchemaType.OBJECT, properties: { metric: { type: SchemaType.STRING }, value: { type: SchemaType.STRING }, rating: { type: SchemaType.STRING }, analysis: { type: SchemaType.STRING }, suggestion: { type: SchemaType.STRING } } } }
                     }
                 }
             }
@@ -2351,13 +2352,13 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
             config: {
                 responseMimeType: "application/json",
                 responseSchema: {
-                    type: Type.OBJECT,
+                    type: SchemaType.OBJECT,
                     additionalProperties: {
-                        type: Type.OBJECT,
+                        type: SchemaType.OBJECT,
                         properties: {
-                            price: { type: Type.NUMBER },
-                            change: { type: Type.NUMBER },
-                            changePercent: { type: Type.NUMBER }
+                            price: { type: SchemaType.NUMBER },
+                            change: { type: SchemaType.NUMBER },
+                            changePercent: { type: SchemaType.NUMBER }
                         },
                         required: ["price", "change", "changePercent"]
                     }
@@ -2507,11 +2508,11 @@ Be specific, actionable, and leverage the detailed event information provided. I
             config: {
                 responseMimeType: 'application/json',
                 responseSchema: {
-                    type: Type.OBJECT,
+                    type: SchemaType.OBJECT,
                     properties: {
-                        insight: { type: Type.STRING },
-                        action: { type: Type.STRING },
-                        relevance: { type: Type.STRING },
+                        insight: { type: SchemaType.STRING },
+                        action: { type: SchemaType.STRING },
+                        relevance: { type: SchemaType.STRING },
                     },
                     required: ['insight', 'action', 'relevance'],
                 },
@@ -2578,13 +2579,13 @@ Return a single JSON object with: minimumUpsidePercentage (number 15-35, typical
             config: {
                 responseMimeType: 'application/json',
                 responseSchema: {
-                    type: Type.OBJECT,
+                    type: SchemaType.OBJECT,
                     properties: {
-                        minimumUpsidePercentage: { type: Type.NUMBER },
-                        stale_days: { type: Type.NUMBER },
-                        min_coverage_threshold: { type: Type.NUMBER },
-                        redirect_policy: { type: Type.STRING },
-                        target_provider: { type: Type.STRING },
+                        minimumUpsidePercentage: { type: SchemaType.NUMBER },
+                        stale_days: { type: SchemaType.NUMBER },
+                        min_coverage_threshold: { type: SchemaType.NUMBER },
+                        redirect_policy: { type: SchemaType.STRING },
+                        target_provider: { type: SchemaType.STRING },
                     },
                     required: ['minimumUpsidePercentage', 'stale_days', 'min_coverage_threshold', 'redirect_policy', 'target_provider'],
                 },
@@ -2842,24 +2843,24 @@ export async function executeInvestmentPlanStrategy(
         name: 'record_investment_trades',
         description: 'Records the results of the investment plan execution, including trades and audit logs.',
         parameters: {
-            type: Type.OBJECT,
+            type: SchemaType.OBJECT,
             properties: {
-                totalInvestment: { type: Type.NUMBER },
-                coreInvestment: { type: Type.NUMBER },
-                upsideInvestment: { type: Type.NUMBER },
-                speculativeInvestment: { type: Type.NUMBER },
-                redirectedInvestment: { type: Type.NUMBER },
-                unusedUpsideFunds: { type: Type.NUMBER },
-                status: { type: Type.STRING, enum: ['success', 'failure'] },
-                log_details: { type: Type.STRING, description: 'Markdown formatted audit log of the execution.' },
+                totalInvestment: { type: SchemaType.NUMBER },
+                coreInvestment: { type: SchemaType.NUMBER },
+                upsideInvestment: { type: SchemaType.NUMBER },
+                speculativeInvestment: { type: SchemaType.NUMBER },
+                redirectedInvestment: { type: SchemaType.NUMBER },
+                unusedUpsideFunds: { type: SchemaType.NUMBER },
+                status: { type: SchemaType.STRING, enum: ['success', 'failure'] },
+                log_details: { type: SchemaType.STRING, description: 'Markdown formatted audit log of the execution.' },
                 trades: {
-                    type: Type.ARRAY,
+                    type: SchemaType.ARRAY,
                     items: {
-                        type: Type.OBJECT,
+                        type: SchemaType.OBJECT,
                         properties: {
-                            ticker: { type: Type.STRING },
-                            amount: { type: Type.NUMBER },
-                            reason: { type: Type.STRING },
+                            ticker: { type: SchemaType.STRING },
+                            amount: { type: SchemaType.NUMBER },
+                            reason: { type: SchemaType.STRING },
                         },
                         required: ['ticker', 'amount', 'reason'],
                     },
@@ -2976,12 +2977,12 @@ Priorities:
             config: {
                 responseMimeType: 'application/json',
                 responseSchema: {
-                    type: Type.OBJECT,
+                    type: SchemaType.OBJECT,
                     properties: {
-                        lossTriggerPct: { type: Type.NUMBER },
-                        cashCap: { type: Type.NUMBER },
-                        recoveryEnabled: { type: Type.BOOLEAN },
-                        notes: { type: Type.STRING },
+                        lossTriggerPct: { type: SchemaType.NUMBER },
+                        cashCap: { type: SchemaType.NUMBER },
+                        recoveryEnabled: { type: SchemaType.BOOLEAN },
+                        notes: { type: SchemaType.STRING },
                     },
                     required: ['lossTriggerPct', 'cashCap', 'recoveryEnabled'],
                 },

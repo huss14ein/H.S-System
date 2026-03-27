@@ -1,6 +1,7 @@
 import React, { useState, useRef, useContext, useCallback, useEffect, useMemo } from 'react';
 import Modal from './Modal';
-import { Type, FunctionDeclaration, Content, Part, FunctionCall } from '@google/genai';
+import type { FunctionDeclaration, Content, Part, FunctionCall } from '@google/genai';
+import { SchemaType } from '../services/geminiSchemaTypes';
 import { DataContext } from '../context/DataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
@@ -92,10 +93,10 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
     }, [addWatchlistItem]);
 
     const functionDeclarations: FunctionDeclaration[] = [
-        { name: 'getNetWorth', parameters: { type: Type.OBJECT, properties: {} } },
-        { name: 'getBudgetStatus', parameters: { type: Type.OBJECT, properties: { category: { type: Type.STRING } }, required: ['category'] } },
-        { name: 'getRecentTransactions', parameters: { type: Type.OBJECT, properties: { limit: { type: Type.NUMBER } }, required: ['limit'] } },
-        { name: 'addWatchlistItem', description: "Adds a stock to the user's watchlist.", parameters: { type: Type.OBJECT, properties: { symbol: { type: Type.STRING, description: "The stock ticker symbol, e.g., MSFT or 2222.SR" }, name: { type: Type.STRING, description: "The full name of the company, e.g., Microsoft Corp." } }, required: ['symbol', 'name'] } },
+        { name: 'getNetWorth', parameters: { type: SchemaType.OBJECT, properties: {} } },
+        { name: 'getBudgetStatus', parameters: { type: SchemaType.OBJECT, properties: { category: { type: SchemaType.STRING } }, required: ['category'] } },
+        { name: 'getRecentTransactions', parameters: { type: SchemaType.OBJECT, properties: { limit: { type: SchemaType.NUMBER } }, required: ['limit'] } },
+        { name: 'addWatchlistItem', description: "Adds a stock to the user's watchlist.", parameters: { type: SchemaType.OBJECT, properties: { symbol: { type: SchemaType.STRING, description: "The stock ticker symbol, e.g., MSFT or 2222.SR" }, name: { type: SchemaType.STRING, description: "The full name of the company, e.g., Microsoft Corp." } }, required: ['symbol', 'name'] } },
     ];
     
     const functionHandlers: Record<string, (args: any) => any> = {
