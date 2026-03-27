@@ -23,10 +23,12 @@ import {
     buildHouseholdBudgetPlan,
     buildHouseholdEngineInputFromData,
     computeBulkAddLimitsForSelection,
+    deriveEngineProfileFromRiskProfile,
     HOUSEHOLD_ENGINE_PROFILES,
     HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS,
     generateHouseholdBudgetCategories,
     KSA_EXPENSE_CATEGORY_HINTS,
+    monthlyEquivalentFromBudgetLimit,
     type HouseholdEngineProfile,
     type HouseholdMonthlyOverride,
 } from '../services/householdBudgetEngine';
@@ -381,11 +383,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const [bulkAddTargetMonth, setBulkAddTargetMonth] = useState(currentMonth);
     const [bulkAddTargetYear, setBulkAddTargetYear] = useState(currentYear);
     const [bulkAddSalary, setBulkAddSalary] = useState<number | ''>('');
+    /** Scales suggested limits (%) before bulk create — applied after engine/template merge. */
+    const [bulkLimitScalePercent, setBulkLimitScalePercent] = useState(100);
     const [bulkAddSelectedCategories, setBulkAddSelectedCategories] = useState<string[]>([]);
     /** Previous bulk-add template category order; used to merge user checkbox state when salary/family/profile/month updates. */
     const bulkAddPrevSuggestionNamesRef = useRef<string[]>([]);
-    /** After first non-empty template sync, empty `bulkAddSelectedCategories` means the user chose “deselect all”, not the initial pre-effect frame. */
-    const bulkAddTemplateSyncedRef = useRef(false);
 
     type BudgetTier = 'Core' | 'Supporting' | 'Optional';
 
@@ -581,11 +583,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const { household: householdConstraints } = useFinancialEnginesIntegration();
 
     React.useEffect(() => {
-        const riskProfile = String((data as any)?.settings?.riskProfile || '').toLowerCase();
-        if (engineProfile === 'Moderate') {
-            if (riskProfile.includes('conservative')) setEngineProfile('Conservative');
-            if (riskProfile.includes('aggressive') || riskProfile.includes('growth')) setEngineProfile('Growth');
-        }
+        const next = deriveEngineProfileFromRiskProfile(
+            engineProfile,
+            String((data as any)?.settings?.riskProfile || '')
+        );
+        if (next !== engineProfile) setEngineProfile(next);
     }, [(data as any)?.settings?.riskProfile]);
 
     const categoryNameById = useMemo(() => new Map(governanceCategories.map((c) => [c.id, c.name])), [governanceCategories]);
@@ -978,14 +980,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             : (suggestedMonthlySalary && suggestedMonthlySalary > 0 ? suggestedMonthlySalary : 0);
         const monthlySalary = Number.isFinite(salary) && salary > 0 ? salary : fallback;
         if (!monthlySalary || monthlySalary <= 0 || bulkAddSuggestedCategories.length === 0) return bulkAddSuggestedCategories;
-        // After sync, “nothing selected” should show 0 limits (not full template), so limits don’t look like they “snap back” with no selection.
-        if (
-            bulkAddTemplateSyncedRef.current &&
-            bulkAddSelectedCategories.length === 0 &&
-            bulkAddSuggestedCategories.length > 0
-        ) {
-            return bulkAddSuggestedCategories.map((c) => ({ ...c, limit: 0 }));
-        }
         return computeBulkAddLimitsForSelection(
             bulkAddSuggestedCategories,
             bulkAddSelectedCategories,
@@ -996,17 +990,43 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
         );
     }, [bulkAddSuggestedCategories, bulkAddSelectedCategories, bulkAddSalary, expectedMonthlySalary, suggestedMonthlySalary, engineProfile, householdAdults, householdKids]);
 
+    const bulkAddScaledCategories = useMemo(() => {
+        const p = Number(bulkLimitScalePercent);
+        const factor = Number.isFinite(p) ? Math.max(0.25, Math.min(2, p / 100)) : 1;
+        return bulkAddDisplayCategories.map((c) => ({
+            ...c,
+            limit: Math.max(0, Math.round(Number(c.limit) * factor)),
+        }));
+    }, [bulkAddDisplayCategories, bulkLimitScalePercent]);
+
+    const bulkAddDisplayCategorySet = useMemo(
+        () => new Set(bulkAddScaledCategories.map((c) => c.category)),
+        [bulkAddScaledCategories]
+    );
+    const bulkAddSelectedCategoriesNormalized = useMemo(
+        () => Array.from(new Set(bulkAddSelectedCategories)).filter((n) => bulkAddDisplayCategorySet.has(n)),
+        [bulkAddSelectedCategories, bulkAddDisplayCategorySet]
+    );
+    const bulkAddSelectedMonthlyEquivalent = useMemo(() => {
+        if (bulkAddSelectedCategoriesNormalized.length === 0) return 0;
+        const selectedSet = new Set(bulkAddSelectedCategoriesNormalized);
+        return Math.round(
+            bulkAddScaledCategories.reduce((sum, c) => {
+                if (!selectedSet.has(c.category)) return sum;
+                return sum + monthlyEquivalentFromBudgetLimit(c.limit, c.period as 'monthly' | 'weekly' | 'yearly' | 'daily');
+            }, 0)
+        );
+    }, [bulkAddScaledCategories, bulkAddSelectedCategoriesNormalized]);
+
     // Keep checkbox selection stable when only limits change; add new template rows as selected; drop removed rows.
     // (Old logic reset to “all selected” whenever length differed — that wiped unchecks on adults/kids/profile/salary/month changes.)
     React.useEffect(() => {
         const names = bulkAddSuggestedCategories.map((c) => c.category);
         if (names.length === 0) {
             bulkAddPrevSuggestionNamesRef.current = [];
-            bulkAddTemplateSyncedRef.current = false;
             setBulkAddSelectedCategories([]);
             return;
         }
-        bulkAddTemplateSyncedRef.current = true;
 
         const prevNames = bulkAddPrevSuggestionNamesRef.current;
         const prevSet = new Set(prevNames);
@@ -2051,7 +2071,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                             <div className="flex items-center justify-between mb-2">
                                 <h3 className="text-sm font-semibold text-violet-800">Request History</h3>
                                 <button type="button" onClick={() => setHistoryCollapsed(!historyCollapsed)} className="text-xs text-violet-600 hover:text-violet-800">
-                                    {historyCollapsed ? '▼ Expand' : '▲ Collapse'}
+                                    {historyCollapsed ? 'Expand' : 'Collapse'}
                                 </button>
                             </div>
                             {!historyCollapsed && (
@@ -2263,23 +2283,54 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                             <label className="block text-xs text-slate-600 font-medium mb-1">Profile</label>
                             <span className="text-sm text-slate-700">{HOUSEHOLD_ENGINE_PROFILES[engineProfile]?.label ?? engineProfile}</span>
                         </div>
+                        <div className="min-w-[200px]">
+                            <label className="block text-xs text-slate-600 font-medium mb-1" htmlFor="bulk-limit-scale">Limit scale before create (%)</label>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    id="bulk-limit-scale"
+                                    type="range"
+                                    min={25}
+                                    max={200}
+                                    step={1}
+                                    value={bulkLimitScalePercent}
+                                    onChange={(e) => setBulkLimitScalePercent(Number(e.target.value))}
+                                    className="flex-1 min-w-[120px] accent-emerald-600"
+                                />
+                                <input
+                                    type="number"
+                                    min={25}
+                                    max={200}
+                                    step={1}
+                                    value={bulkLimitScalePercent}
+                                    onChange={(e) => setBulkLimitScalePercent(Math.max(25, Math.min(200, Number(e.target.value) || 100)))}
+                                    className="w-16 p-1.5 border border-slate-300 rounded text-sm text-center"
+                                    aria-label="Limit scale percent"
+                                />
+                            </div>
+                            <p className="text-[11px] text-slate-500 mt-1">Multiplies every suggested limit (same category split; adjust tighter or looser before generating budgets).</p>
+                        </div>
                     </div>
 
                     <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4 space-y-4">
                             <p className="text-xs text-slate-600">Suggested limits use the same formulas as the engine (groceries scale with family size; rent, utilities, transport, schooling, etc. are consistent). If you have run the engine above for this year, amounts for the target month may reflect engine projections. Select categories to create or update.</p>
-                            {bulkAddDisplayCategories.length > 0 && (
+                            {bulkAddScaledCategories.length > 0 && (
                                 <>
                                     <div className="flex items-center justify-between gap-2">
                                         <span className="text-xs font-medium text-slate-600">Select categories to create or update (limits sync with salary, profile & selection):</span>
                                         <span className="flex gap-2">
-                                            <button type="button" onClick={() => setBulkAddSelectedCategories(bulkAddDisplayCategories.map((c) => c.category))} className="text-xs text-emerald-600 hover:text-emerald-800 font-medium">Select all</button>
+                                            <button type="button" onClick={() => setBulkAddSelectedCategories(bulkAddScaledCategories.map((c) => c.category))} className="text-xs text-emerald-600 hover:text-emerald-800 font-medium">Select all</button>
                                             <span className="text-slate-300">|</span>
                                             <button type="button" onClick={() => setBulkAddSelectedCategories([])} className="text-xs text-emerald-600 hover:text-emerald-800 font-medium">Deselect all</button>
                                         </span>
                                     </div>
+                                    <div className="text-xs text-slate-600">
+                                        Selected: <span className="font-semibold text-slate-800">{bulkAddSelectedCategoriesNormalized.length}</span>
+                                        {' '}categories · Monthly equivalent:{' '}
+                                        <span className="font-semibold text-slate-800">{formatCurrencyString(bulkAddSelectedMonthlyEquivalent, { digits: 0 })}/mo</span>
+                                    </div>
                                     <div className="max-h-48 overflow-y-auto rounded border border-slate-200 bg-white p-2 space-y-1.5">
-                                        {bulkAddDisplayCategories.map((cat) => {
-                                            const selected = bulkAddSelectedCategories.includes(cat.category);
+                                        {bulkAddScaledCategories.map((cat) => {
+                                            const selected = bulkAddSelectedCategoriesNormalized.includes(cat.category);
                                             const periodLabel = cat.period === 'yearly' ? '/yr' : cat.period === 'weekly' ? '/wk' : cat.period === 'daily' ? '/day' : '/mo';
                                             return (
                                                 <label key={cat.category} className="flex items-center gap-2 py-1 px-2 rounded hover:bg-slate-50 cursor-pointer">
@@ -2288,7 +2339,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                                         checked={selected}
                                                         onChange={() => {
                                                             if (selected) setBulkAddSelectedCategories((prev) => prev.filter((n) => n !== cat.category));
-                                                            else setBulkAddSelectedCategories((prev) => [...prev, cat.category]);
+                                                            else setBulkAddSelectedCategories((prev) => (prev.includes(cat.category) ? prev : [...prev, cat.category]));
                                                         }}
                                                         className="rounded border-slate-300 text-emerald-600"
                                                     />
@@ -2304,7 +2355,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                     </div>
                                     <button
                                         type="button"
-                                        disabled={!isAdmin || bulkAddSelectedCategories.length === 0}
+                                        disabled={!isAdmin || bulkAddSelectedCategoriesNormalized.length === 0}
                                         onClick={async () => {
                                             if (!isAdmin) { alert('Only admins can create budgets from the household engine.'); return; }
                                             const salary = Number(bulkAddSalary);
@@ -2314,8 +2365,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                                 alert('Enter a monthly salary or use the value from the table above.');
                                                 return;
                                             }
-                                            const selectedSet = new Set(bulkAddSelectedCategories);
-                                            const categories = bulkAddDisplayCategories.filter((c) => selectedSet.has(c.category));
+                                            const selectedSet = new Set(bulkAddSelectedCategoriesNormalized);
+                                            const categories = bulkAddScaledCategories.filter((c) => selectedSet.has(c.category));
                                             if (!window.confirm(`Create or update ${categories.length} budgets for ${MONTHS[bulkAddTargetMonth - 1]} ${bulkAddTargetYear}? Existing budgets for that month will be updated.`)) return;
                                             const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === bulkAddTargetYear && b.month === bulkAddTargetMonth);
                                             let created = 0, updated = 0;
@@ -2338,7 +2389,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                         }}
                                         className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
-                                        Create/update {bulkAddSelectedCategories.length} selected for {MONTHS[bulkAddTargetMonth - 1]} {bulkAddTargetYear}
+                                        Create/update {bulkAddSelectedCategoriesNormalized.length} selected for {MONTHS[bulkAddTargetMonth - 1]} {bulkAddTargetYear}
                                     </button>
                                 </>
                             )}

@@ -34,6 +34,8 @@ import { ClockIcon, TargetIcon } from '../components/icons';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd, convertBetweenTradeCurrencies, inferInstrumentCurrencyFromSymbol } from '../utils/currencyMath';
+import CurrencyDualDisplay from '../components/CurrencyDualDisplay';
+import { fetchCompanyNameForSymbol } from '../hooks/useSymbolCompanyName';
 
 const ISO_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -215,14 +217,27 @@ const PlanTradeModal: React.FC<{
         onClose();
     };
 
-    // Auto-fill name from universe when symbol changes (only if name is empty).
-    // Omit name from deps so clearing the field does not re-trigger fill.
+    // Auto-fill company name: Investment Plan universe first, then Finnhub/static map (same as Record Trade / Watchlist).
     useEffect(() => {
-        if (!symbol.trim() || planToEdit || name) return;
+        if (!isOpen || planToEdit) return;
         const sym = symbol.trim().toUpperCase();
-        const match = universe.find((t: any) => String(t.ticker || '').toUpperCase() === sym);
-        if (match?.name) setName(match.name);
-    }, [symbol, planToEdit, universe]);
+        if (sym.length < 2) return;
+        const match = universe.find((t: { ticker?: string; name?: string }) => String(t.ticker || '').toUpperCase() === sym);
+        if (match?.name) {
+            setName(match.name);
+            return;
+        }
+        let cancelled = false;
+        const t = setTimeout(() => {
+            fetchCompanyNameForSymbol(sym).then((apiName) => {
+                if (!cancelled && apiName) setName(apiName);
+            });
+        }, 450);
+        return () => {
+            cancelled = true;
+            clearTimeout(t);
+        };
+    }, [symbol, isOpen, planToEdit, universe]);
 
     // Suggest target price from current price when creating new plan.
     // Omit targetValue from deps so clearing the field does not re-trigger fill.
@@ -411,7 +426,18 @@ const PlanTradeModal: React.FC<{
                     <div>
                         <label htmlFor="target-value" className="block text-sm font-semibold text-gray-700 mb-2">
                             {conditionType === 'date' ? 'Target Date' : (
-                                <>Target Price <InfoHint text="Enter in the stock's traded currency (USD for US shares, SAR for Tadawul)." hintId="plan-target-price" hintPage="Investment Plan" /></>
+                                <>
+                                    Trigger price (per share)
+                                    <InfoHint
+                                        text={
+                                            tradeType === 'buy'
+                                                ? 'Per share in the stock’s traded currency (e.g. USD). The plan is ready when the market price is at or below this level (≤).'
+                                                : 'Per share in the stock’s traded currency. The plan is ready when the market price is at or above this level (≥).'
+                                        }
+                                        hintId="plan-target-price"
+                                        hintPage="Investment Plan"
+                                    />
+                                </>
                             )}
                         </label>
                         <input 
@@ -551,7 +577,7 @@ const InvestmentPlanControlTower: React.FC = () => {
   if (!hasAlerts && !hasActions && !cash && !hasStress && !hasNextBest) return null;
 
   return (
-    <SectionCard title="Your financial health check" collapsible collapsibleSummary="Cash, stress, runway" defaultExpanded>
+    <SectionCard title="Your financial health check" collapsible collapsibleSummary="Cash, stress, runway" defaultExpanded={false}>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {cash && (
           <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
@@ -630,7 +656,6 @@ const InvestmentPlanView: React.FC<{
     const { data, loading, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker } = useContext(DataContext)!;
     const { trackAction, trackSuggestionFeedback } = useSelfLearning();
     const { simulatedPrices } = useMarketData();
-    const { formatCurrencyString } = useFormatCurrency();
     
     // Loading state
     if (loading || !data) {
@@ -698,17 +723,15 @@ const InvestmentPlanView: React.FC<{
     };
     
     const priorityClass = (p: PlannedTrade['priority']) => ({ High: 'bg-red-100 text-red-800', Medium: 'bg-yellow-100 text-yellow-800', Low: 'bg-blue-100 text-blue-800' }[p]);
-    const getPlannedExecutionPrice = (plan: PlannedTrade): number | null => {
-        if ((plan.quantity ?? 0) > 0 && (plan.amount ?? 0) > 0) {
-            const qty = plan.quantity ?? 1;
-            if (qty === 0) return null; // Prevent division by zero
-            return (plan.amount ?? 0) / qty;
-        }
-        return plan.conditionType === 'price' ? plan.targetValue : null;
+    /** Per-share trigger in instrument currency (not derived from amount ÷ qty). */
+    const getTriggerPriceForComparison = (plan: PlannedTrade): number | null => {
+        if (plan.conditionType !== 'price') return null;
+        const v = plan.targetValue;
+        return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
     };
 
     const getPriceSignalClass = (plan: PlannedTrade): string => {
-        const plannedPrice = getPlannedExecutionPrice(plan);
+        const plannedPrice = getTriggerPriceForComparison(plan);
         const currentPrice = simulatedPrices[plan.symbol]?.price;
         if (!plannedPrice || !currentPrice) return 'bg-gray-100 text-gray-600';
 
@@ -721,13 +744,13 @@ const InvestmentPlanView: React.FC<{
     };
 
     const getPriceSignalLabel = (plan: PlannedTrade): string => {
-        const plannedPrice = getPlannedExecutionPrice(plan);
+        const plannedPrice = getTriggerPriceForComparison(plan);
         const currentPrice = simulatedPrices[plan.symbol]?.price;
         if (!plannedPrice || !currentPrice) return 'Waiting price';
 
         const ratio = Math.abs((currentPrice - plannedPrice) / plannedPrice);
         if (ratio <= 0.01) return 'Near plan';
-        if (plan.tradeType === 'buy') return currentPrice <= plannedPrice ? 'Favorable' : 'Expensive';
+        if (plan.tradeType === 'buy') return currentPrice <= plannedPrice ? 'Favorable' : 'Above trigger';
         return currentPrice >= plannedPrice ? 'Favorable' : 'Below plan';
     };
 
@@ -736,11 +759,24 @@ const InvestmentPlanView: React.FC<{
         if (plan.conditionType === 'date') {
             return `On ${new Date(plan.targetValue).toLocaleDateString()}`;
         }
+        const instr = inferInstrumentCurrencyFromSymbol(plan.symbol ?? '');
         const currentPrice = simulatedPrices[plan.symbol]?.price;
-        const operator = plan.tradeType === 'buy' ? '≤' : '≥';
-        const priceText = `${operator} ${formatCurrencyString(plan.targetValue)}`;
-        return <>{priceText} <span className="text-xs text-gray-500">(Now: {currentPrice ? formatCurrencyString(currentPrice) : '...'})</span></>;
-    }
+        const side = plan.tradeType === 'buy' ? 'Buy when' : 'Sell when';
+        return (
+            <div className="space-y-1">
+                <p className="text-xs text-slate-500">
+                    {side} price {plan.tradeType === 'buy' ? '≤' : '≥'} trigger
+                </p>
+                <CurrencyDualDisplay value={plan.targetValue} inCurrency={instr} digits={2} size="base" weight="bold" className="text-slate-900" />
+                {currentPrice != null && Number.isFinite(currentPrice) && (
+                    <p className="text-xs text-slate-500">
+                        Spot:{' '}
+                        <CurrencyDualDisplay value={currentPrice} inCurrency={instr} digits={2} size="base" className="inline-flex" />
+                    </p>
+                )}
+            </div>
+        );
+    };
     
 
 
@@ -1135,7 +1171,7 @@ const InvestmentPlanView: React.FC<{
                 )}
 
                 {/* How It Works — plain language for non-financial users */}
-                <CollapsibleSection title="How it works" summary="Plan now, act when ready" className="overflow-hidden">
+                <CollapsibleSection title="How it works" summary="Plan now, act when ready" className="overflow-hidden" defaultExpanded={false}>
                     <div className="bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 rounded-2xl p-8 border border-blue-100">
                         <div className="flex items-center gap-4 mb-6">
                             <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
@@ -1179,7 +1215,7 @@ const InvestmentPlanView: React.FC<{
                 </CollapsibleSection>
 
                 {/* Enhanced Strategy Guides */}
-                <CollapsibleSection title="Strategy Guides" summary="Core, Tactical, Defensive playbooks" className="overflow-hidden">
+                <CollapsibleSection title="Strategy Guides" summary="Core, Tactical, Defensive playbooks" className="overflow-hidden" defaultExpanded={false}>
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                         {strategyGuides.map((guide) => (
                             <div key={guide.key} className="bg-gradient-to-br from-white to-slate-50 border-2 border-slate-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 overflow-hidden group">
@@ -1230,60 +1266,51 @@ const InvestmentPlanView: React.FC<{
                     </div>
                 </CollapsibleSection>
 
-                {/* Enhanced AI Candidates Section */}
-                <SectionCard title="AI Rebalance Candidates" className="min-h-[500px] overflow-hidden" collapsible collapsibleSummary="Symbols from AI" defaultExpanded>
-                    <div className="flex items-center justify-between mb-8">
-                        <div className="flex items-center gap-4">
-                            <div className="w-14 h-14 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
-                                <SparklesIcon className="h-7 w-7 text-white" />
-                            </div>
-                            <div>
-                                <h3 className="text-2xl font-bold text-slate-900">Quick Add from AI Analysis</h3>
-                                <p className="text-slate-600 mt-1">Actionable symbols without existing planned trades</p>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
-                            <span className="text-sm font-medium text-purple-600">AI-powered</span>
-                        </div>
-                    </div>
-                    <div className="space-y-4 max-h-96 overflow-y-auto pr-4 scrollbar-thin scrollbar-thumb-purple-200 scrollbar-track-purple-50">
+                {/* AI: universe posture → optional trade plan (collapsed by default) */}
+                <SectionCard
+                    title="AI rebalance candidates"
+                    className="overflow-hidden"
+                    collapsible
+                    collapsibleSummary="Universe symbols without a trade plan yet"
+                    defaultExpanded={false}
+                    infoHint="These rows come from your Portfolio Universe (Core, High-Upside, Quarantine). For each symbol you have not scheduled a trade plan yet, we suggest a buy or sell direction from that status. “Create plan” adds a price rule you can edit—nothing executes until you record a trade."
+                >
+                    <p className="text-sm text-slate-600 mb-4 max-w-3xl leading-relaxed">
+                        <span className="font-medium text-slate-800">What this is for:</span> turn universe posture into a concrete rule (e.g. accumulate while Core, or trim while Quarantine).
+                        Use <strong className="font-semibold">Create plan</strong> to pre-fill a trigger from live price; you still confirm size and timing in the editor.
+                    </p>
+                    <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
                         {aiPlanCandidates.map((candidate) => (
-                            <div key={candidate.symbol} className="bg-gradient-to-r from-purple-50 via-indigo-50 to-blue-50 border-2 border-purple-200 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 hover:shadow-lg transition-all duration-300 group">
-                                <div className="flex-1">
-                                    <div className="flex items-center gap-4 mb-3">
-                                        <div className="w-12 h-12 bg-gradient-to-br from-purple-100 to-indigo-100 rounded-xl flex items-center justify-center">
-                                            <span className="font-bold text-purple-700 text-lg">{candidate.symbol.slice(0, 2)}</span>
-                                        </div>
-                                        <div>
-                                            <span className="font-bold text-slate-900 text-lg">{candidate.symbol}</span>
-                                            <span className="text-slate-400 mx-2">•</span>
-                                            <span className="text-slate-700">{candidate.name}</span>
-                                        </div>
+                            <div
+                                key={candidate.symbol}
+                                className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 hover:border-slate-300 transition-colors"
+                            >
+                                <div className="flex items-start gap-3 min-w-0 flex-1">
+                                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white border border-slate-200 text-sm font-semibold text-slate-700">
+                                        {candidate.symbol.slice(0, 2)}
                                     </div>
-                                    <div className="flex flex-wrap gap-2">
-                                        <span className={`px-3 py-1.5 rounded-full font-bold text-sm ${
-                                            candidate.status === 'Core' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
-                                            candidate.status === 'High-Upside' ? 'bg-purple-100 text-purple-800 border border-purple-200' :
-                                            candidate.status === 'Quarantine' ? 'bg-red-100 text-red-800 border border-red-200' :
-                                            'bg-gray-100 text-gray-800 border border-gray-200'
-                                        }`}>
-                                            {candidate.status}
-                                        </span>
-                                        <span className="px-3 py-1.5 rounded-full bg-gradient-to-r from-green-100 to-emerald-100 text-green-800 font-bold text-sm border border-green-200">
-                                            {candidate.suggestion.toUpperCase()}
-                                        </span>
-                                        <span className="px-3 py-1.5 rounded-full bg-gradient-to-r from-slate-100 to-gray-100 text-slate-800 font-bold text-sm border border-slate-200">
-                                            {(candidate.monthlyWeight * 100).toFixed(1)}% weight
-                                        </span>
+                                    <div className="min-w-0">
+                                        <div className="font-semibold text-slate-900">{candidate.symbol}</div>
+                                        <div className="text-sm text-slate-600 truncate">{candidate.name}</div>
+                                        <div className="mt-2 flex flex-wrap gap-1.5">
+                                            <span className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-medium text-slate-700">
+                                                {candidate.status}
+                                            </span>
+                                            <span className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800">
+                                                Suggested: {candidate.suggestion === 'buy' ? 'Buy' : 'Sell'}
+                                            </span>
+                                            <span className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-600">
+                                                Sleeve wt {(candidate.monthlyWeight * 100).toFixed(1)}%
+                                            </span>
+                                        </div>
                                     </div>
                                 </div>
-                                <button 
-                                    type="button" 
-                                    onClick={() => handleCreatePlanFromAi(candidate)} 
-                                    className="px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl hover:from-purple-700 hover:to-indigo-700 transition-all duration-200 font-bold text-sm shadow-lg hover:shadow-xl transform hover:scale-105 whitespace-nowrap"
+                                <button
+                                    type="button"
+                                    onClick={() => handleCreatePlanFromAi(candidate)}
+                                    className="shrink-0 rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90 whitespace-nowrap"
                                 >
-                                    Create Plan
+                                    Create plan
                                 </button>
                             </div>
                         ))}
@@ -1298,7 +1325,7 @@ const InvestmentPlanView: React.FC<{
                 </SectionCard>
 
                 {/* Enhanced Plan vs AI Alignment */}
-                <SectionCard title="Do your plans match AI?" className="min-h-[600px] overflow-hidden" collapsible collapsibleSummary="Same direction or different" defaultExpanded>
+                <SectionCard title="Do your plans match AI?" className="min-h-[600px] overflow-hidden" collapsible collapsibleSummary="Same direction or different" defaultExpanded={false}>
                     <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-8">
                         <div className="flex items-center gap-4">
                             <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
@@ -1494,8 +1521,7 @@ const InvestmentPlanView: React.FC<{
                                 <tr className="text-left text-xs font-semibold text-slate-600">
                                     <th className="px-6 py-3.5">Stock</th>
                                     <th className="px-6 py-3.5">Buy or sell</th>
-                                    <th className="px-6 py-3.5" title="The price or date you chose">Your rule</th>
-                                    <th className="px-6 py-3.5" title="In the stock’s trading currency (e.g. USD or SAR)">Target price</th>
+                                    <th className="px-6 py-3.5" title="Date, or per-share trigger in the stock’s currency (SAR primary; hover for USD)">Trigger</th>
                                     <th className="px-6 py-3.5" title="Whether today’s price lines up with your plan">Hint</th>
                                     <th className="px-6 py-3.5" title="How soon you want to act if the rule is met">Urgency</th>
                                     <th className="px-6 py-3.5">Stage</th>
@@ -1516,12 +1542,14 @@ const InvestmentPlanView: React.FC<{
                                                 {plan.tradeType.toUpperCase()}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-4">{renderCondition(plan)}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            {getPlannedExecutionPrice(plan) ? formatCurrencyString(getPlannedExecutionPrice(plan)!) : '--'}
-                                        </td>
+                                        <td className="px-6 py-4 align-top">{renderCondition(plan)}</td>
                                         <td className="px-6 py-4">
-                                            <span className={`px-3 py-1 inline-flex text-xs font-semibold rounded-full ${getPriceSignalClass(plan)}`}>
+                                            <span
+                                                className={`px-3 py-1 inline-flex text-xs font-semibold rounded-full ${getPriceSignalClass(plan)}`}
+                                                title={plan.tradeType === 'buy'
+                                                    ? 'For buy plans: Favorable means current price is at/below trigger; Above trigger means current price is still above your buy trigger.'
+                                                    : 'For sell plans: Favorable means current price is at/above trigger; Below plan means current price has not reached your sell trigger yet.'}
+                                            >
                                                 {getPriceSignalLabel(plan)}
                                             </span>
                                         </td>

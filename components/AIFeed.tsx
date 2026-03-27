@@ -38,7 +38,7 @@ const AIFeed: React.FC = () => {
     const [arItems, setArItems] = useState<{ title: string; description: string }[] | null>(null);
     const [translating, setTranslating] = useState(false);
     const { data } = useContext(DataContext)!;
-    const { isAiAvailable } = useAI();
+    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const dataRef = useRef(data);
 
     useEffect(() => {
@@ -54,7 +54,7 @@ const AIFeed: React.FC = () => {
     }, [displayLang]);
 
     useEffect(() => {
-        if (displayLang !== 'ar' || feedItems.length === 0 || !isAiAvailable) return;
+        if (displayLang !== 'ar' || feedItems.length === 0 || !aiActionsEnabled) return;
         if (arItems && arItems.length === feedItems.length) return;
         let cancelled = false;
         (async () => {
@@ -81,7 +81,7 @@ const AIFeed: React.FC = () => {
         return () => {
             cancelled = true;
         };
-    }, [displayLang, feedItems, arItems, isAiAvailable]);
+    }, [displayLang, feedItems, arItems, aiActionsEnabled]);
 
     const handleGenerate = useCallback(async () => {
         setIsLoading(true);
@@ -127,7 +127,7 @@ const AIFeed: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleLangToggle}
-                  disabled={isLoading || translating || feedItems.length === 0 || !isAiAvailable}
+                  disabled={isLoading || translating || feedItems.length === 0 || !aiActionsEnabled}
                   title={displayLang === 'ar' ? 'Show English' : 'Translate feed to Arabic'}
                   className="w-full sm:w-auto flex items-center justify-center px-4 py-2 border border-slate-300 text-slate-800 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
                 >
@@ -188,7 +188,7 @@ const AIFeed: React.FC = () => {
                 </div>
             )}
 
-            {!isAiAvailable ? (
+            {aiHealthChecked && !isAiAvailable ? (
                  <div className="text-center p-4 text-gray-500 bg-gray-50 rounded-md">
                     <p className="font-semibold">AI Features Disabled</p>
                     <p className="text-sm">Please set your Gemini API key in the environment variables to enable personalized insights.</p>

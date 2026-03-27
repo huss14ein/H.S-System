@@ -9,16 +9,13 @@ import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import AIAdvisor from '../components/AIAdvisor';
 import SalaryPlanningExperts from '../components/SalaryPlanningExperts';
 import SinkingFunds from './SinkingFunds';
-import { PlusIcon } from '../components/icons/PlusIcon';
-import Modal from '../components/Modal';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import SectionCard from '../components/SectionCard';
 import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
-import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
-import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
+import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from '../components/charts/chartTheme';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
@@ -38,76 +35,13 @@ import {
 } from '../services/householdBudgetEngine';
 import { calculateDynamicBaselines, generatePredictiveSpend } from '../services/enhancedBudgetEngine';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
-import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi, isInternalTransferTransaction } from '../services/transactionFilters';
+import { countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { getPersonalTransactions, getPersonalAccounts } from '../utils/wealthScope';
-
+import { buildAnnualPlanRows, formatAnnualPlanIncomeHint, type AnnualPlanRow } from '../services/annualPlanFromData';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-interface PlanRow {
-    type: 'income' | 'expense';
-    category: string;
-    subcategory?: string;
-    monthly_planned: number[];
-    monthly_actual: number[];
-}
-
-interface LifeEvent {
-    id: string;
-    name: string;
-    month: number;
-    amount: number;
-    type: 'income' | 'expense';
-}
-
-const EventModal: React.FC<{
-    isOpen: boolean;
-    onClose: () => void;
-    onSave: (event: Omit<LifeEvent, 'id'>) => void;
-}> = ({ isOpen, onClose, onSave }) => {
-    const [name, setName] = useState('');
-    const [month, setMonth] = useState(1);
-    const [amount, setAmount] = useState('');
-    const [type, setType] = useState<'income' | 'expense'>('expense');
-
-    const handleSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        onSave({ name, month, amount: parseFloat(amount), type });
-        onClose();
-    };
-
-    return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Add Major Life Event">
-            <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Event Name <InfoHint text="One-time life event (e.g. Wedding, Bonus) for scenario planning." /></label>
-                    <input type="text" placeholder="Event Name (e.g., Wedding)" value={name} onChange={e => setName(e.target.value)} required className="input-base" />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Amount <InfoHint text="One-time amount (income or expense) in your plan currency." /></label>
-                        <input type="number" placeholder="Amount" value={amount} onChange={e => setAmount(e.target.value)} required className="input-base" />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Month <InfoHint text="Month when this event occurs in the plan year." /></label>
-                        <select value={month} onChange={e => setMonth(Number(e.target.value))} className="select-base">
-                            {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
-                        </select>
-                    </div>
-                </div>
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Type <InfoHint text="One-time expense (e.g. wedding) or one-time income (e.g. bonus)." /></label>
-                    <select value={type} onChange={e => setType(e.target.value as any)} className="select-base">
-                        <option value="expense">One-time Expense</option>
-                        <option value="income">One-time Income</option>
-                    </select>
-                </div>
-                <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg">Save Event</button>
-            </form>
-        </Modal>
-    );
-};
-
+type PlanRow = AnnualPlanRow;
 
 const SCENARIO_PRESETS = [
     { name: 'None', income: 0, expense: 0, duration: 1, startMonth: 1, label: 'None' },
@@ -139,11 +73,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     // Scenario States
     const [incomeShock, setIncomeShock] = useState({ percent: 0, startMonth: 1, duration: 1 });
     const [expenseStress, setExpenseStress] = useState({ category: 'All', percent: 0 });
-    const [events, setEvents] = useState<LifeEvent[]>([]);
-    const [isEventModalOpen, setIsEventModalOpen] = useState(false);
 
-    const [planData, setPlanData] = useState<PlanRow[]>([]);
-    const [isEditing, setIsEditing] = useState<{ row: number; col: number } | null>(null);
     const [planSubPage, setPlanSubPage] = useState<'overview' | 'experts'>('overview');
 
     const budgets = data?.budgets ?? [];
@@ -268,159 +198,67 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         };
     }, [householdProfileCloudEnabled, auth?.user?.id, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary, householdProfileCloudLoadedUserId]);
 
-    // Build plan from transactions, budgets, recurring, and investment data — fully integrated
-    React.useEffect(() => {
-        const yearTx = transactions.filter((t: { date: string }) => new Date(t.date).getFullYear() === year);
-
-        // Suggested monthly salary from transactions: plan year first, then any year when plan year has no income (exclude Transfer/Transfers)
-        const planYearIncomeByMonth = Array(12).fill(0);
-        yearTx.forEach((t: { type?: string; amount?: number; category?: string }) => {
-            if (!countsAsIncomeForCashflowKpi(t)) return;
-            const d = new Date((t as any).date);
-            planYearIncomeByMonth[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
-        });
-        const planYearWithData = planYearIncomeByMonth.filter((v) => v > 0);
-        let suggestedMonthlySalary = planYearWithData.length > 0 ? Math.round(planYearWithData.reduce((a, b) => a + b, 0) / planYearWithData.length) : 0;
-        if (suggestedMonthlySalary === 0 && transactions.length > 0) {
-            const anyYearIncome = Array(12).fill(0);
-            (transactions as Array<{ date: string; type?: string; amount?: number; category?: string }>).forEach((t) => {
-                if (!countsAsIncomeForCashflowKpi(t)) return;
-                const d = new Date(t.date);
-                anyYearIncome[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
-            });
-            const anyWithData = anyYearIncome.filter((v) => v > 0);
-            suggestedMonthlySalary = anyWithData.length > 0 ? Math.round(anyWithData.reduce((a, b) => a + b, 0) / anyWithData.length) : 0;
+    /** Annual plan rows: single source of truth in `services/annualPlanFromData.ts` (fed from Budgets, Transactions, recurring, Investment Plan, household profile). */
+    const basePlanResult = useMemo(() => {
+        if (!data) {
+            return {
+                rows: [] as PlanRow[],
+                incomeMeta: {
+                    recurringIncomeMonthlySum: 0,
+                    budgetIncomeMax: 0,
+                    incomeAvg: 0,
+                    suggestedMonthlySalary: 0,
+                },
+            };
         }
-
-        // Income: planned and actual from Transactions (exclude Transfer/Transfers to avoid double-counting)
-        const incomeActuals = Array(12).fill(0);
-        yearTx.forEach((t: { type?: string; amount: number; date: string; category?: string }) => {
-            if (countsAsIncomeForCashflowKpi(t)) {
-                const monthIndex = new Date(t.date).getMonth();
-                incomeActuals[monthIndex] += Number(t.amount) || 0;
-            }
+        return buildAnnualPlanRows({
+            year,
+            budgets,
+            transactions,
+            recurringTransactions,
+            investmentPlan,
+            investmentTransactions,
+            accounts: accounts as Account[],
+            investments: data.investments ?? [],
+            personalAccountIds,
+            data,
+            exchangeRate,
+            sarPerUsd,
+            expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : undefined,
+            householdOverrides,
         });
-        const incomeTotal = incomeActuals.reduce((a, b) => a + b, 0);
-        const incomeMonthsWithData = incomeActuals.filter(x => x > 0).length;
-        const incomeAvg = incomeMonthsWithData > 0 ? incomeTotal / incomeMonthsWithData : 0;
-        const salaryBaseline = typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0
-            ? expectedMonthlySalary
-            : (incomeAvg > 0 ? incomeAvg : suggestedMonthlySalary);
-        const overrideByMonth = new Map((householdOverrides ?? []).map((o) => [((o.month ?? o.monthIndex ?? 1) - 1), Number(o.salary ?? 0)]));
-        const incomePlanned = incomeActuals.map((actual, m) => {
-            const override = overrideByMonth.get(m);
-            if (override != null && override > 0) return override;
-            return actual > 0 ? actual : (salaryBaseline || incomeAvg);
-        });
-        const recurringIncome = recurringTransactions.filter((r: { enabled: boolean; type: string; category?: string; budgetCategory?: string }) => r.enabled && r.type === 'income' && !isInternalTransferTransaction({ category: r.budgetCategory || r.category })).reduce((s: number, r: { amount: number }) => s + (Number(r.amount) || 0), 0);
-        for (let m = 0; m < 12; m++) incomePlanned[m] = (incomePlanned[m] || 0) + recurringIncome;
-        const incomeRow: PlanRow = {
-            type: 'income',
-            category: 'Income',
-            monthly_planned: incomePlanned,
-            monthly_actual: incomeActuals,
-        };
+    }, [
+        data,
+        year,
+        budgets,
+        transactions,
+        recurringTransactions,
+        investmentPlan,
+        investmentTransactions,
+        accounts,
+        exchangeRate,
+        sarPerUsd,
+        expectedMonthlySalary,
+        householdOverrides,
+        personalAccountIds,
+    ]);
 
-        // Expense categories: from Budgets (planned) + Transactions (actual); include every category that appears in either
-        // Include budgets with no year (falsy: null, undefined, 0, '') or matching plan year to avoid excluding year 0
-        const yearBudgets = budgets.filter((b: { year?: number }) => !(b as any).year || (b as any).year === year);
-        const byCategory = new Map<string, { planned: number[]; actual: number[] }>();
+    const basePlanRows = basePlanResult.rows;
+    const incomeMeta = basePlanResult.incomeMeta;
 
-        const budgetToMonthly = (limit: number, period?: string) =>
-            period === 'yearly' ? limit / 12 : period === 'weekly' ? limit * (52 / 12) : period === 'daily' ? limit * (365 / 12) : limit;
-        const normalizeCategory = (cat: string) => {
-            const c = String(cat ?? '').trim().toLowerCase();
-            return c === 'transfers' ? 'Transfer' : cat;
-        };
-        yearBudgets.forEach((b: { category: string; limit: number; month?: number; period?: string }) => {
-            const limit = Number(b.limit) || 0;
-            const period = (b as any).period;
-            const monthly = budgetToMonthly(limit, period);
-            const monthIndex = ((b as any).month ?? 1) - 1;
-            const key = normalizeCategory(b.category);
-            if (!byCategory.has(key)) {
-                byCategory.set(key, { planned: Array(12).fill(0), actual: Array(12).fill(0) });
-            }
-            const planned = byCategory.get(key)!.planned;
-            // Yearly, weekly, and daily apply to the whole year; monthly applies only to its calendar month
-            const appliesAllYear = period === 'yearly' || period === 'weekly' || period === 'daily';
-            if (appliesAllYear) {
-                for (let m = 0; m < 12; m++) planned[m] += monthly;
-            } else {
-                planned[monthIndex] += monthly;
-            }
-        });
-
-        yearTx.forEach((t: { type?: string; amount: number; date: string; category?: string; budgetCategory?: string }) => {
-            if (!countsAsExpenseForCashflowKpi(t)) return;
-            const monthIndex = new Date(t.date).getMonth();
-            const raw = (t.budgetCategory || t.category || 'Other').trim() || 'Other';
-            const category = normalizeCategory(raw);
-            if (!byCategory.has(category)) {
-                byCategory.set(category, { planned: Array(12).fill(0), actual: Array(12).fill(0) });
-            }
-            byCategory.get(category)!.actual[monthIndex] += Math.abs(Number(t.amount)) || 0;
-        });
-
-        // Recurring expenses: add expected amount to planned for each category (every month); include both auto and manual so plan aligns with recurring from Transactions
-        recurringTransactions.filter((r: { enabled: boolean; type: string; category?: string; budgetCategory?: string }) => r.enabled && r.type === 'expense' && !isInternalTransferTransaction({ category: r.budgetCategory || r.category })).forEach((r: { category: string; budgetCategory?: string; amount: number }) => {
-            const raw = (r.budgetCategory || r.category || 'Other').trim() || 'Other';
-            const cat = normalizeCategory(raw);
-            if (!byCategory.has(cat)) byCategory.set(cat, { planned: Array(12).fill(0), actual: Array(12).fill(0) });
-            const row = byCategory.get(cat)!;
-            const amt = Number(r.amount) || 0;
-            for (let m = 0; m < 12; m++) row.planned[m] += amt;
-        });
-
-        // Only show expense categories that have a reference: planned (from budgets/recurring) or actual (from transactions)
-        let expenseRows: PlanRow[] = Array.from(byCategory.entries())
-            .filter(([, { planned, actual }]) => planned.some(x => x > 0) || actual.some(x => x > 0))
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([category, { planned, actual }]) => ({
-                type: 'expense' as const,
-                category,
-                monthly_planned: planned.some(x => x > 0) ? planned : Array(12).fill(0),
-                monthly_actual: actual,
-            }));
-
-        // Monthly investment: from Investment Plan (planned) + Investment Transactions (actual buys)
-        const monthlyInvestment = Number(investmentPlan?.monthlyBudget) || 0;
-        const investmentActuals = Array(12).fill(0);
-        const invPortfolios = data?.investments ?? [];
-        const invAccounts = data?.accounts ?? [];
-        investmentTransactions.forEach((tx: { date: string; type: string; total?: number; accountId?: string; currency?: string }) => {
-            const date = new Date(tx.date);
-            if (date.getFullYear() === year && tx.type === 'buy') {
-                const cur = inferInvestmentTransactionCurrency(
-                    { accountId: tx.accountId ?? '', currency: tx.currency as 'SAR' | 'USD' | undefined },
-                    invAccounts as Account[],
-                    invPortfolios as any[],
-                );
-                const day = (tx.date ?? '').slice(0, 10);
-                const dayRate =
-                    data && day.length === 10 ? getSarPerUsdForCalendarDay(day, data, exchangeRate) : sarPerUsd;
-                investmentActuals[date.getMonth()] += toSAR(Number(tx.total) || 0, cur, dayRate);
-            }
-        });
-        const investmentRow: PlanRow = {
-            type: 'expense',
-            category: 'Monthly investment',
-            monthly_planned: Array(12).fill(monthlyInvestment),
-            monthly_actual: investmentActuals,
-        };
-        setPlanData([incomeRow, ...expenseRows, investmentRow]);
-    }, [budgets, transactions, year, investmentPlan, investmentTransactions, recurringTransactions, expectedMonthlySalary, householdOverrides, data?.investments, data?.accounts, data, exchangeRate, sarPerUsd]);
+    const incomePlannedHint = useMemo(
+        () => (basePlanRows.length > 0 ? formatAnnualPlanIncomeHint(incomeMeta, formatCurrencyString) : null),
+        [basePlanRows.length, incomeMeta, formatCurrencyString],
+    );
     
     const processedPlanData: PlanRow[] = useMemo(() => {
-        let baseData: PlanRow[] = JSON.parse(JSON.stringify(planData));
-
-        // Apply scenarios
-        let incomeRow = baseData.find((r: PlanRow) => r.type === 'income');
+        const baseData: PlanRow[] = JSON.parse(JSON.stringify(basePlanRows));
+        const incomeRow = baseData.find((r: PlanRow) => r.type === 'income');
         if (incomeRow) {
             for (let i = 0; i < incomeShock.duration; i++) {
-                const monthIndex = (incomeShock.startMonth - 1 + i);
+                const monthIndex = incomeShock.startMonth - 1 + i;
                 if (monthIndex < 12) {
-                   incomeRow.monthly_planned[monthIndex] *= (1 + incomeShock.percent / 100);
+                    incomeRow.monthly_planned[monthIndex] *= 1 + incomeShock.percent / 100;
                 }
             }
         }
@@ -429,25 +267,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 row.monthly_planned = row.monthly_planned.map((p: number) => p * (1 + expenseStress.percent / 100));
             }
         });
-
-        // Apply events
-        let eventsRow = baseData.find((r: PlanRow) => r.category === 'Major Events');
-        if (events.some(e => e.type === 'expense') && !eventsRow) {
-            eventsRow = { type: 'expense', category: 'Major Events', monthly_planned: Array(12).fill(0), monthly_actual: Array(12).fill(0) };
-            baseData.push(eventsRow);
-        }
-
-        events.forEach(event => {
-            const monthIndex = event.month - 1;
-            if (event.type === 'income' && incomeRow) {
-                incomeRow.monthly_planned[monthIndex] += event.amount;
-            } else if (event.type === 'expense' && eventsRow) {
-                eventsRow.monthly_planned[monthIndex] += event.amount;
-            }
-        });
-        
         return baseData;
-    }, [planData, incomeShock, expenseStress, events]);
+    }, [basePlanRows, incomeShock, expenseStress]);
     
     const totals = useMemo(() => {
         const income = processedPlanData.find((r: PlanRow) => r.type === 'income');
@@ -706,17 +527,6 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         }
         return warnings;
     }, [sarPerUsd, processedPlanData.length, year, totals]);
-
-    const handlePlanEdit = (rowIndex: number, monthIndex: number, newValue: number) => {
-        const newData = [...planData];
-        newData[rowIndex].monthly_planned[monthIndex] = newValue;
-        setPlanData(newData);
-        setIsEditing(null);
-    }
-    
-    const handleSaveEvent = (event: Omit<LifeEvent, 'id'>) => {
-        setEvents(prev => [...prev, { ...event, id: `evt-${Date.now()}` }]);
-    };
     
     const renderCell = (value: number, limit: number) => {
         const percentage = limit > 0 ? (value / limit) * 100 : 0;
@@ -725,9 +535,9 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         else if (percentage > 90) statusColor = 'bg-yellow-500';
 
         return (
-             <div className="flex items-center space-x-2">
-                <span className={`w-2.5 h-2.5 rounded-full ${statusColor}`} title={`Status: ${percentage.toFixed(0)}% of plan`}></span>
-                <span>{formatCurrencyString(value, { digits: 0 })}</span>
+             <div className="flex items-center gap-2 min-h-[1.25rem]">
+                <span className={`w-2.5 h-2.5 shrink-0 rounded-full ${statusColor}`} title={`Status: ${percentage.toFixed(0)}% of plan`} />
+                <span className="tabular-nums">{formatCurrencyString(value, { digits: 0 })}</span>
              </div>
         );
     }
@@ -743,7 +553,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     return (
         <PageLayout
             title="Annual Financial Plan"
-            description="Fed from Accounts, Budgets, Transactions, Goals, Liabilities, and Investment Plan. Use Forecast for multi-year net worth scenarios alongside this annual view. Income & expense actuals from Transactions; planned limits from Budgets; recurring and scheduled transfers from Accounts/Recurring; goals progress from Goals; investment planned & actual from Investment Plan; debt context from Liabilities."
+            description="Read-only annual view: every number is computed from Budgets, Transactions (actuals + recurring), Investment Plan, household profile (synced with Budgets), Accounts, Goals, and Liabilities. Edit those pages—not the grid here."
             action={
                 <div className="w-full flex flex-col lg:flex-row lg:items-center lg:justify-end gap-3">
                     <div className="inline-flex items-center p-1 rounded-xl border border-slate-200 bg-slate-100/80 self-start lg:self-auto shadow-sm">
@@ -815,7 +625,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     </>
                 )}
                 <span className="text-xs text-slate-500 w-full pt-2 mt-1 border-t border-slate-200/80 leading-relaxed">
-                    Actuals from Transactions; planned limits from Budgets; income planned uses expected salary (Household Engine) or transaction average when no salary set; recurring and scheduled transfers from Accounts/Recurring; goals from Goals; investment planned & actual from Investment Plan; debt context from Liabilities.
+                    Actuals from Transactions. Expense planned from Budgets + recurring expense rules. Income planned uses a single priority (no double-counting): month override → expected monthly salary → income-type budgets (Salary/Income) → recurring income total → averages from transactions. Investment planned from Investment Plan; goals and liabilities for context.
                 </span>
                 {householdProfileCloudEnabled && householdProfileSaveStatus !== 'idle' && (
                     <p className={`text-xs w-full pt-2 mt-1 border-t border-slate-200/80 ${householdProfileSaveStatus === 'error' ? 'text-amber-700' : householdProfileSaveStatus === 'saved' ? 'text-emerald-600' : 'text-slate-500'}`} role="status" aria-live="polite">
@@ -869,34 +679,47 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 </div>
             )}
 
-            {/* Liquid cash from Accounts; debt from Liabilities (plan fed from these pages) */}
-            {((accounts.length > 0) || (liabilities.length > 0)) && (
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {accounts.length > 0 && (() => {
-                const liquidCash = accounts
+            {/* Liquid cash from Accounts; debt from Liabilities — equal-width columns when both show */}
+            {((accounts.length > 0) || (liabilities.length > 0)) && (() => {
+                const liquidCash =
+                    accounts.length > 0
+                        ? accounts
                     .filter((a: { type: string }) => a.type === 'Checking' || a.type === 'Savings')
                     .reduce((sum: number, a: Account) => {
                         const cur = a.currency === 'USD' ? 'USD' : 'SAR';
                         return sum + Math.max(0, toSAR(Number(a.balance) || 0, cur, sarPerUsd));
-                    }, 0);
-                return liquidCash !== 0 ? (
-                    <div className="p-4 rounded-xl border-2 border-emerald-200 bg-emerald-50/50 min-w-0 overflow-hidden flex flex-col">
+                              }, 0)
+                        : 0;
+                const totalDebt =
+                    liabilities.length > 0
+                        ? liabilities
+                              .filter((l: { type?: string; amount?: number }) => (l.type ?? '') !== 'Receivable')
+                              .reduce((sum: number, l: { amount?: number }) => sum + Math.abs(Number(l.amount) || 0), 0)
+                        : 0;
+                const showLiquid = liquidCash !== 0;
+                const showDebt = totalDebt > 0;
+                const cells: React.ReactNode[] = [];
+                if (showLiquid) {
+                    cells.push(
+                        <div
+                            key="liquid"
+                            className={`p-4 rounded-xl border-2 border-emerald-200 bg-emerald-50/50 min-w-0 overflow-hidden flex flex-col justify-between ${showDebt ? '' : 'sm:col-span-2 max-w-2xl'}`}
+                        >
                         <p className="metric-label text-xs font-medium text-emerald-800 uppercase tracking-wide w-full">Liquid cash (Checking + Savings)</p>
                         <p className="metric-value text-xl font-bold text-emerald-800 tabular-nums mt-0.5 w-full">{formatCurrencyString(liquidCash, { inCurrency: 'SAR', digits: 0 })}</p>
                         <p className="text-xs text-slate-600 mt-0.5">From Accounts (SAR equivalent).</p>
                         {setActivePage && (
                             <button type="button" onClick={() => setActivePage('Accounts')} className="mt-2 text-xs font-medium text-primary hover:underline inline-flex items-center gap-1">Accounts →</button>
                         )}
-                    </div>
-                ) : null;
-            })()}
-            {liabilities.length > 0 && (() => {
-                // Total debt: exclude Receivables; sum |amount| so it works whether debt is stored positive or negative
-                const totalDebt = liabilities
-                    .filter((l: { type?: string; amount?: number }) => (l.type ?? '') !== 'Receivable')
-                    .reduce((sum: number, l: { amount?: number }) => sum + Math.abs(Number(l.amount) || 0), 0);
-                return totalDebt > 0 ? (
-                    <div className="p-4 rounded-xl border-2 border-slate-200 bg-slate-50/50 min-w-0 overflow-hidden flex flex-col">
+                        </div>,
+                    );
+                }
+                if (showDebt) {
+                    cells.push(
+                        <div
+                            key="debt"
+                            className={`p-4 rounded-xl border-2 border-slate-200 bg-slate-50/50 min-w-0 overflow-hidden flex flex-col justify-between ${showLiquid ? '' : 'sm:col-span-2 max-w-2xl'}`}
+                        >
                         <p className="metric-label text-xs font-medium text-slate-700 uppercase tracking-wide w-full flex items-center gap-1 flex-wrap">
                             Total debt (Liabilities)
                             <InfoHint text="Sum of absolute amounts on liability rows except type Receivable. Matches Liabilities page context for annual planning." />
@@ -906,11 +729,14 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         {setActivePage && (
                             <button type="button" onClick={() => setActivePage('Liabilities')} className="mt-2 text-xs font-medium text-primary hover:underline inline-flex items-center gap-1">Liabilities →</button>
                         )}
-                    </div>
-                ) : null;
+                        </div>,
+                    );
+                }
+                if (cells.length === 0) return null;
+                return (
+                    <div className={`mt-4 grid grid-cols-1 gap-4 ${cells.length === 2 ? 'sm:grid-cols-2' : ''}`}>{cells}</div>
+                );
             })()}
-            </div>
-            )}
 
             {/* Executive summary */}
             {totals && (() => {
@@ -979,11 +805,11 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         <InfoHint text="Planned amounts use this page’s grid (budgets, recurring, investment plan). Actuals use transactions (and investment buys) for the same calendar months—year-to-date for the current year, or the full selected year for past years." />
                     </h3>
                     <p className="text-xs text-slate-500 mt-1 mb-3">{planProgressPeriod.label}</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-stretch">
                         {planProgressPeriod.income && (planProgressPeriod.income.planned > 0 || planProgressPeriod.income.actual > 0) && (
-                            <div className="rounded-lg border border-slate-100 bg-slate-50/80 p-3 min-w-0">
-                                <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Income</p>
-                                <p className="text-sm text-slate-800 mt-1 tabular-nums">
+                            <div className="rounded-lg border border-slate-100 bg-slate-50/80 p-3 min-w-0 flex flex-col justify-between min-h-[7.5rem]">
+                                <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Income</p>
+                                <p className="text-sm text-slate-800 tabular-nums leading-snug">
                                     Planned <strong>{formatCurrencyString(planProgressPeriod.income.planned, { digits: 0 })}</strong>
                                     <span className="text-slate-400 mx-1">·</span>
                                     Actual <strong>{formatCurrencyString(planProgressPeriod.income.actual, { digits: 0 })}</strong>
@@ -1001,9 +827,9 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                             </div>
                         )}
                         {(planProgressPeriod.expenses.planned > 0 || planProgressPeriod.expenses.actual > 0) && (
-                            <div className="rounded-lg border border-slate-100 bg-slate-50/80 p-3 min-w-0">
-                                <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Expenses</p>
-                                <p className="text-sm text-slate-800 mt-1 tabular-nums">
+                            <div className="rounded-lg border border-slate-100 bg-slate-50/80 p-3 min-w-0 flex flex-col justify-between min-h-[7.5rem]">
+                                <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Expenses</p>
+                                <p className="text-sm text-slate-800 tabular-nums leading-snug">
                                     Planned <strong>{formatCurrencyString(planProgressPeriod.expenses.planned, { digits: 0 })}</strong>
                                     <span className="text-slate-400 mx-1">·</span>
                                     Actual <strong>{formatCurrencyString(planProgressPeriod.expenses.actual, { digits: 0 })}</strong>
@@ -1022,9 +848,9 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                             </div>
                         )}
                         {planProgressPeriod.investment && (
-                            <div className="rounded-lg border border-violet-100 bg-violet-50/50 p-3 min-w-0">
-                                <p className="text-xs font-medium text-violet-700 uppercase tracking-wide">Monthly investment</p>
-                                <p className="text-sm text-slate-800 mt-1 tabular-nums">
+                            <div className="rounded-lg border border-violet-100 bg-violet-50/50 p-3 min-w-0 flex flex-col justify-between min-h-[7.5rem]">
+                                <p className="text-xs font-medium text-violet-700 uppercase tracking-wide mb-1">Monthly investment</p>
+                                <p className="text-sm text-slate-800 tabular-nums leading-snug">
                                     Planned <strong>{formatCurrencyString(planProgressPeriod.investment.planned, { digits: 0 })}</strong>
                                     <span className="text-slate-400 mx-1">·</span>
                                     Actual <strong>{formatCurrencyString(planProgressPeriod.investment.actual, { digits: 0 })}</strong>
@@ -1269,7 +1095,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                          </button>
                      ))}
                  </div>
-                 <div className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4">
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
                      {/* Income Shock */}
                      <div className="space-y-2 p-3 bg-gray-50 rounded-lg">
                         <label className="font-medium text-sm flex items-center">Income Shock <InfoHint text="Simulate a change in income: e.g. +10% for 3 months starting month 5. Planned income in that range is scaled for scenario view." /></label>
@@ -1295,15 +1121,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                            <span className="text-sm">%</span>
                         </div>
                      </div>
-                      {/* Major Events */}
-                     <div className="space-y-2 p-3 bg-gray-50 rounded-lg">
-                        <label className="font-medium text-sm flex items-center">Major Life Events <InfoHint text="One-time income or expense events (e.g. bonus, wedding) that affect the plan; add via the button below." /></label>
-                        <div className="text-xs space-y-1">
-                            {events.map(e => <div key={e.id} className="flex justify-between"><span>{e.name} ({MONTHS[e.month-1]})</span><span>{formatCurrencyString(e.amount)}</span></div>)}
                         </div>
-                        <button onClick={() => setIsEventModalOpen(true)} className="flex items-center text-sm text-primary hover:underline mt-1"><PlusIcon className="h-4 w-4 mr-1"/>Add Event</button>
-                     </div>
-                 </div>
+                 <p className="text-xs text-slate-500 mt-2">One-time scenarios belong in <strong>Forecast</strong>; this grid stays tied to your saved data only.</p>
             </div>
 
              <AIAdvisor
@@ -1318,8 +1137,11 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             
             {/* Plan Grid: actuals from Transactions, planned from Budgets + recurring; investment from Investment Plan */}
             <div className="space-y-2">
+                {incomePlannedHint && (
+                    <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 leading-relaxed">{incomePlannedHint}</p>
+                )}
                 <p className="text-xs text-slate-500">
-                    Grid (each month): <span className="text-gray-600">top</span> = actual (transactions &amp; investment buys, SAR eq.) · <span className="font-medium text-slate-700">bottom</span> = planned (budgets + recurring + salary baseline). Investment actuals converted with account/trade currency.
+                    Grid (each month): <span className="text-gray-600">top</span> = actual (transactions &amp; investment buys, SAR eq.) · <span className="font-medium text-slate-700">bottom</span> = planned from Budgets, recurring rules, Investment Plan, and household profile. <span className="text-slate-600">You cannot type amounts here—edit source pages so the plan stays consistent everywhere.</span>
                 </p>
                 <div className="bg-white shadow rounded-lg overflow-x-auto">
                 <table className="min-w-full text-sm">
@@ -1333,7 +1155,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     <tbody className="divide-y divide-gray-200">
                         {/* Income */}
                         <tr className="bg-green-50"><td colSpan={14} className="p-2 font-bold text-green-800">Income</td></tr>
-                        {processedPlanData.filter((r: PlanRow) => r.type === 'income').map((row: PlanRow, rowIndex: number) => {
+                        {processedPlanData.filter((r: PlanRow) => r.type === 'income').map((row: PlanRow) => {
                              const totalPlanned = row.monthly_planned.reduce((a: number, b: number) => a + b, 0);
                              const totalActual = row.monthly_actual.reduce((a: number, b: number) => a + b, 0);
                              return (
@@ -1343,21 +1165,23 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                                         const isAffected = incomeShock.percent !== 0 && monthIndex >= incomeShock.startMonth - 1 && monthIndex < incomeShock.startMonth - 1 + incomeShock.duration;
                                         return (
                                             <td key={monthIndex} className="p-2 align-top">
-                                                <div className="text-gray-500">{formatCurrencyString(row.monthly_actual[monthIndex], { digits: 0 })}</div>
-                                                <div className={`font-semibold cursor-pointer p-1 rounded ${isAffected ? 'bg-blue-100' : ''}`} onClick={() => setIsEditing({row: rowIndex, col: monthIndex})}>
-                                                    {formatCurrencyString(plan, { digits: 0 })}
+                                                <div className="text-xs text-gray-500 tabular-nums leading-snug mb-0.5">Actual {formatCurrencyString(row.monthly_actual[monthIndex], { digits: 0 })}</div>
+                                                <div className={`text-sm font-semibold tabular-nums p-1 rounded -mx-1 ${isAffected ? 'bg-blue-100' : ''}`} title="Edit via Budgets, Transactions (recurring), or household salary">
+                                                    Planned {formatCurrencyString(plan, { digits: 0 })}
                                                 </div>
                                             </td>
                                         )
                                     })}
-                                    <td className="p-2 align-top font-bold"><div className="text-gray-500">{formatCurrencyString(totalActual, { digits: 0 })}</div><div>{formatCurrencyString(totalPlanned, { digits: 0 })}</div></td>
+                                    <td className="p-2 align-top font-bold">
+                                        <div className="text-xs text-gray-500 tabular-nums font-normal mb-0.5">Actual {formatCurrencyString(totalActual, { digits: 0 })}</div>
+                                        <div className="tabular-nums">Planned {formatCurrencyString(totalPlanned, { digits: 0 })}</div>
+                                    </td>
                                 </tr>
                              )
                         })}
                         {/* Expenses */}
                         <tr className="bg-red-50"><td colSpan={14} className="p-2 font-bold text-red-800">Expenses</td></tr>
                         {processedPlanData.filter((r: PlanRow) => r.type === 'expense').map((row: PlanRow) => {
-                             const originalIndex = planData.findIndex(item => item.category === row.category && item.type === 'expense');
                              const totalPlanned = row.monthly_planned.reduce((a: number, b: number) => a + b, 0);
                              const totalActual = row.monthly_actual.reduce((a: number, b: number) => a + b, 0);
                              const isAffected = expenseStress.percent !== 0 && (expenseStress.category === 'All' || expenseStress.category === row.category);
@@ -1367,12 +1191,12 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                                     {row.monthly_planned.map((plan: number, monthIndex: number) => (
                                         <td key={monthIndex} className="p-2 align-top">
                                             <div className="text-gray-500">{renderCell(row.monthly_actual[monthIndex], plan)}</div>
-                                            <div className={`font-semibold cursor-pointer p-1 rounded ${isAffected ? 'bg-orange-100' : ''}`} onClick={() => originalIndex > -1 && setIsEditing({row: originalIndex, col: monthIndex})}>
+                                            <div className={`font-semibold tabular-nums p-1 rounded ${isAffected ? 'bg-orange-100' : ''}`} title="Edit via Budgets or Transactions (recurring)">
                                                 {formatCurrencyString(plan, { digits: 0 })}
                                             </div>
                                         </td>
                                     ))}
-                                     <td className="p-2 align-top font-bold"><div className="text-gray-500">{renderCell(totalActual, totalPlanned)}</div><div>{formatCurrencyString(totalPlanned, { digits: 0 })}</div></td>
+                                     <td className="p-2 align-top font-bold"><div className="text-gray-500">{renderCell(totalActual, totalPlanned)}</div><div className="tabular-nums">{formatCurrencyString(totalPlanned, { digits: 0 })}</div></td>
                                 </tr>
                              )
                         })}
@@ -1380,28 +1204,6 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 </table>
                 </div>
             </div>
-            
-            <EventModal isOpen={isEventModalOpen} onClose={() => setIsEventModalOpen(false)} onSave={handleSaveEvent} />
-
-            {isEditing && (
-                <div className="fixed inset-0 bg-black bg-opacity-25 flex items-center justify-center z-50" onClick={() => setIsEditing(null)}>
-                    <div className="bg-white p-4 rounded-lg shadow-lg" onClick={e => e.stopPropagation()}>
-                         <h4 className="font-bold mb-2">Edit Planned Amount</h4>
-                         <p className="text-sm mb-2">{planData[isEditing.row].category} - {MONTHS[isEditing.col]}</p>
-                         <form onSubmit={(e) => {
-                             e.preventDefault();
-                             const input = e.currentTarget.elements.namedItem('newValue') as HTMLInputElement;
-                             handlePlanEdit(isEditing.row, isEditing.col, parseFloat(input.value));
-                         }}>
-                            <input name="newValue" type="number" defaultValue={planData[isEditing.row].monthly_planned[isEditing.col]} className="p-2 border rounded-md w-full" autoFocus/>
-                            <div className="flex justify-end space-x-2 mt-4">
-                               <button type="button" onClick={() => setIsEditing(null)} className="px-4 py-2 bg-gray-200 rounded-md">Cancel</button>
-                               <button type="submit" className="px-4 py-2 bg-primary text-white rounded-md">Save</button>
-                            </div>
-                         </form>
-                    </div>
-                </div>
-            )}
                 </div>
             </div>
             )}

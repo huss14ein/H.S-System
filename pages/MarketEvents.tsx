@@ -5,7 +5,7 @@ import { DataContext } from '../context/DataContext';
 import { getMarketCalendarCached, getMarketCalendarFresh, getMarketHolidays, type MarketCalendarLoadMode } from '../services/finnhubService';
 import { getStaticMarketHolidays, getStaticEconomicCalendar } from '../services/staticMarketCalendarService';
 import type { Page } from '../types';
-import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
+// Market Events should consider all investment portfolios/holdings (not only personal-scope).
 import { CalendarDaysIcon } from '../components/icons/CalendarDaysIcon';
 import { Bars3Icon } from '../components/icons/Bars3Icon';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
@@ -326,7 +326,7 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
 const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
   const { data, loading } = useContext(DataContext)!;
   const { exchangeRate } = useCurrency();
-  const { isAiAvailable } = useAI();
+  const { aiActionsEnabled } = useAI();
   const [categoryFilter, setCategoryFilter] = useState<'All' | EventCategory>('All');
   const [impactFilter, setImpactFilter] = useState<'All' | Impact>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -347,17 +347,17 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   const [aiTranslateError, setAiTranslateError] = useState<string | null>(null);
 
   const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
-  const personalAccounts = useMemo(() => getPersonalAccounts(data ?? null), [data]);
-  const personalAccountIds = useMemo(() => new Set(personalAccounts.map((a) => a.id)), [personalAccounts]);
-  const personalInvestments = useMemo(() => getPersonalInvestments(data ?? null), [data]);
+  const investmentAccounts = useMemo(() => (data?.accounts ?? []).filter((a) => a.type === 'Investment'), [data]);
+  const investmentAccountIds = useMemo(() => new Set(investmentAccounts.map((a) => a.id)), [investmentAccounts]);
+  const investmentPortfolios = useMemo(() => (data?.investments ?? []) as any[], [data]);
 
   const trackedSymbols = useMemo((): string[] => {
     const fromWatchlist = (data?.watchlist ?? []).map((w: { symbol?: string }) => w.symbol?.trim().toUpperCase()).filter((s): s is string => Boolean(s));
-    const fromHoldings = personalInvestments.flatMap((p: { holdings?: { symbol?: string }[] }) =>
+    const fromHoldings = investmentPortfolios.flatMap((p: { holdings?: { symbol?: string }[] }) =>
       (p.holdings ?? []).map((h: { symbol?: string }) => h.symbol?.trim().toUpperCase()).filter((s): s is string => Boolean(s)),
     );
     return Array.from(new Set([...fromWatchlist, ...fromHoldings]));
-  }, [data, personalInvestments]);
+  }, [data, investmentPortfolios]);
 
   useEffect(() => {
     try {
@@ -669,7 +669,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
 
     const firstBuyBySymbol = new Map<string, Date>();
     (data?.investmentTransactions ?? [])
-      .filter(t => t.type === 'buy' && t.symbol && personalAccountIds.has(t.accountId ?? ''))
+      .filter(t => t.type === 'buy' && t.symbol && investmentAccountIds.has(t.accountId ?? ''))
       .forEach((t) => {
         const s = t.symbol.trim().toUpperCase();
         const d = new Date(t.date);
@@ -713,7 +713,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
         return t >= now.getTime() && t <= end.getTime();
       })
       .sort((a, b) => a.date.getTime() - b.date.getTime());
-  }, [data, trackedSymbols, finnhubState.events, holidayEvents, includeEstimated, personalAccountIds]);
+  }, [data, trackedSymbols, finnhubState.events, holidayEvents, includeEstimated, investmentAccountIds]);
 
   const filtered = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -758,7 +758,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
 
   const diagnostics = useMemo(() => {
     const warnings: string[] = [];
-    if (trackedSymbols.length === 0) warnings.push('No tracked symbols found from Watchlist or personal holdings. Add symbols to improve event relevance.');
+    if (trackedSymbols.length === 0) warnings.push('No tracked symbols found from Watchlist or investment holdings. Add symbols to improve event relevance.');
     if (finnhubState.mode === 'none') warnings.push('Live market calendar feed is unavailable; static schedule fallback is active.');
     if (finnhubState.mode === 'cache_stale') warnings.push('Using stale cached market calendar snapshot; click refresh prices to sync data.');
     if (events.length === 0) warnings.push('No events available in the next 6 months for current data scope.');
@@ -766,10 +766,10 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   }, [trackedSymbols.length, finnhubState.mode, events.length]);
 
   const aiPortfolioContext = useMemo(() => {
-    const holdings = personalInvestments.flatMap((p) => {
-      const ccy = resolveInvestmentPortfolioCurrency(p);
-      return (p.holdings ?? []).map((h) => ({
-        symbol: h.symbol,
+    const holdings = investmentPortfolios.flatMap((p: { holdings?: Array<{ symbol?: string; quantity?: unknown; currentValue?: unknown }> }) => {
+      const ccy = resolveInvestmentPortfolioCurrency(p as any);
+      return (p.holdings ?? []).map((h: { symbol?: string; quantity?: unknown; currentValue?: unknown }) => ({
+        symbol: String(h.symbol ?? '').trim(),
         quantity: Number(h.quantity) || 0,
         currentValue: Math.max(0, toSAR(Number(h.currentValue) || 0, ccy, sarPerUsd)),
       }));
@@ -780,7 +780,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
         .map((w: { symbol?: string }) => (w.symbol ?? '').trim().toUpperCase())
         .filter((s: string) => s.length > 0),
     };
-  }, [personalInvestments, sarPerUsd, data?.watchlist]);
+  }, [investmentPortfolios, sarPerUsd, data?.watchlist]);
 
   const aiTargetEvent = useMemo(() => {
     if (!aiEventId) return topFocusEvents[0]?.event ?? null;
@@ -789,7 +789,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
 
   const handleGenerateAiInsight = async () => {
     if (!aiTargetEvent) return;
-    if (!isAiAvailable) {
+    if (!aiActionsEnabled) {
       setAiError('Configure AI to enable market event insights.');
       return;
     }
@@ -823,7 +823,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   const handleAiLangChange = async (lang: 'en' | 'ar') => {
     setAiLang(lang);
     if (lang !== 'ar') return;
-    if (!isAiAvailable) {
+    if (!aiActionsEnabled) {
       setAiTranslateError('Configure AI to enable Arabic translation.');
       return;
     }
@@ -1191,7 +1191,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
                 onClick={() => void handleAiLangChange('ar')}
                 className={`px-2.5 py-1 text-xs rounded-md border ${aiLang === 'ar' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300'}`}
                 disabled={aiTranslating || !aiInsightEn}
-                title={!isAiAvailable ? 'Configure AI to enable Arabic translation' : 'عرض بالعربية'}
+                title={!aiActionsEnabled ? 'Configure AI to enable Arabic translation' : 'عرض بالعربية'}
               >
                 {aiTranslating ? 'Translating…' : 'العربية'}
               </button>

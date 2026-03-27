@@ -7,17 +7,17 @@ import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useAI } from '../context/AiContext';
-import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { getTargetAllocationForProfile, meanVarianceOptimization } from '../services/portfolioConstruction';
 import type { Holding, Page } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
+import { getPersonalInvestments } from '../utils/wealthScope';
+import { useFormatCurrency } from '../hooks/useFormatCurrency';
 
 type RiskProfile = 'Conservative' | 'Moderate' | 'Aggressive';
 
@@ -32,7 +32,7 @@ interface AIRebalancerViewProps {
 
 const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, onOpenWealthUltra, setActivePage: _setActivePage }) => {
   const { data, loading } = useContext(DataContext)!;
-  const { isAiAvailable } = useAI();
+  const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
   const { trackAction } = useSelfLearning();
   const { simulatedPrices } = useMarketData();
   const { exchangeRate } = useCurrency();
@@ -55,8 +55,15 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
   const [rebalTranslateError, setRebalTranslateError] = useState<string | null>(null);
   const [isTranslatingRebal, setIsTranslatingRebal] = useState(false);
 
-  const portfolios = (data as any)?.personalInvestments ?? data?.investments ?? [];
+  const portfolios = useMemo(() => getPersonalInvestments(data), [data]);
   const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+
+  useEffect(() => {
+    const r = data?.settings?.riskProfile;
+    if (r === 'Conservative' || r === 'Moderate' || r === 'Aggressive') {
+      setRiskProfile(r);
+    }
+  }, [data?.settings?.riskProfile]);
 
   useEffect(() => {
     if (!portfolios.length) return;
@@ -125,7 +132,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
   }, [selectedPortfolio, riskProfile, trackAction, portfolioBookCurrency, sarPerUsd, simulatedPrices, totalPortfolioValueBook]);
 
   const runArabicTranslation = useCallback(async () => {
-    if (!rebalancingPlan.trim()) return;
+    if (!rebalancingPlan.trim() || !aiActionsEnabled) return;
     setIsTranslatingRebal(true);
     setRebalTranslateError(null);
     try {
@@ -136,10 +143,10 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
     } finally {
       setIsTranslatingRebal(false);
     }
-  }, [rebalancingPlan]);
+  }, [rebalancingPlan, aiActionsEnabled]);
 
   useEffect(() => {
-    if (rebalDisplayLang !== 'ar' || !rebalancingPlan.trim() || rebalAr != null) return;
+    if (rebalDisplayLang !== 'ar' || !rebalancingPlan.trim() || rebalAr != null || !aiActionsEnabled) return;
     let cancelled = false;
     (async () => {
       setIsTranslatingRebal(true);
@@ -156,7 +163,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
     return () => {
       cancelled = true;
     };
-  }, [rebalDisplayLang, rebalancingPlan, rebalAr]);
+  }, [rebalDisplayLang, rebalancingPlan, rebalAr, aiActionsEnabled]);
 
   const targetAssetMix = useMemo(() => getTargetAllocationForProfile(riskProfile), [riskProfile]);
 
@@ -175,20 +182,24 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
     if (total <= 0) return null;
     const expectedReturns = holdings.map(() => 0.07 / 12);
     const n = holdings.length;
-    const cov = Array(n).fill(0).map(() => Array(n).fill(0));
+    const cov = Array(n)
+      .fill(0)
+      .map(() => Array(n).fill(0));
     for (let i = 0; i < n; i++) cov[i][i] = 0.04 / 12;
     const res = meanVarianceOptimization({ expectedReturns, covarianceMatrix: cov, riskFreeRate: 0.04 / 12 });
     const labels = holdings.map((h: Holding) => h.symbol ?? '');
     return { ...res, labels };
   }, [selectedPortfolio, simulatedPrices, sarPerUsd]);
 
-  // Loading state
   if (loading || !data) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50 flex items-center justify-center" aria-busy="true">
+      <div className="page-container flex items-center justify-center min-h-[24rem]" aria-busy="true">
         <div className="text-center">
-          <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" aria-label="Loading AI Rebalancer" />
-          <p className="text-sm text-slate-600">Loading portfolio data...</p>
+          <div
+            className="w-12 h-12 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"
+            aria-label="Loading AI Rebalancer"
+          />
+          <p className="text-sm text-slate-600">Loading portfolio data…</p>
         </div>
       </div>
     );
@@ -196,13 +207,19 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
 
   if (!portfolios.length) {
     return (
-      <div className="mt-6 space-y-4">
-        <section className="rounded-2xl border border-slate-200 bg-slate-50/50 p-6 text-center">
-          <h2 className="text-xl font-bold text-slate-800">AI Portfolio Rebalancer</h2>
-          <p className="text-slate-600 mt-2">You don't have any investment portfolios to analyze.</p>
-          <p className="text-sm text-slate-500 mt-1">Add a platform and portfolio under <strong>Portfolios</strong>, then return here.</p>
+      <div className="page-container space-y-6">
+        <section className="section-card p-6 sm:p-8 text-center">
+          <h2 className="page-title text-xl sm:text-2xl">AI Portfolio Rebalancer</h2>
+          <p className="text-slate-600 mt-2">You don&apos;t have any investment portfolios to analyze.</p>
+          <p className="text-sm text-slate-500 mt-1">
+            Add a platform and portfolio under <strong>Portfolios</strong>, then return here.
+          </p>
           {onNavigateToTab && (
-            <button type="button" onClick={() => onNavigateToTab('Portfolios')} className="mt-4 px-4 py-2.5 bg-primary text-white rounded-xl hover:bg-secondary text-sm font-medium">
+            <button
+              type="button"
+              onClick={() => onNavigateToTab('Portfolios')}
+              className="mt-4 btn-primary"
+            >
               Go to Portfolios
             </button>
           )}
@@ -212,194 +229,155 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
-      {/* Enhanced Hero Section */}
-      <div className="rounded-3xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 via-white to-indigo-50 p-8 shadow-xl mb-8">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
-          <div className="flex items-center gap-4">
-            <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
-              <ScaleIcon className="h-8 w-8 text-white" />
+    <div className="page-container space-y-6">
+      <div className="section-card p-6 sm:p-8">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+          <div className="flex items-start gap-4 min-w-0">
+            <div className="w-12 h-12 shrink-0 bg-primary/10 rounded-xl flex items-center justify-center">
+              <ScaleIcon className="h-6 w-6 text-primary" />
             </div>
-            <div>
-              <h2 className="text-3xl font-bold text-slate-900">AI Portfolio Rebalancer</h2>
-              <p className="text-lg text-slate-600 mt-2">
-                Plain-language view of how concentrated your holdings are versus a risk style you pick. Not buy/sell advice—ideas to discuss with a professional.
+            <div className="min-w-0">
+              <h2 className="page-title text-2xl sm:text-3xl">AI Portfolio Rebalancer</h2>
+              <p className="text-slate-600 mt-1 max-w-3xl">
+                Compare your current weights to a risk style and get educational notes. Numbers match this portfolio&apos;s book
+                currency and the same prices as <strong>Portfolios</strong>. Not personalized advice.
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="w-3 h-3 bg-indigo-500 rounded-full animate-pulse"></div>
-            <span className="text-sm font-bold text-indigo-700 uppercase tracking-wider">AI Powered</span>
-          </div>
-        </div>
-        <div className="mt-6 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl p-6 border border-indigo-100">
-          <p className="text-slate-700 leading-relaxed">
-            Get educational suggestions to align your portfolio with your risk tolerance. Select a portfolio and risk profile, then generate a rebalancing plan. 
-            Use with <span className="font-bold text-indigo-700">Investment Plan</span> and <span className="font-bold text-indigo-700">Wealth Ultra</span> for allocation and execution.
-          </p>
-          <p className="text-xs text-amber-700 font-medium mt-3">Disclaimer: Not financial advice. For educational purposes only.</p>
-        </div>
-      </div>
-
-      {/* Enhanced Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8">
-        <div className="bg-gradient-to-br from-slate-50 to-slate-100 border-2 border-slate-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-14 h-14 bg-gradient-to-br from-slate-500 to-slate-600 rounded-2xl flex items-center justify-center shadow-lg">
-              <span className="text-white font-bold text-lg">📁</span>
-            </div>
-            <div className="w-3 h-3 bg-slate-500 rounded-full animate-pulse"></div>
-          </div>
-          <p className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-2">Portfolios</p>
-          <p className="text-4xl font-black text-slate-900 tabular-nums">{portfolios.length}</p>
-          <p className="text-sm text-slate-600 mt-2">Available portfolios</p>
-        </div>
-        <div className="bg-gradient-to-br from-indigo-50 to-blue-50 border-2 border-indigo-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-14 h-14 bg-gradient-to-br from-indigo-500 to-blue-600 rounded-2xl flex items-center justify-center shadow-lg">
-              <span className="text-white font-bold text-lg">📊</span>
-            </div>
-            <div className="w-3 h-3 bg-indigo-500 rounded-full animate-pulse"></div>
-          </div>
-          <p className="text-sm font-bold text-indigo-800 uppercase tracking-wider mb-2">Selected Holdings</p>
-          <p className="text-4xl font-black text-indigo-900 tabular-nums">{currentAllocation.length}</p>
-          <p className="text-sm text-indigo-600 mt-2">Priced positions (excludes zero-value lines)</p>
-        </div>
-        <div className="bg-gradient-to-br from-emerald-50 to-green-50 border-2 border-emerald-200 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all duration-300">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-14 h-14 bg-gradient-to-br from-emerald-500 to-green-600 rounded-2xl flex items-center justify-center shadow-lg">
-              {isAiAvailable ? <CheckCircleIcon className="h-7 w-7 text-white" /> : <ExclamationTriangleIcon className="h-7 w-7 text-white" />}
-            </div>
-            <div className={`w-3 h-3 rounded-full animate-pulse ${
-              isAiAvailable ? 'bg-emerald-500' : 'bg-amber-500'
-            }`}></div>
-          </div>
-          <p className="text-sm font-bold text-emerald-800 uppercase tracking-wider mb-2">AI Status</p>
-          <p className={`text-2xl font-bold tabular-nums ${
-            isAiAvailable ? 'text-emerald-900' : 'text-amber-900'
-          }`}>
-            {isAiAvailable ? 'Operational' : 'Fallback Active'}
-          </p>
-          <p className="text-sm text-emerald-600 mt-2">Service status</p>
-        </div>
-      </div>
-
-      {/* Enhanced Navigation Links */}
-      {(onNavigateToTab || onOpenWealthUltra) && (
-        <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 p-6 shadow-lg hover:shadow-xl transition-all duration-300 mb-8">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-sm font-bold text-slate-700 uppercase tracking-wider">Related Pages:</span>
-            {onNavigateToTab && (
-              <>
-                <button 
-                  type="button" 
-                  onClick={() => onNavigateToTab('Portfolios')} 
-                  className="px-4 py-2 text-sm font-bold bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors duration-200"
-                >
-                  Portfolios
-                </button>
-                <button 
-                  type="button" 
-                  onClick={() => onNavigateToTab('Investment Plan')} 
-                  className="px-4 py-2 text-sm font-bold bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors duration-200"
-                >
-                  Investment Plan
-                </button>
-                <button 
-                  type="button" 
-                  onClick={() => onNavigateToTab('Execution History')} 
-                  className="px-4 py-2 text-sm font-bold bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors duration-200"
-                >
-                  Execution History
-                </button>
-              </>
-            )}
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <span
+              className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
+                !aiHealthChecked
+                  ? 'bg-slate-100 text-slate-600 border border-slate-200'
+                  : isAiAvailable
+                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                    : 'bg-amber-50 text-amber-900 border border-amber-200'
+              }`}
+            >
+              {!aiHealthChecked ? 'Checking…' : isAiAvailable ? 'AI enabled' : 'Rule-based fallback if AI unavailable'}
+            </span>
             {onOpenWealthUltra && (
-              <button 
-                type="button" 
-                onClick={onOpenWealthUltra} 
-                className="px-4 py-2 text-sm font-bold bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition-colors duration-200"
-              >
+              <button type="button" onClick={onOpenWealthUltra} className="btn-ghost text-sm">
                 Wealth Ultra
               </button>
             )}
           </div>
         </div>
-      )}
+        <p className="text-xs text-slate-500 mt-4 pt-4 border-t border-slate-100">
+          Risk profile defaults from Settings when possible; you can override below. Generated text is grounded to the totals and
+          weights on this screen.
+        </p>
+      </div>
 
-      {/* Enhanced Main Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Enhanced Configuration Section */}
-        <div className="lg:col-span-1">
-          <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 p-8 shadow-lg hover:shadow-xl transition-all duration-300">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-12 h-12 bg-gradient-to-br from-slate-500 to-slate-600 rounded-xl flex items-center justify-center shadow-lg">
-                <span className="text-white font-bold text-lg">⚙️</span>
-              </div>
-              <h3 className="text-xl font-bold text-slate-900">Configuration</h3>
-            </div>
-            
+      <div className="cards-grid grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="section-card">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Portfolios</p>
+          <p className="text-2xl font-bold text-slate-900 tabular-nums mt-1">{portfolios.length}</p>
+          <p className="text-sm text-slate-600 mt-1">In your personal scope</p>
+        </div>
+        <div className="section-card">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Priced positions</p>
+          <p className="text-2xl font-bold text-slate-900 tabular-nums mt-1">{currentAllocation.length}</p>
+          <p className="text-sm text-slate-600 mt-1">In selected portfolio</p>
+        </div>
+        <div className="section-card">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Book currency</p>
+          <p className="text-2xl font-bold text-slate-900 tabular-nums mt-1">{portfolioBookCurrency}</p>
+          <p className="text-sm text-slate-600 mt-1">Used for totals and AI</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 lg:gap-8 items-start">
+        <div className="lg:col-span-2 space-y-6">
+          <div className="section-card p-6 sm:p-8">
+            <h3 className="section-title mb-6">Configuration</h3>
+
             <div className="space-y-6">
-              {/* Portfolio Selection */}
               <div>
-                <label htmlFor="portfolio-select" className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
-                  <span className="text-lg">1️⃣</span>
-                  Select Portfolio
-                  <InfoHint text="Choose which portfolio to analyze. Holdings and current allocation are taken from your Portfolios data." hintId="rebalancer-portfolio" hintPage="AI Rebalancer" />
+                <label htmlFor="portfolio-select" className="block text-sm font-semibold text-slate-800 mb-2">
+                  Portfolio
+                  <InfoHint
+                    text="Holdings and weights come from your Portfolios data for the selection."
+                    hintId="rebalancer-portfolio"
+                    hintPage="AI Rebalancer"
+                  />
                 </label>
                 <select
                   id="portfolio-select"
                   value={selectedPortfolioId}
                   onChange={(e) => setSelectedPortfolioId(e.target.value)}
-                  className="w-full p-3 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-800 font-medium bg-white shadow-sm"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
                 >
                   {portfolios.map((p: { id: string; name?: string }) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
                   ))}
                 </select>
               </div>
 
-              {/* Current Allocation Chart */}
-              <div className="bg-white rounded-2xl p-6 border border-slate-200">
-                <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
-                  <span className="text-lg">📊</span>
-                  Current Allocation
-                  <InfoHint text="Pie chart of current holdings by market value. Use this to see concentration before rebalancing." hintId="rebalancer-pie" hintPage="AI Rebalancer" />
+              <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4">
+                <h4 className="text-sm font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                  Current allocation
+                  <InfoHint
+                    text="Slice weights by market value using the same pricing as Portfolios."
+                    hintId="rebalancer-pie"
+                    hintPage="AI Rebalancer"
+                  />
                 </h4>
-                <div className="h-64 w-full">
-                  <AllocationPieChart data={currentAllocation} />
+                <div className="h-64 w-full mx-auto">
+                  <AllocationPieChart data={currentAllocation} showLegend={false} />
                 </div>
-                <p className="mt-3 text-sm font-semibold text-slate-800 tabular-nums">
+                {currentAllocation.length > 0 && (
+                  <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px] sm:text-xs">
+                    {currentAllocation.slice(0, 10).map((item, idx) => {
+                      const palette = ['bg-indigo-500', 'bg-cyan-500', 'bg-emerald-500', 'bg-amber-500', 'bg-violet-500', 'bg-rose-500'];
+                      return (
+                        <div key={`${item.name}-${idx}`} className="flex items-center gap-1.5 min-w-0">
+                          <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${palette[idx % palette.length]}`} aria-hidden />
+                          <span className="truncate text-slate-700" title={`${item.name}: ${item.value.toFixed(1)}%`}>
+                            {item.name}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="mt-4 text-sm font-semibold text-slate-800 tabular-nums">
                   Total (holdings):{' '}
-                  {formatCurrencyString(totalPortfolioValueBook, { inCurrency: portfolioBookCurrency, showSecondary: true })}
+                  <span className="text-primary">
+                    {formatCurrencyString(totalPortfolioValueBook, { inCurrency: portfolioBookCurrency, digits: 0 })}
+                  </span>
                 </p>
                 <p className="text-xs text-slate-500 mt-1">
-                  Uses the same prices as <strong>Portfolios</strong> (live quote when available). Currency is this portfolio&apos;s book currency ({portfolioBookCurrency}).
+                  Same valuation rules as the Portfolios tab. Currency: {portfolioBookCurrency}.
                 </p>
                 {totalPortfolioValueBook <= 0 && (
                   <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mt-2">
-                    Add holdings with quantity and price, or refresh quotes, so we can compute a total.
+                    Add holdings with quantity and prices, or refresh quotes, so totals can be computed.
                   </p>
                 )}
               </div>
 
-              {/* Risk Profile Selection */}
               <div>
-                <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
-                  <span className="text-lg">2️⃣</span>
-                  Risk Profile
-                  <InfoHint text="Conservative: lower volatility focus. Moderate: balanced. Aggressive: higher growth tolerance. AI suggestions adapt to your choice." hintId="rebalancer-risk-profile" hintPage="AI Rebalancer" />
-                </label>
-                <div className="grid grid-cols-3 gap-3">
-                  {(['Conservative', 'Moderate', 'Aggressive'] as RiskProfile[]).map(profile => (
+                <p className="text-sm font-semibold text-slate-800 mb-2">
+                  Risk profile
+                  <InfoHint
+                    text="Conservative / Moderate / Aggressive adjusts the illustrative target mix used in the narrative."
+                    hintId="rebalancer-risk-profile"
+                    hintPage="AI Rebalancer"
+                  />
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['Conservative', 'Moderate', 'Aggressive'] as RiskProfile[]).map((profile) => (
                     <button
                       key={profile}
                       type="button"
                       onClick={() => setRiskProfile(profile)}
-                      className={`px-4 py-3 text-sm font-bold rounded-xl transition-all duration-200 shadow-md hover:shadow-lg ${
+                      className={`rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors ${
                         riskProfile === profile
-                          ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg'
-                          : 'bg-white text-slate-700 hover:bg-slate-50 border-2 border-slate-200'
+                          ? 'bg-primary text-white shadow-sm'
+                          : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
                       }`}
                     >
                       {profile}
@@ -407,27 +385,28 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                   ))}
                 </div>
                 {Object.keys(targetAssetMix).length > 0 && (
-                  <p className="text-xs text-slate-600 mt-2">
-                    <span className="font-medium text-slate-700">Example US broad ETF mix</span> (illustrative):{' '}
-                    {Object.entries(targetAssetMix).map(([sym, w]) => `${sym} ${(w * 100).toFixed(0)}%`).join(', ')}.
-                    <InfoHint text="VTI/BND are common US-listed examples. Your real targets may differ—see Investment Plan and your broker." />
+                  <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+                    <span className="font-medium text-slate-700">Illustrative US ETF mix</span> (examples only):{' '}
+                    {Object.entries(targetAssetMix)
+                      .map(([sym, w]) => `${sym} ${(w * 100).toFixed(0)}%`)
+                      .join(', ')}
+                    . <InfoHint text="Your real targets may differ—see Investment Plan." />
                   </p>
                 )}
                 {mvoResult && mvoResult.optimalWeights.length > 0 && (
                   <div className="mt-3 pt-3 border-t border-slate-200">
-                    <p className="text-xs font-medium text-slate-700 mb-1">Illustrative weights (math demo)</p>
-                    <p className="text-xs text-slate-600">
+                    <p className="text-xs font-medium text-slate-700 mb-1">Illustrative weights (demo math)</p>
+                    <p className="text-xs text-slate-600 leading-relaxed">
                       {mvoResult.labels.map((label: string, i: number) => `${label} ${(mvoResult!.optimalWeights[i] * 100).toFixed(0)}%`).join(', ')}
                       {mvoResult.sharpeRatio != null && (
-                        <span className="block mt-1 text-slate-500">Sharpe {mvoResult.sharpeRatio.toFixed(2)} (simplified model)</span>
+                        <span className="block mt-1 text-slate-500">Sharpe {mvoResult.sharpeRatio.toFixed(2)} (placeholder model)</span>
                       )}
                     </p>
-                    <p className="text-[11px] text-slate-500 mt-1">Not a recommendation—uses placeholder risk/return data for demonstration.</p>
+                    <p className="text-[11px] text-slate-500 mt-1">Not a recommendation—placeholder risk/return inputs.</p>
                   </div>
                 )}
               </div>
 
-              {/* Generate Button */}
               <button
                 type="button"
                 onClick={handleGeneratePlan}
@@ -436,34 +415,32 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                   !selectedPortfolio
                     ? 'Select a portfolio'
                     : totalPortfolioValueBook <= 0
-                      ? 'Need at least one holding with a value (refresh prices on Portfolios if needed)'
-                      : 'Generate educational rebalancing notes'
+                      ? 'Need at least one holding with a positive value'
+                      : 'Generate educational notes'
                 }
-                className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed font-bold text-lg shadow-lg hover:shadow-xl transition-all duration-200"
+                className="btn-primary w-full justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <ScaleIcon className="h-6 w-6" />
-                {isLoading ? 'Generating…' : 'Generate Rebalancing Plan'}
+                <ScaleIcon className="h-5 w-5 shrink-0" />
+                {isLoading ? 'Generating…' : 'Generate notes'}
               </button>
             </div>
           </div>
         </div>
 
-        {/* Enhanced Results Section */}
-        <div className="lg:col-span-2">
-          <div className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-purple-50 p-8 shadow-lg hover:shadow-xl transition-all duration-300 min-h-[600px]">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
-                  <LightBulbIcon className="h-6 w-6 text-white" />
+        <div className="lg:col-span-3">
+          <div className="section-card p-6 sm:p-8 min-h-[28rem] flex flex-col">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6 pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 shrink-0 bg-primary/10 rounded-xl flex items-center justify-center">
+                  <LightBulbIcon className="h-5 w-5 text-primary" />
                 </div>
-                <div>
-                  <h3 className="text-xl font-bold text-indigo-900">Rebalancing Suggestions</h3>
-                  <p className="text-sm text-indigo-600 mt-1">From your expert investment advisor</p>
+                <div className="min-w-0">
+                  <h3 className="section-title mb-0">Rebalancing notes</h3>
+                  <p className="text-sm text-slate-500 mt-0.5">Grounded to the figures above; educational only.</p>
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Report</span>
-                <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm">
+                <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5" role="group" aria-label="Report language">
                   <button
                     type="button"
                     onClick={() => {
@@ -474,7 +451,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                       }
                       setRebalDisplayLang('en');
                     }}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-md ${rebalDisplayLang === 'en' ? 'bg-indigo-100 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-md ${rebalDisplayLang === 'en' ? 'bg-primary/15 text-primary' : 'text-slate-600'}`}
                   >
                     English
                   </button>
@@ -489,77 +466,54 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                       setRebalDisplayLang('ar');
                       setRebalAr(null);
                     }}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-md ${rebalDisplayLang === 'ar' ? 'bg-indigo-100 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-md ${rebalDisplayLang === 'ar' ? 'bg-primary/15 text-primary' : 'text-slate-600'}`}
                   >
                     العربية
                   </button>
                 </div>
-                {!isAiAvailable && !isLoading && (
-                  <div className="px-3 py-1.5 rounded-lg bg-amber-100 text-amber-800 text-xs font-bold">
-                    AI Fallback Active
-                  </div>
-                )}
               </div>
             </div>
-            
-            {!isAiAvailable && !isLoading && (
-              <div className="rounded-2xl border-2 border-amber-200 bg-gradient-to-r from-amber-50 to-yellow-50 p-6 mb-6">
-                <div className="flex items-start gap-3">
-                  <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-yellow-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <ExclamationTriangleIcon className="h-5 w-5 text-white" />
-                  </div>
-                  <p className="text-sm text-amber-800 font-medium leading-relaxed">
-                    Live AI is unavailable right now. Rebalancer will still generate a deterministic, portfolio-based fallback plan.
-                  </p>
-                </div>
+
+            {aiHealthChecked && !isAiAvailable && !isLoading && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 mb-4 flex gap-3 items-start">
+                <ExclamationTriangleIcon className="h-5 w-5 text-amber-700 shrink-0 mt-0.5" />
+                <p className="text-sm text-amber-900">
+                  When the AI service is unavailable, the app uses the same deterministic summary as fallback—still tied to your
+                  holdings and totals.
+                </p>
               </div>
             )}
-            
+
             {planError && !isLoading && (
-              <div className="rounded-2xl border-2 border-rose-200 bg-gradient-to-r from-rose-50 to-red-50 p-6 mb-6">
-                <div className="flex items-start gap-3">
-                  <div className="w-8 h-8 bg-gradient-to-br from-rose-500 to-red-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <span className="text-white font-bold text-sm">!</span>
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm text-rose-800 font-medium leading-relaxed mb-4">
-                      <SafeMarkdownRenderer content={planError} />
-                    </p>
-                    <button 
-                      type="button" 
-                      onClick={handleGeneratePlan} 
-                      className="px-4 py-2 text-sm font-bold bg-rose-100 text-rose-800 rounded-lg hover:bg-rose-200 transition-colors duration-200"
-                    >
-                      Retry
-                    </button>
-                  </div>
-                </div>
+              <div className="rounded-xl border border-rose-200 bg-rose-50/80 px-4 py-3 mb-4">
+                <SafeMarkdownRenderer content={planError} />
+                <button type="button" onClick={handleGeneratePlan} className="btn-ghost mt-3 text-sm">
+                  Retry
+                </button>
               </div>
             )}
-            
+
             {isLoading && (
-              <div className="flex flex-col justify-center items-center min-h-[400px] text-center">
-                <div className="w-16 h-16 bg-indigo-200 rounded-full animate-pulse mb-6"></div>
-                <p className="text-lg font-bold text-indigo-900 mb-2">Analyzing your portfolio…</p>
-                <p className="text-sm text-indigo-600 max-w-md">Generating educational suggestions based on your risk profile and current allocation.</p>
+              <div className="flex flex-col justify-center items-center flex-1 py-16 text-center">
+                <div className="w-12 h-12 border-2 border-primary border-t-transparent rounded-full animate-spin mb-4" />
+                <p className="text-sm font-medium text-slate-800">Generating notes…</p>
+                <p className="text-sm text-slate-500 mt-1 max-w-md">Using your portfolio weights and risk selection.</p>
               </div>
             )}
-            
+
             {rebalancingPlan && !isLoading && (
-              <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-8 border border-indigo-100">
+              <div className="flex-1 rounded-xl border border-slate-200 bg-slate-50/50 p-5 sm:p-6">
                 {rebalDisplayLang === 'ar' && isTranslatingRebal && (
                   <p className="text-sm text-center text-slate-500 py-2">Translating to Arabic…</p>
                 )}
                 {rebalDisplayLang === 'ar' && rebalancingPlan.trim() && !isTranslatingRebal && (
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                    <p className="text-xs text-slate-600">
-                      Arabic uses the same translation step as other Finova AI reports. If it fails, retry or switch to English.
-                    </p>
+                    <p className="text-xs text-slate-600">Arabic uses the same translation step as other reports.</p>
                     <button
                       type="button"
                       onClick={runArabicTranslation}
-                      disabled={isTranslatingRebal}
-                      className="shrink-0 px-3 py-1.5 text-xs font-semibold rounded-lg border border-indigo-200 bg-white text-indigo-800 hover:bg-indigo-50 disabled:opacity-50"
+                      disabled={isTranslatingRebal || !aiActionsEnabled}
+                      className="shrink-0 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-800 hover:bg-slate-50 disabled:opacity-50"
                     >
                       {rebalAr ? 'Refresh Arabic' : rebalTranslateError ? 'Retry Arabic' : 'Translate to Arabic'}
                     </button>
@@ -568,20 +522,21 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                 {rebalTranslateError && rebalDisplayLang === 'ar' && (
                   <p className="text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2 mb-3">{rebalTranslateError}</p>
                 )}
-                <div className="prose prose-sm max-w-none text-slate-700" dir={rebalDisplayLang === 'ar' ? 'rtl' : 'ltr'}>
+                <div
+                  className="prose prose-sm prose-slate max-w-none text-slate-800 [&_ul]:pl-5 [&_ol]:pl-5 [&_li]:my-1"
+                  dir={rebalDisplayLang === 'ar' ? 'rtl' : 'ltr'}
+                >
                   <SafeMarkdownRenderer content={rebalDisplayLang === 'ar' ? (rebalAr ?? rebalancingPlan) : rebalancingPlan} />
                 </div>
               </div>
             )}
-            
+
             {!rebalancingPlan && !isLoading && !planError && (
-              <div className="flex flex-col justify-center items-center min-h-[400px] text-center">
-                <div className="w-20 h-20 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-full flex items-center justify-center mb-6">
-                  <LightBulbIcon className="h-10 w-10 text-indigo-400" />
-                </div>
-                <p className="text-lg font-bold text-slate-900 mb-2">No plan yet</p>
-                <p className="text-sm text-slate-600 max-w-md">
-                  Select a portfolio and risk profile, then click <span className="font-bold text-indigo-700">Generate Rebalancing Plan</span> to see educational rebalancing ideas.
+              <div className="flex flex-col justify-center items-center flex-1 py-16 text-center px-4">
+                <LightBulbIcon className="h-10 w-10 text-slate-300 mb-4" />
+                <p className="text-sm font-medium text-slate-800">No notes yet</p>
+                <p className="text-sm text-slate-500 mt-1 max-w-md">
+                  Choose a portfolio and risk profile, then select <span className="font-semibold text-slate-700">Generate notes</span>.
                 </p>
               </div>
             )}

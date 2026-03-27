@@ -29,6 +29,7 @@ import { roundAvgCostPerUnit, roundMoney, roundQuantity } from '../utils/money';
 import { normalizeCoreUpsideAllocations } from '../utils/investmentPlanAllocations';
 import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/investmentPlanPerPortfolio';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
+import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
@@ -470,6 +471,12 @@ function holdingToRow(holding: Partial<Holding> & { quantity: number }): Record<
     } else if ((holding as any).goal_id != null) {
         row.goal_id = (holding as any).goal_id;
     }
+    const acq = holding.acquisitionDate ?? (holding as any).acquisition_date;
+    if (acq != null && String(acq).trim() !== '') {
+        row.acquisition_date = String(acq).slice(0, 10);
+    } else {
+        row.acquisition_date = null;
+    }
     return row;
 }
 
@@ -488,6 +495,7 @@ function normalizeHoldingFromRow(row: any): Holding {
         zakahClass: row.zakah_class ?? row.zakahClass ?? 'Zakatable',
         assetClass: row.asset_class ?? row.assetClass,
         goalId: row.goal_id ?? row.goalId,
+        acquisitionDate: row.acquisition_date ?? row.acquisitionDate ?? undefined,
     };
 }
 
@@ -495,7 +503,8 @@ function normalizeHoldingFromRow(row: any): Holding {
 function commodityHoldingToRow(holding: Partial<CommodityHolding> & { symbol: string; quantity: number }): Record<string, unknown> {
     const raw = holding.name ?? (holding as any).name ?? String(holding.symbol ?? 'Other').trim();
     const name = (raw && String(raw).trim()) ? String(raw).trim() : 'Other';
-    return {
+    const cacq = holding.acquisitionDate ?? (holding as any).acquisition_date;
+    const row: Record<string, unknown> = {
         name,
         quantity: roundQuantity(Number(holding.quantity ?? 0)),
         unit: holding.unit ?? 'unit',
@@ -504,7 +513,20 @@ function commodityHoldingToRow(holding: Partial<CommodityHolding> & { symbol: st
         purchase_value: roundMoney(Number(holding.purchaseValue ?? (holding as any).purchase_value ?? 0)),
         current_value: roundMoney(Number(holding.currentValue ?? (holding as any).current_value ?? 0)),
         zakah_class: holding.zakahClass ?? (holding as any).zakah_class ?? 'Zakatable',
+        // Persist goal linkage so it survives refresh. "Not linked" => NULL in DB.
+        goal_id:
+            holding.goalId != null && String(holding.goalId).trim() !== ''
+                ? holding.goalId
+                : (holding as any).goal_id != null && String((holding as any).goal_id).trim() !== ''
+                  ? (holding as any).goal_id
+                  : null,
     };
+    if (cacq != null && String(cacq).trim() !== '') {
+        row.acquisition_date = String(cacq).slice(0, 10);
+    } else {
+        row.acquisition_date = null;
+    }
+    return row;
 }
 
 function investmentPlanToRow(plan: InvestmentPlanSettings): Record<string, unknown> {
@@ -584,6 +606,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             dividendDistribution: holding.dividendDistribution ?? holding.dividend_distribution,
             dividendYield: holding.dividendYield ?? holding.dividend_yield,
             zakahClass: holding.zakahClass ?? holding.zakah_class ?? 'Zakatable',
+            acquisitionDate: holding.acquisitionDate ?? holding.acquisition_date,
         };
     };
 
@@ -593,6 +616,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return {
             ...transaction,
             accountId: transaction.accountId || transaction.account_id,
+            portfolioId: transaction.portfolioId ?? transaction.portfolio_id,
             currency,
             linkedCashAccountId: transaction.linkedCashAccountId ?? transaction.linked_cash_account_id,
         };
@@ -611,6 +635,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 goldKarat: (holding.goldKarat ?? holding.gold_karat ?? (String(holding.symbol || '').match(/_(24|22|21|18)K$/)?.[1] ? Number(String(holding.symbol || '').match(/_(24|22|21|18)K$/)?.[1]) : undefined)) as CommodityHolding['goldKarat'],
                 zakahClass: holding.zakahClass ?? holding.zakah_class ?? holding.zakahclass ?? 'Zakatable',
                 goalId: holding.goalId ?? holding.goal_id,
+                acquisitionDate: holding.acquisitionDate ?? holding.acquisition_date,
+                createdAt: holding.createdAt ?? holding.created_at,
             };
         }
         const allowedNames = ['Gold', 'Silver', 'Bitcoin'] as const;
@@ -624,6 +650,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             goldKarat: (holding.goldKarat ?? holding.gold_karat ?? (String(holding.symbol || '').match(/_(24|22|21|18)K$/)?.[1] ? Number(String(holding.symbol || '').match(/_(24|22|21|18)K$/)?.[1]) : undefined)) as CommodityHolding['goldKarat'],
             zakahClass: holding.zakahClass ?? holding.zakah_class ?? holding.zakahclass ?? 'Zakatable',
             goalId: holding.goalId ?? holding.goal_id,
+            acquisitionDate: holding.acquisitionDate ?? holding.acquisition_date,
+            createdAt: holding.createdAt ?? holding.created_at,
         };
     };
 
@@ -915,7 +943,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }, 8000);
         
         return () => clearTimeout(timeoutId);
-    }, [auth?.user]);
+        // Use user id only: `user` object reference changes on TOKEN_REFRESHED; refetching then caused global loading flashes.
+    }, [auth?.user?.id]);
+
+    useEffect(() => {
+        if (!auth?.user?.id || !supabase) return;
+        void mergeNetWorthSnapshotsFromServer(supabase, auth.user.id);
+    }, [auth?.user?.id]);
 
     /** Keep a dense SAR/USD point per calendar day for charts/KPIs (spot + snapshot seed + forward-fill). */
     useEffect(() => {
@@ -1795,7 +1829,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         cashBalanceAccumulatorRef.current = {};
         return applied;
-    }, [data.recurringTransactions, addTransaction, supabase, auth?.user]);
+    }, [data.recurringTransactions, addTransaction, supabase, auth?.user?.id]);
 
     // Auto-apply recurring transactions due today (dayOfMonth === today, addManually === false), once per calendar day.
     // Intentionally omit data.transactions so the effect does not re-run when we add transactions (avoids effect loop); duplicate check uses transactionsRef.
@@ -1808,7 +1842,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         applyRecurringDueToday().catch(() => {
             if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(storageKey);
         });
-    }, [loading, auth?.user, data.recurringTransactions, applyRecurringDueToday]);
+    }, [loading, auth?.user?.id, data.recurringTransactions, applyRecurringDueToday]);
 
     // --- Accounts / Platforms ---
     const addPlatform = async (platform: Omit<Account, 'id' | 'user_id' | 'balance'> & { balance?: number }) => {

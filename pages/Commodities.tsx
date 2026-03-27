@@ -38,6 +38,7 @@ const CommodityHoldingModal: React.FC<{
     const [otherCurrentValue, setOtherCurrentValue] = useState('');
     const [zakahClass, setZakahClass] = useState<CommodityHolding['zakahClass']>('Zakatable');
     const [owner, setOwner] = useState('');
+    const [acquisitionDate, setAcquisitionDate] = useState('');
     const [formError, setFormError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     
@@ -51,8 +52,9 @@ const CommodityHoldingModal: React.FC<{
             setOtherCurrentValue(holdingToEdit.name === 'Other' ? String(holdingToEdit.currentValue ?? '') : '');
             setZakahClass(holdingToEdit.zakahClass);
             setOwner(holdingToEdit.owner || '');
+            setAcquisitionDate(holdingToEdit.acquisitionDate ?? (holdingToEdit as { acquisition_date?: string }).acquisition_date ?? '');
         } else {
-            setName('Gold'); setQuantity(''); setUnit('gram'); setGoldKarat(24); setPurchaseValue(''); setOtherCurrentValue(''); setZakahClass('Zakatable'); setOwner('');
+            setName('Gold'); setQuantity(''); setUnit('gram'); setGoldKarat(24); setPurchaseValue(''); setOtherCurrentValue(''); setZakahClass('Zakatable'); setOwner(''); setAcquisitionDate('');
         }
         setFormError(null);
     }, [holdingToEdit, isOpen]);
@@ -97,6 +99,7 @@ const CommodityHoldingModal: React.FC<{
             }
         }
 
+        const ad = acquisitionDate.trim();
         const holdingDataBase = {
             name,
             quantity: parsedQuantity,
@@ -106,6 +109,7 @@ const CommodityHoldingModal: React.FC<{
             zakahClass,
             goldKarat: name === 'Gold' ? goldKarat : undefined,
             owner: owner || undefined,
+            acquisitionDate: ad ? ad.slice(0, 10) : undefined,
         };
 
         try {
@@ -184,6 +188,10 @@ const CommodityHoldingModal: React.FC<{
                 </div>
                 {formError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">{formError}</p>}
                  <div><label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father, Spouse for managed wealth (excluded)." /></label><input type="text" placeholder="e.g. Father, Spouse or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="input-base mt-1 w-full" /></div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Acquisition date (optional) <InfoHint text="Start of lunar hawl (~354 days) for Zakat. If empty, server created time may be used when present." /></label>
+                    <input type="date" value={acquisitionDate} onChange={(e) => setAcquisitionDate(e.target.value)} className="input-base mt-1 w-full" />
+                </div>
                 <div><label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Zakat Classification <InfoHint text="Zakatable: included in Zakat calculation. Non-Zakatable: excluded (e.g. personal use)." /></label><select value={zakahClass} onChange={e => setZakahClass(e.target.value as any)} className="select-base mt-1 w-full"><option value="Zakatable">Zakatable</option><option value="Non-Zakatable">Non-Zakatable</option></select></div>
                 <button type="submit" disabled={isSubmitting} className="w-full btn-primary disabled:opacity-50">{isSubmitting ? 'Fetching price & saving…' : 'Save'}</button>
             </form>

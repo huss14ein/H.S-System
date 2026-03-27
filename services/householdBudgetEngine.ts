@@ -130,6 +130,22 @@ export const HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS: Array<{
   },
 ];
 
+/**
+ * Risk-profile -> household-engine profile mapping used by Budgets auto-sync.
+ * Applies only while user profile is still default "Moderate" (manual override should stick).
+ */
+export function deriveEngineProfileFromRiskProfile(
+  currentEngineProfile: HouseholdEngineProfile,
+  riskProfileRaw: string
+): HouseholdEngineProfile {
+  if (currentEngineProfile !== 'Moderate') return currentEngineProfile;
+  const riskProfile = String(riskProfileRaw || '').toLowerCase();
+  if (riskProfile.includes('conservative')) return 'Conservative';
+  if (riskProfile.includes('aggressive')) return 'Aggressive';
+  if (riskProfile.includes('growth')) return 'Growth';
+  return currentEngineProfile;
+}
+
 export function mapGoalsForRouting(goals: Array<{ id?: string; name?: string; targetAmount?: number; currentAmount?: number; deadline?: string }>): GoalForRouting[] {
   return (goals || []).map((g) => ({
     id: String(g.id ?? ''),
@@ -558,13 +574,33 @@ const PROFILE_BULK_ENVELOPE_PCT: Partial<Record<string, number>> = {
   Growth: 0.58 * ENVELOPE_BASE_BUMP,
 };
 
+/** Integer halalas (2 dp) proportional split so row sums match the envelope exactly. */
+function distributeMonthlyHalalasByLargestRemainder(weights: number[], targetHalalas: number): number[] {
+  const n = weights.length;
+  if (n === 0) return [];
+  const sumW = weights.reduce((a, b) => a + b, 0);
+  if (sumW <= 0 || targetHalalas <= 0) {
+    return weights.map(() => 0);
+  }
+  const raw = weights.map((w) => (targetHalalas * w) / sumW);
+  const floors = raw.map((r) => Math.floor(r));
+  let rem = targetHalalas - floors.reduce((a, b) => a + b, 0);
+  const order = raw
+    .map((r, i) => ({ i, frac: r - Math.floor(r) }))
+    .sort((a, b) => b.frac - a.frac);
+  const out = [...floors];
+  for (let k = 0; k < rem; k++) {
+    const idx = order[k % order.length]?.i ?? 0;
+    out[idx] = (out[idx] ?? 0) + 1;
+  }
+  return out;
+}
+
 /**
  * When **all** categories are selected, returns the base suggestions unchanged (engine-merged template).
- * When **fewer** are selected, reallocates `salary × envelope(profile)` across selected rows in proportion
- * to each row’s monthly-equivalent weight from the base list so limits stay synced with salary + profile + selection count.
- *
- * When **no** categories are selected, returns the base list unchanged (full template limits on every row).
- * The Budgets UI overrides that after the template has synced so “deselect all” shows zero limits instead of misleading full amounts.
+ * When **fewer** are selected, reallocates `salary × envelope(profile)` across **selected** rows only; **unselected**
+ * rows get `limit: 0` so bulk-add UI never shows full template amounts next to unchecked boxes.
+ * When **no** categories are selected, every row has `limit: 0` (nothing will be created until user selects rows).
  */
 export function computeBulkAddLimitsForSelection(
   baseSuggestions: HouseholdBudgetCategorySuggestion[],
@@ -585,29 +621,37 @@ export function computeBulkAddLimitsForSelection(
     baseSuggestions.length > 0 && baseSuggestions.every((c) => selected.has(c.category));
   if (allSelected) return baseSuggestions.map((c) => ({ ...c }));
 
+  if (selected.size === 0) {
+    return baseSuggestions.map((c) => ({ ...c, limit: 0 }));
+  }
+
   const selectedRows = baseSuggestions.filter((c) => selected.has(c.category));
-  if (selectedRows.length === 0) return baseSuggestions.map((c) => ({ ...c }));
 
   const basePct = PROFILE_BULK_ENVELOPE_PCT[String(profile)] ?? PROFILE_BULK_ENVELOPE_PCT.Moderate ?? 0.58 * ENVELOPE_BASE_BUMP;
   const headScale = householdConsumptionScale(adults, kids);
   const envelopePct = Math.min(0.74, basePct * Math.min(1.14, headScale / 1.02));
   const envelope = salary * envelopePct;
+  const targetHalalas = Math.max(0, Math.round(envelope * 100));
 
   const weights = selectedRows.map((c) => monthlyEquivalentFromBudgetLimit(c.limit, c.period));
   const sumW = weights.reduce((a, b) => a + b, 0);
 
-  const allocatedMonthly: number[] =
+  const allocatedHalalas: number[] =
     sumW > 0
-      ? weights.map((w) => (envelope * w) / sumW)
-      : selectedRows.map(() => envelope / selectedRows.length);
+      ? distributeMonthlyHalalasByLargestRemainder(weights, targetHalalas)
+      : distributeMonthlyHalalasByLargestRemainder(
+          selectedRows.map(() => 1),
+          targetHalalas,
+        );
 
   const limitByCategory = new Map<string, number>();
   selectedRows.forEach((c, i) => {
-    limitByCategory.set(c.category, budgetLimitFromMonthlyEquivalent(allocatedMonthly[i], c.period));
+    const monthlySar = (allocatedHalalas[i] ?? 0) / 100;
+    limitByCategory.set(c.category, budgetLimitFromMonthlyEquivalent(monthlySar, c.period));
   });
 
   return baseSuggestions.map((c) => {
-    if (!selected.has(c.category)) return { ...c };
+    if (!selected.has(c.category)) return { ...c, limit: 0 };
     const next = limitByCategory.get(c.category);
     return next != null ? { ...c, limit: next } : { ...c };
   });

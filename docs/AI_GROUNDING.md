@@ -20,7 +20,9 @@ Use this checklist when wiring or auditing AI features.
 | Feature | Primary code | Grounding summary |
 |---------|----------------|-------------------|
 | Dashboard AI | `components/AIAdvisor.tsx` | Personal wealth slices from `DataContext` |
-| Dividend analysis | `services/geminiService.ts` (`getAIDividendAnalysis`) | Dividend txs + YTD / projected totals |
+| Investments workspace coach | `Investments.tsx` → `AIAdvisor` | **Overview** sub-tab only; same grounding as hub insights |
+| Execution History | — | **No AI surface**; logs/export only (avoids duplicate coaching next to static page copy) |
+| Dividend analysis | `services/geminiService.ts` (`getAIDividendAnalysis`) | YTD + trailing-12m actuals + projected annual + top payers (symbols); model must not invent figures |
 | Trade insights | `getAITradeAnalysis` | Last 20 personal `investmentTransactions` + holdings (SAR) + watchlist + plan + `riskProfile` + **as-of** date |
 | Watchlist tips | `getAIWatchlistAdvice` | Symbol list only |
 | Rebalancer | `getAIRebalancingPlan` | Holdings valued like **Portfolios** (`effectiveHoldingValueInBookCurrency` + `simulatedPrices`), **portfolio book currency** (USD/SAR), `sarPerUsd`, risk profile |

@@ -32,11 +32,10 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
   icon,
   card = true,
 }) => {
-  void _defaultExpanded;
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(_defaultExpanded ?? true);
 
   const baseClass = card ? 'section-card' : 'rounded-lg border border-slate-200 bg-white';
-  const headerClass = 'flex items-center justify-between gap-3 w-full text-left py-1 pr-1 cursor-pointer hover:bg-slate-50/80 rounded-lg transition-colors';
+  const headerClass = 'flex items-center justify-between gap-3 w-full text-left py-1 pr-1 cursor-pointer rounded-lg';
 
   return (
     <div className={`${baseClass} ${className}`}>
@@ -48,7 +47,8 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
           {icon}
-          <h3 className="section-title text-base font-semibold text-slate-800 truncate">{title}</h3>
+          {/* Use explicit `mb-0` instead of global `.section-title` margin to keep header rows aligned. */}
+          <h3 className="mb-0 text-base font-semibold text-slate-800 truncate">{title}</h3>
           {summary && !expanded && (
             <span className="hidden sm:inline text-sm text-slate-500 truncate ml-1">— {summary}</span>
           )}
@@ -57,7 +57,7 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
           {expanded ? <ChevronUpIcon className="h-5 w-5" /> : <ChevronDownIcon className="h-5 w-5" />}
         </span>
       </button>
-      {expanded && <div className="pt-3 mt-1 border-t border-slate-100">{children}</div>}
+      {expanded && <div className="pt-2 mt-1 border-t border-slate-100">{children}</div>}
     </div>
   );
 };

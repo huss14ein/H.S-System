@@ -46,6 +46,7 @@ const LoginPage: React.FC = () => {
                     <input
                     type="email"
                     id="email"
+                    autoComplete="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
@@ -57,6 +58,7 @@ const LoginPage: React.FC = () => {
                     <input
                     type="password"
                     id="password"
+                    autoComplete="current-password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required

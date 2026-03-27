@@ -150,7 +150,7 @@
         @apply text-xl sm:text-2xl md:text-3xl font-bold text-dark tracking-tight break-words;
     }
     .section-card {
-        @apply bg-white rounded-xl shadow-md border border-slate-200/80 p-4 sm:p-5 md:p-6 min-w-0 max-w-full overflow-hidden;
+        @apply bg-white rounded-xl shadow-md border border-slate-200/80 p-4 sm:p-5 md:p-6 min-w-0 max-w-full overflow-visible;
     }
     /* DraggableResizableGrid: item wrapper so content fills cell and resize handle is usable; no horizontal scroll on cards */
     .rgl-item-wrapper {
@@ -171,7 +171,24 @@
         opacity: 1;
     }
     .section-card-hover {
-        @apply section-card transition-all duration-200 hover:shadow-lg hover:border-slate-300 cursor-pointer;
+        @apply section-card transition-all duration-200 cursor-pointer;
+    }
+    .section-card-hover:hover,
+    .section-card:hover {
+        box-shadow: inherit !important;
+        border-color: inherit !important;
+        transform: none !important;
+    }
+    /* Remove internal scrolling/max-height inside cards system-wide. */
+    .section-card [class*="overflow-y-auto"],
+    .section-card [class*="overflow-auto"],
+    .section-card-hover [class*="overflow-y-auto"],
+    .section-card-hover [class*="overflow-auto"] {
+        overflow: visible !important;
+    }
+    .section-card [class*="max-h-"],
+    .section-card-hover [class*="max-h-"] {
+        max-height: none !important;
     }
     .section-title {
         @apply text-base sm:text-lg font-semibold text-dark mb-4 flex items-center gap-2 min-w-0 break-words;

@@ -20,7 +20,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
-import { computePersonalNetWorthChartBucketsSAR } from '../services/personalNetWorth';
+import { computeAllNetWorthChartBucketsSAR } from '../services/personalNetWorth';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 
 const TOOLTIP_STYLE = { backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' };
@@ -63,7 +63,8 @@ const SpendingByCategoryChart: React.FC = () => {
     const { formatCurrencyString } = useFormatCurrency();
     const chartData = useMemo(() => {
         const spending = new Map<string, number>();
-        const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        /** Full user ledger — not `personalTransactions` (subset when mixed household/personal accounts). */
+        const txs = data?.transactions ?? [];
         txs.filter((t: Transaction) => countsAsExpenseForCashflowKpi(t))
             .forEach((t: { budgetCategory?: string; category?: string; amount?: number }) => {
                 const rawCategory = (t.budgetCategory || t.category || 'Uncategorized').trim();
@@ -73,7 +74,7 @@ const SpendingByCategoryChart: React.FC = () => {
         return Array.from(spending, ([name, value]) => ({ name, value }))
             .filter((x) => Number.isFinite(x.value) && x.value > 0)
             .sort((a, b) => b.value - a.value);
-    }, [data?.transactions, (data as any)?.personalTransactions]);
+    }, [data?.transactions]);
     const isEmpty = !chartData.length;
 
     return (
@@ -94,7 +95,7 @@ const SpendingByCategoryChart: React.FC = () => {
 const IncomeExpenseTrendChart: React.FC = () => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const chartData = useMemo(() => buildTrendData((data as any)?.personalTransactions ?? data?.transactions ?? [], 6), [data?.transactions, (data as any)?.personalTransactions]);
+    const chartData = useMemo(() => buildTrendData(data?.transactions ?? [], 6), [data?.transactions]);
     const hasSignal = chartData.some((x) => x.income > 0 || x.expenses > 0);
     const isEmpty = !hasSignal;
 
@@ -119,39 +120,53 @@ const AssetLiabilityChart: React.FC = () => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
+    const toFiniteMoney = (value: unknown): number => {
+        const n = Number(value);
+        return Number.isFinite(n) ? Math.max(0, n) : 0;
+    };
     const chartData = useMemo(() => {
         const fx = resolveSarPerUsd(data, exchangeRate);
-        const buckets = computePersonalNetWorthChartBucketsSAR(data, fx, { getAvailableCashForAccount });
+        const buckets = computeAllNetWorthChartBucketsSAR(data, fx, { getAvailableCashForAccount });
 
         return [
-            { name: 'Investments', value: buckets.investments },
-            { name: 'Cash', value: buckets.cash },
-            { name: 'Physical Assets', value: buckets.physicalAndCommodities },
-            { name: 'Receivables', value: buckets.receivables },
-            { name: 'Debt', value: Math.abs(buckets.liabilities) },
+            { name: 'Investments', value: toFiniteMoney(buckets.investments) },
+            { name: 'Cash', value: toFiniteMoney(buckets.cash) },
+            { name: 'Physical Assets', value: toFiniteMoney(buckets.physicalAndCommodities) },
+            { name: 'Receivables', value: toFiniteMoney(buckets.receivables) },
+            { name: 'Debt', value: toFiniteMoney(Math.abs(buckets.liabilities)) },
         ];
     }, [data, exchangeRate, getAvailableCashForAccount]);
 
-    const hasSignal = chartData.some((x) => x.value > 0);
+    const hasSignal = chartData.some((x) => Number.isFinite(x.value) && x.value > 0);
     const isEmpty = !hasSignal;
     const getBarColor = (name: string) => name === 'Debt' ? CHART_COLORS.liability : name === 'Receivables' ? CHART_COLORS.positive : CHART_COLORS.primary;
 
     return (
-        <ChartContainer height={300} isEmpty={isEmpty} emptyMessage="No assets/liabilities available yet.">
-            <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray={CHART_GRID_STROKE} stroke={CHART_GRID_COLOR} />
-                    <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
-                    <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
-                    <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })} contentStyle={TOOLTIP_STYLE} />
-                    <Bar dataKey="value" name="Value" radius={[4, 4, 0, 0]}>
-                        {chartData.map((entry) => (
-                            <Cell key={`cell-${entry.name}`} fill={getBarColor(entry.name)} />
-                        ))}
-                    </Bar>
-                </BarChart>
-            </ResponsiveContainer>
-        </ChartContainer>
+        <div className="space-y-3">
+            <ChartContainer height={300} isEmpty={isEmpty} emptyMessage="No assets/liabilities available yet.">
+                <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray={CHART_GRID_STROKE} stroke={CHART_GRID_COLOR} />
+                        <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
+                        <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
+                        <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })} contentStyle={TOOLTIP_STYLE} />
+                        <Bar dataKey="value" name="Value" radius={[4, 4, 0, 0]}>
+                            {chartData.map((entry) => (
+                                <Cell key={`cell-${entry.name}`} fill={getBarColor(entry.name)} />
+                            ))}
+                        </Bar>
+                    </BarChart>
+                </ResponsiveContainer>
+            </ChartContainer>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                {chartData.map((row) => (
+                    <div key={`summary-${row.name}`} className="flex items-center justify-between rounded-md bg-slate-50 px-2 py-1.5">
+                        <span className="text-slate-600">{row.name}</span>
+                        <span className="font-semibold text-slate-800 tabular-nums">{formatCurrencyString(row.value, { digits: 0 })}</span>
+                    </div>
+                ))}
+            </div>
+        </div>
     );
 };
 
@@ -161,8 +176,8 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = () => {
     const { formatCurrencyString } = useFormatCurrency();
 
     const contextData = useMemo(() => {
-        const d = data as any;
-        const transactions = d?.personalTransactions ?? data?.transactions ?? [];
+        /** Analysis uses the full ledger so household-tagged accounts aren’t hidden after a partial personal match. */
+        const transactions = data?.transactions ?? [];
 
         const spendingMap = new Map<string, number>();
         transactions.filter((t: Transaction) => countsAsExpenseForCashflowKpi(t)).forEach((t: { budgetCategory?: string; category?: string; amount?: number }) => {
@@ -177,7 +192,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = () => {
 
         hydrateSarPerUsdDailySeries(data, exchangeRate);
         const fx = resolveSarPerUsd(data, exchangeRate);
-        const nwBuckets = computePersonalNetWorthChartBucketsSAR(data, fx, { getAvailableCashForAccount });
+        const nwBuckets = computeAllNetWorthChartBucketsSAR(data, fx, { getAvailableCashForAccount });
         const compositionData = [
             { name: 'Investments', value: nwBuckets.investments },
             { name: 'Cash', value: nwBuckets.cash },
@@ -219,8 +234,9 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = () => {
     }
 
     return (
-        <PageLayout 
+        <PageLayout
             title="Financial Analysis"
+            description="Spend trends, merchants, and balances use your full ledger and all accounts (household-inclusive). Dashboard and Summary still use personal-wealth scope for headline net worth."
         >
             <AIAdvisor pageContext="analysis" contextData={contextData} />
 
@@ -314,7 +330,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = () => {
                     </p>
                     <ul className="text-sm space-y-2">
                         {(contextData as any).refundPairs.slice(0, 15).map((r: { expenseId: string; incomeId: string; amount: number; daysApart: number }) => {
-                            const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+                            const txs = data?.transactions ?? [];
                             const ex = txs.find((t: Transaction) => t.id === r.expenseId);
                             const inc = txs.find((t: Transaction) => t.id === r.incomeId);
                             return (

@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { InformationCircleIcon } from './icons/InformationCircleIcon';
 import { ArrowTrendingUpIcon } from './icons/ArrowTrendingUpIcon';
 import { ArrowTrendingDownIcon } from './icons/ArrowTrendingDownIcon';
 
@@ -50,7 +49,7 @@ const normalizeDisplayNode = (raw: React.ReactNode): React.ReactNode => {
   return raw;
 };
 
-const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, ariaLabel, valueColor, indicatorColor, icon, density = 'compact' }) => {
+const Card: React.FC<CardProps> = ({ title, value, trend, onClick, ariaLabel, valueColor, indicatorColor, icon, density = 'compact' }) => {
   const displayValue = normalizeDisplayNode(value);
   const displayTrend = typeof trend === 'string' && isInvalidDisplayToken(trend) ? undefined : trend;
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
@@ -106,29 +105,22 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
       aria-label={onClick ? (ariaLabel ?? title) : undefined}
-      className={`${cardToneClass} ${compact ? 'p-4 min-h-[120px]' : 'p-5 min-h-[140px]'} rounded-xl shadow-md hover:shadow-lg transition-all duration-300 ease-in-out flex flex-col h-full border border-t-4 ${indicatorClass} ${onClick ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2' : ''} ${flashClass}`}
+      className={`${cardToneClass} ${compact ? 'p-4 min-h-[120px]' : 'p-5 min-h-[140px]'} rounded-xl shadow-md transition-all duration-300 ease-in-out flex flex-col h-full border border-t-4 ${indicatorClass} ${onClick ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2' : ''} ${flashClass}`}
       onClick={onClick}
       onKeyDown={handleKeyDown}
     >
       {/* Header: title + icon/tooltip — same layout for all cards */}
       <div className="flex items-center justify-between gap-2 min-h-[28px] flex-shrink-0 min-w-0">
         <h3 className={`metric-label flex-1 min-w-0 ${compact ? 'text-xs' : 'text-sm'} font-medium text-slate-500 uppercase tracking-wide`}>{title}</h3>
-        <div className="flex-shrink-0 flex items-center gap-0.5">
-          {icon}
-          {tooltip && (
-            <div className="relative group inline-flex items-center">
-              <InformationCircleIcon className="h-4 w-4 text-slate-400" />
-              <div className="absolute bottom-full mb-2 w-56 max-w-[min(22rem,88vw)] bg-slate-800 text-white text-xs rounded-md py-1.5 px-2.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none left-1/2 -translate-x-1/2 z-20 leading-relaxed shadow-lg">
-                {tooltip}
-                <svg className="absolute text-slate-800 h-2 w-3 left-1/2 -translate-x-1/2 top-full" x="0px" y="0px" viewBox="0 0 255 255" preserveAspectRatio="none"><polygon className="fill-current" points="0,0 127.5,127.5 255,0"/></svg>
-              </div>
-            </div>
-          )}
-        </div>
+        {icon ? <div className="flex-shrink-0">{icon}</div> : null}
       </div>
       {/* Value + trend: allow full visibility without clipping. */}
-      <div className="mt-2 flex-1 min-h-0 flex flex-col justify-center min-w-0">
-        <p className={`metric-value ${compact ? 'text-2xl' : 'text-3xl'} font-extrabold tabular-nums ${valueToneClass}`}>{displayValue}</p>
+      <div className="mt-2 flex-1 min-h-0 flex flex-col justify-center min-w-0 overflow-visible">
+        <div
+          className={`metric-value !whitespace-nowrap max-w-full ${compact ? 'text-2xl' : 'text-3xl'} font-extrabold tabular-nums ${valueToneClass}`}
+        >
+          {displayValue}
+        </div>
         {displayTrend && (
           <div className={`metric-value flex items-center gap-1 ${compact ? 'text-xs' : 'text-sm'} mt-1 font-medium ${trendColor}`}>
             {isPositive && <ArrowTrendingUpIcon className="h-3.5 w-3.5 flex-shrink-0"/>}

@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback, useContext, useEffect, lazy, Suspense } from 'react';
+import React, { useMemo, useState, useCallback, useContext, useEffect, useRef, lazy, Suspense } from 'react';
 import { DataContext } from '../context/DataContext';
 import {
     getAIStockAnalysis,
@@ -26,6 +26,7 @@ import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { fetchCompanyNameForSymbol, useCompanyNames } from '../hooks/useSymbolCompanyName';
 import MiniPriceChart from '../components/charts/MiniPriceChart';
+import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
 import InvestmentOverview from './InvestmentOverview';
@@ -38,6 +39,8 @@ import InfoHint from '../components/InfoHint';
 import { LinkIcon } from '../components/icons/LinkIcon';
 import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
 import Card from '../components/Card';
+import { getUniverseRowPlanRole } from '../services/universePlanRole';
+import CurrencyDualDisplay from '../components/CurrencyDualDisplay';
 import SectionCard from '../components/SectionCard';
 import AIAdvisor from '../components/AIAdvisor';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -342,64 +345,139 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
     );
 };
 
-/** Surfaces the largest retirement-named goal (if any) so long-term progress is visible on Investments. */
-const RetirementGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGoals }) => {
+const priorityRank = (p?: Goal['priority']) => (p === 'High' ? 0 : p === 'Medium' ? 1 : p === 'Low' ? 2 : 3);
+
+/** Surfaces savings & life goals from the Goals page (not only retirement) so progress is visible before drilling into tabs. */
+const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGoals }) => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const retirementGoals = useMemo(() => {
-        return (data?.goals ?? []).filter((g) => /retirement|تقاعد|pension|معاش|retire/i.test(g.name || ''));
+    const sortedGoals = useMemo(() => {
+        const list = (data?.goals ?? []).filter((g) => Number(g.targetAmount) > 0);
+        return [...list].sort((a, b) => {
+            const pr = priorityRank(a.priority) - priorityRank(b.priority);
+            if (pr !== 0) return pr;
+            const da = new Date(a.deadline).getTime();
+            const db = new Date(b.deadline).getTime();
+            if (Number.isFinite(da) && Number.isFinite(db) && da !== db) return da - db;
+            return (Number(b.targetAmount) || 0) - (Number(a.targetAmount) || 0);
+        });
     }, [data?.goals]);
-    if (!retirementGoals.length) return null;
-    const g = [...retirementGoals].sort((a, b) => (Number(b.targetAmount) || 0) - (Number(a.targetAmount) || 0))[0];
-    const target = Math.max(0, Number(g.targetAmount) || 0);
-    const current = Math.max(0, Number(g.currentAmount) || 0);
-    const pct = target > 0 ? Math.min(100, (current / target) * 100) : 0;
-    const remaining = Math.max(0, target - current);
+    const displayGoals = sortedGoals.slice(0, 6);
+
+    if (sortedGoals.length === 0) {
+        return (
+            <SectionCard
+                title="Savings & life goals"
+                className="mb-6 border-indigo-100 bg-gradient-to-br from-white to-indigo-50/40"
+                icon={<ClipboardDocumentListIcon className="h-5 w-5 text-indigo-600" aria-hidden />}
+            >
+                <p className="text-sm text-slate-600 mb-3">
+                    Link investments to what you are saving for. Add goals on the <strong>Goals</strong> page (e.g. retirement, home, education); they will show here with progress.
+                </p>
+                {onOpenGoals && (
+                    <button
+                        type="button"
+                        onClick={onOpenGoals}
+                        className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 transition-colors"
+                    >
+                        Open Goals
+                    </button>
+                )}
+            </SectionCard>
+        );
+    }
+
     return (
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-indigo-100 mb-6">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                        <ClipboardDocumentListIcon className="h-5 w-5 text-indigo-600 shrink-0" />
-                        <h3 className="text-lg font-bold text-dark">Retirement & long-term goals</h3>
-                    </div>
-                    <p className="text-sm text-gray-600 mb-3">
-                        Tracking <span className="font-semibold text-dark">{g.name}</span> from your Goals page. Amounts are in SAR (goal fields).
-                    </p>
-                    <div className="space-y-2">
-                        <div className="flex justify-between text-xs font-bold uppercase tracking-wider text-gray-400">
-                            <span>Progress to target</span>
-                            <span>{target > 0 ? `${pct.toFixed(1)}%` : '—'}</span>
-                        </div>
-                        <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
-                            <div className="h-full bg-indigo-600 transition-all duration-700 ease-out" style={{ width: `${target > 0 ? pct : 0}%` }} />
-                        </div>
-                        <div className="flex flex-wrap justify-between gap-2 text-xs text-gray-600">
-                            <span>Current: {formatCurrencyString(current, { inCurrency: 'SAR', digits: 0 })}</span>
-                            <span>Target: {formatCurrencyString(target, { inCurrency: 'SAR', digits: 0 })}</span>
-                            <span>Remaining: {target > 0 ? formatCurrencyString(remaining, { inCurrency: 'SAR', digits: 0 }) : '—'}</span>
+        <div className="mb-6 rounded-2xl border border-indigo-100 bg-gradient-to-br from-white via-white to-indigo-50/50 shadow-sm overflow-hidden">
+            <div className="p-5 sm:p-6 border-b border-indigo-100/80 bg-white/80">
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                    <div className="flex items-start gap-3 min-w-0">
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700">
+                            <ClipboardDocumentListIcon className="h-5 w-5" aria-hidden />
+                        </span>
+                        <div>
+                            <h3 className="text-lg font-bold text-slate-900">Savings & life goals</h3>
+                            <p className="text-sm text-slate-600 mt-0.5">
+                                Pulled from your <strong>Goals</strong> page. Amounts are in SAR. Showing up to six goals, ordered by priority then nearest deadline.
+                            </p>
                         </div>
                     </div>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 lg:min-w-[280px]">
-                    <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-center">
-                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Saved</p>
-                        <p className="text-sm font-bold text-slate-900 tabular-nums">{formatCurrencyString(current, { inCurrency: 'SAR', digits: 0 })}</p>
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-center">
-                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Target</p>
-                        <p className="text-sm font-bold text-slate-900 tabular-nums">{formatCurrencyString(target, { inCurrency: 'SAR', digits: 0 })}</p>
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-center">
-                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Deadline</p>
-                        <p className="text-sm font-bold text-slate-900">{g.deadline ? new Date(g.deadline).toLocaleDateString() : '—'}</p>
-                    </div>
+                    {onOpenGoals && (
+                        <button
+                            type="button"
+                            onClick={onOpenGoals}
+                            className="shrink-0 text-sm font-semibold text-indigo-700 hover:text-indigo-900 hover:underline"
+                        >
+                            Manage in Goals →
+                        </button>
+                    )}
                 </div>
             </div>
-            {onOpenGoals && (
-                <button type="button" onClick={onOpenGoals} className="mt-4 text-sm font-medium text-indigo-700 hover:underline">
-                    Edit in Goals →
-                </button>
+            <div className="p-4 sm:p-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {displayGoals.map((g) => {
+                    const target = Math.max(0, Number(g.targetAmount) || 0);
+                    const current = Math.max(0, Number(g.currentAmount) || 0);
+                    const pct = target > 0 ? Math.min(100, (current / target) * 100) : 0;
+                    const remaining = Math.max(0, target - current);
+                    const isRetirement = /retirement|تقاعد|pension|معاش|retire/i.test(g.name || '');
+                    const borderAccent = isRetirement ? 'border-l-amber-400' : 'border-l-indigo-400';
+                    const badgeBg =
+                        g.priority === 'High'
+                            ? 'bg-rose-50 text-rose-800 border-rose-200'
+                            : g.priority === 'Medium'
+                              ? 'bg-amber-50 text-amber-900 border-amber-200'
+                              : g.priority === 'Low'
+                                ? 'bg-slate-100 text-slate-700 border-slate-200'
+                                : 'bg-slate-50 text-slate-600 border-slate-200';
+                    return (
+                        <div
+                            key={g.id}
+                            className={`rounded-xl border border-slate-200 bg-white p-4 shadow-sm border-l-4 ${borderAccent} flex flex-col min-h-[140px]`}
+                        >
+                            <div className="flex items-start justify-between gap-2 mb-2">
+                                <h4 className="font-semibold text-slate-900 text-sm leading-snug line-clamp-2">{g.name}</h4>
+                                {g.priority && (
+                                    <span className={`shrink-0 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full border ${badgeBg}`}>
+                                        {g.priority}
+                                    </span>
+                                )}
+                            </div>
+                            <div className="flex justify-between text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                                <span>Progress</span>
+                                <span className="tabular-nums text-indigo-700">{target > 0 ? `${pct.toFixed(1)}%` : '—'}</span>
+                            </div>
+                            <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden mb-3">
+                                <div
+                                    className={`h-full rounded-full transition-all duration-700 ${pct >= 100 ? 'bg-emerald-500' : 'bg-indigo-600'}`}
+                                    style={{ width: `${target > 0 ? pct : 0}%` }}
+                                />
+                            </div>
+                            <dl className="grid grid-cols-2 gap-x-2 gap-y-1 text-xs mt-auto">
+                                <div>
+                                    <dt className="text-slate-500">Saved</dt>
+                                    <dd className="font-semibold tabular-nums text-slate-900">{formatCurrencyString(current, { inCurrency: 'SAR', digits: 0 })}</dd>
+                                </div>
+                                <div className="text-right">
+                                    <dt className="text-slate-500">Target</dt>
+                                    <dd className="font-semibold tabular-nums text-slate-900">{formatCurrencyString(target, { inCurrency: 'SAR', digits: 0 })}</dd>
+                                </div>
+                                <div>
+                                    <dt className="text-slate-500">Left to go</dt>
+                                    <dd className="font-semibold tabular-nums text-amber-800">{target > 0 ? formatCurrencyString(remaining, { inCurrency: 'SAR', digits: 0 }) : '—'}</dd>
+                                </div>
+                                <div className="text-right">
+                                    <dt className="text-slate-500">Deadline</dt>
+                                    <dd className="font-semibold text-slate-800">{g.deadline ? new Date(g.deadline).toLocaleDateString() : '—'}</dd>
+                                </div>
+                            </dl>
+                        </div>
+                    );
+                })}
+            </div>
+            {sortedGoals.length > 6 && (
+                <p className="px-6 pb-4 text-xs text-slate-500">
+                    +{sortedGoals.length - 6} more goal{sortedGoals.length - 6 !== 1 ? 's' : ''} on the Goals page.
+                </p>
             )}
         </div>
     );
@@ -456,6 +534,7 @@ const RecordTradeModal: React.FC<{
     const [fees, setFees] = useState('');
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [companyNameLookupLoading, setCompanyNameLookupLoading] = useState(false);
 
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const efRunway = useEmergencyFund(data ?? null);
@@ -594,7 +673,51 @@ const RecordTradeModal: React.FC<{
             setTradeCurrency((portfolio?.currency as TradeCurrency) || 'USD');
         }
     }, [portfolioId, portfolios, initialData]);
-    
+
+    /** Snapshot of `initialData` when this open started — used so we do not overwrite a plan/deeplink company name until the user changes symbol. */
+    const initialDataWhenOpenedRef = useRef<typeof initialData>(null);
+    useEffect(() => {
+        if (isOpen) initialDataWhenOpenedRef.current = initialData;
+        else initialDataWhenOpenedRef.current = null;
+    }, [isOpen, initialData]);
+
+    /** Finnhub/static map — same as Watchlist: fill company name after symbol (debounced). */
+    useEffect(() => {
+        if (!isOpen) return;
+        if (type !== 'buy' || !isNewHolding || manualValuation) {
+            setCompanyNameLookupLoading(false);
+            return;
+        }
+        const sym = symbol.trim().toUpperCase();
+        if (sym.length < 2) {
+            setCompanyNameLookupLoading(false);
+            return;
+        }
+        const snap = initialDataWhenOpenedRef.current;
+        const snapSym = (snap?.symbol || '').toUpperCase().trim();
+        if (snap?.name && snapSym && sym === snapSym) {
+            setCompanyNameLookupLoading(false);
+            return;
+        }
+        let cancelled = false;
+        setCompanyNameLookupLoading(true);
+        const t = setTimeout(() => {
+            fetchCompanyNameForSymbol(sym)
+                .then((apiName) => {
+                    if (cancelled) return;
+                    if (apiName) setHoldingName(apiName);
+                    setCompanyNameLookupLoading(false);
+                })
+                .catch(() => {
+                    if (!cancelled) setCompanyNameLookupLoading(false);
+                });
+        }, 450);
+        return () => {
+            cancelled = true;
+            clearTimeout(t);
+        };
+    }, [symbol, isOpen, type, isNewHolding, manualValuation]);
+
     const brokerConstraints = data?.investmentPlan?.brokerConstraints;
     const fractionalOpts = useMemo(
         () => ({
@@ -1087,8 +1210,24 @@ const RecordTradeModal: React.FC<{
                 </div>
                 {isNewHolding && (
                     <div>
-                        <label htmlFor="holdingName" className="block text-sm font-medium text-gray-700">Company Name</label>
-                        <input type="text" id="holdingName" value={holdingName} onChange={e => setHoldingName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" placeholder="e.g., Saudi Aramco"/>
+                        <label htmlFor="holdingName" className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                            Company Name
+                            {companyNameLookupLoading && (
+                                <span className="inline-flex h-4 w-4 border-2 border-slate-300 border-t-primary rounded-full animate-spin shrink-0" aria-hidden />
+                            )}
+                        </label>
+                        <input
+                            type="text"
+                            id="holdingName"
+                            value={holdingName}
+                            onChange={(e) => setHoldingName(e.target.value)}
+                            required
+                            className="mt-1 w-full p-2 border border-gray-300 rounded-md"
+                            placeholder={companyNameLookupLoading ? 'Looking up…' : 'e.g., Saudi Aramco'}
+                        />
+                        {!manualValuation && (
+                            <p className="mt-1 text-xs text-slate-500">Filled automatically from the symbol when possible (Finnhub or built-in map). You can edit it.</p>
+                        )}
                     </div>
                 )}
                 {type === 'buy' && isNewHolding && (
@@ -1275,7 +1414,7 @@ const STOCK_ANALYST_LANG_KEY = 'finova_default_ai_lang_v1';
 
 const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holding: (Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number }) | null; portfolio: InvestmentPortfolio | null }> = ({ isOpen, onClose, holding, portfolio }) => {
     const { data } = useContext(DataContext)!;
-    const { isAiAvailable } = useAI();
+    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
@@ -1326,7 +1465,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     }, [holding, analystDisplayLang]);
 
     useEffect(() => {
-        if (analystDisplayLang !== 'ar' || !aiAnalysis.trim() || analystAr != null || !isAiAvailable) return;
+        if (analystDisplayLang !== 'ar' || !aiAnalysis.trim() || analystAr != null || !aiActionsEnabled) return;
         let cancelled = false;
         (async () => {
             setIsTranslatingAnalyst(true);
@@ -1343,7 +1482,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
         return () => {
             cancelled = true;
         };
-    }, [analystDisplayLang, aiAnalysis, analystAr, isAiAvailable]);
+    }, [analystDisplayLang, aiAnalysis, analystAr, aiActionsEnabled]);
 
     useEffect(() => {
         if (holding && isOpen && !aiAnalysis && !isLoading) {
@@ -1461,7 +1600,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     const hasReliableDividendEstimate = Boolean(projectedAnnualDividend && projectedAnnualDividend > 0 && projectedAnnualDividend < holding.currentValue * 0.25);
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`${holding.symbol} — Share details`}>
+        <Modal isOpen={isOpen} onClose={onClose} title={`${holding.symbol} — Share details`} maxWidthClass="max-w-5xl">
             <div className="space-y-6 min-w-0">
                 {/* Hero: symbol, name, price, change — centered with stronger hierarchy */}
                 <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-100/70 px-5 py-6 sm:px-6 sm:py-7 min-w-0 shadow-sm">
@@ -1701,7 +1840,7 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                     {isTranslatingAnalyst && analystDisplayLang === 'ar' && (
                         <p className="text-sm text-center text-slate-500 py-2">Translating to Arabic…</p>
                     )}
-                    {analystDisplayLang === 'ar' && !isAiAvailable && !analystAr && aiAnalysis.trim() && !isLoading && (
+                    {analystDisplayLang === 'ar' && aiHealthChecked && !isAiAvailable && !analystAr && aiAnalysis.trim() && !isLoading && (
                         <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
                             Arabic translation needs the AI service. Switch to English or enable AI.
                         </p>
@@ -1745,6 +1884,7 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
     const [zakahClass, setZakahClass] = useState<'Zakatable' | 'Non-Zakatable'>('Zakatable');
     const [assetClass, setAssetClass] = useState<HoldingAssetClass>('Stock');
     const [goalId, setGoalId] = useState<string | undefined>();
+    const [acquisitionDate, setAcquisitionDate] = useState('');
     
     useEffect(() => {
         if (holding) {
@@ -1753,6 +1893,7 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
             setZakahClass(holding.zakahClass);
             setAssetClass((holding.assetClass as HoldingAssetClass) || 'Stock');
             setGoalId(holding.goalId);
+            setAcquisitionDate(holding.acquisitionDate ?? (holding as { acquisition_date?: string }).acquisition_date ?? '');
             if (!currentName.trim() && holding.symbol.trim().length >= 2) {
                 fetchCompanyNameForSymbol(holding.symbol).then((apiName) => {
                     if (apiName) setName(apiName);
@@ -1764,7 +1905,8 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (holding) {
-            onSave({ ...holding, name, zakahClass, assetClass, goalId });
+            const ad = acquisitionDate.trim();
+            onSave({ ...holding, name, zakahClass, assetClass, goalId, acquisitionDate: ad ? ad.slice(0, 10) : undefined });
             onClose();
         }
     };
@@ -1795,6 +1937,17 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
                         <option value="none">-- Not Linked --</option>
                         {(data?.goals ?? []).map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                     </select>
+                </div>
+                <div>
+                    <label htmlFor="holding-acq" className="block text-sm font-medium text-gray-700">Acquisition date (optional)</label>
+                    <p className="text-xs text-slate-500 mt-0.5 mb-1">Zakat lunar hawl (~354 days) from this date. If empty, earliest buy in this portfolio is used when available.</p>
+                    <input
+                        id="holding-acq"
+                        type="date"
+                        value={acquisitionDate}
+                        onChange={(e) => setAcquisitionDate(e.target.value)}
+                        className="mt-1 w-full p-2 border border-gray-300 rounded-md"
+                    />
                 </div>
                 <button type="submit" className="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Save Changes</button>
             </form>
@@ -1963,11 +2116,13 @@ const PlatformCard: React.FC<{
     onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number; }, portfolio: InvestmentPortfolio) => void;
     onEditHolding: (holding: Holding) => void;
     simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
+    isExpanded: boolean;
+    onToggleExpanded: () => void;
 }> = (props) => {
-    const { platform, portfolios, metricsPortfolios, transactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices } = props;
+    const { platform, portfolios, metricsPortfolios, transactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded } = props;
     const portfoliosForMetrics = metricsPortfolios ?? portfolios;
     const showPersonalScopeNote = portfolios.length > portfoliosForMetrics.length;
-    const { formatCurrencyString, formatCurrency } = useFormatCurrency();
+    const { formatCurrencyString } = useFormatCurrency();
     const { data: dataCtx } = useContext(DataContext)!;
     const [isTxnModalOpen, setIsTxnModalOpen] = useState(false);
     const investmentsForInfer = useMemo(() => {
@@ -2043,16 +2198,42 @@ const PlatformCard: React.FC<{
     }, [portfolios]);
     const { names: symbolNames } = useCompanyNames(symbolsNeedingName);
 
+    const [portfolioExpanded, setPortfolioExpanded] = useState<Record<string, boolean>>({});
+    const sortedPortfolios = useMemo(
+        () => [...portfolios].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })),
+        [portfolios],
+    );
+    useEffect(() => {
+        if (sortedPortfolios.length === 0) return;
+        setPortfolioExpanded((prev) => {
+            const next: Record<string, boolean> = {};
+            sortedPortfolios.forEach((p, idx) => {
+                if (typeof prev[p.id] === 'boolean') next[p.id] = prev[p.id];
+                else next[p.id] = idx === 0;
+            });
+            return next;
+        });
+    }, [sortedPortfolios]);
+
     const totalHoldings = portfolios.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
     const metricsHoldingsCount = portfoliosForMetrics.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
     const availableCashSAR = tradableCashBucketToSAR(availableCashByCurrency, sarPerUsd);
 
     return (
-        <article className="platform-card bg-white rounded-xl shadow-md flex flex-col overflow-hidden border border-slate-200 hover:shadow-lg transition-shadow duration-300 ease-in-out min-w-0">
+        <article className="platform-card w-full max-w-full bg-white rounded-2xl shadow-md flex flex-col overflow-hidden border border-slate-200 hover:shadow-md transition-shadow duration-300 ease-in-out min-w-0">
             {/* Platform Header — compact, professional */}
             <header className="platform-card-header bg-gradient-to-br from-slate-50 via-white to-slate-50/50 border-b border-slate-200 min-w-0">
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:justify-between sm:items-start">
                     <div className="flex items-start gap-3 min-w-0 flex-1 overflow-hidden">
+                        <button
+                            type="button"
+                            onClick={onToggleExpanded}
+                            className="mt-1 shrink-0 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-primary transition-colors"
+                            aria-expanded={isExpanded}
+                            title={isExpanded ? 'Collapse platform' : 'Expand platform'}
+                        >
+                            <ChevronRightIcon className={`h-5 w-5 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                        </button>
                         <div className="w-1 h-12 rounded-full bg-primary shrink-0" aria-hidden />
                         <div className="min-w-0 flex-1 overflow-hidden">
                             <div className="flex items-center gap-2 flex-wrap min-w-0">
@@ -2062,18 +2243,9 @@ const PlatformCard: React.FC<{
                                     <button type="button" onClick={() => onDeletePlatform(platform)} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors" title="Remove platform" aria-label="Remove platform"><TrashIcon className="h-4 w-4" /></button>
                                 </span>
                             </div>
-                            <p
-                                className="text-2xl sm:text-3xl font-bold text-primary mt-1 tabular-nums break-words"
-                                title={formatCurrencyString(totalValueInSAR, {
-                                    digits: 2,
-                                    showSecondary: true,
-                                })}
-                            >
-                                {formatCurrencyString(totalValueInSAR, {
-                                    digits: 2,
-                                    showSecondary: true,
-                                })}
-                            </p>
+                            <div className="text-2xl sm:text-3xl font-bold text-primary mt-1 tabular-nums min-w-0 max-w-full overflow-x-auto">
+                                <CurrencyDualDisplay value={totalValueInSAR} inCurrency="SAR" digits={2} size="xl" className="text-primary" />
+                            </div>
                             <p className="text-xs text-slate-500 mt-1 font-medium">
                                 {hasMixedCurrencies ? 'Mixed SAR/USD portfolios · ' : ''}
                                 Totals use each portfolio&apos;s base currency, then your app display currency above.{' '}
@@ -2092,6 +2264,7 @@ const PlatformCard: React.FC<{
                         <ArrowsRightLeftIcon className="h-4 w-4" /> Transaction Log
                     </button>
                 </div>
+                {isExpanded && (
                 <dl className="platform-metrics grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3.5" aria-label="Platform metrics">
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
                         <dt
@@ -2100,29 +2273,30 @@ const PlatformCard: React.FC<{
                         >
                             Available Cash
                         </dt>
-                        <dd className="metric-value w-full mt-1.5 text-base sm:text-lg font-bold text-slate-900 tabular-nums leading-tight">
+                        <dd className="metric-value w-full mt-1.5 flex flex-col items-center justify-center text-base sm:text-lg text-slate-900 tabular-nums leading-tight">
                             {availableCashByCurrency.SAR === 0 && availableCashByCurrency.USD === 0 ? (
                                 <span className="text-slate-500">—</span>
                             ) : (
                                 <>
-                                    <span className="block">
-                                        {formatCurrencyString(availableCashSAR, {
-                                            digits: 0,
-                                            showSecondary:
-                                                availableCashByCurrency.SAR > 0 && availableCashByCurrency.USD > 0,
-                                        })}
-                                    </span>
-                                    <span className="mt-1 block text-[11px] font-medium text-slate-500">
-                                        Ledger:{' '}
-                                        {formatCurrencyString(availableCashByCurrency.SAR, {
-                                            inCurrency: 'SAR',
-                                            digits: 0,
-                                        })}{' '}
-                                        ·{' '}
-                                        {formatCurrencyString(availableCashByCurrency.USD, {
-                                            inCurrency: 'USD',
-                                            digits: 0,
-                                        })}
+                                    <div className="flex justify-center">
+                                        <CurrencyDualDisplay value={availableCashSAR} inCurrency="SAR" digits={0} size="lg" weight="bold" />
+                                    </div>
+                                    <span className="relative mt-1 inline-flex items-center justify-center gap-1 text-[11px] font-medium text-slate-500 group/cash-buckets">
+                                        <span>By bucket</span>
+                                        <span
+                                            role="tooltip"
+                                            className="pointer-events-none absolute left-1/2 bottom-full z-30 mb-2 w-max max-w-[min(18rem,90vw)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700 shadow-lg opacity-0 transition-opacity group-hover/cash-buckets:opacity-100"
+                                        >
+                                            <span className="font-semibold tabular-nums text-slate-900 block">
+                                                {formatCurrencyString(availableCashByCurrency.SAR, { inCurrency: 'SAR', digits: 0 })}
+                                            </span>
+                                            <span className="font-semibold tabular-nums text-slate-900 block mt-1">
+                                                {formatCurrencyString(availableCashByCurrency.USD, { inCurrency: 'USD', digits: 0 })}
+                                            </span>
+                                            <span className="text-[11px] text-slate-500 mt-1.5 block leading-snug">
+                                                Actual ledger balances (not FX-converted). Hover the main amount for pooled buying power in SAR with USD equivalent.
+                                            </span>
+                                        </span>
                                     </span>
                                 </>
                             )}
@@ -2135,14 +2309,14 @@ const PlatformCard: React.FC<{
                         >
                             Unrealized P/L
                         </dt>
-                        <dd className="metric-value w-full mt-1.5 font-bold text-lg tabular-nums">
-                            {formatCurrency(totalGainLossSAR, { colorize: true, digits: 0 })}
+                        <dd className="metric-value w-full mt-1.5 flex justify-center">
+                            <CurrencyDualDisplay value={totalGainLossSAR} inCurrency="SAR" digits={0} size="lg" colorize weight="bold" />
                         </dd>
                     </div>
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
                         <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Daily P/L</dt>
-                        <dd className="metric-value w-full mt-1.5 font-bold text-lg tabular-nums">
-                            {formatCurrency(dailyPnLSAR, { colorize: true, digits: 0 })}
+                        <dd className="metric-value w-full mt-1.5 flex justify-center">
+                            <CurrencyDualDisplay value={dailyPnLSAR} inCurrency="SAR" digits={0} size="lg" colorize weight="bold" />
                         </dd>
                     </div>
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
@@ -2156,29 +2330,27 @@ const PlatformCard: React.FC<{
                     </div>
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
                         <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Invested</dt>
-                        <dd
-                            className="metric-value w-full mt-1.5 font-bold text-slate-800 text-lg tabular-nums"
-                            title={formatCurrencyString(totalInvestedSAR, { digits: 0, showSecondary: true })}
-                        >
-                            {formatCurrencyString(totalInvestedSAR, { digits: 0 })}
+                        <dd className="metric-value w-full mt-1.5 flex justify-center text-slate-800">
+                            <CurrencyDualDisplay value={totalInvestedSAR} inCurrency="SAR" digits={0} size="lg" weight="bold" />
                         </dd>
                     </div>
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
                         <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Withdrawn</dt>
-                        <dd
-                            className="metric-value w-full mt-1.5 font-bold text-slate-800 text-lg tabular-nums"
-                            title={formatCurrencyString(totalWithdrawnSAR, { digits: 0, showSecondary: true })}
-                        >
-                            {formatCurrencyString(totalWithdrawnSAR, { digits: 0 })}
+                        <dd className="metric-value w-full mt-1.5 flex justify-center text-slate-800">
+                            <CurrencyDualDisplay value={totalWithdrawnSAR} inCurrency="SAR" digits={0} size="lg" weight="bold" />
                         </dd>
                     </div>
                 </dl>
+                )}
             </header>
 
             {/* Portfolios & Holdings — compact hierarchy; spacing from design system */}
-            <div className="platform-card-body">
+            {isExpanded && <div className="platform-card-body">
                 <div className="flex items-center justify-between flex-wrap gap-2">
-                    <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Portfolios · {portfolios.length}</h4>
+                    <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wider">
+                        Portfolios · {portfolios.length}{' '}
+                        <span className="text-slate-400 font-normal normal-case tracking-normal">(sorted A–Z)</span>
+                    </h4>
                     <button
                         type="button"
                         onClick={() => onAddPortfolio(platform.id)}
@@ -2199,18 +2371,27 @@ const PlatformCard: React.FC<{
                         </button>
                     </div>
                 ) : null}
-                {portfolios.map(portfolio => {
+                {sortedPortfolios.map((portfolio) => {
+                    const portfolioOpen = portfolioExpanded[portfolio.id] === true;
                     const portfolioCurrency = (portfolio.currency as TradeCurrency) || 'USD';
                     const portfolioHoldings = holdingsWithGains(portfolio.holdings || [], portfolioCurrency);
                     const portfolioValue = portfolioHoldings.reduce((sum, h) => sum + h.currentValue, 0);
                     const fmt = (val: number, opts?: { digits?: number; showSecondary?: boolean }) => formatCurrencyString(val, { inCurrency: portfolioCurrency, ...opts });
                     const fmtPerUnit = (val: number) => fmt(val, { digits: HOLDING_PER_UNIT_DECIMALS });
-                    const fmtColor = (val: number, opts?: { digits?: number }) => formatCurrency(val, { inCurrency: portfolioCurrency, colorize: false, ...opts });
                     return (
                         <section key={portfolio.id} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
                             {/* Portfolio header: name, value, goal, actions — contained in box */}
                             <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3 px-4 sm:px-5 py-3 sm:py-4 bg-gradient-to-r from-slate-50 to-white border-b border-slate-100 min-w-0">
-                                <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
+                                <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 overflow-hidden">
+                                    <button
+                                        type="button"
+                                        onClick={() => setPortfolioExpanded((prev) => ({ ...prev, [portfolio.id]: !prev[portfolio.id] }))}
+                                        className="shrink-0 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-primary transition-colors"
+                                        aria-expanded={portfolioOpen}
+                                        title={portfolioOpen ? 'Hide holdings' : 'Show holdings'}
+                                    >
+                                        <ChevronRightIcon className={`h-5 w-5 transition-transform ${portfolioOpen ? 'rotate-90' : ''}`} />
+                                    </button>
                                     <div className="w-1 h-8 rounded-full bg-primary shrink-0" />
                                     <div className="min-w-0 flex-1 overflow-hidden">
                                         <div className="flex flex-wrap items-center gap-2">
@@ -2219,7 +2400,9 @@ const PlatformCard: React.FC<{
                                                 <span className="inline-flex items-center text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-0.5" title="Excluded from My net worth — managed">Managed: {portfolio.owner}</span>
                                             )}
                                         </div>
-                                        <p className="text-sm font-semibold text-primary tabular-nums mt-0.5 break-words" title={fmt(portfolioValue, { showSecondary: true })}>{fmt(portfolioValue)}</p>
+                                        <div className="text-sm font-semibold text-primary tabular-nums mt-0.5 min-w-0 max-w-full overflow-x-auto">
+                                            <CurrencyDualDisplay value={portfolioValue} inCurrency={portfolioCurrency} size="base" className="text-primary" />
+                                        </div>
                                         {(portfolio.holdings?.length ?? 0) > 0 && (
                                             <p className="text-xs text-slate-500 mt-0.5">{(portfolio.holdings?.length ?? 0)} holding{(portfolio.holdings?.length ?? 0) !== 1 ? 's' : ''}</p>
                                         )}
@@ -2236,7 +2419,8 @@ const PlatformCard: React.FC<{
                                     <button type="button" onClick={() => onDeletePortfolio(portfolio)} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors" title="Remove portfolio" aria-label="Remove portfolio"><TrashIcon className="h-4 w-4"/></button>
                                 </div>
                             </div>
-                            {/* Holdings */}
+                            {/* Holdings — expand portfolio row to view */}
+                            {portfolioOpen && (
                             <div className="overflow-x-auto max-h-96 overflow-y-auto">
                                 {portfolioHoldings.length === 0 ? (
                                     <div className="px-5 py-8 text-center text-sm text-slate-500 rounded-b-2xl bg-slate-50/30">No holdings yet. Record a buy from <strong>Record Trade</strong> or the Transaction Log.</div>
@@ -2247,14 +2431,14 @@ const PlatformCard: React.FC<{
                                                 <tr className="text-left">
                                                     <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">Share</th>
                                                     <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right w-20">Alloc.</th>
-                                                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Qty</th>
-                                                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right whitespace-nowrap">Avg cost</th>
+                                                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-center">Qty</th>
+                                                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-center whitespace-nowrap">Avg cost</th>
                                                     <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">
                                                         <span className="block leading-tight">Current</span>
                                                         <span className="block text-[10px] font-normal normal-case text-slate-400 tracking-normal mt-0.5">Purchased cost</span>
                                                     </th>
                                                     <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-center">P/L</th>
-                                                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Today</th>
+                                                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-center">Today</th>
                                                     <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider text-center w-20">Zakat</th>
                                                     <th className="w-9" aria-label="Actions" />
                                                 </tr>
@@ -2308,15 +2492,14 @@ const PlatformCard: React.FC<{
                                                             <td className="px-3 py-3 text-center text-sm font-medium text-slate-700 tabular-nums">{fmtPerUnit(h.avgCost ?? 0)}</td>
                                                             <td className="px-3 py-3 text-right align-top">
                                                                 <div className="inline-flex flex-col items-end gap-0.5 tabular-nums min-w-0">
-                                                                    <span
-                                                                        className="text-sm font-bold text-slate-900 leading-tight"
-                                                                        title={
-                                                                            portfolioCurrency === 'USD'
-                                                                                ? formatCurrencyString(h.currentValue, { inCurrency: 'USD', showSecondary: true })
-                                                                                : undefined
-                                                                        }
-                                                                    >
-                                                                        {fmt(h.currentValue, { digits: 0 })}
+                                                                    <span className="text-sm font-bold text-slate-900 leading-tight inline-flex justify-end">
+                                                                        <CurrencyDualDisplay
+                                                                            value={h.currentValue}
+                                                                            inCurrency={portfolioCurrency}
+                                                                            digits={0}
+                                                                            size="base"
+                                                                            className="justify-end text-slate-900"
+                                                                        />
                                                                     </span>
                                                                     <span
                                                                         className="text-[11px] font-medium text-slate-500 leading-tight"
@@ -2327,22 +2510,30 @@ const PlatformCard: React.FC<{
                                                                 </div>
                                                             </td>
                                                             <td className="px-3 py-3 text-center whitespace-nowrap">
-                                                                <span
-                                                                    className={`inline-flex items-center justify-center gap-1 tabular-nums ${
-                                                                        h.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'
-                                                                    }`}
-                                                                >
-                                                                    <span className="text-sm font-semibold">
-                                                                        {fmtColor(h.gainLoss, { digits: 0 })}
-                                                                    </span>
-                                                                    <span className="text-xs">
+                                                                <div className="inline-flex flex-col items-center gap-0.5 tabular-nums">
+                                                                    <CurrencyDualDisplay
+                                                                        value={h.gainLoss}
+                                                                        inCurrency={portfolioCurrency}
+                                                                        digits={0}
+                                                                        size="base"
+                                                                        colorize
+                                                                        weight="bold"
+                                                                    />
+                                                                    <span className="text-xs text-slate-600">
                                                                         ({gainLossPct >= 0 ? '+' : ''}
                                                                         {gainLossPct.toFixed(1)}%)
                                                                     </span>
-                                                                </span>
+                                                                </div>
                                                             </td>
                                                             <td className="px-3 py-3 text-center">
-                                                                <span className={`text-sm font-medium tabular-nums ${rowDailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmtColor(rowDailyPnL, { digits: 0 })}</span>
+                                                                <CurrencyDualDisplay
+                                                                    value={rowDailyPnL}
+                                                                    inCurrency={portfolioCurrency}
+                                                                    digits={0}
+                                                                    size="base"
+                                                                    colorize
+                                                                    weight="bold"
+                                                                />
                                                             </td>
                                                             <td className="px-3 py-3 text-center">
                                                                 <span className={`inline-block px-2 py-0.5 text-[10px] font-semibold rounded-full ${h.zakahClass === 'Zakatable' ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-600'}`}>{h.zakahClass === 'Zakatable' ? 'Zak.' : 'Non'}</span>
@@ -2358,10 +2549,11 @@ const PlatformCard: React.FC<{
                                     </>
                                 )}
                             </div>
+                            )}
                         </section>
                     );
                 })}
-            </div>
+            </div>}
 
             <TransactionHistoryModal isOpen={isTxnModalOpen} onClose={() => setIsTxnModalOpen(false)} transactions={transactions} platformName={platform.name} />
         </article>
@@ -2383,7 +2575,6 @@ const PlatformView: React.FC<{
     simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
 }> = (props) => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-    const { formatCurrencyString } = useFormatCurrency();
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { setActivePage, setActiveTab, onOpenAddPortfolio } = props;
@@ -2412,6 +2603,18 @@ const PlatformView: React.FC<{
 
     const totalPlatforms = platformsData.length;
     const totalPortfolios = platformsData.reduce((sum, p) => sum + p.portfoliosAll.length, 0);
+    const [platformExpanded, setPlatformExpanded] = useState<Record<string, boolean>>({});
+    useEffect(() => {
+        if (platformsData.length === 0) return;
+        setPlatformExpanded((prev) => {
+            const next: Record<string, boolean> = {};
+            platformsData.forEach((p, idx) => {
+                if (typeof prev[p.account.id] === 'boolean') next[p.account.id] = prev[p.account.id];
+                else next[p.account.id] = idx === 0;
+            });
+            return next;
+        });
+    }, [platformsData]);
     const aggregateValue = useMemo(() => {
         if (!data) return 0;
         return computePersonalPlatformsRollupSAR(data, sarPerUsd, props.simulatedPrices, getAvailableCashForAccount).subtotalSAR;
@@ -2464,8 +2667,8 @@ const PlatformView: React.FC<{
                         <div className="flex flex-wrap items-center gap-4 sm:gap-6">
                             <div className="flex items-baseline gap-2">
                                 <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Your platforms total (holdings + cash, SAR)</span>
-                                <span className="text-xl sm:text-2xl font-bold text-primary tabular-nums tracking-tight">
-                                    {formatCurrencyString(aggregateValue, { inCurrency: 'SAR', digits: 2 })}
+                                <span className="text-xl sm:text-2xl text-primary tabular-nums tracking-tight inline-flex items-baseline">
+                                    <CurrencyDualDisplay value={aggregateValue} inCurrency="SAR" digits={2} size="xl" weight="bold" className="text-primary" />
                                 </span>
                             </div>
                             <div className="flex items-center gap-2 sm:gap-4">
@@ -2513,7 +2716,7 @@ const PlatformView: React.FC<{
                 </div>
             ) : null}
 
-            <div className="platform-cards-grid grid grid-cols-1 xl:grid-cols-2 gap-6 items-stretch min-w-0" data-platform-count={platformsData.length}>
+            <div className="platform-cards-grid flex flex-col gap-6 w-full min-w-0" data-platform-count={platformsData.length}>
                 {platformsData.map(p => (
                     <PlatformCard
                         key={p.account.id}
@@ -2532,6 +2735,8 @@ const PlatformView: React.FC<{
                         onHoldingClick={props.onHoldingClick}
                         onEditHolding={props.onEditHolding}
                         simulatedPrices={props.simulatedPrices}
+                        isExpanded={platformExpanded[p.account.id] ?? false}
+                        onToggleExpanded={() => setPlatformExpanded((prev) => ({ ...prev, [p.account.id]: !prev[p.account.id] }))}
                     />
                 ))}
             </div>
@@ -2566,7 +2771,7 @@ const ANALYST_DEFAULTS = {
 const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => void; onOpenWealthUltra?: () => void; onOpenRecordTrade?: (trade: { ticker: string; amount: number; reason?: string; price?: number; quantity?: number; tradeCurrency?: TradeCurrency }) => void }> = ({ onNavigateToTab, onOpenWealthUltra, onOpenRecordTrade }) => {
     const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const { isAiAvailable } = useAI();
+    const { isAiAvailable, aiHealthChecked } = useAI();
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const { simulatedPrices } = useMarketData();
@@ -2686,7 +2891,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         });
         
         return Array.from(universeMap.values());
-    }, [data?.portfolioUniverse, data?.investments, data?.watchlist, data?.plannedTrades, universePortfolioId]);
+    }, [data, universePortfolioId]);
 
     const universeHealth = useMemo(() => {
         const actionable = unifiedUniverse.filter(t => t.status === 'Core' || t.status === 'High-Upside');
@@ -2868,8 +3073,24 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         ? `Minimum order size is higher than your monthly budget; no single order can be placed.`
         : null;
 
-    const actionableCount = unifiedUniverse.filter(t => t.status === 'Core' || t.status === 'High-Upside').length;
-    const noActionableWarning = actionableCount === 0 ? 'Add at least one Core or High-Upside ticker in the universe below (or from Watchlist) before executing the plan.' : null;
+    const selectedPortfolio = useMemo(
+        () => personalPortfolios.find((p) => p.id === universePortfolioId) ?? null,
+        [personalPortfolios, universePortfolioId],
+    );
+    const holdingsFallbackUniverse = useMemo<UniverseTicker[]>(() => (
+        (selectedPortfolio?.holdings ?? [])
+            .filter((h) => Boolean((h.symbol || '').trim()))
+            .map((h, idx) => ({
+                id: `fallback-holding-${h.id ?? idx}`,
+                ticker: (h.symbol || '').trim().toUpperCase(),
+                name: h.name || (h.symbol || '').trim().toUpperCase(),
+                status: 'Core',
+                monthly_weight: undefined,
+                max_position_weight: undefined,
+                min_upside_threshold_override: undefined,
+                min_coverage_override: undefined,
+            }))
+    ), [selectedPortfolio]);
 
     // Live execution preview: estimated order counts from current budget and min order size
     const executionPreview = useMemo(() => {
@@ -2895,6 +3116,15 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             min_coverage_override: t.min_coverage_override,
         }))
     ), [unifiedUniverse]);
+    const effectiveExecutionUniverse = useMemo<UniverseTicker[]>(() => {
+        const actionable = executionUniverse.filter((t) => (t.status === 'Core' || t.status === 'High-Upside') && Boolean((t.ticker || '').trim()));
+        if (actionable.length > 0) return executionUniverse;
+        return holdingsFallbackUniverse;
+    }, [executionUniverse, holdingsFallbackUniverse]);
+    const actionableCount = effectiveExecutionUniverse.filter((t) => t.status === 'Core' || t.status === 'High-Upside').length;
+    const noActionableWarning = actionableCount === 0
+        ? 'Add at least one Core or High-Upside ticker in the universe below (or from Watchlist) before executing the plan.'
+        : null;
 
     const planHealth = useMemo(() => {
         let score = 100;
@@ -3072,6 +3302,7 @@ Save anyway?`)) return;
 
     const isUniverseTicker = (ticker: UniverseTicker & { source?: string }) => ticker.source === 'Universe' || ticker.source?.includes('Universe');
     const isActionableUniverseStatus = (status: TickerStatus) => status === 'Core' || status === 'High-Upside';
+
     const parsePercentInputToWeight = (raw: string): number | undefined => {
         const parsed = Number.parseFloat(raw);
         if (!Number.isFinite(parsed) || parsed < 0) return undefined;
@@ -3362,7 +3593,7 @@ Save anyway?`)) return;
         setExecutionResult(null);
         setExecutionError(null);
         try {
-            const result = await executeInvestmentPlanStrategy(plan, executionUniverse, {
+            const result = await executeInvestmentPlanStrategy(plan, effectiveExecutionUniverse, {
                 forceRuleBased,
                 planCurrency: plan.budgetCurrency,
                 tickerCurrencyMap,
@@ -3384,7 +3615,7 @@ Save anyway?`)) return;
 
             if (!forceRuleBased) {
                 try {
-                    const fallbackResult = await executeInvestmentPlanStrategy(plan, executionUniverse, {
+                    const fallbackResult = await executeInvestmentPlanStrategy(plan, effectiveExecutionUniverse, {
                         forceRuleBased: true,
                         planCurrency: plan.budgetCurrency,
                         tickerCurrencyMap,
@@ -3418,18 +3649,26 @@ Save anyway?`)) return;
 
     return (
         <div className="space-y-6">
-            <section className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-5 sm:p-6">
-                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                    <div>
-                        <h1 className="text-2xl sm:text-3xl font-bold text-white">Monthly Core + Analyst-Upside Sleeve Strategy</h1>
-                        <p className="mt-1 text-sm text-slate-200 max-w-2xl">Design, validate, and execute your monthly allocation in one professional workflow connected to universe signals and Wealth Ultra.</p>
-                        <span className={`mt-3 inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-500/20 text-emerald-100' : 'bg-amber-500/20 text-amber-100'}`}>AI {isAiAvailable ? 'Enabled' : 'Unavailable'}</span>
+            <section className="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 sm:p-6">
+                <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0 flex-1">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Focus here first</p>
+                        <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 mt-1">Monthly allocation & execution</h1>
+                        <p className="mt-2 text-sm text-slate-600 max-w-2xl leading-relaxed">
+                            Set your monthly budget, then run <strong className="text-slate-800">Execute</strong> to generate orders. This page is separate from <strong>Trade plans</strong> (price/date rules) below.
+                        </p>
+                        <ol className="mt-4 flex flex-col sm:flex-row sm:flex-wrap gap-2 text-xs text-slate-700">
+                            <li className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2"><span className="font-bold text-primary">1</span> Budget & Core / Upside split</li>
+                            <li className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2"><span className="font-bold text-primary">2</span> Universe weights (per ticker)</li>
+                            <li className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2"><span className="font-bold text-primary">3</span> Execute → record trades</li>
+                        </ol>
+                        <span className={`mt-3 inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${!aiHealthChecked ? 'bg-slate-100 text-slate-600 border border-slate-200' : isAiAvailable ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                            Execution AI {!aiHealthChecked ? 'checking…' : isAiAvailable ? 'available' : 'off — rule-based only'}
+                        </span>
                     </div>
-                    <div className="flex items-center space-x-2">
-                        <button type="button" onClick={handleSave} disabled={isSavingPlan} className="px-6 py-2.5 bg-white text-slate-900 rounded-xl hover:bg-slate-100 transition-colors font-semibold disabled:opacity-60 disabled:cursor-not-allowed" aria-busy={isSavingPlan}>
-                            {isSavingPlan ? 'Saving…' : 'Save Plan'}
-                        </button>
-                    </div>
+                    <button type="button" onClick={handleSave} disabled={isSavingPlan} className="shrink-0 px-6 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors font-semibold disabled:opacity-60 disabled:cursor-not-allowed shadow-sm" aria-busy={isSavingPlan}>
+                        {isSavingPlan ? 'Saving…' : 'Save plan'}
+                    </button>
                 </div>
             </section>
             {personalPortfolios.length > 0 && (
@@ -3497,7 +3736,7 @@ Save anyway?`)) return;
             <div className="bg-slate-50 border border-slate-200 rounded-lg overflow-hidden">
                 <button type="button" onClick={() => setShowFlowNote(!showFlowNote)} className="w-full px-4 py-3 flex items-center justify-between text-left text-sm font-medium text-slate-800 hover:bg-slate-100">
                     <span>How this works: Plan → Universe → Execute / Wealth Ultra</span>
-                    <span className="text-slate-500">{showFlowNote ? '▼' : '▶'}</span>
+                    <span className="text-slate-500">{showFlowNote ? 'Hide' : 'Show'}</span>
                 </button>
                 {showFlowNote && (
                     <div className="px-4 pb-4 pt-3 border-t border-slate-200 bg-white/70">
@@ -3547,7 +3786,9 @@ Save anyway?`)) return;
                     <dl className="grid grid-cols-2 gap-2 sm:gap-3 text-xs text-slate-600 w-full lg:w-auto lg:min-w-[360px]">
                         <div className="rounded-lg border border-emerald-100 bg-white/80 px-3 py-2">
                             <dt className="font-medium text-slate-700">Monthly budget</dt>
-                            <dd className="font-mono tabular-nums text-slate-900 text-sm mt-0.5 whitespace-nowrap">{formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: planCurrency, digits: 0 })}</dd>
+                            <dd className="text-slate-900 text-sm mt-0.5 whitespace-nowrap">
+                                <CurrencyDualDisplay value={plan.monthlyBudget ?? 0} inCurrency={planCurrency} digits={0} size="base" weight="bold" />
+                            </dd>
                         </div>
                         <div className="rounded-lg border border-emerald-100 bg-white/80 px-3 py-2">
                             <dt className="font-medium text-slate-700">Core / Upside mix</dt>
@@ -3565,8 +3806,8 @@ Save anyway?`)) return;
                 </div>
             </SectionCard>
 
-            <div className="cards-grid grid grid-cols-1 xl:grid-cols-5">
-                <div className="xl:col-span-3 space-y-6">
+            <div className="cards-grid grid grid-cols-1 xl:grid-cols-12 gap-6">
+                <div className="xl:col-span-7 space-y-6 min-w-0">
                     {/* Allocation Settings — essential fields first */}
                     <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -3593,7 +3834,9 @@ Save anyway?`)) return;
                                 <div>
                                     <p className="text-sm font-semibold text-emerald-800">Suggested monthly budget</p>
                                     <p className="text-xs text-emerald-700 mt-0.5">{suggestedBudgetSource}</p>
-                                    <p className="text-lg font-bold text-emerald-900 tabular-nums mt-1">{formatCurrencyString(suggestedMonthlyBudget, { inCurrency: planCurrency, digits: 0 })}</p>
+                                    <div className="text-lg mt-1">
+                                        <CurrencyDualDisplay value={suggestedMonthlyBudget} inCurrency={planCurrency} digits={0} size="xl" className="text-emerald-900" />
+                                    </div>
                                 </div>
                                 <button type="button" onClick={() => handlePlanChange('monthlyBudget', suggestedMonthlyBudget)} className="shrink-0 inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700">Use this budget</button>
                             </div>
@@ -3627,9 +3870,15 @@ Save anyway?`)) return;
 
                         <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3">
                             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Live execution split <InfoHint text="Updates as you change budget or allocation. Core and High-Upside amounts drive how much goes to each sleeve when you run Execute." hintId="plan-execution-split" hintPage="Investments" /></p>
-                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-700">
-                                <span className="tabular-nums">Core {planHealth.corePct.toFixed(0)}% → <strong className="text-slate-900">{formatCurrencyString(coreShareAmount, { inCurrency: planCurrency, digits: 0 })}</strong></span>
-                                <span className="tabular-nums">High-Upside {planHealth.upsidePct.toFixed(0)}% → <strong className="text-slate-900">{formatCurrencyString(upsideShareAmount, { inCurrency: planCurrency, digits: 0 })}</strong></span>
+                            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-700">
+                                <span className="tabular-nums inline-flex items-baseline gap-2">
+                                    Core {planHealth.corePct.toFixed(0)}% →{' '}
+                                    <CurrencyDualDisplay value={coreShareAmount} inCurrency={planCurrency} digits={0} size="base" weight="bold" className="text-slate-900" />
+                                </span>
+                                <span className="tabular-nums inline-flex items-baseline gap-2">
+                                    High-Upside {planHealth.upsidePct.toFixed(0)}% →{' '}
+                                    <CurrencyDualDisplay value={upsideShareAmount} inCurrency={planCurrency} digits={0} size="base" weight="bold" className="text-slate-900" />
+                                </span>
                             </div>
                             {executionPreview.totalOrders >= 0 && (plan.monthlyBudget ?? 0) > 0 && (
                                 <p className="text-xs text-slate-500 mt-2">If you execute now: ~<strong className="tabular-nums">{executionPreview.totalOrders}</strong> orders (Core ~{executionPreview.coreOrders}, Upside ~{executionPreview.upsideOrders})</p>
@@ -3712,33 +3961,40 @@ Save anyway?`)) return;
                             </>
                         )}
                         <button type="button" onClick={() => setPlanAdvancedOpen(!planAdvancedOpen)} className="mt-4 text-sm font-medium text-primary hover:underline">
-                            {planAdvancedOpen ? '▲ Hide advanced options' : '▼ Show advanced options (analyst rules, broker)'}
+                            {planAdvancedOpen ? 'Hide advanced options' : 'Show advanced options (analyst rules, broker)'}
                         </button>
                     </div>
                 </div>
 
                 {/* Execute & Results — right side of Monthly Plan */}
-                <div className="xl:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden xl:sticky xl:top-24 self-start">
+                <div className="xl:col-span-5 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden self-start min-w-0">
                     <div className="p-6 border-b border-slate-100 bg-gradient-to-r from-indigo-50 via-violet-50 to-slate-50">
                         <div className="flex items-start justify-between gap-3">
                             <div>
                                 <h2 className="text-xl font-bold text-slate-800 mb-1">Execute & Results</h2>
                                 <p className="text-sm text-slate-600">Run AI-assisted execution and instantly review the allocation, trades, and audit log.</p>
                             </div>
-                            <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                                {isAiAvailable ? 'AI ready' : 'AI unavailable'}
+                            <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${!aiHealthChecked ? 'bg-slate-100 text-slate-600' : isAiAvailable ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                {!aiHealthChecked ? 'Checking…' : isAiAvailable ? 'AI ready' : 'AI unavailable'}
                             </span>
                         </div>
                     </div>
                     <div className="p-6">
-                        {!isAiAvailable && (
+                        {aiHealthChecked && !isAiAvailable && (
                             <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">
                                 AI provider is temporarily unavailable. Execute with AI will automatically switch to deterministic rule-based logic and still return results.
                             </div>
                         )}
                         {actionableCount > 0 && (plan.monthlyBudget ?? 0) > 0 && (
                             <div className="mb-4 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-xs text-indigo-900">
-                                <span className="font-medium">Preview:</span> Running now would deploy <strong className="tabular-nums">{formatCurrencyString(coreShareAmount + upsideShareAmount, { inCurrency: planCurrency, digits: 0 })}</strong> across ~<strong>{executionPreview.totalOrders}</strong> orders (Core ~{executionPreview.coreOrders}, Upside ~{executionPreview.upsideOrders}).
+                                <span className="font-medium">Preview:</span> Running now would deploy{' '}
+                                <CurrencyDualDisplay value={coreShareAmount + upsideShareAmount} inCurrency={planCurrency} digits={0} size="base" weight="bold" className="text-indigo-950 inline" />{' '}
+                                across ~<strong>{executionPreview.totalOrders}</strong> orders (Core ~{executionPreview.coreOrders}, Upside ~{executionPreview.upsideOrders}).
+                            </div>
+                        )}
+                        {executionUniverse.filter((t) => t.status === 'Core' || t.status === 'High-Upside').length === 0 && holdingsFallbackUniverse.length > 0 && (
+                            <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                                No actionable universe entries found for this portfolio. Execution will use current holdings as temporary Core candidates.
                             </div>
                         )}
                         {noActionableWarning && (
@@ -3794,26 +4050,36 @@ Save anyway?`)) return;
                                     {executionResult.status === 'failure' && (
                                         <p className="text-sm text-amber-800 mb-3">No allocation could be generated. Add Core or High-Upside tickers in Portfolio Universe and set weights, then run again.</p>
                                     )}
-                                    <dl className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 min-w-0 text-sm">
-                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
+                                    <dl className="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-3 gap-3 min-w-0 text-sm">
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 flex flex-col gap-1 min-w-0">
                                             <dt className="text-slate-600">Monthly budget</dt>
-                                            <dd className="font-mono font-semibold tabular-nums text-slate-800 whitespace-nowrap text-right" title={formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(plan.monthlyBudget ?? 0, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                            <dd className="text-left min-w-0">
+                                                <CurrencyDualDisplay value={plan.monthlyBudget ?? 0} inCurrency={planCurrency} digits={0} size="base" weight="bold" className="justify-end text-slate-800" />
+                                            </dd>
                                         </div>
-                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 flex flex-col gap-1 min-w-0">
                                             <dt className="text-slate-600">Total deployed</dt>
-                                            <dd className="font-mono font-semibold tabular-nums text-slate-800 whitespace-nowrap text-right" title={formatCurrencyString(executionResult.totalInvestment, { inCurrency: planCurrency, digits: 0, showSecondary: true })}>{formatCurrencyString(executionResult.totalInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                            <dd className="text-left min-w-0">
+                                                <CurrencyDualDisplay value={executionResult.totalInvestment} inCurrency={planCurrency} digits={0} size="base" weight="bold" className="justify-end text-slate-800" />
+                                            </dd>
                                         </div>
-                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 flex flex-col gap-1 min-w-0">
                                             <dt className="text-slate-600">Core</dt>
-                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap text-right">{formatCurrencyString(executionResult.coreInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                            <dd className="text-left min-w-0">
+                                                <CurrencyDualDisplay value={executionResult.coreInvestment} inCurrency={planCurrency} digits={0} size="base" className="justify-end text-slate-700" />
+                                            </dd>
                                         </div>
-                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 flex flex-col gap-1 min-w-0">
                                             <dt className="text-slate-600">High-Upside</dt>
-                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap text-right">{formatCurrencyString(executionResult.upsideInvestment, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                            <dd className="text-left min-w-0">
+                                                <CurrencyDualDisplay value={executionResult.upsideInvestment} inCurrency={planCurrency} digits={0} size="base" className="justify-end text-slate-700" />
+                                            </dd>
                                         </div>
-                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-2">
+                                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 flex flex-col gap-1 min-w-0">
                                             <dt className="text-slate-600">Unused</dt>
-                                            <dd className="font-mono tabular-nums text-slate-700 whitespace-nowrap text-right">{formatCurrencyString(executionResult.unusedUpsideFunds, { inCurrency: planCurrency, digits: 0 })}</dd>
+                                            <dd className="text-left min-w-0">
+                                                <CurrencyDualDisplay value={executionResult.unusedUpsideFunds} inCurrency={planCurrency} digits={0} size="base" className="justify-end text-slate-700" />
+                                            </dd>
                                         </div>
                                     </dl>
                                     <p className="text-xs text-slate-500 mt-2">Total deployed + unused should match monthly budget (within rounding).</p>
@@ -3823,8 +4089,8 @@ Save anyway?`)) return;
                                     {executionResult.trades.length === 0 ? (
                                         <p className="text-sm text-slate-500 py-2">No trades proposed.</p>
                                     ) : (
-                                        <div className="rounded-lg border border-slate-200 overflow-hidden">
-                                            <table className="w-full table-fixed text-sm">
+                                        <div className="rounded-lg border border-slate-200 overflow-x-auto">
+                                            <table className="w-full min-w-[760px] text-sm">
                                                 <thead>
                                                     <tr className="bg-slate-50 border-b border-slate-200 text-left text-slate-600">
                                                         <th className="w-[22%] px-3 py-2 font-semibold">Ticker</th>
@@ -3840,9 +4106,8 @@ Save anyway?`)) return;
                                                             <tr key={index} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
                                                                 <td className="px-3 py-2 font-medium text-slate-800">{trade.ticker}</td>
                                                                 <td className="px-3 py-2 text-slate-600">{trade.reason}</td>
-                                                                <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-primary whitespace-nowrap">
-                                                                    <div>{formatCurrencyString(suggestion.amountInTradeCurrency, { inCurrency: suggestion.tradeCurrency, digits: 0 })}</div>
-                                                                    {suggestion.tradeCurrency !== planCurrency && <div className="text-[11px] font-normal text-slate-500">{formatCurrencyString(trade.amount, { inCurrency: planCurrency, digits: 0 })} in plan currency</div>}
+                                                                <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-primary whitespace-nowrap align-top">
+                                                                    <CurrencyDualDisplay value={suggestion.amountInTradeCurrency} inCurrency={suggestion.tradeCurrency} digits={0} size="base" weight="bold" className="justify-end text-primary" />
                                                                 </td>
                                                                 {onOpenRecordTrade && (
                                                                     <td className="px-3 py-2 text-right">
@@ -3873,7 +4138,7 @@ Save anyway?`)) return;
                                     <InfoHint text="Scoped to the portfolio selected above. Tickers and their status (Core, High-Upside, Speculative, etc.) with optional monthly weights. Core and High-Upside drive allocation; weights define how this portfolio’s monthly budget is split. Sync from Watchlist or add manually." hintId="plan-universe-tickers" hintPage="Investments" />
                                 </span>
                             </h2>
-                            <p className="text-sm text-gray-500 mt-1">Define your assets, their status, and their monthly investment weights. Core and High-Upside assets will be invested according to these weights.</p>
+                            <p className="text-sm text-gray-500 mt-1">Define your assets and weights. Status drives automation: Core and High-Upside receive the monthly budget split; other statuses are handled as shown in Plan role.</p>
                         </div>
                         <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-4 text-xs">
                             <div className="p-2 rounded border bg-slate-50"><p className="text-gray-500">Tickers</p><p className="font-semibold text-dark">{universeHealth.totalCount}</p></div>
@@ -3911,13 +4176,16 @@ Save anyway?`)) return;
                             <input type="text" placeholder="Company Name" value={newTicker.name} onChange={e => setNewTicker(p => ({...p, name: e.target.value}))} className="flex-grow min-w-[120px] p-2 border border-slate-200 rounded-lg" />
                             <button onClick={handleAddNewTicker} className="p-2 bg-primary text-white rounded-lg hover:bg-secondary"><PlusIcon className="h-5 w-5" /></button>
                         </div>
-                        <div className="max-h-60 overflow-y-auto">
-                            <table className="min-w-full divide-y divide-gray-200 text-sm">
+                        <div className="max-h-[28rem] overflow-auto rounded-lg border border-slate-100">
+                            <table className="min-w-[1100px] w-full divide-y divide-gray-200 text-sm">
                                 <thead className="bg-gray-50 sticky top-0"><tr>
                                     <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle">Ticker</th>
                                     <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle">Name</th>
                                     <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle">
                                         <span className="inline-flex items-center gap-1 whitespace-nowrap">Status <InfoHint text="Core and High-Upside get allocation; Speculative gets a small share; Quarantine/Excluded get none." hintId="plan-universe-status" hintPage="Investments" /></span>
+                                    </th>
+                                    <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle min-w-[12rem] max-w-[16rem]">
+                                        <span className="inline-flex items-center gap-1">Plan role <InfoHint text="Derived from status: shows how the system treats this ticker in monthly execution (no manual entry)." hintId="plan-universe-role" hintPage="Investments" /></span>
                                     </th>
                                     <th className="px-3 py-2 text-center font-medium text-gray-500 align-middle">
                                         <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap">Monthly Wt <InfoHint text="Share of this sleeve's budget (e.g. 50% = half of Core budget goes here). Weights should sum to ~100% per sleeve." hintId="plan-monthly-wt" hintPage="Investments" /></span>
@@ -3930,7 +4198,7 @@ Save anyway?`)) return;
                                 <tbody className="bg-white divide-y divide-gray-200">
                                     {filteredAndSortedUniverse.length === 0 ? (
                                         <tr>
-                                            <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                                            <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
                                                 {unifiedUniverse.length === 0 ? (
                                                     <>
                                                         <p className="font-medium text-slate-700">No tickers in universe yet</p>
@@ -3960,6 +4228,9 @@ Save anyway?`)) return;
                                                     <option>Speculative</option>
                                                     <option>Excluded</option>
                                                 </select>
+                                            </td>
+                                            <td className="px-4 py-2 text-xs text-slate-700 align-top">
+                                                {getUniverseRowPlanRole(ticker)}
                                             </td>
                                             <td className="px-4 py-2 text-center">
                                                 {isUniverseTicker(ticker) ? (
@@ -4065,14 +4336,22 @@ Save anyway?`)) return;
                                                     <div className={`mt-1 inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold ${o.confidence === 'High' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>{o.confidence}</div>
                                                 </td>
                                                 <td className="px-3 py-2">
-                                                    <div className="text-xs text-slate-700">Pullback: <strong>{formatCurrencyString(o.pullbackPrice, { inCurrency: o.tradeCurrency, digits: HOLDING_PER_UNIT_DECIMALS })}</strong></div>
-                                                    <div className="text-xs text-slate-500">Deep pullback: {formatCurrencyString(o.deepPullbackPrice, { inCurrency: o.tradeCurrency, digits: HOLDING_PER_UNIT_DECIMALS })}</div>
+                                                    <div className="text-xs text-slate-700 flex flex-wrap items-baseline gap-x-1 gap-y-0.5">
+                                                        <span>Pullback:</span>
+                                                        <CurrencyDualDisplay value={o.pullbackPrice} inCurrency={o.tradeCurrency} digits={HOLDING_PER_UNIT_DECIMALS} size="base" weight="bold" className="inline-flex text-slate-900" />
+                                                    </div>
+                                                    <div className="text-xs text-slate-500 flex flex-wrap items-baseline gap-x-1 mt-0.5">
+                                                        <span>Deep pullback:</span>
+                                                        <CurrencyDualDisplay value={o.deepPullbackPrice} inCurrency={o.tradeCurrency} digits={HOLDING_PER_UNIT_DECIMALS} size="base" className="inline-flex" />
+                                                    </div>
                                                     <div className="text-[11px] text-slate-500 mt-1 leading-snug">{o.reason}</div>
                                                 </td>
-                                                <td className="px-3 py-2 text-right">
-                                                    <div className="font-mono font-semibold text-primary tabular-nums">{formatCurrencyString(o.suggestedPlanAmount, { inCurrency: planCurrency, digits: 0 })}</div>
-                                                    <div className="text-[11px] text-slate-500">≈ {formatCurrencyString(o.amountInTradeCurrency, { inCurrency: o.tradeCurrency, digits: 0 })}</div>
-                                                    <div className="text-[11px] text-slate-500">{o.suggestedQuantity.toFixed(4)} sh @ {formatCurrencyString(o.pullbackPrice, { inCurrency: o.tradeCurrency, digits: HOLDING_PER_UNIT_DECIMALS })}</div>
+                                                <td className="px-3 py-2 text-right align-top">
+                                                    <CurrencyDualDisplay value={o.suggestedPlanAmount} inCurrency={planCurrency} digits={0} size="base" weight="bold" className="justify-end text-primary" />
+                                                    <div className="text-[11px] text-slate-500 mt-1 tabular-nums">
+                                                        {o.suggestedQuantity.toFixed(4)} sh @{' '}
+                                                        <CurrencyDualDisplay value={o.pullbackPrice} inCurrency={o.tradeCurrency} digits={HOLDING_PER_UNIT_DECIMALS} size="base" className="inline-flex justify-end" />
+                                                    </div>
                                                 </td>
                                                 {onOpenRecordTrade && (
                                                     <td className="px-3 py-2 text-right">
@@ -4117,9 +4396,9 @@ interface InvestmentsProps {
 
 const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
   const { data, loading, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, getAvailableCashForAccount } = useContext(DataContext)!;
-  const { isAiAvailable } = useAI();
+  const { isAiAvailable, aiHealthChecked } = useAI();
   const { simulatedPrices } = useMarketData();
-  const { formatCurrency, formatCurrencyString } = useFormatCurrency();
+  const { formatCurrencyString } = useFormatCurrency();
   const { trackAction } = useSelfLearning();
   const [activeTab, setActiveTabState] = useState<InvestmentSubPage>('Overview');
   const setActiveTab = useCallback((tab: InvestmentSubPage) => {
@@ -4235,11 +4514,14 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
       holdingCount: holdings.length,
       watchlistCount: wl.length,
       totalValueSAR: totalValue,
+      unrealizedGainLossSAR: totalGainLoss,
+      roiPct: roi,
+      dailyPnLSAR: totalDailyPnL,
       commoditiesValueSAR,
       appDisplayCurrency,
       executionLogCount,
     };
-  }, [data, activeTab, totalValue, commoditiesValueSAR, appDisplayCurrency]);
+  }, [data, activeTab, totalValue, totalGainLoss, roi, totalDailyPnL, commoditiesValueSAR, appDisplayCurrency]);
 
   const getTrendString = (trend: number) => {
     return `${trend >= 0 ? '+' : ''}${trend.toFixed(2)}%`;
@@ -4409,7 +4691,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
             onEditHolding={handleOpenHoldingEditModal}
         />;
       case 'Investment Plan': return (
-                <div className="space-y-14 sm:space-y-16">
+                <div className="flex flex-col gap-16 sm:gap-20">
                     <InvestmentPlanView
                         embedded
                         onExecutePlan={() => {}}
@@ -4467,7 +4749,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8 sm:space-y-10">
         <header className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 via-white to-indigo-50 px-5 py-6 sm:px-6 shadow-sm">
             <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
                 <div>
@@ -4478,8 +4760,8 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                     <p className="mt-2 max-w-2xl text-sm text-slate-600">Track every portfolio, evaluate share-level insights, and run AI workflows from one professional command center.</p>
                     <div className="mt-4 flex flex-wrap items-center gap-3">
                         <LivePricesStatus variant="inline" className="flex-shrink-0 text-slate-700" />
-                        <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${isAiAvailable ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
-                            {isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${!aiHealthChecked ? 'bg-slate-100 text-slate-600' : isAiAvailable ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                            {!aiHealthChecked ? 'Checking…' : <>{isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}</>}
                         </span>
                     </div>
                 </div>
@@ -4497,21 +4779,21 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         <section className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4" aria-label="Investment summary">
             <Card
                 title="Total Value"
-                value={formatCurrencyString(totalValue, { inCurrency: 'SAR', showSecondary: true })}
+                value={<CurrencyDualDisplay value={totalValue} inCurrency="SAR" digits={2} size="2xl" />}
                 density="compact"
                 indicatorColor="green"
                 valueColor="text-emerald-700"
                 icon={<ChartPieIcon className="h-5 w-5 text-emerald-600" aria-hidden />}
-                tooltip="Everything you have invested right now: stocks and funds at today's prices, idle cash sitting on your broker accounts, and commodities. US-listed prices are converted into riyals using your FX rate so the number matches your net worth view."
+                tooltip="Everything you have invested right now: stocks and funds at today's prices, idle cash sitting on your broker accounts, and commodities. US-listed prices are converted into riyals using your FX rate so the number matches your net worth view. Hover the amount to see the USD equivalent."
             />
             <Card
                 title="Unrealized P/L"
-                value={formatCurrency(totalGainLoss, { colorize: true, inCurrency: 'SAR', showSecondary: true })}
+                value={<CurrencyDualDisplay value={totalGainLoss} inCurrency="SAR" digits={2} colorize size="2xl" />}
                 density="compact"
                 indicatorColor={totalGainLoss >= 0 ? 'green' : 'red'}
                 valueColor={totalGainLoss >= 0 ? 'text-emerald-700' : 'text-rose-700'}
                 icon={<ArrowsRightLeftIcon className={`h-5 w-5 ${totalGainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
-                tooltip="Paper profit or loss: current value minus money you moved in (deposits) and out (withdrawals) of investment platforms, including commodities cost. It updates when prices refresh; it is not tax or realized gain until you sell."
+                tooltip="Paper profit or loss: current value minus money you moved in (deposits) and out (withdrawals) of investment platforms, including commodities cost. It updates when prices refresh; it is not tax or realized gain until you sell. Hover the amount to see USD equivalent."
             />
             <Card
                 title="Portfolio ROI"
@@ -4524,9 +4806,9 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
             />
             <Card
                 title="Daily P/L"
-                value={formatCurrency(totalDailyPnL, { colorize: true, digits: 2, inCurrency: 'SAR', showSecondary: true })}
+                value={<CurrencyDualDisplay value={totalDailyPnL} inCurrency="SAR" digits={2} colorize size="2xl" />}
                 trend={getTrendString(trendPercentage)}
-                tooltip="Estimated change today from price moves on your holdings (live or simulated quotes). Converted the same way as total value so it lines up with your portfolio currency and FX settings."
+                tooltip="Estimated change today from price moves on your holdings (live or simulated quotes). Converted the same way as total value so it lines up with your portfolio currency and FX settings. Hover the amount to see USD equivalent."
                 density="compact"
                 indicatorColor={totalDailyPnL >= 0 ? 'green' : 'red'}
                 valueColor={totalDailyPnL >= 0 ? 'text-emerald-700' : 'text-rose-700'}
@@ -4544,7 +4826,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         )}
 
         <PlanSummary onEditPlan={() => setActiveTab('Investment Plan')} />
-        <RetirementGoalsStrip onOpenGoals={setActivePage ? () => setActivePage('Goals') : undefined} />
+        <InvestmentGoalsStrip onOpenGoals={setActivePage ? () => setActivePage('Goals') : undefined} />
 
         <nav className="rounded-2xl border border-slate-200 bg-white p-2" aria-label="Investment sections">
             <div className="flex gap-1 overflow-x-auto scrollbar-thin">
@@ -4566,20 +4848,22 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         </nav>
       
       <InvestmentTabErrorBoundary activeTab={activeTab} onReset={() => setActiveTab('Overview')}>
-        <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50/80 via-white to-indigo-50/50 min-h-[28rem] overflow-hidden">
+        <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50/80 via-white to-indigo-50/50 min-h-[28rem] overflow-hidden p-4 sm:p-6">
           <Suspense fallback={<LoadingSpinner message="Loading..." className="min-h-[12rem] bg-transparent" />}>
             {renderContent()}
           </Suspense>
         </div>
       </InvestmentTabErrorBoundary>
 
-      <AIAdvisor
-        pageContext="investments"
-        contextData={investmentsHubAiContext}
-        title="Investments workspace coach"
-        subtitle={`Current tab: ${activeTab} · Holdings & watchlist-aware · English / العربية`}
-        buttonLabel="Insights for this workspace"
-      />
+      {activeTab === 'Overview' && (
+        <AIAdvisor
+          pageContext="investments"
+          contextData={investmentsHubAiContext}
+          title="Investments workspace coach"
+          subtitle="Holdings & watchlist-aware · English / العربية"
+          buttonLabel="Insights for this workspace"
+        />
+      )}
 
       <HoldingDetailModal isOpen={isHoldingModalOpen} onClose={() => { setIsHoldingModalOpen(false); setSelectedHolding(null); setSelectedPortfolio(null); }} holding={selectedHolding} portfolio={selectedPortfolio} />
       <HoldingEditModal isOpen={isHoldingEditModalOpen} onClose={() => setIsHoldingEditModalOpen(false)} onSave={handleSaveHolding} holding={holdingToEdit} />

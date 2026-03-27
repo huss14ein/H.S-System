@@ -47,7 +47,7 @@ function holdingValueInBookCurrency(
 
 const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => void }> = ({ setActiveTab }) => {
     const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
-    const { isAiAvailable } = useAI();
+    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { exchangeRate } = useCurrency();
     const { simulatedPrices } = useMarketData();
 
@@ -150,7 +150,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
     const [isAiLoading, setIsAiLoading] = useState(false);
 
     useEffect(() => {
-        if (swotDisplayLang !== 'ar' || !swotEn.trim() || swotAr != null || !isAiAvailable) return;
+        if (swotDisplayLang !== 'ar' || !swotEn.trim() || swotAr != null || !aiActionsEnabled) return;
         let cancelled = false;
         (async () => {
             setIsTranslatingSwot(true);
@@ -167,7 +167,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
         return () => {
             cancelled = true;
         };
-    }, [swotDisplayLang, swotEn, swotAr, isAiAvailable]);
+    }, [swotDisplayLang, swotEn, swotAr, aiActionsEnabled]);
 
     const diversification = useMemo(() => {
         const totalValue =
@@ -248,18 +248,26 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                 </div>
             )}
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="rounded-xl border border-sky-200 bg-sky-50/40 p-4 border-l-4 border-l-sky-500">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Portfolios</p>
-                    <p className="mt-1 text-2xl font-bold text-slate-900">{portfolioAllocation.length}</p>
+                    <p className="mt-1 text-2xl font-bold text-sky-800 tabular-nums">{portfolioAllocation.length}</p>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 border-l-4 border-l-indigo-500">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tracked Shares</p>
-                    <p className="mt-1 text-2xl font-bold text-slate-900">{allHoldingsWithGains.length}</p>
+                    <p className="mt-1 text-2xl font-bold text-indigo-800 tabular-nums">{allHoldingsWithGains.length}</p>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 border-l-4 border-l-emerald-500">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">AI Engine Status</p>
-                    <p className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${isAiAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                        {isAiAvailable ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />} {isAiAvailable ? 'Operational' : 'Offline'}
+                    <p className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
+                        !aiHealthChecked ? 'bg-slate-100 text-slate-600' : isAiAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                    }`}>
+                        {!aiHealthChecked ? (
+                            <>Checking…</>
+                        ) : isAiAvailable ? (
+                            <><CheckCircleIcon className="h-4 w-4" /> Operational</>
+                        ) : (
+                            <><ExclamationTriangleIcon className="h-4 w-4" /> Offline</>
+                        )}
                     </p>
                 </div>
             </div>
@@ -293,7 +301,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="rounded-xl border border-cyan-200 bg-cyan-50/40 p-4 border-l-4 border-l-cyan-500">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Top holding</p>
                     <div className="text-lg font-bold text-slate-900 mt-1">
                         {diversification.topHolding?.symbol ? (
@@ -308,22 +316,38 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                             '—'
                         )}
                     </div>
-                    <p className="text-sm tabular-nums text-slate-600">{diversification.topHoldingPct.toFixed(1)}%</p>
+                    <p className="text-sm tabular-nums text-cyan-700">{diversification.topHoldingPct.toFixed(1)}%</p>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-4 border-l-4 border-l-violet-500">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Top asset class</p>
                     <p className="text-lg font-bold text-slate-900 mt-1">{diversification.topAssetClass?.name || '—'}</p>
-                    <p className="text-sm tabular-nums text-slate-600">{diversification.topAssetClassPct.toFixed(1)}%</p>
+                    <p className="text-sm tabular-nums text-violet-700">{diversification.topAssetClassPct.toFixed(1)}%</p>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className={`rounded-xl border p-4 border-l-4 ${
+                    diversification.hhi > 0.18
+                        ? 'border-rose-200 border-l-rose-500 bg-rose-50/40'
+                        : diversification.hhi > 0.12
+                        ? 'border-amber-200 border-l-amber-500 bg-amber-50/40'
+                        : 'border-emerald-200 border-l-emerald-500 bg-emerald-50/40'
+                }`}>
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">HHI</p>
-                    <p className="text-lg font-bold text-slate-900 mt-1 tabular-nums">{diversification.hhi.toFixed(3)}</p>
-                    <p className="text-xs text-slate-500">Lower is better diversification</p>
+                    <p className={`text-lg font-bold mt-1 tabular-nums ${
+                        diversification.hhi > 0.18 ? 'text-rose-700' : diversification.hhi > 0.12 ? 'text-amber-700' : 'text-emerald-700'
+                    }`}>{diversification.hhi.toFixed(3)}</p>
+                    <p className="text-xs text-slate-600">Lower is better diversification</p>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className={`rounded-xl border p-4 border-l-4 ${
+                    diversification.effectiveHoldings < 8
+                        ? 'border-rose-200 border-l-rose-500 bg-rose-50/40'
+                        : diversification.effectiveHoldings < 14
+                        ? 'border-amber-200 border-l-amber-500 bg-amber-50/40'
+                        : 'border-emerald-200 border-l-emerald-500 bg-emerald-50/40'
+                }`}>
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Effective holdings</p>
-                    <p className="text-lg font-bold text-slate-900 mt-1 tabular-nums">{diversification.effectiveHoldings.toFixed(1)}</p>
-                    <p className="text-xs text-slate-500">Equivalent equal-weight positions</p>
+                    <p className={`text-lg font-bold mt-1 tabular-nums ${
+                        diversification.effectiveHoldings < 8 ? 'text-rose-700' : diversification.effectiveHoldings < 14 ? 'text-amber-700' : 'text-emerald-700'
+                    }`}>{diversification.effectiveHoldings.toFixed(1)}</p>
+                    <p className="text-xs text-slate-600">Equivalent equal-weight positions</p>
                 </div>
             </div>
 
@@ -409,14 +433,14 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                         </button>
                     </div>
                 </div>
-                {!isAiAvailable && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">AI provider is currently unavailable. SWOT will still run using deterministic fallback guidance.</div>}
+                {aiHealthChecked && !isAiAvailable && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">AI provider is currently unavailable. SWOT will still run using deterministic fallback guidance.</div>}
                 {aiError && <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm"><SafeMarkdownRenderer content={aiError} /><button type="button" onClick={handleGenerateAnalysis} className="mt-2 px-3 py-1.5 text-sm font-medium bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200">Retry</button></div>}
                 {swotTranslateError && (
                     <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">{swotTranslateError}</div>
                 )}
                 {isAiLoading && <p className="text-sm text-center text-slate-500 py-4">Performing strategic analysis on your portfolio...</p>}
                 {isTranslatingSwot && swotDisplayLang === 'ar' && <p className="text-sm text-center text-slate-500 py-2">Translating to Arabic…</p>}
-                {!isAiLoading && swotDisplayLang === 'ar' && !isAiAvailable && !swotAr && swotEn.trim() && (
+                {!isAiLoading && swotDisplayLang === 'ar' && aiHealthChecked && !isAiAvailable && !swotAr && swotEn.trim() && (
                     <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">Arabic translation needs the AI service. Switch to English or enable AI in settings.</p>
                 )}
                 {!isAiLoading && (swotDisplayLang === 'ar' ? (swotAr ?? swotEn) : swotEn) && (
@@ -427,11 +451,13 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                 {!isAiLoading && !swotEn.trim() && !aiError && <p className="text-sm text-center text-slate-500 py-4">Click &quot;Generate SWOT Analysis&quot; for an expert strategic overview of your investments.</p>}
             </div>
             
-            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2 items-stretch">
                 <div className="section-card flex flex-col min-h-[460px] border border-slate-200 shadow-sm">
-                    <h3 className="section-title mb-1">Portfolio Allocation</h3>
-                    <p className="text-sm text-slate-500 mb-4">How your total investment value is distributed across portfolios.</p>
-                    <div className="w-full h-[320px] min-h-[320px] rounded-lg overflow-hidden">
+                    <div className="min-h-[58px]">
+                        <h3 className="section-title mb-1">Portfolio Allocation</h3>
+                        <p className="text-sm text-slate-500 mb-4">How your total investment value is distributed across portfolios.</p>
+                    </div>
+                    <div className="w-full flex-1 min-h-[320px] h-[320px] rounded-lg overflow-hidden">
                         {portfolioAllocation?.length ? (
                             <div className="w-full h-full min-h-[320px]">
                                 <AllocationPieChart data={portfolioAllocation} />
@@ -447,9 +473,11 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                     </div>
                 </div>
                 <div className="section-card flex flex-col min-h-[460px] border border-slate-200 shadow-sm">
-                    <h3 className="section-title mb-1">Allocation by Asset Class</h3>
-                    <p className="text-sm text-slate-500 mb-4">The mix of asset types across all your investments.</p>
-                    <div className="w-full h-[320px] min-h-[320px] rounded-lg overflow-hidden">
+                    <div className="min-h-[58px]">
+                        <h3 className="section-title mb-1">Allocation by Asset Class</h3>
+                        <p className="text-sm text-slate-500 mb-4">The mix of asset types across all your investments.</p>
+                    </div>
+                    <div className="w-full flex-1 min-h-[320px] h-[320px] rounded-lg overflow-hidden">
                         <AllocationBarChart data={assetClassAllocation} />
                     </div>
                 </div>

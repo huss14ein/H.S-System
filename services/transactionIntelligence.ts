@@ -1,5 +1,5 @@
 import type { Account, Transaction } from '../types';
-import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi, isInternalTransferTransaction } from './transactionFilters';
+import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { toSAR } from '../utils/currencyMath';
 
 /** Normalize merchant from bank-style descriptions. */
@@ -44,7 +44,7 @@ export function detectSalaryIncome(transactions: Transaction[], monthsLookback =
   const start = new Date();
   start.setMonth(start.getMonth() - monthsLookback);
   const income = transactions.filter(
-    (t) => t.type === 'income' && !isInternalTransferTransaction(t) && new Date(t.date) >= start
+    (t) => countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= start
   );
   const byMonth = new Map<string, number[]>();
   income.forEach((t) => {
@@ -87,7 +87,7 @@ export function detectSalaryIncomeSar(
   const start = new Date();
   start.setMonth(start.getMonth() - monthsLookback);
   const income = transactions.filter(
-    (t) => t.type === 'income' && !isInternalTransferTransaction(t) && new Date(t.date) >= start
+    (t) => countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= start
   );
   const byMonth = new Map<string, number[]>();
   income.forEach((t) => {
@@ -123,7 +123,7 @@ const SUBSCRIPTION_KEYWORDS = /netflix|spotify|apple\.com|google|youtube|prime|d
 
 export function tagSubscriptionLikeExpenses(transactions: Transaction[]): Transaction[] {
   return transactions.filter(
-    (t) => t.type === 'expense' && SUBSCRIPTION_KEYWORDS.test(t.description || '')
+    (t) => countsAsExpenseForCashflowKpi(t) && SUBSCRIPTION_KEYWORDS.test(t.description || '')
   );
 }
 

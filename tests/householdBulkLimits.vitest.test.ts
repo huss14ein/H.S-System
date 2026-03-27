@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeBulkAddLimitsForSelection,
+  deriveEngineProfileFromRiskProfile,
   generateHouseholdBudgetCategories,
   householdConsumptionScale,
   monthlyEquivalentFromBudgetLimit,
@@ -61,5 +62,34 @@ describe('computeBulkAddLimitsForSelection', () => {
     const growth = computeBulkAddLimitsForSelection(base, pick, 20_000, 'Growth', 2, 1);
     const aggr = computeBulkAddLimitsForSelection(base, pick, 20_000, 'Aggressive', 2, 1);
     expect(sumMonthlyForCategories(aggr, pick)).toBeGreaterThan(sumMonthlyForCategories(growth, pick) * 1.02);
+  });
+
+  it('returns zero limits for every row when nothing is selected (bulk-add UX)', () => {
+    const base = generateHouseholdBudgetCategories(2, 0, 12_000, 'Moderate');
+    const out = computeBulkAddLimitsForSelection(base, [], 12_000, 'Moderate', 2, 0);
+    expect(out.every((c) => c.limit === 0)).toBe(true);
+  });
+
+  it('zeros out unchecked categories when only a subset is selected', () => {
+    const base = generateHouseholdBudgetCategories(2, 0, 12_000, 'Moderate');
+    const pick = [base[0]!.category];
+    const out = computeBulkAddLimitsForSelection(base, pick, 12_000, 'Moderate', 2, 0);
+    const picked = out.find((c) => c.category === pick[0]);
+    expect(picked != null && picked.limit > 0).toBe(true);
+    expect(out.filter((c) => !pick.includes(c.category)).every((c) => c.limit === 0)).toBe(true);
+  });
+});
+
+describe('deriveEngineProfileFromRiskProfile', () => {
+  it('maps aggressive risk profile to Aggressive', () => {
+    expect(deriveEngineProfileFromRiskProfile('Moderate', 'Aggressive')).toBe('Aggressive');
+  });
+
+  it('maps growth risk profile to Growth', () => {
+    expect(deriveEngineProfileFromRiskProfile('Moderate', 'Growth')).toBe('Growth');
+  });
+
+  it('does not override manual non-default profile', () => {
+    expect(deriveEngineProfileFromRiskProfile('Conservative', 'Aggressive')).toBe('Conservative');
   });
 });

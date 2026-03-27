@@ -29,6 +29,17 @@ function isModelError(err: unknown): boolean {
   );
 }
 
+/** xAI returns 403 when team has no credits/licenses — treat as “Grok off” and fall through if another provider can run. */
+function isGrokAccountNotUsable(status: number, body: string): boolean {
+  if (status === 402 || status === 403) return true;
+  return /does not have permission|no credits|licenses yet|team doesn't have/i.test(body);
+}
+
+function isGrokDisabled(): boolean {
+  const v = (process.env.GROK_DISABLED || '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
 function extractText(response: GenerateContentResponse): string | undefined {
   if (typeof (response as { text?: string }).text === 'string') {
     return (response as { text: string }).text;
@@ -238,6 +249,11 @@ async function callGrok(
 
   if (!response.ok) {
     const errorText = await response.text();
+    if (isGrokAccountNotUsable(response.status, errorText)) {
+      throw new Error(
+        `GROK_ACCOUNT_NOT_USABLE: xAI Grok returned ${response.status}. Add credits or a license at https://console.x.ai or configure GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY. Raw: ${errorText.slice(0, 400)}`,
+      );
+    }
     throw new Error(`Grok API error ${response.status}: ${errorText}`);
   }
 
@@ -282,9 +298,11 @@ const handler: Handler = async (event: HandlerEvent) => {
     if (healthMode) {
       const geminiConfigured = Boolean(primaryApiKey || backupApiKey);
       const anthropicConfigured = Boolean(process.env.ANTHROPIC_API_KEY);
-      const grokConfigured = Boolean(process.env.GROK_API_KEY);
+      const grokKeyPresent = Boolean(process.env.GROK_API_KEY);
+      const grokConfigured = grokKeyPresent && !isGrokDisabled();
       const openaiConfigured = Boolean(process.env.OPENAI_API_KEY);
-      const anyProviderConfigured = geminiConfigured || anthropicConfigured || grokConfigured || openaiConfigured;
+      const anyProviderConfigured =
+        geminiConfigured || anthropicConfigured || grokConfigured || openaiConfigured;
       return {
         statusCode: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -294,7 +312,7 @@ const handler: Handler = async (event: HandlerEvent) => {
           providers: {
             gemini: { configured: geminiConfigured, primaryConfigured: Boolean(primaryApiKey), backupConfigured: Boolean(backupApiKey) },
             anthropic: { configured: anthropicConfigured },
-            grok: { configured: grokConfigured },
+            grok: { configured: grokConfigured, keyPresent: grokKeyPresent, skippedByEnv: grokKeyPresent && isGrokDisabled() },
             openai: { configured: openaiConfigured },
           },
         }),
@@ -341,21 +359,7 @@ const handler: Handler = async (event: HandlerEvent) => {
       }
     }
 
-    // 3) Try Grok (xAI) if available
-    if (process.env.GROK_API_KEY) {
-      try {
-        const result = await callGrok(contents, config);
-        return {
-          statusCode: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-          body: JSON.stringify(result),
-        };
-      } catch (grokError) {
-        lastError = grokError;
-      }
-    }
-
-    // 4) Try OpenAI if available
+    // 3) Try OpenAI before Grok — xAI keys often hit 403/team credits; prefer OpenAI when configured.
     if (process.env.OPENAI_API_KEY) {
       try {
         const result = await callOpenAI(contents, config);
@@ -369,8 +373,36 @@ const handler: Handler = async (event: HandlerEvent) => {
       }
     }
 
-    if (!primaryApiKey && !backupApiKey && !process.env.ANTHROPIC_API_KEY && !process.env.GROK_API_KEY && !process.env.OPENAI_API_KEY) {
-      throw new Error("No AI providers configured. Set at least one: GEMINI_API_KEY, GEMINI_API_KEY_BACKUP, ANTHROPIC_API_KEY, GROK_API_KEY, or OPENAI_API_KEY.");
+    // 4) Grok (xAI) last — often 403 without credits; prefer GEMINI / OPENAI / ANTHROPIC. GROK_DISABLED=1 skips Grok.
+    if (process.env.GROK_API_KEY && !isGrokDisabled()) {
+      try {
+        const result = await callGrok(contents, config);
+        return {
+          statusCode: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify(result),
+        };
+      } catch (grokError) {
+        const msg = grokError instanceof Error ? grokError.message : String(grokError);
+        // If Gemini/Claude/OpenAI already failed, don't replace their error with Grok "no credits" noise.
+        if (lastError && /GROK_ACCOUNT_NOT_USABLE/i.test(msg)) {
+          /* keep lastError */
+        } else {
+          lastError = grokError;
+        }
+      }
+    }
+
+    if (
+      !primaryApiKey &&
+      !backupApiKey &&
+      !process.env.ANTHROPIC_API_KEY &&
+      !process.env.GROK_API_KEY &&
+      !process.env.OPENAI_API_KEY
+    ) {
+      throw new Error(
+        "No AI providers configured. Set at least one: GEMINI_API_KEY, GEMINI_API_KEY_BACKUP, ANTHROPIC_API_KEY, OPENAI_API_KEY, or GROK_API_KEY.",
+      );
     }
 
     if (lastError) {

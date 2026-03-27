@@ -224,6 +224,26 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         openHtmlForPrint(html);
     }, [reportModel?.wealthSummaryReportPayload]);
 
+    const summaryMonthlyKpis = useMemo(
+        () =>
+            data
+                ? computeMonthlyReportFinancialKpis(data, sarPerUsd, getAvailableCashForAccount)
+                : { budgetVariance: Number.NaN, roi: Number.NaN },
+        [data, sarPerUsd, getAvailableCashForAccount]
+    );
+
+    const summaryValidationWarnings = useMemo(() => {
+        const out: string[] = [];
+        const fm = reportModel?.financialMetricsWithEf;
+        if (!fm) return out;
+        if (!Number.isFinite(fm.netWorth)) out.push('Net worth is invalid.');
+        if (!Number.isFinite(fm.monthlyIncome)) out.push('Monthly income is invalid.');
+        if (!Number.isFinite(fm.monthlyExpenses)) out.push('Monthly expenses are invalid.');
+        if (!Number.isFinite(summaryMonthlyKpis.budgetVariance)) out.push('Budget variance could not be computed.');
+        if (!Number.isFinite(summaryMonthlyKpis.roi)) out.push('ROI could not be computed.');
+        return out;
+    }, [reportModel, summaryMonthlyKpis]);
+
     if (loading || !data) {
         return (
             <div className="flex justify-center items-center h-96" aria-busy="true">
@@ -252,20 +272,6 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         shockDrill,
         liquidNw,
     } = reportModel;
-
-    const summaryMonthlyKpis = useMemo(
-        () => computeMonthlyReportFinancialKpis(data, sarPerUsd, getAvailableCashForAccount),
-        [data, sarPerUsd, getAvailableCashForAccount]
-    );
-    const summaryValidationWarnings = useMemo(() => {
-        const out: string[] = [];
-        if (!Number.isFinite(financialMetricsWithEf.netWorth)) out.push('Net worth is invalid.');
-        if (!Number.isFinite(financialMetricsWithEf.monthlyIncome)) out.push('Monthly income is invalid.');
-        if (!Number.isFinite(financialMetricsWithEf.monthlyExpenses)) out.push('Monthly expenses are invalid.');
-        if (!Number.isFinite(summaryMonthlyKpis.budgetVariance)) out.push('Budget variance could not be computed.');
-        if (!Number.isFinite(summaryMonthlyKpis.roi)) out.push('ROI could not be computed.');
-        return out;
-    }, [financialMetricsWithEf, summaryMonthlyKpis]);
 
     return (
         <PageLayout 
@@ -298,22 +304,24 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                         tabIndex={0}
                         onClick={() => setActivePage?.('Assets')}
                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActivePage?.('Assets'); } }}
-                        className="lg:col-span-1 section-card flex flex-col justify-center items-center text-center border-t-4 border-primary cursor-pointer hover:shadow-md transition-shadow"
+                        className="lg:col-span-1 section-card-hover flex flex-col justify-center items-center text-center border-l-4 border-l-primary cursor-pointer"
                         aria-label="View and manage assets"
                     >
-                        <h2 className="text-lg font-medium text-gray-500 flex items-center gap-1">
-                            My Net Worth
+                        <div className="w-full flex items-start justify-between gap-2 mb-1">
+                            <h2 className="text-lg font-medium text-gray-500 text-left min-w-0 flex-1">My Net Worth</h2>
                             <InfoHint text="Personal wealth only. Items with Owner set (e.g. Father) are excluded from this total." placement="bottom" hintId="summary-personal-wealth" hintPage="Summary" />
-                        </h2>
+                        </div>
                         <p className="text-5xl font-extrabold text-dark my-2">{maskBalance(formatCurrencyString(financialMetricsWithEf.netWorth, { digits: 0 }))}</p>
-                        <p className={`${financialMetricsWithEf.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold flex flex-wrap items-center justify-center gap-1`}>
+                        <p className={`${financialMetricsWithEf.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold flex flex-wrap items-center justify-center gap-2`}>
                             <span>{financialMetricsWithEf.netWorthTrend >= 0 ? '+' : ''}{financialMetricsWithEf.netWorthTrend.toFixed(1)}% vs implied prior net worth</span>
-                            <InfoHint
-                                text="Uses this month’s personal transactions (income vs expenses) vs current net worth—not a stored last-month snapshot. Same personal scope as Dashboard."
-                                placement="bottom"
-                                hintId="summary-nw-trend"
-                                hintPage="Summary"
-                            />
+                            <span className="inline-flex flex-shrink-0">
+                                <InfoHint
+                                    text="Uses this month’s personal transactions (income vs expenses) vs current net worth—not a stored last-month snapshot. Same personal scope as Dashboard."
+                                    placement="bottom"
+                                    hintId="summary-nw-trend"
+                                    hintPage="Summary"
+                                />
+                            </span>
                         </p>
                         <p className="text-xs text-slate-500 mt-2">Personal wealth only · Click to manage assets</p>
                         {managedWealthTotal > 0 && (
@@ -321,7 +329,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                         )}
                     </div>
                 ) : (
-                    <div className="lg:col-span-1 section-card border-l-4 border-amber-400">
+                    <div className="lg:col-span-1 section-card border-l-4 border-l-amber-400">
                         <h2 className="text-lg font-medium text-gray-700">Net Worth</h2>
                         <p className="text-sm text-slate-600 mt-2">Net worth visibility is restricted to Admin only.</p>
                     </div>
@@ -389,23 +397,23 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                 </CollapsibleSection>
             )}
             
-            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
+            <div className="cards-grid grid grid-cols-1 gap-4">
                 {isAdmin ? (
-                    <div className="section-card flex flex-col h-[450px]">
+                    <div className="section-card flex flex-col min-h-[420px] h-[min(56vh,520px)]">
                         <NetWorthCompositionChart title="Historical Net Worth" />
                     </div>
                 ) : (
-                    <div className="section-card flex flex-col h-[450px] justify-center">
+                    <div className="section-card flex flex-col min-h-[200px] justify-center">
                         <p className="text-sm text-slate-600 text-center px-6">Historical net worth chart is available for Admin only.</p>
                     </div>
                 )}
-                <div className="section-card flex flex-col h-[450px]">
-                    <h3 className="section-title mb-4">Investment Allocation & Performance</h3>
-                    <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
+                <div className="section-card flex flex-col min-h-[420px] h-[min(56vh,520px)]">
+                    <h3 className="section-title mb-2 sm:mb-4">Investment Allocation &amp; Performance</h3>
+                    <div className="flex-1 min-h-[320px] rounded-lg overflow-hidden border border-slate-100">
                         {investmentTreemapData.length > 0 ? (
                             <PerformanceTreemap data={investmentTreemapData} />
                         ) : (
-                            <div className="empty-state h-full flex items-center justify-center">No investment data available.</div>
+                            <div className="empty-state h-full min-h-[280px] flex items-center justify-center">No investment data available.</div>
                         )}
                     </div>
                 </div>

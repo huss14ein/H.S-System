@@ -12,10 +12,11 @@ import InfoHint from '../components/InfoHint';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+import CollapsibleSection from '../components/CollapsibleSection';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { fetchLiveGoldPriceSarPerGram } from '../utils/commodityLiveValue';
-import { summarizeZakatableInvestmentsForZakat } from '../services/zakatInvestmentValuation';
+import { summarizeZakatableCommoditiesForZakat, summarizeZakatableInvestmentsForZakat } from '../services/zakatInvestmentValuation';
 import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestments, getPersonalLiabilities } from '../utils/wealthScope';
 import AIAdvisor from '../components/AIAdvisor';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
@@ -111,18 +112,23 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
     }, [useNisabAmount, localNisabAmount, nisabAmountSetting, localGoldPrice, goldPrice]);
 
     const zakatableAssets = useMemo(() => {
+        const asOf = new Date(new Date().toISOString().slice(0, 10) + 'T12:00:00.000Z');
         const accounts = getPersonalAccounts(data);
         const investments = getPersonalInvestments(data);
         const commodityHoldings = getPersonalCommodityHoldings(data);
         const cash = accounts
             .filter((a) => ['Checking', 'Savings'].includes(a.type ?? ''))
             .reduce((sum, acc) => sum + toSAR(Math.max(0, acc.balance ?? 0), acc.currency, sarPerUsd), 0);
-        const { totalSar: invValue, lines: investmentLines } = summarizeZakatableInvestmentsForZakat(investments, sarPerUsd);
-        const commodities = commodityHoldings
-            .filter((c: { zakahClass?: string; zakah_class?: string }) => (c.zakahClass ?? c.zakah_class) !== 'Non-Zakatable')
-            .reduce((sum: number, c: { currentValue?: number }) => sum + (c.currentValue ?? 0), 0);
+        const invTx = data?.investmentTransactions ?? [];
+        const { totalSar: invValue, lines: investmentLines } = summarizeZakatableInvestmentsForZakat(
+            investments,
+            sarPerUsd,
+            invTx,
+            asOf,
+        );
+        const { totalSar: commodities, lines: commodityLines } = summarizeZakatableCommoditiesForZakat(commodityHoldings, asOf);
         const total = cash + invValue + commodities;
-        return { cash, investments: invValue, commodities, total, investmentLines };
+        return { cash, investments: invValue, commodities, total, investmentLines, commodityLines };
     }, [data, sarPerUsd]);
 
     const zakatInvSymbols = useMemo(
@@ -213,11 +219,33 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                 </div>
             </div>
 
+            <SectionCard title="Hawl (holding period) & cash treatment" collapsible collapsibleSummary="≈354-day lunar rule for investments & commodities" defaultExpanded className="max-w-3xl mb-6">
+                <div className="space-y-3 text-sm text-slate-700">
+                    <p>
+                        For <strong>investments</strong> and <strong>commodities</strong>, the app applies an approximate lunar <em>hawl</em> of <strong>354 days</strong> from a start date: your optional <strong>acquisition date</strong> on the holding, else the <strong>earliest recorded buy</strong> (investments) or <strong>created date</strong> (commodities). Amounts that have not yet completed a full hawl are shown but <strong>not</strong> added to the zakatable total. If no start date can be inferred, the position is still counted (legacy behavior) — set dates or record trades for stricter tracking.
+                    </p>
+                    <ul className="list-disc pl-5 space-y-1 text-xs sm:text-sm">
+                        <li>
+                            <strong>Investments:</strong> set acquisition on the holding edit dialog, or rely on buy history. Use <strong>Non‑Zakatable</strong> to exclude positions by fiqh choice.
+                        </li>
+                        <li>
+                            <strong>Cash:</strong> uses current checking/savings balances (no automatic hawl); adjust manually if your situation differs.
+                        </li>
+                        <li>
+                            <strong>Commodities:</strong> optional acquisition date on the Commodities form; otherwise the server <strong>created</strong> timestamp starts the hawl when present.
+                        </li>
+                    </ul>
+                    <p className="text-xs text-slate-500">
+                        Nisab and rate (e.g. 2.5%) apply after classification; consult a scholar for your school’s rules.
+                    </p>
+                </div>
+            </SectionCard>
+
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-3 items-start">
                 <div className="space-y-6">
                     <SectionCard title="Zakatable Assets" collapsible collapsibleSummary="Cash, investments, receivables" defaultExpanded>
                          <div className="space-y-3">
-                            <p className="text-xs text-slate-500 -mt-1 mb-2">Totals use <strong>SAR</strong> (same basis as Nisab / gold here): cash and card debt converted from each account&apos;s currency; investments use each portfolio&apos;s book currency (USD vs SAR), including Tadawul when portfolio currency was unset.</p>
+                            <p className="text-xs text-slate-500 -mt-1 mb-2">Totals use <strong>SAR</strong>. Investment and commodity lines show gross value and what counts after hawl; cash is unchanged.</p>
                             <div className="flex justify-between text-sm pt-2">
                                <span className="text-gray-600 flex items-center"><CheckCircleIcon className="h-4 w-4 mr-2 text-green-500"/>Cash</span>
                                <span>{formatCurrencyString(zakatableAssets.cash, { inCurrency: 'SAR', digits: 0 })}</span>
@@ -227,20 +255,28 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                                 <span className="text-right font-medium tabular-nums">{formatCurrencyString(zakatableAssets.investments, { inCurrency: 'SAR', digits: 0 })}</span>
                             </div>
                             {zakatableAssets.investmentLines.length > 0 && (
-                                <div className="ml-6 rounded-lg border border-slate-200 bg-slate-50/80 overflow-hidden">
-                                    <div className="max-h-40 overflow-y-auto">
+                                <CollapsibleSection
+                                    title="Investment details"
+                                    summary={`${zakatableAssets.investmentLines.length} symbol(s)`}
+                                    defaultExpanded={false}
+                                    card={false}
+                                    className="mt-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2"
+                                >
+                                    <div className="rounded-lg border border-slate-200 bg-white">
                                         <table className="w-full text-xs text-left">
                                             <thead className="sticky top-0 bg-slate-100 text-slate-600 uppercase tracking-wide">
                                                 <tr>
                                                     <th className="py-1.5 px-2 font-semibold">Symbol</th>
                                                     <th className="py-1.5 px-2 font-semibold">Portfolio</th>
-                                                    <th className="py-1.5 px-2 font-semibold text-right">SAR</th>
+                                                    <th className="py-1.5 px-2 font-semibold text-right">Gross SAR</th>
+                                                    <th className="py-1.5 px-2 font-semibold text-right">Zakat SAR</th>
+                                                    <th className="py-1.5 px-2 font-semibold">Hawl</th>
                                                 </tr>
                                             </thead>
-                                            <tbody className="divide-y divide-slate-100">
-                                                {zakatableAssets.investmentLines.map((row: { portfolioId: string; symbol: string; portfolioName: string; name?: string; valueSar: number }, idx: number) => (
+                                            <tbody className="divide-y divide-slate-100 bg-white leading-relaxed">
+                                                {zakatableAssets.investmentLines.map((row, idx: number) => (
                                                     <tr key={`${row.portfolioId}-${row.symbol}-${idx}`} className="text-slate-800">
-                                                        <td className="py-1.5 px-2 font-medium min-w-0 max-w-[140px]">
+                                                        <td className="py-2 px-2 font-medium min-w-0 max-w-[140px] align-top">
                                                             <ResolvedSymbolLabel
                                                                 symbol={row.symbol}
                                                                 storedName={row.name}
@@ -250,20 +286,56 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                                                                 companyClassName="text-[10px] text-slate-500"
                                                             />
                                                         </td>
-                                                        <td className="py-1.5 px-2 text-slate-600 truncate max-w-[120px]" title={row.portfolioName}>{row.portfolioName}</td>
-                                                        <td className="py-1.5 px-2 text-right tabular-nums">{formatCurrencyString(row.valueSar, { inCurrency: 'SAR', digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-slate-600 truncate max-w-[120px] align-top" title={row.portfolioName}>{row.portfolioName}</td>
+                                                        <td className="py-2 px-2 text-right tabular-nums align-top">{formatCurrencyString(row.grossValueSar, { inCurrency: 'SAR', digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right tabular-nums align-top font-medium">{formatCurrencyString(row.zakatableValueSar, { inCurrency: 'SAR', digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-[10px] text-slate-600 align-top max-w-[200px]">{row.hawlLabel}</td>
                                                     </tr>
                                                 ))}
                                             </tbody>
                                         </table>
                                     </div>
-                                    <p className="text-[11px] text-slate-500 px-2 py-1.5 border-t border-slate-200">Value = market value when set; otherwise quantity × average cost. Non‑Zakatable positions excluded.</p>
-                                </div>
+                                    <p className="text-[11px] leading-5 text-slate-500 px-2 py-2 border-t border-slate-200 bg-slate-50/80">
+                                        Gross = market value (or cost basis). Zakat SAR = gross after ≈354‑day hawl when a start date exists. Non‑Zakatable positions excluded.
+                                    </p>
+                                </CollapsibleSection>
                             )}
                              <div className="flex justify-between text-sm">
                                 <span className="text-gray-600 flex items-center"><CheckCircleIcon className="h-4 w-4 mr-2 text-green-500"/>Commodities</span>
                                 <span>{formatCurrencyString(zakatableAssets.commodities, { inCurrency: 'SAR', digits: 0 })}</span>
                             </div>
+                            {zakatableAssets.commodityLines.length > 0 && (
+                                <CollapsibleSection
+                                    title="Commodity details"
+                                    summary={`${zakatableAssets.commodityLines.length} lot(s)`}
+                                    defaultExpanded={false}
+                                    card={false}
+                                    className="mt-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2"
+                                >
+                                    <div className="rounded-lg border border-slate-200 bg-white">
+                                        <table className="w-full text-xs text-left">
+                                            <thead className="sticky top-0 bg-slate-100 text-slate-600 uppercase tracking-wide">
+                                                <tr>
+                                                    <th className="py-1.5 px-2 font-semibold">Commodity</th>
+                                                    <th className="py-1.5 px-2 font-semibold text-right">Gross SAR</th>
+                                                    <th className="py-1.5 px-2 font-semibold text-right">Zakat SAR</th>
+                                                    <th className="py-1.5 px-2 font-semibold">Hawl</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100 bg-white leading-relaxed">
+                                                {zakatableAssets.commodityLines.map((row) => (
+                                                    <tr key={row.id} className="text-slate-800">
+                                                        <td className="py-2 px-2 font-medium align-top">{row.name}</td>
+                                                        <td className="py-2 px-2 text-right tabular-nums align-top">{formatCurrencyString(row.grossValueSar, { inCurrency: 'SAR', digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right tabular-nums align-top font-medium">{formatCurrencyString(row.zakatableValueSar, { inCurrency: 'SAR', digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-[10px] text-slate-600 align-top max-w-[200px]">{row.hawlLabel}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </CollapsibleSection>
+                            )}
                             <div className="border-t pt-2 mt-2 flex justify-between font-bold"><span>Total Assets</span><span>{formatCurrencyString(zakatableAssets.total, { inCurrency: 'SAR', digits: 0 })}</span></div>
                              <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded-md mt-2">
                                 <p>Includes cash, zakatable investments (default zakatable if unset), and commodities not marked Non‑Zakatable. You can change an asset&apos;s Zakat classification on the {setActivePage ? (
@@ -324,11 +396,24 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                             </div>
                         )}
                     </div>
-                    <div className="flex justify-between text-sm"><span className="text-gray-600">Nisab Threshold</span><span className="font-medium text-dark">{formatCurrencyString(nisab, { inCurrency: 'SAR', digits: 0 })}</span></div>
-                    <hr/>
-                    <div className="flex justify-between text-sm"><span className="text-gray-600">Total Zakatable Assets</span><span className="font-medium text-dark">{formatCurrencyString(zakatableAssets.total, { inCurrency: 'SAR', digits: 0 })}</span></div>
-                    <div className="flex justify-between text-sm"><span className="text-gray-600">Deductible Liabilities</span><span className="font-medium text-dark">-{formatCurrencyString(deductibleLiabilities.total, { inCurrency: 'SAR', digits: 0 })}</span></div>
-                    <div className="flex justify-between text-base font-semibold p-2 bg-gray-100 rounded-md"><span className="text-gray-800">Net Zakatable Wealth</span><span className="text-dark">{formatCurrencyString(netZakatableWealth, { inCurrency: 'SAR', digits: 0 })}</span></div>
+                    <div className="space-y-1 border-t border-slate-200 pt-3">
+                        <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm leading-6">
+                            <span className="text-gray-600">Nisab Threshold</span>
+                            <span className="min-w-[130px] text-right font-medium tabular-nums text-dark">{formatCurrencyString(nisab, { inCurrency: 'SAR', digits: 0 })}</span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm leading-6">
+                            <span className="text-gray-600">Total Zakatable Assets</span>
+                            <span className="min-w-[130px] text-right font-medium tabular-nums text-dark">{formatCurrencyString(zakatableAssets.total, { inCurrency: 'SAR', digits: 0 })}</span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm leading-6">
+                            <span className="text-gray-600">Deductible Liabilities</span>
+                            <span className="min-w-[130px] text-right font-medium tabular-nums text-dark">-{formatCurrencyString(deductibleLiabilities.total, { inCurrency: 'SAR', digits: 0 })}</span>
+                        </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 text-base font-semibold p-2.5 bg-gray-100 rounded-md">
+                        <span className="text-gray-800">Net Zakatable Wealth</span>
+                        <span className="min-w-[150px] text-right tabular-nums text-dark">{formatCurrencyString(netZakatableWealth, { inCurrency: 'SAR', digits: 0 })}</span>
+                    </div>
                      <div className="flex items-center justify-center space-x-2 pt-2">
                         {isNisabMet ? ( <><CheckCircleIcon className="h-6 w-6 text-green-500" /><span className="font-semibold text-green-600">Nisab Threshold Met</span></> ) : ( <><XCircleIcon className="h-6 w-6 text-red-500" /><span className="font-semibold text-red-500">Nisab Threshold Not Met</span></> )}
                     </div>
@@ -346,7 +431,7 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                 )}
                 
                  {/* Column 3: Payment Ledger */}
-                <div className="bg-white p-6 rounded-lg shadow space-y-4">
+                <div className="section-card flex flex-col space-y-4">
                      <div className="flex justify-between items-center">
                         <h3 className="font-semibold text-dark">Payment Progress & Ledger</h3>
                         <button onClick={() => setIsPaymentModalOpen(true)} className="px-3 py-1 bg-primary text-white rounded-md hover:bg-secondary text-sm">Record Payment</button>

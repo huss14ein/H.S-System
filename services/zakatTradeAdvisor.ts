@@ -20,12 +20,13 @@ export function buildZakatTradeAdvice(data: FinancialData | null | undefined): Z
   const personalAccounts = getPersonalAccounts(data);
   const personalAccountIds = new Set(personalAccounts.map((a) => a.id));
   const sarPerUsd = resolveSarPerUsd(data, undefined);
-  const { lines } = summarizeZakatableInvestmentsForZakat(investments, sarPerUsd);
+  const txs = (data.investmentTransactions ?? []) as InvestmentTransaction[];
+  const { lines } = summarizeZakatableInvestmentsForZakat(investments, sarPerUsd, txs);
 
   const bySymbol = new Map<string, number>();
   for (const row of lines) {
     const sym = row.symbol.toUpperCase();
-    bySymbol.set(sym, (bySymbol.get(sym) ?? 0) + row.valueSar);
+    bySymbol.set(sym, (bySymbol.get(sym) ?? 0) + row.zakatableValueSar);
   }
 
   const totalZakatable = Array.from(bySymbol.values()).reduce((sum, v) => sum + v, 0);
@@ -51,9 +52,9 @@ export function buildZakatTradeAdvice(data: FinancialData | null | undefined): Z
   });
 
   const allTxs = (data.investmentTransactions ?? []) as InvestmentTransaction[];
-  const txs = personalAccountIds.size > 0 ? allTxs.filter(t => personalAccountIds.has(t.accountId ?? '')) : allTxs;
+  const txsFiltered = personalAccountIds.size > 0 ? allTxs.filter(t => personalAccountIds.has(t.accountId ?? '')) : allTxs;
   const year = new Date().getFullYear();
-  const recentBuys = txs.filter(t => {
+  const recentBuys = txsFiltered.filter(t => {
     const d = new Date(t.date);
     return t.type === 'buy' && d.getFullYear() === year;
   });

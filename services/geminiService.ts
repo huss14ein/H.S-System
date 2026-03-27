@@ -1,10 +1,11 @@
 import { Type, FunctionDeclaration } from "@google/genai";
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult, ProposedTrade, TradeCurrency } from '../types';
-import { finnhubFetch, toFinnhubSymbol, fromFinnhubSymbol, canonicalQuoteLookupKey } from './finnhubService';
+import { finnhubFetch, toFinnhubSymbol, fromFinnhubSymbol, canonicalQuoteLookupKey, toStooqSymbol } from './finnhubService';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { capitalizeCategoryName } from '../utils/categoryFormat';
 import { DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
+import { fetchStooq } from './stooqClient';
 
 // --- Model Constants ---
 const FAST_MODEL = 'gemini-3-flash-preview';
@@ -89,7 +90,10 @@ export function formatAiError(error: any): string {
         return AI_QUOTA_MESSAGE;
     }
     if (/GEMINI_API_KEY not set|No AI providers configured/i.test(mergedMessage)) {
-        return `AI not configured. Set at least one in Netlify env: GEMINI_API_KEY, GEMINI_API_KEY_BACKUP, ANTHROPIC_API_KEY, GROK_API_KEY, or OPENAI_API_KEY.`;
+        return `AI not configured. Set at least one in Netlify env: GEMINI_API_KEY, GEMINI_API_KEY_BACKUP, ANTHROPIC_API_KEY, OPENAI_API_KEY, or GROK_API_KEY (Grok is tried last; use another provider if Grok has no credits).`;
+    }
+    if (/GROK_ACCOUNT_NOT_USABLE|Grok \(xAI\)|xAI Grok returned|console\.x\.ai|no credits or licenses|does not have permission to execute/i.test(mergedMessage)) {
+        return `Grok (xAI) isn’t usable for this team yet (credits or license). Add billing at https://console.x.ai or set GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY in Netlify so AI runs on another provider. You can also set GROK_DISABLED=1 to skip Grok without removing the key.`;
     }
     if (/API key not valid/i.test(mergedMessage)) {
         return "The AI service API key is not valid. Please check the backend configuration.";
@@ -269,14 +273,9 @@ const getFinnhubApiKey = (): string => {
     if (!apiKey) throw new Error('Finnhub API key is missing. Set VITE_FINNHUB_API_KEY.');
     return apiKey;
 };
-
-/** Stooq uses lowercase with dot for Saudi: 2222.sr. Others use dash (e.g. aapl.us). */
-const toStooqSymbol = (symbol: string): string => {
-    const s = (symbol || '').trim();
-    if (/\.SR$/i.test(s)) return s.toLowerCase();
-    if (/\.SA$/i.test(s)) return s.toLowerCase();
-    return s.toLowerCase().replace(/\./g, '-');
-};
+const isFinnhub403 = (error: unknown): boolean =>
+    /\b403\b|forbidden|plan\/key restriction|premium|not available/i.test(error instanceof Error ? error.message : String(error ?? ''));
+let warnedFinnhub403InGeminiService = false;
 
 const getFinnhubLivePrices = async (symbols: string[]): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {
     if (symbols.length === 0) return {};
@@ -300,10 +299,20 @@ const getFinnhubLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
             const rawUpper = (rawSymbol || '').trim().toUpperCase();
             const keys = new Set<string>([displayKey, rawUpper].filter(Boolean));
             const tad = displayKey.match(/^([0-9]{4,6})\.SR$/);
-            if (tad) keys.add(`${tad[1]}.SA`);
+            if (tad) {
+                keys.add(`${tad[1]}.SA`);
+                keys.add(`${tad[1]}.SE`);
+            }
             for (const k of keys) mapped[k] = quote;
         } catch (error) {
-            console.warn(`Finnhub quote failed for ${rawSymbol}:`, error);
+            if (isFinnhub403(error)) {
+                if (!warnedFinnhub403InGeminiService) {
+                    warnedFinnhub403InGeminiService = true;
+                    console.warn('Finnhub returned 403 for this key; quote research fallback will use other sources.');
+                }
+            } else {
+                console.warn(`Finnhub quote failed for ${rawSymbol}:`, error);
+            }
         }
     }
 
@@ -338,7 +347,7 @@ const getFinnhubCompanyNews = async (symbols: string[]): Promise<Array<{ symbol:
                 });
             });
         } catch (error) {
-            console.warn(`Finnhub company news failed for ${rawSymbol}:`, error);
+            if (!isFinnhub403(error)) console.warn(`Finnhub company news failed for ${rawSymbol}:`, error);
         }
     }
 
@@ -395,7 +404,8 @@ const getStooqLivePrices = async (symbols: string[]): Promise<{ [symbol: string]
         try {
             const symbol = rawSymbol.trim().toUpperCase();
             const stooqCode = toStooqSymbol(rawSymbol);
-            const response = await fetch(`https://stooq.com/q/l/?s=${encodeURIComponent(stooqCode)}&f=sd2t2ohlcvcp&h&e=csv`);
+            const stooqUrl = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqCode)}&f=sd2t2ohlcvcp&h&e=csv`;
+            const response = await fetchStooq(stooqUrl);
             if (!response.ok) continue;
             const csv = await response.text();
             const lines = csv.trim().split('\n');
@@ -416,7 +426,17 @@ const getStooqLivePrices = async (symbols: string[]): Promise<{ [symbol: string]
 };
 
 // Helper function to securely invoke the Gemini API via a Netlify Function.
+/** Clears legacy client block (older builds set this after Grok/credit errors). Safe to call from Settings. */
+export function clearAiProxySessionBlock(): void {
+    try {
+        sessionStorage.removeItem('finova_ai_proxy_block_reason');
+    } catch {
+        /* ignore */
+    }
+}
+
 async function invokeGeminiProxy(payload: { model: string, contents: any, config?: any }): Promise<any> {
+    clearAiProxySessionBlock();
     const endpoints = ['/api/gemini-proxy', '/.netlify/functions/gemini-proxy'];
     let lastError: Error | null = null;
 
@@ -455,7 +475,7 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
 
             return await response.json();
         } catch (error) {
-            console.error(`Error invoking AI proxy endpoint ${endpoint}:`, error);
+            console.warn(`AI proxy endpoint ${endpoint} failed:`, error instanceof Error ? error.message : String(error));
             if (error instanceof DOMException && error.name === 'AbortError') {
                 lastError = new Error('AI request timed out while waiting for proxy response.');
                 continue;
@@ -1287,6 +1307,12 @@ export interface InvestmentHubAiMeta {
   holdingCount?: number;
   watchlistCount?: number;
   totalValueSAR?: number;
+  /** Paper P/L in SAR (from app engine — do not invent). */
+  unrealizedGainLossSAR?: number;
+  /** Simple ROI % on net capital. */
+  roiPct?: number;
+  /** Estimated one-day change SAR. */
+  dailyPnLSAR?: number;
   commoditiesValueSAR?: number;
   appDisplayCurrency?: string;
   executionLogCount?: number;
@@ -1295,17 +1321,45 @@ export interface InvestmentHubAiMeta {
 export const getInvestmentAIAnalysis = async (holdings: Holding[], meta?: InvestmentHubAiMeta): Promise<string> => {
   const symKey = holdings.map((h) => (h.symbol ?? '') + h.quantity).join(',');
   const metaKey = meta
-    ? `${meta.activeTab ?? ''}|${meta.portfolioCount ?? ''}|${meta.holdingCount ?? ''}|${meta.watchlistCount ?? ''}|${meta.totalValueSAR ?? ''}|${meta.commoditiesValueSAR ?? ''}|${meta.executionLogCount ?? ''}`
+    ? `${meta.activeTab ?? ''}|${meta.portfolioCount ?? ''}|${meta.holdingCount ?? ''}|${meta.watchlistCount ?? ''}|${meta.totalValueSAR ?? ''}|${meta.unrealizedGainLossSAR ?? ''}|${meta.roiPct ?? ''}|${meta.dailyPnLSAR ?? ''}|${meta.commoditiesValueSAR ?? ''}|${meta.executionLogCount ?? ''}`
     : '';
   const cacheKey = `getInvestmentAIAnalysis:${symKey}:${metaKey}`;
   const cached = getFromCache(cacheKey);
   if (cached) return cached;
   try {
-    const hub =
-      meta && (meta.activeTab || meta.portfolioCount != null)
-        ? `Workspace context: user is on the "${meta.activeTab ?? 'Investments'}" tab. Personal portfolios: ${meta.portfolioCount ?? 'n/a'}, listed holdings: ${meta.holdingCount ?? 'n/a'}, watchlist symbols: ${meta.watchlistCount ?? 'n/a'}. Approximate total invested book value in SAR (platforms + commodities): ${typeof meta.totalValueSAR === 'number' ? meta.totalValueSAR.toFixed(0) : 'n/a'}; commodities portion (SAR): ${typeof meta.commoditiesValueSAR === 'number' ? meta.commoditiesValueSAR.toFixed(0) : 'n/a'}. App display currency label: ${meta.appDisplayCurrency ?? 'SAR'}. Stored execution log rows: ${typeof meta.executionLogCount === 'number' ? meta.executionLogCount : 'n/a'}. `
-        : '';
-    const prompt = `You are Finova AI, a very clever expert investment advisor. ${hub}Based on these equity/fund holdings (symbols only), give a brief Markdown analysis with ### sections: Diversification, Concentration risk, How this tab fits their workflow (one short paragraph). Be direct; educational tone; no specific buy/sell orders. No HTML. Holdings: ${holdings.map((h) => h.symbol ?? '').filter(Boolean).join(', ') || '(none)'}`;
+    const facts: string[] = [];
+    if (meta) {
+      facts.push(`Tab: ${meta.activeTab ?? 'Investments'}.`);
+      facts.push(`Portfolios (personal): ${meta.portfolioCount ?? 'n/a'}; holdings listed: ${meta.holdingCount ?? 'n/a'}; watchlist symbols: ${meta.watchlistCount ?? 'n/a'}.`);
+      if (typeof meta.totalValueSAR === 'number') facts.push(`Total portfolio value (SAR, app-calculated): ${meta.totalValueSAR.toFixed(0)}.`);
+      if (typeof meta.unrealizedGainLossSAR === 'number') facts.push(`Unrealized P/L (SAR): ${meta.unrealizedGainLossSAR.toFixed(0)}.`);
+      if (typeof meta.roiPct === 'number' && Number.isFinite(meta.roiPct)) facts.push(`Portfolio ROI (%): ${meta.roiPct.toFixed(2)}.`);
+      if (typeof meta.dailyPnLSAR === 'number') facts.push(`Estimated daily P/L (SAR): ${meta.dailyPnLSAR.toFixed(0)}.`);
+      if (typeof meta.commoditiesValueSAR === 'number') facts.push(`Commodities value (SAR): ${meta.commoditiesValueSAR.toFixed(0)}.`);
+      facts.push(`App display currency label: ${meta.appDisplayCurrency ?? 'SAR'}.`);
+      if (typeof meta.executionLogCount === 'number') facts.push(`Stored plan execution log rows: ${meta.executionLogCount}.`);
+    }
+    const factsBlock = facts.length ? `FACTS (use only these numbers; if something is missing say "not shown in app" — do not invent prices, balances, or returns):\n${facts.join(' ')}\n` : '';
+    const symbolsList = holdings.map((h) => h.symbol ?? '').filter(Boolean).join(', ') || '(none)';
+    const prompt = `You are Finova AI. Write for someone who is NOT a finance professional: short sentences, plain words, no jargon without a one-line explanation.
+
+${factsBlock}
+Holdings symbols (from the user's data only): ${symbolsList}
+
+Return GitHub-flavored Markdown with exactly these ### sections in order:
+### Portfolio snapshot
+Reference only the FACTS numbers above for totals and P/L. One short paragraph.
+
+### Diversification
+What the mix of symbols suggests (no invented percentages per symbol).
+
+### Concentration risk
+If few symbols or one sector could dominate — stay general unless FACTS imply it.
+
+### How to use this workspace
+One paragraph: how the Investments tabs (Overview, Plan, etc.) help them stay organized.
+
+Rules: No buy/sell recommendations. No HTML. No tables. Use **bold** sparingly for key terms.`;
     const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
     const result = response.text || 'Could not retrieve analysis.';
     setToCache(cacheKey, result);
@@ -1331,35 +1385,6 @@ export interface CommoditiesAiContext {
   sarPerUsd: number;
   holdingCount: number;
 }
-
-export interface ExecutionHistoryAiContext {
-  total: number;
-  success: number;
-  failure: number;
-  other: number;
-  /** Current UI filter so the model knows the user may be looking at a subset. */
-  filterLabel: string;
-  sampleLines: string[];
-}
-
-export const getAIExecutionHistoryDigest = async (ctx: ExecutionHistoryAiContext): Promise<string> => {
-  const cacheKey = `getAIExecutionHistoryDigest:${ctx.total}:${ctx.success}:${ctx.failure}:${ctx.filterLabel}:${ctx.sampleLines.join(';').slice(0, 240)}`;
-  const cached = getFromCache(cacheKey);
-  if (cached) return cached;
-  try {
-    const lines =
-      ctx.sampleLines.length > 0
-        ? ctx.sampleLines.join('\n')
-        : '(no sample rows)';
-    const prompt = `You are Finova AI. The user reviews automated investment plan execution logs (simulation / journaling — not guaranteed real broker fills).\nCounts (all stored runs): ${ctx.total} total, ${ctx.success} success, ${ctx.failure} failed, ${ctx.other} other/unknown.\nUI filter active: "${ctx.filterLabel}".\nRecent sample lines (dates + status + trade count hints):\n${lines}\n\nReturn short Markdown with ### Hygiene, ### When failures matter, ### Next checks. Operational tone; no buy/sell advice. No HTML.`;
-    const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
-    const result = response.text || 'Could not retrieve analysis.';
-    setToCache(cacheKey, result);
-    return result;
-  } catch (error) {
-    return formatAiError(error);
-  }
-};
 
 /** Context for Wealth Ultra plain-language digest (engine uses USD for portfolio math; plan budget may be SAR). */
 export interface WealthUltraAiContext {
@@ -1820,15 +1845,18 @@ const buildRuleBasedRebalancingPlan = (
         other: toPct(bucket.other),
     };
 
-    const topHolding = normalized.slice().sort((a, b) => b.value - a.value)[0];
+    const byVal = normalized.slice().sort((a, b) => b.value - a.value);
+    const topHolding = byVal[0];
+    const secondHolding = byVal[1];
     const topPct = topHolding ? toPct(topHolding.value) : 0;
+    const topTwoPct = topPct + (secondHolding ? toPct(secondHolding.value) : 0);
     const target = targetByRisk[riskProfile];
     const fivePct = totalValue * 0.05;
     const fmt = (n: number) => formatBookCurrencyAmount(n, bookCurrency);
 
     return `### Current Portfolio Analysis
 - **${portfolioName || 'Portfolio'}** total (holdings only): **${fmt(totalValue)}** — all figures in **${curLabel}** (1 USD = ${sarPerUsd.toFixed(4)} SAR for reference).
-- Concentration is ${topPct > 35 ? '**high**' : topPct > 20 ? '**moderate**' : '**controlled**'}; largest line is **${topHolding?.symbol || 'N/A'}** at **${topPct.toFixed(1)}%** of holdings.
+- Concentration is ${topPct > 35 ? '**high**' : topPct > 20 ? '**moderate**' : '**controlled**'}; largest line is **${topHolding?.symbol || 'N/A'}** at **${topPct.toFixed(1)}%**; top **two** lines combined **${topTwoPct.toFixed(1)}%**${secondHolding ? ` (${secondHolding.symbol} ${toPct(secondHolding.value).toFixed(1)}%)` : ''}.
 - Current mix: **Stocks ${current.stocks.toFixed(1)}% · Sukuk/Bonds ${current.sukuk.toFixed(1)}% · Other ${current.other.toFixed(1)}%**.
 
 ### Target Allocation (${riskProfile})
@@ -1854,32 +1882,68 @@ export const getAIRebalancingPlan = async (
     if (normalized.length === 0 || totalValue <= 0) {
         return buildRuleBasedRebalancingPlan(holdings, riskProfile, meta);
     }
-    const lines = normalized
-        .slice()
-        .sort((a, b) => b.value - a.value)
+
+    const equityLike = new Set(['Stock', 'ETF', 'Mutual Fund', 'REIT']);
+    const bucket = { stocks: 0, sukuk: 0, other: 0 };
+    normalized.forEach((h) => {
+        const ac = h.assetClass || 'Other';
+        if (ac === 'Sukuk') bucket.sukuk += h.value;
+        else if (equityLike.has(ac)) bucket.stocks += h.value;
+        else bucket.other += h.value;
+    });
+    const toPct = (v: number) => (totalValue > 0 ? (v / totalValue) * 100 : 0);
+    const currentBuckets = {
+        stocks: toPct(bucket.stocks),
+        sukuk: toPct(bucket.sukuk),
+        other: toPct(bucket.other),
+    };
+
+    const sorted = normalized.slice().sort((a, b) => b.value - a.value);
+    const h1 = sorted[0];
+    const h2 = sorted[1];
+    const top1Pct = h1 && totalValue > 0 ? (h1.value / totalValue) * 100 : 0;
+    const top2Pct = h2 && totalValue > 0 ? (h2.value / totalValue) * 100 : 0;
+    const topTwoCombinedPct = top1Pct + (h2 ? top2Pct : 0);
+    const fivePctAmount = formatBookCurrencyAmount(totalValue * 0.05, bookCurrency);
+
+    const lines = sorted
         .slice(0, 24)
-        .map((h) => `${h.symbol ?? '—'}: ${formatBookCurrencyAmount(h.value, bookCurrency)} (${h.assetClass || 'Other'}, ${totalValue > 0 ? ((h.value / totalValue) * 100).toFixed(1) : '0'}%)`);
+        .map(
+            (h) =>
+                `${h.symbol ?? '—'}: ${formatBookCurrencyAmount(h.value, bookCurrency)} (${h.assetClass || 'Other'}, ${totalValue > 0 ? ((h.value / totalValue) * 100).toFixed(1) : '0'}%)`,
+        );
     const holdingsSummary = lines.join('; ') || '(no priced positions)';
 
     try {
         const prompt = `${DEFAULT_SYSTEM_INSTRUCTION}
 
-Portfolio: **${portfolioName || 'Selected portfolio'}**.
-All **monetary amounts in this analysis are in ${curLabel}** (portfolio book currency). Reference FX: **1 USD = ${sarPerUsd.toFixed(4)} SAR** (do not convert line items to the other currency unless showing an approximate secondary figure in parentheses).
-Holdings value total (**${curLabel}**): **${formatBookCurrencyAmount(totalValue, bookCurrency)}**.
-Risk profile: **${riskProfile}**.
-Line items: ${holdingsSummary}
+You must ground every numeric claim in the **Ground truth** block below. If a figure is not listed there, do not invent it. Do not restate a different portfolio total, concentration %, or top-holding weight than given.
 
-Return a short rebalancing analysis in Markdown only (no HTML). Use ### for each section. Be direct; use only the numbers above (do not invent SAR if the book currency is USD).
+**Ground truth (${curLabel} book currency, same as Portfolios / this screen):**
+- Portfolio name: **${portfolioName || 'Selected portfolio'}**
+- Holdings count (priced lines): **${normalized.length}**
+- Total market value (holdings only): **${formatBookCurrencyAmount(totalValue, bookCurrency)}**
+- FX reference only: 1 USD = ${sarPerUsd.toFixed(4)} SAR (use **${curLabel}** for all primary amounts)
+- Asset-class mix by value: Stocks **${currentBuckets.stocks.toFixed(1)}%** · Sukuk/Bonds **${currentBuckets.sukuk.toFixed(1)}%** · Other **${currentBuckets.other.toFixed(1)}%**
+- Largest line: **${h1?.symbol ?? '—'}** = **${top1Pct.toFixed(2)}%** of portfolio
+- Second largest: **${h2 ? `${h2.symbol} = ${top2Pct.toFixed(2)}%` : 'N/A (single position)'}**
+- Combined weight of top two lines: **${topTwoCombinedPct.toFixed(2)}%**
+- Example single-name cap (5% of portfolio, educational): **${fivePctAmount}**
+
+Risk profile selected by user: **${riskProfile}**.
+
+**Line items (symbol: amount, class, weight):** ${holdingsSummary}
+
+Return a short rebalancing analysis in Markdown only (no HTML). Use ### for each section. Be direct.
 
 ### Current Portfolio Analysis
-- Two bullets: diversification/concentration, and whether risk seems aligned with **${riskProfile}** for this mix.
+- Two bullets: cite **exact** concentration using largest line % and combined top-two % from Ground truth. Mention asset-class mix **exactly** as given.
 
 ### Target Allocation (${riskProfile})
-- 2–3 bullets: educational allocation ideas for this profile. Reference **${curLabel}** where you mention amounts.
+- 2–3 bullets: educational ideas for this profile; do not contradict Ground truth totals.
 
 ### Rebalancing Suggestions
-- 3 bullets: practical, educational steps (no specific buy/sell orders). Mention position sizing in **${curLabel}** using ~5% of **${formatBookCurrencyAmount(totalValue * 0.05, bookCurrency)}** as an example cap for a single name only if relevant.
+- 3 bullets: practical, educational steps (no specific buy/sell orders). If you mention a position-size example, use **${fivePctAmount}** (${curLabel}) or refer to it as ~5% of the stated total.
 
 Markdown only.`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
@@ -2231,22 +2295,52 @@ Rules:
     return out || src;
 }
 
-export const getAIDividendAnalysis = async (ytdIncome: number, projectedAnnual: number, topPayers: {name: string, projected: number}[]): Promise<string> => {
+export const getAIDividendAnalysis = async (
+    ytdIncome: number,
+    projectedAnnual: number,
+    trailing12mActual: number,
+    topPayers: { name: string; symbol: string; projected: number }[],
+): Promise<string> => {
     try {
-        const prompt = `You are a dividend analyst. Data: YTD ${ytdIncome.toLocaleString()} SAR; projected annual ${projectedAnnual.toLocaleString()} SAR; top payers: ${topPayers.map(p => `${p.name} (~${p.projected.toLocaleString()} SAR/yr)`).join(', ')}. Return a short analysis in Markdown only (no HTML). Use ### for each section. Be direct.
+        const payerLines =
+            topPayers.length > 0
+                ? topPayers
+                      .map(
+                          (p) =>
+                              `${(p.symbol || '—').trim()} — ${(p.name || '').trim()} — ${Math.round(p.projected).toLocaleString()} SAR/yr (forward model estimate)`,
+                      )
+                      .join('\n')
+                : '(none — no forward estimates available)';
+        const prompt = `You are a dividend analyst for a personal finance app. Use ONLY the figures below. Do not invent amounts, symbols, yields, or company facts not stated here.
 
-### On Track?
-- One sentence: is YTD vs projected on track? Use numbers.
+Figures (SAR, display currency):
+- YTD dividend income (actual, from ledger): ${Math.round(ytdIncome).toLocaleString()}
+- Trailing 12 months dividend income (actual, from ledger): ${Math.round(trailing12mActual).toLocaleString()}
+- Projected annual dividend income (forward-looking model from holdings + fundamentals, not broker-reported): ${Math.round(projectedAnnual).toLocaleString()}
+
+Top contributors by projected annual income (forward model):
+${payerLines}
+
+Rules:
+- If YTD and trailing 12m are both zero, say recorded dividend history is empty and do not speculate about portfolio performance or future dividends.
+- Do not equate projected annual with realized income; label projections as estimates when you mention them.
+- Keep commentary educational; no personalized investment advice or buy/sell instructions.
+
+Return Markdown only (no HTML). Use ### for each section.
+
+### On track?
+- One or two short sentences comparing actuals (YTD / trailing 12m) to the forward projection only when at least one actual figure is non-zero; otherwise explain that there is no dividend history in the ledger yet.
 
 ### Concentration
-- 1-2 bullets on concentration risk from top contributors.
+- 1–2 bullets on concentration among the listed top contributors (if any); if none, say estimates are unavailable.
 
 ### Suggestion
-- One educational tip to improve a dividend strategy. One sentence.
-No financial advice. Markdown only.`;
+- One sentence: general educational practice for dividend income tracking (not ticker-specific advice).`;
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
         return response.text || "Could not retrieve dividend analysis.";
-    } catch (error) { return formatAiError(error); }
+    } catch (error) {
+        return formatAiError(error);
+    }
 };
 
 export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {

@@ -3,9 +3,23 @@ import { ResponsiveContainer, Treemap, Tooltip } from 'recharts';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { formatSymbolWithCompany, type SymbolNamesMap } from '../SymbolWithCompanyName';
 
+const truncateForWidth = (text: string, width: number, fontSize: number): string => {
+    const safe = String(text || '').trim();
+    if (!safe) return '';
+    const usableWidth = Math.max(0, width - 12);
+    const avgCharWidth = fontSize * 0.56;
+    const maxChars = Math.max(3, Math.floor(usableWidth / Math.max(1, avgCharWidth)));
+    if (safe.length <= maxChars) return safe;
+    return `${safe.slice(0, Math.max(1, maxChars - 1))}…`;
+};
+
 const CustomizedContent: React.FC<any> = ({ depth, x, y, width, height, name, gainLossPercent, color }) => {
     const textColor = 'white';
-    const fontSize = Math.min(width / 4, height / 2.5, 16);
+    const fontSize = Math.max(10, Math.min(width / 9, height / 3.2, 14));
+    const pctFontSize = Math.max(9, Math.min(12, fontSize * 0.82));
+    const line1 = truncateForWidth(String(name ?? ''), width, fontSize);
+    const showPct = width > 85 && height > 40;
+    const clipId = `treemap-label-${Math.round(x)}-${Math.round(y)}-${Math.round(width)}-${Math.round(height)}`;
 
     return (
         <g>
@@ -23,11 +37,29 @@ const CustomizedContent: React.FC<any> = ({ depth, x, y, width, height, name, ga
                     strokeOpacity: 1,
                 }}
             />
-            {depth === 1 && width > 50 && height > 25 ? (
-                <text x={x + width / 2} y={y + height / 2} dy=".35em" textAnchor="middle" fill={textColor} style={{ fontSize: `${fontSize}px`, fontWeight: 'bold' }}>
-                    <tspan x={x + width / 2} dy="-0.5em">{name}</tspan>
-                    <tspan x={x + width / 2} dy="1.2em" style={{ opacity: 0.8, fontSize: `${fontSize * 0.8}px` }}>{(gainLossPercent ?? 0).toFixed(1)}%</tspan>
-                </text>
+            {depth === 1 && width > 54 && height > 24 ? (
+                <>
+                    <defs>
+                        <clipPath id={clipId}>
+                            <rect x={x + 4} y={y + 4} width={Math.max(0, width - 8)} height={Math.max(0, height - 8)} rx={3} ry={3} />
+                        </clipPath>
+                    </defs>
+                    <text
+                        x={x + width / 2}
+                        y={y + height / 2}
+                        textAnchor="middle"
+                        fill={textColor}
+                        clipPath={`url(#${clipId})`}
+                        style={{ fontSize: `${fontSize}px`, fontWeight: 700 }}
+                    >
+                        <tspan x={x + width / 2} dy={showPct ? '-0.35em' : '0.35em'}>{line1}</tspan>
+                        {showPct ? (
+                            <tspan x={x + width / 2} dy="1.2em" style={{ opacity: 0.9, fontSize: `${pctFontSize}px` }}>
+                                {(gainLossPercent ?? 0).toFixed(1)}%
+                            </tspan>
+                        ) : null}
+                    </text>
+                </>
             ) : null}
         </g>
     );
@@ -35,11 +67,11 @@ const CustomizedContent: React.FC<any> = ({ depth, x, y, width, height, name, ga
 
 const TreemapTooltip: React.FC<{ active?: boolean; payload?: any[]; formatValue?: (n: number) => string }> = ({ active, payload, formatValue }) => {
     if (active && payload && payload.length) {
-        const { name, size, gainLossPercent } = payload[0].payload;
+        const { name, fullName, size, gainLossPercent } = payload[0].payload;
         const fmt = formatValue ?? ((n: number) => new Intl.NumberFormat('en-US', { style: 'currency', minimumFractionDigits: 0 }).format(n));
         return (
             <div className="bg-white border border-slate-200 rounded-xl shadow-lg px-3 py-2.5 text-sm min-w-[140px]">
-                <p className="font-semibold text-slate-800 break-words leading-tight" title={name}>{name}</p>
+                <p className="font-semibold text-slate-800 break-words leading-tight" title={fullName || name}>{fullName || name}</p>
                 <p className="text-slate-600">Market value: {fmt(size)}</p>
                 <p className={gainLossPercent >= 0 ? 'text-emerald-600 font-medium' : 'text-red-600 font-medium'}>
                     Performance: {gainLossPercent.toFixed(2)}%
@@ -132,18 +164,20 @@ const PerformanceTreemap: React.FC<{ data: any[]; companyNames?: SymbolNamesMap 
 
                 if (size <= 0) return null;
 
-                const sym = item.symbol || '';
-                const label = sym
+                const sym = String(item.symbol || '').trim();
+                const companyLabel = sym
                     ? formatSymbolWithCompany(sym, item.name, companyNames)
                     : item.name || 'Unknown';
+                const compactLabel = sym || String(item.name || 'Unknown');
                 return {
-                    name: label,
+                    name: compactLabel,
+                    fullName: companyLabel,
                     size,
                     gainLossPercent: Number.isFinite(item.gainLossPercent) ? item.gainLossPercent : 0,
                     color: getColor(item.gainLossPercent),
                 };
             })
-            .filter((item): item is { name: string; size: number; gainLossPercent: number; color: string } => Boolean(item))
+            .filter((item): item is { name: string; fullName: string; size: number; gainLossPercent: number; color: string } => Boolean(item))
     ), [data, companyNames]);
 
     const enableAnimation = processedData.length <= 60 && !prefersReducedMotion;

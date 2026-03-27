@@ -60,8 +60,7 @@ const SectionCard: React.FC<SectionCardProps> = ({
   collapsibleSummary,
   defaultExpanded: _defaultExpanded,
 }) => {
-  void _defaultExpanded;
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(_defaultExpanded ?? true);
   const cardClass = hover || onClick ? 'section-card-hover' : 'section-card';
   const resolvedHint = resolveSectionInfoHint({
     title,
@@ -90,20 +89,23 @@ const SectionCard: React.FC<SectionCardProps> = ({
   const content = (
     <>
       {collapsible && title ? (
-        <div className="flex items-center justify-between gap-2 w-full rounded-lg -m-1 p-1 min-w-0 hover:bg-slate-50/80 transition-colors">
+        <div className="flex items-center justify-between gap-3 w-full min-h-[44px] rounded-lg -mx-1 px-1 min-w-0 hover:bg-slate-50/80 transition-colors">
           <button
             type="button"
             onClick={() => setExpanded((e) => !e)}
-            className="flex items-center gap-2 min-w-0 flex-1 text-left py-1 pr-1 cursor-pointer rounded-lg"
+            className="flex items-center gap-2 min-w-0 flex-1 text-left py-0.5 pr-1 cursor-pointer rounded-lg"
             aria-expanded={expanded}
           >
             {icon}
-            <h2 className="section-title text-base font-semibold text-slate-800 truncate">{title}</h2>
+            {/* Avoid global `.section-title { margin-bottom }` here — it skews row height vs chevron column. */}
+            <h2 className="mb-0 text-base sm:text-lg font-semibold text-dark truncate leading-tight">
+              {title}
+            </h2>
             {collapsibleSummary && !expanded && (
               <span className="hidden sm:inline text-sm text-slate-500 truncate ml-1">— {collapsibleSummary}</span>
             )}
           </button>
-          <div className="flex items-center gap-1 shrink-0 relative z-20 pt-0.5">
+          <div className="flex items-center gap-1 shrink-0 relative z-20 self-center">
             {resolvedHint ? <InfoHint text={resolvedHint} popoverAlign="right" /> : null}
             <button
               type="button"
@@ -120,7 +122,7 @@ const SectionCard: React.FC<SectionCardProps> = ({
         headerContent
       )}
       {(!collapsible || expanded) && (
-        <div className={collapsible ? 'pt-3 mt-1 border-t border-slate-100' : undefined}>
+        <div className={collapsible ? 'pt-4 mt-3 border-t border-slate-100' : undefined}>
           {collapsible && headerAction ? <div className="mb-2">{headerAction}</div> : null}
           {children}
         </div>

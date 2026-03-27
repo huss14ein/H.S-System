@@ -5,8 +5,7 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useCurrency } from '../context/CurrencyContext';
 import InfoHint from '../components/InfoHint';
 import SectionCard from '../components/SectionCard';
-import type { Holding, InvestmentPortfolio, TradeCurrency } from '../types';
-import type { RecoveryPositionConfig, RecoveryGlobalConfig, RecoveryOrderDraft } from '../types';
+import type { Holding, InvestmentPortfolio, PlannedTrade, RecoveryOrderDraft, RecoveryPositionConfig, RecoveryGlobalConfig, TradeCurrency } from '../types';
 import {
   buildRecoveryPlan,
   computeNewAverage,
@@ -41,6 +40,9 @@ import {
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import { ResolvedSymbolLabel, formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
 import { getPersonalInvestments } from '../utils/wealthScope';
+import { toast } from '../context/ToastContext';
+import { recoveryOrderDraftToPlannedTrade, plannedTradeMatchesRecoveryDraft } from '../services/recoveryToPlannedTrade';
+import { validatePlannedTrade } from '../services/dataQuality/validation';
 
 interface RecoveryPlanViewProps {
   onNavigateToTab?: (tab: string) => void;
@@ -80,13 +82,14 @@ const deriveDynamicPositionConfig = (
 };
 function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActivePage }: RecoveryPlanViewProps) {
   const ctx = useContext(DataContext)!;
-  const { data, loading, getAvailableCashForAccount } = ctx;
+  const { data, loading, getAvailableCashForAccount, addPlannedTrade } = ctx;
   const { exchangeRate } = useCurrency();
   const { trackAction } = useSelfLearning();
   const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
-  const { isAiAvailable } = useAI();
+  const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
+  const aiOptimizeDisabled = !aiActionsEnabled;
 
   const allHoldingsWithPortfolio = useMemo(() => {
     const list: { holding: Holding; portfolioName: string; bookCurrency: TradeCurrency; accountId?: string }[] = [];
@@ -160,6 +163,10 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }), [deployableCashSAR]);
 
   const universe = data?.portfolioUniverse ?? [];
+  const planCurrency = useMemo(
+    () => (data?.investmentPlan?.budgetCurrency as TradeCurrency) || 'SAR',
+    [data?.investmentPlan?.budgetCurrency],
+  );
   const coreUpsideSpec = useMemo(() => {
     const coreTickers: string[] = [];
     const upsideTickers: string[] = [];
@@ -180,6 +187,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
   const [selectedHoldingId, setSelectedHoldingId] = useState<string | null>(null);
   const [draftOrders, setDraftOrders] = useState<RecoveryOrderDraft[] | null>(null);
+  const [insertingPlanKey, setInsertingPlanKey] = useState<string | null>(null);
   const [selectedFundamentals, setSelectedFundamentals] = useState<HoldingFundamentals | null>(null);
   const [isSelectedFundamentalsLoading, setIsSelectedFundamentalsLoading] = useState(false);
   const [selectedFundamentalsError, setSelectedFundamentalsError] = useState<string | null>(null);
@@ -407,6 +415,109 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     : deployableCashSAR / sarPerUsd;
   const isSelected = (holdingId: string) => selectedHoldingId === holdingId;
 
+  const resolveDisplayNameForDraft = useCallback(
+    (draft: RecoveryOrderDraft) => {
+      const sym = draft.symbol.toUpperCase();
+      const fromUniverse = universe.find((u: { ticker?: string }) => (u.ticker ?? '').toUpperCase() === sym)?.name;
+      if (fromUniverse && String(fromUniverse).trim()) return String(fromUniverse).trim();
+      if (selected?.holding?.symbol?.toUpperCase() === sym && selected.holding.name) return String(selected.holding.name).trim();
+      return sym;
+    },
+    [universe, selected],
+  );
+
+  const insertRecoveryDraftIntoInvestmentPlan = useCallback(
+    async (draft: RecoveryOrderDraft, index: number) => {
+      const key = `${draft.symbol}-${index}`;
+      setInsertingPlanKey(key);
+      try {
+        const displayName = resolveDisplayNameForDraft(draft);
+        const limitPriceCurrency = selected?.bookCurrency ?? 'USD';
+        const payload = recoveryOrderDraftToPlannedTrade(draft, {
+          displayName,
+          planCurrency,
+          sarPerUsd,
+          limitPriceCurrency,
+        });
+        if (plannedTradeMatchesRecoveryDraft(data?.plannedTrades ?? [], payload)) {
+          toast('This limit is already in Trade plans.', 'info');
+          return;
+        }
+        const v = validatePlannedTrade(payload);
+        if (!v.valid) {
+          toast(v.errors.join('\n'), 'error');
+          return;
+        }
+        await addPlannedTrade(payload);
+        toast(`${payload.symbol} added to Trade plans (Investment Plan tab).`, 'success');
+        trackAction('recovery-draft-to-investment-plan', 'Recovery Plan');
+      } catch (e) {
+        toast(e instanceof Error ? e.message : 'Could not add to Investment Plan.', 'error');
+      } finally {
+        setInsertingPlanKey(null);
+      }
+    },
+    [addPlannedTrade, data?.plannedTrades, planCurrency, resolveDisplayNameForDraft, sarPerUsd, selected?.bookCurrency, trackAction],
+  );
+
+  const insertAllRecoveryDraftsIntoInvestmentPlan = useCallback(async () => {
+    if (!draftOrders?.length) return;
+    setInsertingPlanKey('__all__');
+    let added = 0;
+    let skipped = 0;
+    try {
+      const seen = new Set<string>();
+      const existing = [...(data?.plannedTrades ?? [])];
+      for (let i = 0; i < draftOrders.length; i++) {
+        const d = draftOrders[i];
+        const displayName = resolveDisplayNameForDraft(d);
+        const limitPriceCurrency = selected?.bookCurrency ?? 'USD';
+        const payload = recoveryOrderDraftToPlannedTrade(d, {
+          displayName,
+          planCurrency,
+          sarPerUsd,
+          limitPriceCurrency,
+        });
+        const dedupeKey = `${payload.symbol}|${payload.tradeType}|${payload.targetValue}|${payload.quantity}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        if (plannedTradeMatchesRecoveryDraft(existing, payload)) {
+          skipped += 1;
+          continue;
+        }
+        const v = validatePlannedTrade(payload);
+        if (!v.valid) {
+          toast(`${payload.symbol}: ${v.errors[0] ?? 'Invalid plan'}`, 'error');
+          continue;
+        }
+        await addPlannedTrade(payload);
+        existing.push({ id: `local-${i}`, user_id: '', ...payload } as PlannedTrade);
+        added += 1;
+      }
+      if (added > 0) {
+        toast(`Added ${added} trade plan${added === 1 ? '' : 's'}.${skipped ? ` ${skipped} already existed.` : ''}`, 'success');
+        trackAction('recovery-draft-to-investment-plan-batch', 'Recovery Plan');
+        onNavigateToTab?.('Investment Plan');
+      } else if (skipped > 0) {
+        toast('All matching limits are already in Trade plans.', 'info');
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not add plans.', 'error');
+    } finally {
+      setInsertingPlanKey(null);
+    }
+  }, [
+    addPlannedTrade,
+    data?.plannedTrades,
+    draftOrders,
+    onNavigateToTab,
+    planCurrency,
+    resolveDisplayNameForDraft,
+    sarPerUsd,
+    selected?.bookCurrency,
+    trackAction,
+  ]);
+
   const whatIfSimulation = useMemo(() => {
     if (!selected || !selectedPlan) return null;
     const spend = parseFloat(whatIfSpend);
@@ -446,7 +557,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }, [selected, selectedPlan, sarPerUsd, formatCurrencyString]);
 
   useEffect(() => {
-    if (recoveryDisplayLang !== 'ar' || !isAiAvailable) {
+    if (recoveryDisplayLang !== 'ar' || !aiActionsEnabled) {
       setRecoveryBriefAr(null);
       setRecoveryNotesAr(null);
       setRecoveryTranslateErr(null);
@@ -481,7 +592,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     return () => {
       cancelled = true;
     };
-  }, [recoveryDisplayLang, isAiAvailable, selectedRecoveryBrief, selected?.aiNotes, selected?.holding?.id]);
+  }, [recoveryDisplayLang, aiActionsEnabled, selectedRecoveryBrief, selected?.aiNotes, selected?.holding?.id]);
 
   const refreshAiRecoveryConfig = useCallback(async () => {
     if (!selected) return;
@@ -607,17 +718,17 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }
 
   return (
-    <div className="page-container min-h-[40rem]">
+    <div className="page-container min-h-[40rem] space-y-8 sm:space-y-10">
       {/* Hero */}
       <section className="section-card p-6 sm:p-8">
-        <div className="flex flex-col gap-6">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 bg-gradient-to-br from-primary to-secondary rounded-2xl flex items-center justify-center shadow-lg">
+        <div className="flex flex-col gap-8">
+          <div className="flex flex-wrap items-center gap-5">
+            <div className="flex items-center gap-4 min-w-0">
+              <div className="w-16 h-16 bg-gradient-to-br from-primary to-secondary rounded-2xl flex items-center justify-center shadow-lg shrink-0">
                 <span className="text-white font-bold text-xl">R</span>
               </div>
-              <div>
-                <h2 className="text-3xl font-bold text-slate-900 flex items-center gap-3">
+              <div className="min-w-0">
+                <h2 className="text-3xl font-bold text-slate-900 flex flex-wrap items-center gap-2">
                   Recovery Plan (Averaging / Correction Engine)
                   <InfoHint text="Controlled workflow for positions in loss: only activates when loss exceeds your trigger (e.g. 20%). Builds a limited buy ladder (1–3 orders), predicts new average cost, and can generate exit targets. Safe guardrails prevent over-spending." />
                 </h2>
@@ -625,11 +736,34 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-3 ml-auto">
-              <span className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold shadow-md ${
-                isAiAvailable ? 'bg-gradient-to-r from-emerald-100 to-emerald-200 text-emerald-800 border border-emerald-300' : 
-                'bg-gradient-to-r from-amber-100 to-amber-200 text-amber-800 border border-amber-300'
-              }`}>
-                {isAiAvailable ? <CheckCircleIcon className="h-5 w-5" /> : <ExclamationTriangleIcon className="h-5 w-5" />} AI {isAiAvailable ? 'Enabled' : 'Unavailable'}
+              <span
+                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold shadow-md border ${
+                  !aiHealthChecked
+                    ? 'bg-slate-100 text-slate-700 border-slate-200'
+                    : isAiAvailable
+                      ? 'bg-gradient-to-r from-emerald-100 to-emerald-200 text-emerald-800 border-emerald-300'
+                      : 'bg-gradient-to-r from-amber-100 to-amber-200 text-amber-800 border-amber-300'
+                }`}
+              >
+                {!aiHealthChecked ? (
+                  <>
+                    <span className="h-2 w-2 rounded-full bg-slate-400 animate-pulse" aria-hidden />
+                    Checking AI…
+                    <InfoHint text="Status unknown until the app finishes talking to the AI proxy. This is not the same as “off”—wait a moment, or confirm Netlify env keys if it stays here." />
+                  </>
+                ) : isAiAvailable ? (
+                  <>
+                    <CheckCircleIcon className="h-5 w-5 shrink-0" />
+                    AI ready
+                    <InfoHint text="At least one backend AI provider is configured (e.g. Gemini, Claude, OpenAI, Grok). Optional AI optimize buttons can call the model; the ladder and guardrails still work without AI." />
+                  </>
+                ) : (
+                  <>
+                    <ExclamationTriangleIcon className="h-5 w-5 shrink-0" />
+                    AI unavailable
+                    <InfoHint text="No AI provider key reported by the proxy, or all providers failed. Configure GEMINI_API_KEY, OPENAI_API_KEY, or similar in Netlify. Recovery math and rules still run without AI." />
+                  </>
+                )}
               </span>
               {recoveryStats && recoveryStats.totalExecutions > 0 && (
                 <button
@@ -642,7 +776,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               )}
             </div>
           </div>
-          <div className="bg-slate-50 rounded-xl p-6 border border-slate-200">
+          <div className="bg-slate-50 rounded-xl p-5 sm:p-6 border border-slate-200">
             <p className="text-slate-700 leading-relaxed">
               Positions in loss are listed below. When a position qualifies, you can generate a recovery ladder and optional exit targets. Integrated with your Portfolios and Investment Plan; never runs if over budget, spec breach, or per-ticker cap exceeded.
             </p>
@@ -949,7 +1083,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       {selected && selectedPlan && (
         <SectionCard
           title={`${selected.holding.symbol ? formatSymbolWithCompany(selected.holding.symbol, selected.holding.name, recoveryCompanyNames) : 'Holding'} — Recovery Plan`}
-          className="space-y-5"
+          className="space-y-7"
           collapsible
           collapsibleSummary="Ladder, targets"
           defaultExpanded
@@ -1050,9 +1184,9 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                       /* ignore */
                     }
                   }}
-                  disabled={!isAiAvailable}
+                  disabled={aiOptimizeDisabled}
                   className={`rounded-md px-2.5 py-1.5 ${recoveryDisplayLang === 'ar' ? 'bg-slate-100 text-slate-900' : 'text-slate-600'} disabled:opacity-50`}
-                                title={!isAiAvailable ? 'Enable AI for Arabic translation' : 'Translate AI summary to Arabic'}
+                                title={aiOptimizeDisabled ? 'Wait for AI check or configure AI for Arabic translation' : 'Translate AI summary to Arabic'}
                 >
                   العربية
                 </button>
@@ -1060,16 +1194,18 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               <button 
                 type="button" 
                 onClick={refreshAiRecoveryConfig} 
-                disabled={isAiRecoveryLoading} 
+                disabled={aiOptimizeDisabled || isAiRecoveryLoading} 
                 className="px-4 py-2.5 rounded-xl border-2 border-primary/30 text-primary text-sm font-bold hover:bg-primary/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-sm hover:shadow-md"
+                title={aiOptimizeDisabled ? 'Configure AI in Netlify or wait for health check' : 'Run AI on selected position'}
               >
                 {isAiRecoveryLoading ? 'Optimizing…' : 'AI optimize selected'}
               </button>
               <button 
                 type="button" 
                 onClick={applyAiToAllQualifiedPositions} 
-                disabled={isBulkAiRecoveryLoading || qualifiedPositions.length === 0} 
+                disabled={aiOptimizeDisabled || isBulkAiRecoveryLoading || qualifiedPositions.length === 0} 
                 className="px-4 py-2.5 rounded-xl border-2 border-emerald-300 text-emerald-700 text-sm font-bold hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-sm hover:shadow-md"
+                title={aiOptimizeDisabled ? 'Configure AI in Netlify or wait for health check' : 'Run AI on all qualifying positions'}
               >
                 {isBulkAiRecoveryLoading ? 'Optimizing all…' : `AI optimize all (${qualifiedPositions.length})`}
               </button>
@@ -1129,7 +1265,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           )}
 
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 p-6 shadow-lg hover:shadow-xl transition-all duration-300">
               <div className="flex items-center justify-between mb-4">
                 <p className="text-sm font-bold text-slate-700 uppercase tracking-wider">Deployable cash ({selected.bookCurrency ?? 'USD'})</p>
@@ -1149,21 +1285,21 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               <p className="text-2xl font-black text-blue-900 tabular-nums">{formatCurrencyString(alternateCurrencyDeployableCash, { inCurrency: (selected?.bookCurrency === 'USD' ? 'SAR' : 'USD') as TradeCurrency })}</p>
             </div>
           </div>
-          {!isAiAvailable && (
-            <div className="rounded-2xl border-2 border-amber-200 bg-gradient-to-r from-amber-50 to-yellow-50 p-6 shadow-lg">
+          {aiHealthChecked && !isAiAvailable && (
+            <div className="rounded-2xl border-2 border-amber-200 bg-gradient-to-r from-amber-50 to-yellow-50 p-5 sm:p-6 shadow-lg">
               <div className="flex items-start gap-3">
                 <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-yellow-600 rounded-lg flex items-center justify-center flex-shrink-0">
                   <span className="text-white font-bold text-sm">⚠</span>
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-amber-800 mb-1">AI Currently Unavailable</p>
-                  <p className="text-sm text-amber-700 leading-relaxed">Recovery plan still runs with deterministic guardrails, dual-currency checks, and clear trigger logic.</p>
+                  <p className="text-sm font-bold text-amber-800 mb-1">AI not configured</p>
+                  <p className="text-sm text-amber-700 leading-relaxed">Optional AI tuning is off until you add an API key on the server. The recovery ladder, budgets, and guardrails still run with rule-based parameters—use the page normally.</p>
                 </div>
               </div>
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-7">
             <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 p-6 shadow-lg hover:shadow-xl transition-all duration-300">
               <div className="flex items-center justify-between mb-4">
                 <p className="text-sm font-bold text-slate-700 uppercase tracking-wider">Current Position</p>
@@ -1591,10 +1727,26 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       )}
 
       {draftOrders && draftOrders.length > 0 && (
-        <SectionCard title="Draft orders (export to broker)" className="space-y-3" collapsible collapsibleSummary="Limit orders">
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-sm text-slate-600">Copy or use these to place limit orders in your broker.</p>
-            <div className="flex gap-2">
+        <SectionCard
+          title="Draft orders (export to broker)"
+          className="space-y-3"
+          collapsible
+          collapsibleSummary="Limit orders"
+          infoHint="Each row is generated from the recovery ladder. Use Add to Trade plans to copy symbol, limit price, quantity, and notional into Investment Plan as price-triggered rules—no retyping. Buys trigger when price ≤ limit; sells when ≥ limit."
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
+            <p className="text-sm text-slate-600 max-w-2xl leading-relaxed">
+              Copy or export for your broker, or <span className="font-medium text-slate-800">insert into Trade plans</span> so the same limits appear under Investment Plan (scheduled rules), fully filled from this engine.
+            </p>
+            <div className="flex flex-wrap gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={insertAllRecoveryDraftsIntoInvestmentPlan}
+                disabled={insertingPlanKey !== null}
+                className="px-4 py-2 text-sm font-semibold rounded-lg bg-primary text-white hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {insertingPlanKey === '__all__' ? 'Adding…' : 'Add all to Trade plans'}
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -1645,34 +1797,47 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             {draftOrders.map((d, i) => (
               <div
                 key={i}
-                className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100 text-sm"
+                className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100 text-sm"
               >
-                <span className="font-semibold text-slate-800">
-                  {d.type} {d.symbol}
-                </span>
-                <span className="text-slate-600">Qty: {d.qty}</span>
-                <span className="text-slate-600">
-                  Limit:{' '}
-                  {formatCurrencyString(d.limitPrice, {
-                    inCurrency: selected?.bookCurrency ?? 'USD',
-                  })}
-                </span>
-                {d.label && <span className="text-slate-500">({d.label})</span>}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const text = `${d.type.toUpperCase()} ${d.symbol} - Qty: ${d.qty}, Limit: ${formatCurrencyString(d.limitPrice, { inCurrency: selected?.bookCurrency ?? 'USD' })}${d.label ? ` (${d.label})` : ''}`;
-                    navigator.clipboard.writeText(text).then(() => {
-                      // Visual feedback could be added here
-                    }).catch(() => {
-                      alert('Failed to copy to clipboard.');
-                    });
-                  }}
-                  className="ml-auto px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 rounded transition-colors"
-                  title="Copy this order"
-                >
-                  Copy
-                </button>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0 flex-1">
+                  <span className="font-semibold text-slate-800">
+                    {d.type} {d.symbol}
+                  </span>
+                  <span className="text-slate-600 tabular-nums">Qty: {d.qty}</span>
+                  <span className="text-slate-600">
+                    Limit:{' '}
+                    {formatCurrencyString(d.limitPrice, {
+                      inCurrency: selected?.bookCurrency ?? 'USD',
+                    })}
+                  </span>
+                  {d.label && <span className="text-slate-500">({d.label})</span>}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 sm:ml-auto shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => insertRecoveryDraftIntoInvestmentPlan(d, i)}
+                    disabled={insertingPlanKey !== null}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    title="Creates a Trade plan with this symbol, limit price, quantity, and notional (no manual entry)"
+                  >
+                    {insertingPlanKey === `${d.symbol}-${i}` ? 'Adding…' : 'Add to Trade plans'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const text = `${d.type.toUpperCase()} ${d.symbol} - Qty: ${d.qty}, Limit: ${formatCurrencyString(d.limitPrice, { inCurrency: selected?.bookCurrency ?? 'USD' })}${d.label ? ` (${d.label})` : ''}`;
+                      navigator.clipboard.writeText(text).then(() => {
+                        // Visual feedback could be added here
+                      }).catch(() => {
+                        alert('Failed to copy to clipboard.');
+                      });
+                    }}
+                    className="px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 rounded transition-colors"
+                    title="Copy this order"
+                  >
+                    Copy
+                  </button>
+                </div>
               </div>
             ))}
           </div>

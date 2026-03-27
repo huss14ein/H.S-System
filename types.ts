@@ -257,6 +257,8 @@ export interface Holding {
   dividendYield?: number;
   /** DB/schema: 'ticker' | 'manual_fund' etc. Used when persisting to backend. */
   holdingType?: string;
+  /** ISO date (YYYY-MM-DD). Zakat lunar hawl (~354d) from this lot’s start; if unset, app infers earliest buy. */
+  acquisitionDate?: string;
 }
 
 export interface InvestmentPortfolio {
@@ -277,6 +279,8 @@ export interface InvestmentTransaction {
   id: string;
   user_id?: string;
   accountId: string;
+  /** When present (e.g. DB column), ties the row to a portfolio for scoping. */
+  portfolioId?: string;
   date: string;
   type: 'buy' | 'sell' | 'dividend' | 'deposit' | 'withdrawal';
   symbol: string;
@@ -353,6 +357,10 @@ export interface CommodityHolding {
   zakahClass: 'Zakatable' | 'Non-Zakatable';
   owner?: string;
   goalId?: string;
+  /** ISO date (YYYY-MM-DD). Lunar hawl start for this commodity lot. */
+  acquisitionDate?: string;
+  /** Server timestamp when the row was created (hawl fallback). */
+  createdAt?: string;
 }
 
 export interface WatchlistItem {
