@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+import netlify from '@netlify/vite-plugin';
 import process from 'process';
 
 // https://vitejs.dev/config/
@@ -7,7 +8,9 @@ export default defineConfig(({ mode }) => {
   loadEnv(mode, process.cwd(), '');
 
   return {
-    plugins: [react()],
+    // Emulates Netlify redirects (`/api/*` → functions) and runs `netlify/functions` locally.
+    // Without this, plain `vite` cannot reach `gemini-proxy`, so AiContext health fails and all AI stays disabled.
+    plugins: [react(), netlify()],
     build: {
       rollupOptions: {
         output: {

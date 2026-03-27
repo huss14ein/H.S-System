@@ -10,16 +10,25 @@ const SignupPage: React.FC = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<{ name?: string; email?: string; password?: string }>({});
   const auth = useContext(AuthContext);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setFieldErrors({});
     setLoading(true);
     setSuccess(false);
     const result = await auth!.signup(name.trim(), email.trim(), password);
     if (result.error) {
       setError(result.error.message);
+      if (result.validation) {
+        setFieldErrors({
+          name: result.validation.nameValidation?.error,
+          email: result.validation.emailValidation?.error,
+          password: result.validation.passwordValidation?.errors?.[0],
+        });
+      }
     } else if (result.user) {
       setSuccess(true);
     }
@@ -63,6 +72,7 @@ const SignupPage: React.FC = () => {
                   autoComplete="name"
                   className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-primary focus:border-primary sm:text-sm"
                 />
+                {fieldErrors.name && <p className="mt-1 text-xs text-red-600">{fieldErrors.name}</p>}
               </div>
               <div>
                 <label htmlFor="signup-email" className="block text-sm font-medium text-gray-700">Email address</label>
@@ -75,6 +85,7 @@ const SignupPage: React.FC = () => {
                   autoComplete="email"
                   className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-primary focus:border-primary sm:text-sm"
                 />
+                {fieldErrors.email && <p className="mt-1 text-xs text-red-600">{fieldErrors.email}</p>}
               </div>
               <div>
                 <label htmlFor="signup-password" className="block text-sm font-medium text-gray-700">Password</label>
@@ -89,6 +100,7 @@ const SignupPage: React.FC = () => {
                   className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-primary focus:border-primary sm:text-sm"
                 />
                 <p className="mt-1 text-xs text-gray-500">At least 12 characters with uppercase, lowercase, number and symbol.</p>
+                {fieldErrors.password && <p className="mt-1 text-xs text-red-600">{fieldErrors.password}</p>}
               </div>
               <button
                 type="submit"

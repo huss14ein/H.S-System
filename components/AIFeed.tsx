@@ -38,7 +38,8 @@ const AIFeed: React.FC = () => {
     const [arItems, setArItems] = useState<{ title: string; description: string }[] | null>(null);
     const [translating, setTranslating] = useState(false);
     const { data } = useContext(DataContext)!;
-    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
+    const { isAiAvailable, aiHealthChecked, aiActionsEnabled, refreshAiHealth } = useAI();
+    const [aiRecheckBusy, setAiRecheckBusy] = useState(false);
     const dataRef = useRef(data);
 
     useEffect(() => {
@@ -117,8 +118,8 @@ const AIFeed: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleGenerate}
-                  disabled={isLoading}
-                  title="Refresh Feed"
+                  disabled={isLoading || !aiActionsEnabled}
+                  title={!aiActionsEnabled ? 'AI unavailable — check proxy and API keys' : 'Refresh Feed'}
                   className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                 >
                     <SparklesIcon className="h-5 w-5 mr-2" />
@@ -189,9 +190,20 @@ const AIFeed: React.FC = () => {
             )}
 
             {aiHealthChecked && !isAiAvailable ? (
-                 <div className="text-center p-4 text-gray-500 bg-gray-50 rounded-md">
+                 <div className="text-center p-4 text-amber-900 bg-amber-50 border border-amber-200 rounded-md">
                     <p className="font-semibold">AI Features Disabled</p>
-                    <p className="text-sm">Please set your Gemini API key in the environment variables to enable personalized insights.</p>
+                    <p className="text-sm mt-1">Configure a provider key on the server and ensure the dev server exposes <code className="text-xs bg-amber-100 px-1 rounded">/api/gemini-proxy</code> (Netlify Vite plugin).</p>
+                    <button
+                        type="button"
+                        disabled={aiRecheckBusy}
+                        onClick={() => {
+                            setAiRecheckBusy(true);
+                            void refreshAiHealth().finally(() => setAiRecheckBusy(false));
+                        }}
+                        className="mt-3 px-3 py-1.5 text-sm font-medium rounded-lg bg-amber-100 text-amber-950 hover:bg-amber-200 disabled:opacity-60"
+                    >
+                        {aiRecheckBusy ? 'Checking…' : 'Retry connection check'}
+                    </button>
                 </div>
             ) : (
                 feedItems.length === 0 && !isLoading && !error && (

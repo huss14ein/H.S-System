@@ -232,7 +232,8 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
     const [translateError, setTranslateError] = useState<string | null>(null);
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
-    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
+    const { isAiAvailable, aiHealthChecked, aiActionsEnabled, refreshAiHealth } = useAI();
+    const [aiRecheckBusy, setAiRecheckBusy] = useState(false);
 
     const insightSource = useMemo(() => {
         const text = (insightEn || '').toLowerCase();
@@ -275,7 +276,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
             }
         })();
         return () => { cancelled = true; };
-    }, [displayLang, insightEn, insightAr, isAiAvailable]);
+    }, [displayLang, insightEn, insightAr, aiActionsEnabled]);
 
     const handleGenerate = useCallback(async () => {
         setIsLoading(true);
@@ -409,7 +410,18 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
             {aiHealthChecked && !isAiAvailable ? (
                  <div className="text-center p-4 text-slate-600 bg-amber-50/80 border border-amber-200 rounded-lg mt-2" role="alert">
                     <p className="font-semibold text-amber-950">AI غير مفعّل / AI disabled</p>
-                    <p className="text-sm mt-1">Set your Gemini (or other) API key in environment variables to enable insights and Arabic translation.</p>
+                    <p className="text-sm mt-1">Set your Gemini (or other) API key in environment variables to enable insights and Arabic translation. With <code className="text-xs bg-amber-100 px-1 rounded">npm run dev</code>, use <code className="text-xs bg-amber-100 px-1 rounded">@netlify/vite-plugin</code> so <code className="text-xs bg-amber-100 px-1 rounded">/api/gemini-proxy</code> resolves locally.</p>
+                    <button
+                        type="button"
+                        disabled={aiRecheckBusy}
+                        onClick={() => {
+                            setAiRecheckBusy(true);
+                            void refreshAiHealth().finally(() => setAiRecheckBusy(false));
+                        }}
+                        className="mt-3 px-3 py-1.5 text-sm font-medium rounded-lg bg-amber-100 text-amber-950 hover:bg-amber-200 disabled:opacity-60"
+                    >
+                        {aiRecheckBusy ? 'Checking…' : 'Retry connection check'}
+                    </button>
                 </div>
             ) : (
                 !insightEn && !isLoading && (

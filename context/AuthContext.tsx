@@ -328,8 +328,8 @@ function validateAndSanitizeName(name: string): { isValid: boolean; sanitized: s
     return { isValid: false, sanitized: '', error: 'Name is too long (max 100 characters)' };
   }
   
-  // Check for valid characters (letters, spaces, hyphens, apostrophes)
-  const validNameRegex = /^[a-zA-Z\s\-'\.]+$/;
+  // Allow international names (Arabic/Latin/etc), spaces, hyphens, apostrophes, periods.
+  const validNameRegex = /^[\p{L}\p{M}\s\-'\.]+$/u;
   if (!validNameRegex.test(sanitized)) {
     return { isValid: false, sanitized: '', error: 'Name can only contain letters, spaces, hyphens (-), apostrophes (\'), and periods (.)' };
   }
@@ -354,6 +354,24 @@ function validateAndSanitizeName(name: string): { isValid: boolean; sanitized: s
   }
   
   return { isValid: true, sanitized };
+}
+
+/** Normalize provider auth throttling / transient messages for better UX. */
+function normalizeAuthServiceErrorMessage(message: string | undefined | null): string {
+  const raw = String(message || '').trim();
+  const lower = raw.toLowerCase();
+  if (!raw) return 'Authentication service error. Please try again shortly.';
+  if (
+    lower.includes('email rate limit exceeded') ||
+    lower.includes('over_email_send_rate_limit') ||
+    (lower.includes('email') && lower.includes('rate'))
+  ) {
+    return 'Email sending is temporarily rate-limited. Please wait a few minutes before trying again.';
+  }
+  if (lower.includes('too many requests') || lower.includes('rate limit')) {
+    return 'Too many attempts in a short time. Please wait a few minutes and try again.';
+  }
+  return raw;
 }
 
 // Rate limiting check with persistent storage
@@ -586,6 +604,8 @@ export interface SecurityValidationResult {
 interface AuthContextType {
   isAuthenticated: boolean;
   isApproved: boolean | null;
+  /** True when admin rejected the signup (distinct from "waiting for approval"). Requires DB column signup_rejected. */
+  isSignupRejected: boolean;
   user: User | null;
   session: Session | null;
   login: (email: string, password: string) => Promise<{ error: AuthError | null; user?: User | null }>;
@@ -617,6 +637,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [session, setSession] = useState<Session | null>(null);
     const [loading, setLoading] = useState(true);
     const [isApproved, setIsApproved] = useState<boolean | null>(null);
+    const [isSignupRejected, setIsSignupRejected] = useState(false);
     const [isEmailVerified, setIsEmailVerified] = useState(false);
     const [is2FAEnabled, setIs2FAEnabled] = useState(false);
     const [twoFactorMethod, setTwoFactorMethod] = useState<'email' | 'sms' | 'totp' | null>(null);
@@ -695,6 +716,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const fetchApprovalStatus = useCallback(async (userId: string) => {
         if (!supabase) {
             setIsApproved(true);
+            setIsSignupRejected(false);
             return;
         }
         const APPROVAL_FETCH_MS = 8000;
@@ -714,16 +736,35 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             const result = await Promise.race([query, timeout]);
             if (result === null) {
                 setIsApproved(true);
+                setIsSignupRejected(false);
                 return;
             }
-            const { data, error } = result as { data: { approved?: boolean } | null; error: { message?: string } | null };
+            const { data, error } = result as { data: Record<string, unknown> | null; error: { message?: string } | null };
             if (error) {
                 setIsApproved(true);
+                setIsSignupRejected(false);
                 return;
             }
-            setIsApproved(data?.approved ?? true);
+            // No public.users row: do not grant access (signup trigger missing or race before insert completes).
+            if (data == null) {
+                setIsApproved(false);
+                setIsSignupRejected(false);
+                return;
+            }
+            // Legacy DB without `approved` column: field absent → treat as approved.
+            const raw = data.approved;
+            const hasApprovedKey = Object.prototype.hasOwnProperty.call(data, 'approved');
+            const approvedVal = !hasApprovedKey ? true : Boolean(raw);
+            setIsApproved(approvedVal);
+            if (approvedVal) {
+                setIsSignupRejected(false);
+            } else {
+                const hasRejKey = Object.prototype.hasOwnProperty.call(data, 'signup_rejected');
+                setIsSignupRejected(hasRejKey && Boolean(data.signup_rejected));
+            }
         } catch {
             setIsApproved(true);
+            setIsSignupRejected(false);
         }
     }, []);
 
@@ -736,6 +777,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             }
             setLoading(false);
             setIsApproved(true);
+            setIsSignupRejected(false);
             return;
         }
     
@@ -749,11 +791,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                     void fetchApprovalStatus(session.user.id);
                 } else {
                     setIsApproved(null);
+                    setIsSignupRejected(false);
                 }
             } catch {
                 setSession(null);
                 setUser(null);
                 setIsApproved(null);
+                setIsSignupRejected(false);
             } finally {
                 setLoading(false);
             }
@@ -796,7 +840,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
             if (error) {
                 logSecurityEvent('login_failed', { email, reason: error.message }, false);
-                return { error: { name: error.name, message: error.message } as AuthError };
+                return {
+                    error: {
+                        name: error.name,
+                        message: normalizeAuthServiceErrorMessage(error.message),
+                    } as AuthError,
+                };
             }
 
             if (data.user) {
@@ -887,7 +936,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 };
 
                 logSecurityEvent('signup_validation_failed', { email }, false);
-                return { error: { name: 'ValidationError', message: 'Validation failed' } as AuthError, user: null, validation };
+                const detail =
+                    nameValidation.error ||
+                    emailValidation.error ||
+                    passwordValidation.errors?.[0] ||
+                    'Please correct the highlighted fields.';
+                return { error: { name: 'ValidationError', message: detail } as AuthError, user: null, validation };
             }
 
             // Get device fingerprint
@@ -907,11 +961,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
             if (error) {
                 logSecurityEvent('signup_failed', { email, reason: error.message }, false);
-                
+                if (import.meta.env.DEV) {
+                    // eslint-disable-next-line no-console
+                    console.warn('[signup] Supabase error:', error.message, error);
+                }
+
                 // Sanitize error messages to prevent user enumeration
-                let sanitizedError = error.message;
+                let sanitizedError = normalizeAuthServiceErrorMessage(error.message);
                 if (error.message.includes('User already registered')) {
                     sanitizedError = 'An account with this email already exists. Please sign in instead.';
+                } else if (
+                    /database error|saving new user|new user/i.test(error.message) ||
+                    (error as { code?: string }).code === 'unexpected_failure'
+                ) {
+                    // Usually: public.users RLS blocks handle_new_user() trigger — apply
+                    // supabase/migrations/fix_signup_handle_new_user_bypass_rls.sql on the project DB.
+                    sanitizedError =
+                        'Signup could not complete (database rejected the new profile). This is often fixed by applying the latest Supabase migration for handle_new_user. If you are the project admin, run the migration in SQL Editor or ask support.';
                 }
 
                 return { 
@@ -1058,7 +1124,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
             if (error) {
                 logSecurityEvent('verification_email_failed', { email, reason: error.message }, false);
-                return { error: { name: error.name, message: error.message } as AuthError };
+                return {
+                    error: {
+                        name: error.name,
+                        message: normalizeAuthServiceErrorMessage(error.message),
+                    } as AuthError,
+                };
             }
 
             logSecurityEvent('verification_email_sent', { email }, true);
@@ -1076,6 +1147,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const value = {
         isAuthenticated: !!user,
         isApproved,
+        isSignupRejected,
         user,
         session,
         login,

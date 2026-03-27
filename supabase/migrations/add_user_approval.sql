@@ -37,6 +37,8 @@ security definer
 set search_path = public
 as $$
 begin
+  -- RLS on public.users otherwise blocks this INSERT (Supabase shows "Database error saving new user").
+  set local row_security = off;
   insert into public.users (id, name, email, role, approved)
   values (
     new.id,

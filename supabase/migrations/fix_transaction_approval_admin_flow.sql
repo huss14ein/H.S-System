@@ -1,71 +1,10 @@
+-- Harden transaction approval flow:
+-- 1) Admin-only approve/reject RPCs
+-- 2) Admin-only pending transactions RPC for RLS-safe review queue
+
 begin;
 
-drop table if exists public.users cascade;
-create table if not exists public.users (
-  id uuid primary key,
-  name text,
-  role text not null default 'Restricted' check (role in ('Admin','Restricted')),
-  created_at timestamptz not null default now()
-);
-
-drop table if exists public.categories cascade;
-create table if not exists public.categories (
-  id uuid primary key default gen_random_uuid(),
-  name text not null unique,
-  monthly_limit numeric not null default 0,
-  total_spent numeric not null default 0,
-  created_at timestamptz not null default now()
-);
-
-drop table if exists public.permissions cascade;
-create table if not exists public.permissions (
-  user_id uuid not null,
-  category_id uuid not null references public.categories(id) on delete cascade,
-  created_at timestamptz not null default now(),
-  primary key (user_id, category_id)
-);
-
-drop table if exists public.budget_requests cascade;
-create table if not exists public.budget_requests (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null,
-  request_type text not null check (request_type in ('NewCategory','IncreaseLimit')),
-  category_id uuid null references public.categories(id) on delete set null,
-  category_name text,
-  amount numeric not null,
-  status text not null default 'Pending' check (status in ('Pending','Finalized','Rejected')),
-  created_at timestamptz not null default now()
-);
-
-alter table if exists public.transactions
-  add column if not exists status text not null default 'Approved' check (status in ('Pending','Approved','Rejected')),
-  add column if not exists category_id uuid null references public.categories(id) on delete set null,
-  add column if not exists note text,
-  add column if not exists rejection_reason text;
-
-create index if not exists idx_permissions_user on public.permissions(user_id);
-create index if not exists idx_budget_requests_status on public.budget_requests(status, created_at desc);
-create unique index if not exists idx_budget_requests_pending_newcategory_unique
-  on public.budget_requests(user_id, lower(trim(category_name)), request_type)
-  where status = 'Pending' and request_type = 'NewCategory' and category_name is not null;
-create unique index if not exists idx_budget_requests_pending_increaselimit_unique
-  on public.budget_requests(user_id, category_id, request_type)
-  where status = 'Pending' and request_type = 'IncreaseLimit' and category_id is not null;
-create index if not exists idx_transactions_status on public.transactions(status, date desc);
-create index if not exists idx_transactions_category_id on public.transactions(category_id);
-
-create or replace function public.apply_approved_transaction_to_category(p_category_name text, p_amount numeric)
-returns void
-language plpgsql
-as $$
-begin
-  update public.categories
-  set total_spent = coalesce(total_spent, 0) + coalesce(p_amount, 0)
-  where name = p_category_name;
-end;
-$$;
-
--- If you get "cannot change return type of existing function", run supabase/drop_pending_transaction_functions.sql first, then re-run this file.
+-- Ensure helper exists.
 create or replace function public.is_admin_user()
 returns boolean
 language sql
@@ -142,7 +81,7 @@ begin
   for update;
 
   if not found then
-    return false;  -- transaction not found (e.g. deleted); no exception
+    return false;
   end if;
 
   tx_json := to_jsonb(tx);
@@ -190,7 +129,7 @@ begin
   for update;
 
   if not found then
-    return false;  -- transaction not found (e.g. deleted); no exception
+    return false;
   end if;
 
   if tx_status <> 'Pending' then
