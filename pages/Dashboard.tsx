@@ -67,7 +67,8 @@ interface ExtendedBudget extends Budget {
 
 const AIExecutiveSummary: React.FC = () => {
     const { data } = useContext(DataContext)!;
-    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
+    const { isAiAvailable, aiHealthChecked, aiActionsEnabled, refreshAiHealth } = useAI();
+    const [aiRecheckBusy, setAiRecheckBusy] = useState(false);
     const { trackAction } = useSelfLearning();
     const [summary, setSummary] = useState<string>('');
     const [summaryEn, setSummaryEn] = useState<string>('');
@@ -163,9 +164,20 @@ const AIExecutiveSummary: React.FC = () => {
             )}
 
             {aiHealthChecked && !isAiAvailable ? (
-                <div className="text-center p-4 text-slate-500 bg-slate-50 rounded-md">
-                    <p className="font-semibold">AI Features Disabled</p>
-                    <p className="text-sm">Please set your Gemini API key to enable this feature.</p>
+                <div className="text-center p-4 text-slate-600 bg-amber-50/80 border border-amber-200 rounded-md">
+                    <p className="font-semibold text-amber-950">AI Features Disabled</p>
+                    <p className="text-sm mt-1">Configure an AI provider key on the server (e.g. GEMINI_API_KEY). For local dev, use Vite with the Netlify plugin so <code className="text-xs bg-amber-100 px-1 rounded">/api/gemini-proxy</code> works.</p>
+                    <button
+                        type="button"
+                        disabled={aiRecheckBusy}
+                        onClick={() => {
+                            setAiRecheckBusy(true);
+                            void refreshAiHealth().finally(() => setAiRecheckBusy(false));
+                        }}
+                        className="mt-3 px-3 py-1.5 text-sm font-medium rounded-lg bg-amber-100 text-amber-950 hover:bg-amber-200 disabled:opacity-60"
+                    >
+                        {aiRecheckBusy ? 'Checking…' : 'Retry connection check'}
+                    </button>
                 </div>
             ) : (
                 !summary && !isLoading && !error && (

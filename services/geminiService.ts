@@ -6,6 +6,7 @@ import { capitalizeCategoryName } from '../utils/categoryFormat';
 import { DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { fetchStooq } from './stooqClient';
+import { fetchGeminiProxyHealthStatus, getGeminiProxyEndpoints } from './aiProxyEndpoints';
 
 // --- Model Constants ---
 const FAST_MODEL = 'gemini-3-flash-preview';
@@ -437,7 +438,7 @@ export function clearAiProxySessionBlock(): void {
 
 async function invokeGeminiProxy(payload: { model: string, contents: any, config?: any }): Promise<any> {
     clearAiProxySessionBlock();
-    const endpoints = ['/api/gemini-proxy', '/.netlify/functions/gemini-proxy'];
+    const endpoints = getGeminiProxyEndpoints();
     let lastError: Error | null = null;
 
     for (const endpoint of endpoints) {
@@ -501,42 +502,28 @@ export async function probeGeminiProxyHealth(): Promise<{
     error?: string;
     configured?: boolean;
 }> {
-    const endpoints = ['/api/gemini-proxy', '/.netlify/functions/gemini-proxy'];
     const start = performance.now();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
     try {
-        for (const endpoint of endpoints) {
-            try {
-                const t0 = performance.now();
-                const res = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ health: true }),
-                    signal: controller.signal,
-                });
-                const ms = Math.round(performance.now() - t0);
-                if (!res.ok) continue;
-                const json = await res.json().catch(() => ({}));
-                const configured = Boolean((json as { anyProviderConfigured?: boolean })?.anyProviderConfigured);
-                if (!configured) {
-                    return {
-                        ok: false,
-                        ms,
-                        configured: false,
-                        error: 'Proxy reachable but no AI provider key configured (GEMINI_API_KEY / backup env).',
-                    };
-                }
-                return { ok: true, ms, configured: true };
-            } catch {
-                continue;
-            }
+        const r = await fetchGeminiProxyHealthStatus(controller.signal);
+        const ms = Math.round(performance.now() - start);
+        if (!r.reachable) {
+            return {
+                ok: false,
+                ms,
+                error: 'Could not reach AI proxy. Deploy Netlify functions, use dev with @netlify/vite-plugin, or set VITE_AI_PROXY_EXTRA_ORIGIN.',
+            };
         }
-        return {
-            ok: false,
-            ms: Math.round(performance.now() - start),
-            error: 'Could not reach AI proxy. Deploy Netlify functions or run local API.',
-        };
+        if (!r.configured) {
+            return {
+                ok: false,
+                ms,
+                configured: false,
+                error: 'Proxy reachable but no AI provider key configured (GEMINI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, or GROK_API_KEY on the server).',
+            };
+        }
+        return { ok: true, ms, configured: true };
     } finally {
         clearTimeout(timeoutId);
     }

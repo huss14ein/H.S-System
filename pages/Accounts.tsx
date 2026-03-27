@@ -371,9 +371,13 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             const admin = inferIsAdmin(auth.user, userRecord?.role ?? null);
             setIsAdmin(admin);
 
-            const { data: sharedRows } = await supabase
-                .rpc('get_shared_accounts_for_me')
-                .then((r) => r, () => ({ data: [] as any[] } as any));
+            const { data: sharedRows, error: sharedRpcError } = await supabase.rpc('get_shared_accounts_for_me');
+            if (sharedRpcError) {
+                if (process.env.NODE_ENV === 'development') {
+                    // eslint-disable-next-line no-console
+                    console.warn('get_shared_accounts_for_me failed:', sharedRpcError.message);
+                }
+            }
             const rows = (sharedRows || []) as any[];
             setSharedAccounts(rows.map((r) => ({
                 id: String(r.account_id ?? r.id ?? ''),

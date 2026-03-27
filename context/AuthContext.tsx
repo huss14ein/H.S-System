@@ -604,6 +604,8 @@ export interface SecurityValidationResult {
 interface AuthContextType {
   isAuthenticated: boolean;
   isApproved: boolean | null;
+  /** True when admin rejected the signup (distinct from "waiting for approval"). Requires DB column signup_rejected. */
+  isSignupRejected: boolean;
   user: User | null;
   session: Session | null;
   login: (email: string, password: string) => Promise<{ error: AuthError | null; user?: User | null }>;
@@ -635,6 +637,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [session, setSession] = useState<Session | null>(null);
     const [loading, setLoading] = useState(true);
     const [isApproved, setIsApproved] = useState<boolean | null>(null);
+    const [isSignupRejected, setIsSignupRejected] = useState(false);
     const [isEmailVerified, setIsEmailVerified] = useState(false);
     const [is2FAEnabled, setIs2FAEnabled] = useState(false);
     const [twoFactorMethod, setTwoFactorMethod] = useState<'email' | 'sms' | 'totp' | null>(null);
@@ -713,6 +716,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const fetchApprovalStatus = useCallback(async (userId: string) => {
         if (!supabase) {
             setIsApproved(true);
+            setIsSignupRejected(false);
             return;
         }
         const APPROVAL_FETCH_MS = 8000;
@@ -732,24 +736,35 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             const result = await Promise.race([query, timeout]);
             if (result === null) {
                 setIsApproved(true);
+                setIsSignupRejected(false);
                 return;
             }
             const { data, error } = result as { data: Record<string, unknown> | null; error: { message?: string } | null };
             if (error) {
                 setIsApproved(true);
+                setIsSignupRejected(false);
                 return;
             }
             // No public.users row: do not grant access (signup trigger missing or race before insert completes).
             if (data == null) {
                 setIsApproved(false);
+                setIsSignupRejected(false);
                 return;
             }
             // Legacy DB without `approved` column: field absent → treat as approved.
             const raw = data.approved;
             const hasApprovedKey = Object.prototype.hasOwnProperty.call(data, 'approved');
-            setIsApproved(!hasApprovedKey ? true : Boolean(raw));
+            const approvedVal = !hasApprovedKey ? true : Boolean(raw);
+            setIsApproved(approvedVal);
+            if (approvedVal) {
+                setIsSignupRejected(false);
+            } else {
+                const hasRejKey = Object.prototype.hasOwnProperty.call(data, 'signup_rejected');
+                setIsSignupRejected(hasRejKey && Boolean(data.signup_rejected));
+            }
         } catch {
             setIsApproved(true);
+            setIsSignupRejected(false);
         }
     }, []);
 
@@ -762,6 +777,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             }
             setLoading(false);
             setIsApproved(true);
+            setIsSignupRejected(false);
             return;
         }
     
@@ -775,11 +791,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                     void fetchApprovalStatus(session.user.id);
                 } else {
                     setIsApproved(null);
+                    setIsSignupRejected(false);
                 }
             } catch {
                 setSession(null);
                 setUser(null);
                 setIsApproved(null);
+                setIsSignupRejected(false);
             } finally {
                 setLoading(false);
             }
@@ -1129,6 +1147,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const value = {
         isAuthenticated: !!user,
         isApproved,
+        isSignupRejected,
         user,
         session,
         login,
