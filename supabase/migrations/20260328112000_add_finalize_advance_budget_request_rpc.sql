@@ -133,14 +133,14 @@ begin
   for update;
 
   v_src_new := greatest(0, coalesce(v_src.limit, 0) - v_amount);
-  update public.budgets set limit = v_src_new where id = v_src.id;
+  update public.budgets set "limit" = v_src_new where id = v_src.id;
 
   if found and v_dst.id is not null then
     v_dst_new := greatest(0, coalesce(v_dst.limit, 0) + v_amount);
-    update public.budgets set limit = v_dst_new where id = v_dst.id;
+    update public.budgets set "limit" = v_dst_new where id = v_dst.id;
   else
     insert into public.budgets (
-      user_id, category, limit, month, year, period, tier, destination_account_id
+      user_id, category, "limit", month, year, period, tier, destination_account_id
     )
     values (
       v_target_user_id,
@@ -152,7 +152,7 @@ begin
       coalesce(v_src.tier, 'Optional'),
       v_src.destination_account_id
     )
-    returning id, limit into v_dst;
+    returning id, "limit" into v_dst;
     v_dst_new := v_dst.limit;
   end if;
 
