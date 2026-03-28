@@ -61,6 +61,8 @@ describe('currencyMath', () => {
 
   it('inferInstrumentCurrencyFromSymbol detects Tadawul-style symbols', () => {
     expect(inferInstrumentCurrencyFromSymbol('2222.SR')).toBe('SAR');
+    expect(inferInstrumentCurrencyFromSymbol('2222')).toBe('SAR');
+    expect(inferInstrumentCurrencyFromSymbol('TADAWUL:2222')).toBe('SAR');
     expect(inferInstrumentCurrencyFromSymbol('AAPL')).toBe('USD');
   });
 
@@ -82,4 +84,3 @@ describe('currencyMath', () => {
     expect(quoteDailyPnLInBookCurrency(2, 5, 'AAPL', 'SAR', rate)).toBeCloseTo(37.5, 8);
   });
 });
-

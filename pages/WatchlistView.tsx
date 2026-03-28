@@ -479,24 +479,24 @@ const WatchlistItemRow: React.FC<{
                     {quoteSource === 'live' ? 'Period: 1D' : quoteSource === 'candle_close' ? 'vs prior close' : '—'}
                 </span>
             </td>
-            <td className="px-4 py-2 text-left align-top whitespace-nowrap text-xs text-slate-600 max-w-[200px]">
+            <td className="px-4 py-2 text-left align-top text-xs text-slate-600 w-[220px] max-w-[220px]">
                 {techSignals && (
                     <div className="space-y-0.5">
                         {techSignals.rsi != null && (
-                            <span className={techSignals.rsiSig === 'overbought' ? 'text-amber-700 font-medium' : techSignals.rsiSig === 'oversold' ? 'text-emerald-700 font-medium' : 'text-slate-600'}>
+                            <span className={`block leading-tight ${techSignals.rsiSig === 'overbought' ? 'text-amber-700 font-medium' : techSignals.rsiSig === 'oversold' ? 'text-emerald-700 font-medium' : 'text-slate-600'}`}>
                                 RSI {techSignals.rsi.toFixed(0)}{techSignals.rsiSig !== 'neutral' ? ` (${techSignals.rsiSig})` : ''}
                             </span>
                         )}
                         {techSignals.zScore != null && techSignals.zSig !== 'neutral' && (
-                            <span className="text-slate-600">Z {techSignals.zScore.toFixed(2)} ({techSignals.zSig})</span>
+                            <span className="block leading-tight text-slate-600">Z {techSignals.zScore.toFixed(2)} ({techSignals.zSig})</span>
                         )}
                         {techSignals.bb && (
-                            <span className={techSignals.bb.includes('upper') ? 'text-amber-600' : techSignals.bb.includes('lower') ? 'text-emerald-600' : 'text-slate-600'}>
+                            <span className={`block leading-tight ${techSignals.bb.includes('upper') ? 'text-amber-600' : techSignals.bb.includes('lower') ? 'text-emerald-600' : 'text-slate-600'}`}>
                                 {techSignals.bb}
                             </span>
                         )}
                         {techSignals.smaCross && (
-                            <span className={techSignals.smaCross === 'golden' ? 'text-emerald-600 font-medium' : 'text-rose-600 font-medium'}>
+                            <span className={`block leading-tight ${techSignals.smaCross === 'golden' ? 'text-emerald-600 font-medium' : 'text-rose-600 font-medium'}`}>
                                 SMA(5/10): {techSignals.smaCross === 'golden' ? 'golden cross' : 'death cross'}
                             </span>
                         )}
@@ -504,7 +504,7 @@ const WatchlistItemRow: React.FC<{
                 )}
                 {!techSignals && historical1M && historical1M.length < 20 && <span className="text-slate-400">Need 20+ days</span>}
             </td>
-            <td className="px-4 py-2 text-left align-top whitespace-nowrap text-xs text-slate-600 max-w-[220px]">
+            <td className="px-4 py-2 text-left align-top text-xs text-slate-600 w-[240px] max-w-[240px]">
                 {fundamentalsLoading && !fundamentals && <span className="text-[11px] text-slate-400">Loading events…</span>}
                 {!fundamentalsLoading && !fundamentals && <span className="text-[11px] text-slate-400">No event data</span>}
                 {fundamentals && (

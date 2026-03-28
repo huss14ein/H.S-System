@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, Label } from 'recharts';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { CHART_COLORS } from './chartTheme';
 import ChartContainer from './ChartContainer';
@@ -51,7 +51,6 @@ const formatCompactAmount = (value: number): string => {
 };
 
 const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data, showLegend = true }) => {
-  const { formatCurrencyString } = useFormatCurrency();
   const chartHostRef = useRef<HTMLDivElement | null>(null);
   const [chartSize, setChartSize] = useState({ width: 0, height: 0 });
 
@@ -76,13 +75,33 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data, showLegen
   );
   const totalValue = useMemo(() => sanitizedData.reduce((sum, entry) => sum + entry.value, 0), [sanitizedData]);
   const totalDisplay = useMemo(() => formatCompactAmount(totalValue), [totalValue]);
-  const totalFull = useMemo(() => formatCurrencyString(totalValue, { digits: 0 }), [formatCurrencyString, totalValue]);
   const isEmpty = !sanitizedData.length || totalValue <= 0;
   const tooltipPosition = chartSize.width >= 640
     ? { x: Math.max(8, chartSize.width - 220), y: Math.max(10, Math.round(chartSize.height * 0.24)) }
     : undefined;
   /** Keep the donut centered so the overlay label lines up with the hole (was 38% on wide screens, which skewed the total). */
   const pieCenterX = '50%';
+  const renderCenterLabel = (props: any) => {
+    const { viewBox } = props ?? {};
+    const cx = Number(viewBox?.cx);
+    const cy = Number(viewBox?.cy);
+    if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
+    return (
+      <g pointerEvents="none">
+        <text x={cx} y={cy - 14} textAnchor="middle" className="fill-slate-500 text-[11px] font-semibold tracking-[0.12em] uppercase">
+          TOTAL VALUE
+        </text>
+        <text x={cx} y={cy + 18} textAnchor="middle" className="fill-slate-800 text-[34px] font-bold tabular-nums" style={{ fontSize: '34px' }}>
+          {totalDisplay}
+        </text>
+        {sanitizedData.length === 1 && (
+          <text x={cx} y={cy + 40} textAnchor="middle" className="fill-slate-500 text-[11px]">
+            {sanitizedData[0].name}
+          </text>
+        )}
+      </g>
+    );
+  };
 
   return (
     <ChartContainer className="w-full h-full min-h-[200px] relative" isEmpty={isEmpty}>
@@ -102,6 +121,7 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data, showLegen
             isAnimationActive={true}
             animationDuration={800}
           >
+            <Label position="center" content={renderCenterLabel} />
             {sanitizedData.map((_entry, index) => (
               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
             ))}
@@ -117,13 +137,6 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data, showLegen
           {showLegend && sanitizedData.length > 1 && <Legend iconType="circle" verticalAlign="bottom" align="center" wrapperStyle={{ paddingTop: 8 }} />}
         </PieChart>
       </ResponsiveContainer>
-      </div>
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-4">
-        <div className="rounded-xl bg-white/97 border border-slate-200 shadow-sm px-4 py-2.5 text-center max-w-[min(88%,14rem)] mx-auto">
-          <p className="text-[11px] sm:text-xs font-semibold text-gray-500 uppercase tracking-[0.12em]">Total Value</p>
-          <p className="text-xl sm:text-2xl font-bold text-dark tabular-nums mt-1 whitespace-nowrap overflow-hidden text-ellipsis" title={totalFull}>{totalDisplay}</p>
-          {sanitizedData.length === 1 && <p className="text-xs text-slate-500 mt-0.5">{sanitizedData[0].name}</p>}
-        </div>
       </div>
     </ChartContainer>
   );
