@@ -130,6 +130,35 @@ export function toFinnhubSymbol(symbol: string): string {
   return upper;
 }
 
+/** Candidate quote symbols for Finnhub `/quote` fallback chain (important for Tadawul coverage across account tiers). */
+export function getFinnhubQuoteCandidates(symbol: string): string[] {
+  const upper = (symbol || '').toUpperCase().trim();
+  if (!upper) return [];
+  const primary = toFinnhubSymbol(upper);
+  const out: string[] = [];
+  const push = (s: string) => {
+    const v = (s || '').trim().toUpperCase();
+    if (!v) return;
+    if (!out.includes(v)) out.push(v);
+  };
+
+  const tadawul = upper.match(/^([A-Z0-9]{1,8})(?:\.(SR|SA|SE))?$/);
+  const isBareDigits = /^[0-9]{4,6}$/.test(upper);
+  const looksTadawul = Boolean(tadawul && (/\.(SR|SA|SE)$/i.test(upper) || isBareDigits));
+  if (looksTadawul && tadawul) {
+    const code = tadawul[1];
+    // Many Finnhub accounts return quote rows for `.SR`/`.SE` even when `TADAWUL:` is restricted.
+    push(`${code}.SR`);
+    push(`${code}.SE`);
+    push(`${code}.SA`);
+    push(`TADAWUL:${code}`);
+    return out;
+  }
+
+  push(primary);
+  return out;
+}
+
 /** Canonical key used for live quote maps (matches getFinnhubLivePrices / fromFinnhubSymbol after request). */
 export function canonicalQuoteLookupKey(symbol: string): string {
   return fromFinnhubSymbol(toFinnhubSymbol(symbol));
@@ -423,15 +452,28 @@ export async function getExchangeMarketStatus(exchange: string): Promise<Exchang
 }
 
 export async function getQuote(symbol: string): Promise<QuoteWith52W | null> {
-  try {
-    const data = await get<QuoteWith52W & { p?: number }>('/quote', { symbol: toFinnhubSymbol(symbol) });
-    if (!data) return null;
-    const price = Number(data.c ?? data.pc ?? data.p);
-    if (!Number.isFinite(price) || price <= 0) return getStooqQuote(symbol);
-    return { ...data, c: price, d: Number(data.d ?? 0), dp: Number(data.dp ?? 0), h: Number(data.h ?? price), l: Number(data.l ?? price), o: Number(data.o ?? price), pc: Number(data.pc ?? price) };
-  } catch {
-    return getStooqQuote(symbol);
+  const candidates = getFinnhubQuoteCandidates(symbol);
+  for (const candidate of candidates) {
+    try {
+      const data = await get<QuoteWith52W & { p?: number }>('/quote', { symbol: candidate });
+      if (!data) continue;
+      const price = Number(data.c ?? data.pc ?? data.p);
+      if (!Number.isFinite(price) || price <= 0) continue;
+      return {
+        ...data,
+        c: price,
+        d: Number(data.d ?? 0),
+        dp: Number(data.dp ?? 0),
+        h: Number(data.h ?? price),
+        l: Number(data.l ?? price),
+        o: Number(data.o ?? price),
+        pc: Number(data.pc ?? price),
+      };
+    } catch {
+      // Try next candidate symbol form.
+    }
   }
+  return getStooqQuote(symbol);
 }
 
 /** Quote plus 52-week from metrics endpoint. */

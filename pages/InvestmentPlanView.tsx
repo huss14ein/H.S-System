@@ -36,6 +36,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd, convertBetweenTradeCurrencies, inferInstrumentCurrencyFromSymbol } from '../utils/currencyMath';
 import CurrencyDualDisplay from '../components/CurrencyDualDisplay';
 import { fetchCompanyNameForSymbol } from '../hooks/useSymbolCompanyName';
+import { translateFinancialInsightToArabic, formatAiError } from '../services/geminiService';
 
 const ISO_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -656,7 +657,23 @@ const InvestmentPlanView: React.FC<{
     const { data, loading, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker } = useContext(DataContext)!;
     const { trackAction, trackSuggestionFeedback } = useSelfLearning();
     const { simulatedPrices } = useMarketData();
-    
+    const { exchangeRate } = useCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
+
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [planToEdit, setPlanToEdit] = useState<PlannedTrade | null>(null);
+    const [planToDelete, setPlanToDelete] = useState<PlannedTrade | null>(null);
+    const [alignmentFilter, setAlignmentFilter] = useState<'All' | 'Aligned' | 'Conflict' | 'Needs mapping'>('All');
+    const [symbolFocus, setSymbolFocus] = useState<string>('');
+    const [alignmentSummaryAr, setAlignmentSummaryAr] = useState<string>('');
+    const [alignmentSummaryArError, setAlignmentSummaryArError] = useState<string | null>(null);
+    const [isTranslatingAlignment, setIsTranslatingAlignment] = useState(false);
+
+    const householdStress = React.useMemo(
+        () => computeHouseholdStressFromData(data),
+        [data]
+    );
+
     // Loading state
     if (loading || !data) {
         const loadingInner = (
@@ -674,17 +691,6 @@ const InvestmentPlanView: React.FC<{
             </PageLayout>
         );
     }
-
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [planToEdit, setPlanToEdit] = useState<PlannedTrade | null>(null);
-    const [planToDelete, setPlanToDelete] = useState<PlannedTrade | null>(null);
-    const [alignmentFilter, setAlignmentFilter] = useState<'All' | 'Aligned' | 'Conflict' | 'Needs mapping'>('All');
-    const [symbolFocus, setSymbolFocus] = useState<string>('');
-
-    const householdStress = React.useMemo(
-        () => computeHouseholdStressFromData(data),
-        [data]
-    );
 
     const handleSave = (planData: Omit<PlannedTrade, 'id' | 'user_id'> | PlannedTrade) => {
         if ('id' in planData) {
@@ -829,6 +835,73 @@ const InvestmentPlanView: React.FC<{
             untrackedCount: rows.filter(r => r.aligned === null).length,
         };
     }, [data?.plannedTrades, data?.portfolioUniverse, alignmentFilter]);
+
+    const planValidationWarnings = useMemo(() => {
+        const plans = data?.plannedTrades ?? [];
+        const planCurrency = ((data as any)?.investmentPlan?.budgetCurrency || 'SAR') as TradeCurrency;
+        const out: string[] = [];
+        if (plans.length === 0) return out;
+        let invalidDateCount = 0;
+        let invalidPriceCount = 0;
+        let stalePriceCount = 0;
+        let sizingMismatchCount = 0;
+        let missingSymbolCount = 0;
+        plans.forEach((plan) => {
+            const sym = String(plan.symbol ?? '').trim().toUpperCase();
+            if (!sym) missingSymbolCount += 1;
+            if (plan.conditionType === 'date') {
+                const d = new Date(String(plan.targetValue ?? ''));
+                if (!(d instanceof Date) || Number.isNaN(d.getTime())) invalidDateCount += 1;
+            }
+            if (plan.conditionType === 'price') {
+                const target = Number(plan.targetValue);
+                if (!Number.isFinite(target) || target <= 0) invalidPriceCount += 1;
+                const spot = Number(simulatedPrices[sym]?.price);
+                if (!Number.isFinite(spot) || spot <= 0) stalePriceCount += 1;
+                const qty = Number(plan.quantity ?? 0);
+                const amt = Number(plan.amount ?? 0);
+                if (qty > 0 && amt > 0 && Number.isFinite(target) && target > 0) {
+                    const instr = inferInstrumentCurrencyFromSymbol(sym);
+                    const amtInstr = convertBetweenTradeCurrencies(amt, planCurrency, instr, sarPerUsd);
+                    const impliedPrice = amtInstr / qty;
+                    const drift = Math.abs((impliedPrice - target) / target);
+                    if (Number.isFinite(drift) && drift > 0.35) sizingMismatchCount += 1;
+                }
+            }
+        });
+        if (missingSymbolCount > 0) out.push(`${missingSymbolCount} plan${missingSymbolCount > 1 ? 's' : ''} missing symbol.`);
+        if (invalidDateCount > 0) out.push(`${invalidDateCount} date trigger${invalidDateCount > 1 ? 's are' : ' is'} invalid.`);
+        if (invalidPriceCount > 0) out.push(`${invalidPriceCount} price trigger${invalidPriceCount > 1 ? 's are' : ' is'} invalid.`);
+        if (stalePriceCount > 0) out.push(`${stalePriceCount} price-triggered plan${stalePriceCount > 1 ? 's' : ''} missing live price.`);
+        if (sizingMismatchCount > 0) out.push(`${sizingMismatchCount} plan${sizingMismatchCount > 1 ? 's' : ''} have amount/quantity mismatch vs target price.`);
+        return out;
+    }, [data?.plannedTrades, data?.investmentPlan, simulatedPrices, sarPerUsd]);
+
+    const alignmentSummaryEn = useMemo(
+        () =>
+            `Plan alignment summary: ${planAlignment.alignedCount} aligned, ${planAlignment.conflictCount} conflicts, ${planAlignment.untrackedCount} need mapping. ` +
+            (planValidationWarnings.length > 0
+                ? `Validation checks: ${planValidationWarnings.join(' ')}`
+                : 'Validation checks: no critical issues found.'),
+        [planAlignment, planValidationWarnings]
+    );
+
+    useEffect(() => {
+        setAlignmentSummaryAr('');
+        setAlignmentSummaryArError(null);
+    }, [alignmentSummaryEn]);
+
+    const handleTranslateAlignmentToArabic = useCallback(async () => {
+        setIsTranslatingAlignment(true);
+        setAlignmentSummaryArError(null);
+        try {
+            const ar = await translateFinancialInsightToArabic(alignmentSummaryEn);
+            setAlignmentSummaryAr(ar);
+        } catch (e) {
+            setAlignmentSummaryArError(formatAiError(e));
+        }
+        setIsTranslatingAlignment(false);
+    }, [alignmentSummaryEn]);
 
 
 
@@ -1308,7 +1381,7 @@ const InvestmentPlanView: React.FC<{
                                 <button
                                     type="button"
                                     onClick={() => handleCreatePlanFromAi(candidate)}
-                                    className="shrink-0 rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90 whitespace-nowrap"
+                                    className="shrink-0 w-full sm:w-auto rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90 whitespace-nowrap"
                                 >
                                     Create plan
                                 </button>
@@ -1325,62 +1398,74 @@ const InvestmentPlanView: React.FC<{
                 </SectionCard>
 
                 {/* Enhanced Plan vs AI Alignment */}
-                <SectionCard title="Do your plans match AI?" className="min-h-[600px] overflow-hidden" collapsible collapsibleSummary="Same direction or different" defaultExpanded={false}>
-                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-8">
-                        <div className="flex items-center gap-4">
-                            <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
-                                <ChartBarIcon className="h-7 w-7 text-white" />
+                <SectionCard title="Do your plans match AI?" className="overflow-hidden" collapsible collapsibleSummary="Same direction or different" defaultExpanded>
+                    <div className="flex flex-col gap-4 mb-5">
+                        <div className="flex items-start gap-3">
+                            <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
+                                <ChartBarIcon className="h-5 w-5 text-indigo-700" />
                             </div>
                             <div>
-                                <h3 className="text-xl font-semibold text-slate-900">Quick comparison</h3>
-                                <p className="text-slate-600 mt-1 text-sm max-w-xl">Finova checks each plan against its suggestions so you’re not accidentally betting the opposite way.</p>
+                                <h3 className="text-lg font-semibold text-slate-900">Quick comparison</h3>
+                                <p className="text-sm text-slate-600">Each plan is checked against AI universe posture (Core / High-Upside / Quarantine) so direction stays consistent.</p>
                             </div>
                         </div>
-                        <div className="flex flex-wrap items-center gap-4">
-                            <div className="flex items-center gap-6 bg-white/70 backdrop-blur-sm rounded-2xl px-6 py-3 border border-slate-200 shadow-lg">
-                                <span className="flex items-center gap-2">
-                                    <div className="w-4 h-4 bg-emerald-500 rounded-full animate-pulse"></div>
-                                    <span className="font-bold text-emerald-700">Aligned: {planAlignment.alignedCount}</span>
-                                </span>
-                                <span className="flex items-center gap-2">
-                                    <div className="w-4 h-4 bg-rose-500 rounded-full animate-pulse"></div>
-                                    <span className="font-bold text-rose-700">Conflicts: {planAlignment.conflictCount}</span>
-                                </span>
-                                <span className="flex items-center gap-2">
-                                    <div className="w-4 h-4 bg-slate-500 rounded-full animate-pulse"></div>
-                                    <span className="font-bold text-slate-700">Untracked: {planAlignment.untrackedCount}</span>
-                                </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800">Aligned: {planAlignment.alignedCount}</div>
+                            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-800">Conflicts: {planAlignment.conflictCount}</div>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">Needs mapping: {planAlignment.untrackedCount}</div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            <button
+                                type="button"
+                                onClick={handleEditNextConflict}
+                                disabled={planAlignment.conflictCount === 0}
+                                className="px-4 py-2 text-sm font-semibold border border-slate-300 text-slate-700 rounded-lg hover:border-primary hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                Edit next conflict
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleAlignAllConflicts}
+                                disabled={planAlignment.conflictCount === 0}
+                                className="px-4 py-2 text-sm font-semibold border border-emerald-300 text-emerald-700 rounded-lg hover:border-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                Align all conflicts
+                            </button>
+                        </div>
+                        {planValidationWarnings.length > 0 && (
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                                <p className="text-xs font-semibold text-amber-800 mb-1">Validation checks</p>
+                                <ul className="text-xs text-amber-900 list-disc list-inside space-y-0.5">
+                                    {planValidationWarnings.slice(0, 5).map((w, i) => <li key={`pv-${i}`}>{w}</li>)}
+                                </ul>
                             </div>
-                            <div className="flex gap-3">
-                                <button 
-                                    type="button" 
-                                    onClick={handleEditNextConflict} 
-                                    disabled={planAlignment.conflictCount === 0} 
-                                    className="px-6 py-3 text-sm font-bold border-2 border-slate-300 text-slate-700 rounded-xl hover:border-primary hover:text-primary disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 shadow-sm hover:shadow-md"
+                        )}
+                        <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                                <p className="text-xs font-semibold text-indigo-900">AI alignment summary</p>
+                                <button
+                                    type="button"
+                                    onClick={() => void handleTranslateAlignmentToArabic()}
+                                    disabled={isTranslatingAlignment}
+                                    className="px-2.5 py-1 text-xs font-semibold border border-indigo-300 text-indigo-800 rounded-md hover:border-indigo-500 disabled:opacity-60"
                                 >
-                                    Edit Next Conflict
-                                </button>
-                                <button 
-                                    type="button" 
-                                    onClick={handleAlignAllConflicts} 
-                                    disabled={planAlignment.conflictCount === 0} 
-                                    className="px-6 py-3 text-sm font-bold border-2 border-emerald-300 text-emerald-700 rounded-xl hover:border-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 shadow-sm hover:shadow-md"
-                                >
-                                    Align All Conflicts
+                                    {isTranslatingAlignment ? 'Translating…' : 'العربية'}
                                 </button>
                             </div>
+                            <p className="text-xs text-indigo-900">{alignmentSummaryAr || alignmentSummaryEn}</p>
+                            {alignmentSummaryArError && <p className="text-xs text-rose-700 mt-1">{alignmentSummaryArError}</p>}
                         </div>
                     </div>
-                    
-                    <div className="flex flex-wrap gap-3 mb-8">
+
+                    <div className="flex flex-wrap gap-2 mb-5">
                         {(['All', 'Aligned', 'Conflict', 'Needs mapping'] as const).map((filter) => (
-                            <button 
-                                key={filter} 
-                                type="button" 
-                                onClick={() => setAlignmentFilter(filter)} 
-                                className={`px-6 py-3 text-sm font-bold rounded-full border-2 transition-all duration-200 shadow-sm hover:shadow-md ${
-                                    alignmentFilter === filter 
-                                        ? 'bg-gradient-to-r from-primary to-secondary text-white border-primary shadow-lg transform scale-105' 
+                            <button
+                                key={filter}
+                                type="button"
+                                onClick={() => setAlignmentFilter(filter)}
+                                className={`px-3 py-1.5 text-xs sm:text-sm font-semibold rounded-full border transition-colors ${
+                                    alignmentFilter === filter
+                                        ? 'bg-primary text-white border-primary'
                                         : 'bg-white text-slate-700 border-slate-300 hover:border-primary hover:text-primary'
                                 }`}
                             >
@@ -1389,88 +1474,77 @@ const InvestmentPlanView: React.FC<{
                         ))}
                     </div>
 
-                    <div className="space-y-4 max-h-96 overflow-y-auto pr-4 scrollbar-thin scrollbar-thumb-blue-200 scrollbar-track-blue-50">
+                    <div className="space-y-3 max-h-[28rem] overflow-y-auto pr-1">
                         {planAlignment.filteredRows.map(({ plan, universeStatus, recommendation, aligned, reason, suggestedTradeType }) => (
-                            <div key={`align-${plan.id}`} className={`border-2 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6 hover:shadow-lg transition-all duration-300 ${
-                                aligned === true ? 'border-emerald-200 bg-gradient-to-r from-emerald-50/50 to-green-50/30' :
-                                aligned === false ? 'border-rose-200 bg-gradient-to-r from-rose-50/50 to-red-50/30' :
-                                'border-slate-200 bg-gradient-to-r from-slate-50/50 to-gray-50/30'
-                            }`}>
-                                <div className="flex-1">
-                                    <div className="flex items-center gap-4 mb-3">
-                                        <div className="w-12 h-12 bg-gradient-to-br from-slate-100 to-slate-200 rounded-xl flex items-center justify-center">
-                                            <span className="font-bold text-slate-700 text-lg">{(plan.symbol ?? '').slice(0, 2)}</span>
-                                        </div>
-                                        <div className="flex-1">
-                                            <span className="font-bold text-slate-900 text-lg">{plan.symbol ?? '—'}</span>
-                                            <span className="mx-2 text-slate-400">•</span>
-                                            <span className={`px-3 py-1.5 rounded-full text-xs font-bold border ${
-                                                plan.tradeType === 'buy' 
-                                                    ? 'bg-emerald-100 text-emerald-800 border-emerald-200' 
-                                                    : 'bg-rose-100 text-rose-800 border-rose-200'
-                                            }`}>
+                            <div
+                                key={`align-${plan.id}`}
+                                className={`rounded-xl border p-4 ${
+                                    aligned === true
+                                        ? 'border-emerald-200 bg-emerald-50/40'
+                                        : aligned === false
+                                        ? 'border-rose-200 bg-rose-50/40'
+                                        : 'border-slate-200 bg-slate-50/40'
+                                }`}
+                            >
+                                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                                            <span className="font-semibold text-slate-900">{plan.symbol ?? '—'}</span>
+                                            <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${plan.tradeType === 'buy' ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : 'bg-rose-100 text-rose-800 border-rose-200'}`}>
                                                 {plan.tradeType.toUpperCase()}
                                             </span>
-                                            <span className={`ml-3 px-3 py-1.5 rounded-full text-xs font-bold border ${
+                                            <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${
                                                 aligned === true ? 'bg-emerald-100 text-emerald-800 border-emerald-200' :
                                                 aligned === false ? 'bg-rose-100 text-rose-800 border-rose-200' :
-                                                'bg-slate-100 text-slate-800 border-slate-200'
+                                                'bg-slate-100 text-slate-700 border-slate-200'
                                             }`}>
                                                 {aligned === true ? 'Aligned' : aligned === false ? 'Conflict' : 'Needs mapping'}
                                             </span>
                                         </div>
+                                        <p className="text-sm text-slate-700">
+                                            <span className="font-medium">Universe:</span> {universeStatus} · {recommendation}
+                                        </p>
+                                        <p className="text-sm text-slate-600 mt-1">{reason}</p>
+                                        <p className="text-xs text-indigo-700 mt-2">
+                                            AI suggests: {suggestedTradeType === 'buy' ? 'Accumulation direction preferred' : 'De-risking direction preferred'}
+                                        </p>
                                     </div>
-                                    <div className="space-y-2">
-                                        <div className="bg-white/50 backdrop-blur-sm rounded-xl p-4">
-                                            <p className="text-slate-700 font-semibold">
-                                                <span className="text-blue-600">Universe:</span> {universeStatus} • {recommendation}
-                                            </p>
-                                        </div>
-                                        <div className="bg-white/50 backdrop-blur-sm rounded-xl p-4">
-                                            <p className="text-slate-600 text-sm leading-relaxed">{reason}</p>
-                                        </div>
-                                        <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl p-4 border border-indigo-200">
-                                            <p className="text-indigo-800 text-sm font-semibold">
-                                                AI suggests: {suggestedTradeType === 'buy' ? 'Accumulation direction preferred' : 'De-risking direction preferred'}
-                                            </p>
-                                        </div>
+                                    <div className="flex flex-wrap gap-2 lg:justify-end">
+                                        <button
+                                            type="button"
+                                            onClick={() => setSymbolFocus(plan.symbol)}
+                                            className="px-3 py-1.5 text-xs font-semibold border border-slate-300 text-slate-700 rounded-lg hover:border-primary hover:text-primary"
+                                        >
+                                            Focus
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleOpenPlanModal(plan)}
+                                            className="px-3 py-1.5 text-xs font-semibold border border-slate-300 text-slate-700 rounded-lg hover:border-primary hover:text-primary"
+                                        >
+                                            Edit
+                                        </button>
+                                        {aligned === false && (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleAlignWithAi(plan, suggestedTradeType)}
+                                                title="Change this plan to match the AI recommendation"
+                                                className="px-3 py-1.5 text-xs font-semibold border border-emerald-300 text-emerald-700 rounded-lg hover:border-emerald-500"
+                                            >
+                                                Align with AI
+                                            </button>
+                                        )}
+                                        {aligned === null && (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleAddToUniverse(plan)}
+                                                title="Add this symbol to your portfolio so AI can track and recommend it"
+                                                className="px-3 py-1.5 text-xs font-semibold border border-indigo-300 text-indigo-700 rounded-lg hover:border-indigo-500"
+                                            >
+                                                Add to universe
+                                            </button>
+                                        )}
                                     </div>
-                                </div>
-                                <div className="flex flex-col gap-3 self-start sm:self-auto">
-                                    <button 
-                                        type="button" 
-                                        onClick={() => setSymbolFocus(plan.symbol)} 
-                                        className="px-4 py-2 text-xs font-bold border-2 border-slate-300 text-slate-700 rounded-lg hover:border-primary hover:text-primary transition-all duration-200 shadow-sm hover:shadow-md"
-                                    >
-                                        Focus
-                                    </button>
-                                    <button 
-                                        type="button" 
-                                        onClick={() => handleOpenPlanModal(plan)} 
-                                        className="px-4 py-2 text-xs font-bold border-2 border-slate-300 text-slate-700 rounded-lg hover:border-primary hover:text-primary transition-all duration-200 shadow-sm hover:shadow-md"
-                                    >
-                                        Edit
-                                    </button>
-                                    {aligned === false && (
-                                        <button 
-                                            type="button" 
-                                            onClick={() => handleAlignWithAi(plan, suggestedTradeType)} 
-                                            title="Change this plan to match the AI recommendation"
-                                            className="px-4 py-2 text-xs font-bold border-2 border-emerald-300 text-emerald-700 rounded-lg hover:border-emerald-500 transition-all duration-200 shadow-sm hover:shadow-md"
-                                        >
-                                            Align with AI
-                                        </button>
-                                    )}
-                                    {aligned === null && (
-                                        <button 
-                                            type="button" 
-                                            onClick={() => handleAddToUniverse(plan)} 
-                                            title="Add this symbol to your portfolio so AI can track and recommend it"
-                                            className="px-4 py-2 text-xs font-bold border-2 border-indigo-300 text-indigo-700 rounded-lg hover:border-indigo-500 transition-all duration-200 shadow-sm hover:shadow-md"
-                                        >
-                                            Add to Universe
-                                        </button>
-                                    )}
                                 </div>
                             </div>
                         ))}
@@ -1489,23 +1563,21 @@ const InvestmentPlanView: React.FC<{
 
                 {/* Enhanced Symbol Focus Indicator */}
                 {symbolFocus && (
-                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-3xl p-8 shadow-xl">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                                <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
-                                    <TargetIcon className="h-7 w-7 text-white" />
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                                <div className="w-9 h-9 bg-blue-100 rounded-lg flex items-center justify-center">
+                                    <TargetIcon className="h-5 w-5 text-blue-700" />
                                 </div>
                                 <div>
-                                    <span className="text-blue-800 font-bold text-lg">
-                                        Focused on symbol: <span className="text-2xl font-bold text-blue-900">{symbolFocus.toUpperCase()}</span>
-                                    </span>
-                                    <p className="text-blue-600 text-sm mt-1">Viewing all plans for this symbol</p>
+                                    <p className="text-sm font-semibold text-blue-900">Focused symbol: {symbolFocus.toUpperCase()}</p>
+                                    <p className="text-xs text-blue-700">Showing plans and actions for this ticker.</p>
                                 </div>
                             </div>
-                            <button 
-                                type="button" 
-                                onClick={() => setSymbolFocus('')} 
-                                className="px-6 py-3 text-sm font-bold border-2 border-blue-300 text-blue-700 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all duration-200 shadow-sm hover:shadow-md"
+                            <button
+                                type="button"
+                                onClick={() => setSymbolFocus('')}
+                                className="px-3 py-1.5 text-xs font-semibold border border-blue-300 text-blue-700 rounded-lg hover:border-blue-500 hover:bg-blue-100"
                             >
                                 Clear Focus
                             </button>
@@ -1514,36 +1586,36 @@ const InvestmentPlanView: React.FC<{
                 )}
 
                 {/* Plans Table */}
-                <SectionCard title="All your plans" className="min-h-[600px]" collapsible collapsibleSummary="Edit or record trades" defaultExpanded>
+                <SectionCard title="All your plans" className="min-h-0" collapsible collapsibleSummary="Edit or record trades" defaultExpanded>
                     <div className="overflow-x-auto">
                         <table className="min-w-full divide-y divide-gray-200">
                             <thead className="bg-gray-50">
                                 <tr className="text-left text-xs font-semibold text-slate-600">
-                                    <th className="px-6 py-3.5">Stock</th>
-                                    <th className="px-6 py-3.5">Buy or sell</th>
-                                    <th className="px-6 py-3.5" title="Date, or per-share trigger in the stock’s currency (SAR primary; hover for USD)">Trigger</th>
-                                    <th className="px-6 py-3.5" title="Whether today’s price lines up with your plan">Hint</th>
-                                    <th className="px-6 py-3.5" title="How soon you want to act if the rule is met">Urgency</th>
-                                    <th className="px-6 py-3.5">Stage</th>
-                                    <th className="px-6 py-3.5">Next step</th>
+                                    <th className="px-3 sm:px-6 py-3.5">Stock</th>
+                                    <th className="px-3 sm:px-6 py-3.5">Buy or sell</th>
+                                    <th className="px-3 sm:px-6 py-3.5" title="Date trigger, or per-share trigger in the stock’s traded currency">Trigger</th>
+                                    <th className="px-3 sm:px-6 py-3.5" title="Whether today’s price lines up with your plan">Hint</th>
+                                    <th className="px-3 sm:px-6 py-3.5" title="How soon you want to act if the rule is met">Urgency</th>
+                                    <th className="px-3 sm:px-6 py-3.5">Stage</th>
+                                    <th className="px-3 sm:px-6 py-3.5">Next step</th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
                                 {visiblePlans.map(plan => (
                                     <tr key={plan.id} className={`${isTriggered(plan) ? 'bg-yellow-50' : ''} hover:bg-gray-50 transition-colors`}>
-                                        <td className="px-6 py-4 whitespace-nowrap">
+                                        <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap">
                                             <div>
                                                 <div className="font-medium text-gray-900">{plan.symbol ?? '—'}</div>
                                                 <div className="text-sm text-gray-500">{plan.name}</div>
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
+                                        <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap">
                                             <span className={`font-semibold ${plan.tradeType === 'buy' ? 'text-green-600' : 'text-red-600'}`}>
                                                 {plan.tradeType.toUpperCase()}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-4 align-top">{renderCondition(plan)}</td>
-                                        <td className="px-6 py-4">
+                                        <td className="px-3 sm:px-6 py-3 sm:py-4 align-top">{renderCondition(plan)}</td>
+                                        <td className="px-3 sm:px-6 py-3 sm:py-4">
                                             <span
                                                 className={`px-3 py-1 inline-flex text-xs font-semibold rounded-full ${getPriceSignalClass(plan)}`}
                                                 title={plan.tradeType === 'buy'
@@ -1553,12 +1625,12 @@ const InvestmentPlanView: React.FC<{
                                                 {getPriceSignalLabel(plan)}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-4">
+                                        <td className="px-3 sm:px-6 py-3 sm:py-4">
                                             <span className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${priorityClass(plan.priority)}`}>
                                                 {plan.priority}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-4">
+                                        <td className="px-3 sm:px-6 py-3 sm:py-4">
                                             {plan.status === 'Executed' ? (
                                                 <span className="flex items-center gap-1 text-green-600 font-semibold">
                                                     <CheckCircleIcon className="h-4 w-4"/>Executed
@@ -1571,7 +1643,7 @@ const InvestmentPlanView: React.FC<{
                                                 <span className="text-gray-600">Planned</span>
                                             )}
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
+                                        <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap">
                                             <div className="flex items-center gap-2">
                                                 <button 
                                                     type="button"
