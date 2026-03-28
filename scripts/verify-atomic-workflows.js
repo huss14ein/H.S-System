@@ -35,6 +35,18 @@ const migrationChecks = [
     file: 'supabase/migrations/20260328112000_add_finalize_advance_budget_request_rpc.sql',
     fn: 'finalize_advance_budget_request',
   },
+  {
+    file: 'supabase/migrations/20260328130000_fix_shared_accounts_and_budgets_rpc_bypass_rls.sql',
+    fn: 'get_shared_accounts_for_me',
+  },
+  {
+    file: 'supabase/migrations/20260328130000_fix_shared_accounts_and_budgets_rpc_bypass_rls.sql',
+    fn: 'get_shared_budgets_for_me',
+  },
+  {
+    file: 'supabase/migrations/20260328130000_fix_shared_accounts_and_budgets_rpc_bypass_rls.sql',
+    fn: 'get_shared_budget_consumed_for_me',
+  },
 ];
 
 for (const m of migrationChecks) {
@@ -49,6 +61,11 @@ expectContains(dataContext, "rpc('create_investment_cash_transfer_with_fee'", 'c
 
 const budgets = read('pages/Budgets.tsx');
 expectContains(budgets, "rpc('finalize_advance_budget_request'", 'pages/Budgets.tsx');
+expectContains(budgets, "rpc('get_shared_budgets_for_me'", 'pages/Budgets.tsx');
+expectContains(budgets, "rpc('get_shared_budget_consumed_for_me'", 'pages/Budgets.tsx');
+
+const accountsPage = read('pages/Accounts.tsx');
+expectContains(accountsPage, "rpc('get_shared_accounts_for_me'", 'pages/Accounts.tsx');
 
 const investmentCashMigration = read('supabase/migrations/20260328101000_add_investment_cash_transfer_rpc.sql');
 expectContains(investmentCashMigration, 'linked_cash_account_id', 'supabase/migrations/20260328101000_add_investment_cash_transfer_rpc.sql');
@@ -63,10 +80,17 @@ expectContains(advanceFinalizeMigration, 'v_target_user_id := v_request.user_id'
 expectContains(advanceFinalizeMigration, 'Advance window parameters do not match the locked budget request', 'supabase/migrations/20260328112000_add_finalize_advance_budget_request_rpc.sql');
 expectContains(advanceFinalizeMigration, 'Provided category does not match the locked budget request', 'supabase/migrations/20260328112000_add_finalize_advance_budget_request_rpc.sql');
 
+
+const sharedMigration = read('supabase/migrations/20260328130000_fix_shared_accounts_and_budgets_rpc_bypass_rls.sql');
+expectContains(sharedMigration, 'security definer', 'supabase/migrations/20260328130000_fix_shared_accounts_and_budgets_rpc_bypass_rls.sql');
+expectContains(sharedMigration, 'set local row_security = off', 'supabase/migrations/20260328130000_fix_shared_accounts_and_budgets_rpc_bypass_rls.sql');
+expectContains(sharedMigration, 'where s.shared_with_user_id = auth.uid()', 'supabase/migrations/20260328130000_fix_shared_accounts_and_budgets_rpc_bypass_rls.sql');
+expectContains(sharedMigration, 'where bs.shared_with_user_id = auth.uid()', 'supabase/migrations/20260328130000_fix_shared_accounts_and_budgets_rpc_bypass_rls.sql');
+
 if (failures.length > 0) {
   console.error('Critical atomic workflow verification failed:\n');
   for (const f of failures) console.error(`- ${f}`);
   process.exit(1);
 }
 
-console.log('Atomic workflow verification passed.');
+console.log('Atomic/shared workflow verification passed.');
