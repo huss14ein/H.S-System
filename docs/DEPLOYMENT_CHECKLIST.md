@@ -1,6 +1,6 @@
 # Production Deployment Checklist
 
-**Version:** 1.0.0.0  
+**Version:** 1.1.1.0  
 **Last updated:** March 2026
 
 This checklist ensures all critical items are configured before going live.
