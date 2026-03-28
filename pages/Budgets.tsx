@@ -1662,6 +1662,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 // Optional; ignore failures (RLS / duplicates)
             }
         }
+        let finalizedByAtomicAdvance = false;
         if (mode === 'AdvanceFromNextMonth') {
             const targetCategory = resolveRequestCategory(request);
             const advanceMeta = parseAdvanceMeta(request) ?? (() => {
@@ -1689,38 +1690,27 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 alert(`Next month available limit is ${formatCurrencyString(Math.max(0, srcLimit), { digits: 0 })}. Cannot approve ${formatCurrencyString(amount, { digits: 0 })}.`);
                 return;
             }
-
-            const dst = rows.find((b) => Number(b.year) === advanceMeta.toYear && Number(b.month) === advanceMeta.toMonth);
-            const newSrcLimit = Math.max(0, srcLimit - amount);
-            const { error: srcUpdateError } = await supabase.from('budgets').update({ limit: newSrcLimit }).eq('id', src.id);
-            if (srcUpdateError) {
-                alert(`Failed to update next month budget: ${srcUpdateError.message}`);
+            const rpcRes = await supabase.rpc('finalize_advance_budget_request', {
+                p_request_id: request.id,
+                p_request_user_id: request.user_id,
+                p_category: targetCategory,
+                p_amount: amount,
+                p_from_year: advanceMeta.fromYear,
+                p_from_month: advanceMeta.fromMonth,
+                p_to_year: advanceMeta.toYear,
+                p_to_month: advanceMeta.toMonth,
+            } as any);
+            if (rpcRes.error) {
+                const msg = String(rpcRes.error.message || '');
+                const missingRpc = rpcRes.error.code === 'PGRST202' || (msg.toLowerCase().includes('function') && msg.toLowerCase().includes('does not exist'));
+                if (missingRpc) {
+                    alert('Atomic budget-advance RPC is not deployed yet. Run migration `supabase/migrations/20260328112000_add_finalize_advance_budget_request_rpc.sql` and retry.');
+                } else {
+                    alert(`Failed to finalize advance request atomically: ${rpcRes.error.message}`);
+                }
                 return;
             }
-            if (dst) {
-                const dstLimit = Number(dst.limit ?? 0);
-                const { error: dstUpdateError } = await supabase.from('budgets').update({ limit: Math.max(0, dstLimit + amount) }).eq('id', dst.id);
-                if (dstUpdateError) {
-                    alert(`Failed to update current month budget: ${dstUpdateError.message}`);
-                    return;
-                }
-            } else {
-                const dstPayload = {
-                    user_id: request.user_id,
-                    category: targetCategory,
-                    limit: amount,
-                    month: advanceMeta.toMonth,
-                    year: advanceMeta.toYear,
-                    period: 'monthly',
-                    tier: (src as any).tier ?? 'Optional',
-                    destination_account_id: (src as any).destination_account_id ?? null,
-                };
-                const { error: dstInsertError } = await supabase.from('budgets').insert(dstPayload);
-                if (dstInsertError) {
-                    alert(`Failed to create current month budget row: ${dstInsertError.message}`);
-                    return;
-                }
-            }
+            finalizedByAtomicAdvance = true;
         } else if (request.request_type === 'IncreaseLimit') {
             if (request.category_id) {
                 const { error: updateError } = await supabase
@@ -1749,13 +1739,15 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             }
         }
 
-        const { error: requestUpdateError } = await supabase
-            .from('budget_requests')
-            .update({ status: 'Finalized', amount })
-            .eq('id', request.id);
-        if (requestUpdateError) {
-            alert(`Failed to finalize request: ${requestUpdateError.message}`);
-            return;
+        if (!finalizedByAtomicAdvance) {
+            const { error: requestUpdateError } = await supabase
+                .from('budget_requests')
+                .update({ status: 'Finalized', amount })
+                .eq('id', request.id);
+            if (requestUpdateError) {
+                alert(`Failed to finalize request: ${requestUpdateError.message}`);
+                return;
+            }
         }
 
         setBudgetRequests(prev => prev.map((r) => r.id === request.id ? { ...r, status: 'Finalized', amount } : r));
