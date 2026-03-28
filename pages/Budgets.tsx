@@ -1692,7 +1692,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             }
             const rpcRes = await supabase.rpc('finalize_advance_budget_request', {
                 p_request_id: request.id,
-                p_request_user_id: request.user_id,
                 p_category: targetCategory,
                 p_amount: amount,
                 p_from_year: advanceMeta.fromYear,

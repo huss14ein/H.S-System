@@ -2,7 +2,6 @@
 
 create or replace function public.finalize_advance_budget_request(
   p_request_id uuid,
-  p_request_user_id uuid,
   p_category text,
   p_amount numeric,
   p_from_year integer,
@@ -41,7 +40,7 @@ begin
   into v_request
   from public.budget_requests br
   where br.id = p_request_id
-    and br.user_id = p_request_user_id
+    and br.user_id = v_user_id
   for update;
 
   if not found then
@@ -55,7 +54,7 @@ begin
   select b.*
   into v_src
   from public.budgets b
-  where b.user_id = p_request_user_id
+  where b.user_id = v_user_id
     and b.category = p_category
     and b.year = p_from_year
     and b.month = p_from_month
@@ -74,7 +73,7 @@ begin
   select b.*
   into v_dst
   from public.budgets b
-  where b.user_id = p_request_user_id
+  where b.user_id = v_user_id
     and b.category = p_category
     and b.year = p_to_year
     and b.month = p_to_month
@@ -93,7 +92,7 @@ begin
       user_id, category, limit, month, year, period, tier, destination_account_id
     )
     values (
-      p_request_user_id,
+      v_user_id,
       p_category,
       v_amount,
       p_to_month,
@@ -115,5 +114,5 @@ begin
 end;
 $$;
 
-revoke all on function public.finalize_advance_budget_request(uuid, uuid, text, numeric, integer, integer, integer, integer) from public;
-grant execute on function public.finalize_advance_budget_request(uuid, uuid, text, numeric, integer, integer, integer, integer) to authenticated;
+revoke all on function public.finalize_advance_budget_request(uuid, text, numeric, integer, integer, integer, integer) from public;
+grant execute on function public.finalize_advance_budget_request(uuid, text, numeric, integer, integer, integer, integer) to authenticated;
