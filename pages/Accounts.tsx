@@ -46,6 +46,7 @@ interface TransferHistoryItem {
     toAccountId: string;
     amount: number;
     feeAmount?: number;
+    feeAccountId?: string;
     date: string;
     description?: string;
 }
@@ -534,7 +535,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             grouped.set(gid, list);
         }
         const groupedPairs: TransferHistoryItem[] = [];
-        const groupedFeeById = new Map<string, number>();
+        const groupedFeeById = new Map<string, { amount: number; accountId?: string }>();
         for (const [, rows] of grouped) {
             const gid = rows[0] ? (rows[0].transferGroupId ?? rows[0].transfer_group_id ?? '') : '';
             const out = rows.find((r) => (r.transferRole ?? r.transfer_role) === 'principal_out');
@@ -542,7 +543,10 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             const feeRow = rows.find((r) => (r.transferRole ?? r.transfer_role) === 'fee');
             const feeAmount = feeRow ? Math.abs(Number(feeRow.amount ?? 0)) : 0;
             if (gid && Number.isFinite(feeAmount) && feeAmount > 0) {
-                groupedFeeById.set(gid, feeAmount);
+                groupedFeeById.set(gid, {
+                    amount: feeAmount,
+                    accountId: feeRow?.accountId ?? feeRow?.account_id,
+                });
             }
             if (!out || !inc) continue;
             const fromId = out.accountId ?? out.account_id ?? '';
@@ -554,6 +558,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 toAccountId: toId,
                 amount: absAmt,
                 feeAmount: Number.isFinite(feeAmount) && feeAmount > 0 ? feeAmount : undefined,
+                feeAccountId: feeRow ? (feeRow.accountId ?? feeRow.account_id ?? undefined) : undefined,
                 date: String(out.date ?? inc.date ?? ''),
                 description: (out.description ?? '').replace(/^Transfer to .+?:\s*/i, '').trim() || undefined,
             });
@@ -600,7 +605,8 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                     fromAccountId: t.type === 'deposit' ? linkedCashAccountId : platformAccountId,
                     toAccountId: t.type === 'deposit' ? platformAccountId : linkedCashAccountId,
                     amount: absAmt,
-                    feeAmount: gid ? groupedFeeById.get(gid) : undefined,
+                    feeAmount: gid ? groupedFeeById.get(gid)?.amount : undefined,
+                    feeAccountId: gid ? groupedFeeById.get(gid)?.accountId : undefined,
                     date: String(t.date ?? ''),
                     description: t.type === 'deposit' ? 'Transfer to investment platform' : 'Transfer from investment platform',
                 } as TransferHistoryItem;
@@ -1132,6 +1138,9 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                         {filteredTransferHistory.map((item, idx) => {
                             const fromAcc = (data?.accounts ?? []).find((a: { id: string }) => a.id === item.fromAccountId);
                             const toAcc = (data?.accounts ?? []).find((a: { id: string }) => a.id === item.toAccountId);
+                            const feeAcc = item.feeAccountId
+                                ? (data?.accounts ?? []).find((a: { id: string }) => a.id === item.feeAccountId)
+                                : undefined;
                             return (
                                 <div key={`${item.date}-${item.fromAccountId}-${item.toAccountId}-${item.amount}-${idx}`} className="flex items-center justify-between gap-3 px-4 py-2.5 bg-white hover:bg-slate-50 border-b border-slate-100 last:border-0">
                                     <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -1140,7 +1149,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                                         <span className="font-medium text-slate-800 truncate">{toAcc?.name ?? item.toAccountId}</span>
                                         {item.feeAmount && item.feeAmount > 0 && (
                                             <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 shrink-0">
-                                                Fee {formatCurrencyString(item.feeAmount, { inCurrency: accountBookCurrency(fromAcc), showSecondary: true })}
+                                                Fee {formatCurrencyString(item.feeAmount, { inCurrency: accountBookCurrency(feeAcc ?? fromAcc), showSecondary: true })}
                                             </span>
                                         )}
                                     </div>
