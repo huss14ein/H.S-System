@@ -59,6 +59,14 @@ const migrationChecks = [
     file: 'supabase/migrations/20260328134000_fix_shared_accounts_return_text_types.sql',
     fn: 'get_shared_accounts_for_me',
   },
+  {
+    file: 'supabase/migrations/20260328135000_add_share_user_discovery_rpcs.sql',
+    fn: 'find_user_by_email',
+  },
+  {
+    file: 'supabase/migrations/20260328135000_add_share_user_discovery_rpcs.sql',
+    fn: 'list_shareable_users',
+  },
 ];
 
 for (const m of migrationChecks) {
@@ -78,6 +86,8 @@ expectContains(budgets, "rpc('get_shared_budget_consumed_for_me'", 'pages/Budget
 
 const accountsPage = read('pages/Accounts.tsx');
 expectContains(accountsPage, "rpc('get_shared_accounts_for_me'", 'pages/Accounts.tsx');
+expectContains(accountsPage, "rpc('list_shareable_users'", 'pages/Accounts.tsx');
+expectContains(budgets, "rpc('list_shareable_users'", 'pages/Budgets.tsx');
 
 const investmentCashMigration = read('supabase/migrations/20260328101000_add_investment_cash_transfer_rpc.sql');
 expectContains(investmentCashMigration, 'linked_cash_account_id', 'supabase/migrations/20260328101000_add_investment_cash_transfer_rpc.sql');
@@ -112,6 +122,12 @@ expectContains(sharedAccountsTypeFixMigration, 'a.name::text as name', 'supabase
 expectContains(sharedAccountsTypeFixMigration, 'a.type::text as type', 'supabase/migrations/20260328134000_fix_shared_accounts_return_text_types.sql');
 expectContains(sharedAccountsTypeFixMigration, 'a.owner::text as owner', 'supabase/migrations/20260328134000_fix_shared_accounts_return_text_types.sql');
 expectContains(sharedAccountsTypeFixMigration, 'coalesce(owner_u.email::text, s.owner_user_id::text) as owner_email', 'supabase/migrations/20260328134000_fix_shared_accounts_return_text_types.sql');
+
+
+const shareUserDiscoveryMigration = read('supabase/migrations/20260328135000_add_share_user_discovery_rpcs.sql');
+expectContains(shareUserDiscoveryMigration, 'create or replace function public.find_user_by_email', 'supabase/migrations/20260328135000_add_share_user_discovery_rpcs.sql');
+expectContains(shareUserDiscoveryMigration, 'create or replace function public.list_shareable_users', 'supabase/migrations/20260328135000_add_share_user_discovery_rpcs.sql');
+expectContains(shareUserDiscoveryMigration, 'au.email::text as email', 'supabase/migrations/20260328135000_add_share_user_discovery_rpcs.sql');
 
 if (failures.length > 0) {
   console.error('Critical atomic workflow verification failed:\n');
