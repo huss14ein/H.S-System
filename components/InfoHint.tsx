@@ -196,7 +196,7 @@ const InfoHint: React.FC<InfoHintProps> = ({ text, placement = 'auto', popoverAl
   ) : null;
 
   return (
-    <span className="relative z-[60] inline-flex h-[1.125rem] shrink-0 items-center justify-center align-middle translate-y-px">
+    <span className="relative z-[60] inline-flex h-4 w-4 shrink-0 items-center justify-center align-middle leading-none self-center">
       <button
         ref={triggerRef}
         type="button"
@@ -207,7 +207,7 @@ const InfoHint: React.FC<InfoHintProps> = ({ text, placement = 'auto', popoverAl
         onPointerEnter={(e) => {
           if (e.pointerType === 'mouse' || e.pointerType === 'pen') scheduleOpenFromHover();
         }}
-        className="relative inline-flex h-[1.125rem] w-[1.125rem] shrink-0 items-center justify-center rounded-full border border-gray-300 text-[10px] font-bold leading-none text-gray-600 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-primary/30 ml-0.5 touch-manipulation"
+        className="relative inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-gray-300 text-[10px] font-bold leading-none text-gray-600 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-primary/30 touch-manipulation"
         aria-label="More information"
         aria-expanded={open}
         aria-describedby={open ? tooltipId : undefined}

@@ -203,6 +203,10 @@ export interface Transaction {
   recurringId?: string;
   /** Optional link to the financial statement (e.g. bank/trading) this transaction was imported from. */
   statementId?: string;
+  /** Logical transfer id linking transfer principal legs and optional transfer fee rows. */
+  transferGroupId?: string;
+  /** Role inside a grouped transfer (`principal_out`, `principal_in`, or `fee`). */
+  transferRole?: 'principal_out' | 'principal_in' | 'fee';
   /** Parsed from note (see transactionSplitNote); not a separate DB column. */
   splitLines?: { category: string; amount: number }[];
 }
@@ -335,7 +339,7 @@ export interface CategoryPermission {
 export interface BudgetRequest {
   id: string;
   userId: string;
-  requestType: 'NewCategory' | 'IncreaseLimit';
+  requestType: 'NewCategory' | 'IncreaseLimit' | 'AdvanceFromNextMonth';
   categoryId?: string;
   categoryName?: string;
   amount: number;

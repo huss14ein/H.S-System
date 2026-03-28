@@ -102,7 +102,7 @@ interface DataContextType {
   updateTransaction: (transaction: Transaction) => Promise<void>;
   deleteTransaction: (transactionId: string) => Promise<void>;
   /** Create a transfer between two accounts (two transactions: out from fromAccountId, in to toAccountId). */
-  addTransfer: (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string) => Promise<void>;
+  addTransfer: (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string, feeAmount?: number) => Promise<void>;
   addRecurringTransaction: (recurring: Omit<RecurringTransaction, 'id' | 'user_id'>) => Promise<void>;
   updateRecurringTransaction: (recurring: RecurringTransaction) => Promise<void>;
   deleteRecurringTransaction: (id: string) => Promise<void>;
@@ -673,6 +673,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             categoryId: transaction.categoryId ?? transaction.category_id,
             rejectionReason: transaction.rejectionReason ?? transaction.rejection_reason,
             recurringId: transaction.recurringId ?? transaction.recurring_id,
+            transferGroupId: transaction.transferGroupId ?? transaction.transfer_group_id,
+            transferRole: transaction.transferRole ?? transaction.transfer_role,
             note: cleanNote !== undefined ? cleanNote : transaction.note,
             ...(splitLines?.length ? { splitLines } : {}),
         };
@@ -736,22 +738,32 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const recId = (transactionClean as { recurringId?: string; recurring_id?: string }).recurringId ?? (transactionClean as any).recurring_id;
         const budgetCat = (transactionClean as { budgetCategory?: string; budget_category?: string }).budgetCategory ?? (transactionClean as any).budget_category;
         const accountId = (transactionClean as { accountId?: string; account_id?: string }).accountId ?? (transactionClean as any).account_id;
+        const transferGroupId = (transactionClean as { transferGroupId?: string; transfer_group_id?: string }).transferGroupId ?? (transactionClean as any).transfer_group_id;
+        const transferRole = (transactionClean as { transferRole?: string; transfer_role?: string }).transferRole ?? (transactionClean as any).transfer_role;
 
         const payloadWithSnakeCase: Record<string, unknown> = { ...transactionClean };
         delete payloadWithSnakeCase.accountId;
         delete payloadWithSnakeCase.budgetCategory;
         delete payloadWithSnakeCase.recurringId;
+        delete payloadWithSnakeCase.transferGroupId;
+        delete payloadWithSnakeCase.transferRole;
         if (recId !== undefined) payloadWithSnakeCase.recurring_id = recId;
         if (budgetCat !== undefined) payloadWithSnakeCase.budget_category = budgetCat;
         if (accountId !== undefined) payloadWithSnakeCase.account_id = accountId;
+        if (transferGroupId !== undefined) payloadWithSnakeCase.transfer_group_id = transferGroupId;
+        if (transferRole !== undefined) payloadWithSnakeCase.transfer_role = transferRole;
 
         const payloadWithCamelCase: Record<string, unknown> = { ...transactionClean };
         delete payloadWithCamelCase.account_id;
         delete payloadWithCamelCase.budget_category;
         delete payloadWithCamelCase.recurring_id;
+        delete payloadWithCamelCase.transfer_group_id;
+        delete payloadWithCamelCase.transfer_role;
         if (recId !== undefined) payloadWithCamelCase.recurringId = recId;
         if (budgetCat !== undefined) payloadWithCamelCase.budgetCategory = budgetCat;
         if (accountId !== undefined) payloadWithCamelCase.accountId = accountId;
+        if (transferGroupId !== undefined) payloadWithCamelCase.transferGroupId = transferGroupId;
+        if (transferRole !== undefined) payloadWithCamelCase.transferRole = transferRole;
 
         const variants: Record<string, unknown>[] = [payloadWithCamelCase, payloadWithSnakeCase];
         const hasNote =
@@ -1480,11 +1492,23 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             await applyCashAccountDeltaForTransaction(normalized.accountId, Number(normalized.amount) || 0);
         }
     };
-    const addTransfer = async (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string) => {
+    const addTransfer = async (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string, feeAmount?: number) => {
         if (!supabase || !auth?.user) return;
         const absAmount = Math.abs(Number(amount));
+        const fee = Math.max(0, Number(feeAmount) || 0);
+        const transferGroupId = (() => {
+            try {
+                return crypto?.randomUUID?.();
+            } catch {
+                return undefined;
+            }
+        })();
         if (!Number.isFinite(absAmount) || absAmount <= 0) {
             toast('Transfer amount must be a valid positive number.', 'error');
+            return;
+        }
+        if (!Number.isFinite(fee) || fee < 0) {
+            toast('Transfer fee must be a valid non-negative number.', 'error');
             return;
         }
         const fromAcc = (data?.accounts ?? []).find((a) => a.id === fromAccountId);
@@ -1492,7 +1516,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const fromName = fromAcc?.name ?? fromAccountId;
         const toName = toAcc?.name ?? toAccountId;
         const dateStr = date ?? new Date().toISOString().split('T')[0];
-        const descOut = note ? `Transfer to ${toName}: ${note}` : `Transfer to ${toName}`;
+        const feeTag = fee > 0 ? ` (fee ${fee.toFixed(2)})` : '';
+        const descOut = note ? `Transfer to ${toName}: ${note}${feeTag}` : `Transfer to ${toName}${feeTag}`;
         const descIn = note ? `Transfer from ${fromName}: ${note}` : `Transfer from ${fromName}`;
 
         const isCashAccount = (a: Account | undefined) => Boolean(a && (a.type === 'Checking' || a.type === 'Savings'));
@@ -1505,6 +1530,57 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 return;
             }
             const linkedCashAccountId = links.length > 0 ? fromAccountId : undefined;
+            if (linkedCashAccountId) {
+                const rpcRes = await supabase.rpc('create_investment_cash_transfer_with_fee', {
+                    p_investment_account_id: toAccountId,
+                    p_cash_account_id: linkedCashAccountId,
+                    p_direction: 'cash_to_investment',
+                    p_amount: absAmount,
+                    p_fee_amount: fee,
+                    p_date: dateStr,
+                    p_cash_description: descOut,
+                    p_fee_description: `Transfer fee to ${toName}`,
+                    p_transfer_group_id: transferGroupId,
+                } as any);
+                const rpcError = rpcRes.error;
+                const rpcRows = (rpcRes.data as Array<{ investment_transaction_id?: string; cash_transaction_ids?: string[] }> | null) ?? null;
+                if (!rpcError && rpcRows && rpcRows[0]) {
+                    const invId = rpcRows[0].investment_transaction_id;
+                    const cashIds = rpcRows[0].cash_transaction_ids ?? [];
+                    if (invId) {
+                        const invFetch = await supabase.from('investment_transactions').select('*').eq('id', invId).single();
+                        if (!invFetch.error && invFetch.data) {
+                            const normalizedInv = normalizeInvestmentTransaction(invFetch.data);
+                            setData(prev => ({ ...prev, investmentTransactions: [normalizedInv, ...prev.investmentTransactions] }));
+                        }
+                    }
+                    if (cashIds.length > 0) {
+                        const cashFetch = await supabase.from('transactions').select('*').in('id', cashIds);
+                        const txRows = (cashFetch.data ?? []).map((r: any) => normalizeTransaction(r))
+                            .sort((a, b) => {
+                                const rank = (v: Transaction) => (v.transferRole === 'principal_out' ? 0 : v.transferRole === 'fee' ? 1 : 2);
+                                return rank(a) - rank(b);
+                            });
+                        if (txRows.length > 0) {
+                            setData(prev => ({ ...prev, transactions: [...txRows, ...prev.transactions] }));
+                            for (const row of txRows) {
+                                await syncSharedBudgetTransactionMirror(row as any);
+                                auditChangeLog({
+                                    action: 'create',
+                                    entity: 'transaction',
+                                    entityId: row.id,
+                                    summary: `${row.type}: ${String(row.description ?? '').slice(0, 120)} · ${row.amount}`,
+                                    userId: auth.user.id,
+                                });
+                                await applyCashAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
+                            }
+                        }
+                    }
+                    return;
+                }
+                const missingRpc = rpcError?.code === 'PGRST202' || (String(rpcError?.message || '').toLowerCase().includes('function') && String(rpcError?.message || '').toLowerCase().includes('does not exist'));
+                if (rpcError && !missingRpc) throw rpcError;
+            }
             try {
                 await recordTrade({
                     type: 'deposit',
@@ -1516,6 +1592,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     quantity: 0,
                     price: 0,
                     linkedCashAccountId,
+                    transferGroupId,
                 } as Parameters<typeof recordTrade>[0]);
             } catch (e: unknown) {
                 const msg = e instanceof Error ? e.message : 'Transfer failed.';
@@ -1530,6 +1607,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     type: 'expense',
                     accountId: fromAccountId,
                     category: 'Transfer',
+                    transferGroupId,
+                    transferRole: 'principal_out',
+                });
+            }
+            if (fee > 0) {
+                await addTransaction({
+                    date: dateStr,
+                    description: `Transfer fee to ${toName}`,
+                    amount: -fee,
+                    type: 'expense',
+                    accountId: fromAccountId,
+                    category: 'Fee',
+                    transferGroupId,
+                    transferRole: 'fee',
                 });
             }
             return;
@@ -1542,6 +1633,57 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 return;
             }
             const linkedCashAccountId = links.length > 0 ? toAccountId : undefined;
+            if (linkedCashAccountId) {
+                const rpcRes = await supabase.rpc('create_investment_cash_transfer_with_fee', {
+                    p_investment_account_id: fromAccountId,
+                    p_cash_account_id: linkedCashAccountId,
+                    p_direction: 'investment_to_cash',
+                    p_amount: absAmount,
+                    p_fee_amount: fee,
+                    p_date: dateStr,
+                    p_cash_description: descIn,
+                    p_fee_description: `Transfer fee from ${fromName}`,
+                    p_transfer_group_id: transferGroupId,
+                } as any);
+                const rpcError = rpcRes.error;
+                const rpcRows = (rpcRes.data as Array<{ investment_transaction_id?: string; cash_transaction_ids?: string[] }> | null) ?? null;
+                if (!rpcError && rpcRows && rpcRows[0]) {
+                    const invId = rpcRows[0].investment_transaction_id;
+                    const cashIds = rpcRows[0].cash_transaction_ids ?? [];
+                    if (invId) {
+                        const invFetch = await supabase.from('investment_transactions').select('*').eq('id', invId).single();
+                        if (!invFetch.error && invFetch.data) {
+                            const normalizedInv = normalizeInvestmentTransaction(invFetch.data);
+                            setData(prev => ({ ...prev, investmentTransactions: [normalizedInv, ...prev.investmentTransactions] }));
+                        }
+                    }
+                    if (cashIds.length > 0) {
+                        const cashFetch = await supabase.from('transactions').select('*').in('id', cashIds);
+                        const txRows = (cashFetch.data ?? []).map((r: any) => normalizeTransaction(r))
+                            .sort((a, b) => {
+                                const rank = (v: Transaction) => (v.transferRole === 'principal_in' ? 0 : v.transferRole === 'fee' ? 1 : 2);
+                                return rank(a) - rank(b);
+                            });
+                        if (txRows.length > 0) {
+                            setData(prev => ({ ...prev, transactions: [...txRows, ...prev.transactions] }));
+                            for (const row of txRows) {
+                                await syncSharedBudgetTransactionMirror(row as any);
+                                auditChangeLog({
+                                    action: 'create',
+                                    entity: 'transaction',
+                                    entityId: row.id,
+                                    summary: `${row.type}: ${String(row.description ?? '').slice(0, 120)} · ${row.amount}`,
+                                    userId: auth.user.id,
+                                });
+                                await applyCashAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
+                            }
+                        }
+                    }
+                    return;
+                }
+                const missingRpc = rpcError?.code === 'PGRST202' || (String(rpcError?.message || '').toLowerCase().includes('function') && String(rpcError?.message || '').toLowerCase().includes('does not exist'));
+                if (rpcError && !missingRpc) throw rpcError;
+            }
             try {
                 await recordTrade({
                     type: 'withdrawal',
@@ -1553,6 +1695,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     quantity: 0,
                     price: 0,
                     linkedCashAccountId,
+                    transferGroupId,
                 } as Parameters<typeof recordTrade>[0]);
             } catch (e: unknown) {
                 const msg = e instanceof Error ? e.message : 'Transfer failed.';
@@ -1567,6 +1710,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     type: 'income',
                     accountId: toAccountId,
                     category: 'Transfer',
+                    transferGroupId,
+                    transferRole: 'principal_in',
+                });
+            }
+            if (fee > 0) {
+                await addTransaction({
+                    date: dateStr,
+                    description: `Transfer fee from ${fromName}`,
+                    amount: -fee,
+                    type: 'expense',
+                    accountId: fromAccountId,
+                    category: 'Fee',
+                    transferGroupId,
+                    transferRole: 'fee',
                 });
             }
             return;
@@ -1576,6 +1733,51 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const fromCur = fromAcc?.currency === 'USD' ? 'USD' : 'SAR';
         const toCur = toAcc?.currency === 'USD' ? 'USD' : 'SAR';
         const inboundAmount = fromCur === toCur ? absAmount : fromSAR(toSAR(absAmount, fromCur, rate), toCur, rate);
+        const rpcPayload = {
+            p_from_account_id: fromAccountId,
+            p_to_account_id: toAccountId,
+            p_amount: absAmount,
+            p_inbound_amount: inboundAmount,
+            p_fee_amount: fee,
+            p_date: dateStr,
+            p_description_out: descOut,
+            p_description_in: descIn,
+            p_fee_description: `Transfer fee to ${toName}`,
+            p_transfer_group_id: transferGroupId,
+        };
+        const rpcRes = await supabase.rpc('create_linked_transfer_with_fee', rpcPayload as any);
+        const rpcRows = (rpcRes.data as any[] | null) ?? null;
+        const rpcError = rpcRes.error;
+        if (rpcRows && !rpcError) {
+            const normalizedRows = rpcRows
+                .map((r) => normalizeTransaction(r))
+                .sort((a, b) => {
+                    const rank = (v: Transaction) => (v.transferRole === 'principal_out' ? 0 : v.transferRole === 'fee' ? 1 : 2);
+                    return rank(a) - rank(b);
+                });
+            setData(prev => ({ ...prev, transactions: [...normalizedRows, ...prev.transactions] }));
+            for (const row of normalizedRows) {
+                await syncSharedBudgetTransactionMirror(row as any);
+                auditChangeLog({
+                    action: 'create',
+                    entity: 'transaction',
+                    entityId: row.id,
+                    summary: `${row.type}: ${String(row.description ?? '').slice(0, 120)} · ${row.amount}`,
+                    userId: auth.user.id,
+                });
+                await applyCashAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
+            }
+            return;
+        }
+
+        const missingRpc = rpcError?.code === 'PGRST202' || String(rpcError?.message || '').toLowerCase().includes('function') && String(rpcError?.message || '').toLowerCase().includes('does not exist');
+        if (rpcError && !missingRpc) {
+            throw rpcError;
+        }
+        if (missingRpc) {
+            toast('Transfer saved via legacy flow. For full atomic transfer+fee writes, run migration `supabase/migrations/20260328091000_add_linked_transfer_rpc.sql`.', 'info');
+        }
+
         await addTransaction({
             date: dateStr,
             description: descOut,
@@ -1583,7 +1785,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             type: 'expense',
             accountId: fromAccountId,
             category: 'Transfer',
+            transferGroupId,
+            transferRole: 'principal_out',
         });
+        if (fee > 0) {
+            await addTransaction({
+                date: dateStr,
+                description: `Transfer fee to ${toName}`,
+                amount: -fee,
+                type: 'expense',
+                accountId: fromAccountId,
+                category: 'Fee',
+                transferGroupId,
+                transferRole: 'fee',
+            });
+        }
         await addTransaction({
             date: dateStr,
             description: descIn,
@@ -1591,6 +1807,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             type: 'income',
             accountId: toAccountId,
             category: 'Transfer',
+            transferGroupId,
+            transferRole: 'principal_in',
         });
     };
     const updateTransaction = async (transaction: Transaction) => {
@@ -2063,7 +2281,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             };
         });
     };
-    const recordTrade = async (trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number }, executedPlanId?: string) => {
+    const recordTrade = async (
+        trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string, transferGroupId?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number },
+        executedPlanId?: string,
+    ) => {
         if (!supabase || !auth?.user) return;
         if (tradeSubmissionInFlightRef.current) {
             throw new Error('A trade submission is already in progress. Please wait.');
@@ -2259,9 +2480,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         date: trade.date,
                         description,
                         amount,
-                        category: 'Transfers',
+                        category: 'Transfer',
                         type: trade.type === 'deposit' ? 'expense' : 'income',
                         accountId: linkedCashAccountId,
+                        transferGroupId: (trade as any).transferGroupId,
+                        transferRole: trade.type === 'deposit' ? 'principal_out' : 'principal_in',
                     });
                 }
             } catch (cashTxError) {
