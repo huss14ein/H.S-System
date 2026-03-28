@@ -838,6 +838,7 @@ const InvestmentPlanView: React.FC<{
 
     const planValidationWarnings = useMemo(() => {
         const plans = data?.plannedTrades ?? [];
+        const planCurrency = ((data as any)?.investmentPlan?.budgetCurrency || 'SAR') as TradeCurrency;
         const out: string[] = [];
         if (plans.length === 0) return out;
         let invalidDateCount = 0;
@@ -861,7 +862,7 @@ const InvestmentPlanView: React.FC<{
                 const amt = Number(plan.amount ?? 0);
                 if (qty > 0 && amt > 0 && Number.isFinite(target) && target > 0) {
                     const instr = inferInstrumentCurrencyFromSymbol(sym);
-                    const amtInstr = convertBetweenTradeCurrencies(amt, 'SAR', instr, sarPerUsd);
+                    const amtInstr = convertBetweenTradeCurrencies(amt, planCurrency, instr, sarPerUsd);
                     const impliedPrice = amtInstr / qty;
                     const drift = Math.abs((impliedPrice - target) / target);
                     if (Number.isFinite(drift) && drift > 0.35) sizingMismatchCount += 1;
@@ -874,7 +875,7 @@ const InvestmentPlanView: React.FC<{
         if (stalePriceCount > 0) out.push(`${stalePriceCount} price-triggered plan${stalePriceCount > 1 ? 's' : ''} missing live price.`);
         if (sizingMismatchCount > 0) out.push(`${sizingMismatchCount} plan${sizingMismatchCount > 1 ? 's' : ''} have amount/quantity mismatch vs target price.`);
         return out;
-    }, [data?.plannedTrades, simulatedPrices, sarPerUsd]);
+    }, [data?.plannedTrades, data?.investmentPlan, simulatedPrices, sarPerUsd]);
 
     const alignmentSummaryEn = useMemo(
         () =>
