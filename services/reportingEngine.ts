@@ -64,6 +64,15 @@ function toCsv(rows: Record<string, unknown>[]): string {
   return [headers.join(','), ...rows.map((r) => headers.map((h) => escape(r[h])).join(','))].join('\n');
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function exportGoalStatus(args: {
   goals: { id: string; name: string; targetAmount: number; currentAmount: number; deadline: string }[];
 }): string {
@@ -294,29 +303,29 @@ export function generateWealthSummaryReportHtml(
   };
   const holdingsRows = (input.holdings ?? [])
     .map((h) => `<tr>
-      <td>${h.symbol || ''}</td>
-      <td>${h.name || ''}</td>
+      <td>${escapeHtml(h.symbol || '')}</td>
+      <td>${escapeHtml(h.name || '')}</td>
       <td style="text-align:right">${n(h.quantity).toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
-      <td style="text-align:right">${h.currency} ${num(h.avgCost)}</td>
-      <td style="text-align:right">${h.currency} ${num(h.currentValue)}</td>
-      <td style="text-align:right">${h.currency} ${num(h.gainLoss)}</td>
+      <td style="text-align:right">${escapeHtml(h.currency)} ${num(h.avgCost)}</td>
+      <td style="text-align:right">${escapeHtml(h.currency)} ${num(h.currentValue)}</td>
+      <td style="text-align:right">${escapeHtml(h.currency)} ${num(h.gainLoss)}</td>
       <td style="text-align:right">${pct(h.gainLossPct)}</td>
       <td style="text-align:right">${money(h.currentValueSar)}</td>
     </tr>`)
     .join('');
   const assetsRows = (input.assets ?? [])
     .map((a) => `<tr>
-      <td>${a.name || ''}</td>
-      <td>${a.type || ''}</td>
+      <td>${escapeHtml(a.name || '')}</td>
+      <td>${escapeHtml(a.type || '')}</td>
       <td style="text-align:right">${money(a.value)}</td>
     </tr>`)
     .join('');
   const liabilitiesRows = (input.liabilities ?? [])
     .map((l) => `<tr>
-      <td>${l.name || ''}</td>
-      <td>${l.type || ''}</td>
+      <td>${escapeHtml(l.name || '')}</td>
+      <td>${escapeHtml(l.type || '')}</td>
       <td style="text-align:right">${money(l.amount)}</td>
-      <td>${l.status || ''}</td>
+      <td>${escapeHtml(l.status || '')}</td>
     </tr>`)
     .join('');
   return `<!doctype html>
@@ -343,7 +352,7 @@ export function generateWealthSummaryReportHtml(
 <body>
   <h1>Wealth Summary Report</h1>
   <div class="muted">Generated: ${new Date(input.generatedAtIso).toLocaleString()}</div>
-  <div class="muted">Currency: ${input.currency}</div>
+  <div class="muted">Currency: ${escapeHtml(input.currency)}</div>
 
   ${cfg.includeSnapshot ? `<h2>Net Worth Snapshot</h2>
   <div class="grid">
@@ -360,7 +369,7 @@ export function generateWealthSummaryReportHtml(
     <div class="card"><div class="k">Net P&L</div><div class="v">${money(input.monthlyPnL)}</div></div>
     <div class="card"><div class="k">Savings Rate</div><div class="v">${pct(input.savingsRatePct)}</div></div>
     <div class="card"><div class="k">Debt-to-Asset Ratio</div><div class="v">${pct(input.debtToAssetRatioPct)}</div></div>
-    <div class="card"><div class="k">Investment Style</div><div class="v">${input.investmentStyle}</div></div>
+    <div class="card"><div class="k">Investment Style</div><div class="v">${escapeHtml(input.investmentStyle)}</div></div>
   </div>` : ''}
 
   ${cfg.includeRisk ? `<h2>Resilience & Risk</h2>
@@ -368,12 +377,12 @@ export function generateWealthSummaryReportHtml(
     <div class="card"><div class="k">Emergency Fund Coverage</div><div class="v">${n(input.emergencyFundMonths).toFixed(1)} months</div></div>
     <div class="card"><div class="k">Emergency Fund Target</div><div class="v">${money(input.emergencyFundTargetAmount)}</div></div>
     <div class="card"><div class="k">Emergency Fund Shortfall</div><div class="v">${money(input.emergencyFundShortfall)}</div></div>
-    <div class="card"><div class="k">Risk Lane</div><div class="v">${input.riskLane}</div></div>
+    <div class="card"><div class="k">Risk Lane</div><div class="v">${escapeHtml(input.riskLane)}</div></div>
     <div class="card"><div class="k">Liquidity Runway</div><div class="v">${n(input.liquidityRunwayMonths).toFixed(1)} months</div></div>
     <div class="card"><div class="k">Discipline Score</div><div class="v">${n(input.disciplineScore).toFixed(0)} / 100</div></div>
-    <div class="card"><div class="k">Household Stress Status</div><div class="v">${input.householdStressLabel}</div></div>
+    <div class="card"><div class="k">Household Stress Status</div><div class="v">${escapeHtml(input.householdStressLabel)}</div></div>
     <div class="card"><div class="k">Household Stress Pressure Months</div><div class="v">${n(input.householdStressPressureMonths).toFixed(0)} month(s)</div></div>
-    <div class="card"><div class="k">Shock Drill Severity</div><div class="v">${input.shockDrillSeverity}</div></div>
+    <div class="card"><div class="k">Shock Drill Severity</div><div class="v">${escapeHtml(input.shockDrillSeverity)}</div></div>
     <div class="card"><div class="k">Shock Drill Estimated Gap</div><div class="v">${money(input.shockDrillEstimatedGap)}</div></div>
   </div>` : ''}
 

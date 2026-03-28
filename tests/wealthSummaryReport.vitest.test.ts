@@ -114,6 +114,33 @@ describe('wealth summary report exports', () => {
     expect(html).toContain('Asset Details');
     expect(html).not.toContain('Liability Details');
   });
+
+  it('escapes user-provided HTML in holdings/assets/liabilities rows', () => {
+    const html = generateWealthSummaryReportHtml({
+      ...sampleInput,
+      holdings: [
+        {
+          symbol: '<img src=x onerror=alert(1)>',
+          name: '<script>alert(1)</script>',
+          quantity: 1,
+          avgCost: 1,
+          currentValue: 1,
+          gainLoss: 0,
+          gainLossPct: 0,
+          currency: 'USD',
+          currentValueSar: 3.75,
+        },
+      ],
+      assets: [{ name: '<b>Home</b>', type: '<i>Property</i>', value: 1 }],
+      liabilities: [{ name: '<svg/onload=alert(1)>', type: '<u>Loan</u>', amount: 1, status: 'Active<script>' }],
+    });
+
+    expect(html).not.toContain('<script>');
+    expect(html).not.toContain('<img src=x onerror=alert(1)>');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).toContain('&lt;b&gt;Home&lt;/b&gt;');
+    expect(html).toContain('&lt;svg/onload=alert(1)&gt;');
+  });
 });
 
 describe('monthly report and portfolio review export', () => {

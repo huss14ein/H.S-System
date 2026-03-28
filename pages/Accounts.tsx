@@ -534,15 +534,20 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             grouped.set(gid, list);
         }
         const groupedPairs: TransferHistoryItem[] = [];
+        const groupedFeeById = new Map<string, number>();
         for (const [, rows] of grouped) {
+            const gid = rows[0] ? (rows[0].transferGroupId ?? rows[0].transfer_group_id ?? '') : '';
             const out = rows.find((r) => (r.transferRole ?? r.transfer_role) === 'principal_out');
             const inc = rows.find((r) => (r.transferRole ?? r.transfer_role) === 'principal_in');
-            if (!out || !inc) continue;
             const feeRow = rows.find((r) => (r.transferRole ?? r.transfer_role) === 'fee');
+            const feeAmount = feeRow ? Math.abs(Number(feeRow.amount ?? 0)) : 0;
+            if (gid && Number.isFinite(feeAmount) && feeAmount > 0) {
+                groupedFeeById.set(gid, feeAmount);
+            }
+            if (!out || !inc) continue;
             const fromId = out.accountId ?? out.account_id ?? '';
             const toId = inc.accountId ?? inc.account_id ?? '';
             const absAmt = Math.abs(Number(out.amount ?? 0));
-            const feeAmount = feeRow ? Math.abs(Number(feeRow.amount ?? 0)) : 0;
             if (!fromId || !toId || !Number.isFinite(absAmt) || absAmt <= 0) continue;
             groupedPairs.push({
                 fromAccountId: fromId,
@@ -588,12 +593,14 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             .map((t: any) => {
                 const linkedCashAccountId = t.linkedCashAccountId ?? t.linked_cash_account_id;
                 const platformAccountId = t.accountId ?? t.account_id ?? '';
+                const gid = t.transferGroupId ?? t.transfer_group_id;
                 const absAmt = Math.abs(Number(t.total ?? 0));
                 if (!linkedCashAccountId || !platformAccountId || !Number.isFinite(absAmt) || absAmt <= 0) return null;
                 return {
                     fromAccountId: t.type === 'deposit' ? linkedCashAccountId : platformAccountId,
                     toAccountId: t.type === 'deposit' ? platformAccountId : linkedCashAccountId,
                     amount: absAmt,
+                    feeAmount: gid ? groupedFeeById.get(gid) : undefined,
                     date: String(t.date ?? ''),
                     description: t.type === 'deposit' ? 'Transfer to investment platform' : 'Transfer from investment platform',
                 } as TransferHistoryItem;
