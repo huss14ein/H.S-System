@@ -45,6 +45,7 @@ interface TransferHistoryItem {
     fromAccountId: string;
     toAccountId: string;
     amount: number;
+    feeAmount?: number;
     date: string;
     description?: string;
 }
@@ -347,6 +348,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const [transferFromAccount, setTransferFromAccount] = useState('');
     const [transferToAccount, setTransferToAccount] = useState('');
     const [transferAmount, setTransferAmount] = useState('');
+    const [transferFeeAmount, setTransferFeeAmount] = useState('');
     const [transferDescription, setTransferDescription] = useState('');
     const [isRecurringTransferModalOpen, setIsRecurringTransferModalOpen] = useState(false);
     const [recurringFromId, setRecurringFromId] = useState('');
@@ -509,9 +511,53 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
 
     const transferHistory = useMemo((): TransferHistoryItem[] => {
         const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const txsWithRoles = txs as Array<{
+            id?: string;
+            category?: string;
+            type?: string;
+            date?: string;
+            amount?: number;
+            description?: string;
+            accountId?: string;
+            account_id?: string;
+            transferGroupId?: string;
+            transfer_group_id?: string;
+            transferRole?: string;
+            transfer_role?: string;
+        }>;
+        const grouped = new Map<string, typeof txsWithRoles>();
+        for (const t of txsWithRoles) {
+            const gid = t.transferGroupId ?? t.transfer_group_id;
+            if (!gid) continue;
+            const list = grouped.get(gid) ?? [];
+            list.push(t);
+            grouped.set(gid, list);
+        }
+        const groupedPairs: TransferHistoryItem[] = [];
+        for (const [, rows] of grouped) {
+            const out = rows.find((r) => (r.transferRole ?? r.transfer_role) === 'principal_out');
+            const inc = rows.find((r) => (r.transferRole ?? r.transfer_role) === 'principal_in');
+            if (!out || !inc) continue;
+            const feeRow = rows.find((r) => (r.transferRole ?? r.transfer_role) === 'fee');
+            const fromId = out.accountId ?? out.account_id ?? '';
+            const toId = inc.accountId ?? inc.account_id ?? '';
+            const absAmt = Math.abs(Number(out.amount ?? 0));
+            const feeAmount = feeRow ? Math.abs(Number(feeRow.amount ?? 0)) : 0;
+            if (!fromId || !toId || !Number.isFinite(absAmt) || absAmt <= 0) continue;
+            groupedPairs.push({
+                fromAccountId: fromId,
+                toAccountId: toId,
+                amount: absAmt,
+                feeAmount: Number.isFinite(feeAmount) && feeAmount > 0 ? feeAmount : undefined,
+                date: String(out.date ?? inc.date ?? ''),
+                description: (out.description ?? '').replace(/^Transfer to .+?:\s*/i, '').trim() || undefined,
+            });
+        }
+
         const transfers = txs.filter((t: { category?: string }) => isInternalTransferTransaction(t));
-        const expenses = transfers.filter((t: { type?: string }) => t.type === 'expense');
-        let incomesLeft = transfers.filter((t: { type?: string }) => t.type === 'income');
+        const ungroupedTransfers = transfers.filter((t: any) => !(t.transferGroupId ?? t.transfer_group_id));
+        const expenses = ungroupedTransfers.filter((t: { type?: string }) => t.type === 'expense');
+        let incomesLeft = ungroupedTransfers.filter((t: { type?: string }) => t.type === 'income');
         const pairs: TransferHistoryItem[] = [];
         for (const exp of expenses) {
             const absAmt = Math.abs(Number(exp.amount ?? 0));
@@ -553,7 +599,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 } as TransferHistoryItem;
             })
             .filter((v: TransferHistoryItem | null): v is TransferHistoryItem => v !== null);
-        const merged = [...pairs, ...investmentLinkedTransfers];
+        const merged = [...groupedPairs, ...pairs, ...investmentLinkedTransfers];
         return merged.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     }, [data?.transactions, (data as any)?.personalTransactions, data?.investmentTransactions, (data as any)?.personalInvestmentTransactions]);
 
@@ -617,8 +663,13 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             return;
         }
         const amount = parseFloat(transferAmount);
+        const feeAmount = transferFeeAmount ? parseFloat(transferFeeAmount) : 0;
         if (!Number.isFinite(amount) || amount <= 0) {
             alert('Please enter a valid positive amount.');
+            return;
+        }
+        if (!Number.isFinite(feeAmount) || feeAmount < 0) {
+            alert('Please enter a valid non-negative transfer fee.');
             return;
         }
         const accounts = data?.accounts ?? [];
@@ -637,29 +688,32 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         const availableFromInInputCurrency = fromAccount.type === 'Investment'
             ? fromSAR(spendableBalanceSar(fromAccount), fromCurrency, sarPerUsd)
             : Math.max(0, Number(fromAccount.balance) || 0);
-        if (availableFromInInputCurrency < amount) {
-            alert(`Insufficient balance. Available: ${formatCurrencyString(availableFromInInputCurrency, { inCurrency: fromCurrency })}`);
+        const totalDebit = amount + feeAmount;
+        if (availableFromInInputCurrency < totalDebit) {
+            alert(`Insufficient balance. Available: ${formatCurrencyString(availableFromInInputCurrency, { inCurrency: fromCurrency })}. Total debit (amount + fee): ${formatCurrencyString(totalDebit, { inCurrency: fromCurrency })}`);
             return;
         }
         const convertedForDestination = fromCurrency === toCurrency
             ? amount
             : fromSAR(toSAR(amount, fromCurrency, sarPerUsd), toCurrency, sarPerUsd);
+        const feeNote = feeAmount > 0 ? `\nTransfer fee: ${formatCurrencyString(feeAmount, { inCurrency: fromCurrency })}\nTotal debit from source: ${formatCurrencyString(totalDebit, { inCurrency: fromCurrency })}` : '';
         const conversionNote = fromCurrency === toCurrency
             ? ''
             : `\nConverted amount to destination: ${formatCurrencyString(convertedForDestination, { inCurrency: toCurrency })}`;
-        if (!window.confirm(`Transfer ${formatCurrencyString(amount, { inCurrency: fromCurrency })} from ${fromAccount.name} to ${toAccount.name}?${conversionNote}`)) {
+        if (!window.confirm(`Transfer ${formatCurrencyString(amount, { inCurrency: fromCurrency })} from ${fromAccount.name} to ${toAccount.name}?${feeNote}${conversionNote}`)) {
             return;
         }
         try {
             const note = transferDescription.trim() || undefined;
             const today = new Date().toISOString().split('T')[0];
-            await addTransfer(transferFromAccount, transferToAccount, amount, today, note);
+            await addTransfer(transferFromAccount, transferToAccount, amount, today, note, feeAmount);
 
             alert('Transfer completed successfully.');
             setIsTransferModalOpen(false);
             setTransferFromAccount('');
             setTransferToAccount('');
             setTransferAmount('');
+            setTransferFeeAmount('');
             setTransferDescription('');
         } catch (error) {
             alert(`Failed to complete transfer: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -1077,6 +1131,11 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                                         <span className="font-medium text-slate-800 truncate">{fromAcc?.name ?? item.fromAccountId}</span>
                                         <ArrowsRightLeftIcon className="h-4 w-4 text-slate-400 shrink-0" />
                                         <span className="font-medium text-slate-800 truncate">{toAcc?.name ?? item.toAccountId}</span>
+                                        {item.feeAmount && item.feeAmount > 0 && (
+                                            <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 shrink-0">
+                                                Fee {formatCurrencyString(item.feeAmount, { inCurrency: accountBookCurrency(fromAcc), showSecondary: true })}
+                                            </span>
+                                        )}
                                     </div>
                                     <span className="font-semibold text-slate-900 tabular-nums shrink-0">{formatCurrencyString(item.amount, { inCurrency: accountBookCurrency(fromAcc), showSecondary: true })}</span>
                                     <span className="text-sm text-slate-500 shrink-0">{new Date(item.date).toLocaleDateString()}</span>
@@ -1203,7 +1262,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 )}
             </Modal>
 
-            <Modal isOpen={isTransferModalOpen} onClose={() => setIsTransferModalOpen(false)} title="Transfer Between Accounts">
+            <Modal isOpen={isTransferModalOpen} onClose={() => { setIsTransferModalOpen(false); setTransferFeeAmount(''); }} title="Transfer Between Accounts">
                 <form onSubmit={(e) => { e.preventDefault(); handleTransfer(); }} className="space-y-4">
                     {transferFromAccount && transferToAccount && (() => {
                         const fromAcc = (data?.accounts ?? []).find(a => a.id === transferFromAccount);
@@ -1298,6 +1357,21 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             className="input-base"
                             placeholder="0.00"
                         />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                            Transfer Fee (Optional) <InfoHint text="Fee charged by the source account or bank in the source account currency." />
+                        </label>
+                        <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={transferFeeAmount}
+                            onChange={(e) => setTransferFeeAmount(e.target.value)}
+                            className="input-base"
+                            placeholder="0.00"
+                        />
+                        <p className="text-xs text-slate-500 mt-1">If provided, the fee is recorded as a separate expense transaction in category “Fee”.</p>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">

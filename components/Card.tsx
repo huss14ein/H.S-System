@@ -117,7 +117,7 @@ const Card: React.FC<CardProps> = ({ title, value, trend, onClick, ariaLabel, va
       {/* Value + trend: allow full visibility without clipping. */}
       <div className="mt-2 flex-1 min-h-0 flex flex-col justify-center min-w-0 overflow-visible">
         <div
-          className={`metric-value !whitespace-nowrap max-w-full ${compact ? 'text-2xl' : 'text-3xl'} font-extrabold tabular-nums ${valueToneClass}`}
+          className={`metric-value whitespace-normal sm:whitespace-nowrap break-words max-w-full ${compact ? 'text-xl sm:text-2xl' : 'text-2xl sm:text-3xl'} font-extrabold tabular-nums ${valueToneClass}`}
         >
           {displayValue}
         </div>
