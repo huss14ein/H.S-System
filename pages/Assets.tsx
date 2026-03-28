@@ -576,6 +576,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
     const [groundingChunks, setGroundingChunks] = useState<any[]>([]);
     const [physicalAssetFilter, setPhysicalAssetFilter] = useState<'All' | 'Property' | 'Sukuk' | 'Vehicle' | 'Other'>('All');
+    const [sukukStatusFilter, setSukukStatusFilter] = useState<'Active' | 'Completed' | 'All'>('Active');
     const [lastCommodityRefreshAt, setLastCommodityRefreshAt] = useState<string | null>(null);
 
     useEffect(() => {
@@ -654,9 +655,23 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
 
     const orderedAssets = useMemo(() => [...assetsList].sort((a, b) => a.name.localeCompare(b.name)), [assetsList]);
     const filteredPhysicalAssets = useMemo(() => {
-        if (physicalAssetFilter === 'All') return orderedAssets;
-        return orderedAssets.filter((a: Asset) => a.type === physicalAssetFilter);
-    }, [orderedAssets, physicalAssetFilter]);
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+        const isSukukCompleted = (asset: Asset) => {
+            if (asset.type !== 'Sukuk') return false;
+            const maturity = asset.maturityDate ? new Date(asset.maturityDate) : null;
+            if (!maturity || Number.isNaN(maturity.getTime())) return false;
+            maturity.setHours(0, 0, 0, 0);
+            return maturity.getTime() < now.getTime();
+        };
+
+        return orderedAssets.filter((asset: Asset) => {
+            if (physicalAssetFilter !== 'All' && asset.type !== physicalAssetFilter) return false;
+            if (asset.type !== 'Sukuk' || sukukStatusFilter === 'All') return true;
+            const completed = isSukukCompleted(asset);
+            return sukukStatusFilter === 'Completed' ? completed : !completed;
+        });
+    }, [orderedAssets, physicalAssetFilter, sukukStatusFilter]);
     const orderedCommodities = useMemo(() => [...commodityList].sort((a, b) => (a.name || '').localeCompare(b.name || '')), [commodityList]);
     const assetsValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
@@ -778,21 +793,37 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 collapsibleSummary="Property, Sukuk, vehicles"
                 defaultExpanded
                 headerAction={
-                    <label className="flex items-center gap-2 text-sm text-slate-600 shrink-0">
-                        <span className="hidden sm:inline whitespace-nowrap">Show</span>
-                        <select
-                            value={physicalAssetFilter}
-                            onChange={(e) => setPhysicalAssetFilter(e.target.value as typeof physicalAssetFilter)}
-                            className="select-base text-sm py-1.5 min-w-[9rem]"
-                            aria-label="Filter physical assets by type"
-                        >
-                            <option value="All">All types</option>
-                            <option value="Property">Property only</option>
-                            <option value="Sukuk">Sukuk only</option>
-                            <option value="Vehicle">Vehicles only</option>
-                            <option value="Other">Other only</option>
-                        </select>
-                    </label>
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600 shrink-0">
+                        <label className="flex items-center gap-2">
+                            <span className="hidden sm:inline whitespace-nowrap">Show</span>
+                            <select
+                                value={physicalAssetFilter}
+                                onChange={(e) => setPhysicalAssetFilter(e.target.value as typeof physicalAssetFilter)}
+                                className="select-base text-sm py-1.5 min-w-[9rem]"
+                                aria-label="Filter physical assets by type"
+                            >
+                                <option value="All">All types</option>
+                                <option value="Property">Property only</option>
+                                <option value="Sukuk">Sukuk only</option>
+                                <option value="Vehicle">Vehicles only</option>
+                                <option value="Other">Other only</option>
+                            </select>
+                        </label>
+                        <label className="flex items-center gap-2">
+                            <span className="hidden sm:inline whitespace-nowrap">Sukuk</span>
+                            <select
+                                value={sukukStatusFilter}
+                                onChange={(e) => setSukukStatusFilter(e.target.value as typeof sukukStatusFilter)}
+                                className="select-base text-sm py-1.5 min-w-[9rem]"
+                                aria-label="Filter Sukuk assets by maturity status"
+                                title="Default is Active. Switch to Completed to review matured Sukuk."
+                            >
+                                <option value="Active">Active (default)</option>
+                                <option value="Completed">Completed</option>
+                                <option value="All">All Sukuk</option>
+                            </select>
+                        </label>
+                    </div>
                 }
             >
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">

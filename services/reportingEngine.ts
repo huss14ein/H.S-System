@@ -64,6 +64,15 @@ function toCsv(rows: Record<string, unknown>[]): string {
   return [headers.join(','), ...rows.map((r) => headers.map((h) => escape(r[h])).join(','))].join('\n');
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function exportGoalStatus(args: {
   goals: { id: string; name: string; targetAmount: number; currentAmount: number; deadline: string }[];
 }): string {
@@ -126,6 +135,17 @@ export interface WealthSummaryReportInput {
     currency: string;
     currentValueSar: number;
   }>;
+  assets?: Array<{
+    name: string;
+    type: string;
+    value: number;
+  }>;
+  liabilities?: Array<{
+    name: string;
+    type: string;
+    amount: number;
+    status?: string;
+  }>;
 }
 
 export function generateWealthSummaryReportJson(input: WealthSummaryReportInput): string {
@@ -165,6 +185,17 @@ export function generateWealthSummaryReportJson(input: WealthSummaryReportInput)
         gainLossPct: safe(h.gainLossPct),
         currency: h.currency,
         currentValueSar: safe(h.currentValueSar),
+      })),
+      assets: (input.assets ?? []).map((a) => ({
+        name: String(a.name ?? ''),
+        type: String(a.type ?? ''),
+        value: safe(a.value),
+      })),
+      liabilities: (input.liabilities ?? []).map((l) => ({
+        name: String(l.name ?? ''),
+        type: String(l.type ?? ''),
+        amount: safe(l.amount),
+        status: String(l.status ?? ''),
       })),
     },
     null,
@@ -247,21 +278,54 @@ export function generateWealthSummaryReportCsv(input: WealthSummaryReportInput):
   ]);
 }
 
-export function generateWealthSummaryReportHtml(input: WealthSummaryReportInput): string {
+export function generateWealthSummaryReportHtml(
+  input: WealthSummaryReportInput,
+  options?: {
+    includeSnapshot?: boolean;
+    includeCashflow?: boolean;
+    includeRisk?: boolean;
+    includeHoldings?: boolean;
+    includeAssets?: boolean;
+    includeLiabilities?: boolean;
+  }
+): string {
   const n = (v: number) => (Number.isFinite(v) ? v : 0);
   const pct = (v: number) => `${n(v).toFixed(1)}%`;
   const num = (v: number) => n(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
   const money = (v: number) => `${input.currency} ${num(v)}`;
+  const cfg = {
+    includeSnapshot: options?.includeSnapshot ?? true,
+    includeCashflow: options?.includeCashflow ?? true,
+    includeRisk: options?.includeRisk ?? true,
+    includeHoldings: options?.includeHoldings ?? true,
+    includeAssets: options?.includeAssets ?? true,
+    includeLiabilities: options?.includeLiabilities ?? true,
+  };
   const holdingsRows = (input.holdings ?? [])
     .map((h) => `<tr>
-      <td>${h.symbol || ''}</td>
-      <td>${h.name || ''}</td>
+      <td>${escapeHtml(h.symbol || '')}</td>
+      <td>${escapeHtml(h.name || '')}</td>
       <td style="text-align:right">${n(h.quantity).toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
-      <td style="text-align:right">${h.currency} ${num(h.avgCost)}</td>
-      <td style="text-align:right">${h.currency} ${num(h.currentValue)}</td>
-      <td style="text-align:right">${h.currency} ${num(h.gainLoss)}</td>
+      <td style="text-align:right">${escapeHtml(h.currency)} ${num(h.avgCost)}</td>
+      <td style="text-align:right">${escapeHtml(h.currency)} ${num(h.currentValue)}</td>
+      <td style="text-align:right">${escapeHtml(h.currency)} ${num(h.gainLoss)}</td>
       <td style="text-align:right">${pct(h.gainLossPct)}</td>
       <td style="text-align:right">${money(h.currentValueSar)}</td>
+    </tr>`)
+    .join('');
+  const assetsRows = (input.assets ?? [])
+    .map((a) => `<tr>
+      <td>${escapeHtml(a.name || '')}</td>
+      <td>${escapeHtml(a.type || '')}</td>
+      <td style="text-align:right">${money(a.value)}</td>
+    </tr>`)
+    .join('');
+  const liabilitiesRows = (input.liabilities ?? [])
+    .map((l) => `<tr>
+      <td>${escapeHtml(l.name || '')}</td>
+      <td>${escapeHtml(l.type || '')}</td>
+      <td style="text-align:right">${money(l.amount)}</td>
+      <td>${escapeHtml(l.status || '')}</td>
     </tr>`)
     .join('');
   return `<!doctype html>
@@ -288,41 +352,41 @@ export function generateWealthSummaryReportHtml(input: WealthSummaryReportInput)
 <body>
   <h1>Wealth Summary Report</h1>
   <div class="muted">Generated: ${new Date(input.generatedAtIso).toLocaleString()}</div>
-  <div class="muted">Currency: ${input.currency}</div>
+  <div class="muted">Currency: ${escapeHtml(input.currency)}</div>
 
-  <h2>Net Worth Snapshot</h2>
+  ${cfg.includeSnapshot ? `<h2>Net Worth Snapshot</h2>
   <div class="grid">
     <div class="card"><div class="k">Net Worth</div><div class="v">${money(input.netWorth)}</div></div>
     <div class="card"><div class="k">Trend vs Last Month</div><div class="v">${pct(input.netWorthTrendPct)}</div></div>
     <div class="card"><div class="k">Liquid Net Worth</div><div class="v">${money(input.liquidNetWorth)}</div></div>
     <div class="card"><div class="k">Wealth Under Management</div><div class="v">${money(input.managedWealthTotal)}</div></div>
-  </div>
+  </div>` : ''}
 
-  <h2>Cashflow & Efficiency (Current Month)</h2>
+  ${cfg.includeCashflow ? `<h2>Cashflow & Efficiency (Current Month)</h2>
   <div class="grid">
     <div class="card"><div class="k">Income</div><div class="v">${money(input.monthlyIncome)}</div></div>
     <div class="card"><div class="k">Expenses</div><div class="v">${money(input.monthlyExpenses)}</div></div>
     <div class="card"><div class="k">Net P&L</div><div class="v">${money(input.monthlyPnL)}</div></div>
     <div class="card"><div class="k">Savings Rate</div><div class="v">${pct(input.savingsRatePct)}</div></div>
     <div class="card"><div class="k">Debt-to-Asset Ratio</div><div class="v">${pct(input.debtToAssetRatioPct)}</div></div>
-    <div class="card"><div class="k">Investment Style</div><div class="v">${input.investmentStyle}</div></div>
-  </div>
+    <div class="card"><div class="k">Investment Style</div><div class="v">${escapeHtml(input.investmentStyle)}</div></div>
+  </div>` : ''}
 
-  <h2>Resilience & Risk</h2>
+  ${cfg.includeRisk ? `<h2>Resilience & Risk</h2>
   <div class="grid">
     <div class="card"><div class="k">Emergency Fund Coverage</div><div class="v">${n(input.emergencyFundMonths).toFixed(1)} months</div></div>
     <div class="card"><div class="k">Emergency Fund Target</div><div class="v">${money(input.emergencyFundTargetAmount)}</div></div>
     <div class="card"><div class="k">Emergency Fund Shortfall</div><div class="v">${money(input.emergencyFundShortfall)}</div></div>
-    <div class="card"><div class="k">Risk Lane</div><div class="v">${input.riskLane}</div></div>
+    <div class="card"><div class="k">Risk Lane</div><div class="v">${escapeHtml(input.riskLane)}</div></div>
     <div class="card"><div class="k">Liquidity Runway</div><div class="v">${n(input.liquidityRunwayMonths).toFixed(1)} months</div></div>
     <div class="card"><div class="k">Discipline Score</div><div class="v">${n(input.disciplineScore).toFixed(0)} / 100</div></div>
-    <div class="card"><div class="k">Household Stress Status</div><div class="v">${input.householdStressLabel}</div></div>
+    <div class="card"><div class="k">Household Stress Status</div><div class="v">${escapeHtml(input.householdStressLabel)}</div></div>
     <div class="card"><div class="k">Household Stress Pressure Months</div><div class="v">${n(input.householdStressPressureMonths).toFixed(0)} month(s)</div></div>
-    <div class="card"><div class="k">Shock Drill Severity</div><div class="v">${input.shockDrillSeverity}</div></div>
+    <div class="card"><div class="k">Shock Drill Severity</div><div class="v">${escapeHtml(input.shockDrillSeverity)}</div></div>
     <div class="card"><div class="k">Shock Drill Estimated Gap</div><div class="v">${money(input.shockDrillEstimatedGap)}</div></div>
-  </div>
+  </div>` : ''}
 
-  <h2>Holding Details (Position by Position)</h2>
+  ${cfg.includeHoldings ? `<h2>Holding Details (Position by Position)</h2>
   <table>
     <thead>
       <tr>
@@ -339,7 +403,36 @@ export function generateWealthSummaryReportHtml(input: WealthSummaryReportInput)
     <tbody>
       ${holdingsRows || '<tr><td colspan="8">No holdings found.</td></tr>'}
     </tbody>
-  </table>
+  </table>` : ''}
+
+  ${cfg.includeAssets ? `<h2>Asset Details</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Type</th>
+        <th>Value</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${assetsRows || '<tr><td colspan="3">No assets found.</td></tr>'}
+    </tbody>
+  </table>` : ''}
+
+  ${cfg.includeLiabilities ? `<h2>Liability Details</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Type</th>
+        <th>Amount</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${liabilitiesRows || '<tr><td colspan="4">No liabilities found.</td></tr>'}
+    </tbody>
+  </table>` : ''}
 
   <div class="foot">Prepared by Finova. This summary is informational and does not constitute financial advice.</div>
 </body>

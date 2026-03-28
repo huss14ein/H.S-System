@@ -70,7 +70,7 @@ See **[`docs/DEPLOYMENT_CHECKLIST.md`](docs/DEPLOYMENT_CHECKLIST.md)** for the c
 
 ## Version
 
-**Current Version:** 1.0.0.0
+**Current Version:** 1.1.1.0
 
 ---
 

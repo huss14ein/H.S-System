@@ -1,6 +1,6 @@
 # Implementation Status — System Enhancement Plan
 
-**Version:** 1.0.0.0  
+**Version:** 1.1.1.0  
 **Last updated:** Implementation phase A–F completed; ready for run-and-verify.
 
 ---
@@ -16,7 +16,7 @@
 | **B** | RLS: `supabase/rls_all_user_tables.sql` for all user-scoped tables | Done |
 | **B** | `supabase/README_DB_MIGRATIONS.md` updated with new RLS script | Done |
 | **E** | Removed root-level `debug_*.ts`, `trace_*.ts`, `test_*.ts` (9 files) | Done |
-| **F** | `package.json` version set to **1.0.0.0** | Done |
+| **F** | `package.json` version set to **1.1.1.0** | Done |
 | **F** | `docs/IMPLEMENTATION_REPORT_1.0.0.0.md` and plan doc in `docs/` | Done |
 
 ---
@@ -59,5 +59,5 @@
 ## References
 
 - Full plan: `docs/COMPREHENSIVE_SYSTEM_ENHANCEMENT_AND_REFACTORING_PLAN.md`
-- Change summary: `docs/IMPLEMENTATION_REPORT_1.0.0.0.md`
+- Change summary: `docs/IMPLEMENTATION_REPORT_1.1.1.0.md`
 - DB migrations: `supabase/README_DB_MIGRATIONS.md`

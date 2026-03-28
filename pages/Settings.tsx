@@ -382,6 +382,15 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         updateSettings({ [key]: value });
     };
 
+    const scrollToSettingsSection = useCallback((sectionId: string) => {
+        if (typeof document === 'undefined') return;
+        const sectionEl = document.getElementById(sectionId);
+        if (!sectionEl) return;
+        const STICKY_HEADER_OFFSET = 128;
+        const top = sectionEl.getBoundingClientRect().top + window.scrollY - STICKY_HEADER_OFFSET;
+        window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    }, []);
+
     const accountsForEmptyCheck = (data as any)?.personalAccounts ?? data?.accounts ?? [];
 const hasData = accountsForEmptyCheck.length > 0;
     const defaultWealthUltra = useMemo(() => ({ ...getDefaultWealthUltraConfig(), ...(data?.wealthUltraConfig || {}) }), [data?.wealthUltraConfig]);
@@ -423,7 +432,15 @@ const hasData = accountsForEmptyCheck.length > 0;
                         { id: 'reports-export', label: 'Reports' },
                         { id: 'data-management', label: 'Data' },
                     ].map(({ id, label }) => (
-                        <a key={id} href={`#${id}`} className="text-sm px-2 py-1 rounded-md text-slate-600 hover:text-primary hover:bg-primary/10 transition-colors">{label}</a>
+                        <button
+                            key={id}
+                            type="button"
+                            onClick={() => scrollToSettingsSection(id)}
+                            className="text-sm px-2 py-1 rounded-md text-slate-600 hover:text-primary hover:bg-primary/10 transition-colors"
+                            aria-controls={id}
+                        >
+                            {label}
+                        </button>
                     ))}
                 </nav>
                 <div className="mt-6 rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50/80 via-white to-slate-50 p-5 sm:p-6">
