@@ -1,7 +1,8 @@
 import type { FinancialData } from '../types';
-import { normalizedMonthlyExpense, cashRunwayMonths } from './financeMetrics';
+import { normalizedMonthlyExpenseSar, cashRunwayMonths } from './financeMetrics';
 import { computeHouseholdStressFromData } from './householdBudgetStress';
 import { getPerformanceSnapshots } from './wealthUltraPerformance';
+import { resolveSarPerUsd, totalLiquidCashSARFromAccounts, toSAR } from '../utils/currencyMath';
 
 export interface LiquidityRunwaySummary {
   monthsOfRunway: number;
@@ -10,20 +11,33 @@ export interface LiquidityRunwaySummary {
   reasons: string[];
 }
 
-export function computeLiquidityRunwayFromData(data: FinancialData | null | undefined): LiquidityRunwaySummary | null {
+export function computeLiquidityRunwayFromData(
+  data: FinancialData | null | undefined,
+  options?: { exchangeRate?: number; getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number } }
+): LiquidityRunwaySummary | null {
   if (!data) return null;
 
   const stress = computeHouseholdStressFromData(data);
   const accounts = (data as any).personalAccounts ?? data.accounts ?? [];
   const transactions = (data as any).personalTransactions ?? data.transactions ?? [];
+  const sarPerUsd = resolveSarPerUsd(data as { wealthUltraConfig?: { fxRate?: number | null } | null }, options?.exchangeRate);
 
-  const avgMonthlyExpense = normalizedMonthlyExpense(transactions as { date: string; type?: string; category?: string; amount?: number }[], {
-    monthsLookback: 6,
-  });
+  const avgMonthlyExpense = normalizedMonthlyExpenseSar(
+    transactions as any,
+    accounts as any,
+    sarPerUsd,
+    { monthsLookback: 6 }
+  );
 
-  const liquidCash = accounts
-    .filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings')
-    .reduce((sum: number, a: { balance?: number }) => sum + Math.max(0, a.balance ?? 0), 0);
+  const liquidCash = options?.getAvailableCashForAccount
+    ? totalLiquidCashSARFromAccounts(accounts as { id: string; type?: string; balance?: number; currency?: 'USD' | 'SAR' }[], options.getAvailableCashForAccount, sarPerUsd)
+    : accounts
+        .filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings')
+        .reduce((sum: number, a: { balance?: number; currency?: 'USD' | 'SAR' }) => {
+          const bal = Math.max(0, Number(a.balance) || 0);
+          const cur = a.currency === 'USD' ? 'USD' : 'SAR';
+          return sum + toSAR(bal, cur, sarPerUsd);
+        }, 0);
 
   const monthsOfRunway = cashRunwayMonths(liquidCash, avgMonthlyExpense);
 
@@ -71,4 +85,3 @@ export function computeLiquidityRunwayFromData(data: FinancialData | null | unde
     reasons,
   };
 }
-

@@ -35,6 +35,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isCurrencyOpen, setIsCurrencyOpen] = useState(false);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
+  const [isNotificationsPreviewOpen, setIsNotificationsPreviewOpen] = useState(false);
+  const [isTasksPreviewOpen, setIsTasksPreviewOpen] = useState(false);
   
   const auth = useContext(AuthContext);
   const { data } = useContext(DataContext)!;
@@ -64,6 +66,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const profileRef = useClickOutside<HTMLDivElement>(() => setIsProfileOpen(false));
   const currencyRef = useClickOutside<HTMLDivElement>(() => setIsCurrencyOpen(false));
   const navRef = useClickOutside<HTMLDivElement>(() => setActiveGroup(null));
+  const notificationsPreviewRef = useClickOutside<HTMLDivElement>(() => setIsNotificationsPreviewOpen(false));
+  const tasksPreviewRef = useClickOutside<HTMLDivElement>(() => setIsTasksPreviewOpen(false));
 
   const notificationsContext = useNotifications();
   const notificationCount = notificationsContext?.unreadCount ?? 0;
@@ -100,16 +104,47 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
     prevNotificationCountRef.current = notificationCount;
   }, [notificationCount, soundEnabled]);
 
-  const handleBellClick = () => {
+  const openAlertsPage = () => {
+    setIsNotificationsPreviewOpen(false);
+    setIsTasksPreviewOpen(false);
     if (soundEnabled && notificationCount > 0) playBeepRef.current();
     if (triggerPageActionPair) triggerPageActionPair('Notifications', 'notifications-tab:alerts');
     else setActivePage('Notifications');
   };
 
-  const handleTasksShortcut = () => {
+  const openTasksPage = () => {
+    setIsNotificationsPreviewOpen(false);
+    setIsTasksPreviewOpen(false);
     if (triggerPageActionPair) triggerPageActionPair('Notifications', 'notifications-tab:tasks');
     else setActivePage('Notifications');
   };
+
+  const topNotificationPreview = useMemo(() => {
+    const list = notificationsContext?.notifications ?? [];
+    return [...list]
+      .sort((a, b) => {
+        if (a.isRead !== b.isRead) return a.isRead ? 1 : -1;
+        return new Date(b.date).getTime() - new Date(a.date).getTime();
+      })
+      .slice(0, 4);
+  }, [notificationsContext?.notifications]);
+
+  const topTasksPreview = useMemo(() => {
+    const todos = todosOpt?.todos ?? [];
+    return [...todos]
+      .filter((t) => t.status === 'open')
+      .sort((a, b) => {
+        if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate);
+        if (a.dueDate) return -1;
+        if (b.dueDate) return 1;
+        if (a.priority !== b.priority) {
+          const rank = { high: 0, medium: 1, low: 2 } as const;
+          return rank[a.priority] - rank[b.priority];
+        }
+        return a.title.localeCompare(b.title);
+      })
+      .slice(0, 4);
+  }, [todosOpt?.todos]);
 
   const navGroups = useMemo(() => [
     { name: 'Overview', items: ['Dashboard', 'Summary', 'Analysis', 'Forecast'] },
@@ -279,36 +314,101 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                 )}
               </div>
               
-              <button
-                type="button"
-                onClick={handleTasksShortcut}
-                className="relative flex p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all"
-                title={todoOverdue > 0 ? `${todoOverdue} overdue tasks` : 'My tasks'}
-                aria-label={`My tasks${todoActive > 0 ? `, ${todoActive} open` : ''}`}
-              >
-                <ClipboardDocumentListIcon className="h-6 w-6" />
-                {todoActive > 0 && (
-                  <span className="absolute top-1.5 right-1.5 flex h-4 min-w-[1rem] px-0.5">
-                    <span
-                      className={`relative inline-flex rounded-full min-w-[1rem] h-4 px-1 text-white text-[10px] items-center justify-center font-bold ${
-                        todoOverdue > 0 ? 'bg-rose-500' : 'bg-primary'
-                      }`}
-                    >
-                      {todoActive > 99 ? '99+' : todoActive}
-                    </span>
-                  </span>
-                )}
-              </button>
-
-              <button onClick={handleBellClick} className="relative p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all" aria-label={`Notifications${notificationCount > 0 ? `, ${notificationCount} unread` : ''}`}>
-                  <BellIcon className="h-6 w-6" />
-                  {notificationCount > 0 && (
-                      <span className="absolute top-2 right-2 flex h-4 w-4">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-danger opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-4 w-4 bg-danger text-white text-[10px] items-center justify-center font-bold">{notificationCount}</span>
+              <div className="relative" ref={tasksPreviewRef}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsNotificationsPreviewOpen(false);
+                    setIsTasksPreviewOpen((v) => !v);
+                  }}
+                  className="relative flex p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all"
+                  title={todoOverdue > 0 ? `${todoOverdue} overdue tasks` : 'My tasks'}
+                  aria-label={`My tasks${todoActive > 0 ? `, ${todoActive} open` : ''}`}
+                  aria-expanded={isTasksPreviewOpen}
+                >
+                  <ClipboardDocumentListIcon className="h-6 w-6" />
+                  {todoActive > 0 && (
+                    <span className="absolute top-1.5 right-1.5 flex h-4 min-w-[1rem] px-0.5">
+                      <span
+                        className={`relative inline-flex rounded-full min-w-[1rem] h-4 px-1 text-white text-[10px] items-center justify-center font-bold ${
+                          todoOverdue > 0 ? 'bg-rose-500' : 'bg-primary'
+                        }`}
+                      >
+                        {todoActive > 99 ? '99+' : todoActive}
                       </span>
+                    </span>
                   )}
-              </button>
+                </button>
+                {isTasksPreviewOpen && (
+                  <div className="absolute right-0 mt-2 w-[22rem] max-w-[90vw] rounded-2xl border border-slate-200 bg-white shadow-2xl z-50 p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-sm font-semibold text-slate-800">Task preview</p>
+                      <button type="button" onClick={openTasksPage} className="text-xs font-semibold text-primary hover:underline">Open Tasks</button>
+                    </div>
+                    {topTasksPreview.length === 0 ? (
+                      <p className="text-xs text-slate-500">No open tasks. You’re all caught up.</p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {topTasksPreview.map((t) => (
+                          <li key={t.id} className="rounded-lg border border-slate-100 px-2.5 py-2 bg-slate-50/40">
+                            <p className="text-sm text-slate-700 line-clamp-2">{t.title}</p>
+                            <p className="text-[11px] text-slate-500 mt-0.5">
+                              {t.dueDate ? `Due ${t.dueDate}` : 'No due date'}{t.priority ? ` · ${t.priority}` : ''}
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <button type="button" onClick={openTasksPage} className="mt-3 w-full rounded-lg bg-primary text-white text-sm font-medium py-2 hover:bg-secondary">
+                      Go to Tasks
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="relative" ref={notificationsPreviewRef}>
+                <button
+                  onClick={() => {
+                    if (soundEnabled && notificationCount > 0) playBeepRef.current();
+                    setIsTasksPreviewOpen(false);
+                    setIsNotificationsPreviewOpen((v) => !v);
+                  }}
+                  className="relative p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all"
+                  aria-label={`Notifications${notificationCount > 0 ? `, ${notificationCount} unread` : ''}`}
+                  aria-expanded={isNotificationsPreviewOpen}
+                >
+                    <BellIcon className="h-6 w-6" />
+                    {notificationCount > 0 && (
+                        <span className="absolute top-2 right-2 flex h-4 w-4">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-danger opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-4 w-4 bg-danger text-white text-[10px] items-center justify-center font-bold">{notificationCount}</span>
+                        </span>
+                    )}
+                </button>
+                {isNotificationsPreviewOpen && (
+                  <div className="absolute right-0 mt-2 w-[24rem] max-w-[90vw] rounded-2xl border border-slate-200 bg-white shadow-2xl z-50 p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-sm font-semibold text-slate-800">Alerts preview</p>
+                      <button type="button" onClick={openAlertsPage} className="text-xs font-semibold text-primary hover:underline">Open Alerts</button>
+                    </div>
+                    {topNotificationPreview.length === 0 ? (
+                      <p className="text-xs text-slate-500">No alerts right now.</p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {topNotificationPreview.map((n) => (
+                          <li key={n.id} className={`rounded-lg border px-2.5 py-2 ${n.isRead ? 'border-slate-100 bg-slate-50/40' : 'border-primary/20 bg-primary/5'}`}>
+                            <p className="text-sm text-slate-700 line-clamp-2">{n.message}</p>
+                            {n.actionHint && <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-2">{n.actionHint}</p>}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <button type="button" onClick={openAlertsPage} className="mt-3 w-full rounded-lg bg-primary text-white text-sm font-medium py-2 hover:bg-secondary">
+                      Go to Alerts
+                    </button>
+                  </div>
+                )}
+              </div>
 
               {onOpenCommandPalette && (
                 <button

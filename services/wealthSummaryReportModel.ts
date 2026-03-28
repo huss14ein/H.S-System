@@ -306,7 +306,7 @@ export function computeWealthSummaryReportModel(
   const householdStress = deriveCashflowStressSummary(householdPlan) as CashflowStressSummary;
 
   const riskLane = computeRiskLaneFromData(data, emergencyFund.monthsCovered);
-  const liquidityRunway = computeLiquidityRunwayFromData(data);
+  const liquidityRunway = computeLiquidityRunwayFromData(data, { exchangeRate: sarPerUsd, getAvailableCashForAccount });
   const discipline = computeDisciplineScore(data);
   const shockDrill = runShockDrill(data, 'job_loss');
   const liquidNw = computeLiquidNetWorth(data, { getAvailableCashForAccount, exchangeRate: sarPerUsd });
@@ -344,6 +344,17 @@ export function computeWealthSummaryReportModel(
       gainLossPct: Number(h.gainLossPercent ?? 0),
       currency: String(h.portfolioCurrency ?? 'USD'),
       currentValueSar: toSAR(Number(h.currentValue ?? 0), cur(h.portfolioCurrency), sarPerUsd),
+    })),
+    assets: (personalAssets ?? []).map((a: { name?: string; type?: string; value?: number }) => ({
+      name: String(a.name ?? ''),
+      type: String(a.type ?? ''),
+      value: Number(a.value ?? 0),
+    })),
+    liabilities: (personalLiabilities ?? []).map((l: { name?: string; type?: string; amount?: number; status?: string }) => ({
+      name: String(l.name ?? ''),
+      type: String(l.type ?? ''),
+      amount: Number(l.amount ?? 0),
+      status: String(l.status ?? ''),
     })),
   };
 
