@@ -43,12 +43,12 @@ begin
     a.id,
     a.id as account_id,
     a.user_id,
-    a.name,
-    a.type,
+    a.name::text as name,
+    a.type::text as type,
     case when coalesce(s.show_balance, true) then a.balance else null end as balance,
-    a.owner,
+    a.owner::text as owner,
     s.owner_user_id,
-    coalesce(owner_u.email, s.owner_user_id::text) as owner_email,
+    coalesce(owner_u.email::text, s.owner_user_id::text) as owner_email,
     coalesce(s.show_balance, true) as show_balance
   from public.account_shares s
   join public.accounts a on a.id = s.account_id

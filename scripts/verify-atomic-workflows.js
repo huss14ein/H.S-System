@@ -55,6 +55,10 @@ const migrationChecks = [
     file: 'supabase/migrations/20260328133000_fix_shared_rpc_return_types_and_ambiguity.sql',
     fn: 'get_shared_budget_consumed_for_me',
   },
+  {
+    file: 'supabase/migrations/20260328134000_fix_shared_accounts_return_text_types.sql',
+    fn: 'get_shared_accounts_for_me',
+  },
 ];
 
 for (const m of migrationChecks) {
@@ -101,6 +105,13 @@ expectContains(sharedRpcFixMigration, 'b.month::integer as month', 'supabase/mig
 expectContains(sharedRpcFixMigration, 'b.year::integer as year', 'supabase/migrations/20260328133000_fix_shared_rpc_return_types_and_ambiguity.sql');
 expectContains(sharedRpcFixMigration, 'select os.owner_user_id, os.category, os.amount from owner_spend os', 'supabase/migrations/20260328133000_fix_shared_rpc_return_types_and_ambiguity.sql');
 expectContains(sharedRpcFixMigration, 'select cs.owner_user_id, cs.category, cs.amount from contributor_spend cs', 'supabase/migrations/20260328133000_fix_shared_rpc_return_types_and_ambiguity.sql');
+
+
+const sharedAccountsTypeFixMigration = read('supabase/migrations/20260328134000_fix_shared_accounts_return_text_types.sql');
+expectContains(sharedAccountsTypeFixMigration, 'a.name::text as name', 'supabase/migrations/20260328134000_fix_shared_accounts_return_text_types.sql');
+expectContains(sharedAccountsTypeFixMigration, 'a.type::text as type', 'supabase/migrations/20260328134000_fix_shared_accounts_return_text_types.sql');
+expectContains(sharedAccountsTypeFixMigration, 'a.owner::text as owner', 'supabase/migrations/20260328134000_fix_shared_accounts_return_text_types.sql');
+expectContains(sharedAccountsTypeFixMigration, 'coalesce(owner_u.email::text, s.owner_user_id::text) as owner_email', 'supabase/migrations/20260328134000_fix_shared_accounts_return_text_types.sql');
 
 if (failures.length > 0) {
   console.error('Critical atomic workflow verification failed:\n');
