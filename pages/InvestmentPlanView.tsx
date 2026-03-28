@@ -1593,7 +1593,7 @@ const InvestmentPlanView: React.FC<{
                                 <tr className="text-left text-xs font-semibold text-slate-600">
                                     <th className="px-3 sm:px-6 py-3.5">Stock</th>
                                     <th className="px-3 sm:px-6 py-3.5">Buy or sell</th>
-                                    <th className="px-3 sm:px-6 py-3.5" title="Date, or per-share trigger in the stock’s currency (SAR primary; hover for USD)">Trigger</th>
+                                    <th className="px-3 sm:px-6 py-3.5" title="Date trigger, or per-share trigger in the stock’s traded currency">Trigger</th>
                                     <th className="px-3 sm:px-6 py-3.5" title="Whether today’s price lines up with your plan">Hint</th>
                                     <th className="px-3 sm:px-6 py-3.5" title="How soon you want to act if the rule is met">Urgency</th>
                                     <th className="px-3 sm:px-6 py-3.5">Stage</th>
