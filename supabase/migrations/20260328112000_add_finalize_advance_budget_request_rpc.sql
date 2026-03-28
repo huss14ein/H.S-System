@@ -24,6 +24,13 @@ declare
   v_is_admin boolean := false;
   v_request record;
   v_target_user_id uuid;
+  v_request_category text;
+  v_request_note text;
+  v_advance_match text[];
+  v_req_from_year integer;
+  v_req_from_month integer;
+  v_req_to_year integer;
+  v_req_to_month integer;
   v_src record;
   v_dst record;
   v_amount numeric := coalesce(p_amount, 0);
@@ -58,6 +65,39 @@ begin
 
   if lower(coalesce(v_request.status, '')) <> 'pending' then
     raise exception using errcode = '22023', message = 'Only pending budget requests can be finalized';
+  end if;
+
+  v_request_note := coalesce(v_request.request_note, v_request.note, '');
+  if v_request_note !~* '\[Request mode:\s*AdvanceFromNextMonth\]' then
+    raise exception using errcode = '22023', message = 'Budget request is not marked as AdvanceFromNextMonth mode';
+  end if;
+
+  v_advance_match := regexp_match(v_request_note, '\[AdvanceFromNextMonth:\s*from=(\d{4})-(\d{2});\s*to=(\d{4})-(\d{2})\]');
+  if v_advance_match is null then
+    raise exception using errcode = '22023', message = 'Budget request is missing advance window metadata';
+  end if;
+  v_req_from_year := v_advance_match[1]::integer;
+  v_req_from_month := v_advance_match[2]::integer;
+  v_req_to_year := v_advance_match[3]::integer;
+  v_req_to_month := v_advance_match[4]::integer;
+
+  if v_req_from_year <> p_from_year
+    or v_req_from_month <> p_from_month
+    or v_req_to_year <> p_to_year
+    or v_req_to_month <> p_to_month then
+    raise exception using errcode = '22023', message = 'Advance window parameters do not match the locked budget request';
+  end if;
+
+  if nullif(trim(coalesce(v_request.category_name, '')), '') is not null then
+    v_request_category := trim(v_request.category_name);
+  elsif v_request.category_id is not null then
+    select c.name into v_request_category from public.categories c where c.id = v_request.category_id;
+  end if;
+  if nullif(trim(coalesce(v_request_category, '')), '') is null then
+    raise exception using errcode = 'P0002', message = 'Budget request category could not be resolved';
+  end if;
+  if trim(coalesce(p_category, '')) <> v_request_category then
+    raise exception using errcode = '22023', message = 'Provided category does not match the locked budget request';
   end if;
 
   v_target_user_id := v_request.user_id;

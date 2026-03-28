@@ -60,6 +60,8 @@ if (advanceFinalizeMigration.includes('p_request_user_id')) {
 }
 expectContains(advanceFinalizeMigration, 'Only admins can finalize budget requests', 'supabase/migrations/20260328112000_add_finalize_advance_budget_request_rpc.sql');
 expectContains(advanceFinalizeMigration, 'v_target_user_id := v_request.user_id', 'supabase/migrations/20260328112000_add_finalize_advance_budget_request_rpc.sql');
+expectContains(advanceFinalizeMigration, 'Advance window parameters do not match the locked budget request', 'supabase/migrations/20260328112000_add_finalize_advance_budget_request_rpc.sql');
+expectContains(advanceFinalizeMigration, 'Provided category does not match the locked budget request', 'supabase/migrations/20260328112000_add_finalize_advance_budget_request_rpc.sql');
 
 if (failures.length > 0) {
   console.error('Critical atomic workflow verification failed:\n');
