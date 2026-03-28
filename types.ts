@@ -335,7 +335,7 @@ export interface CategoryPermission {
 export interface BudgetRequest {
   id: string;
   userId: string;
-  requestType: 'NewCategory' | 'IncreaseLimit';
+  requestType: 'NewCategory' | 'IncreaseLimit' | 'AdvanceFromNextMonth';
   categoryId?: string;
   categoryName?: string;
   amount: number;

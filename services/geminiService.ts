@@ -1,7 +1,7 @@
 import type { FunctionDeclaration } from '@google/genai';
 import { SchemaType } from './geminiSchemaTypes';
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult, ProposedTrade, TradeCurrency } from '../types';
-import { finnhubFetch, toFinnhubSymbol, fromFinnhubSymbol, canonicalQuoteLookupKey, toStooqSymbol } from './finnhubService';
+import { finnhubFetch, toFinnhubSymbol, fromFinnhubSymbol, canonicalQuoteLookupKey, toStooqSymbol, getFinnhubQuoteCandidates } from './finnhubService';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { capitalizeCategoryName } from '../utils/categoryFormat';
 import { DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
@@ -285,35 +285,38 @@ const getFinnhubLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
     const mapped: { [symbol: string]: { price: number; change: number; changePercent: number } } = {};
 
     for (const rawSymbol of symbols) {
-        try {
-            const finnhubSymbol = toFinnhubSymbol(rawSymbol);
-            const response = await finnhubFetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(finnhubSymbol)}&token=${encodeURIComponent(token)}`);
-            if (!response.ok) continue;
-            const row = await response.json();
-            const price = Number(row?.c ?? row?.pc ?? row?.p);
-            let change = Number(row?.d ?? 0);
-            let changePercent = Number(row?.dp ?? 0);
-            if (!Number.isFinite(price) || price <= 0) continue;
-            if (!Number.isFinite(change)) change = 0;
-            if (!Number.isFinite(changePercent)) changePercent = 0;
-            const quote = { price, change, changePercent };
-            const displayKey = fromFinnhubSymbol(finnhubSymbol);
-            const rawUpper = (rawSymbol || '').trim().toUpperCase();
-            const keys = new Set<string>([displayKey, rawUpper].filter(Boolean));
-            const tad = displayKey.match(/^([0-9]{4,6})\.SR$/);
-            if (tad) {
-                keys.add(`${tad[1]}.SA`);
-                keys.add(`${tad[1]}.SE`);
-            }
-            for (const k of keys) mapped[k] = quote;
-        } catch (error) {
-            if (isFinnhub403(error)) {
-                if (!warnedFinnhub403InGeminiService) {
-                    warnedFinnhub403InGeminiService = true;
-                    console.warn('Finnhub returned 403 for this key; quote research fallback will use other sources.');
+        const candidateSymbols = getFinnhubQuoteCandidates(rawSymbol);
+        for (const finnhubSymbol of candidateSymbols) {
+            try {
+                const response = await finnhubFetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(finnhubSymbol)}&token=${encodeURIComponent(token)}`);
+                if (!response.ok) continue;
+                const row = await response.json();
+                const price = Number(row?.c ?? row?.pc ?? row?.p);
+                let change = Number(row?.d ?? 0);
+                let changePercent = Number(row?.dp ?? 0);
+                if (!Number.isFinite(price) || price <= 0) continue;
+                if (!Number.isFinite(change)) change = 0;
+                if (!Number.isFinite(changePercent)) changePercent = 0;
+                const quote = { price, change, changePercent };
+                const displayKey = fromFinnhubSymbol(finnhubSymbol);
+                const rawUpper = (rawSymbol || '').trim().toUpperCase();
+                const keys = new Set<string>([displayKey, rawUpper].filter(Boolean));
+                const tad = displayKey.match(/^([0-9]{4,6})\.SR$/);
+                if (tad) {
+                    keys.add(`${tad[1]}.SA`);
+                    keys.add(`${tad[1]}.SE`);
                 }
-            } else {
-                console.warn(`Finnhub quote failed for ${rawSymbol}:`, error);
+                for (const k of keys) mapped[k] = quote;
+                break;
+            } catch (error) {
+                if (isFinnhub403(error)) {
+                    if (!warnedFinnhub403InGeminiService) {
+                        warnedFinnhub403InGeminiService = true;
+                        console.warn('Finnhub returned 403 for this key; quote research fallback will use other sources.');
+                    }
+                } else {
+                    console.warn(`Finnhub quote failed for ${rawSymbol} (${finnhubSymbol}):`, error);
+                }
             }
         }
     }
