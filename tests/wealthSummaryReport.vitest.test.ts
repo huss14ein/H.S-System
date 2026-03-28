@@ -57,6 +57,12 @@ const sampleInput: WealthSummaryReportInput = {
       currentValueSar: 6375,
     },
   ],
+  assets: [
+    { name: 'Home', type: 'Property', value: 900000 },
+  ],
+  liabilities: [
+    { name: 'Mortgage', type: 'Mortgage', amount: -350000, status: 'Active' },
+  ],
 };
 
 describe('wealth summary report exports', () => {
@@ -84,10 +90,29 @@ describe('wealth summary report exports', () => {
   it('renders holding details table in HTML export', () => {
     const html = generateWealthSummaryReportHtml(sampleInput);
     expect(html).toContain('Holding Details (Position by Position)');
+    expect(html).toContain('Asset Details');
+    expect(html).toContain('Liability Details');
     expect(html).toContain('<table>');
     expect(html).toContain('AAPL');
     expect(html).toContain('MSFT');
     expect(html).toContain('Current Value (SAR)');
+  });
+
+  it('respects section options in HTML export', () => {
+    const html = generateWealthSummaryReportHtml(sampleInput, {
+      includeSnapshot: true,
+      includeCashflow: false,
+      includeRisk: false,
+      includeHoldings: false,
+      includeAssets: true,
+      includeLiabilities: false,
+    });
+    expect(html).toContain('Net Worth Snapshot');
+    expect(html).not.toContain('Cashflow & Efficiency');
+    expect(html).not.toContain('Resilience & Risk');
+    expect(html).not.toContain('Holding Details (Position by Position)');
+    expect(html).toContain('Asset Details');
+    expect(html).not.toContain('Liability Details');
   });
 });
 
