@@ -21,7 +21,9 @@ set search_path = public
 as $$
 declare
   v_user_id uuid := auth.uid();
+  v_is_admin boolean := false;
   v_request record;
+  v_target_user_id uuid;
   v_src record;
   v_dst record;
   v_amount numeric := coalesce(p_amount, 0);
@@ -30,6 +32,10 @@ declare
 begin
   if v_user_id is null then
     raise exception using errcode = '28000', message = 'Authentication required';
+  end if;
+  v_is_admin := coalesce(public.is_admin_user(), false);
+  if not v_is_admin then
+    raise exception using errcode = '42501', message = 'Only admins can finalize budget requests';
   end if;
 
   if v_amount <= 0 then
@@ -40,7 +46,6 @@ begin
   into v_request
   from public.budget_requests br
   where br.id = p_request_id
-    and br.user_id = v_user_id
   for update;
 
   if not found then
@@ -51,10 +56,16 @@ begin
     raise exception using errcode = '23505', message = 'Budget request already finalized';
   end if;
 
+  if lower(coalesce(v_request.status, '')) <> 'pending' then
+    raise exception using errcode = '22023', message = 'Only pending budget requests can be finalized';
+  end if;
+
+  v_target_user_id := v_request.user_id;
+
   select b.*
   into v_src
   from public.budgets b
-  where b.user_id = v_user_id
+  where b.user_id = v_target_user_id
     and b.category = p_category
     and b.year = p_from_year
     and b.month = p_from_month
@@ -73,7 +84,7 @@ begin
   select b.*
   into v_dst
   from public.budgets b
-  where b.user_id = v_user_id
+  where b.user_id = v_target_user_id
     and b.category = p_category
     and b.year = p_to_year
     and b.month = p_to_month
@@ -92,7 +103,7 @@ begin
       user_id, category, limit, month, year, period, tier, destination_account_id
     )
     values (
-      v_user_id,
+      v_target_user_id,
       p_category,
       v_amount,
       p_to_month,

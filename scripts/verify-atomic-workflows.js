@@ -50,11 +50,16 @@ expectContains(dataContext, "rpc('create_investment_cash_transfer_with_fee'", 'c
 const budgets = read('pages/Budgets.tsx');
 expectContains(budgets, "rpc('finalize_advance_budget_request'", 'pages/Budgets.tsx');
 
+const investmentCashMigration = read('supabase/migrations/20260328101000_add_investment_cash_transfer_rpc.sql');
+expectContains(investmentCashMigration, 'linked_cash_account_id', 'supabase/migrations/20260328101000_add_investment_cash_transfer_rpc.sql');
+expectContains(investmentCashMigration, 'p_cash_account_id', 'supabase/migrations/20260328101000_add_investment_cash_transfer_rpc.sql');
+
 const advanceFinalizeMigration = read('supabase/migrations/20260328112000_add_finalize_advance_budget_request_rpc.sql');
 if (advanceFinalizeMigration.includes('p_request_user_id')) {
   failures.push('supabase/migrations/20260328112000_add_finalize_advance_budget_request_rpc.sql should not accept caller-supplied p_request_user_id');
 }
-expectContains(advanceFinalizeMigration, 'and br.user_id = v_user_id', 'supabase/migrations/20260328112000_add_finalize_advance_budget_request_rpc.sql');
+expectContains(advanceFinalizeMigration, 'Only admins can finalize budget requests', 'supabase/migrations/20260328112000_add_finalize_advance_budget_request_rpc.sql');
+expectContains(advanceFinalizeMigration, 'v_target_user_id := v_request.user_id', 'supabase/migrations/20260328112000_add_finalize_advance_budget_request_rpc.sql');
 
 if (failures.length > 0) {
   console.error('Critical atomic workflow verification failed:\n');

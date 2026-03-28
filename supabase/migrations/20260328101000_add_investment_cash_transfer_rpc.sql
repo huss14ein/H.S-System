@@ -67,7 +67,7 @@ begin
   v_trade_type := case when p_direction = 'cash_to_investment' then 'deposit' else 'withdrawal' end;
 
   insert into public.investment_transactions (
-    user_id, account_id, date, type, symbol, quantity, price, total
+    user_id, account_id, date, type, symbol, quantity, price, total, linked_cash_account_id
   )
   values (
     v_user_id,
@@ -77,7 +77,8 @@ begin
     'CASH',
     0,
     0,
-    abs(p_amount)
+    abs(p_amount),
+    p_cash_account_id
   )
   returning id into v_investment_tx_id;
 
