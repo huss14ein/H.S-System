@@ -40,6 +40,7 @@ import {
     generateWealthSummaryReportJson,
 } from '../services/reportingEngine';
 import { useSelfLearning } from '../context/SelfLearningContext';
+import Modal from '../components/Modal';
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
@@ -91,6 +92,15 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [isAdmin, setIsAdmin] = useState(false);
+    const [isPrintOptionsOpen, setIsPrintOptionsOpen] = useState(false);
+    const [printSections, setPrintSections] = useState({
+        includeSnapshot: true,
+        includeCashflow: true,
+        includeRisk: true,
+        includeHoldings: true,
+        includeAssets: true,
+        includeLiabilities: true,
+    });
 
     useEffect(() => {
         const loadRole = async () => {
@@ -220,9 +230,9 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     const handlePrintWealthSummary = useCallback(() => {
         const payload = reportModel?.wealthSummaryReportPayload;
         if (!payload) return;
-        const html = generateWealthSummaryReportHtml(payload);
+        const html = generateWealthSummaryReportHtml(payload, printSections);
         openHtmlForPrint(html);
-    }, [reportModel?.wealthSummaryReportPayload]);
+    }, [reportModel?.wealthSummaryReportPayload, printSections]);
 
     const summaryMonthlyKpis = useMemo(
         () =>
@@ -236,13 +246,30 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         const out: string[] = [];
         const fm = reportModel?.financialMetricsWithEf;
         if (!fm) return out;
+        const scopedAccounts = ((data as { personalAccounts?: { currency?: 'SAR' | 'USD' }[] })?.personalAccounts ?? data?.accounts ?? []) as { currency?: 'SAR' | 'USD' }[];
+        const hasUsdAccounts = scopedAccounts.some((a) => a.currency === 'USD');
+        const fxLooksValid = Number.isFinite(sarPerUsd) && sarPerUsd > 0;
+        const liquid = reportModel?.liquidNw;
+        const runway = reportModel?.liquidityRunway;
+
+        if (!fxLooksValid) out.push('FX rate is invalid; USD balances may not convert correctly.');
+        if (hasUsdAccounts && !fxLooksValid) out.push('USD accounts detected but FX is missing. Set USD→SAR in header/settings.');
         if (!Number.isFinite(fm.netWorth)) out.push('Net worth is invalid.');
         if (!Number.isFinite(fm.monthlyIncome)) out.push('Monthly income is invalid.');
         if (!Number.isFinite(fm.monthlyExpenses)) out.push('Monthly expenses are invalid.');
         if (!Number.isFinite(summaryMonthlyKpis.budgetVariance)) out.push('Budget variance could not be computed.');
         if (!Number.isFinite(summaryMonthlyKpis.roi)) out.push('ROI could not be computed.');
+        if (liquid) {
+            const rebuilt = liquid.liquidCash + liquid.investmentsSAR + liquid.commodities + liquid.receivables - liquid.shortTermDebt;
+            if (Math.abs(rebuilt - liquid.liquidNetWorth) > 0.5) {
+                out.push('Liquid net worth components do not reconcile. Please refresh or review input data.');
+            }
+        }
+        if (runway && !Number.isFinite(runway.monthsOfRunway)) {
+            out.push('Liquidity runway could not be calculated from current data.');
+        }
         return out;
-    }, [reportModel, summaryMonthlyKpis]);
+    }, [reportModel, summaryMonthlyKpis, data, sarPerUsd]);
 
     if (loading || !data) {
         return (
@@ -282,7 +309,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                     <PageActionsDropdown
                         ariaLabel="Summary quick links"
                         actions={[
-                            { value: 'print-wealth-summary', label: 'Print wealth summary', onClick: handlePrintWealthSummary },
+                            { value: 'print-wealth-summary', label: 'Print wealth summary', onClick: () => setIsPrintOptionsOpen(true) },
                             { value: 'export-wealth-json', label: 'Export wealth summary (JSON)', onClick: handleExportWealthSummaryJson },
                             { value: 'export-wealth-csv', label: 'Export wealth summary (CSV)', onClick: handleExportWealthSummaryCsv },
                             { value: 'wealth-ultra', label: 'Wealth Ultra', onClick: () => setActivePage('Wealth Ultra') },
@@ -297,6 +324,41 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                 )
             }
         >
+            <Modal isOpen={isPrintOptionsOpen} onClose={() => setIsPrintOptionsOpen(false)} title="Choose what to include in the HTML report">
+                <div className="space-y-3 text-sm text-slate-700">
+                    <p className="text-slate-600">Pick sections for export. This helps non-financial users print only what they need.</p>
+                    {[
+                        ['includeSnapshot', 'Net worth snapshot'],
+                        ['includeCashflow', 'Cashflow & efficiency'],
+                        ['includeRisk', 'Resilience & risk'],
+                        ['includeHoldings', 'Holding details'],
+                        ['includeAssets', 'Asset details'],
+                        ['includeLiabilities', 'Liability details'],
+                    ].map(([key, label]) => (
+                        <label key={key} className="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                checked={(printSections as Record<string, boolean>)[key]}
+                                onChange={(e) => setPrintSections((prev) => ({ ...prev, [key]: e.target.checked }))}
+                            />
+                            <span>{label}</span>
+                        </label>
+                    ))}
+                    <div className="flex justify-end gap-2 pt-2">
+                        <button type="button" className="px-3 py-2 rounded border border-slate-300 text-slate-700" onClick={() => setIsPrintOptionsOpen(false)}>Cancel</button>
+                        <button
+                            type="button"
+                            className="px-3 py-2 rounded bg-primary text-white"
+                            onClick={() => {
+                                handlePrintWealthSummary();
+                                setIsPrintOptionsOpen(false);
+                            }}
+                        >
+                            Generate HTML report
+                        </button>
+                    </div>
+                </div>
+            </Modal>
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {isAdmin ? (
                     <div
@@ -359,15 +421,34 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
 
             <CollapsibleSection title="Liquid net worth (simplified)" summary={maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))} className="border border-slate-200 bg-slate-50/50">
                 <p className="text-2xl font-extrabold text-primary mb-4">{maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))}</p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-slate-600">
-                    <span>Cash (checking/savings): {maskBalance(formatCurrencyString(liquidNw.liquidCash, { digits: 0 }))}</span>
-                    <span>Investments (book): {maskBalance(formatCurrencyString(liquidNw.investmentsSAR, { digits: 0 }))}</span>
-                    <span>Commodities: {maskBalance(formatCurrencyString(liquidNw.commodities, { digits: 0 }))}</span>
-                    <span>Receivables: {maskBalance(formatCurrencyString(liquidNw.receivables, { digits: 0 }))}</span>
-                    <span>Debt: −{maskBalance(formatCurrencyString(liquidNw.shortTermDebt, { digits: 0 }))}</span>
-                    <span className="text-slate-500">~30d cashflow est.: {maskBalance(formatCurrencyString(liquidNw.contributionEstimate30d, { digits: 0 }))}</span>
+                <p className="text-xs text-slate-500 mb-3">Simple formula: cash + investments + commodities + receivables − debt.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-xs text-slate-600">
+                    <span className="flex items-center justify-between gap-2 rounded bg-white/80 px-2 py-1">
+                        <span>Cash (checking/savings)</span>
+                        <span className="tabular-nums text-slate-700">{maskBalance(formatCurrencyString(liquidNw.liquidCash, { digits: 0 }))}</span>
+                    </span>
+                    <span className="flex items-center justify-between gap-2 rounded bg-white/80 px-2 py-1">
+                        <span>Investments (SAR eq.)</span>
+                        <span className="tabular-nums text-slate-700">{maskBalance(formatCurrencyString(liquidNw.investmentsSAR, { digits: 0 }))}</span>
+                    </span>
+                    <span className="flex items-center justify-between gap-2 rounded bg-white/80 px-2 py-1">
+                        <span>Commodities</span>
+                        <span className="tabular-nums text-slate-700">{maskBalance(formatCurrencyString(liquidNw.commodities, { digits: 0 }))}</span>
+                    </span>
+                    <span className="flex items-center justify-between gap-2 rounded bg-white/80 px-2 py-1">
+                        <span>Receivables</span>
+                        <span className="tabular-nums text-slate-700">{maskBalance(formatCurrencyString(liquidNw.receivables, { digits: 0 }))}</span>
+                    </span>
+                    <span className="flex items-center justify-between gap-2 rounded bg-white/80 px-2 py-1">
+                        <span>Debt</span>
+                        <span className="tabular-nums text-slate-700">−{maskBalance(formatCurrencyString(liquidNw.shortTermDebt, { digits: 0 }))}</span>
+                    </span>
+                    <span className="flex items-center justify-between gap-2 rounded bg-white/80 px-2 py-1 text-slate-500">
+                        <span>~30d cashflow est.</span>
+                        <span className="tabular-nums">{maskBalance(formatCurrencyString(liquidNw.contributionEstimate30d, { digits: 0 }))}</span>
+                    </span>
                 </div>
-                <p className="text-[11px] text-slate-400 mt-2">Excludes illiquid physical assets. Investment values in account currency; not FX-normalized to SAR here.</p>
+                <p className="text-[11px] text-slate-400 mt-2">Excludes illiquid physical assets. Displayed in SAR equivalent for a single-currency snapshot.</p>
             </CollapsibleSection>
 
             {isAdmin && (

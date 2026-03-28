@@ -415,12 +415,12 @@ const Notifications: React.FC<{
                                   </button>
                                 </div>
                               </div>
-                              <div className="flex items-center gap-2 flex-shrink-0">
-                                <button onClick={() => handleNotificationClick(n)} className="text-sm font-semibold text-primary hover:underline">
+                              <div className="flex items-start gap-2 flex-shrink-0 pt-0.5">
+                                <button onClick={() => handleNotificationClick(n)} className="text-sm font-semibold text-primary hover:underline leading-none">
                                   View
                                 </button>
                                 {!n.isRead && (
-                                  <button onClick={() => ctx.markAsRead(n.id)} title="Mark as read" className="p-1 rounded hover:bg-slate-200">
+                                  <button onClick={() => ctx.markAsRead(n.id)} title="Mark as read" className="p-1 rounded hover:bg-slate-200 mt-[-2px]">
                                     <CheckCircleIcon className="h-5 w-5 text-slate-400 hover:text-green-500" />
                                   </button>
                                 )}

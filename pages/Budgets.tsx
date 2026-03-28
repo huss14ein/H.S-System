@@ -222,7 +222,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     const [requestAmount, setRequestAmount] = useState('');
     const [requestAmountPeriod, setRequestAmountPeriod] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
     const [requestNote, setRequestNote] = useState('');
-    const [requestType, setRequestType] = useState<'NewCategory' | 'IncreaseLimit'>('NewCategory');
+    const [requestType, setRequestType] = useState<'NewCategory' | 'IncreaseLimit' | 'AdvanceFromNextMonth'>('NewCategory');
     const [requestCategoryId, setRequestCategoryId] = useState('');
     const [governanceCategories, setGovernanceCategories] = useState<Array<{ id: string; name: string; monthly_limit?: number }>>([]);
     const [budgetRequests, setBudgetRequests] = useState<any[]>([]);
@@ -606,6 +606,31 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
         if (!Number.isFinite(rawAmount) || rawAmount <= 0) return {};
         return { rawAmount, rawPeriod: m[1] as any };
     };
+
+    const addMonths = (month: number, year: number, delta: number): { month: number; year: number } => {
+        const d = new Date(year, month - 1 + delta, 1);
+        return { month: d.getMonth() + 1, year: d.getFullYear() };
+    };
+    const parseAdvanceMeta = (request: any): { fromYear: number; fromMonth: number; toYear: number; toMonth: number } | null => {
+        const note = String(request?.request_note || request?.note || '');
+        const m = note.match(/\[AdvanceFromNextMonth:\s*from=(\d{4})-(\d{2});\s*to=(\d{4})-(\d{2})\]/i);
+        if (!m) return null;
+        const fromYear = Number(m[1]);
+        const fromMonth = Number(m[2]);
+        const toYear = Number(m[3]);
+        const toMonth = Number(m[4]);
+        if (![fromYear, fromMonth, toYear, toMonth].every(Number.isFinite)) return null;
+        if (fromMonth < 1 || fromMonth > 12 || toMonth < 1 || toMonth > 12) return null;
+        return { fromYear, fromMonth, toYear, toMonth };
+    };
+    const requestMode = (request: any): 'Standard' | 'AdvanceFromNextMonth' => {
+        const note = String(request?.request_note || request?.note || '');
+        return /\[Request mode:\s*AdvanceFromNextMonth\]/i.test(note) ? 'AdvanceFromNextMonth' : 'Standard';
+    };
+    const displayRequestType = (request: any): string =>
+        requestMode(request) === 'AdvanceFromNextMonth'
+            ? 'Advance from next month'
+            : (request?.request_type ?? 'Request');
 
     React.useEffect(() => {
         const loadGovernance = async () => {
@@ -1480,23 +1505,28 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             return;
         }
 
-        if (requestType === 'IncreaseLimit' && !requestCategoryId) {
-            alert('Please select a category for an increase request.');
+        if ((requestType === 'IncreaseLimit' || requestType === 'AdvanceFromNextMonth') && !requestCategoryId) {
+            alert(requestType === 'AdvanceFromNextMonth' ? 'Please select a category to borrow from next month.' : 'Please select a category for an increase request.');
             return;
         }
 
         const selectedCategoryName =
-            requestType === 'IncreaseLimit' && requestCategoryId
+            (requestType === 'IncreaseLimit' || requestType === 'AdvanceFromNextMonth') && requestCategoryId
                 ? (availableIncreaseCategories.find((opt) => opt.value === requestCategoryId)?.category ??
                    (requestCategoryId.startsWith('OWN::') ? requestCategoryId.replace('OWN::', '') : ''))
                 : '';
 
         const duplicateMatch = budgetRequests.some((r) => {
-            if (r.status !== 'Pending' || r.request_type !== requestType) return false;
+            const storedMode = requestMode(r);
+            const wantedMode = requestType === 'AdvanceFromNextMonth' ? 'AdvanceFromNextMonth' : 'Standard';
+            if (r.status !== 'Pending') return false;
+            if (requestType === 'NewCategory' && r.request_type !== 'NewCategory') return false;
+            if (requestType !== 'NewCategory' && r.request_type !== 'IncreaseLimit') return false;
+            if (storedMode !== wantedMode) return false;
             if (requestType === 'NewCategory') {
                 return String(r.category_name || '').trim().toLowerCase() === newCategoryName.trim().toLowerCase();
             }
-            // IncreaseLimit: match by category_id when present, otherwise by category_name for shared-category requests
+            // IncreaseLimit / Advance: match by category_id when present, otherwise by category_name for shared-category requests
             if (requestCategoryId && !requestCategoryId.startsWith('SHARED::')) {
                 const normalizedCategoryId = requestCategoryId.replace('OWN::', '');
                 return r.category_id === normalizedCategoryId;
@@ -1513,20 +1543,25 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
 
         const monthlyAmount = normalizeToMonthly(enteredAmount, requestAmountPeriod);
 
-        const periodTag = requestAmountPeriod === 'Monthly'
-            ? ''
-            : `[Requested period: ${requestAmountPeriod}; Raw: ${enteredAmount}]`;
-        const mergedNote = [periodTag, requestNote.trim()].filter(Boolean).join(' ').trim() || null;
+        const periodTag = requestAmountPeriod === 'Monthly' ? '' : `[Requested period: ${requestAmountPeriod}; Raw: ${enteredAmount}]`;
+        const modeTag = requestType === 'AdvanceFromNextMonth' ? '[Request mode: AdvanceFromNextMonth]' : '';
+        const advanceWindowTag = (() => {
+            if (requestType !== 'AdvanceFromNextMonth') return '';
+            const from = addMonths(currentMonth, currentYear, 1);
+            return `[AdvanceFromNextMonth: from=${from.year}-${String(from.month).padStart(2, '0')}; to=${currentYear}-${String(currentMonth).padStart(2, '0')}]`;
+        })();
+        const mergedNote = [modeTag, advanceWindowTag, periodTag, requestNote.trim()].filter(Boolean).join(' ').trim() || null;
 
-        const isSharedSelection = requestType === 'IncreaseLimit' && requestCategoryId.startsWith('SHARED::');
+        const isSharedSelection = (requestType === 'IncreaseLimit' || requestType === 'AdvanceFromNextMonth') && requestCategoryId.startsWith('SHARED::');
+        const requestTypeForStorage: 'NewCategory' | 'IncreaseLimit' = requestType === 'NewCategory' ? 'NewCategory' : 'IncreaseLimit';
 
         const payloadBase = {
             user_id: auth.user.id,
-            request_type: requestType,
-            category_id: requestType === 'IncreaseLimit' && !isSharedSelection ? (requestCategoryId.replace('OWN::', '') || null) : null,
+            request_type: requestTypeForStorage,
+            category_id: requestType !== 'NewCategory' && !isSharedSelection ? (requestCategoryId.replace('OWN::', '') || null) : null,
             category_name: requestType === 'NewCategory'
                 ? newCategoryName.trim()
-                : (requestType === 'IncreaseLimit' && isSharedSelection ? selectedCategoryName || null : null),
+                : (isSharedSelection ? selectedCategoryName || null : null),
             amount: monthlyAmount,
             status: 'Pending'
         };
@@ -1568,9 +1603,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             alert('Request amount is invalid; please reject or correct the request.');
             return;
         }
+        const mode = requestMode(request);
 
         const categoryLabel = resolveRequestCategory(request);
-        if (!window.confirm(`Finalize ${request.request_type} for ${categoryLabel} with ${formatCurrencyString(amount, { digits: 0 })}?`)) {
+        const requestLabel = mode === 'AdvanceFromNextMonth' ? 'Advance from next month' : request.request_type;
+        if (!window.confirm(`Finalize ${requestLabel} for ${categoryLabel} with ${formatCurrencyString(amount, { digits: 0 })}?`)) {
             return;
         }
 
@@ -1625,7 +1662,66 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 // Optional; ignore failures (RLS / duplicates)
             }
         }
-        if (request.request_type === 'IncreaseLimit') {
+        if (mode === 'AdvanceFromNextMonth') {
+            const targetCategory = resolveRequestCategory(request);
+            const advanceMeta = parseAdvanceMeta(request) ?? (() => {
+                const from = addMonths(currentMonth, currentYear, 1);
+                return { fromYear: from.year, fromMonth: from.month, toYear: currentYear, toMonth: currentMonth };
+            })();
+
+            const { data: requesterBudgets, error: requesterBudgetError } = await supabase
+                .from('budgets')
+                .select('*')
+                .eq('user_id', request.user_id)
+                .eq('category', targetCategory);
+            if (requesterBudgetError) {
+                alert(`Failed to load requester budgets: ${requesterBudgetError.message}`);
+                return;
+            }
+            const rows = (requesterBudgets || []) as any[];
+            const src = rows.find((b) => Number(b.year) === advanceMeta.fromYear && Number(b.month) === advanceMeta.fromMonth);
+            if (!src) {
+                alert(`Next month budget row was not found for ${targetCategory}. Ask user to create next month budget first.`);
+                return;
+            }
+            const srcLimit = Number(src.limit ?? 0);
+            if (!Number.isFinite(srcLimit) || srcLimit < amount) {
+                alert(`Next month available limit is ${formatCurrencyString(Math.max(0, srcLimit), { digits: 0 })}. Cannot approve ${formatCurrencyString(amount, { digits: 0 })}.`);
+                return;
+            }
+
+            const dst = rows.find((b) => Number(b.year) === advanceMeta.toYear && Number(b.month) === advanceMeta.toMonth);
+            const newSrcLimit = Math.max(0, srcLimit - amount);
+            const { error: srcUpdateError } = await supabase.from('budgets').update({ limit: newSrcLimit }).eq('id', src.id);
+            if (srcUpdateError) {
+                alert(`Failed to update next month budget: ${srcUpdateError.message}`);
+                return;
+            }
+            if (dst) {
+                const dstLimit = Number(dst.limit ?? 0);
+                const { error: dstUpdateError } = await supabase.from('budgets').update({ limit: Math.max(0, dstLimit + amount) }).eq('id', dst.id);
+                if (dstUpdateError) {
+                    alert(`Failed to update current month budget: ${dstUpdateError.message}`);
+                    return;
+                }
+            } else {
+                const dstPayload = {
+                    user_id: request.user_id,
+                    category: targetCategory,
+                    limit: amount,
+                    month: advanceMeta.toMonth,
+                    year: advanceMeta.toYear,
+                    period: 'monthly',
+                    tier: (src as any).tier ?? 'Optional',
+                    destination_account_id: (src as any).destination_account_id ?? null,
+                };
+                const { error: dstInsertError } = await supabase.from('budgets').insert(dstPayload);
+                if (dstInsertError) {
+                    alert(`Failed to create current month budget row: ${dstInsertError.message}`);
+                    return;
+                }
+            }
+        } else if (request.request_type === 'IncreaseLimit') {
             if (request.category_id) {
                 const { error: updateError } = await supabase
                     .from('categories')
@@ -1698,7 +1794,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             }
             
             if (!normalizedQuery) return true;
-            const combinedText = `${r.request_type} ${resolveRequestCategory(r)} ${r.note || ''} ${r.request_note || ''}`.toLowerCase();
+            const combinedText = `${displayRequestType(r)} ${resolveRequestCategory(r)} ${r.note || ''} ${r.request_note || ''}`.toLowerCase();
             return combinedText.includes(normalizedQuery);
         });
 
@@ -1882,23 +1978,25 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
 
             {!isAdmin && (() => {
                 const selectedCategoryName = (() => {
-                    if (requestType !== 'IncreaseLimit' || !requestCategoryId) return '';
+                    if ((requestType !== 'IncreaseLimit' && requestType !== 'AdvanceFromNextMonth') || !requestCategoryId) return '';
                     const fromOptions = availableIncreaseCategories.find((opt) => opt.value === requestCategoryId);
                     if (fromOptions) return fromOptions.category;
                     return requestCategoryId.startsWith('OWN::') ? requestCategoryId.replace('OWN::', '') : '';
                 })();
-                const currentBudgetRow = requestType === 'IncreaseLimit' && selectedCategoryName ? budgetData.find(b => b.category === selectedCategoryName) : null;
+                const currentBudgetRow = (requestType === 'IncreaseLimit' || requestType === 'AdvanceFromNextMonth') && selectedCategoryName ? budgetData.find(b => b.category === selectedCategoryName) : null;
                 const currentLimit = currentBudgetRow?.monthlyLimit ?? 0;
                 const currentSpent = currentBudgetRow?.spent ?? 0;
+                const nextMonthCtx = addMonths(currentMonth, currentYear, 1);
                 return (
                     <div className="bg-gradient-to-br from-white via-primary/5 to-indigo-50 rounded-lg shadow p-5 border border-primary/20">
-                        <h2 className="text-lg font-semibold mb-3 flex items-center">Request Budget Change <InfoHint text="Submit new-category or limit-increase proposals with context notes for admin approval." /></h2>
+                        <h2 className="text-lg font-semibold mb-3 flex items-center">Request Budget Change <InfoHint text="Submit requests that always require admin approval: new category, increase limit, or pull budget from next month." /></h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Request type</label>
                                 <select value={requestType} onChange={(e) => setRequestType(e.target.value as any)} className="w-full p-2 border rounded">
                                     <option value="NewCategory">New Category</option>
                                     <option value="IncreaseLimit">Increase Limit</option>
+                                    <option value="AdvanceFromNextMonth">Advance from next month</option>
                                 </select>
                             </div>
                             {requestType === 'NewCategory' ? (
@@ -1908,7 +2006,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                 </div>
                             ) : (
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Category to increase <InfoHint text={selectedCategoryName ? getCategoryHint(selectedCategoryName) : 'Choose which budget category you want to request a higher limit for.'} /></label>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">{requestType === 'AdvanceFromNextMonth' ? 'Category to advance' : 'Category to increase'} <InfoHint text={selectedCategoryName ? getCategoryHint(selectedCategoryName) : requestType === 'AdvanceFromNextMonth' ? 'Choose which category should borrow limit from next month (requires admin approval).' : 'Choose which budget category you want to request a higher limit for.'} /></label>
                                     <select value={requestCategoryId} onChange={(e) => setRequestCategoryId(e.target.value)} className="w-full p-2 border rounded">
                                         <option value="">Select category</option>
                                         {availableIncreaseCategories.map((opt) => (
@@ -1917,6 +2015,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                     </select>
                                     {currentBudgetRow && (
                                         <p className="mt-1 text-xs text-gray-600">Current limit: {formatCurrencyString(currentLimit, { digits: 0 })} · Spent this period: {formatCurrencyString(currentSpent, { digits: 0 })}</p>
+                                    )}
+                                    {requestType === 'AdvanceFromNextMonth' && (
+                                        <p className="mt-1 text-xs text-indigo-700">If approved, {formatCurrencyString(Number(requestAmount || 0) || 0, { digits: 0 })} moves from {MONTHS[nextMonthCtx.month - 1]} {nextMonthCtx.year} to {MONTHS[currentMonth - 1]} {currentYear} for this category.</p>
                                     )}
                                 </div>
                             )}
@@ -1943,7 +2044,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                 <button onClick={submitBudgetRequest} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary">Submit request</button>
                             </div>
                         </div>
-                        <p className="mt-3 text-xs text-gray-500">Amounts are normalized to a monthly limit for approval. Duplicate pending requests for the same category are blocked. Admins also see the original amount and period.</p>
+                        <p className="mt-3 text-xs text-gray-500">Amounts are normalized to a monthly limit for approval. Duplicate pending requests for the same category are blocked. Advance-from-next-month requests are automated after admin approval: next month decreases and current month increases by the approved amount.</p>
                     </div>
                 );
             })()}
@@ -1955,7 +2056,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                         {pendingRequests.map((r) => (
                             <div key={r.id} className="p-3 border rounded flex items-center justify-between">
                                 <div>
-                                    <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
+                                    <p className="font-medium">{displayRequestType(r)} • {resolveRequestCategory(r)}</p>
                                     <p className="text-xs text-gray-500">Proposed (monthly equivalent): {formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</p>
                                     {(r.note || r.request_note) && <p className="text-xs text-gray-600 mt-1">Note: {r.note || r.request_note}</p>}
                                     <p className="text-[11px] text-gray-400 mt-1">{r.created_at ? new Date(r.created_at).toLocaleString() : 'No timestamp'}</p>
@@ -1975,7 +2076,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                         {pendingRequests.map((r) => (
                             <div key={r.id} className="p-3 border rounded flex items-center justify-between gap-2">
                                 <div>
-                                    <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
+                                    <p className="font-medium">{displayRequestType(r)} • {resolveRequestCategory(r)}</p>
                                     <p className="text-xs text-gray-500">
                                         {(() => {
                                             const meta = parseRequestedAmountMeta(r);
@@ -2031,7 +2132,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                             {pendingRequests.map((r) => (
                                 <div key={r.id} className="p-3 border rounded flex items-center justify-between gap-2 bg-white">
                                     <div>
-                                        <p className="font-medium">{r.request_type} • {resolveRequestCategory(r)}</p>
+                                        <p className="font-medium">{displayRequestType(r)} • {resolveRequestCategory(r)}</p>
                                         <p className="text-xs text-gray-500">
                                             {(() => {
                                                 const meta = parseRequestedAmountMeta(r);
@@ -2092,7 +2193,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                                                 {visibleHistoryRequests.filter((r) => requestStatusFilter === 'All' || r.status === requestStatusFilter).map((r) => (
                                                     <tr key={`history-${r.id}`} className="border-b border-violet-100 hover:bg-white/60">
                                                         <td className="py-2 px-2 text-gray-600 whitespace-nowrap">{r.created_at ? new Date(r.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
-                                                        <td className="py-2 px-2">{r.request_type}</td>
+                                                        <td className="py-2 px-2">{displayRequestType(r)}</td>
                                                         <td className="py-2 px-2">{resolveRequestCategory(r)}</td>
                                                         <td className="py-2 px-2 text-right font-medium">{formatCurrencyString(Number(r.amount || 0), { digits: 0 })}</td>
                                                         <td className="py-2 px-2"><span className={`text-xs px-2 py-0.5 rounded ${requestStatusClasses[r.status] || 'bg-slate-100 text-slate-800'}`}>{r.status}</span></td>
