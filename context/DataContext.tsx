@@ -615,10 +615,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const currency = curRaw === 'SAR' || curRaw === 'USD' ? curRaw : undefined;
         const typeRaw = String(transaction.type ?? '').toLowerCase();
         const normalizedType = typeRaw as InvestmentTransaction['type'];
+        const portfolioId = transaction.portfolioId ?? transaction.portfolio_id;
+        const linkedPortfolio: any = portfolioId ? (data?.investments ?? []).find((p: any) => p.id === portfolioId) : undefined;
+        const portfolioLinkedAccountId = portfolioId
+            ? resolveAccountId(
+                  linkedPortfolio?.accountId ?? linkedPortfolio?.account_id,
+                  data?.accounts ?? [],
+              )
+            : undefined;
         return {
             ...transaction,
-            accountId: transaction.accountId || transaction.account_id,
-            portfolioId: transaction.portfolioId ?? transaction.portfolio_id,
+            accountId: transaction.accountId || transaction.account_id || portfolioLinkedAccountId,
+            portfolioId,
             type: normalizedType,
             currency,
             linkedCashAccountId: transaction.linkedCashAccountId ?? transaction.linked_cash_account_id,
@@ -2952,7 +2960,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             map[accId][baseCur] += openingBalance;
         });
         (data.investmentTransactions || []).forEach((t: InvestmentTransaction) => {
-            const raw = t.accountId ?? (t as any).account_id;
+            const portfolioId = t.portfolioId ?? (t as any).portfolio_id;
+            const linkedPortfolio: any = portfolioId ? (data?.investments ?? []).find((p: any) => p.id === portfolioId) : undefined;
+            const fallbackPortfolioAccount = portfolioId
+                ? resolveAccountId(
+                      linkedPortfolio?.accountId ?? linkedPortfolio?.account_id,
+                      data?.accounts ?? [],
+                  )
+                : undefined;
+            const raw = t.accountId ?? (t as any).account_id ?? fallbackPortfolioAccount;
             if (!raw) return;
             const accId = resolveCanonicalAccountId(String(raw), data?.accounts ?? []);
             if (!accId) return;
