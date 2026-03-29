@@ -4150,8 +4150,8 @@ Save anyway?`)) return;
                     </div>
                 </div>
 
-                {/* Portfolio Universe — full width below */}
-                <div className="xl:col-span-5">
+                {/* Portfolio Universe — full width row */}
+                <div className="xl:col-span-12">
                     <div className="bg-white p-6 rounded-lg shadow">
                         <div className="mb-4">
                             <h2 className="text-xl font-semibold text-dark flex items-center gap-2 min-w-0">
@@ -4309,7 +4309,7 @@ Save anyway?`)) return;
                     </div>
                 </div>
 
-                <div className="xl:col-span-5 w-full min-w-0">
+                <div className="xl:col-span-12 w-full min-w-0">
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden w-full">
                     <div className="p-6 border-b border-slate-100 bg-emerald-50/40">
                         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
