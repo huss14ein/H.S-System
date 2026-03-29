@@ -28,5 +28,14 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Unit tests
+        run: npm test
+
+      - name: Atomic workflow wiring checks
+        run: npm run verify:atomic-workflows
+
+      - name: Security audit (high+critical)
+        run: npm audit --audit-level=high
+
       - name: Build
         run: npm run build

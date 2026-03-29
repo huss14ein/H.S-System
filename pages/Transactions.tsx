@@ -738,6 +738,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
     const [selectedPendingIds, setSelectedPendingIds] = useState<string[]>([]);
     const [isBulkReviewing, setIsBulkReviewing] = useState(false);
+    const [sharedAccounts, setSharedAccounts] = useState<Account[]>([]);
 
     const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
     const [transactionToEdit, setTransactionToEdit] = useState<Transaction | null>(null);
@@ -818,6 +819,39 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [auth?.user?.id]);
 
     useEffect(() => {
+        const loadSharedAccounts = async () => {
+            if (!supabase || !auth?.user?.id) {
+                setSharedAccounts([]);
+                return;
+            }
+            const { data: sharedRows } = await supabase
+                .rpc('get_shared_accounts_for_me')
+                .then((r) => r, () => ({ data: [] as any[] } as any));
+            const mapped = ((sharedRows || []) as any[])
+                .map((r) => ({
+                    id: String(r.account_id ?? r.id ?? ''),
+                    name: String(r.name ?? 'Shared Account'),
+                    type: (r.type === 'Savings' || r.type === 'Investment' || r.type === 'Credit' ? r.type : 'Checking') as Account['type'],
+                    balance: Number(r.balance ?? 0),
+                    owner: r.owner ?? undefined,
+                }))
+                .filter((a) => !!a.id);
+            setSharedAccounts(mapped);
+        };
+        loadSharedAccounts();
+    }, [auth?.user?.id]);
+
+    const availableAccounts = useMemo(() => {
+        const personal = ((data as any)?.personalAccounts ?? data?.accounts ?? []) as Account[];
+        const map = new Map<string, Account>();
+        personal.forEach((a) => map.set(a.id, a));
+        sharedAccounts.forEach((a) => {
+            if (!map.has(a.id)) map.set(a.id, a);
+        });
+        return Array.from(map.values());
+    }, [data?.accounts, (data as any)?.personalAccounts, sharedAccounts]);
+
+    useEffect(() => {
         const loadPendingTransactions = async () => {
             if (!supabase || userRole !== 'Admin') {
                 setAdminPendingTransactions([]);
@@ -887,8 +921,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [userRole, data?.transactions, pendingRefreshKey]);
 
     const accountsById = useMemo(
-        () => new Map<string, Account>(((data as any)?.personalAccounts ?? data?.accounts ?? []).map((a: Account) => [a.id, a])),
-        [data?.accounts, (data as any)?.personalAccounts],
+        () => new Map<string, Account>(availableAccounts.map((a: Account) => [a.id, a])),
+        [availableAccounts],
     );
 
     const formatCashTransactionDisplay = useCallback(
@@ -929,7 +963,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
     const { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown } = useMemo(() => {
         const fx = resolveSarPerUsd(data, exchangeRate);
-        const accountsMap = new Map<string, Account>(((data as any)?.personalAccounts ?? data?.accounts ?? []).map((a: Account) => [a.id, a]));
+        const accountsMap = new Map<string, Account>(availableAccounts.map((a: Account) => [a.id, a]));
         const txAmountSar = (t: Transaction) => {
             const acc = accountsMap.get(t.accountId ?? '');
             const cur = acc?.currency === 'USD' ? 'USD' : 'SAR';
@@ -974,12 +1008,12 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         if (uncategorized > 0) warnings.push(`${uncategorized} approved expense transaction(s) are missing budget category mapping.`);
         const invalidDates = approved.filter((t: Transaction) => Number.isNaN(new Date(t.date).getTime())).length;
         if (invalidDates > 0) warnings.push(`${invalidDates} transaction(s) have invalid dates.`);
-        const unknownAccounts = approved.filter((t: Transaction) => !(data?.accounts ?? []).some((a) => a.id === t.accountId)).length;
+        const unknownAccounts = approved.filter((t: Transaction) => !availableAccounts.some((a) => a.id === t.accountId)).length;
         if (unknownAccounts > 0) warnings.push(`${unknownAccounts} transaction(s) reference missing accounts.`);
         const invalidAmounts = approved.filter((t: Transaction) => !Number.isFinite(Number(t.amount)) || Number(t.amount) === 0).length;
         if (invalidAmounts > 0) warnings.push(`${invalidAmounts} transaction(s) have invalid/zero amount.`);
         return warnings;
-    }, [filteredTransactions, data?.accounts]);
+    }, [filteredTransactions, availableAccounts]);
 
     const handleOpenTransactionModal = (transaction: Transaction | null = null) => {
         setTransactionToEdit(transaction);
@@ -1259,7 +1293,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                         {r.type === 'income' ? '+' : '−'}{formatRecurringDisplay(r)}
                                     </span>
                                     <span className="text-xs text-gray-500 ml-2">
-                                        • Day {r.dayOfMonth} • {(data?.accounts ?? []).find(a => a.id === r.accountId)?.name ?? r.accountId}
+                                        • Day {r.dayOfMonth} • {availableAccounts.find(a => a.id === r.accountId)?.name ?? r.accountId}
                                         {r.type === 'expense' && r.budgetCategory && ` • ${r.budgetCategory}`}
                                         {r.addManually ? <span className="ml-1 text-slate-500">(manual)</span> : <span className="ml-1 text-emerald-600">(auto)</span>}
                                     </span>
@@ -1352,7 +1386,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     <input type="month" value={filters.month} onChange={(e) => setFilters({...filters, month: e.target.value})} className="input-base w-auto min-w-[140px]" />
                     <select value={filters.accountId} onChange={(e) => setFilters({...filters, accountId: e.target.value})} className="select-base w-auto min-w-[160px]">
                         <option value="all">All Accounts</option>
-                        {(data?.accounts ?? []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        {availableAccounts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
                     <div className="flex items-center gap-1">
                         <span className="text-xs font-medium text-slate-500 mr-1">Nature:</span>
@@ -1423,7 +1457,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 transactionToEdit={transactionToEdit} 
                 budgetCategories={budgetCategories}
                 allCategories={allCategories}
-                accounts={data?.accounts ?? []}
+                accounts={availableAccounts}
                 existingTransactions={(data as any)?.personalTransactions ?? data?.transactions ?? []}
             />
              <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.description || ''} />
@@ -1432,7 +1466,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 onClose={() => { setIsRecurringModalOpen(false); setRecurringToEdit(null); }}
                 onSave={handleSaveRecurring}
                 recurring={recurringToEdit}
-                accounts={data?.accounts ?? []}
+                accounts={availableAccounts}
                 budgetCategories={budgetCategories}
             />
         </PageLayout>

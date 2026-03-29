@@ -57,6 +57,12 @@ const sampleInput: WealthSummaryReportInput = {
       currentValueSar: 6375,
     },
   ],
+  assets: [
+    { name: 'Home', type: 'Property', value: 900000 },
+  ],
+  liabilities: [
+    { name: 'Mortgage', type: 'Mortgage', amount: -350000, status: 'Active' },
+  ],
 };
 
 describe('wealth summary report exports', () => {
@@ -84,10 +90,56 @@ describe('wealth summary report exports', () => {
   it('renders holding details table in HTML export', () => {
     const html = generateWealthSummaryReportHtml(sampleInput);
     expect(html).toContain('Holding Details (Position by Position)');
+    expect(html).toContain('Asset Details');
+    expect(html).toContain('Liability Details');
     expect(html).toContain('<table>');
     expect(html).toContain('AAPL');
     expect(html).toContain('MSFT');
     expect(html).toContain('Current Value (SAR)');
+  });
+
+  it('respects section options in HTML export', () => {
+    const html = generateWealthSummaryReportHtml(sampleInput, {
+      includeSnapshot: true,
+      includeCashflow: false,
+      includeRisk: false,
+      includeHoldings: false,
+      includeAssets: true,
+      includeLiabilities: false,
+    });
+    expect(html).toContain('Net Worth Snapshot');
+    expect(html).not.toContain('Cashflow & Efficiency');
+    expect(html).not.toContain('Resilience & Risk');
+    expect(html).not.toContain('Holding Details (Position by Position)');
+    expect(html).toContain('Asset Details');
+    expect(html).not.toContain('Liability Details');
+  });
+
+  it('escapes user-provided HTML in holdings/assets/liabilities rows', () => {
+    const html = generateWealthSummaryReportHtml({
+      ...sampleInput,
+      holdings: [
+        {
+          symbol: '<img src=x onerror=alert(1)>',
+          name: '<script>alert(1)</script>',
+          quantity: 1,
+          avgCost: 1,
+          currentValue: 1,
+          gainLoss: 0,
+          gainLossPct: 0,
+          currency: 'USD',
+          currentValueSar: 3.75,
+        },
+      ],
+      assets: [{ name: '<b>Home</b>', type: '<i>Property</i>', value: 1 }],
+      liabilities: [{ name: '<svg/onload=alert(1)>', type: '<u>Loan</u>', amount: 1, status: 'Active<script>' }],
+    });
+
+    expect(html).not.toContain('<script>');
+    expect(html).not.toContain('<img src=x onerror=alert(1)>');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).toContain('&lt;b&gt;Home&lt;/b&gt;');
+    expect(html).toContain('&lt;svg/onload=alert(1)&gt;');
   });
 });
 
