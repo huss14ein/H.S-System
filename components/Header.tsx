@@ -365,7 +365,11 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                         ))}
                       </ul>
                     )}
-                    <button type="button" onClick={openTasksPage} className="mt-3 w-full rounded-lg bg-primary text-white text-sm font-medium py-2 hover:bg-secondary">
+                    <button
+                      type="button"
+                      onClick={openTasksPage}
+                      className="mt-3 w-full inline-flex items-center justify-center rounded-lg bg-primary text-white text-sm font-semibold leading-none h-10 hover:bg-secondary"
+                    >
                       View all tasks
                     </button>
                   </div>
@@ -411,7 +415,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                               <button
                                 type="button"
                                 onClick={() => openNotificationTarget(n)}
-                                className="shrink-0 text-[11px] font-semibold text-primary hover:underline"
+                                className="shrink-0 text-[11px] font-semibold leading-none text-primary hover:underline"
                                 aria-label="Open alert target"
                               >
                                 Open
@@ -421,7 +425,11 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                         ))}
                       </ul>
                     )}
-                    <button type="button" onClick={openAlertsPage} className="mt-3 w-full rounded-lg bg-primary text-white text-sm font-medium py-2 hover:bg-secondary">
+                    <button
+                      type="button"
+                      onClick={openAlertsPage}
+                      className="mt-3 w-full inline-flex items-center justify-center rounded-lg bg-primary text-white text-sm font-semibold leading-none h-10 hover:bg-secondary"
+                    >
                       View all alerts
                     </button>
                   </div>
