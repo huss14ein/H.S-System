@@ -2941,6 +2941,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const availableCashByAccountId = useMemo(() => {
         const map: Record<string, { SAR: number; USD: number }> = {};
+        (data?.accounts ?? []).forEach((acc: Account) => {
+            if (acc.type !== 'Investment') return;
+            const accId = resolveCanonicalAccountId(acc.id, data?.accounts ?? []) ?? acc.id;
+            if (!accId) return;
+            if (!(accId in map)) map[accId] = { SAR: 0, USD: 0 };
+            const openingBalance = Math.max(0, Number(acc.balance ?? 0));
+            if (!Number.isFinite(openingBalance) || openingBalance <= 0) return;
+            const baseCur: TradeCurrency = acc.currency === 'USD' ? 'USD' : 'SAR';
+            map[accId][baseCur] += openingBalance;
+        });
         (data.investmentTransactions || []).forEach((t: InvestmentTransaction) => {
             const raw = t.accountId ?? (t as any).account_id;
             if (!raw) return;
