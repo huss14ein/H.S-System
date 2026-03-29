@@ -6,7 +6,7 @@ import { DataContext } from '../context/DataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
 import { resolveSarPerUsd } from '../utils/currencyMath';
-import { invokeAI } from '../services/geminiService';
+import { invokeAI, formatAiError } from '../services/geminiService';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { HeadsetIcon } from './icons/HeadsetIcon';
 import { SparklesIcon } from './icons/SparklesIcon';
@@ -106,17 +106,81 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         addWatchlistItem: handleAddWatchlistItem_,
     };
 
+    const buildDeterministicAdvisorReply = useCallback((question: string): string => {
+        const fx = resolveSarPerUsd(data, exchangeRate);
+        const netWorthSar = computePersonalNetWorthSAR(data, fx, { getAvailableCashForAccount });
+        const budgets = data?.budgets ?? [];
+        const tx = ((data as any)?.personalTransactions ?? data?.transactions ?? [])
+            .slice()
+            .sort((a: { date: string }, b: { date: string }) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        const recent = tx.slice(0, 3);
+        const monthStart = new Date();
+        monthStart.setDate(1);
+        monthStart.setHours(0, 0, 0, 0);
+        const approvedThisMonth = tx.filter((t: { date: string; status?: string }) => {
+            const d = new Date(t.date);
+            const status = (t.status ?? 'Approved').toLowerCase();
+            return d >= monthStart && status === 'approved';
+        });
+        const monthlyExpenses = approvedThisMonth
+            .filter((t: { type?: string }) => countsAsExpenseForCashflowKpi(t))
+            .reduce((sum: number, t: { amount?: number }) => sum + Math.abs(Number(t.amount) || 0), 0);
+        const byCategory = new Map<string, number>();
+        approvedThisMonth
+            .filter((t: { type?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t))
+            .forEach((t: { amount?: number; budgetCategory?: string; category?: string }) => {
+                const key = String(t.budgetCategory ?? t.category ?? 'Uncategorized').trim() || 'Uncategorized';
+                byCategory.set(key, (byCategory.get(key) ?? 0) + Math.abs(Number(t.amount) || 0));
+            });
+        const topCat = Array.from(byCategory.entries()).sort((a, b) => b[1] - a[1])[0];
+        const q = question.toLowerCase();
+        const askedBudget = budgets.find((b) => q.includes(String(b.category || '').toLowerCase()));
+        const budgetSnippet = askedBudget
+            ? `\n### Budget check (${askedBudget.category})\n- Limit: **${askedBudget.limit.toLocaleString()}**\n- Period: **${askedBudget.period || 'monthly'}**\n- Tip: review this category in Budgets for latest consumed/remaining figures.`
+            : '';
+        const recentSnippet = recent.length
+            ? recent
+                  .map((t: { description?: string; amount?: number; date?: string }) => `- ${t.date}: ${t.description || 'Transaction'} (${Number(t.amount || 0).toLocaleString()})`)
+                  .join('\n')
+            : '- No recent transactions found.';
+        return `### Quick financial snapshot (fallback mode)
+- Net worth (SAR): **${netWorthSar.toLocaleString()}**
+- This month expenses (approved): **${monthlyExpenses.toLocaleString()}**
+- Top spending category: **${topCat ? `${topCat[0]} (${topCat[1].toLocaleString()})` : 'No category data yet'}**
+
+### Recent transactions
+${recentSnippet}${budgetSnippet}
+
+> Live AI provider is temporarily unavailable, so this answer is generated from your current in-app data.`;
+    }, [data, exchangeRate, getAvailableCashForAccount]);
+
     const processTurn = async (chatHistory: Content[], remainingToolRounds = 4) => {
         setIsLoading(true);
         try {
-            const response = await invokeAI({
-                model: 'gemini-3-flash-preview',
-                contents: chatHistory,
-                config: {
-                    tools: [{ functionDeclarations }],
-                    systemInstruction,
-                },
-            });
+            let response;
+            try {
+                response = await invokeAI({
+                    model: 'gemini-3-flash-preview',
+                    contents: chatHistory,
+                    config: {
+                        tools: [{ functionDeclarations }],
+                        systemInstruction,
+                    },
+                });
+            } catch (primaryError) {
+                response = await invokeAI({
+                    model: 'gemini-2.0-flash',
+                    contents: chatHistory,
+                    config: {
+                        tools: [{ functionDeclarations }],
+                        systemInstruction,
+                    },
+                });
+            }
+
+            if (!response) {
+                throw new Error('AI provider returned empty response.');
+            }
 
             if (response.functionCalls) {
                 if (remainingToolRounds <= 0) {
@@ -155,11 +219,15 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
             }
         } catch (e) {
             console.error("Error in Live Advisor processTurn:", e);
-            let errorMessage = "An unknown error occurred while communicating with the AI service.";
-            if (e instanceof Error) {
-                errorMessage = `AI Service Error: ${e.message}`;
-            }
-            setHistory(prev => [...prev, { role: 'model', parts: [{ text: errorMessage }] }]);
+            const userQuestion = chatHistory
+                .slice()
+                .reverse()
+                .find((entry) => entry.role === 'user')
+                ?.parts?.find((p) => 'text' in p && typeof p.text === 'string') as { text?: string } | undefined;
+            const deterministic = buildDeterministicAdvisorReply(userQuestion?.text || '');
+            const normalized = formatAiError(e);
+            const fallbackMessage = `### AI temporarily unavailable\n${normalized}\n\n${deterministic}`;
+            setHistory(prev => [...prev, { role: 'model', parts: [{ text: fallbackMessage }] }]);
             setIsLoading(false);
         }
     };

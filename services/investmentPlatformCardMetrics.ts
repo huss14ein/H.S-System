@@ -11,6 +11,7 @@ import {
   portfolioBelongsToAccount,
   resolveCanonicalAccountId,
 } from '../utils/investmentLedgerCurrency';
+import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import {
   getPersonalAccounts,
   getPersonalCommodityHoldings,
@@ -110,14 +111,14 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
   let wdrSAR = 0;
   let wdrUSD = 0;
   transactions
-    .filter((t) => t.type === 'deposit')
+    .filter((t) => isInvestmentTransactionType(t.type, 'deposit'))
     .forEach((t) => {
       const c = inferInvestmentTransactionCurrency(t, accList, invList);
       if (c === 'SAR') invSAR += t.total ?? 0;
       else invUSD += t.total ?? 0;
     });
   transactions
-    .filter((t) => t.type === 'withdrawal')
+    .filter((t) => isInvestmentTransactionType(t.type, 'withdrawal'))
     .forEach((t) => {
       const c = inferInvestmentTransactionCurrency(t, accList, invList);
       if (c === 'SAR') wdrSAR += t.total ?? 0;

@@ -18,6 +18,7 @@ import { runShockDrill, type ShockDrillResult } from './shockDrillEngine';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { computeLiquidNetWorth } from './liquidNetWorth';
 import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
+import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 
 export type GetAvailableCashFn = (accountId: string) => { SAR: number; USD: number };
 
@@ -120,7 +121,7 @@ export function computeMonthlyReportFinancialKpis(
   const totalInvestmentsValue = holdingsValueSAR + brokerageCashSAR;
   const invTx = (data.investmentTransactions ?? []).filter((t: { accountId?: string }) => personalAccountIds.has(t.accountId ?? ''));
   const totalInvestedSar = invTx
-    .filter((t: { type?: string }) => t.type === 'deposit')
+    .filter((t: { type?: string }) => isInvestmentTransactionType(t.type, 'deposit'))
     .reduce((sum: number, t: { total?: number; currency?: string; accountId?: string }) => {
       const currency = inferInvestmentTransactionCurrency(
         { currency: t.currency as 'SAR' | 'USD' | undefined, accountId: t.accountId ?? '' },
@@ -130,7 +131,7 @@ export function computeMonthlyReportFinancialKpis(
       return sum + toSAR(t.total ?? 0, currency, sarPerUsd);
     }, 0);
   const totalWithdrawnSar = invTx
-    .filter((t: { type?: string }) => t.type === 'withdrawal')
+    .filter((t: { type?: string }) => isInvestmentTransactionType(t.type, 'withdrawal'))
     .reduce((sum: number, t: { total?: number; currency?: string; accountId?: string }) => {
       const currency = inferInvestmentTransactionCurrency(
         { currency: t.currency as 'SAR' | 'USD' | undefined, accountId: t.accountId ?? '' },
@@ -306,7 +307,7 @@ export function computeWealthSummaryReportModel(
   const householdStress = deriveCashflowStressSummary(householdPlan) as CashflowStressSummary;
 
   const riskLane = computeRiskLaneFromData(data, emergencyFund.monthsCovered);
-  const liquidityRunway = computeLiquidityRunwayFromData(data);
+  const liquidityRunway = computeLiquidityRunwayFromData(data, { exchangeRate: sarPerUsd, getAvailableCashForAccount });
   const discipline = computeDisciplineScore(data);
   const shockDrill = runShockDrill(data, 'job_loss');
   const liquidNw = computeLiquidNetWorth(data, { getAvailableCashForAccount, exchangeRate: sarPerUsd });
@@ -344,6 +345,17 @@ export function computeWealthSummaryReportModel(
       gainLossPct: Number(h.gainLossPercent ?? 0),
       currency: String(h.portfolioCurrency ?? 'USD'),
       currentValueSar: toSAR(Number(h.currentValue ?? 0), cur(h.portfolioCurrency), sarPerUsd),
+    })),
+    assets: (personalAssets ?? []).map((a: { name?: string; type?: string; value?: number }) => ({
+      name: String(a.name ?? ''),
+      type: String(a.type ?? ''),
+      value: Number(a.value ?? 0),
+    })),
+    liabilities: (personalLiabilities ?? []).map((l: { name?: string; type?: string; amount?: number; status?: string }) => ({
+      name: String(l.name ?? ''),
+      type: String(l.type ?? ''),
+      amount: Number(l.amount ?? 0),
+      status: String(l.status ?? ''),
     })),
   };
 

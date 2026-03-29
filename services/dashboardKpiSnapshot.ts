@@ -5,6 +5,7 @@ import { getAllInvestmentsValueInSAR, toSAR, tradableCashBucketToSAR, resolveSar
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from './fxDailySeries';
 import { computePersonalNetWorthSAR } from './personalNetWorth';
 import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
+import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 
 /** KPI figures shared by Dashboard and System Health diagnostics (keep in sync with dashboard aggregation). */
 export type DashboardKpiSnapshot = {
@@ -97,7 +98,7 @@ export function computeDashboardKpiSnapshot(
 
     const invTx = (data.investmentTransactions ?? []).filter((t) => personalAccountIds.has(t.accountId ?? ''));
     const totalInvestedSar = invTx
-      .filter((t) => t.type === 'deposit')
+      .filter((t) => isInvestmentTransactionType(t.type, 'deposit'))
       .reduce((sum, t) => {
         const c = inferInvestmentTransactionCurrency(
           { accountId: t.accountId ?? '', currency: t.currency as 'SAR' | 'USD' | undefined },
@@ -109,7 +110,7 @@ export function computeDashboardKpiSnapshot(
         return sum + toSAR(t.total ?? 0, c, r);
       }, 0);
     const totalWithdrawnSar = invTx
-      .filter((t) => t.type === 'withdrawal')
+      .filter((t) => isInvestmentTransactionType(t.type, 'withdrawal'))
       .reduce((sum, t) => {
         const c = inferInvestmentTransactionCurrency(
           { accountId: t.accountId ?? '', currency: t.currency as 'SAR' | 'USD' | undefined },

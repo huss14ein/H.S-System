@@ -4,6 +4,7 @@
  */
 
 import type { Holding, InvestmentTransaction, Liability, Transaction } from '../types';
+import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 
 /** Compare sum of (buy - sell) quantity to current holding quantity. */
 export function reconcileHoldings(args: {
@@ -15,8 +16,8 @@ export function reconcileHoldings(args: {
   let ledger = 0;
   (args.trades ?? []).forEach((t) => {
     if (String(t.symbol).toUpperCase() !== symbol) return;
-    if (t.type === 'buy') ledger += Math.max(0, Number(t.quantity) || 0);
-    if (t.type === 'sell') ledger -= Math.max(0, Number(t.quantity) || 0);
+    if (isInvestmentTransactionType(t.type, 'buy')) ledger += Math.max(0, Number(t.quantity) || 0);
+    if (isInvestmentTransactionType(t.type, 'sell')) ledger -= Math.max(0, Number(t.quantity) || 0);
   });
   const drift = stored - ledger;
   const ok = Math.abs(drift) < 0.0001;
@@ -31,7 +32,7 @@ export function reconcileDividends(args: {
   expectedFromHoldings?: number;
 }): { recordedTotal: number; expectedTotal: number; drift: number } {
   const recorded = (args.dividendTxs ?? [])
-    .filter((t) => t.accountId === args.accountId && t.type === 'dividend')
+    .filter((t) => t.accountId === args.accountId && isInvestmentTransactionType(t.type, 'dividend'))
     .reduce((s, t) => s + Math.max(0, Number(t.total) || 0), 0);
   const expected = Number(args.expectedFromHoldings) ?? 0;
   return { recordedTotal: recorded, expectedTotal: expected, drift: expected - recorded };

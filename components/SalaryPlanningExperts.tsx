@@ -59,6 +59,16 @@ const EXPERTS: { id: string; name: string; logic: string; run: (p: any) => Promi
     { id: 'lifestyle-upgrade', name: 'Lifestyle Upgrade Without Slowing Wealth', logic: 'Swap low-joy for high-joy spending → small cost increase, big happiness gain → wealth velocity stays high', run: getLifestyleUpgradeExpert, params: ['salary', 'currentExpenses'] },
 ];
 
+const RISK_TOLERANCE_OPTIONS = new Set(['LOW', 'MEDIUM', 'HIGH']);
+const NUMERIC_FIELD_LABELS: Partial<Record<ExpertParamKey, string>> = {
+    salary: 'monthly salary',
+    fixedExpenses: 'fixed monthly expenses',
+    currentSavings: 'current savings',
+    monthlyInvestment: 'monthly investment',
+    monthlyExpenses: 'monthly expenses',
+    currentExpenses: 'current monthly expenses',
+};
+
 function initialExpertsExpanded(): Record<string, boolean> {
     return Object.fromEntries(EXPERTS.map((e) => [e.id, true]));
 }
@@ -262,10 +272,11 @@ const SalaryPlanningExperts: React.FC = () => {
 
     // Investment amount or %: from Investment Plan monthly budget and salary
     const { suggestedInvestmentAmountOrPct, suggestedInvestmentAmountOrPctSource } = React.useMemo(() => {
-        const plan = data?.investmentPlan as { monthlyBudget?: number } | undefined;
+        const plan = data?.investmentPlan as { monthlyBudget?: number; budgetCurrency?: 'SAR' | 'USD' | string } | undefined;
         const sal = suggestedSalary || 0;
         if (plan?.monthlyBudget != null && Number(plan.monthlyBudget) > 0) {
-            const amt = Math.round(Number(plan.monthlyBudget));
+            const planCurrency = String(plan.budgetCurrency ?? 'SAR').toUpperCase() === 'USD' ? 'USD' : 'SAR';
+            const amt = Math.round(toSAR(Number(plan.monthlyBudget), planCurrency, sarPerUsd));
             if (sal > 0) {
                 const pct = Math.round((amt / sal) * 100);
                 return { suggestedInvestmentAmountOrPct: `${amt} SAR (${pct}%)`, suggestedInvestmentAmountOrPctSource: 'Investment Plan' };
@@ -273,7 +284,7 @@ const SalaryPlanningExperts: React.FC = () => {
             return { suggestedInvestmentAmountOrPct: `${amt} SAR`, suggestedInvestmentAmountOrPctSource: 'Investment Plan' };
         }
         return { suggestedInvestmentAmountOrPct: '', suggestedInvestmentAmountOrPctSource: '' };
-    }, [data?.investmentPlan, suggestedSalary]);
+    }, [data?.investmentPlan, suggestedSalary, sarPerUsd]);
 
     const suggestedFormValues = React.useMemo(() => {
         const f: Record<string, string> = {};
@@ -308,6 +319,61 @@ const SalaryPlanningExperts: React.FC = () => {
     }, [suggestedFormValues]);
 
     const updateForm = (updates: Record<string, string>): void => setFormValues((prev: Record<string, string>) => ({ ...prev, ...updates }));
+
+    const refreshInputsFromLiveData = React.useCallback(() => {
+        setFormValues((prev) => ({ ...prev, ...suggestedFormValues }));
+    }, [suggestedFormValues]);
+
+    const expertValidationErrors = React.useMemo(() => {
+        const parseNumberField = (key: ExpertParamKey): number | null => {
+            const raw = (formValues[key] ?? suggestedFormValues[key] ?? '').toString().trim();
+            if (!raw) return null;
+            const n = Number(raw.replace(/,/g, ''));
+            return Number.isFinite(n) ? n : NaN;
+        };
+
+        const errorsByExpert: Record<string, string[]> = {};
+        EXPERTS.forEach((expert) => {
+            const errors: string[] = [];
+
+            expert.params.forEach((param) => {
+                if (!NUMERIC_FIELD_LABELS[param]) return;
+                const n = parseNumberField(param);
+                if (n == null) return;
+                if (Number.isNaN(n)) {
+                    errors.push(`Please enter a valid number for ${NUMERIC_FIELD_LABELS[param]}.`);
+                    return;
+                }
+                if (n < 0) errors.push(`Please use 0 or higher for ${NUMERIC_FIELD_LABELS[param]}.`);
+            });
+
+            if (expert.params.includes('salary')) {
+                const salary = parseNumberField('salary');
+                if (salary == null || Number.isNaN(salary) || salary <= 0) {
+                    errors.push('Add your monthly salary to run this expert accurately.');
+                }
+            }
+
+            if (expert.params.includes('expenseBreakdown')) {
+                const breakdown = (formValues.expenseBreakdown ?? suggestedExpenseBreakdown ?? '').trim();
+                if (!breakdown) errors.push('Add an expense breakdown (for example: Rent 3500, Groceries 1800).');
+            }
+
+            if (expert.params.includes('debtList')) {
+                const debtList = (formValues.debtList ?? suggestedDebtList ?? '').trim();
+                if (!debtList) errors.push('Add at least one debt you owe for a debt payoff plan.');
+            }
+
+            if (expert.params.includes('riskTolerance')) {
+                const risk = (formValues.riskTolerance ?? 'MEDIUM').toUpperCase();
+                if (!RISK_TOLERANCE_OPTIONS.has(risk)) errors.push('Risk tolerance must be Low, Medium, or High.');
+            }
+
+            errorsByExpert[expert.id] = errors;
+        });
+
+        return errorsByExpert;
+    }, [formValues, suggestedFormValues, suggestedExpenseBreakdown, suggestedDebtList]);
 
     const sourceLabel = (key: string, value: string | undefined): string => {
         const v = (value ?? '').trim();
@@ -463,6 +529,16 @@ const SalaryPlanningExperts: React.FC = () => {
             <p className="text-sm text-slate-600 mb-6 max-w-2xl">
                 Choose an expert, fill in your numbers (SAR), and run AI-powered plans. Logic and prompts are aligned with essentials-first, savings protection, and long-term wealth.
             </p>
+            <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                <button
+                    type="button"
+                    onClick={refreshInputsFromLiveData}
+                    className="inline-flex items-center rounded-md border border-slate-300 px-2.5 py-1 font-medium text-slate-700 hover:bg-slate-50"
+                >
+                    Refresh live inputs from Accounts, Transactions, Goals, and Plan
+                </button>
+                <span>All suggested values are normalized to SAR to avoid currency mismatch.</span>
+            </div>
             {aiHealthChecked && !isAiAvailable && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 mb-6">
                     <p className="font-medium">AI is unavailable.</p>
@@ -496,6 +572,8 @@ const SalaryPlanningExperts: React.FC = () => {
             <div className="space-y-3">
                 {EXPERTS.map((expert) => {
                     const isExpanded = expandedIds[expert.id] !== false;
+                    const validationErrors = expertValidationErrors[expert.id] ?? [];
+                    const hasValidationErrors = validationErrors.length > 0;
                     const expertTitleHint = lookupHintForTitle(expert.name);
                     return (
                         <div key={expert.id} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-visible hover:border-slate-300 transition-colors">
@@ -652,7 +730,7 @@ const SalaryPlanningExperts: React.FC = () => {
                                                     Risk tolerance
                                                     <InfoHint text="Low: prefer stability (e.g. Sukuk, deposits). Medium: balanced mix. High: more equity for long-term growth. Affects suggested asset allocation." />
                                                 </label>
-                                                <select value={formValues.riskTolerance ?? 'MEDIUM'} onChange={(e) => updateForm({ riskTolerance: e.target.value })} className="select-base w-full rounded-lg border-slate-200">
+                                                <select value={formValues.riskTolerance ?? 'MEDIUM'} onChange={(e) => updateForm({ riskTolerance: e.target.value.toUpperCase() })} className="select-base w-full rounded-lg border-slate-200">
                                                     <option value="LOW">Low</option>
                                                     <option value="MEDIUM">Medium</option>
                                                     <option value="HIGH">High</option>
@@ -695,7 +773,7 @@ const SalaryPlanningExperts: React.FC = () => {
                                     <div className="flex flex-wrap items-center gap-3 pt-1">
                                         <button
                                             type="button"
-                                            disabled={!aiActionsEnabled || loadingId === expert.id}
+                                            disabled={!aiActionsEnabled || loadingId === expert.id || hasValidationErrors}
                                             onClick={() => handleRun(expert)}
                                             className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary text-white rounded-xl text-sm font-medium hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                                         >
@@ -712,6 +790,16 @@ const SalaryPlanningExperts: React.FC = () => {
                                             {copiedId === expert.id ? 'Copied!' : 'Copy prompt'}
                                         </button>
                                     </div>
+                                    {hasValidationErrors && (
+                                        <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+                                            <p className="font-semibold mb-1">Please fix these items before running analysis:</p>
+                                            <ul className="list-disc pl-4 space-y-0.5">
+                                                {validationErrors.map((msg) => (
+                                                    <li key={msg}>{msg}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    )}
                                     {result?.expertId === expert.id && (
                                         <div className="mt-6 pt-5 border-t border-slate-200">
                                             <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-800 mb-2">

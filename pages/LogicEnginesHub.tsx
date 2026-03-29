@@ -138,7 +138,10 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
   );
   /** Local NW snapshots (device); refresh when tab visible so Risk hub + Dashboard writes show up. */
   const snaps = useMemo(() => listNetWorthSnapshots(), [data?.accounts?.length, dataTick]);
-  const liquidityRunway = useMemo(() => computeLiquidityRunwayFromData(data ?? null), [data]);
+  const liquidityRunway = useMemo(
+    () => computeLiquidityRunwayFromData(data ?? null, { exchangeRate: sarPerUsd, getAvailableCashForAccount }),
+    [data, sarPerUsd, getAvailableCashForAccount]
+  );
 
   const portfolioReturnPct = useMemo(() => {
     if (snaps.length < 2) return 0;

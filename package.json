@@ -1,7 +1,7 @@
 {
   "name": "finova",
   "private": true,
-  "version": "1.0.0.0",
+  "version": "1.1.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,6 +15,7 @@
     "verify:investment-sar-flow": "vitest run tests/investmentSarFlowMetrics.vitest.test.ts",
     "verify:budgets-bulk": "vitest run tests/householdBulkLimits.vitest.test.ts",
     "verify:regressions": "vitest run tests/investmentSarFlowMetrics.vitest.test.ts tests/householdBulkLimits.vitest.test.ts tests/investmentPlanAllocations.vitest.test.ts tests/regressionUserFixes.vitest.test.ts",
+    "verify:atomic-workflows": "node scripts/verify-atomic-workflows.js",
     "test:e2e": "playwright test",
     "test:release": "npm run test && npm run build && npm run test:e2e"
   },
@@ -34,12 +35,12 @@
     "@playwright/test": "^1.51.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.1",
+    "@vitejs/plugin-react": "^5.2.0",
     "autoprefixer": "^10.4.16",
     "postcss": "^8.4.31",
     "tailwindcss": "^3.3.5",
     "typescript": "^5.9.3",
-    "vite": "^5.3.1",
-    "vitest": "^2.1.9"
+    "vite": "^8.0.3",
+    "vitest": "^4.1.2"
   }
 }

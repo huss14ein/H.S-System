@@ -1549,22 +1549,30 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     if (!holding) return null;
 
     const portfolioCurrency: TradeCurrency = (portfolio?.currency as TradeCurrency) || 'USD';
+    const inferredHoldingCurrency = inferInstrumentCurrencyFromSymbol((holding.symbol || '').trim().toUpperCase());
+    const holdingCurrency: TradeCurrency = inferredHoldingCurrency ?? portfolioCurrency;
     const fundamentalsCurrencyRaw = (fundamentals?.currency || '').toUpperCase();
     const fundamentalsCurrency: TradeCurrency =
         fundamentalsCurrencyRaw === 'SAR' ? 'SAR' : 'USD';
 
-    const fmt = (val: number, opts?: { digits?: number }) => formatCurrencyString(val, { inCurrency: portfolioCurrency, ...opts });
+    const convertFromPortfolioToHolding = (value: number) =>
+        convertBetweenTradeCurrencies(Number(value) || 0, portfolioCurrency, holdingCurrency, sarPerUsd);
+    const fmt = (val: number, opts?: { digits?: number }) => formatCurrencyString(val, { inCurrency: holdingCurrency, ...opts });
     const fmtPerUnit = (val: number) => fmt(val, { digits: HOLDING_PER_UNIT_DECIMALS });
-    const fmtColor = (val: number, opts?: { digits?: number }) => formatCurrency(val, { inCurrency: portfolioCurrency, colorize: false, ...opts });
+    const fmtColor = (val: number, opts?: { digits?: number }) => formatCurrency(val, { inCurrency: holdingCurrency, colorize: false, ...opts });
     const fmtFundamentals = (val: number, opts?: { digits?: number }) =>
         formatCurrencyString(val, { inCurrency: fundamentalsCurrency, ...opts });
 
     const displayName = holding.name || (holding as any).name || holding.symbol;
     const priceTrendPercent = holding.priceChangePercent ?? holding.gainLossPercent;
     const currentPrice = holding.quantity > 0 ? holding.currentValue / holding.quantity : holding.avgCost ?? 0;
+    const currentPriceDisplay = convertFromPortfolioToHolding(currentPrice);
+    const marketValueDisplay = convertFromPortfolioToHolding(holding.currentValue);
+    const avgCostDisplay = convertFromPortfolioToHolding(holding.avgCost ?? 0);
     const totalCost = (holding.avgCost ?? 0) * holding.quantity;
-    const toSAR = (valueUsd: number) => valueUsd * sarPerUsd;
-    const toUSD = (valueSar: number) => valueSar / sarPerUsd;
+    const totalCostDisplay = convertFromPortfolioToHolding(totalCost);
+    const gainLossDisplay = convertFromPortfolioToHolding(holding.gainLoss);
+    const toCurrency = (value: number, to: TradeCurrency) => convertBetweenTradeCurrencies(value, holdingCurrency, to, sarPerUsd);
     const formatSAR = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'SAR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
     const formatUSD = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 
@@ -1589,18 +1597,18 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
     const dividendYieldPct = typeof fundamentals?.dividend?.dividendYieldPct === 'number' ? fundamentals.dividend.dividendYieldPct : null;
     const dividendPerShareAnnual = typeof fundamentals?.dividend?.dividendPerShareAnnual === 'number' ? fundamentals.dividend.dividendPerShareAnnual : null;
     const projectedDividendFromPerShare = dividendPerShareAnnual && holding.quantity > 0
-        ? convertBetweenCurrencies(dividendPerShareAnnual * holding.quantity, fundamentalsCurrency, portfolioCurrency)
+        ? convertBetweenCurrencies(dividendPerShareAnnual * holding.quantity, fundamentalsCurrency, holdingCurrency)
         : null;
-    const projectedDividendFromYield = dividendYieldPct && dividendYieldPct > 0 && holding.currentValue > 0
-        ? holding.currentValue * (dividendYieldPct / 100)
+    const projectedDividendFromYield = dividendYieldPct && dividendYieldPct > 0 && marketValueDisplay > 0
+        ? marketValueDisplay * (dividendYieldPct / 100)
         : null;
     const projectedAnnualDividend = (projectedDividendFromPerShare && projectedDividendFromPerShare > 0)
         ? projectedDividendFromPerShare
         : projectedDividendFromYield;
-    const hasReliableDividendEstimate = Boolean(projectedAnnualDividend && projectedAnnualDividend > 0 && projectedAnnualDividend < holding.currentValue * 0.25);
+    const hasReliableDividendEstimate = Boolean(projectedAnnualDividend && projectedAnnualDividend > 0 && projectedAnnualDividend < marketValueDisplay * 0.25);
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`${holding.symbol} — Share details`} maxWidthClass="max-w-5xl">
+        <Modal isOpen={isOpen} onClose={onClose} title={`${holding.symbol} — Share details`} maxWidthClass="max-w-[min(96vw,96rem)]">
             <div className="space-y-6 min-w-0">
                 {/* Hero: symbol, name, price, change — centered with stronger hierarchy */}
                 <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-slate-100/70 px-5 py-6 sm:px-6 sm:py-7 min-w-0 shadow-sm">
@@ -1611,11 +1619,11 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                         {portfolio && <p className="text-xs text-slate-500 mt-1">Portfolio: {portfolio.name ?? '—'}</p>}
                     </div>
                     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
-                        <span className="metric-value text-2xl sm:text-3xl font-bold text-slate-900 tabular-nums max-w-full" title={fmtPerUnit(currentPrice)}>{fmtPerUnit(currentPrice)}</span>
+                        <span className="metric-value text-2xl sm:text-3xl font-bold text-slate-900 tabular-nums max-w-full" title={fmtPerUnit(currentPriceDisplay)}>{fmtPerUnit(currentPriceDisplay)}</span>
                         <span className={`metric-value text-lg font-semibold tabular-nums shrink-0 ${priceTrendPercent >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                             {priceTrendPercent >= 0 ? '+' : ''}{priceTrendPercent.toFixed(2)}%
                         </span>
-                        <span className="text-sm text-slate-500 shrink-0">today · per share · {portfolioCurrency}</span>
+                        <span className="text-sm text-slate-500 shrink-0">today · per share · {holdingCurrency}</span>
                     </div>
                 </div>
 
@@ -1623,9 +1631,9 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 min-w-0">
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Market value</p>
-                        <p className="share-detail-metric-value w-full mt-1 text-base sm:text-lg font-bold text-slate-900 tabular-nums !whitespace-normal !overflow-visible !text-clip break-words leading-tight" title={fmt(holding.currentValue)}>{fmt(holding.currentValue)}</p>
+                        <p className="share-detail-metric-value w-full mt-1 text-base sm:text-lg font-bold text-slate-900 tabular-nums !whitespace-normal !overflow-visible !text-clip break-words leading-tight" title={fmt(marketValueDisplay)}>{fmt(marketValueDisplay)}</p>
                         <p className="w-full mt-1 text-[11px] font-medium text-slate-500 tabular-nums leading-tight" title="Total purchased cost (cost basis)">
-                            Purchased cost {fmt(totalCost)}
+                            Purchased cost {fmt(totalCostDisplay)}
                         </p>
                     </div>
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
@@ -1634,49 +1642,49 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                     </div>
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Avg. Cost</p>
-                        <p className="share-detail-metric-value w-full mt-1 text-base sm:text-lg font-bold text-slate-900 tabular-nums !whitespace-normal !overflow-visible !text-clip break-words leading-tight" title={fmtPerUnit(holding.avgCost ?? 0)}>{fmtPerUnit(holding.avgCost ?? 0)}</p>
+                        <p className="share-detail-metric-value w-full mt-1 text-base sm:text-lg font-bold text-slate-900 tabular-nums !whitespace-normal !overflow-visible !text-clip break-words leading-tight" title={fmtPerUnit(avgCostDisplay)}>{fmtPerUnit(avgCostDisplay)}</p>
                     </div>
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
                         <p className="share-detail-metric-label w-full text-xs font-semibold text-slate-500 uppercase tracking-wide">Unrealized G/L</p>
-                        <p className={`share-detail-metric-value w-full mt-1 text-base sm:text-lg font-bold tabular-nums !whitespace-normal !overflow-visible !text-clip break-words leading-tight ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(holding.gainLoss)}>{fmtColor(holding.gainLoss)}</p>
-                        <p className="share-detail-metric-value w-full text-xs text-slate-500 mt-0.5 !whitespace-normal !overflow-visible !text-clip break-words leading-tight" title={fmt(totalCost)}>on cost {fmt(totalCost)}</p>
+                        <p className={`share-detail-metric-value w-full mt-1 text-base sm:text-lg font-bold tabular-nums !whitespace-normal !overflow-visible !text-clip break-words leading-tight ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(gainLossDisplay)}>{fmtColor(gainLossDisplay)}</p>
+                        <p className="share-detail-metric-value w-full text-xs text-slate-500 mt-0.5 !whitespace-normal !overflow-visible !text-clip break-words leading-tight" title={fmt(totalCostDisplay)}>on cost {fmt(totalCostDisplay)}</p>
                     </div>
                 </div>
 
                 {/* Converted value — SAR when portfolio is USD, USD when portfolio is SAR (hint/side) */}
-                {portfolioCurrency === 'USD' ? (
+                {holdingCurrency === 'USD' ? (
                     <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4 min-w-0 overflow-hidden">
                         <p className="share-detail-metric-label text-xs font-semibold text-emerald-800 uppercase tracking-wide mb-2">≈ In Saudi Riyal (SAR)</p>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm min-w-0">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm min-w-0">
                             <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Market value</p>
-                                <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatSAR(toSAR(holding.currentValue))}>{formatSAR(toSAR(holding.currentValue))}</p>
+                                <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatSAR(toCurrency(marketValueDisplay, 'SAR'))}>{formatSAR(toCurrency(marketValueDisplay, 'SAR'))}</p>
                             </div>
                             <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Cost basis</p>
-                                <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatSAR(toSAR(totalCost))}>{formatSAR(toSAR(totalCost))}</p>
+                                <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatSAR(toCurrency(totalCostDisplay, 'SAR'))}>{formatSAR(toCurrency(totalCostDisplay, 'SAR'))}</p>
                             </div>
                             <div className="min-w-0 overflow-hidden rounded-lg bg-white/60 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Unrealized G/L</p>
-                                <p className={`share-detail-metric-value w-full font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={formatSAR(toSAR(holding.gainLoss))}>{formatSAR(toSAR(holding.gainLoss))}</p>
+                                <p className={`share-detail-metric-value w-full font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={formatSAR(toCurrency(gainLossDisplay, 'SAR'))}>{formatSAR(toCurrency(gainLossDisplay, 'SAR'))}</p>
                             </div>
                         </div>
                     </div>
                 ) : (
                     <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 min-w-0 overflow-hidden">
                         <p className="share-detail-metric-label text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">≈ In USD</p>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm min-w-0">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm min-w-0">
                             <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Market value</p>
-                                <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatUSD(toUSD(holding.currentValue))}>{formatUSD(toUSD(holding.currentValue))}</p>
+                                <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatUSD(toCurrency(marketValueDisplay, 'USD'))}>{formatUSD(toCurrency(marketValueDisplay, 'USD'))}</p>
                             </div>
                             <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Cost basis</p>
-                                <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatUSD(toUSD(totalCost))}>{formatUSD(toUSD(totalCost))}</p>
+                                <p className="share-detail-metric-value w-full font-bold text-slate-900 tabular-nums" title={formatUSD(toCurrency(totalCostDisplay, 'USD'))}>{formatUSD(toCurrency(totalCostDisplay, 'USD'))}</p>
                             </div>
                             <div className="min-w-0 overflow-hidden rounded-lg bg-white/80 p-2 flex flex-col items-center text-center">
                                 <p className="share-detail-metric-label w-full text-slate-600 text-xs">Unrealized G/L</p>
-                                <p className={`share-detail-metric-value w-full font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={formatUSD(toUSD(holding.gainLoss))}>{formatUSD(toUSD(holding.gainLoss))}</p>
+                                <p className={`share-detail-metric-value w-full font-bold tabular-nums ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={formatUSD(toCurrency(gainLossDisplay, 'USD'))}>{formatUSD(toCurrency(gainLossDisplay, 'USD'))}</p>
                             </div>
                         </div>
                     </div>
@@ -1740,9 +1748,9 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                                         )}
                                     {hasReliableDividendEstimate && projectedAnnualDividend && (
                                             <p className="text-xs text-slate-600">
-                                                Estimated annual dividends on your position ({portfolioCurrency}):{' '}
+                                                Estimated annual dividends on your position ({holdingCurrency}):{' '}
                                                 {formatCurrencyString(projectedAnnualDividend, {
-                                                    inCurrency: portfolioCurrency,
+                                                    inCurrency: holdingCurrency,
                                                     digits: 0,
                                                 })}
                                             </p>
@@ -2376,8 +2384,6 @@ const PlatformCard: React.FC<{
                     const portfolioCurrency = (portfolio.currency as TradeCurrency) || 'USD';
                     const portfolioHoldings = holdingsWithGains(portfolio.holdings || [], portfolioCurrency);
                     const portfolioValue = portfolioHoldings.reduce((sum, h) => sum + h.currentValue, 0);
-                    const fmt = (val: number, opts?: { digits?: number; showSecondary?: boolean }) => formatCurrencyString(val, { inCurrency: portfolioCurrency, ...opts });
-                    const fmtPerUnit = (val: number) => fmt(val, { digits: HOLDING_PER_UNIT_DECIMALS });
                     return (
                         <section key={portfolio.id} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
                             {/* Portfolio header: name, value, goal, actions — contained in box */}
@@ -2447,6 +2453,15 @@ const PlatformCard: React.FC<{
                                                 {portfolioHoldings.map(h => {
                                                     const hSym = (h.symbol || '').trim().toUpperCase();
                                                     const allocationPct = portfolioValue > 0 ? (h.currentValue / portfolioValue) * 100 : 0;
+                                                    const inferredHoldingCurrency = inferInstrumentCurrencyFromSymbol(hSym || h.symbol || '');
+                                                    const holdingDisplayCurrency: TradeCurrency = inferredHoldingCurrency ?? portfolioCurrency;
+                                                    const toHoldingDisplayCurrency = (amountInPortfolioBook: number): number =>
+                                                        convertBetweenTradeCurrencies(
+                                                            Number(amountInPortfolioBook) || 0,
+                                                            portfolioCurrency,
+                                                            holdingDisplayCurrency,
+                                                            sarPerUsd
+                                                        );
                                                     const rowDailyPnL = holdingUsesLiveQuote(h)
                                                         ? quoteDailyPnLInBookCurrency(
                                                               simulatedPrices[hSym]?.change ?? 0,
@@ -2457,6 +2472,11 @@ const PlatformCard: React.FC<{
                                                           )
                                                         : 0;
                                                     const gainLossPct = (h.totalCost && h.totalCost > 0) ? (h.gainLoss / h.totalCost) * 100 : 0;
+                                                    const avgCostDisplay = toHoldingDisplayCurrency(h.avgCost ?? 0);
+                                                    const currentValueDisplay = toHoldingDisplayCurrency(h.currentValue);
+                                                    const purchasedCostDisplay = toHoldingDisplayCurrency((h.avgCost ?? 0) * (h.quantity || 0));
+                                                    const gainLossDisplay = toHoldingDisplayCurrency(h.gainLoss);
+                                                    const rowDailyPnLDisplay = toHoldingDisplayCurrency(rowDailyPnL);
                                                     return (
                                                         <tr key={h.id} className="group hover:bg-slate-50/80 transition-colors">
                                                             <td className="px-4 py-3 min-w-0 max-w-[200px]">
@@ -2489,13 +2509,15 @@ const PlatformCard: React.FC<{
                                                                 )}
                                                             </td>
                                                             <td className="px-3 py-3 text-center text-sm font-medium text-slate-800 tabular-nums">{h.quantity}</td>
-                                                            <td className="px-3 py-3 text-center text-sm font-medium text-slate-700 tabular-nums">{fmtPerUnit(h.avgCost ?? 0)}</td>
+                                                            <td className="px-3 py-3 text-center text-sm font-medium text-slate-700 tabular-nums">
+                                                                {formatCurrencyString(avgCostDisplay, { inCurrency: holdingDisplayCurrency, digits: HOLDING_PER_UNIT_DECIMALS })}
+                                                            </td>
                                                             <td className="px-3 py-3 text-right align-top">
                                                                 <div className="inline-flex flex-col items-end gap-0.5 tabular-nums min-w-0">
                                                                     <span className="text-sm font-bold text-slate-900 leading-tight inline-flex justify-end">
                                                                         <CurrencyDualDisplay
-                                                                            value={h.currentValue}
-                                                                            inCurrency={portfolioCurrency}
+                                                                            value={currentValueDisplay}
+                                                                            inCurrency={holdingDisplayCurrency}
                                                                             digits={0}
                                                                             size="base"
                                                                             className="justify-end text-slate-900"
@@ -2505,15 +2527,15 @@ const PlatformCard: React.FC<{
                                                                         className="text-[11px] font-medium text-slate-500 leading-tight"
                                                                         title="Total purchased cost (quantity × average cost)"
                                                                     >
-                                                                        {fmt((h.avgCost ?? 0) * (h.quantity || 0), { digits: 0 })}
+                                                                        {formatCurrencyString(purchasedCostDisplay, { inCurrency: holdingDisplayCurrency, digits: 0 })}
                                                                     </span>
                                                                 </div>
                                                             </td>
                                                             <td className="px-3 py-3 text-center whitespace-nowrap">
                                                                 <div className="inline-flex flex-col items-center gap-0.5 tabular-nums">
                                                                     <CurrencyDualDisplay
-                                                                        value={h.gainLoss}
-                                                                        inCurrency={portfolioCurrency}
+                                                                        value={gainLossDisplay}
+                                                                        inCurrency={holdingDisplayCurrency}
                                                                         digits={0}
                                                                         size="base"
                                                                         colorize
@@ -2527,8 +2549,8 @@ const PlatformCard: React.FC<{
                                                             </td>
                                                             <td className="px-3 py-3 text-center">
                                                                 <CurrencyDualDisplay
-                                                                    value={rowDailyPnL}
-                                                                    inCurrency={portfolioCurrency}
+                                                                    value={rowDailyPnLDisplay}
+                                                                    inCurrency={holdingDisplayCurrency}
                                                                     digits={0}
                                                                     size="base"
                                                                     colorize
@@ -4128,8 +4150,8 @@ Save anyway?`)) return;
                     </div>
                 </div>
 
-                {/* Portfolio Universe — full width below */}
-                <div className="xl:col-span-5">
+                {/* Portfolio Universe — full width row */}
+                <div className="xl:col-span-12">
                     <div className="bg-white p-6 rounded-lg shadow">
                         <div className="mb-4">
                             <h2 className="text-xl font-semibold text-dark flex items-center gap-2 min-w-0">
@@ -4287,7 +4309,7 @@ Save anyway?`)) return;
                     </div>
                 </div>
 
-                <div className="xl:col-span-5 w-full min-w-0">
+                <div className="xl:col-span-12 w-full min-w-0">
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden w-full">
                     <div className="p-6 border-b border-slate-100 bg-emerald-50/40">
                         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
