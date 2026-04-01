@@ -1,5 +1,6 @@
 import type { FinancialData } from '../types';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { getSarPerUsdForCalendarDay } from './fxDailySeries';
 
 /**
@@ -41,8 +42,8 @@ export function flowsFromInvestmentTransactions(
   const out: { date: string; amount: number }[] = [];
   txs.forEach((t) => {
     const x = Math.abs(Number(t.total) || 0);
-    if (t.type === 'buy' || t.type === 'deposit') out.push({ date: t.date, amount: -x });
-    if (t.type === 'sell' || t.type === 'withdrawal') out.push({ date: t.date, amount: x });
+    if (isInvestmentTransactionType(t.type, 'buy') || isInvestmentTransactionType(t.type, 'deposit')) out.push({ date: t.date, amount: -x });
+    if (isInvestmentTransactionType(t.type, 'sell') || isInvestmentTransactionType(t.type, 'withdrawal')) out.push({ date: t.date, amount: x });
   });
   return out;
 }
@@ -56,10 +57,10 @@ export function flowsFromInvestmentTransactionsInSAR(
   txs.forEach((t) => {
     const x = Math.abs(Number(t.total) || 0);
     const sar = toSAR(x, (t.currency ?? 'USD') as 'USD' | 'SAR', exchangeRate);
-    if (t.type === 'buy' || t.type === 'deposit') out.push({ date: t.date, amount: -sar });
-    if (t.type === 'sell' || t.type === 'withdrawal') out.push({ date: t.date, amount: sar });
+    if (isInvestmentTransactionType(t.type, 'buy') || isInvestmentTransactionType(t.type, 'deposit')) out.push({ date: t.date, amount: -sar });
+    if (isInvestmentTransactionType(t.type, 'sell') || isInvestmentTransactionType(t.type, 'withdrawal')) out.push({ date: t.date, amount: sar });
     /** Cash dividends are investor inflows (same sign as sell for MWRR math). */
-    if (t.type === 'dividend') out.push({ date: t.date, amount: sar });
+    if (isInvestmentTransactionType(t.type, 'dividend')) out.push({ date: t.date, amount: sar });
   });
   return out;
 }
@@ -80,9 +81,9 @@ export function flowsFromInvestmentTransactionsInSARWithDatedFx(
     const day = (t.date ?? '').slice(0, 10);
     const r = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, uiExchangeRate) : spot;
     const sar = toSAR(x, (t.currency ?? 'USD') as 'USD' | 'SAR', r);
-    if (t.type === 'buy' || t.type === 'deposit') out.push({ date: t.date, amount: -sar });
-    if (t.type === 'sell' || t.type === 'withdrawal') out.push({ date: t.date, amount: sar });
-    if (t.type === 'dividend') out.push({ date: t.date, amount: sar });
+    if (isInvestmentTransactionType(t.type, 'buy') || isInvestmentTransactionType(t.type, 'deposit')) out.push({ date: t.date, amount: -sar });
+    if (isInvestmentTransactionType(t.type, 'sell') || isInvestmentTransactionType(t.type, 'withdrawal')) out.push({ date: t.date, amount: sar });
+    if (isInvestmentTransactionType(t.type, 'dividend')) out.push({ date: t.date, amount: sar });
   });
   return out;
 }

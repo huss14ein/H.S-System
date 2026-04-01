@@ -128,6 +128,44 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     };
   }, [data?.investmentPlan]);
 
+  const planValidation = useMemo(() => {
+    const p = data?.investmentPlan as InvestmentPlanSettings | undefined;
+    if (!p) {
+      return {
+        hasPlan: false,
+        totalAllocationPct: 0,
+        isAllocationBalanced: false,
+        issues: ['Investment Plan is not configured yet.'],
+      };
+    }
+
+    const core = Number(p.coreAllocation);
+    const upside = Number(p.upsideAllocation);
+    const total = (Number.isFinite(core) ? core : 0) + (Number.isFinite(upside) ? upside : 0);
+    const totalPct = total * 100;
+    const issues: string[] = [];
+
+    if (!Number.isFinite(core) || !Number.isFinite(upside)) {
+      issues.push('Core/Upside allocation values are invalid.');
+    }
+    if (Math.abs(total - 1) > 0.0001) {
+      issues.push(`Core + Upside allocation should equal 100%, currently ${totalPct.toFixed(1)}%.`);
+    }
+    if ((Number(p.monthlyBudget) || 0) < 0) {
+      issues.push('Monthly budget cannot be negative.');
+    }
+    if ((Number(p.monthlyBudget) || 0) === 0) {
+      issues.push('Monthly budget is 0. Set a monthly target to unlock full automation recommendations.');
+    }
+
+    return {
+      hasPlan: true,
+      totalAllocationPct: totalPct,
+      isAllocationBalanced: issues.every((m) => !m.includes('allocation')),
+      issues,
+    };
+  }, [data?.investmentPlan]);
+
   const universeByPortfolio = useMemo(() => {
     const rows = (data?.portfolioUniverse ?? []) as UniverseTicker[];
     const map = new Map<string | '__unassigned__', UniverseTicker[]>();
@@ -348,6 +386,45 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
 
   const healthColor = portfolioHealth.score >= 85 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : portfolioHealth.score >= 65 ? 'text-amber-600 bg-amber-50 border-amber-200' : portfolioHealth.score >= 40 ? 'text-amber-700 bg-amber-100 border-amber-300' : 'text-rose-600 bg-rose-50 border-rose-200';
 
+  const dataValidation = useMemo(() => {
+    const issues: string[] = [];
+    if (Math.abs((config.fxRate ?? sarPerUsd) - sarPerUsd) > 0.0001) {
+      issues.push(`FX config mismatch detected (config ${config.fxRate.toFixed(4)} vs resolved ${sarPerUsd.toFixed(4)} SAR/USD). Resolved rate is used for display and conversions.`);
+    }
+    if (portfolioIds.length > 0 && universeByPortfolio.rows.length === 0) {
+      issues.push('No portfolio universe symbols found. Add tickers in Investments → Portfolio universe for full automation.');
+    }
+    if (cashPlannerStatus !== 'WITHIN_LIMIT') {
+      issues.push(`Buy plan exceeds deployable cash by ${fmtEngineUsd(Math.max(0, totalPlannedBuyCost - deployableCash), 0)}.`);
+    }
+    if (planValidation.issues.length > 0) {
+      issues.push(...planValidation.issues);
+    }
+    return issues;
+  }, [config.fxRate, sarPerUsd, portfolioIds.length, universeByPortfolio.rows.length, cashPlannerStatus, totalPlannedBuyCost, deployableCash, fmtEngineUsd, planValidation.issues]);
+
+  const criticalValidationIssues = useMemo(
+    () => dataValidation.filter((msg) => /should equal 100%|cannot be negative|exceeds deployable cash|not configured yet/i.test(msg)),
+    [dataValidation]
+  );
+  const hasBlockingValidationIssue = criticalValidationIssues.length > 0;
+  const exportActionLabel = hasBlockingValidationIssue
+    ? `Export orders (blocked: ${criticalValidationIssues.length} critical check${criticalValidationIssues.length === 1 ? '' : 's'})`
+    : 'Export orders (JSON)';
+
+  const metricConfidence = useMemo(() => {
+    const hasHoldings = investmentHoldingsCount > 0;
+    const hasPlan = !!planSnapshot;
+    const fxHealthy = Math.abs((config.fxRate ?? sarPerUsd) - sarPerUsd) <= 0.0001;
+    return {
+      totalPortfolio: hasHoldings ? 'High' : 'Medium',
+      planBudget: hasPlan ? 'High' : 'Low',
+      deployableCash: Number.isFinite(deployableCash) ? 'High' : 'Low',
+      orderbook: hasBlockingValidationIssue ? 'Low' : orders.length > 0 ? 'High' : 'Medium',
+      fx: fxHealthy ? 'High' : 'Medium',
+    } as const;
+  }, [investmentHoldingsCount, planSnapshot, config.fxRate, sarPerUsd, deployableCash, hasBlockingValidationIssue, orders.length]);
+
   const engineIntelligence = useMemo(() => {
     const maxDrift = allocations.reduce((max, item) => Math.max(max, Math.abs(item.driftPct)), 0);
     const driftPenalty = Math.min(30, maxDrift * 3);
@@ -514,7 +591,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
               <Card
                 title="Total portfolio value"
                 value={<CurrencyDualDisplay value={totalPortfolioValue} inCurrency="USD" digits={0} size="2xl" />}
-                trend={`SAR equivalent uses ${sarPerUsd.toFixed(4)} / USD — hover the amount for details`}
+                trend={`SAR equivalent uses ${sarPerUsd.toFixed(4)} / USD · Confidence: ${metricConfidence.totalPortfolio}`}
                 density="compact"
                 indicatorColor="green"
                 valueColor="text-slate-900"
@@ -531,7 +608,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                 }
                 trend={
                   aggBudget.total > 0
-                    ? `Summed from Investment Plan across ${portfolioIds.length || 'your'} portfolio(s)`
+                    ? `Summed from Investment Plan across ${portfolioIds.length || 'your'} portfolio(s) · Confidence: ${metricConfidence.planBudget}`
                     : 'Set budgets per portfolio in Investments → Investment Plan'
                 }
                 density="compact"
@@ -542,6 +619,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
               <Card
                 title="Deployable cash (engine)"
                 value={<CurrencyDualDisplay value={deployableCash} inCurrency="USD" digits={0} size="2xl" />}
+                trend={`Confidence: ${metricConfidence.deployableCash} · FX consistency: ${metricConfidence.fx}`}
                 density="compact"
                 indicatorColor={deployableCash > 0 ? 'green' : 'yellow'}
                 valueColor="text-slate-900"
@@ -550,6 +628,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
               <Card
                 title="Planned buys (engine)"
                 value={<CurrencyDualDisplay value={totalPlannedBuyCost} inCurrency="USD" digits={0} size="2xl" />}
+                trend={`Confidence: ${metricConfidence.orderbook}`}
                 density="compact"
                 indicatorColor={totalPlannedBuyCost > 0 ? 'green' : undefined}
                 valueColor="text-slate-900"
@@ -1283,13 +1362,13 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                   ]
                 : []),
               ...(setActivePage ? [{ value: 'investments', label: 'Investments hub', onClick: () => setActivePage('Investments') }] : []),
-              { value: 'export', label: 'Export orders (JSON)', onClick: handleExportOrders },
+              { value: 'export', label: exportActionLabel, disabled: hasBlockingValidationIssue, onClick: handleExportOrders },
             ]}
           />
         </div>
       }
     >
-      <div className="space-y-10 lg:space-y-14">
+      <div className="space-y-8 md:space-y-10 lg:space-y-12">
         {engineWarning && (
           <div className="rounded-xl border-2 border-amber-400 bg-amber-50 p-4 text-sm text-amber-950 shadow-sm" role="alert">
             <p className="font-semibold flex items-center gap-2">
@@ -1304,6 +1383,16 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             <p className="mt-1 text-sky-900/90 leading-relaxed">
               Sleeve drift, positions, and order suggestions fill in once you add holdings under Investments. Cash deployable, plan targets, and stress scenarios still run from your accounts and settings.
             </p>
+          </div>
+        )}
+        {hasBlockingValidationIssue && (
+          <div className="rounded-xl border-2 border-rose-300 bg-rose-50 p-4 sm:p-5 text-sm text-rose-900">
+            <p className="font-semibold">Critical validation checks are blocking order export</p>
+            <ul className="mt-2 list-disc pl-5 space-y-1">
+              {criticalValidationIssues.map((issue, idx) => (
+                <li key={`${issue}-${idx}`}>{issue}</li>
+              ))}
+            </ul>
           </div>
         )}
 
@@ -1407,7 +1496,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
           />
           
           {/* Hero & Health Status */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             <div className="lg:col-span-8">
               {gridItems.find(item => item.id === 'hero')?.content}
             </div>
@@ -1440,7 +1529,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                 {advancedRisk && (
                   <div className="rounded-lg border border-slate-200 bg-white p-3">
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Risk score (advanced)</p>
-                    <p className="text-sm text-slate-800">Overall {advancedRisk.overallRiskScore ?? 0}/100 · Concentration {((advancedRisk.concentrationRisk ?? 0) * 100).toFixed(1)}%</p>
+                    <p className="text-sm text-slate-800">Overall {(advancedRisk.overallRiskScore ?? 0).toFixed(1)}/100 · Concentration {((advancedRisk.concentrationRisk ?? 0) * 100).toFixed(1)}%</p>
                   </div>
                 )}
                 {(() => {
@@ -1506,6 +1595,66 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
           <div>
             {gridItems.find(item => item.id === 'kpis')?.content}
           </div>
+
+          <SectionCard
+            title="Data Quality & Automation Checks"
+            className="border border-slate-200 bg-white shadow-sm"
+            collapsible
+            collapsibleSummary={dataValidation.length === 0 ? 'All checks passed' : `${dataValidation.length} check(s) need attention`}
+            defaultExpanded
+            infoHint="These checks verify plan completeness, FX consistency, and order-vs-cash safety before acting on engine output."
+          >
+            {dataValidation.length === 0 ? (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                All core validation checks passed. Wealth Ultra is fully wired to your current plan, holdings, and currency settings.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <ul className="space-y-2">
+                  {dataValidation.map((msg, idx) => (
+                    <li key={`${msg}-${idx}`} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                      {msg}
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {(triggerPageAction || setActivePage) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (triggerPageAction) {
+                          triggerPageAction('Investments', 'focus-investment-plan');
+                          return;
+                        }
+                        setActivePage?.('Investments');
+                      }}
+                      className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50"
+                    >
+                      Fix plan setup
+                    </button>
+                  )}
+                  {(triggerPageAction || setActivePage) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActivePage?.('Investments');
+                      }}
+                      className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50"
+                    >
+                      Open investments hub
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setScenarioId('down10')}
+                    className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50"
+                  >
+                    Stress test (-10%)
+                  </button>
+                </div>
+              </div>
+            )}
+          </SectionCard>
 
           {/* Alerts & Recommendations — surfaced early so users see what to act on */}
           <div>

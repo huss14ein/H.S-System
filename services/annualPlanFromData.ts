@@ -15,6 +15,7 @@ import type {
 } from '../types';
 import { getSarPerUsdForCalendarDay } from './fxDailySeries';
 import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
+import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { toSAR } from '../utils/currencyMath';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi, isInternalTransferTransaction } from './transactionFilters';
 import type { HouseholdMonthlyOverride } from './householdBudgetEngine';
@@ -279,7 +280,7 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
 
   invTxFiltered.forEach((tx) => {
     const date = new Date(tx.date);
-    if (date.getFullYear() === year && tx.type === 'buy') {
+    if (date.getFullYear() === year && isInvestmentTransactionType(tx.type, 'buy')) {
       const cur = inferInvestmentTransactionCurrency(
         { accountId: tx.accountId ?? '', currency: tx.currency as 'SAR' | 'USD' | undefined },
         accounts,

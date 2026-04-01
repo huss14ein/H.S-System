@@ -122,6 +122,8 @@ export function inferInstrumentCurrencyFromSymbol(symbol: string): TradeCurrency
   const s = (symbol || '').trim().toUpperCase();
   if (/(\.SR|\.SA)$/i.test(s)) return 'SAR';
   if (/^[0-9]{4,6}\.SE$/i.test(s)) return 'SAR';
+  if (/^[0-9]{4,6}$/.test(s)) return 'SAR';
+  if (/^TADAWUL:\s*[0-9]{4,6}$/.test(s)) return 'SAR';
   return 'USD';
 }
 
