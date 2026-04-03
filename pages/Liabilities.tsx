@@ -34,13 +34,20 @@ function matchesStatusFilter(liability: Liability, filter: StatusFilter): boolea
     return status === 'Paid';
 }
 
-const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (liability: Liability) => void; liabilityToEdit: Liability | null }> = ({ isOpen, onClose, onSave, liabilityToEdit }) => {
+const LiabilityModal: React.FC<{
+    isOpen: boolean;
+    onClose: () => void;
+    onSave: (liability: Liability) => void;
+    liabilityToEdit: Liability | null;
+    goals: { id: string; name: string }[];
+}> = ({ isOpen, onClose, onSave, liabilityToEdit, goals }) => {
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
     const [name, setName] = useState('');
     const [type, setType] = useState<Liability['type']>('Personal Loan');
     const [amount, setAmount] = useState('');
     const [status, setStatus] = useState<Liability['status']>('Active');
     const [owner, setOwner] = useState('');
+    const [goalId, setGoalId] = useState('');
 
     React.useEffect(() => {
         if (liabilityToEdit) {
@@ -49,6 +56,7 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
             setAmount(String(Math.abs(liabilityToEdit.amount)));
             setStatus(liabilityToEdit.status ?? 'Active');
             setOwner(liabilityToEdit.owner ?? '');
+            setGoalId(liabilityToEdit.goalId ?? '');
         } else {
             const learnedType = getLearnedDefault('liability-add', 'type') as Liability['type'] | undefined;
             const validTypes: Liability['type'][] = ['Credit Card', 'Loan', 'Personal Loan', 'Mortgage', 'Receivable'];
@@ -57,6 +65,7 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
             setAmount('');
             setStatus('Active');
             setOwner('');
+            setGoalId('');
         }
     }, [liabilityToEdit, isOpen, getLearnedDefault]);
 
@@ -69,7 +78,7 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
             type,
             amount: type === 'Receivable' ? value : -value,
             status,
-            goalId: liabilityToEdit?.goalId,
+            goalId: goalId || undefined,
             owner: owner.trim() || undefined,
         };
         onSave(newLiability);
@@ -109,6 +118,20 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father for managed wealth (excluded from your net worth)." /></label>
                     <input type="text" placeholder="e.g. Father, Spouse or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="input-base"/>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                        Link to goal (optional)
+                        <InfoHint text="Connect this liability/receivable to a life goal for easier tracking and reconciliation." />
+                    </label>
+                    <select value={goalId} onChange={e => setGoalId(e.target.value)} className="select-base">
+                        <option value="">No linked goal</option>
+                        {goals.map((g) => (
+                            <option key={g.id} value={g.id}>
+                                {g.name}
+                            </option>
+                        ))}
+                    </select>
                 </div>
                 {liabilityToEdit && (
                     <div>
@@ -593,7 +616,13 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 buttonLabel="Get AI Liabilities Insights"
             />
 
-            <LiabilityModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveLiability} liabilityToEdit={liabilityToEdit} />
+            <LiabilityModal
+                isOpen={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                onSave={handleSaveLiability}
+                liabilityToEdit={liabilityToEdit}
+                goals={(data?.goals ?? []).map((g) => ({ id: g.id, name: g.name }))}
+            />
         </PageLayout>
     );
 };

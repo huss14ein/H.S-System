@@ -569,7 +569,15 @@ ${PERSONAL_WEALTH_SCOPE}
 
 ${BRIEF_DIRECT_RULES}
 
-SAR, Saudi context. Exact amounts and percentages.`;
+SAR, Saudi context. Exact amounts and percentages.
+
+Output rules (mandatory):
+- Return valid Markdown only (no HTML).
+- Start with "## Executive Summary" (3-5 bullets, direct language).
+- Add "## Recommended Plan" with a Markdown table including: Category, Amount (SAR), Percent, Why.
+- Add "## 30-Day Actions" with numbered steps.
+- Add "## Assumptions & Gaps" listing any missing data and the exact impact.
+- Do not return plain paragraphs only; use headings, bullets, and at least one table.`;
 
 export type SalaryAllocationExpertParams = { salary: number; fixedExpenses: number; currentSavings: number; goal: string };
 export type CashFlowExpertParams = { salary: number; expenseBreakdown: string };
