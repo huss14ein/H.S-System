@@ -776,7 +776,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (transferGroupId !== undefined) payloadWithCamelCase.transferGroupId = transferGroupId;
         if (transferRole !== undefined) payloadWithCamelCase.transferRole = transferRole;
 
-        const variants: Record<string, unknown>[] = [payloadWithCamelCase, payloadWithSnakeCase];
+        const payloadWithSnakeCaseNoOptional: Record<string, unknown> = { ...payloadWithSnakeCase };
+        delete payloadWithSnakeCaseNoOptional.recurring_id;
+        delete payloadWithSnakeCaseNoOptional.budget_category;
+        delete payloadWithSnakeCaseNoOptional.transfer_group_id;
+        delete payloadWithSnakeCaseNoOptional.transfer_role;
+
+        const payloadWithCamelCaseNoOptional: Record<string, unknown> = { ...payloadWithCamelCase };
+        delete payloadWithCamelCaseNoOptional.recurringId;
+        delete payloadWithCamelCaseNoOptional.budgetCategory;
+        delete payloadWithCamelCaseNoOptional.transferGroupId;
+        delete payloadWithCamelCaseNoOptional.transferRole;
+
+        const variants: Record<string, unknown>[] = [
+            payloadWithCamelCase,
+            payloadWithSnakeCase,
+            payloadWithSnakeCaseNoOptional,
+            payloadWithCamelCaseNoOptional,
+        ];
         const hasNote =
             transactionClean.note != null && String(transactionClean.note).trim() !== '';
         if (hasNote) {
