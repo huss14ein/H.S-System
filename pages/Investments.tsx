@@ -196,7 +196,7 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
             })
             .reduce((sum, t) => {
                 const txCurrency = inferInvestmentTransactionCurrency(t, accounts, investments);
-                return sum + convertAmount(t.total || 0, txCurrency, planCurrency);
+                return sum + convertAmount(getInvestmentTransactionCashAmount(t as any), txCurrency, planCurrency);
             }, 0);
 
         const corePct = plan?.coreAllocation ?? 0.7;
@@ -2997,7 +2997,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             const d = new Date(t.date);
             const key = `${d.getFullYear()}-${d.getMonth()}`;
             const txnCurrency = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
-            const rawAmount = t.total ?? (t.quantity * (t.price ?? 0));
+            const rawAmount = getInvestmentTransactionCashAmount(t as any);
             const convertedAmount = convertAmount(rawAmount, txnCurrency, budgetCurrency);
             byMonth.set(key, (byMonth.get(key) ?? 0) + convertedAmount);
         });
