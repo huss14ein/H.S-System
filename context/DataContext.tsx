@@ -3067,12 +3067,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const totalDeployableCash = useMemo(() => {
         const sarPerUsd = resolveSarPerUsd(data as FinancialData);
-        const bank = accountsForDeployable.filter((a: Account) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: Account) => s + Math.max(0, a.balance ?? 0), 0);
         const platformCash = accountsForDeployable.filter((a: Account) => a.type === 'Investment').reduce((s: number, a: Account) => {
             const cash = getAvailableCashForAccount(a.id);
             return s + tradableCashBucketToSAR(cash, sarPerUsd);
         }, 0);
-        return bank + platformCash;
+        return platformCash;
     }, [accountsForDeployable, getAvailableCashForAccount, data]);
 
     // Auto-heal legacy duplicate holdings (same portfolio + symbol) once per unique snapshot.

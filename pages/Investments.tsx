@@ -575,11 +575,12 @@ const RecordTradeModal: React.FC<{
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const efRunway = useEmergencyFund(data ?? null);
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
-    /** Checking/Savings + tradable cash on investment platforms (SAR), so runway matches money moved to a broker. */
+    /** Tradable cash on personal investment platforms only (SAR). */
     const liquidCashSARForBuyPolicy = useMemo(() => {
         if (!data) return 0;
         const { personalAccounts } = getPersonalWealthData(data);
-        return totalLiquidCashSARFromAccounts(personalAccounts, getAvailableCashForAccount, sarPerUsd);
+        const investmentAccounts = personalAccounts.filter((a: Account) => a.type === 'Investment');
+        return totalLiquidCashSARFromAccounts(investmentAccounts, getAvailableCashForAccount, sarPerUsd);
     }, [data, getAvailableCashForAccount, sarPerUsd]);
     const runwayMonthsForBuyPolicy = useMemo(() => {
         const exp = efRunway.monthlyCoreExpenses;
