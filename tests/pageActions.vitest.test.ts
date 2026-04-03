@@ -11,11 +11,14 @@ describe('isSupportedPageAction', () => {
   it('accepts known transaction and goal actions', () => {
     expect(isSupportedPageAction('Transactions', 'open-transaction-modal')).toBe(true);
     expect(isSupportedPageAction('Transactions', 'filter-by-budget:Food:monthly:2026:4')).toBe(true);
+    expect(isSupportedPageAction('Transactions', 'filter-by-budget:Rent:yearly:2026:12')).toBe(true);
     expect(isSupportedPageAction('Goals', 'focus-goal:g-1')).toBe(true);
   });
 
   it('accepts known investment and engines actions', () => {
     expect(isSupportedPageAction('Investments', 'investment-tab:Watchlist')).toBe(true);
+    expect(isSupportedPageAction('Investments', 'investment-tab:Dividend Tracker')).toBe(true);
+    expect(isSupportedPageAction('Investments', 'open-trade-modal')).toBe(true);
     expect(isSupportedPageAction('Investments', 'open-trade-modal:from-plan')).toBe(true);
     expect(isSupportedPageAction('Engines & Tools', 'openLogic')).toBe(true);
     expect(isSupportedPageAction('Budgets', 'budgets-focus-admin-pending')).toBe(true);
@@ -24,9 +27,14 @@ describe('isSupportedPageAction', () => {
 
   it('rejects unknown or malformed actions', () => {
     expect(isSupportedPageAction('Investments', 'totally-unknown')).toBe(false);
+    expect(isSupportedPageAction('Investments', 'investment-tab:Unknown Tab')).toBe(false);
+    expect(isSupportedPageAction('Investments', 'open-trade-modalfoo')).toBe(false);
     expect(isSupportedPageAction('Goals', 'investment-tab:Watchlist')).toBe(false);
+    expect(isSupportedPageAction('Goals', 'focus-goal:')).toBe(false);
     expect(isSupportedPageAction('Assets', '')).toBe(false);
     expect(isSupportedPageAction('Assets', 'focus-goal:abc')).toBe(false);
+    expect(isSupportedPageAction('Transactions', 'filter-by-budget:Food:invalid:2026:4')).toBe(false);
+    expect(isSupportedPageAction('Transactions', 'filter-by-budget:Food:monthly:2026:13')).toBe(false);
     expect(isSupportedPageAction('Budgets', 'focus-goal:abc')).toBe(false);
   });
 

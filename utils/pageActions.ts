@@ -12,11 +12,14 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
   }
 
   if (page === 'Transactions') {
-    return action === 'open-transaction-modal' || action.startsWith('filter-by-budget:');
+    return (
+      action === 'open-transaction-modal' ||
+      /^filter-by-budget:[^:]+:(monthly|weekly|daily|yearly):\d{4}:(?:[1-9]|1[0-2])$/.test(action)
+    );
   }
 
   if (page === 'Goals') {
-    return action.startsWith('focus-goal:');
+    return /^focus-goal:[^\s:]+$/.test(action);
   }
 
   if (page === 'Budgets') {
@@ -34,8 +37,13 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
 
   if (page === 'Investments') {
     return (
-      action.startsWith('open-trade-modal') ||
-      action.startsWith('investment-tab:') ||
+      action === 'open-trade-modal' ||
+      /^open-trade-modal:.+/.test(action) ||
+      action === 'investment-tab:Recovery Plan' ||
+      action === 'investment-tab:Investment Plan' ||
+      action === 'investment-tab:Dividend Tracker' ||
+      action === 'investment-tab:AI Rebalancer' ||
+      action === 'investment-tab:Watchlist' ||
       action === 'focus-investment-plan' ||
       action === 'openRiskTradingHub'
     );
