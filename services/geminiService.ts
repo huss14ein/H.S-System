@@ -1546,6 +1546,20 @@ export const getAITradeAnalysis = async (
     transactions: InvestmentTransaction[],
     context?: TradeAnalysisContext
 ): Promise<string> => {
+    const ensureStructuredMarkdown = (raw: string, sections: string[]): string => {
+        const text = String(raw || '').trim();
+        if (!text) return '### Summary\nNo analysis generated.\n\n### Arabic Summary (ملخص عربي)\n- تعذر إنشاء الرد حالياً.';
+        const hasAnyHeading = /(^|\n)###\s+/m.test(text);
+        let out = hasAnyHeading ? text : `### Summary\n${text}`;
+        for (const section of sections) {
+            const re = new RegExp(`(^|\\n)###\\s+${section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\b|\\s)`, 'm');
+            if (!re.test(out)) out += `\n\n### ${section}\n- Not available in this response.`;
+        }
+        if (!/(^|\n)###\s+Arabic Summary\s*\(ملخص عربي\)/m.test(out)) {
+            out += '\n\n### Arabic Summary (ملخص عربي)\n- تعذر إنشاء الملخص العربي في هذه المحاولة. يرجى إعادة التوليد.';
+        }
+        return out;
+    };
     const MS_90D = 90 * 24 * 60 * 60 * 1000;
     const now = Date.now();
     const sorted = [...(transactions ?? [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -1636,7 +1650,15 @@ Rules:
 
     const execute = async () => {
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
-        return response.text || "Could not retrieve analysis.";
+        return ensureStructuredMarkdown(response.text || 'Could not retrieve analysis.', [
+            'Summary',
+            'Patterns',
+            'Portfolio Impact',
+            'Do’s (habits)',
+            'Don’ts (pitfalls)',
+            'Suggestions',
+            'Concept to Research',
+        ]);
     };
 
     try {
@@ -1680,6 +1702,20 @@ Your watchlist: **${list}**
 export const getAIWatchlistAdvice = async (symbols: string[]): Promise<string> => {
     if (!symbols?.length) return 'Add symbols to your watchlist to get AI tips.';
     const list = symbols.slice(0, 25).join(', ');
+    const ensureWatchlistMarkdown = (raw: string): string => {
+        const text = String(raw || '').trim();
+        if (!text) return '### Diversification\n- No suggestions generated.\n\n### Arabic Summary (ملخص عربي)\n- تعذر إنشاء الرد حالياً.';
+        const hasAnyHeading = /(^|\n)###\s+/m.test(text);
+        let out = hasAnyHeading ? text : `### Diversification\n- ${text}`;
+        for (const section of ['Diversification', 'Themes to Consider', 'Concepts to Research']) {
+            const re = new RegExp(`(^|\\n)###\\s+${section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\b|\\s)`, 'm');
+            if (!re.test(out)) out += `\n\n### ${section}\n- Not available in this response.`;
+        }
+        if (!/(^|\n)###\s+Arabic Summary\s*\(ملخص عربي\)/m.test(out)) {
+            out += '\n\n### Arabic Summary (ملخص عربي)\n- تعذر إنشاء الملخص العربي في هذه المحاولة. يرجى إعادة التوليد.';
+        }
+        return out;
+    };
     const prompt = `You are Finova AI, an expert investment advisor. The user's watchlist contains these symbols: ${list}.
 
 Return short, educational suggestions in Markdown only (no HTML). Use ### for section headers. Be concise (2–4 short bullets per section).
@@ -1705,7 +1741,7 @@ Rules:
 
     try {
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
-        return response.text || 'No suggestions generated.';
+        return ensureWatchlistMarkdown(response.text || 'No suggestions generated.');
     } catch {
         return buildFallbackWatchlistTips(symbols);
     }
