@@ -208,9 +208,11 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
 interface BudgetsProps {
     triggerPageAction?: (page: Page, action: string) => void;
     setActivePage?: (page: Page) => void;
+    pageAction?: string | null;
+    clearPageAction?: () => void;
 }
 
-const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) => {
+const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pageAction, clearPageAction }) => {
     const { data, loading, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { trackSuggestionFeedback } = useSelfLearning();
@@ -277,6 +279,29 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
     useEffect(() => {
         setSharedTxMonthFilter(`${currentYear}-${String(currentMonth).padStart(2, '0')}`);
     }, [currentYear, currentMonth]);
+    useEffect(() => {
+        if (!pageAction) return;
+        const scrollTo = (id: string) => {
+            window.setTimeout(() => {
+                const el = document.getElementById(id);
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 60);
+        };
+        if (pageAction === 'budgets-focus-requests') {
+            scrollTo('budget-requests-center');
+            clearPageAction?.();
+        } else if (pageAction === 'budgets-focus-my-pending') {
+            scrollTo('budget-my-pending-requests');
+            clearPageAction?.();
+        } else if (pageAction === 'budgets-open-request-form') {
+            scrollTo('budget-request-form');
+            clearPageAction?.();
+        } else if (pageAction === 'budgets-focus-admin-pending') {
+            setRequestStatusFilter('Pending');
+            scrollTo('budget-requests-center');
+            clearPageAction?.();
+        }
+    }, [pageAction, clearPageAction]);
     const [householdAdults, setHouseholdAdults] = useState(2);
     const [householdKids, setHouseholdKids] = useState(0);
     const [householdOverrides, setHouseholdOverrides] = useState<HouseholdMonthlyOverride[]>([]);
@@ -1849,6 +1874,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             }
         >
             <div className={budgetSubPage === 'household' ? 'hidden' : 'space-y-6'}>
+            <div id="budget-requests-center">
             <SectionCard title="Budget requests" collapsible collapsibleSummary="Search & filters" defaultExpanded>
                 <div className="flex flex-wrap gap-3 items-center">
                     <input
@@ -1893,6 +1919,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                     <div className="rounded border p-2 bg-slate-50 min-w-0 overflow-hidden"><span className="metric-label">Shown:</span> <span className="metric-value font-semibold">{sortedFilteredRequests.length}</span></div>
                 </div>
             </SectionCard>
+            </div>
 
             {budgetValidationWarnings.length > 0 && (
                 <SectionCard title="Budget validation checks" collapsible collapsibleSummary="Data quality checks" defaultExpanded>
@@ -1979,7 +2006,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
                 const currentSpent = currentBudgetRow?.spent ?? 0;
                 const nextMonthCtx = addMonths(currentMonth, currentYear, 1);
                 return (
-                    <div className="bg-gradient-to-br from-white via-primary/5 to-indigo-50 rounded-lg shadow p-5 border border-primary/20">
+                    <div id="budget-request-form" className="bg-gradient-to-br from-white via-primary/5 to-indigo-50 rounded-lg shadow p-5 border border-primary/20">
                         <h2 className="text-lg font-semibold mb-3 flex items-center">Request Budget Change <InfoHint text="Submit requests that always require admin approval: new category, increase limit, or pull budget from next month." /></h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
@@ -2041,7 +2068,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage }) =
             })()}
 
             {!isAdmin && pendingRequests.length > 0 && (
-                <div className="bg-gradient-to-br from-white via-blue-50 to-sky-50 rounded-lg shadow p-5 border border-blue-200">
+                <div id="budget-my-pending-requests" className="bg-gradient-to-br from-white via-blue-50 to-sky-50 rounded-lg shadow p-5 border border-blue-200">
                     <h2 className="text-lg font-semibold mb-3">My Pending Budget Requests</h2>
                     <div className="space-y-2">
                         {pendingRequests.map((r) => (

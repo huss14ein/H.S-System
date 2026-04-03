@@ -1,6 +1,6 @@
 # Production Deployment Checklist
 
-**Version:** 1.1.1.0  
+**Version:** 1.2.0.0  
 **Last updated:** March 2026
 
 This checklist ensures all critical items are configured before going live.
@@ -134,6 +134,7 @@ If enabling weekly emails:
 
 - [ ] **Authentication:** Sign up, login, logout work
 - [ ] **Data CRUD:** Create/edit/delete accounts, transactions, budgets, goals
+- [ ] **Transactions schema compatibility:** Run `supabase/verify_transactions_schema_compat.sql` and confirm required columns + pending RPC health
 - [ ] **AI features:** Dashboard summary, transaction categorization, persona generation
 - [ ] **Calculations:** Net worth, budget tracking, goal progress accurate
 - [ ] **Security:** RLS prevents cross-user data access (test with two accounts)

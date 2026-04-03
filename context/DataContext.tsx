@@ -673,6 +673,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return { ...raw, type, amount: roundMoney(amount), goalId: raw.goalId ?? raw.goal_id };
     };
 
+    const liabilityPayloadVariants = (liability: Liability) => {
+        const common = {
+            name: liability.name,
+            type: liability.type,
+            amount: liability.amount,
+            status: liability.status ?? 'Active',
+            owner: liability.owner ?? null,
+        };
+        const goal = liability.goalId != null && String(liability.goalId).trim() !== '' ? liability.goalId : null;
+        const snake = { ...common, goal_id: goal };
+        const camel = { ...common, goalId: goal };
+        return [snake, camel, common];
+    };
+
     const normalizeTransaction = (transaction: any): Transaction => {
         const rawNote = transaction.note != null ? String(transaction.note) : '';
         const { cleanNote, splitLines } = parseSplitsFromNote(rawNote);
@@ -776,7 +790,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (transferGroupId !== undefined) payloadWithCamelCase.transferGroupId = transferGroupId;
         if (transferRole !== undefined) payloadWithCamelCase.transferRole = transferRole;
 
-        const variants: Record<string, unknown>[] = [payloadWithCamelCase, payloadWithSnakeCase];
+        const payloadWithSnakeCaseNoOptional: Record<string, unknown> = { ...payloadWithSnakeCase };
+        delete payloadWithSnakeCaseNoOptional.recurring_id;
+        delete payloadWithSnakeCaseNoOptional.budget_category;
+        delete payloadWithSnakeCaseNoOptional.transfer_group_id;
+        delete payloadWithSnakeCaseNoOptional.transfer_role;
+
+        const payloadWithCamelCaseNoOptional: Record<string, unknown> = { ...payloadWithCamelCase };
+        delete payloadWithCamelCaseNoOptional.recurringId;
+        delete payloadWithCamelCaseNoOptional.budgetCategory;
+        delete payloadWithCamelCaseNoOptional.transferGroupId;
+        delete payloadWithCamelCaseNoOptional.transferRole;
+
+        const variants: Record<string, unknown>[] = [
+            payloadWithCamelCase,
+            payloadWithSnakeCase,
+            payloadWithSnakeCaseNoOptional,
+            payloadWithCamelCaseNoOptional,
+        ];
         const hasNote =
             transactionClean.note != null && String(transactionClean.note).trim() !== '';
         if (hasNote) {
@@ -1254,18 +1285,34 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const v = validateLiability({ name: liability.name, type: liability.type, amount: liability.amount, status: liability.status });
       if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
       const db = supabase;
-      const { id, user_id, ...insertData } = liability;
-      const { data: newLiability, error } = await db.from('liabilities').insert(withUser(insertData)).select().single();
-      if (error) { console.error("Error adding liability:", error); throw error; }
-      if (newLiability) setData(prev => ({ ...prev, liabilities: [...prev.liabilities, newLiability] }));
+      let newLiability: any = null;
+      let lastErr: any = null;
+      for (const payload of liabilityPayloadVariants(liability)) {
+        const result = await db.from('liabilities').insert(withUser(payload)).select().single();
+        newLiability = result.data;
+        lastErr = result.error;
+        if (!lastErr) break;
+        if (!isMissingColumnError(lastErr)) break;
+      }
+      if (lastErr) { console.error("Error adding liability:", lastErr); throw lastErr; }
+      if (newLiability) {
+        const normalized = normalizeLiability(newLiability);
+        setData(prev => ({ ...prev, liabilities: [...prev.liabilities, normalized] }));
+      }
     };
     const updateLiability = async (liability: Liability) => {
       if(!supabase || !auth?.user) return;
       const v = validateLiability({ name: liability.name, type: liability.type, amount: liability.amount, status: liability.status });
       if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
       const db = supabase;
-      const { error } = await db.from('liabilities').update(liability).match({ id: liability.id, user_id: auth.user.id });
-      if(error) console.error("Error updating liability:", error);
+      let lastErr: any = null;
+      for (const payload of liabilityPayloadVariants(liability)) {
+        const { error } = await db.from('liabilities').update(payload).match({ id: liability.id, user_id: auth.user.id });
+        lastErr = error;
+        if (!lastErr) break;
+        if (!isMissingColumnError(lastErr)) break;
+      }
+      if(lastErr) console.error("Error updating liability:", lastErr);
       else setData(prev => ({ ...prev, liabilities: prev.liabilities.map(l => l.id === liability.id ? liability : l) }));
     };
     const deleteLiability = async (liabilityId: string) => {
@@ -3020,12 +3067,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const totalDeployableCash = useMemo(() => {
         const sarPerUsd = resolveSarPerUsd(data as FinancialData);
-        const bank = accountsForDeployable.filter((a: Account) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: Account) => s + Math.max(0, a.balance ?? 0), 0);
         const platformCash = accountsForDeployable.filter((a: Account) => a.type === 'Investment').reduce((s: number, a: Account) => {
             const cash = getAvailableCashForAccount(a.id);
             return s + tradableCashBucketToSAR(cash, sarPerUsd);
         }, 0);
-        return bank + platformCash;
+        return platformCash;
     }, [accountsForDeployable, getAvailableCashForAccount, data]);
 
     // Auto-heal legacy duplicate holdings (same portfolio + symbol) once per unique snapshot.
