@@ -1591,7 +1591,12 @@ ${mergedContext.tradeActivitySummary ? `Activity summary: ${mergedContext.tradeA
 
     const prompt = `You are Finova AI, an expert investment and trading advisor. Analyze these transactions and return direct, educational feedback in Markdown only (no HTML). Use ### for each section. Be specific and actionable; reference symbols and amounts where relevant.
 
-CRITICAL: Use only the trade rows and dates below. If dates span weeks, months, or years, say that clearly. Do **not** claim trades happened in "the last 48 hours" or a short window unless every listed trade date is within that window of the report run date. Mixed USD/SAR amounts appear on rows—describe them as recorded; do not invent conversions.
+CRITICAL:
+- Use only the trade rows and dates below.
+- If dates span weeks, months, or years, say that clearly.
+- Do **not** claim trades happened in "the last 48 hours" unless every listed trade date is in that window.
+- Mixed USD/SAR amounts appear on rows—describe them exactly as recorded.
+- Do not invent FX conversions. Keep currency labels accurate.
 
 ${contextBlock ? '\n' + contextBlock + '\n' : ''}
 
@@ -1615,11 +1620,19 @@ What the user did in one sentence (buys/sells, main symbols, size). Use numbers.
 - 1-2 bullets: common mistakes to avoid in general terms (no shaming; no buy/sell commands).
 
 ### Suggestions
-- One or two concrete, educational suggestions (e.g. "Consider tracking X", "Look up Y"). No buy/sell recommendations.
+- One or two concrete, educational trading suggestions (entry planning, sizing discipline, risk controls). Keep them scenario-based, never guaranteed.
 
 ### Concept to Research
 - One concept to look up (e.g. dollar-cost averaging, rebalancing, diversification). One sentence.
-Do not give buy/sell advice. Markdown only.`;
+
+### Arabic Summary (ملخص عربي)
+- Provide a concise Arabic translation of Summary + Suggestions + Risk framing in 3-5 bullets.
+- Keep all numbers and currency labels consistent with the English sections.
+
+Rules:
+- English sections first, then Arabic summary section.
+- Educational only, not financial advice.
+- Markdown only.`;
 
     const execute = async () => {
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
@@ -1655,7 +1668,7 @@ Your watchlist: **${list}**
 
 ### When AI is available
 - Use **Generate Watchlist Tips** for diversification, themes, and concepts to research.
-- AI suggestions are educational only (no buy/sell advice).
+- AI suggestions are educational only (not financial advice).
 
 ### General tips
 - Review sector and region concentration; consider diversifying if heavily concentrated.
@@ -1669,7 +1682,7 @@ export const getAIWatchlistAdvice = async (symbols: string[]): Promise<string> =
     const list = symbols.slice(0, 25).join(', ');
     const prompt = `You are Finova AI, an expert investment advisor. The user's watchlist contains these symbols: ${list}.
 
-Return short, educational suggestions in Markdown only (no HTML). Use ### for section headers. Be concise (2–4 short bullets per section). Do NOT give buy/sell recommendations.
+Return short, educational suggestions in Markdown only (no HTML). Use ### for section headers. Be concise (2–4 short bullets per section).
 
 Sections:
 ### Diversification
@@ -1681,7 +1694,14 @@ Sections:
 ### Concepts to Research
 - One or two concepts the user could look up (e.g. position sizing, rebalancing, dollar-cost averaging).
 
-Keep each section to 2–4 short bullets. Markdown only.`;
+### Arabic Summary (ملخص عربي)
+- 3–5 Arabic bullets that summarize Diversification + Themes + Concepts to research.
+- Keep numbers/tickers consistent with the English sections.
+
+Rules:
+- English sections first, then Arabic summary.
+- Educational only, not financial advice.
+- Markdown only.`;
 
     try {
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
