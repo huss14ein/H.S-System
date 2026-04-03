@@ -2997,16 +2997,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const availableCashByAccountId = useMemo(() => {
         const map: Record<string, { SAR: number; USD: number }> = {};
-        (data?.accounts ?? []).forEach((acc: Account) => {
-            if (acc.type !== 'Investment') return;
-            const accId = resolveCanonicalAccountId(acc.id, data?.accounts ?? []) ?? acc.id;
-            if (!accId) return;
-            if (!(accId in map)) map[accId] = { SAR: 0, USD: 0 };
-            const openingBalance = Math.max(0, Number(acc.balance ?? 0));
-            if (!Number.isFinite(openingBalance) || openingBalance <= 0) return;
-            const baseCur: TradeCurrency = acc.currency === 'USD' ? 'USD' : 'SAR';
-            map[accId][baseCur] += openingBalance;
-        });
+        const normalizedTx: Array<{ accId: string; tx: InvestmentTransaction }> = [];
         (data.investmentTransactions || []).forEach((t: InvestmentTransaction) => {
             const portfolioId = t.portfolioId ?? (t as any).portfolio_id;
             const linkedPortfolio: any = portfolioId ? (data?.investments ?? []).find((p: any) => p.id === portfolioId) : undefined;
@@ -3020,6 +3011,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (!raw) return;
             const accId = resolveCanonicalAccountId(String(raw), data?.accounts ?? []);
             if (!accId) return;
+            normalizedTx.push({ accId, tx: t });
+        });
+
+        const hasInvestmentLedgerRows = new Set(normalizedTx.map((x) => x.accId));
+        (data?.accounts ?? []).forEach((acc: Account) => {
+            if (acc.type !== 'Investment') return;
+            const accId = resolveCanonicalAccountId(acc.id, data?.accounts ?? []) ?? acc.id;
+            if (!accId) return;
+            if (!(accId in map)) map[accId] = { SAR: 0, USD: 0 };
+            // Legacy seed only: if this account already has ledger rows, treat `account.balance` as display-only and avoid double counting.
+            if (hasInvestmentLedgerRows.has(accId)) return;
+            const openingBalance = Math.max(0, Number(acc.balance ?? 0));
+            if (!Number.isFinite(openingBalance) || openingBalance <= 0) return;
+            const baseCur: TradeCurrency = acc.currency === 'USD' ? 'USD' : 'SAR';
+            map[accId][baseCur] += openingBalance;
+        });
+
+        normalizedTx.forEach(({ accId, tx: t }) => {
             if (!(accId in map)) map[accId] = { SAR: 0, USD: 0 };
             const amt = getInvestmentTransactionCashAmount(t as any);
             if (!Number.isFinite(amt)) return;

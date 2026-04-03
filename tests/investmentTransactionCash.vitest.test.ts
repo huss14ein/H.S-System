@@ -17,4 +17,12 @@ describe('getInvestmentTransactionCashAmount', () => {
   it('derives sell amount from quantity*price minus fees when total is missing', () => {
     expect(getInvestmentTransactionCashAmount({ type: 'sell', quantity: 10, price: 100, fees: 5 } as any)).toBe(995);
   });
+
+  it('does not derive deposit from quantity*price noise when total/amount are missing', () => {
+    expect(getInvestmentTransactionCashAmount({ type: 'deposit', quantity: 10, price: 100 } as any)).toBe(0);
+  });
+
+  it('does not derive withdrawal from quantity*price noise when total/amount are missing', () => {
+    expect(getInvestmentTransactionCashAmount({ type: 'withdrawal', quantity: 10, price: 100 } as any)).toBe(0);
+  });
 });
