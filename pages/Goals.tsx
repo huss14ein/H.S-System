@@ -235,6 +235,10 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         return Array.from(new Set(syms.filter((s) => s.length >= 2)));
     }, [data?.investments, goal.id]);
     const { names: goalHoldingNames } = useCompanyNames(goalLinkSymbols);
+    const linkedLiabilities = useMemo(
+        () => ((data as any)?.personalLiabilities ?? data?.liabilities ?? []).filter((l: { goalId?: string }) => l.goalId === goal.id),
+        [data?.liabilities, (data as any)?.personalLiabilities, goal.id],
+    );
 
     const { linkedAssets, calculatedCurrentAmount } = useMemo(() => {
         const linkedItems: { name: string, value: number }[] = [];
@@ -431,6 +435,22 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                     </ul>
                 ) : (
                     <p className="text-xs text-gray-500 text-center italic mt-2">No assets linked. Link them from the Assets or Investments pages.</p>
+                )}
+                {linkedLiabilities.length > 0 && (
+                    <div className="mt-3 border-t pt-3">
+                        <p className="text-xs font-semibold text-gray-700 mb-1">Linked liabilities</p>
+                        <ul className="space-y-1 text-sm">
+                            {linkedLiabilities.slice(0, 4).map((liab: { id: string; name?: string; amount?: number; status?: string }) => (
+                                <li key={liab.id} className="flex justify-between items-center">
+                                    <span className="text-gray-600 break-words" title={liab.name ?? 'Liability'}>{liab.name ?? 'Liability'}</span>
+                                    <span className="font-medium text-danger ml-2">{formatCurrencyString(Math.abs(liab.amount ?? 0), { digits: 0 })}{(liab.status ?? 'Active') === 'Paid' ? ' (Paid)' : ''}</span>
+                                </li>
+                            ))}
+                            {linkedLiabilities.length > 4 && (
+                                <li className="text-xs text-gray-500">+{linkedLiabilities.length - 4} more linked liabilities</li>
+                            )}
+                        </ul>
+                    </div>
                 )}
             </div>
             

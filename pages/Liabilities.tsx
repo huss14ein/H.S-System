@@ -149,7 +149,7 @@ const LiabilityModal: React.FC<{
     );
 };
 
-const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void; onMarkPaid: (l: Liability) => void; canMarkPaid: boolean; canEdit: boolean; onGoToAccounts?: () => void }> = ({ liability, onEdit, onMarkPaid, canMarkPaid, canEdit, onGoToAccounts }) => {
+const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void; onMarkPaid: (l: Liability) => void; canMarkPaid: boolean; canEdit: boolean; onGoToAccounts?: () => void; goalName?: string | null }> = ({ liability, onEdit, onMarkPaid, canMarkPaid, canEdit, onGoToAccounts, goalName }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const isPaid = (liability.status ?? 'Active') === 'Paid';
     const getIcon = (type: Liability['type']) => {
@@ -173,6 +173,7 @@ const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void;
                             {liability.type}
                             {isPaid && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-slate-200 text-slate-700">Paid (reference)</span>}
                             <OwnerBadge owner={liability.owner} />
+                            {goalName && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700">Goal: {goalName}</span>}
                         </p>
                     </div>
                 </div>
@@ -196,7 +197,7 @@ const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void;
     );
 };
 
-const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void; onMarkPaid: (l: Liability) => void; canMarkPaid: boolean }> = ({ liability, onEdit, onMarkPaid, canMarkPaid }) => {
+const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void; onMarkPaid: (l: Liability) => void; canMarkPaid: boolean; goalName?: string | null }> = ({ liability, onEdit, onMarkPaid, canMarkPaid, goalName }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const isPaid = (liability.status ?? 'Active') === 'Paid';
     return (
@@ -206,9 +207,10 @@ const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) =>
                     <BanknotesIcon className={`h-8 w-8 ${isPaid ? 'text-slate-400' : 'text-emerald-500'}`} />
                     <div>
                         <h3 className="font-bold text-dark text-lg">{liability.name}</h3>
-                        <p className="text-sm text-gray-500 flex items-center gap-2">
+                        <p className="text-sm text-gray-500 flex items-center gap-2 flex-wrap">
                             Owed to you
                             {isPaid && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-slate-200 text-slate-700">Paid (reference)</span>}
+                            {goalName && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700">Goal: {goalName}</span>}
                         </p>
                     </div>
                 </div>
@@ -258,6 +260,10 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     const debts = useMemo(() => allDebts.filter(l => matchesStatusFilter(l, statusFilter)), [allDebts, statusFilter]);
     const receivables = useMemo(() => allReceivables.filter(l => matchesStatusFilter(l, statusFilter)), [allReceivables, statusFilter]);
     const liabilityIds = useMemo(() => new Set((data?.liabilities ?? []).map(l => l.id)), [data?.liabilities]);
+    const goalNameById = useMemo(
+        () => new Map<string, string>((data?.goals ?? []).map((g) => [g.id, g.name])),
+        [data?.goals],
+    );
 
     /** Checking + savings only, SAR equivalent (mixed USD/SAR accounts). */
     const liquidCheckingSavingsSar = useMemo(() => {
@@ -589,6 +595,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                                 canMarkPaid={liabilityIds.has(liab.id)}
                                 canEdit={liabilityIds.has(liab.id)}
                                 onGoToAccounts={setActivePage ? () => setActivePage('Accounts') : undefined}
+                                goalName={liab.goalId ? goalNameById.get(liab.goalId) ?? null : null}
                             />
                         ))}
                     </div>
@@ -602,7 +609,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 ) : (
                     <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                         {receivables.map(liab => (
-                            <ReceivableCard key={liab.id} liability={liab} onEdit={l => handleOpenModal(l)} onMarkPaid={handleMarkPaid} canMarkPaid={liabilityIds.has(liab.id)} />
+                            <ReceivableCard key={liab.id} liability={liab} onEdit={l => handleOpenModal(l)} onMarkPaid={handleMarkPaid} canMarkPaid={liabilityIds.has(liab.id)} goalName={liab.goalId ? goalNameById.get(liab.goalId) ?? null : null} />
                         ))}
                     </div>
                 )}

@@ -673,6 +673,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return { ...raw, type, amount: roundMoney(amount), goalId: raw.goalId ?? raw.goal_id };
     };
 
+    const liabilityPayloadVariants = (liability: Liability) => {
+        const common = {
+            name: liability.name,
+            type: liability.type,
+            amount: liability.amount,
+            status: liability.status ?? 'Active',
+            owner: liability.owner ?? null,
+        };
+        const goal = liability.goalId != null && String(liability.goalId).trim() !== '' ? liability.goalId : null;
+        const snake = { ...common, goal_id: goal };
+        const camel = { ...common, goalId: goal };
+        return [snake, camel, common];
+    };
+
     const normalizeTransaction = (transaction: any): Transaction => {
         const rawNote = transaction.note != null ? String(transaction.note) : '';
         const { cleanNote, splitLines } = parseSplitsFromNote(rawNote);
@@ -1271,18 +1285,34 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const v = validateLiability({ name: liability.name, type: liability.type, amount: liability.amount, status: liability.status });
       if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
       const db = supabase;
-      const { id, user_id, ...insertData } = liability;
-      const { data: newLiability, error } = await db.from('liabilities').insert(withUser(insertData)).select().single();
-      if (error) { console.error("Error adding liability:", error); throw error; }
-      if (newLiability) setData(prev => ({ ...prev, liabilities: [...prev.liabilities, newLiability] }));
+      let newLiability: any = null;
+      let lastErr: any = null;
+      for (const payload of liabilityPayloadVariants(liability)) {
+        const result = await db.from('liabilities').insert(withUser(payload)).select().single();
+        newLiability = result.data;
+        lastErr = result.error;
+        if (!lastErr) break;
+        if (!isMissingColumnError(lastErr)) break;
+      }
+      if (lastErr) { console.error("Error adding liability:", lastErr); throw lastErr; }
+      if (newLiability) {
+        const normalized = normalizeLiability(newLiability);
+        setData(prev => ({ ...prev, liabilities: [...prev.liabilities, normalized] }));
+      }
     };
     const updateLiability = async (liability: Liability) => {
       if(!supabase || !auth?.user) return;
       const v = validateLiability({ name: liability.name, type: liability.type, amount: liability.amount, status: liability.status });
       if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
       const db = supabase;
-      const { error } = await db.from('liabilities').update(liability).match({ id: liability.id, user_id: auth.user.id });
-      if(error) console.error("Error updating liability:", error);
+      let lastErr: any = null;
+      for (const payload of liabilityPayloadVariants(liability)) {
+        const { error } = await db.from('liabilities').update(payload).match({ id: liability.id, user_id: auth.user.id });
+        lastErr = error;
+        if (!lastErr) break;
+        if (!isMissingColumnError(lastErr)) break;
+      }
+      if(lastErr) console.error("Error updating liability:", lastErr);
       else setData(prev => ({ ...prev, liabilities: prev.liabilities.map(l => l.id === liability.id ? liability : l) }));
     };
     const deleteLiability = async (liabilityId: string) => {
