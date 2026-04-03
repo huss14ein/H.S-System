@@ -1639,6 +1639,21 @@ What the user did in one sentence (buys/sells, main symbols, size). Use numbers.
 ### Concept to Research
 - One concept to look up (e.g. dollar-cost averaging, rebalancing, diversification). One sentence.
 
+### Technical Framework Matrix
+- Dow Theory: regime (uptrend/downtrend/range) and why.
+- Elliott Wave: likely wave context (impulse/corrective) and what would invalidate it.
+- Fibonacci: key retracement/extension zone(s) to monitor.
+- Chart Patterns: active pattern hypothesis and trigger level.
+- Candlestick Patterns: strongest recent candle signal and interpretation.
+- Combined Method (confluence): where 2+ frameworks align and where they conflict.
+
+### Trade Plan (Educational)
+- Entry zone(s), invalidation level, and two target scenarios.
+- Position sizing and risk notes using the row currencies as recorded (USD/SAR labels must remain exact).
+
+### Confidence Score
+- Provide a score from 0-100 and one sentence explaining uncertainty drivers (data limits, mixed signals, timeframe mismatch).
+
 ### Arabic Summary (ملخص عربي)
 - Provide a concise Arabic translation of Summary + Suggestions + Risk framing in 3-5 bullets.
 - Keep all numbers and currency labels consistent with the English sections.
@@ -1658,6 +1673,9 @@ Rules:
             'Don’ts (pitfalls)',
             'Suggestions',
             'Concept to Research',
+            'Technical Framework Matrix',
+            'Trade Plan (Educational)',
+            'Confidence Score',
         ]);
     };
 
