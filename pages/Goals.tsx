@@ -450,7 +450,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
     );
 };
 
-const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
+const Goals: React.FC<{ setActivePage?: (page: Page) => void; pageAction?: string | null; clearPageAction?: () => void }> = ({ setActivePage, pageAction, clearPageAction }) => {
     const { data, loading, addGoal, updateGoal, deleteGoal, updateGoalAllocations } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const { exchangeRate } = useCurrency();
@@ -460,6 +460,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [goalToEdit, setGoalToEdit] = useState<Goal | null>(null);
     const [goalToDelete, setGoalToDelete] = useState<Goal | null>(null);
+    const [focusedGoalId, setFocusedGoalId] = useState<string | null>(null);
     const [allocations, setAllocations] = useState<Record<string, number>>({});
 
     const allocationSyncKey = useMemo(
@@ -479,6 +480,25 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         });
         setAllocations(initialAllocations);
     }, [allocationSyncKey]);
+
+    useEffect(() => {
+        if (!pageAction) return;
+        if (pageAction.startsWith('focus-goal:')) {
+            const encoded = pageAction.slice('focus-goal:'.length);
+            const id = decodeURIComponent(encoded || '').trim();
+            if (id) {
+                setFocusedGoalId(id);
+                window.setTimeout(() => {
+                    const el = document.getElementById(`goal-card-${id}`);
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 60);
+                window.setTimeout(() => {
+                    setFocusedGoalId((prev) => (prev === id ? null : prev));
+                }, 3500);
+            }
+            clearPageAction?.();
+        }
+    }, [pageAction, clearPageAction]);
 
     const averageMonthlySavings = useMemo(() => {
         const monthlyNet = new Map<string, number>();
@@ -770,14 +790,19 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
       
        <div className="cards-grid grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
         {goalsByPriority.map(goal => (
-            <GoalCard 
-                key={goal.id} 
-                goal={goal} 
-                onEdit={() => handleOpenModal(goal)}
-                onDelete={() => handleOpenDeleteModal(goal)}
-                monthlySavings={averageMonthlySavings}
-                onSeeInPlan={setActivePage ? () => setActivePage('Plan') : undefined}
-            />
+            <div
+                key={goal.id}
+                id={`goal-card-${goal.id}`}
+                className={focusedGoalId === goal.id ? 'rounded-xl ring-2 ring-primary/40 ring-offset-2 transition-all' : ''}
+            >
+                <GoalCard
+                    goal={goal}
+                    onEdit={() => handleOpenModal(goal)}
+                    onDelete={() => handleOpenDeleteModal(goal)}
+                    monthlySavings={averageMonthlySavings}
+                    onSeeInPlan={setActivePage ? () => setActivePage('Plan') : undefined}
+                />
+            </div>
         ))}
       </div>
       
