@@ -6,6 +6,7 @@ import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from './fxDai
 import { computePersonalNetWorthSAR } from './personalNetWorth';
 import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
+import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 
 /** KPI figures shared by Dashboard and System Health diagnostics (keep in sync with dashboard aggregation). */
 export type DashboardKpiSnapshot = {
@@ -107,7 +108,7 @@ export function computeDashboardKpiSnapshot(
         );
         const day = (t.date ?? '').slice(0, 10);
         const r = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, exchangeRate) : sarPerUsd;
-        return sum + toSAR(t.total ?? 0, c, r);
+        return sum + toSAR(getInvestmentTransactionCashAmount(t as any), c, r);
       }, 0);
     const totalWithdrawnSar = invTx
       .filter((t) => isInvestmentTransactionType(t.type, 'withdrawal'))
@@ -119,7 +120,7 @@ export function computeDashboardKpiSnapshot(
         );
         const day = (t.date ?? '').slice(0, 10);
         const r = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, exchangeRate) : sarPerUsd;
-        return sum + toSAR(t.total ?? 0, c, r);
+        return sum + toSAR(getInvestmentTransactionCashAmount(t as any), c, r);
       }, 0);
     const netCapital = totalInvestedSar - totalWithdrawnSar;
     const totalGainLoss = totalInvestmentsValue - netCapital;

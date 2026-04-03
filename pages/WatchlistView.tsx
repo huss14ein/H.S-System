@@ -218,6 +218,11 @@ const AddWatchlistItemModal: React.FC<{
                                 className="w-full p-3 pr-10 border border-slate-300 rounded-xl text-lg font-semibold tracking-wide uppercase focus:ring-2 focus:ring-primary focus:border-primary transition-all"
                                 placeholder="e.g. AAPL"
                                 maxLength={10}
+                                autoComplete="off"
+                                autoCorrect="off"
+                                autoCapitalize="characters"
+                                spellCheck={false}
+                                inputMode="text"
                                 aria-describedby="add-wl-hint add-wl-popular"
                             />
                             {symbol && (

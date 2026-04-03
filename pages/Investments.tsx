@@ -81,6 +81,7 @@ import {
     portfolioBelongsToAccount,
     resolveCanonicalAccountId,
 } from '../utils/investmentLedgerCurrency';
+import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import {
     computePersonalCommoditiesContributionSAR,
     computePersonalPlatformsRollupSAR,
@@ -350,18 +351,54 @@ const priorityRank = (p?: Goal['priority']) => (p === 'High' ? 0 : p === 'Medium
 /** Surfaces savings & life goals from the Goals page (not only retirement) so progress is visible before drilling into tabs. */
 const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGoals }) => {
     const { data } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+    const goalCurrentByIdSar = useMemo(() => {
+        const map = new Map<string, number>();
+        const addToGoal = (goalId: string, valueSar: number) => {
+            if (!goalId) return;
+            map.set(goalId, (map.get(goalId) ?? 0) + (Number.isFinite(valueSar) ? valueSar : 0));
+        };
+
+        const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
+        assets.forEach((a: { goalId?: string; value?: number }) => {
+            if (!a.goalId) return;
+            addToGoal(a.goalId, Number(a.value) || 0);
+        });
+
+        const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        investments.forEach((p: { goalId?: string; currency?: string; holdings?: { goalId?: string; currentValue?: number }[] }) => {
+            const pGoalId = p.goalId ?? '';
+            let portfolioResidual = 0;
+            (p.holdings ?? []).forEach((h: { goalId?: string; currentValue?: number }) => {
+                const valueSar = toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd);
+                if (h.goalId) addToGoal(h.goalId, valueSar);
+                else if (pGoalId) portfolioResidual += valueSar;
+            });
+            if (pGoalId && portfolioResidual > 0) addToGoal(pGoalId, portfolioResidual);
+        });
+
+        return map;
+    }, [data?.assets, data?.investments, (data as any)?.personalAssets, (data as any)?.personalInvestments, sarPerUsd]);
     const sortedGoals = useMemo(() => {
-        const list = (data?.goals ?? []).filter((g) => Number(g.targetAmount) > 0);
-        return [...list].sort((a, b) => {
+        const normalized = (data?.goals ?? [])
+            .map((g: any) => ({
+                ...g,
+                targetResolved: Math.max(0, Number(g?.targetAmount ?? g?.target_amount ?? 0) || 0),
+                currentResolved: Math.max(0, Number(goalCurrentByIdSar.get(g.id) ?? 0) || 0),
+                deadlineResolved: String(g?.deadline ?? g?.targetDate ?? g?.target_date ?? ''),
+            }))
+            .filter((g: any) => g.targetResolved > 0);
+        return [...normalized].sort((a: any, b: any) => {
             const pr = priorityRank(a.priority) - priorityRank(b.priority);
             if (pr !== 0) return pr;
-            const da = new Date(a.deadline).getTime();
-            const db = new Date(b.deadline).getTime();
+            const da = new Date(a.deadlineResolved).getTime();
+            const db = new Date(b.deadlineResolved).getTime();
             if (Number.isFinite(da) && Number.isFinite(db) && da !== db) return da - db;
-            return (Number(b.targetAmount) || 0) - (Number(a.targetAmount) || 0);
+            return (Number(b.targetResolved) || 0) - (Number(a.targetResolved) || 0);
         });
-    }, [data?.goals]);
+    }, [data?.goals, goalCurrentByIdSar]);
     const displayGoals = sortedGoals.slice(0, 6);
 
     if (sortedGoals.length === 0) {
@@ -415,8 +452,8 @@ const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGo
             </div>
             <div className="p-4 sm:p-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {displayGoals.map((g) => {
-                    const target = Math.max(0, Number(g.targetAmount) || 0);
-                    const current = Math.max(0, Number(g.currentAmount) || 0);
+                    const target = Math.max(0, Number((g as any).targetResolved) || 0);
+                    const current = Math.max(0, Number((g as any).currentResolved) || 0);
                     const pct = target > 0 ? Math.min(100, (current / target) * 100) : 0;
                     const remaining = Math.max(0, target - current);
                     const isRetirement = /retirement|تقاعد|pension|معاش|retire/i.test(g.name || '');
@@ -467,7 +504,7 @@ const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGo
                                 </div>
                                 <div className="text-right">
                                     <dt className="text-slate-500">Deadline</dt>
-                                    <dd className="font-semibold text-slate-800">{g.deadline ? new Date(g.deadline).toLocaleDateString() : '—'}</dd>
+                                    <dd className="font-semibold text-slate-800">{(g as any).deadlineResolved ? new Date((g as any).deadlineResolved).toLocaleDateString() : '—'}</dd>
                                 </div>
                             </dl>
                         </div>
@@ -539,11 +576,12 @@ const RecordTradeModal: React.FC<{
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const efRunway = useEmergencyFund(data ?? null);
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
-    /** Checking/Savings + tradable cash on investment platforms (SAR), so runway matches money moved to a broker. */
+    /** Tradable cash on personal investment platforms only (SAR). */
     const liquidCashSARForBuyPolicy = useMemo(() => {
         if (!data) return 0;
         const { personalAccounts } = getPersonalWealthData(data);
-        return totalLiquidCashSARFromAccounts(personalAccounts, getAvailableCashForAccount, sarPerUsd);
+        const investmentAccounts = personalAccounts.filter((a: Account) => a.type === 'Investment');
+        return totalLiquidCashSARFromAccounts(investmentAccounts, getAvailableCashForAccount, sarPerUsd);
     }, [data, getAvailableCashForAccount, sarPerUsd]);
     const runwayMonthsForBuyPolicy = useMemo(() => {
         const exp = efRunway.monthlyCoreExpenses;
@@ -4494,20 +4532,32 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0;
     invTxs.forEach((t: InvestmentTransaction) => {
         const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
-        if (c === 'SAR') invSAR += t.total ?? 0;
-        else invUSD += t.total ?? 0;
+        const amt = getInvestmentTransactionCashAmount(t as any);
+        if (c === 'SAR') invSAR += amt;
+        else invUSD += amt;
     });
     wdrTxs.forEach((t: InvestmentTransaction) => {
         const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
-        if (c === 'SAR') wdrSAR += t.total ?? 0;
-        else wdrUSD += t.total ?? 0;
+        const amt = getInvestmentTransactionCashAmount(t as any);
+        if (c === 'SAR') wdrSAR += amt;
+        else wdrUSD += amt;
     });
     const totalInvestedSAR = invSAR + invUSD * rate;
     const totalWithdrawnSAR = wdrSAR + wdrUSD * rate;
     const commodityCost = allCommodities.reduce((sum: number, ch: { purchaseValue?: number }) => sum + toSAR(ch.purchaseValue ?? 0, 'USD', rate), 0);
-    const netCapital = totalInvestedSAR - totalWithdrawnSAR + commodityCost;
+    const holdingsCostBasisSAR = portfolios.reduce((sum: number, p: any) => {
+      const book: 'USD' | 'SAR' = p?.currency === 'USD' ? 'USD' : 'SAR';
+      const cost = (p?.holdings ?? []).reduce(
+        (s: number, h: any) => s + Math.max(0, (Number(h?.avgCost) || 0) * (Number(h?.quantity) || 0)),
+        0,
+      );
+      return sum + toSAR(cost, book, rate);
+    }, 0);
+    const computedNetCapital = totalInvestedSAR - totalWithdrawnSAR + commodityCost;
+    const netCapital = computedNetCapital > 0 ? computedNetCapital : holdingsCostBasisSAR + commodityCost;
     const totalGainLoss = totalValue - netCapital;
-    const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
+    const roiRaw = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
+    const roi = Number.isFinite(roiRaw) ? roiRaw : 0;
 
     const previousTotalValue = totalValue - totalDailyPnL;
     const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;

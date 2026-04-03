@@ -19,6 +19,7 @@ import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import { useTodosOptional } from './TodosContext';
 import { computeTaskCounts } from '../services/todoModel';
+import { isSupportedPageAction } from '../utils/pageActions';
 
 const READ_STORAGE_KEY = 'h.s.notifications.read';
 
@@ -31,6 +32,7 @@ export interface AppNotification {
   date: string;
   isRead: boolean;
   pageLink: Page;
+  pageAction?: string;
   symbol?: string;
   severity?: 'info' | 'warning' | 'urgent';
   actionHint?: string;
@@ -51,6 +53,19 @@ function loadReadIds(): Set<string> {
 
 function saveReadIds(ids: Set<string>) {
   try { localStorage.setItem(READ_STORAGE_KEY, JSON.stringify([...ids])); } catch {}
+}
+
+function asIsoString(value: unknown, fallback: Date): string {
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? fallback.toISOString() : value.toISOString();
+  if (typeof value === 'string' || typeof value === 'number') {
+    const d = new Date(value);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  return fallback.toISOString();
+}
+
+function safePageAction(page: Page, action: string): string | undefined {
+  return isSupportedPageAction(page, action) ? action : undefined;
 }
 
 type NotificationsContextValue = {
@@ -129,13 +144,18 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     }).filter((x) => x.pct >= threshold).sort((a, b) => b.pct - a.pct).slice(0, 4);
 
     budgetCandidates.forEach(({ b, pct }) => {
+      const period = String((b as any).period ?? 'monthly').toLowerCase();
+      const periodTag = period === 'weekly' || period === 'yearly' || period === 'daily' ? period : 'monthly';
+      const y = Number((b as any).year) || now.getFullYear();
+      const m = Number((b as any).month) || (now.getMonth() + 1);
       push({
         id: `budget-${b.id}`,
         category: 'Budget',
         message: `"${b.category ?? 'Budget'}" is at ${pct.toFixed(0)}% of limit.`,
         date: now.toISOString(),
         isRead: false,
-        pageLink: 'Budgets',
+        pageLink: 'Transactions',
+        pageAction: safePageAction('Transactions', `filter-by-budget:${encodeURIComponent(String(b.category ?? 'Other'))}:${periodTag}:${y}:${m}`),
         severity: pct >= 100 ? 'urgent' : 'warning',
         actionHint: pct >= 100 ? 'Review and reduce spending or increase approved limit.' : 'Monitor this category and reduce optional spend.',
       });
@@ -155,6 +175,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           date: now.toISOString(),
           isRead: false,
           pageLink: 'Goals',
+          pageAction: safePageAction('Goals', `focus-goal:${encodeURIComponent(String(g.id ?? ''))}`),
           severity: daysLeft <= 7 ? 'urgent' : 'warning',
           actionHint: 'Increase monthly allocation or adjust goal deadline.',
         });
@@ -175,6 +196,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         date: now.toISOString(),
         isRead: false,
         pageLink: 'Goals',
+        pageAction: safePageAction('Goals', `focus-goal:${encodeURIComponent(String(g.id ?? ''))}`),
         severity: 'info',
         actionHint: 'Set allocation % on the Goals page so funding suggestions reflect your priorities.',
       });
@@ -189,6 +211,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         date: now.toISOString(),
         isRead: false,
         pageLink: 'Budgets',
+        pageAction: safePageAction('Budgets', 'budgets-focus-admin-pending'),
         severity: 'warning',
         actionHint: 'Open Budgets to review and approve. Approved transactions will be reflected in shared budgets for all users with access.',
       });
@@ -203,6 +226,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         date: now.toISOString(),
         isRead: false,
         pageLink: 'Budgets',
+        pageAction: safePageAction('Budgets', 'budgets-focus-admin-pending'),
         severity: 'warning',
         actionHint: 'Open Budgets to approve or reject requests.',
       });
@@ -215,9 +239,10 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         id: `request-${r.id}`,
         category: 'Budget',
         message: r.status === 'Finalized' ? `Your budget request for "${categoryLabel}" was approved.` : `Your budget request for "${categoryLabel}" was rejected.`,
-        date: (r.updated_at || r.created_at || now).toISOString(),
+        date: asIsoString((r as any).updated_at ?? (r as any).created_at, now),
         isRead: false,
         pageLink: 'Budgets',
+        pageAction: safePageAction('Budgets', r.status === 'Finalized' ? 'budgets-focus-my-pending' : 'budgets-open-request-form'),
         severity: r.status === 'Finalized' ? 'info' : 'warning',
         actionHint: r.status === 'Finalized' ? 'View your budgets to see the new category.' : 'You can submit a new request with different details.',
       });
@@ -362,6 +387,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         date: now.toISOString(),
         isRead: false,
         pageLink: 'Investments',
+        pageAction: safePageAction('Investments', 'investment-tab:Investment Plan'),
         severity: 'info',
         actionHint: 'Save your Monthly Plan in Investments to confirm you reviewed USD/SAR assumptions.',
       });
@@ -373,9 +399,10 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         id: `price-${a.id}`,
         category: 'PriceAlert',
         message: `${a.symbol} has reached your target price.`,
-        date: (a as any).createdAt ?? (a as any).created_at ?? now.toISOString(),
+        date: asIsoString((a as any).createdAt ?? (a as any).created_at, now),
         isRead: false,
         pageLink: 'Investments',
+        pageAction: safePageAction('Investments', 'investment-tab:Watchlist'),
         symbol: a.symbol,
         severity: 'urgent',
         actionHint: 'Review execution decision in Investments.',
@@ -396,6 +423,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           date: now.toISOString(),
           isRead: false,
           pageLink: 'Investments',
+          pageAction: safePageAction('Investments', 'open-trade-modal:from-plan'),
           symbol: plan.symbol,
           severity: 'urgent',
           actionHint: 'Open Investments and execute or reschedule this plan.',

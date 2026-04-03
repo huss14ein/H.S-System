@@ -146,6 +146,27 @@ export interface WealthSummaryReportInput {
     amount: number;
     status?: string;
   }>;
+  investmentSummary?: {
+    platformCount: number;
+    portfolioCount: number;
+    holdingCount: number;
+    platformCashSar: number;
+    holdingsValueSar: number;
+  };
+  platforms?: Array<{
+    name: string;
+    currency: string;
+    cashSar: number;
+    cashUsd: number;
+    cashTotalSar: number;
+  }>;
+  portfolios?: Array<{
+    name: string;
+    platformName: string;
+    currency: string;
+    holdingsCount: number;
+    holdingsValueSar: number;
+  }>;
 }
 
 export function generateWealthSummaryReportJson(input: WealthSummaryReportInput): string {
@@ -284,6 +305,9 @@ export function generateWealthSummaryReportHtml(
     includeSnapshot?: boolean;
     includeCashflow?: boolean;
     includeRisk?: boolean;
+    includeInvestmentsOverview?: boolean;
+    includePlatforms?: boolean;
+    includePortfolios?: boolean;
     includeHoldings?: boolean;
     includeAssets?: boolean;
     includeLiabilities?: boolean;
@@ -297,10 +321,31 @@ export function generateWealthSummaryReportHtml(
     includeSnapshot: options?.includeSnapshot ?? true,
     includeCashflow: options?.includeCashflow ?? true,
     includeRisk: options?.includeRisk ?? true,
+    includeInvestmentsOverview: options?.includeInvestmentsOverview ?? true,
+    includePlatforms: options?.includePlatforms ?? true,
+    includePortfolios: options?.includePortfolios ?? true,
     includeHoldings: options?.includeHoldings ?? true,
     includeAssets: options?.includeAssets ?? true,
     includeLiabilities: options?.includeLiabilities ?? true,
   };
+  const platformRows = (input.platforms ?? [])
+    .map((p) => `<tr>
+      <td>${escapeHtml(p.name || '')}</td>
+      <td>${escapeHtml(p.currency || '')}</td>
+      <td style="text-align:right">SAR ${num(p.cashSar)}</td>
+      <td style="text-align:right">USD ${num(p.cashUsd)}</td>
+      <td style="text-align:right">${money(p.cashTotalSar)}</td>
+    </tr>`)
+    .join('');
+  const portfolioRows = (input.portfolios ?? [])
+    .map((p) => `<tr>
+      <td>${escapeHtml(p.name || '')}</td>
+      <td>${escapeHtml(p.platformName || '')}</td>
+      <td>${escapeHtml(p.currency || '')}</td>
+      <td style="text-align:right">${num(p.holdingsCount)}</td>
+      <td style="text-align:right">${money(p.holdingsValueSar)}</td>
+    </tr>`)
+    .join('');
   const holdingsRows = (input.holdings ?? [])
     .map((h) => `<tr>
       <td>${escapeHtml(h.symbol || '')}</td>
@@ -385,6 +430,27 @@ export function generateWealthSummaryReportHtml(
     <div class="card"><div class="k">Shock Drill Severity</div><div class="v">${escapeHtml(input.shockDrillSeverity)}</div></div>
     <div class="card"><div class="k">Shock Drill Estimated Gap</div><div class="v">${money(input.shockDrillEstimatedGap)}</div></div>
   </div>` : ''}
+
+  ${cfg.includeInvestmentsOverview ? `<h2>Investment Summary</h2>
+  <div class="grid">
+    <div class="card"><div class="k">Platforms</div><div class="v">${num(input.investmentSummary?.platformCount ?? 0)}</div></div>
+    <div class="card"><div class="k">Portfolios</div><div class="v">${num(input.investmentSummary?.portfolioCount ?? 0)}</div></div>
+    <div class="card"><div class="k">Holdings</div><div class="v">${num(input.investmentSummary?.holdingCount ?? 0)}</div></div>
+    <div class="card"><div class="k">Platform Cash (SAR)</div><div class="v">${money(input.investmentSummary?.platformCashSar ?? 0)}</div></div>
+    <div class="card"><div class="k">Holdings Value (SAR)</div><div class="v">${money(input.investmentSummary?.holdingsValueSar ?? 0)}</div></div>
+  </div>` : ''}
+
+  ${cfg.includePlatforms ? `<h2>Investment Platforms</h2>
+  <table>
+    <thead><tr><th>Platform</th><th>Currency</th><th>Cash (SAR)</th><th>Cash (USD)</th><th>Total Cash (SAR)</th></tr></thead>
+    <tbody>${platformRows || '<tr><td colspan="5" class="muted">No platform cash rows.</td></tr>'}</tbody>
+  </table>` : ''}
+
+  ${cfg.includePortfolios ? `<h2>Investment Portfolios</h2>
+  <table>
+    <thead><tr><th>Portfolio</th><th>Platform</th><th>Currency</th><th>Holdings</th><th>Value (SAR)</th></tr></thead>
+    <tbody>${portfolioRows || '<tr><td colspan="5" class="muted">No portfolios.</td></tr>'}</tbody>
+  </table>` : ''}
 
   ${cfg.includeHoldings ? `<h2>Holding Details (Position by Position)</h2>
   <table>
