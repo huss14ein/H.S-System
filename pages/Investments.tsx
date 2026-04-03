@@ -350,13 +350,42 @@ const priorityRank = (p?: Goal['priority']) => (p === 'High' ? 0 : p === 'Medium
 /** Surfaces savings & life goals from the Goals page (not only retirement) so progress is visible before drilling into tabs. */
 const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGoals }) => {
     const { data } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+    const goalCurrentByIdSar = useMemo(() => {
+        const map = new Map<string, number>();
+        const addToGoal = (goalId: string, valueSar: number) => {
+            if (!goalId) return;
+            map.set(goalId, (map.get(goalId) ?? 0) + (Number.isFinite(valueSar) ? valueSar : 0));
+        };
+
+        const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
+        assets.forEach((a: { goalId?: string; value?: number }) => {
+            if (!a.goalId) return;
+            addToGoal(a.goalId, Number(a.value) || 0);
+        });
+
+        const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        investments.forEach((p: { goalId?: string; currency?: string; holdings?: { goalId?: string; currentValue?: number }[] }) => {
+            const pGoalId = p.goalId ?? '';
+            let portfolioResidual = 0;
+            (p.holdings ?? []).forEach((h: { goalId?: string; currentValue?: number }) => {
+                const valueSar = toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd);
+                if (h.goalId) addToGoal(h.goalId, valueSar);
+                else if (pGoalId) portfolioResidual += valueSar;
+            });
+            if (pGoalId && portfolioResidual > 0) addToGoal(pGoalId, portfolioResidual);
+        });
+
+        return map;
+    }, [data?.assets, data?.investments, (data as any)?.personalAssets, (data as any)?.personalInvestments, sarPerUsd]);
     const sortedGoals = useMemo(() => {
         const normalized = (data?.goals ?? [])
             .map((g: any) => ({
                 ...g,
                 targetResolved: Math.max(0, Number(g?.targetAmount ?? g?.target_amount ?? 0) || 0),
-                currentResolved: Math.max(0, Number(g?.currentAmount ?? g?.current_amount ?? g?.savedAmount ?? 0) || 0),
+                currentResolved: Math.max(0, Number(goalCurrentByIdSar.get(g.id) ?? 0) || 0),
                 deadlineResolved: String(g?.deadline ?? g?.targetDate ?? g?.target_date ?? ''),
             }))
             .filter((g: any) => g.targetResolved > 0);
@@ -368,7 +397,7 @@ const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGo
             if (Number.isFinite(da) && Number.isFinite(db) && da !== db) return da - db;
             return (Number(b.targetResolved) || 0) - (Number(a.targetResolved) || 0);
         });
-    }, [data?.goals]);
+    }, [data?.goals, goalCurrentByIdSar]);
     const displayGoals = sortedGoals.slice(0, 6);
 
     if (sortedGoals.length === 0) {
