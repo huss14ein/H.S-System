@@ -199,11 +199,18 @@ const GoalConflictAndFeasibilitySection: React.FC<{
               const pct = allocations[goal.id] ?? 0;
               const monthlyContribution = monthlySurplusForGoals * (pct / 100);
               const result = goalFeasibilityCheck({ goal: { ...goal, currentAmount: goal.currentAmount ?? 0 }, monthlyContribution });
+              const feasibilityText = result.feasible
+                ? 'Feasible'
+                : result.reason === 'no_deadline'
+                  ? 'No deadline set'
+                  : result.reason === 'no_contribution'
+                    ? 'No monthly allocation'
+                    : `Need ${result.monthsNeeded ?? 0} mo, have ${result.monthsAvailable ?? 0} mo`;
               return (
                 <li key={goal.id} className="flex justify-between items-center">
                   <span className="text-slate-700">{goal.name}</span>
                   <span className={result.feasible ? 'text-green-700 font-medium' : 'text-amber-700 font-medium'}>
-                    {result.feasible ? 'Feasible' : `Need ${result.monthsNeeded} mo, have ${result.monthsAvailable} mo`}
+                    {feasibilityText}
                   </span>
                 </li>
               );
