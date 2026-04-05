@@ -90,4 +90,15 @@ describe('normalizedMonthlyExpense', () => {
     const avg = normalizedMonthlyExpense(txs, { monthsLookback: 1, endDate: now });
     expect(avg).toBeCloseTo(120, 5);
   });
+
+  it('treats YYYY-MM-DD transaction dates as calendar days vs endDate day boundary', () => {
+    const endDate = new Date();
+    const tomorrow = addDays(endDate, 1);
+    const txs = [
+      { date: toIsoDate(endDate), amount: -200, type: 'expense', category: 'Food' },
+      { date: toIsoDate(tomorrow), amount: -500, type: 'expense', category: 'Food' },
+    ];
+    const avg = normalizedMonthlyExpense(txs, { monthsLookback: 1, endDate });
+    expect(avg).toBeCloseTo(200, 5);
+  });
 });

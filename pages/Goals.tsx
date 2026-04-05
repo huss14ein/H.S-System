@@ -229,6 +229,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
     const { formatCurrencyString } = useFormatCurrency();
     const [aiPlan, setAiPlan] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
+    const effectiveAllocationPercent = allocationPercent ?? goal.savingsAllocationPercent ?? 0;
 
     const goalLinkSymbols = useMemo(() => {
         const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
@@ -283,10 +284,11 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
 
     const handleGetAIPlan = useCallback(async () => {
         setIsLoading(true);
-        const plan = await getGoalAIPlan(goal, monthlySavings, calculatedCurrentAmount);
+        const planGoal = { ...goal, savingsAllocationPercent: effectiveAllocationPercent };
+        const plan = await getGoalAIPlan(planGoal, monthlySavings, calculatedCurrentAmount);
         setAiPlan(plan);
         setIsLoading(false);
-    }, [goal, monthlySavings, calculatedCurrentAmount]);
+    }, [goal, monthlySavings, calculatedCurrentAmount, effectiveAllocationPercent]);
     
 
     const { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution, borderColor } = useMemo(() => {
@@ -305,7 +307,6 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         const progressPercent = Math.min(100, Math.max(0, progressPercentRaw));
         const remainingAmount = Math.max(0, targetAmt - currentAmount);
         const requiredMonthlyContribution = monthsLeft > 0 ? remainingAmount / monthsLeft : remainingAmount;
-        const effectiveAllocationPercent = allocationPercent ?? goal.savingsAllocationPercent ?? 0;
         const projectedMonthlyContribution = computeGoalMonthlyAllocation(monthlySavings, effectiveAllocationPercent);
 
         let status: 'On Track' | 'Needs Attention' | 'At Risk' = 'On Track';

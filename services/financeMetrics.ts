@@ -10,6 +10,22 @@ export type TxLike = {
   amount?: number;
 };
 
+function dayKeyFromDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function dayKeyFromTxDate(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed.slice(0, 10);
+  const d = new Date(trimmed);
+  if (Number.isNaN(d.getTime())) return null;
+  return dayKeyFromDate(d);
+}
+
 /**
  * Average monthly external (non-transfer) expenses over months that have data in the lookback window.
  */
@@ -20,11 +36,14 @@ export function normalizedMonthlyExpense(
   const monthsLookback = opts?.monthsLookback ?? 6;
   const end = opts?.endDate ?? new Date();
   const start = new Date(end.getFullYear(), end.getMonth() - monthsLookback, 1);
+  const startDay = dayKeyFromDate(start);
+  const endDay = dayKeyFromDate(end);
   const byMonth = new Map<string, number>();
   transactions.forEach((t) => {
     if (!countsAsExpenseForCashflowKpi(t) || !t.date) return;
+    const txDay = dayKeyFromTxDate(t.date);
+    if (!txDay || txDay < startDay || txDay > endDay) return;
     const d = new Date(t.date);
-    if (d < start || d > end) return;
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     byMonth.set(key, (byMonth.get(key) ?? 0) + Math.abs(Number(t.amount) || 0));
   });
@@ -45,11 +64,14 @@ export function normalizedMonthlyExpenseSar(
   const monthsLookback = opts?.monthsLookback ?? 6;
   const end = opts?.endDate ?? new Date();
   const start = new Date(end.getFullYear(), end.getMonth() - monthsLookback, 1);
+  const startDay = dayKeyFromDate(start);
+  const endDay = dayKeyFromDate(end);
   const byMonth = new Map<string, number>();
   transactions.forEach((t) => {
     if (!countsAsExpenseForCashflowKpi(t) || !t.date) return;
+    const txDay = dayKeyFromTxDate(t.date);
+    if (!txDay || txDay < startDay || txDay > endDay) return;
     const d = new Date(t.date);
-    if (d < start || d > end) return;
     const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     byMonth.set(key, (byMonth.get(key) ?? 0) + toSAR(Math.abs(Number(t.amount) || 0), cur, sarPerUsd));

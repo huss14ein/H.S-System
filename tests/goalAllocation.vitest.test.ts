@@ -15,5 +15,8 @@ describe('computeGoalMonthlyAllocation', () => {
     expect(computeGoalMonthlyAllocation(Number.NaN, 40)).toBe(0);
     expect(computeGoalMonthlyAllocation(10000, Number.NaN)).toBe(0);
   });
-});
 
+  it('accepts numeric-string allocation values for legacy rows', () => {
+    expect(computeGoalMonthlyAllocation(10000, '25' as unknown as number)).toBe(2500);
+  });
+});
