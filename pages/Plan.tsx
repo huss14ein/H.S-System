@@ -37,6 +37,7 @@ import { calculateDynamicBaselines, generatePredictiveSpend } from '../services/
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import { countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { getPersonalTransactions, getPersonalAccounts } from '../utils/wealthScope';
+import { resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { buildAnnualPlanRows, formatAnnualPlanIncomeHint, type AnnualPlanRow } from '../services/annualPlanFromData';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -83,7 +84,11 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const liabilities = (data as any)?.personalLiabilities ?? data?.liabilities ?? [];
     const investmentPlan = data?.investmentPlan;
     const personalAccountIds = new Set(accounts.map((a: { id: string }) => a.id));
-    const investmentTransactions = (data?.investmentTransactions ?? []).filter((t: { accountId?: string }) => personalAccountIds.has(t.accountId ?? ''));
+    const investmentTransactions = (data?.investmentTransactions ?? []).filter((t: { accountId?: string; account_id?: string; portfolioId?: string; portfolio_id?: string }) =>
+        personalAccountIds.has(
+            resolveInvestmentTransactionAccountId(t as any, accounts as any, ((data as any)?.personalInvestments ?? data?.investments ?? []) as any[]),
+        ),
+    );
     const recurringTransactions = data?.recurringTransactions ?? [];
 
     const householdProfileStorageKey = useMemo(() => `household-profile:${auth?.user?.id ?? 'anon'}`, [auth?.user?.id]);

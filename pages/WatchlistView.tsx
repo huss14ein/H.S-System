@@ -26,7 +26,7 @@ import { XMarkIcon } from '../components/icons';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { rsi, rsiSignal, zScore, zScoreSignal, bollingerBands, shortTermCrossoverSignal } from '../services/technicalIndicators';
 import { rankWatchlistIdeas } from '../services/decisionEngine';
-import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
+import { inferInvestmentTransactionCurrency, resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useSelfLearning } from '../context/SelfLearningContext';
@@ -820,10 +820,10 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
     const recentTransactionsForAnalysis = useMemo(() => {
         const personalAccountIds = new Set(personalAccountsLedger.map((a) => a.id));
         return (data?.investmentTransactions ?? [])
-            .filter((t) => personalAccountIds.has(t.accountId ?? ''))
+            .filter((t) => personalAccountIds.has(resolveInvestmentTransactionAccountId(t as any, personalAccountsLedger as any, personalInvestmentsLedger as any)))
             .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
             .slice(0, 20);
-    }, [data?.investmentTransactions, personalAccountsLedger]);
+    }, [data?.investmentTransactions, personalAccountsLedger, personalInvestmentsLedger]);
 
     const tradeActivitySummary = useMemo(() => {
         const list = recentTransactionsForAnalysis;

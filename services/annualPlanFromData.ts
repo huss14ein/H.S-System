@@ -14,7 +14,7 @@ import type {
   RecurringTransaction,
 } from '../types';
 import { getSarPerUsdForCalendarDay } from './fxDailySeries';
-import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
+import { inferInvestmentTransactionCurrency, resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { toSAR } from '../utils/currencyMath';
@@ -277,13 +277,26 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
 
   const monthlyInvestment = Number(investmentPlan?.monthlyBudget) || 0;
   const investmentActuals = Array(12).fill(0);
-  const invTxFiltered = investmentTransactions.filter((t) => personalAccountIds.has(t.accountId ?? ''));
+  const invTxFiltered = investmentTransactions.filter((t) => {
+    const aid = resolveInvestmentTransactionAccountId(
+      t as InvestmentTransaction & { account_id?: string; portfolio_id?: string },
+      accounts,
+      investments as InvestmentPortfolio[],
+    );
+    return personalAccountIds.has(aid);
+  });
 
   invTxFiltered.forEach((tx) => {
     const date = new Date(tx.date);
     if (date.getFullYear() === year && isInvestmentTransactionType(tx.type, 'buy')) {
       const cur = inferInvestmentTransactionCurrency(
-        { accountId: tx.accountId ?? '', currency: tx.currency as 'SAR' | 'USD' | undefined },
+        {
+          accountId: tx.accountId,
+          account_id: (tx as { account_id?: string }).account_id,
+          portfolioId: tx.portfolioId,
+          portfolio_id: (tx as { portfolio_id?: string }).portfolio_id,
+          currency: tx.currency as 'SAR' | 'USD' | undefined,
+        },
         accounts,
         investments as InvestmentPortfolio[],
       );
