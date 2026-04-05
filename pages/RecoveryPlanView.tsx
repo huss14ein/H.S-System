@@ -135,10 +135,6 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
   const deployableCashSAR = useMemo(() => {
     const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-    const bankCash = accounts
-      .filter((a: { type?: string; balance?: number }) => a.type === 'Checking' || a.type === 'Savings')
-      .reduce((s: number, a: { balance?: number }) => s + Math.max(0, Number(a.balance) || 0), 0);
-
     const platformCashSAR = accounts
       .filter((a: { type?: string; id: string }) => a.type === 'Investment')
       .reduce(
@@ -146,10 +142,10 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         0,
       );
 
-    const total = bankCash + platformCashSAR;
+    const total = platformCashSAR;
     // Validate result
     if (!Number.isFinite(total) || total < 0) {
-      console.warn('Invalid deployable cash calculated:', { bankCash, platformCashSAR, total });
+      console.warn('Invalid deployable cash calculated:', { platformCashSAR, total });
       return 0;
     }
     return total;
@@ -1436,7 +1432,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                 </p>
                 {whatIfSimulation.overBudget && (
                   <p className="text-rose-700 font-medium text-sm">
-                    This exceeds your total deployable cash shown above (all accounts). Lower the amount or add funds first.
+                    This exceeds your total deployable cash shown above (investment platforms only). Lower the amount or add funds first.
                   </p>
                 )}
               </div>

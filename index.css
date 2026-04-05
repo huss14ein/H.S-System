@@ -28,6 +28,34 @@
     @apply bg-light font-sans text-dark antialiased text-[15px] leading-6;
   }
 
+  /**
+   * Prevent browser/extension inline-control icons from rendering inside text-like inputs
+   * (clear/search/credentials/contacts overlays) which can appear as stray symbols on all pages.
+   * Keep select arrows/range controls untouched.
+   */
+  input[type='text'],
+  input[type='search'],
+  input[type='email'],
+  input[type='url'],
+  input[type='tel'],
+  input[type='number'],
+  input[type='password'],
+  textarea {
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: none;
+  }
+
+  input[type='search']::-webkit-search-decoration,
+  input[type='search']::-webkit-search-cancel-button,
+  input[type='search']::-webkit-search-results-button,
+  input[type='search']::-webkit-search-results-decoration,
+  input::-webkit-credentials-auto-fill-button,
+  input::-webkit-contacts-auto-fill-button {
+    display: none !important;
+    -webkit-appearance: none;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: 0.01ms !important;

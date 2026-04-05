@@ -26,7 +26,6 @@ import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { computeGoalFundingPlan } from '../services/goalFundingRouter';
 import { monteCarloGoalSuccess } from '../services/portfolioConstruction';
 import { projectedGoalCompletionDate, goalFundingGap as goalGapShared } from '../services/goalMetrics';
-import { DEFAULT_BONUS_RULES } from '../services/goalWaterfall';
 import { detectGoalConflict, goalFeasibilityCheck, type GoalConflict } from '../services/goalConflictEngine';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
@@ -199,11 +198,18 @@ const GoalConflictAndFeasibilitySection: React.FC<{
               const pct = allocations[goal.id] ?? 0;
               const monthlyContribution = monthlySurplusForGoals * (pct / 100);
               const result = goalFeasibilityCheck({ goal: { ...goal, currentAmount: goal.currentAmount ?? 0 }, monthlyContribution });
+              const feasibilityText = result.feasible
+                ? 'Feasible'
+                : result.reason === 'no_deadline'
+                  ? 'No deadline set'
+                  : result.reason === 'no_contribution'
+                    ? 'No monthly allocation'
+                    : `Need ${result.monthsNeeded ?? 0} mo, have ${result.monthsAvailable ?? 0} mo`;
               return (
                 <li key={goal.id} className="flex justify-between items-center">
                   <span className="text-slate-700">{goal.name}</span>
                   <span className={result.feasible ? 'text-green-700 font-medium' : 'text-amber-700 font-medium'}>
-                    {result.feasible ? 'Feasible' : `Need ${result.monthsNeeded} mo, have ${result.monthsAvailable} mo`}
+                    {feasibilityText}
                   </span>
                 </li>
               );
@@ -235,6 +241,10 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         return Array.from(new Set(syms.filter((s) => s.length >= 2)));
     }, [data?.investments, goal.id]);
     const { names: goalHoldingNames } = useCompanyNames(goalLinkSymbols);
+    const linkedLiabilities = useMemo(
+        () => ((data as any)?.personalLiabilities ?? data?.liabilities ?? []).filter((l: { goalId?: string }) => l.goalId === goal.id),
+        [data?.liabilities, (data as any)?.personalLiabilities, goal.id],
+    );
 
     const { linkedAssets, calculatedCurrentAmount } = useMemo(() => {
         const linkedItems: { name: string, value: number }[] = [];
@@ -432,6 +442,22 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                 ) : (
                     <p className="text-xs text-gray-500 text-center italic mt-2">No assets linked. Link them from the Assets or Investments pages.</p>
                 )}
+                {linkedLiabilities.length > 0 && (
+                    <div className="mt-3 border-t pt-3">
+                        <p className="text-xs font-semibold text-gray-700 mb-1">Linked liabilities</p>
+                        <ul className="space-y-1 text-sm">
+                            {linkedLiabilities.slice(0, 4).map((liab: { id: string; name?: string; amount?: number; status?: string }) => (
+                                <li key={liab.id} className="flex justify-between items-center">
+                                    <span className="text-gray-600 break-words" title={liab.name ?? 'Liability'}>{liab.name ?? 'Liability'}</span>
+                                    <span className="font-medium text-danger ml-2">{formatCurrencyString(Math.abs(liab.amount ?? 0), { digits: 0 })}{(liab.status ?? 'Active') === 'Paid' ? ' (Paid)' : ''}</span>
+                                </li>
+                            ))}
+                            {linkedLiabilities.length > 4 && (
+                                <li className="text-xs text-gray-500">+{linkedLiabilities.length - 4} more linked liabilities</li>
+                            )}
+                        </ul>
+                    </div>
+                )}
             </div>
             
             {onSeeInPlan && (
@@ -450,7 +476,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
     );
 };
 
-const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
+const Goals: React.FC<{ setActivePage?: (page: Page) => void; pageAction?: string | null; clearPageAction?: () => void }> = ({ setActivePage, pageAction, clearPageAction }) => {
     const { data, loading, addGoal, updateGoal, deleteGoal, updateGoalAllocations } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const { exchangeRate } = useCurrency();
@@ -460,6 +486,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [goalToEdit, setGoalToEdit] = useState<Goal | null>(null);
     const [goalToDelete, setGoalToDelete] = useState<Goal | null>(null);
+    const [focusedGoalId, setFocusedGoalId] = useState<string | null>(null);
     const [allocations, setAllocations] = useState<Record<string, number>>({});
 
     const allocationSyncKey = useMemo(
@@ -479,6 +506,25 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         });
         setAllocations(initialAllocations);
     }, [allocationSyncKey]);
+
+    useEffect(() => {
+        if (!pageAction) return;
+        if (pageAction.startsWith('focus-goal:')) {
+            const encoded = pageAction.slice('focus-goal:'.length);
+            const id = decodeURIComponent(encoded || '').trim();
+            if (id) {
+                setFocusedGoalId(id);
+                window.setTimeout(() => {
+                    const el = document.getElementById(`goal-card-${id}`);
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 60);
+                window.setTimeout(() => {
+                    setFocusedGoalId((prev) => (prev === id ? null : prev));
+                }, 3500);
+            }
+            clearPageAction?.();
+        }
+    }, [pageAction, clearPageAction]);
 
     const averageMonthlySavings = useMemo(() => {
         const monthlyNet = new Map<string, number>();
@@ -570,13 +616,14 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
 
     const fundingWaterfallOrder = useMemo(() => {
         const rank = { High: 0, Medium: 1, Low: 2 } as const;
-        return [...(data?.goals ?? [])].sort((a, b) => {
+        const active = (data?.goals ?? []).filter((g) => (g.targetAmount ?? 0) > (goalCurrentAmountByGoalId[g.id] ?? 0));
+        return [...active].sort((a, b) => {
             const pa = rank[a.priority || 'Medium'];
             const pb = rank[b.priority || 'Medium'];
             if (pa !== pb) return pa - pb;
             return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
         });
-    }, [data?.goals]);
+    }, [data?.goals, goalCurrentAmountByGoalId]);
     
     const handleOpenModal = (goal: Goal | null = null) => { if (!goal) trackAction('add-goal', 'Goals'); setGoalToEdit(goal); setIsModalOpen(true); };
     const handleOpenDeleteModal = (goal: Goal) => { setGoalToDelete(goal); setIsDeleteModalOpen(true); };
@@ -613,6 +660,33 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
     };
 
     const efGoals = useEmergencyFund(data ?? null);
+    const dynamicWindfallPlan = useMemo(() => {
+        const goals = (data?.goals ?? [])
+            .map((g) => {
+                const current = goalCurrentAmountByGoalId[g.id] ?? 0;
+                const gap = Math.max(0, (g.targetAmount ?? 0) - current);
+                const priorityFactor = g.priority === 'High' ? 1 : g.priority === 'Medium' ? 0.7 : 0.4;
+                return { id: g.id, name: g.name, gap, weightedGap: gap * priorityFactor };
+            })
+            .filter((g) => g.gap > 0);
+        const totalWeightedGap = goals.reduce((s, g) => s + g.weightedGap, 0);
+        const emergencyBufferPct =
+            efGoals.monthsCovered < 2 ? 35 :
+            efGoals.monthsCovered < 4 ? 25 :
+            efGoals.monthsCovered < 6 ? 15 : 10;
+        const goalFundingPct = totalWeightedGap > 0
+            ? Math.max(30, Math.min(75, Math.round((totalWeightedGap / (totalWeightedGap + 50000)) * 100)))
+            : 40;
+        const investPct = Math.max(0, 100 - goalFundingPct - emergencyBufferPct);
+        const topGoals = goals
+            .sort((a, b) => b.weightedGap - a.weightedGap)
+            .slice(0, 3)
+            .map((g) => ({
+                ...g,
+                pctOfGoalBucket: totalWeightedGap > 0 ? (g.weightedGap / totalWeightedGap) * 100 : 0,
+            }));
+        return { goalFundingPct, emergencyBufferPct, investPct, topGoals };
+    }, [data?.goals, goalCurrentAmountByGoalId, efGoals.monthsCovered]);
     const goalValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
         const goals = data?.goals ?? [];
@@ -749,20 +823,26 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
         allocations={allocations}
       />
 
-      <CollapsibleSection title="Bonus / windfall allocation ideas" summary="Reference split for windfalls" className="border border-slate-200">
-        <p className="text-xs text-slate-600 mb-2">Reference split (customize in your head or with an advisor)—not automated.</p>
+      <CollapsibleSection title="Bonus / windfall allocation ideas" summary="Dynamic split based on current goals" className="border border-slate-200">
+        <p className="text-xs text-slate-600 mb-2">Auto-derived from your goal gaps, priorities, and emergency runway.</p>
         <ul className="text-sm text-slate-700 space-y-2">
-          {DEFAULT_BONUS_RULES.map((r) => (
-            <li key={r.id}>
-              <strong>{r.label}</strong>
-              {r.percentToInvest != null && (
-                <span className="text-slate-600">
-                  {' '}
-                  · ~{r.percentToInvest}% invest · ~{r.percentToBuffer ?? 0}% buffer
-                </span>
-              )}
+          <li>
+            <strong>{dynamicWindfallPlan.goalFundingPct}% to goals</strong>
+            <span className="text-slate-600"> · prioritize by gap × priority weight</span>
+          </li>
+          <li>
+            <strong>{dynamicWindfallPlan.investPct}% to investing</strong>
+            <span className="text-slate-600"> · long-term growth bucket</span>
+          </li>
+          <li>
+            <strong>{dynamicWindfallPlan.emergencyBufferPct}% to emergency buffer</strong>
+            <span className="text-slate-600"> · runway currently {efGoals.monthsCovered.toFixed(1)} months</span>
+          </li>
+          {dynamicWindfallPlan.topGoals.length > 0 && (
+            <li className="text-slate-600">
+              Top goal recipients: {dynamicWindfallPlan.topGoals.map((g) => `${g.name} (${g.pctOfGoalBucket.toFixed(0)}%)`).join(' · ')}
             </li>
-          ))}
+          )}
         </ul>
       </CollapsibleSection>
 
@@ -770,14 +850,19 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePa
       
        <div className="cards-grid grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
         {goalsByPriority.map(goal => (
-            <GoalCard 
-                key={goal.id} 
-                goal={goal} 
-                onEdit={() => handleOpenModal(goal)}
-                onDelete={() => handleOpenDeleteModal(goal)}
-                monthlySavings={averageMonthlySavings}
-                onSeeInPlan={setActivePage ? () => setActivePage('Plan') : undefined}
-            />
+            <div
+                key={goal.id}
+                id={`goal-card-${goal.id}`}
+                className={focusedGoalId === goal.id ? 'rounded-xl ring-2 ring-primary/40 ring-offset-2 transition-all' : ''}
+            >
+                <GoalCard
+                    goal={goal}
+                    onEdit={() => handleOpenModal(goal)}
+                    onDelete={() => handleOpenDeleteModal(goal)}
+                    monthlySavings={averageMonthlySavings}
+                    onSeeInPlan={setActivePage ? () => setActivePage('Plan') : undefined}
+                />
+            </div>
         ))}
       </div>
       

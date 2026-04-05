@@ -13,6 +13,7 @@ import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
+import { resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { getAIMarketEventInsight, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
 import { useAI } from '../context/AiContext';
 
@@ -669,7 +670,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
 
     const firstBuyBySymbol = new Map<string, Date>();
     (data?.investmentTransactions ?? [])
-      .filter(t => t.type === 'buy' && t.symbol && investmentAccountIds.has(t.accountId ?? ''))
+      .filter((t) => t.type === 'buy' && t.symbol && investmentAccountIds.has(resolveInvestmentTransactionAccountId(t as any, data?.accounts ?? [], data?.investments ?? [])))
       .forEach((t) => {
         const s = t.symbol.trim().toUpperCase();
         const d = new Date(t.date);

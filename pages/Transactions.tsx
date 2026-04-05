@@ -877,14 +877,14 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 pendingRows = rpcResult.data;
             } else {
                 for (let attempt = 0; attempt < 2; attempt++) {
-                    const camelCaseResult = await fetchPendingRows('id, user_id, description, amount, budgetCategory, date, status');
-                    pendingRows = camelCaseResult.data || [];
-                    pendingError = camelCaseResult.error;
+                    const snakeCaseResult = await fetchPendingRows('id, user_id, description, amount, budget_category, date, status');
+                    pendingRows = snakeCaseResult.data || [];
+                    pendingError = snakeCaseResult.error;
 
                     if (pendingError?.code === '42703' || pendingError?.code === 'PGRST204') {
-                        const snakeCaseResult = await fetchPendingRows('id, user_id, description, amount, budget_category, date, status');
-                        pendingRows = snakeCaseResult.data || [];
-                        pendingError = snakeCaseResult.error;
+                        const camelCaseResult = await fetchPendingRows('id, user_id, description, amount, budgetCategory, date, status');
+                        pendingRows = camelCaseResult.data || [];
+                        pendingError = camelCaseResult.error;
                     }
 
                     if (!pendingError) break;

@@ -37,6 +37,7 @@ import { useToast } from '../context/ToastContext';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import { resolveCanonicalAccountId, inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
+import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import InfoHint from '../components/InfoHint';
 import {
     syncFinnhubDividendsForHoldings,
@@ -127,7 +128,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
             .filter((t) => new Date(t.date).getFullYear() === now.getFullYear())
             .reduce((sum, t) => {
                 const cur = inferInvestmentTransactionCurrency(t, accountsFull, portfoliosAll);
-                return sum + toSAR(t.total ?? 0, cur, sarPerUsd);
+                return sum + toSAR(getInvestmentTransactionCashAmount(t as any), cur, sarPerUsd);
             }, 0);
 
         const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
@@ -148,7 +149,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
             if (isNaN(txDate.getTime()) || txDate < twelveMonthsAgo) continue;
             const monthKey = t.date.slice(0, 7);
             const cur = inferInvestmentTransactionCurrency(t, accountsFull, portfoliosAll);
-            const sar = toSAR(t.total ?? 0, cur, sarPerUsd);
+            const sar = toSAR(getInvestmentTransactionCashAmount(t as any), cur, sarPerUsd);
             trailing12mDividendActual += sar;
 
             const aid = resolveCanonicalAccountId(t.accountId, accountsFull);
@@ -276,7 +277,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
             invTxPersonal.map((t) => ({
                 date: t.date,
                 type: t.type,
-                total: t.total,
+                total: getInvestmentTransactionCashAmount(t as any),
                 currency: inferInvestmentTransactionCurrency(t, accountsFull, portfoliosAll),
             })),
             data ?? null,
@@ -507,7 +508,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const formatTxAmountSar = useCallback(
         (t: InvestmentTransaction) => {
             const cur = inferInvestmentTransactionCurrency(t, accountsFull, portfoliosAll);
-            return formatCurrencyString(toSAR(t.total ?? 0, cur, sarPerUsd));
+            return formatCurrencyString(toSAR(getInvestmentTransactionCashAmount(t as any), cur, sarPerUsd));
         },
         [accountsFull, portfoliosAll, sarPerUsd, formatCurrencyString],
     );
@@ -824,7 +825,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                                     const csv = [
                                         ['Date', 'Symbol', 'Amount_SAR_equiv'].join(','),
                                         ...recentDividendTransactions.map((t) =>
-                                            [t.date, t.symbol, toSAR(t.total ?? 0, inferInvestmentTransactionCurrency(t, accountsFull, portfoliosAll), sarPerUsd)].join(
+                                            [t.date, t.symbol, toSAR(getInvestmentTransactionCashAmount(t as any), inferInvestmentTransactionCurrency(t, accountsFull, portfoliosAll), sarPerUsd)].join(
                                                 ',',
                                             ),
                                         ),
