@@ -2151,6 +2151,7 @@ const PlatformCard: React.FC<{
     /** If set, card headline / ROI use only these portfolios (e.g. personal); `portfolios` still drives the holdings tables. */
     metricsPortfolios?: InvestmentPortfolio[];
     transactions: InvestmentTransaction[];
+    metricsTransactions?: InvestmentTransaction[];
     goals: Goal[];
     sarPerUsd: number;
     availableCashByCurrency?: { SAR: number; USD: number };
@@ -2165,7 +2166,7 @@ const PlatformCard: React.FC<{
     isExpanded: boolean;
     onToggleExpanded: () => void;
 }> = (props) => {
-    const { platform, portfolios, metricsPortfolios, transactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded } = props;
+    const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded } = props;
     const portfoliosForMetrics = metricsPortfolios ?? portfolios;
     const showPersonalScopeNote = portfolios.length > portfoliosForMetrics.length;
     const { formatCurrencyString } = useFormatCurrency();
@@ -2194,7 +2195,7 @@ const PlatformCard: React.FC<{
         () =>
             computePlatformCardMetrics({
                 portfolios: portfoliosForMetrics,
-                transactions,
+                transactions: metricsTransactions ?? transactions,
                 accounts: dataCtx?.accounts ?? [],
                 allInvestments: investmentsForInfer,
                 sarPerUsd,
@@ -2202,7 +2203,7 @@ const PlatformCard: React.FC<{
                 simulatedPrices,
                 platformCurrency,
             }),
-        [portfoliosForMetrics, transactions, simulatedPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx?.accounts, investmentsForInfer],
+        [portfoliosForMetrics, transactions, metricsTransactions, simulatedPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx?.accounts, investmentsForInfer],
     );
 
     const holdingsWithGains = (holdings: Holding[], bookCurrency: TradeCurrency) =>
@@ -2646,19 +2647,54 @@ const PlatformView: React.FC<{
         const personalInv = getPersonalInvestments(data);
         const investmentTransactions = data?.investmentTransactions ?? [];
         const investmentAccounts = accounts.filter((acc) => acc.type === 'Investment').sort((a, b) => a.name.localeCompare(b.name));
-        return investmentAccounts.map((account) => ({
-            account,
-            portfoliosAll: invList.filter((p) => portfolioBelongsToAccount(p, account, accList)),
-            portfoliosPersonal: personalInv.filter((p) => portfolioBelongsToAccount(p, account, accList)),
-            transactions: investmentTransactions
+        return investmentAccounts.map((account) => {
+            const portfoliosAll = invList.filter((p) => portfolioBelongsToAccount(p, account, accList));
+            const portfoliosPersonal = personalInv.filter((p) => portfolioBelongsToAccount(p, account, accList));
+            const accountTx = investmentTransactions
                 .filter((t) => {
                     const raw = t.accountId ?? (t as { account_id?: string }).account_id ?? '';
                     const canon = resolveCanonicalAccountId(raw, accList);
                     return canon === account.id || raw === account.id;
                 })
-                .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
-            availableCashByCurrency: getAvailableCashForAccount(account.id),
-        }));
+                .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+            const hasMixedOwnership = portfoliosAll.length > portfoliosPersonal.length;
+            const personalPortfolioIds = new Set(portfoliosPersonal.map((p) => p.id).filter(Boolean));
+            const transactionsForMetrics = hasMixedOwnership
+                ? accountTx.filter((t) => {
+                    const pid = t.portfolioId ?? (t as { portfolio_id?: string }).portfolio_id ?? '';
+                    return !!pid && personalPortfolioIds.has(pid);
+                })
+                : accountTx;
+
+            const metricsAvailableCashByCurrency = hasMixedOwnership
+                ? (() => {
+                    let sar = 0;
+                    let usd = 0;
+                    transactionsForMetrics.forEach((t) => {
+                        const cur = inferInvestmentTransactionCurrency(t, accList, invList);
+                        const amt = getInvestmentTransactionCashAmount(t as any);
+                        if (!Number.isFinite(amt) || !(amt > 0)) return;
+                        const type = String(t.type ?? '').toLowerCase();
+                        const delta = type === 'deposit' || type === 'sell' || type === 'dividend'
+                            ? amt
+                            : (type === 'withdrawal' || type === 'buy' ? -amt : 0);
+                        if (cur === 'SAR') sar += delta;
+                        else usd += delta;
+                    });
+                    return { SAR: Math.max(0, sar), USD: Math.max(0, usd) };
+                })()
+                : getAvailableCashForAccount(account.id);
+
+            return {
+                account,
+                portfoliosAll,
+                portfoliosPersonal,
+                transactions: accountTx,
+                transactionsForMetrics,
+                availableCashByCurrency: metricsAvailableCashByCurrency,
+            };
+        });
     }, [data, getAvailableCashForAccount]);
 
     const totalPlatforms = platformsData.length;
@@ -2784,6 +2820,7 @@ const PlatformView: React.FC<{
                         portfolios={p.portfoliosAll}
                         metricsPortfolios={p.portfoliosPersonal}
                         transactions={p.transactions}
+                        metricsTransactions={p.transactionsForMetrics}
                         goals={data?.goals ?? []}
                         sarPerUsd={sarPerUsd}
                         availableCashByCurrency={p.availableCashByCurrency}
