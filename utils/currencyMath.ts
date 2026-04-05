@@ -5,6 +5,13 @@ import { resolveInvestmentPortfolioCurrency } from './investmentPortfolioCurrenc
 export const DEFAULT_SAR_PER_USD = 3.75;
 
 const safeRate = (r: number): number => (Number.isFinite(r) && r > 0 ? r : DEFAULT_SAR_PER_USD);
+const normalizeSarPegRate = (r: number): number => {
+  const safe = safeRate(r);
+  // USD/SAR is effectively pegged; normalize near-peg feed jitter/drift to the canonical 3.75
+  // so KPI and UI conversions remain stable and deterministic.
+  if (safe >= 3.64 && safe <= 3.86) return DEFAULT_SAR_PER_USD;
+  return safe;
+};
 
 /**
  * `exchangeRate` / `sarPerUsd` throughout the app: **SAR per 1 USD** (same as `toSAR` / `fromSAR`).
@@ -17,11 +24,11 @@ export function resolveSarPerUsd(
   const w = Number(data?.wealthUltraConfig?.fxRate);
   if (Number.isFinite(w) && w > 0) {
     // Legacy rows sometimes stored **USD per 1 SAR** (~0.27) instead of SAR per 1 USD (~3.75).
-    if (w < 0.55) return safeRate(1 / w);
-    return w;
+    if (w < 0.55) return normalizeSarPegRate(1 / w);
+    return normalizeSarPegRate(w);
   }
   const u = Number(uiSarPerUsd);
-  if (Number.isFinite(u) && u > 0) return u;
+  if (Number.isFinite(u) && u > 0) return normalizeSarPegRate(u);
   return DEFAULT_SAR_PER_USD;
 }
 

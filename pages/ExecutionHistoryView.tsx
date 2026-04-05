@@ -77,7 +77,13 @@ const ExecutionHistoryView: React.FC = () => {
       logs = [...data.executionLogs];
     }
 
-    const storageKeys = ['investment-execution-logs', 'investmentPlanExecutionLogs', 'execution-logs'];
+    const storageKeys = [
+      'investment-execution-logs',
+      'investmentPlanExecutionLogs',
+      'execution-logs',
+      'change-logs',
+      'investment-change-logs',
+    ];
 
     for (const key of storageKeys) {
       try {

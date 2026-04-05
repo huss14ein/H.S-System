@@ -9,9 +9,11 @@ import { holdingUsesLiveQuote } from '../utils/holdingValuation';
 import {
   inferInvestmentTransactionCurrency,
   portfolioBelongsToAccount,
+  resolveInvestmentTransactionAccountId,
   resolveCanonicalAccountId,
 } from '../utils/investmentLedgerCurrency';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
+import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import {
   getPersonalAccounts,
   getPersonalCommodityHoldings,
@@ -105,32 +107,69 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
       : platformCurrency === 'USD'
         ? totalValueInSAR / rate
         : totalValueInSAR;
+  const holdingsCostBasisSAR = portfolios.reduce((sum, p) => {
+    const cur = ((p.currency as TradeCurrency) || 'USD') as TradeCurrency;
+    const cost = (p.holdings || []).reduce((s: number, h: Holding) => {
+      const qty = Number(h.quantity ?? 0);
+      const avg = Number(h.avgCost ?? 0);
+      if (!(qty > 0) || !(avg > 0)) return s;
+      return s + (qty * avg);
+    }, 0);
+    return sum + toSAR(cost, cur, rate);
+  }, 0);
 
   let invSAR = 0;
   let invUSD = 0;
   let wdrSAR = 0;
   let wdrUSD = 0;
+  let buySAR = 0;
+  let buyUSD = 0;
+  let sellSAR = 0;
+  let sellUSD = 0;
+  let divSAR = 0;
+  let divUSD = 0;
   transactions
     .filter((t) => isInvestmentTransactionType(t.type, 'deposit'))
     .forEach((t) => {
       const c = inferInvestmentTransactionCurrency(t, accList, invList);
-      if (c === 'SAR') invSAR += t.total ?? 0;
-      else invUSD += t.total ?? 0;
+      const amt = getInvestmentTransactionCashAmount(t as any);
+      if (c === 'SAR') invSAR += amt;
+      else invUSD += amt;
     });
   transactions
     .filter((t) => isInvestmentTransactionType(t.type, 'withdrawal'))
     .forEach((t) => {
       const c = inferInvestmentTransactionCurrency(t, accList, invList);
-      if (c === 'SAR') wdrSAR += t.total ?? 0;
-      else wdrUSD += t.total ?? 0;
+      const amt = getInvestmentTransactionCashAmount(t as any);
+      if (c === 'SAR') wdrSAR += amt;
+      else wdrUSD += amt;
+    });
+  transactions
+    .filter((t) => isInvestmentTransactionType(t.type, 'buy'))
+    .forEach((t) => {
+      const c = inferInvestmentTransactionCurrency(t, accList, invList);
+      const amt = getInvestmentTransactionCashAmount(t as any);
+      if (c === 'SAR') buySAR += amt;
+      else buyUSD += amt;
+    });
+  transactions
+    .filter((t) => isInvestmentTransactionType(t.type, 'sell'))
+    .forEach((t) => {
+      const c = inferInvestmentTransactionCurrency(t, accList, invList);
+      const amt = getInvestmentTransactionCashAmount(t as any);
+      if (c === 'SAR') sellSAR += amt;
+      else sellUSD += amt;
+    });
+  transactions
+    .filter((t) => isInvestmentTransactionType(t.type, 'dividend'))
+    .forEach((t) => {
+      const c = inferInvestmentTransactionCurrency(t, accList, invList);
+      const amt = getInvestmentTransactionCashAmount(t as any);
+      if (c === 'SAR') divSAR += amt;
+      else divUSD += amt;
     });
 
-  const totalInvested =
-    platformCurrency === 'SAR'
-      ? invSAR + invUSD * rate
-      : platformCurrency === 'USD'
-        ? invUSD + invSAR / rate
-        : invSAR + invUSD * rate;
+  const totalInvestedSARRaw = invSAR + invUSD * rate;
   const totalWithdrawn =
     platformCurrency === 'SAR'
       ? wdrSAR + wdrUSD * rate
@@ -138,14 +177,39 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
         ? wdrUSD + wdrSAR / rate
         : wdrSAR + wdrUSD * rate;
 
-  const netCapital = totalInvested - totalWithdrawn;
-  const totalGainLoss = totalValue - netCapital;
+  const inferredInvestedFromLedgerSAR = Math.max(
+    0,
+    (buySAR + buyUSD * rate) - (sellSAR + sellUSD * rate) - (divSAR + divUSD * rate) + cashInSar + (wdrSAR + wdrUSD * rate),
+  );
+  const totalInvestedSAR =
+    totalInvestedSARRaw > 0
+      ? totalInvestedSARRaw
+      : inferredInvestedFromLedgerSAR > 0
+        ? inferredInvestedFromLedgerSAR
+        : Math.max(0, holdingsCostBasisSAR + cashInSar + (wdrSAR + wdrUSD * rate));
+  const netCapitalSAR = Math.max(0, totalInvestedSAR - (wdrSAR + wdrUSD * rate));
+  const totalGainLossSAR = totalValueInSAR - netCapitalSAR;
+  const netCapital =
+    platformCurrency === 'SAR'
+      ? netCapitalSAR
+      : platformCurrency === 'USD'
+        ? netCapitalSAR / rate
+        : netCapitalSAR;
+  const totalGainLoss =
+    platformCurrency === 'SAR'
+      ? totalGainLossSAR
+      : platformCurrency === 'USD'
+        ? totalGainLossSAR / rate
+        : totalGainLossSAR;
+  const totalInvested =
+    platformCurrency === 'SAR'
+      ? totalInvestedSAR
+      : platformCurrency === 'USD'
+        ? totalInvestedSAR / rate
+        : totalInvestedSAR;
   const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
 
-  const totalInvestedSAR = invSAR + invUSD * rate;
   const totalWithdrawnSAR = wdrSAR + wdrUSD * rate;
-  const netCapitalSAR = totalInvestedSAR - totalWithdrawnSAR;
-  const totalGainLossSAR = totalValueInSAR - netCapitalSAR;
 
   let dailySar = 0;
   let dailyUsd = 0;
@@ -210,9 +274,14 @@ export function computePersonalPlatformCardRow(
   const txRaw = data.investmentTransactions ?? [];
   const transactions = txRaw
     .filter((t) => {
-      const raw = t.accountId ?? (t as { account_id?: string }).account_id ?? '';
-      const canon = resolveCanonicalAccountId(raw, accounts);
-      return canon === account.id || raw === account.id;
+      const txAccountId = resolveInvestmentTransactionAccountId(
+        t as InvestmentTransaction & { account_id?: string; portfolio_id?: string },
+        accounts,
+        data.investments ?? [],
+      );
+      if (!txAccountId) return false;
+      const canon = resolveCanonicalAccountId(txAccountId, accounts);
+      return canon === account.id || txAccountId === account.id;
     })
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   const currencies = [...new Set(portfoliosOnAccount.map((p) => (p.currency || 'USD') as TradeCurrency))];

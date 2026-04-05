@@ -1,6 +1,7 @@
 import type { Account, InvestmentPortfolio, InvestmentTransaction } from '../types';
 import { fetchStockDividendHistory, type StockDividendPayment, getExchangeAndCurrencyForSymbol } from './finnhubService';
 import { resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
+import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { fromSAR, toSAR } from '../utils/currencyMath';
 import { roundMoney } from '../utils/money';
@@ -44,7 +45,7 @@ export function dividendAlreadyRecorded(args: {
     const tac = resolveCanonicalAccountId(t.accountId, args.accounts);
     if (tac !== canon) continue;
     const cur = t.currency === 'SAR' || t.currency === 'USD' ? t.currency : args.bookCurrency;
-    const a = Number(t.total) || 0;
+    const a = getInvestmentTransactionCashAmount(t as any);
     const b = args.totalBook;
     if (cur === args.bookCurrency && Math.abs(a - b) < 0.05) return true;
   }

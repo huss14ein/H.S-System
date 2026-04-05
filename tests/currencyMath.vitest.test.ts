@@ -31,12 +31,12 @@ describe('currencyMath', () => {
   it('resolveSarPerUsd falls back safely for invalid input', () => {
     expect(resolveSarPerUsd(null, 0)).toBe(DEFAULT_SAR_PER_USD);
     expect(resolveSarPerUsd({ wealthUltraConfig: { fxRate: -1 } }, Number.NaN)).toBe(DEFAULT_SAR_PER_USD);
-    expect(resolveSarPerUsd({ wealthUltraConfig: { fxRate: 3.8 } }, 3.7)).toBe(3.8);
-    expect(resolveSarPerUsd({}, 3.7)).toBe(3.7);
+    expect(resolveSarPerUsd({ wealthUltraConfig: { fxRate: 3.8 } }, 3.7)).toBe(DEFAULT_SAR_PER_USD);
+    expect(resolveSarPerUsd({}, 3.7)).toBe(DEFAULT_SAR_PER_USD);
   });
 
   it('resolveSarPerUsd inverts legacy USD-per-SAR wealthUltra fxRate', () => {
-    expect(resolveSarPerUsd({ wealthUltraConfig: { fxRate: 0.2667 } }, 3.75)).toBeCloseTo(1 / 0.2667, 5);
+    expect(resolveSarPerUsd({ wealthUltraConfig: { fxRate: 0.2667 } }, 3.75)).toBe(DEFAULT_SAR_PER_USD);
   });
 
   it('totalLiquidCashSARFromAccounts converts USD cash accounts to SAR', () => {

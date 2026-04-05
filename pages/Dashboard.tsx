@@ -38,6 +38,8 @@ import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import { pushNetWorthSnapshot, listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { subscriptionSpendMonthly } from '../services/transactionIntelligence';
+import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
+import { resolveInvestmentTransactionAccountId, inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { salaryToExpenseCoverage } from '../services/salaryExpenseCoverage';
 import { generateNextBestActions } from '../services/nextBestActionEngine';
 import { useTodosOptional } from '../context/TodosContext';
@@ -465,17 +467,20 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         const spotRate = resolveSarPerUsd(data, exchangeRate);
         const currentMonth = new Date().getMonth();
         const currentYear = new Date().getFullYear();
-        const personalAccountIds = new Set(((data as any)?.personalAccounts ?? data?.accounts ?? []).map((a: { id: string }) => a.id));
+        const accounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []) as Account[];
+        const investments = ((data as any)?.personalInvestments ?? data?.investments ?? []) as any[];
+        const personalAccountIds = new Set(accounts.map((a: { id: string }) => a.id));
         const monthlyInvested = (data?.investmentTransactions ?? [])
-            .filter((t: { date: string; type?: string; accountId?: string }) => {
+            .filter((t: { date: string; type?: string; accountId?: string; account_id?: string; portfolioId?: string; portfolio_id?: string }) => {
                 const d = new Date(t.date);
-                return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy' && personalAccountIds.has(t.accountId ?? '');
+                const aid = resolveInvestmentTransactionAccountId(t as any, accounts as any, investments as any);
+                return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy' && personalAccountIds.has(aid);
             })
             .reduce((sum, t) => {
-                const txCurrency = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as 'SAR' | 'USD';
+                const txCurrency = inferInvestmentTransactionCurrency(t as any, accounts as any, investments as any);
                 const day = (t.date ?? '').slice(0, 10);
                 const dayRate = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, exchangeRate) : spotRate;
-                const sar = toSAR(t.total ?? 0, txCurrency, dayRate);
+                const sar = toSAR(getInvestmentTransactionCashAmount(t as any), txCurrency, dayRate);
                 const inPlanCurrency = planCurrency === 'SAR' ? sar : sar / spotRate;
                 return sum + inPlanCurrency;
             }, 0);
