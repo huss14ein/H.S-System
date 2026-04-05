@@ -26,7 +26,6 @@ import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { computeGoalFundingPlan } from '../services/goalFundingRouter';
 import { monteCarloGoalSuccess } from '../services/portfolioConstruction';
 import { projectedGoalCompletionDate, goalFundingGap as goalGapShared } from '../services/goalMetrics';
-import { DEFAULT_BONUS_RULES } from '../services/goalWaterfall';
 import { detectGoalConflict, goalFeasibilityCheck, type GoalConflict } from '../services/goalConflictEngine';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
@@ -617,13 +616,14 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void; pageAction?: strin
 
     const fundingWaterfallOrder = useMemo(() => {
         const rank = { High: 0, Medium: 1, Low: 2 } as const;
-        return [...(data?.goals ?? [])].sort((a, b) => {
+        const active = (data?.goals ?? []).filter((g) => (g.targetAmount ?? 0) > (goalCurrentAmountByGoalId[g.id] ?? 0));
+        return [...active].sort((a, b) => {
             const pa = rank[a.priority || 'Medium'];
             const pb = rank[b.priority || 'Medium'];
             if (pa !== pb) return pa - pb;
             return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
         });
-    }, [data?.goals]);
+    }, [data?.goals, goalCurrentAmountByGoalId]);
     
     const handleOpenModal = (goal: Goal | null = null) => { if (!goal) trackAction('add-goal', 'Goals'); setGoalToEdit(goal); setIsModalOpen(true); };
     const handleOpenDeleteModal = (goal: Goal) => { setGoalToDelete(goal); setIsDeleteModalOpen(true); };
@@ -660,6 +660,33 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void; pageAction?: strin
     };
 
     const efGoals = useEmergencyFund(data ?? null);
+    const dynamicWindfallPlan = useMemo(() => {
+        const goals = (data?.goals ?? [])
+            .map((g) => {
+                const current = goalCurrentAmountByGoalId[g.id] ?? 0;
+                const gap = Math.max(0, (g.targetAmount ?? 0) - current);
+                const priorityFactor = g.priority === 'High' ? 1 : g.priority === 'Medium' ? 0.7 : 0.4;
+                return { id: g.id, name: g.name, gap, weightedGap: gap * priorityFactor };
+            })
+            .filter((g) => g.gap > 0);
+        const totalWeightedGap = goals.reduce((s, g) => s + g.weightedGap, 0);
+        const emergencyBufferPct =
+            efGoals.monthsCovered < 2 ? 35 :
+            efGoals.monthsCovered < 4 ? 25 :
+            efGoals.monthsCovered < 6 ? 15 : 10;
+        const goalFundingPct = totalWeightedGap > 0
+            ? Math.max(30, Math.min(75, Math.round((totalWeightedGap / (totalWeightedGap + 50000)) * 100)))
+            : 40;
+        const investPct = Math.max(0, 100 - goalFundingPct - emergencyBufferPct);
+        const topGoals = goals
+            .sort((a, b) => b.weightedGap - a.weightedGap)
+            .slice(0, 3)
+            .map((g) => ({
+                ...g,
+                pctOfGoalBucket: totalWeightedGap > 0 ? (g.weightedGap / totalWeightedGap) * 100 : 0,
+            }));
+        return { goalFundingPct, emergencyBufferPct, investPct, topGoals };
+    }, [data?.goals, goalCurrentAmountByGoalId, efGoals.monthsCovered]);
     const goalValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
         const goals = data?.goals ?? [];
@@ -796,20 +823,26 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void; pageAction?: strin
         allocations={allocations}
       />
 
-      <CollapsibleSection title="Bonus / windfall allocation ideas" summary="Reference split for windfalls" className="border border-slate-200">
-        <p className="text-xs text-slate-600 mb-2">Reference split (customize in your head or with an advisor)—not automated.</p>
+      <CollapsibleSection title="Bonus / windfall allocation ideas" summary="Dynamic split based on current goals" className="border border-slate-200">
+        <p className="text-xs text-slate-600 mb-2">Auto-derived from your goal gaps, priorities, and emergency runway.</p>
         <ul className="text-sm text-slate-700 space-y-2">
-          {DEFAULT_BONUS_RULES.map((r) => (
-            <li key={r.id}>
-              <strong>{r.label}</strong>
-              {r.percentToInvest != null && (
-                <span className="text-slate-600">
-                  {' '}
-                  · ~{r.percentToInvest}% invest · ~{r.percentToBuffer ?? 0}% buffer
-                </span>
-              )}
+          <li>
+            <strong>{dynamicWindfallPlan.goalFundingPct}% to goals</strong>
+            <span className="text-slate-600"> · prioritize by gap × priority weight</span>
+          </li>
+          <li>
+            <strong>{dynamicWindfallPlan.investPct}% to investing</strong>
+            <span className="text-slate-600"> · long-term growth bucket</span>
+          </li>
+          <li>
+            <strong>{dynamicWindfallPlan.emergencyBufferPct}% to emergency buffer</strong>
+            <span className="text-slate-600"> · runway currently {efGoals.monthsCovered.toFixed(1)} months</span>
+          </li>
+          {dynamicWindfallPlan.topGoals.length > 0 && (
+            <li className="text-slate-600">
+              Top goal recipients: {dynamicWindfallPlan.topGoals.map((g) => `${g.name} (${g.pctOfGoalBucket.toFixed(0)}%)`).join(' · ')}
             </li>
-          ))}
+          )}
         </ul>
       </CollapsibleSection>
 
