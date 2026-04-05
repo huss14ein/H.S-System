@@ -3014,14 +3014,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             normalizedTx.push({ accId, tx: t });
         });
 
-        const hasInvestmentLedgerRows = new Set(normalizedTx.map((x) => x.accId));
+        const hasDepositLedgerRows = new Set(
+            normalizedTx
+                .filter(({ tx }) => String(tx.type ?? '').toLowerCase() === 'deposit')
+                .map(({ accId }) => accId),
+        );
         (data?.accounts ?? []).forEach((acc: Account) => {
             if (acc.type !== 'Investment') return;
             const accId = resolveCanonicalAccountId(acc.id, data?.accounts ?? []) ?? acc.id;
             if (!accId) return;
             if (!(accId in map)) map[accId] = { SAR: 0, USD: 0 };
-            // Legacy seed only: if this account already has ledger rows, treat `account.balance` as display-only and avoid double counting.
-            if (hasInvestmentLedgerRows.has(accId)) return;
+            // Preserve legacy opening balances when migrated ledgers are partial (e.g. buys/sells without initial deposit).
+            // If a deposit row exists for the account, that row is treated as canonical opening cash to avoid double counting.
+            if (hasDepositLedgerRows.has(accId)) return;
             const openingBalance = Math.max(0, Number(acc.balance ?? 0));
             if (!Number.isFinite(openingBalance) || openingBalance <= 0) return;
             const baseCur: TradeCurrency = acc.currency === 'USD' ? 'USD' : 'SAR';
