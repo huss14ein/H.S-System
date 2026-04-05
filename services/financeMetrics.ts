@@ -18,8 +18,8 @@ export function normalizedMonthlyExpense(
   opts?: { monthsLookback?: number; endDate?: Date }
 ): number {
   const monthsLookback = opts?.monthsLookback ?? 6;
-  const now = opts?.endDate ?? new Date();
-  const end = opts?.endDate ?? new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const now = new Date();
+  const end = opts?.endDate ?? now;
   const start = new Date(now.getFullYear(), now.getMonth() - monthsLookback, 1);
   const byMonth = new Map<string, number>();
   transactions.forEach((t) => {
@@ -44,8 +44,8 @@ export function normalizedMonthlyExpenseSar(
 ): number {
   const accById = new Map(accounts.map((a) => [a.id, a]));
   const monthsLookback = opts?.monthsLookback ?? 6;
-  const now = opts?.endDate ?? new Date();
-  const end = opts?.endDate ?? new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const now = new Date();
+  const end = opts?.endDate ?? now;
   const start = new Date(now.getFullYear(), now.getMonth() - monthsLookback, 1);
   const byMonth = new Map<string, number>();
   transactions.forEach((t) => {

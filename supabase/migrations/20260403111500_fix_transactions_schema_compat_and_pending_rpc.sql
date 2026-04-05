@@ -18,7 +18,14 @@ begin
     where table_schema='public' and table_name='transactions' and column_name='accountId'
   ) then
     begin
-      execute 'update public.transactions set account_id = nullif("accountId",'''')::uuid where account_id is null and "accountId" is not null and "accountId" <> ''''';
+      execute $sql$
+        update public.transactions
+        set account_id = nullif("accountId"::text,'')::uuid
+        where account_id is null
+          and "accountId" is not null
+          and nullif("accountId"::text,'') is not null
+          and "accountId"::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      $sql$;
     exception when others then
       raise notice 'Skipping account_id backfill from "accountId" due to cast/shape mismatch on some rows.';
     end;
@@ -36,7 +43,14 @@ begin
     where table_schema='public' and table_name='transactions' and column_name='recurringId'
   ) then
     begin
-      execute 'update public.transactions set recurring_id = nullif("recurringId",'''')::uuid where recurring_id is null and "recurringId" is not null and "recurringId" <> ''''';
+      execute $sql$
+        update public.transactions
+        set recurring_id = nullif("recurringId"::text,'')::uuid
+        where recurring_id is null
+          and "recurringId" is not null
+          and nullif("recurringId"::text,'') is not null
+          and "recurringId"::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      $sql$;
     exception when others then
       raise notice 'Skipping recurring_id backfill from "recurringId" due to cast/shape mismatch on some rows.';
     end;
