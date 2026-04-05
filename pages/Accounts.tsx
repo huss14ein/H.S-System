@@ -37,6 +37,7 @@ import { accountBookCurrency } from '../utils/cashAccountDisplay';
 import { isInternalTransferTransaction } from '../services/transactionFilters';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import AIAdvisor from '../components/AIAdvisor';
+import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 
 type SharedAccountRow = Account & { ownerEmail?: string; owner_user_id?: string; account_id?: string; show_balance?: boolean };
 
@@ -599,7 +600,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 const linkedCashAccountId = t.linkedCashAccountId ?? t.linked_cash_account_id;
                 const platformAccountId = t.accountId ?? t.account_id ?? '';
                 const gid = t.transferGroupId ?? t.transfer_group_id;
-                const absAmt = Math.abs(Number(t.total ?? 0));
+                const absAmt = Math.abs(getInvestmentTransactionCashAmount(t as any));
                 if (!linkedCashAccountId || !platformAccountId || !Number.isFinite(absAmt) || absAmt <= 0) return null;
                 return {
                     fromAccountId: t.type === 'deposit' ? linkedCashAccountId : platformAccountId,

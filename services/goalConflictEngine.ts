@@ -82,16 +82,22 @@ export function goalFeasibilityCheck(args: {
   goal: Goal;
   monthlyContribution: number;
   fromDate?: Date;
-}): { feasible: boolean; monthsNeeded: number; monthsAvailable: number } {
+}): {
+  feasible: boolean;
+  monthsNeeded: number | null;
+  monthsAvailable: number | null;
+  reason: 'funded' | 'no_deadline' | 'no_contribution' | 'timeline';
+} {
   const from = args.fromDate ?? new Date();
   const gap = Math.max(0, targetAmount(args.goal) - currentAmount(args.goal));
   const end = targetDate(args.goal);
-  if (gap <= 0) return { feasible: true, monthsNeeded: 0, monthsAvailable: 999 };
-  if (!end) return { feasible: false, monthsNeeded: 999, monthsAvailable: 0 };
+  if (gap <= 0) return { feasible: true, monthsNeeded: 0, monthsAvailable: null, reason: 'funded' };
+  if (!end) return { feasible: false, monthsNeeded: null, monthsAvailable: null, reason: 'no_deadline' };
   const monthsAvailable = Math.max(0, (end.getFullYear() - from.getFullYear()) * 12 + (end.getMonth() - from.getMonth()));
   const monthly = Math.max(0, args.monthlyContribution);
-  const monthsNeeded = monthly > 0 ? Math.ceil(gap / monthly) : 999;
-  return { feasible: monthsNeeded <= monthsAvailable, monthsNeeded, monthsAvailable };
+  if (!(monthly > 0)) return { feasible: false, monthsNeeded: null, monthsAvailable, reason: 'no_contribution' };
+  const monthsNeeded = Math.ceil(gap / monthly);
+  return { feasible: monthsNeeded <= monthsAvailable, monthsNeeded, monthsAvailable, reason: 'timeline' };
 }
 
 /**

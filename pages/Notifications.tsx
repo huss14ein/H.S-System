@@ -17,6 +17,7 @@ import AIAdvisor from '../components/AIAdvisor';
 import { DataContext } from '../context/DataContext';
 import TodoListPanel from '../components/TodoListPanel';
 import { useToast } from '../context/ToastContext';
+import { isSupportedPageAction } from '../utils/pageActions';
 
 const NOTIFICATIONS_TAB_KEY = 'finova_notifications_tab_v1';
 
@@ -133,7 +134,16 @@ const Notifications: React.FC<{
 
   const handleNotificationClick = (n: AppNotification) => {
     ctx?.markAsRead(n.id);
-    if (n.pageLink) setActivePage(n.pageLink);
+    if (n.pageLink) {
+      if (triggerPageAction && n.pageAction && isSupportedPageAction(n.pageLink, n.pageAction)) {
+        triggerPageAction(n.pageLink, n.pageAction);
+      } else {
+        if (n.pageAction && !isSupportedPageAction(n.pageLink, n.pageAction)) {
+          showToast('This alert action is not supported in this app version. Opened the related page instead.', 'info');
+        }
+        setActivePage(n.pageLink);
+      }
+    }
   };
 
   const saveAlertAsTask = (n: AppNotification) => {

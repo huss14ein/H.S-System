@@ -591,10 +591,20 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const commodityList = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
 
     const { totalAssetValue, totalPhysicalAssetValue, totalCommodityValue, totalRentalIncome } = useMemo(() => {
-        const physicalValue = assetsList.reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0);
+        const physicalValue = assetsList
+            .filter((asset: { type?: string }) => asset.type !== 'Sukuk')
+            .reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0);
+        const sukukValue = assetsList
+            .filter((asset: { type?: string }) => asset.type === 'Sukuk')
+            .reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0);
         const commodityValue = commodityList.reduce((sum: number, h: { currentValue?: number }) => sum + (h.currentValue ?? 0), 0);
         const rentalIncome = assetsList.filter((a: { isRental?: boolean; monthlyRent?: number }) => a.isRental && a.monthlyRent).reduce((sum: number, a: { monthlyRent?: number }) => sum + (a.monthlyRent ?? 0), 0);
-        return { totalAssetValue: physicalValue + commodityValue, totalPhysicalAssetValue: physicalValue, totalCommodityValue: commodityValue, totalRentalIncome: rentalIncome };
+        return {
+            totalAssetValue: physicalValue + sukukValue + commodityValue,
+            totalPhysicalAssetValue: physicalValue,
+            totalCommodityValue: commodityValue,
+            totalRentalIncome: rentalIncome,
+        };
     }, [assetsList, commodityList]);
 
     // Physical Asset Handlers

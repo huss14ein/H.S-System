@@ -7,9 +7,13 @@
 import { describe, it, expect } from 'vitest';
 import type { Account, FinancialData, Holding, InvestmentPortfolio, InvestmentTransaction } from '../types';
 import {
+  computePersonalPlatformCardRow,
   computePersonalPlatformsRollupSAR,
   computePlatformCardMetrics,
 } from '../services/investmentPlatformCardMetrics';
+import { computePersonalInvestmentKpisSar } from '../services/investmentKpiCore';
+import { computeDashboardKpiSnapshot } from '../services/dashboardKpiSnapshot';
+import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 
 const SAR_PER_USD = 3.75;
 const PLATFORM_ID = 'platform-inv-1';
@@ -227,5 +231,127 @@ describe('Personal platforms rollup (KPI alignment)', () => {
     const rollup = computePersonalPlatformsRollupSAR(data, SAR_PER_USD, {}, getCash);
     expect(rollup.subtotalSAR).toBeCloseTo(10_000, 5);
     expect(rollup.dailyPnLSAR).toBe(0);
+  });
+
+  it('shared KPI core keeps Dashboard ROI and Monthly-report ROI aligned', () => {
+    const getCash = () => ({ SAR: 2_000, USD: 0 });
+    const data = {
+      accounts: [baseAccount()],
+      investments: [
+        basePortfolio({
+          holdings: [
+            { id: 'h1', symbol: '2222.SR', quantity: 100, avgCost: 50, currentValue: 4_500, zakahClass: 'Zakatable', realizedPnL: 0 } as Holding,
+          ],
+        }),
+      ],
+      investmentTransactions: [
+        tx({ id: 'd1', type: 'deposit', total: 8_000, currency: 'SAR' }),
+        tx({ id: 'w1', type: 'withdrawal', total: 1_000, currency: 'SAR' }),
+      ],
+      transactions: [],
+      budgets: [],
+      goals: [],
+      commodityHoldings: [],
+      assets: [],
+      liabilities: [],
+    } as unknown as FinancialData;
+
+    const core = computePersonalInvestmentKpisSar(data, SAR_PER_USD, getCash);
+    const dashboard = computeDashboardKpiSnapshot(data, SAR_PER_USD, getCash);
+    const reportKpis = computeMonthlyReportFinancialKpis(data, SAR_PER_USD, getCash);
+
+    expect(core.totalInvestedSar).toBeCloseTo(8_000, 5);
+    expect(core.totalWithdrawnSar).toBeCloseTo(1_000, 5);
+    expect(core.brokerageCashSar).toBeCloseTo(2_000, 5);
+    expect(core.totalGainLossSar).toBeCloseTo(-500, 5);
+    expect(core.roi).toBeCloseTo(-500 / 7_000, 8);
+    expect(dashboard?.roi).toBeCloseTo(core.roi, 8);
+    expect(reportKpis.roi).toBeCloseTo(core.roi, 8);
+  });
+
+  it('shared KPI core counts legacy snake_case account_id transaction links', () => {
+    const getCash = () => ({ SAR: 5_000, USD: 0 });
+    const data = {
+      accounts: [baseAccount()],
+      investments: [basePortfolio()],
+      investmentTransactions: [
+        { id: 'd1', account_id: PLATFORM_ID, type: 'deposit', total: 5_000, date: '2025-06-10', symbol: 'CASH', quantity: 0, price: 0, currency: 'SAR' },
+      ],
+      transactions: [],
+      budgets: [],
+      goals: [],
+      commodityHoldings: [],
+      assets: [],
+      liabilities: [],
+    } as unknown as FinancialData;
+
+    const core = computePersonalInvestmentKpisSar(data, SAR_PER_USD, getCash);
+    expect(core.totalInvestedSar).toBeCloseTo(5_000, 5);
+    expect(core.netCapitalSar).toBeCloseTo(5_000, 5);
+  });
+
+  it('shared KPI core resolves portfolio-linked transactions with missing accountId', () => {
+    const getCash = () => ({ SAR: 2_000, USD: 0 });
+    const data = {
+      accounts: [baseAccount()],
+      investments: [basePortfolio({ id: 'pf-linked', accountId: PLATFORM_ID, currency: 'USD' as const })],
+      investmentTransactions: [
+        {
+          id: 'd1',
+          portfolio_id: 'pf-linked',
+          type: 'deposit',
+          total: 1_000,
+          date: '2025-06-10',
+          symbol: 'CASH',
+          quantity: 0,
+          price: 0,
+        },
+      ],
+      transactions: [],
+      budgets: [],
+      goals: [],
+      commodityHoldings: [],
+      assets: [],
+      liabilities: [],
+    } as unknown as FinancialData;
+
+    const core = computePersonalInvestmentKpisSar(data, SAR_PER_USD, getCash);
+    // inferred currency is USD from the single linked USD portfolio.
+    expect(core.totalInvestedSar).toBeCloseTo(3_750, 5);
+  });
+
+  it('platform row metrics include account flows linked by portfolio_id when accountId is missing', () => {
+    const getCash = () => ({ SAR: 3_750, USD: 0 });
+    const data = {
+      accounts: [baseAccount()],
+      investments: [basePortfolio({ id: 'pf-linked', accountId: PLATFORM_ID, currency: 'USD' as const })],
+      investmentTransactions: [
+        {
+          id: 'd1',
+          portfolio_id: 'pf-linked',
+          type: 'deposit',
+          total: 1_000,
+          date: '2025-06-10',
+          symbol: 'CASH',
+          quantity: 0,
+          price: 0,
+        },
+      ],
+      transactions: [],
+      budgets: [],
+      goals: [],
+      commodityHoldings: [],
+      assets: [],
+      liabilities: [],
+    } as unknown as FinancialData;
+
+    const row = computePersonalPlatformCardRow(baseAccount(), data, {
+      sarPerUsd: SAR_PER_USD,
+      simulatedPrices: {},
+      getAvailableCashForAccount: getCash,
+    });
+    expect(row.totalInvestedSAR).toBeCloseTo(3_750, 5);
+    expect(row.totalValueInSAR).toBeCloseTo(3_750, 5);
+    expect(row.totalGainLossSAR).toBeCloseTo(0, 5);
   });
 });
