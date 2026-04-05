@@ -2866,7 +2866,7 @@ const ANALYST_DEFAULTS = {
 };
 
 const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => void; onOpenWealthUltra?: () => void; onOpenRecordTrade?: (trade: { ticker: string; amount: number; reason?: string; price?: number; quantity?: number; tradeCurrency?: TradeCurrency }) => void }> = ({ onNavigateToTab, onOpenWealthUltra, onOpenRecordTrade }) => {
-    const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog } = useContext(DataContext)!;
+    const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { isAiAvailable, aiHealthChecked } = useAI();
     const { exchangeRate } = useCurrency();
@@ -2887,6 +2887,19 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const personalPortfolios = useMemo(() => getPersonalInvestments(data ?? null), [data]);
     const [selectedPortfolioId, setSelectedPortfolioId] = useState<string | null>(null);
     const universePortfolioId = selectedPortfolioId ?? personalPortfolios[0]?.id ?? null;
+    const selectedPortfolio = useMemo(
+        () => personalPortfolios.find((p) => p.id === universePortfolioId) ?? null,
+        [personalPortfolios, universePortfolioId],
+    );
+    const selectedPortfolioAvailableCash = useMemo(() => {
+        const raw = selectedPortfolio?.accountId ?? (selectedPortfolio as { account_id?: string } | null)?.account_id ?? null;
+        if (!raw) return { SAR: 0, USD: 0 };
+        return getAvailableCashForAccount(raw);
+    }, [selectedPortfolio, getAvailableCashForAccount]);
+    const selectedPortfolioAvailableCashInPlanCurrency = useMemo(() => {
+        const c: TradeCurrency = String(plan?.budgetCurrency ?? 'SAR').toUpperCase() === 'USD' ? 'USD' : 'SAR';
+        return availableTradableCashInLedgerCurrency(selectedPortfolioAvailableCash, c, sarPerUsd);
+    }, [selectedPortfolioAvailableCash, plan?.budgetCurrency, sarPerUsd]);
     const [newTicker, setNewTicker] = useState({ ticker: '', name: '' });
     useEffect(() => {
         if (personalPortfolios.length > 0 && selectedPortfolioId === null) {
@@ -3016,7 +3029,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         return list;
     }, [unifiedUniverse, universeFilter, universeSort]);
 
-    // Auto-derive suggested monthly budget from recent buy activity (last 6 months) with source label
+    // Auto-derive suggested monthly budget from selected portfolio cash first, then history.
     const { suggestedMonthlyBudget, suggestedBudgetSource } = useMemo(() => {
         const budgetCurrency = (plan?.budgetCurrency as TradeCurrency) || 'SAR';
         const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
@@ -3024,6 +3037,12 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             if (fromCurrency === toCurrency) return amount;
             return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * sarPerUsd : amount / sarPerUsd;
         };
+        if (selectedPortfolioAvailableCashInPlanCurrency > 0) {
+            return {
+                suggestedMonthlyBudget: Math.round(selectedPortfolioAvailableCashInPlanCurrency),
+                suggestedBudgetSource: 'Available cash in selected portfolio account',
+            };
+        }
 
         const buys = (data?.investmentTransactions ?? []).filter(t => t.type === 'buy');
         const sixMonthsAgo = new Date();
@@ -3055,7 +3074,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             return { suggestedMonthlyBudget: derivedFromPortfolio, suggestedBudgetSource: '~2.5% of portfolio value' };
         }
         return { suggestedMonthlyBudget: 2500, suggestedBudgetSource: 'Default starter amount' };
-    }, [data?.investmentTransactions, data?.investments, (data as any)?.personalInvestments, sarPerUsd, plan?.budgetCurrency]);
+    }, [data?.investmentTransactions, data?.investments, (data as any)?.personalInvestments, sarPerUsd, plan?.budgetCurrency, selectedPortfolioAvailableCashInPlanCurrency]);
 
     const addWatchlistAndHoldingsToUniverse = async () => {
         const toAdd = unifiedUniverse.filter(t => t.source !== 'Universe' && !t.source?.includes('Universe'));
@@ -3170,10 +3189,14 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         ? `Minimum order size is higher than your monthly budget; no single order can be placed.`
         : null;
 
-    const selectedPortfolio = useMemo(
-        () => personalPortfolios.find((p) => p.id === universePortfolioId) ?? null,
-        [personalPortfolios, universePortfolioId],
-    );
+    const effectiveDeployBudget = useMemo(() => {
+        const monthly = Math.max(0, Number(plan.monthlyBudget ?? 0));
+        const available = Math.max(0, Number(selectedPortfolioAvailableCashInPlanCurrency ?? 0));
+        if (!(available > 0)) return monthly;
+        return Math.min(monthly, available);
+    }, [plan.monthlyBudget, selectedPortfolioAvailableCashInPlanCurrency]);
+    const previewCoreShareAmount = effectiveDeployBudget * (plan.coreAllocation ?? 0);
+    const previewUpsideShareAmount = effectiveDeployBudget * (plan.upsideAllocation ?? 0);
     const holdingsFallbackUniverse = useMemo<UniverseTicker[]>(() => (
         (selectedPortfolio?.holdings ?? [])
             .filter((h) => Boolean((h.symbol || '').trim()))
@@ -3192,13 +3215,13 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     // Live execution preview: estimated order counts from current budget and min order size
     const executionPreview = useMemo(() => {
         const minOrder = plan.brokerConstraints?.minimumOrderSize ?? 0;
-        const coreShare = coreShareAmount;
-        const upsideShare = upsideShareAmount;
+        const coreShare = previewCoreShareAmount;
+        const upsideShare = previewUpsideShareAmount;
         if (!Number.isFinite(minOrder) || minOrder <= 0) return { coreOrders: 0, upsideOrders: 0, totalOrders: 0 };
         const coreOrders = Math.floor(coreShare / minOrder);
         const upsideOrders = Math.floor(upsideShare / minOrder);
         return { coreOrders, upsideOrders, totalOrders: coreOrders + upsideOrders };
-    }, [coreShareAmount, upsideShareAmount, plan.brokerConstraints?.minimumOrderSize]);
+    }, [previewCoreShareAmount, previewUpsideShareAmount, plan.brokerConstraints?.minimumOrderSize]);
 
     const executionUniverse = useMemo<UniverseTicker[]>(() => (
         unifiedUniverse.map((t) => ({
@@ -4085,8 +4108,11 @@ Save anyway?`)) return;
                         {actionableCount > 0 && (plan.monthlyBudget ?? 0) > 0 && (
                             <div className="mb-4 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-xs text-indigo-900">
                                 <span className="font-medium">Preview:</span> Running now would deploy{' '}
-                                <CurrencyDualDisplay value={coreShareAmount + upsideShareAmount} inCurrency={planCurrency} digits={0} size="base" weight="bold" className="text-indigo-950 inline" />{' '}
+                                <CurrencyDualDisplay value={previewCoreShareAmount + previewUpsideShareAmount} inCurrency={planCurrency} digits={0} size="base" weight="bold" className="text-indigo-950 inline" />{' '}
                                 across ~<strong>{executionPreview.totalOrders}</strong> orders (Core ~{executionPreview.coreOrders}, Upside ~{executionPreview.upsideOrders}).
+                                {(plan.monthlyBudget ?? 0) > effectiveDeployBudget + 1e-9 && (
+                                    <span className="ml-1 text-indigo-800">Capped by available portfolio cash.</span>
+                                )}
                             </div>
                         )}
                         {executionUniverse.filter((t) => t.status === 'Core' || t.status === 'High-Upside').length === 0 && holdingsFallbackUniverse.length > 0 && (
