@@ -2321,32 +2321,26 @@ const PlatformCard: React.FC<{
                             Available Cash
                         </dt>
                         <dd className="metric-value w-full mt-1.5 flex flex-col items-center justify-center text-base sm:text-lg text-slate-900 tabular-nums leading-tight">
-                            {availableCashByCurrency.SAR === 0 && availableCashByCurrency.USD === 0 ? (
-                                <span className="text-slate-500">—</span>
-                            ) : (
-                                <>
-                                    <div className="flex justify-center">
-                                        <CurrencyDualDisplay value={availableCashSAR} inCurrency="SAR" digits={0} size="lg" weight="bold" />
-                                    </div>
-                                    <span className="relative mt-1 inline-flex items-center justify-center gap-1 text-[11px] font-medium text-slate-500 group/cash-buckets">
-                                        <span>By bucket</span>
-                                        <span
-                                            role="tooltip"
-                                            className="pointer-events-none absolute left-1/2 bottom-full z-30 mb-2 w-max max-w-[min(18rem,90vw)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700 shadow-lg opacity-0 transition-opacity group-hover/cash-buckets:opacity-100"
-                                        >
-                                            <span className="font-semibold tabular-nums text-slate-900 block">
-                                                {formatCurrencyString(availableCashByCurrency.SAR, { inCurrency: 'SAR', digits: 0 })}
-                                            </span>
-                                            <span className="font-semibold tabular-nums text-slate-900 block mt-1">
-                                                {formatCurrencyString(availableCashByCurrency.USD, { inCurrency: 'USD', digits: 0 })}
-                                            </span>
-                                            <span className="text-[11px] text-slate-500 mt-1.5 block leading-snug">
-                                                Actual ledger balances (not FX-converted). Hover the main amount for pooled buying power in SAR with USD equivalent.
-                                            </span>
-                                        </span>
+                            <div className="flex justify-center">
+                                <CurrencyDualDisplay value={availableCashSAR} inCurrency="SAR" digits={0} size="lg" weight="bold" />
+                            </div>
+                            <span className="relative mt-1 inline-flex items-center justify-center gap-1 text-[11px] font-medium text-slate-500 group/cash-buckets">
+                                <span>By bucket</span>
+                                <span
+                                    role="tooltip"
+                                    className="pointer-events-none absolute left-1/2 bottom-full z-30 mb-2 w-max max-w-[min(18rem,90vw)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700 shadow-lg opacity-0 transition-opacity group-hover/cash-buckets:opacity-100"
+                                >
+                                    <span className="font-semibold tabular-nums text-slate-900 block">
+                                        {formatCurrencyString(availableCashByCurrency.SAR, { inCurrency: 'SAR', digits: 0 })}
                                     </span>
-                                </>
-                            )}
+                                    <span className="font-semibold tabular-nums text-slate-900 block mt-1">
+                                        {formatCurrencyString(availableCashByCurrency.USD, { inCurrency: 'USD', digits: 0 })}
+                                    </span>
+                                    <span className="text-[11px] text-slate-500 mt-1.5 block leading-snug">
+                                        Actual ledger balances (not FX-converted). Hover the main amount for pooled buying power in SAR with USD equivalent.
+                                    </span>
+                                </span>
+                            </span>
                         </dd>
                     </div>
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
@@ -4613,11 +4607,15 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     const totalDailyPnL = platformsDailyPnL + commoditiesDailySAR;
 
     // Capital flows: deposit/withdrawal on personal investment platforms (canonical account id)
-    const invTxs = (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => txHitsPersonalInvestment(t) && t.type === 'deposit');
-    const wdrTxs = (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => txHitsPersonalInvestment(t) && t.type === 'withdrawal');
+    const personalInvTxs = (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => txHitsPersonalInvestment(t));
+    const invTxs = personalInvTxs.filter((t: InvestmentTransaction) => t.type === 'deposit');
+    const wdrTxs = personalInvTxs.filter((t: InvestmentTransaction) => t.type === 'withdrawal');
+    const buyTxs = personalInvTxs.filter((t: InvestmentTransaction) => t.type === 'buy');
+    const sellTxs = personalInvTxs.filter((t: InvestmentTransaction) => t.type === 'sell');
+    const divTxs = personalInvTxs.filter((t: InvestmentTransaction) => t.type === 'dividend');
     const accList = data?.accounts ?? [];
     const invPortfolios = portfolios;
-    let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0;
+    let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0, buySAR = 0, buyUSD = 0, sellSAR = 0, sellUSD = 0, divSAR = 0, divUSD = 0;
     invTxs.forEach((t: InvestmentTransaction) => {
         const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
         const amt = getInvestmentTransactionCashAmount(t as any);
@@ -4630,8 +4628,34 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         if (c === 'SAR') wdrSAR += amt;
         else wdrUSD += amt;
     });
-    const totalInvestedSAR = invSAR + invUSD * rate;
+    buyTxs.forEach((t: InvestmentTransaction) => {
+        const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
+        const amt = getInvestmentTransactionCashAmount(t as any);
+        if (c === 'SAR') buySAR += amt;
+        else buyUSD += amt;
+    });
+    sellTxs.forEach((t: InvestmentTransaction) => {
+        const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
+        const amt = getInvestmentTransactionCashAmount(t as any);
+        if (c === 'SAR') sellSAR += amt;
+        else sellUSD += amt;
+    });
+    divTxs.forEach((t: InvestmentTransaction) => {
+        const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
+        const amt = getInvestmentTransactionCashAmount(t as any);
+        if (c === 'SAR') divSAR += amt;
+        else divUSD += amt;
+    });
+    const totalInvestedSARRaw = invSAR + invUSD * rate;
     const totalWithdrawnSAR = wdrSAR + wdrUSD * rate;
+    const personalInvestmentAccounts = getPersonalAccounts(data).filter((a) => a.type === 'Investment');
+    const personalCashInSar = personalInvestmentAccounts.reduce((sum, a) => {
+      return sum + tradableCashBucketToSAR(getAvailableCashForAccount(a.id), rate);
+    }, 0);
+    const inferredInvestedFromLedgerSAR = Math.max(
+      0,
+      (buySAR + buyUSD * rate) - (sellSAR + sellUSD * rate) - (divSAR + divUSD * rate) + personalCashInSar + totalWithdrawnSAR,
+    );
     const commodityCost = allCommodities.reduce((sum: number, ch: { purchaseValue?: number }) => sum + toSAR(ch.purchaseValue ?? 0, 'USD', rate), 0);
     const holdingsCostBasisSAR = portfolios.reduce((sum: number, p: any) => {
       const book: 'USD' | 'SAR' = p?.currency === 'USD' ? 'USD' : 'SAR';
@@ -4641,6 +4665,12 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
       );
       return sum + toSAR(cost, book, rate);
     }, 0);
+    const totalInvestedSAR =
+      totalInvestedSARRaw > 0
+        ? totalInvestedSARRaw
+        : inferredInvestedFromLedgerSAR > 0
+          ? inferredInvestedFromLedgerSAR
+          : holdingsCostBasisSAR;
     const computedNetCapital = totalInvestedSAR - totalWithdrawnSAR + commodityCost;
     const netCapital = computedNetCapital > 0 ? computedNetCapital : holdingsCostBasisSAR + commodityCost;
     const totalGainLoss = totalValue - netCapital;

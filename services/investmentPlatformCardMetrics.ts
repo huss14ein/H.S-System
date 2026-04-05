@@ -121,6 +121,12 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
   let invUSD = 0;
   let wdrSAR = 0;
   let wdrUSD = 0;
+  let buySAR = 0;
+  let buyUSD = 0;
+  let sellSAR = 0;
+  let sellUSD = 0;
+  let divSAR = 0;
+  let divUSD = 0;
   transactions
     .filter((t) => isInvestmentTransactionType(t.type, 'deposit'))
     .forEach((t) => {
@@ -137,6 +143,30 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
       if (c === 'SAR') wdrSAR += amt;
       else wdrUSD += amt;
     });
+  transactions
+    .filter((t) => isInvestmentTransactionType(t.type, 'buy'))
+    .forEach((t) => {
+      const c = inferInvestmentTransactionCurrency(t, accList, invList);
+      const amt = getInvestmentTransactionCashAmount(t as any);
+      if (c === 'SAR') buySAR += amt;
+      else buyUSD += amt;
+    });
+  transactions
+    .filter((t) => isInvestmentTransactionType(t.type, 'sell'))
+    .forEach((t) => {
+      const c = inferInvestmentTransactionCurrency(t, accList, invList);
+      const amt = getInvestmentTransactionCashAmount(t as any);
+      if (c === 'SAR') sellSAR += amt;
+      else sellUSD += amt;
+    });
+  transactions
+    .filter((t) => isInvestmentTransactionType(t.type, 'dividend'))
+    .forEach((t) => {
+      const c = inferInvestmentTransactionCurrency(t, accList, invList);
+      const amt = getInvestmentTransactionCashAmount(t as any);
+      if (c === 'SAR') divSAR += amt;
+      else divUSD += amt;
+    });
 
   const totalInvestedSARRaw = invSAR + invUSD * rate;
   const totalWithdrawn =
@@ -146,10 +176,16 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
         ? wdrUSD + wdrSAR / rate
         : wdrSAR + wdrUSD * rate;
 
+  const inferredInvestedFromLedgerSAR = Math.max(
+    0,
+    (buySAR + buyUSD * rate) - (sellSAR + sellUSD * rate) - (divSAR + divUSD * rate) + cashInSar + (wdrSAR + wdrUSD * rate),
+  );
   const totalInvestedSAR =
     totalInvestedSARRaw > 0
       ? totalInvestedSARRaw
-      : Math.max(0, holdingsCostBasisSAR + cashInSar + (wdrSAR + wdrUSD * rate));
+      : inferredInvestedFromLedgerSAR > 0
+        ? inferredInvestedFromLedgerSAR
+        : Math.max(0, holdingsCostBasisSAR + cashInSar + (wdrSAR + wdrUSD * rate));
   const netCapitalSAR = Math.max(0, totalInvestedSAR - (wdrSAR + wdrUSD * rate));
   const totalGainLossSAR = totalValueInSAR - netCapitalSAR;
   const netCapital =
