@@ -87,6 +87,7 @@ import {
     computePersonalPlatformsRollupSAR,
     computePlatformCardMetrics,
 } from '../services/investmentPlatformCardMetrics';
+import { computePersonalInvestmentKpisSar } from '../services/investmentKpiCore';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 import { aggregateMonthlyBudgetAcrossPortfolios, getEffectivePlanForPortfolio } from '../utils/investmentPlanPerPortfolio';
 
@@ -4581,16 +4582,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         commoditiesValueSAR: 0,
       };
     }
-    const portfolios = getPersonalInvestments(data);
     const allCommodities = getPersonalCommodityHoldings(data);
-    const accountsFull = data?.accounts ?? [];
-    const personalAccountIds = new Set(getPersonalAccounts(data).map((a) => a.id));
-    const txHitsPersonalInvestment = (t: InvestmentTransaction) => {
-      const raw = (t.accountId ?? (t as { account_id?: string }).account_id ?? '').trim();
-      if (!raw) return false;
-      const canon = resolveCanonicalAccountId(raw, accountsFull);
-      return personalAccountIds.has(canon) || personalAccountIds.has(raw);
-    };
     const rate = resolveSarPerUsd(data, exchangeRate);
     const { subtotalSAR: platformsRollupSAR, dailyPnLSAR: platformsDailyPnL } = computePersonalPlatformsRollupSAR(
       data,
@@ -4598,6 +4590,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
       simulatedPrices,
       getAvailableCashForAccount,
     );
+    const { netCapitalSar: platformNetCapitalSar } = computePersonalInvestmentKpisSar(data, rate, getAvailableCashForAccount);
     const { valueSAR: commoditiesValueSAR, dailyDeltaSAR: commoditiesDailySAR } = computePersonalCommoditiesContributionSAR(
       data,
       rate,
@@ -4605,74 +4598,8 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     );
     const totalValue = platformsRollupSAR + commoditiesValueSAR;
     const totalDailyPnL = platformsDailyPnL + commoditiesDailySAR;
-
-    // Capital flows: deposit/withdrawal on personal investment platforms (canonical account id)
-    const personalInvTxs = (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => txHitsPersonalInvestment(t));
-    const invTxs = personalInvTxs.filter((t: InvestmentTransaction) => t.type === 'deposit');
-    const wdrTxs = personalInvTxs.filter((t: InvestmentTransaction) => t.type === 'withdrawal');
-    const buyTxs = personalInvTxs.filter((t: InvestmentTransaction) => t.type === 'buy');
-    const sellTxs = personalInvTxs.filter((t: InvestmentTransaction) => t.type === 'sell');
-    const divTxs = personalInvTxs.filter((t: InvestmentTransaction) => t.type === 'dividend');
-    const accList = data?.accounts ?? [];
-    const invPortfolios = portfolios;
-    let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0, buySAR = 0, buyUSD = 0, sellSAR = 0, sellUSD = 0, divSAR = 0, divUSD = 0;
-    invTxs.forEach((t: InvestmentTransaction) => {
-        const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
-        const amt = getInvestmentTransactionCashAmount(t as any);
-        if (c === 'SAR') invSAR += amt;
-        else invUSD += amt;
-    });
-    wdrTxs.forEach((t: InvestmentTransaction) => {
-        const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
-        const amt = getInvestmentTransactionCashAmount(t as any);
-        if (c === 'SAR') wdrSAR += amt;
-        else wdrUSD += amt;
-    });
-    buyTxs.forEach((t: InvestmentTransaction) => {
-        const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
-        const amt = getInvestmentTransactionCashAmount(t as any);
-        if (c === 'SAR') buySAR += amt;
-        else buyUSD += amt;
-    });
-    sellTxs.forEach((t: InvestmentTransaction) => {
-        const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
-        const amt = getInvestmentTransactionCashAmount(t as any);
-        if (c === 'SAR') sellSAR += amt;
-        else sellUSD += amt;
-    });
-    divTxs.forEach((t: InvestmentTransaction) => {
-        const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
-        const amt = getInvestmentTransactionCashAmount(t as any);
-        if (c === 'SAR') divSAR += amt;
-        else divUSD += amt;
-    });
-    const totalInvestedSARRaw = invSAR + invUSD * rate;
-    const totalWithdrawnSAR = wdrSAR + wdrUSD * rate;
-    const personalInvestmentAccounts = getPersonalAccounts(data).filter((a) => a.type === 'Investment');
-    const personalCashInSar = personalInvestmentAccounts.reduce((sum, a) => {
-      return sum + tradableCashBucketToSAR(getAvailableCashForAccount(a.id), rate);
-    }, 0);
-    const inferredInvestedFromLedgerSAR = Math.max(
-      0,
-      (buySAR + buyUSD * rate) - (sellSAR + sellUSD * rate) - (divSAR + divUSD * rate) + personalCashInSar + totalWithdrawnSAR,
-    );
     const commodityCost = allCommodities.reduce((sum: number, ch: { purchaseValue?: number }) => sum + toSAR(ch.purchaseValue ?? 0, 'USD', rate), 0);
-    const holdingsCostBasisSAR = portfolios.reduce((sum: number, p: any) => {
-      const book: 'USD' | 'SAR' = p?.currency === 'USD' ? 'USD' : 'SAR';
-      const cost = (p?.holdings ?? []).reduce(
-        (s: number, h: any) => s + Math.max(0, (Number(h?.avgCost) || 0) * (Number(h?.quantity) || 0)),
-        0,
-      );
-      return sum + toSAR(cost, book, rate);
-    }, 0);
-    const totalInvestedSAR =
-      totalInvestedSARRaw > 0
-        ? totalInvestedSARRaw
-        : inferredInvestedFromLedgerSAR > 0
-          ? inferredInvestedFromLedgerSAR
-          : holdingsCostBasisSAR;
-    const computedNetCapital = totalInvestedSAR - totalWithdrawnSAR + commodityCost;
-    const netCapital = computedNetCapital > 0 ? computedNetCapital : holdingsCostBasisSAR + commodityCost;
+    const netCapital = Math.max(0, platformNetCapitalSar + commodityCost);
     const totalGainLoss = totalValue - netCapital;
     const roiRaw = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
     const roi = Number.isFinite(roiRaw) ? roiRaw : 0;

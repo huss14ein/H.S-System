@@ -3,7 +3,7 @@
  * Mirrors Summary page calculations so JSON/CSV/HTML match on-screen metrics.
  */
 
-import type { Account, FinancialData, TradeCurrency } from '../types';
+import type { FinancialData, TradeCurrency } from '../types';
 import { computeEmergencyFundMetrics, type EmergencyFundMetrics } from '../hooks/useEmergencyFund';
 import { getAllInvestmentsValueInSAR, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { getPersonalWealthData } from '../utils/wealthScope';
@@ -17,9 +17,7 @@ import { computeRiskLaneFromData, type RiskLaneContext } from './riskLaneEngine'
 import { runShockDrill, type ShockDrillResult } from './shockDrillEngine';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { computeLiquidNetWorth } from './liquidNetWorth';
-import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
-import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
-import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
+import { computePersonalInvestmentKpisSar } from './investmentKpiCore';
 
 export type GetAvailableCashFn = (accountId: string) => { SAR: number; USD: number };
 
@@ -96,11 +94,8 @@ export function computeMonthlyReportFinancialKpis(
   const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const currentMonth = now.getMonth() + 1;
   const currentYear = now.getFullYear();
-  const d = data as { personalTransactions?: typeof data.transactions; personalAccounts?: typeof data.accounts; personalInvestments?: typeof data.investments };
+  const d = data as { personalTransactions?: typeof data.transactions };
   const transactions = d?.personalTransactions ?? data.transactions ?? [];
-  const accounts = d?.personalAccounts ?? data.accounts ?? [];
-  const investments = d?.personalInvestments ?? data.investments ?? [];
-  const personalAccountIds = new Set(accounts.map((a: { id: string }) => a.id));
 
   const monthlyTransactions = transactions.filter((t: { date: string }) => new Date(t.date) >= firstDayOfMonth);
   const monthlyExpenses = monthlyTransactions
@@ -112,70 +107,7 @@ export function computeMonthlyReportFinancialKpis(
     .reduce((sum, b) => sum + budgetToMonthly(b), 0);
   const budgetVariance = totalBudget - monthlyExpenses;
 
-  const holdingsValueSAR = getAllInvestmentsValueInSAR(investments, sarPerUsd);
-  let brokerageCashSAR = 0;
-  accounts.forEach((acc: Account) => {
-    if (acc.type === 'Investment' && personalAccountIds.has(acc.id)) {
-      brokerageCashSAR += tradableCashBucketToSAR(getAvailableCashForAccount(acc.id), sarPerUsd);
-    }
-  });
-  const totalInvestmentsValue = holdingsValueSAR + brokerageCashSAR;
-  const invTx = (data.investmentTransactions ?? []).filter((t: { accountId?: string }) => personalAccountIds.has(t.accountId ?? ''));
-  const totalInvestedSar = invTx
-    .filter((t: { type?: string }) => isInvestmentTransactionType(t.type, 'deposit'))
-    .reduce((sum: number, t: { total?: number; currency?: string; accountId?: string }) => {
-      const currency = inferInvestmentTransactionCurrency(
-        { currency: t.currency as 'SAR' | 'USD' | undefined, accountId: t.accountId ?? '' },
-        accounts as Account[],
-        investments as any,
-      );
-      return sum + toSAR(getInvestmentTransactionCashAmount(t as any), currency, sarPerUsd);
-    }, 0);
-  const totalWithdrawnSar = invTx
-    .filter((t: { type?: string }) => isInvestmentTransactionType(t.type, 'withdrawal'))
-    .reduce((sum: number, t: { total?: number; currency?: string; accountId?: string }) => {
-      const currency = inferInvestmentTransactionCurrency(
-        { currency: t.currency as 'SAR' | 'USD' | undefined, accountId: t.accountId ?? '' },
-        accounts as Account[],
-        investments as any,
-      );
-      return sum + toSAR(getInvestmentTransactionCashAmount(t as any), currency, sarPerUsd);
-    }, 0);
-  const buysSar = invTx
-    .filter((t: { type?: string }) => isInvestmentTransactionType(t.type, 'buy'))
-    .reduce((sum: number, t: { total?: number; currency?: string; accountId?: string }) => {
-      const currency = inferInvestmentTransactionCurrency(
-        { currency: t.currency as 'SAR' | 'USD' | undefined, accountId: t.accountId ?? '' },
-        accounts as Account[],
-        investments as any,
-      );
-      return sum + toSAR(getInvestmentTransactionCashAmount(t as any), currency, sarPerUsd);
-    }, 0);
-  const sellsSar = invTx
-    .filter((t: { type?: string }) => isInvestmentTransactionType(t.type, 'sell'))
-    .reduce((sum: number, t: { total?: number; currency?: string; accountId?: string }) => {
-      const currency = inferInvestmentTransactionCurrency(
-        { currency: t.currency as 'SAR' | 'USD' | undefined, accountId: t.accountId ?? '' },
-        accounts as Account[],
-        investments as any,
-      );
-      return sum + toSAR(getInvestmentTransactionCashAmount(t as any), currency, sarPerUsd);
-    }, 0);
-  const dividendsSar = invTx
-    .filter((t: { type?: string }) => isInvestmentTransactionType(t.type, 'dividend'))
-    .reduce((sum: number, t: { total?: number; currency?: string; accountId?: string }) => {
-      const currency = inferInvestmentTransactionCurrency(
-        { currency: t.currency as 'SAR' | 'USD' | undefined, accountId: t.accountId ?? '' },
-        accounts as Account[],
-        investments as any,
-      );
-      return sum + toSAR(getInvestmentTransactionCashAmount(t as any), currency, sarPerUsd);
-    }, 0);
-  const inferredInvestedSar = Math.max(0, buysSar - sellsSar - dividendsSar + brokerageCashSAR + totalWithdrawnSar);
-  const effectiveInvestedSar = totalInvestedSar > 0 ? totalInvestedSar : inferredInvestedSar;
-  const netCapital = Math.max(0, effectiveInvestedSar - totalWithdrawnSar);
-  const totalGainLoss = totalInvestmentsValue - netCapital;
-  const roi = netCapital > 0 ? totalGainLoss / netCapital : 0;
+  const { roi } = computePersonalInvestmentKpisSar(data, sarPerUsd, getAvailableCashForAccount);
 
   return { budgetVariance, roi };
 }
