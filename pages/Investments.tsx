@@ -2660,10 +2660,14 @@ const PlatformView: React.FC<{
 
             const hasMixedOwnership = portfoliosAll.length > portfoliosPersonal.length;
             const personalPortfolioIds = new Set(portfoliosPersonal.map((p) => p.id).filter(Boolean));
+            const canSafelyIncludeUnassignedFlows = hasMixedOwnership && personalPortfolioIds.size === 1;
             const transactionsForMetrics = hasMixedOwnership
                 ? accountTx.filter((t) => {
                     const pid = t.portfolioId ?? (t as { portfolio_id?: string }).portfolio_id ?? '';
-                    return !!pid && personalPortfolioIds.has(pid);
+                    if (pid) return personalPortfolioIds.has(pid);
+                    // Many legacy deposit/withdraw/dividend rows are account-level (no portfolioId).
+                    // When there is only one personal portfolio under this account, include them to avoid dropping real cash.
+                    return canSafelyIncludeUnassignedFlows;
                 })
                 : accountTx;
 
