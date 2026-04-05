@@ -1,6 +1,7 @@
 import type { FinancialData, InvestmentTransaction } from '../types';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
+import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { summarizeZakatableInvestmentsForZakat } from './zakatInvestmentValuation';
 
 export interface ZakatTradeSuggestion {
@@ -61,7 +62,7 @@ export function buildZakatTradeAdvice(data: FinancialData | null | undefined): Z
   const byBuySymbol = new Map<string, { amount: number }>();
   recentBuys.forEach(t => {
     const sym = (t.symbol ?? '').toUpperCase();
-    byBuySymbol.set(sym, { amount: (byBuySymbol.get(sym)?.amount ?? 0) + Math.abs(t.total) });
+    byBuySymbol.set(sym, { amount: (byBuySymbol.get(sym)?.amount ?? 0) + Math.abs(getInvestmentTransactionCashAmount(t as any)) });
   });
 
   byBuySymbol.forEach((info, symbol) => {

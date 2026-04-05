@@ -1,5 +1,6 @@
 import type { Holding, InvestmentTransaction } from '../types';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
+import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 
 export function weightedAverageCost(h: Holding): number {
   const q = Number(h.quantity) || 0;
@@ -21,8 +22,8 @@ export function realizedPnLFromTrades(
   let sells = 0;
   txs.forEach((t) => {
     if (String(t.symbol).toUpperCase() !== String(symbol).toUpperCase()) return;
-    if (isInvestmentTransactionType(t.type, 'buy')) buys += Math.abs(Number(t.total) || 0);
-    if (isInvestmentTransactionType(t.type, 'sell')) sells += Math.abs(Number(t.total) || 0);
+    if (isInvestmentTransactionType(t.type, 'buy')) buys += Math.abs(getInvestmentTransactionCashAmount(t as any));
+    if (isInvestmentTransactionType(t.type, 'sell')) sells += Math.abs(getInvestmentTransactionCashAmount(t as any));
   });
   return sells - buys;
 }

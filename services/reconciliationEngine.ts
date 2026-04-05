@@ -5,6 +5,7 @@
 
 import type { Holding, InvestmentTransaction, Liability, Transaction } from '../types';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
+import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 
 /** Compare sum of (buy - sell) quantity to current holding quantity. */
 export function reconcileHoldings(args: {
@@ -33,7 +34,7 @@ export function reconcileDividends(args: {
 }): { recordedTotal: number; expectedTotal: number; drift: number } {
   const recorded = (args.dividendTxs ?? [])
     .filter((t) => t.accountId === args.accountId && isInvestmentTransactionType(t.type, 'dividend'))
-    .reduce((s, t) => s + Math.max(0, Number(t.total) || 0), 0);
+    .reduce((s, t) => s + Math.max(0, getInvestmentTransactionCashAmount(t as any)), 0);
   const expected = Number(args.expectedFromHoldings) ?? 0;
   return { recordedTotal: recorded, expectedTotal: expected, drift: expected - recorded };
 }

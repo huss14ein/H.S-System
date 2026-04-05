@@ -1,4 +1,4 @@
-import type { Account, FinancialData, InvestmentPortfolio, Transaction } from '../types';
+import type { Account, FinancialData, InvestmentPortfolio, InvestmentTransaction, Transaction } from '../types';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { savingsRateSar } from './financeMetrics';
 import { getAllInvestmentsValueInSAR, toSAR, tradableCashBucketToSAR, resolveSarPerUsd } from '../utils/currencyMath';
@@ -6,6 +6,7 @@ import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from './fxDai
 import { computePersonalNetWorthSAR } from './personalNetWorth';
 import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
+import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 
 /** KPI figures shared by Dashboard and System Health diagnostics (keep in sync with dashboard aggregation). */
 export type DashboardKpiSnapshot = {
@@ -97,31 +98,32 @@ export function computeDashboardKpiSnapshot(
     const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
 
     const invTx = (data.investmentTransactions ?? []).filter((t) => personalAccountIds.has(t.accountId ?? ''));
+    const invTxSar = (t: InvestmentTransaction) => {
+      const c = inferInvestmentTransactionCurrency(
+        { accountId: t.accountId ?? '', currency: t.currency as 'SAR' | 'USD' | undefined },
+        accounts,
+        investments,
+      );
+      return toSAR(getInvestmentTransactionCashAmount(t as any), c, sarPerUsd);
+    };
     const totalInvestedSar = invTx
       .filter((t) => isInvestmentTransactionType(t.type, 'deposit'))
-      .reduce((sum, t) => {
-        const c = inferInvestmentTransactionCurrency(
-          { accountId: t.accountId ?? '', currency: t.currency as 'SAR' | 'USD' | undefined },
-          accounts,
-          investments,
-        );
-        const day = (t.date ?? '').slice(0, 10);
-        const r = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, exchangeRate) : sarPerUsd;
-        return sum + toSAR(t.total ?? 0, c, r);
-      }, 0);
+      .reduce((sum, t) => sum + invTxSar(t), 0);
     const totalWithdrawnSar = invTx
       .filter((t) => isInvestmentTransactionType(t.type, 'withdrawal'))
-      .reduce((sum, t) => {
-        const c = inferInvestmentTransactionCurrency(
-          { accountId: t.accountId ?? '', currency: t.currency as 'SAR' | 'USD' | undefined },
-          accounts,
-          investments,
-        );
-        const day = (t.date ?? '').slice(0, 10);
-        const r = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, exchangeRate) : sarPerUsd;
-        return sum + toSAR(t.total ?? 0, c, r);
-      }, 0);
-    const netCapital = totalInvestedSar - totalWithdrawnSar;
+      .reduce((sum, t) => sum + invTxSar(t), 0);
+    const buysSar = invTx
+      .filter((t) => isInvestmentTransactionType(t.type, 'buy'))
+      .reduce((sum, t) => sum + invTxSar(t), 0);
+    const sellsSar = invTx
+      .filter((t) => isInvestmentTransactionType(t.type, 'sell'))
+      .reduce((sum, t) => sum + invTxSar(t), 0);
+    const dividendsSar = invTx
+      .filter((t) => isInvestmentTransactionType(t.type, 'dividend'))
+      .reduce((sum, t) => sum + invTxSar(t), 0);
+    const inferredInvestedSar = Math.max(0, buysSar - sellsSar - dividendsSar + brokerageCashSAR + totalWithdrawnSar);
+    const effectiveInvestedSar = totalInvestedSar > 0 ? totalInvestedSar : inferredInvestedSar;
+    const netCapital = Math.max(0, effectiveInvestedSar - totalWithdrawnSar);
     const totalGainLoss = totalInvestmentsValue - netCapital;
     const roi = netCapital > 0 ? totalGainLoss / netCapital : 0;
 

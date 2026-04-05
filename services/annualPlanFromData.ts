@@ -16,6 +16,7 @@ import type {
 import { getSarPerUsdForCalendarDay } from './fxDailySeries';
 import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
+import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { toSAR } from '../utils/currencyMath';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi, isInternalTransferTransaction } from './transactionFilters';
 import type { HouseholdMonthlyOverride } from './householdBudgetEngine';
@@ -288,7 +289,7 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
       );
       const day = (tx.date ?? '').slice(0, 10);
       const dayRate = data && day.length === 10 ? getSarPerUsdForCalendarDay(day, data, exchangeRate) : sarPerUsd;
-      investmentActuals[date.getMonth()] += toSAR(Number(tx.total) || 0, cur, dayRate);
+      investmentActuals[date.getMonth()] += toSAR(getInvestmentTransactionCashAmount(tx as any), cur, dayRate);
     }
   });
 

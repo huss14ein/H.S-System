@@ -34,13 +34,20 @@ function matchesStatusFilter(liability: Liability, filter: StatusFilter): boolea
     return status === 'Paid';
 }
 
-const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (liability: Liability) => void; liabilityToEdit: Liability | null }> = ({ isOpen, onClose, onSave, liabilityToEdit }) => {
+const LiabilityModal: React.FC<{
+    isOpen: boolean;
+    onClose: () => void;
+    onSave: (liability: Liability) => void;
+    liabilityToEdit: Liability | null;
+    goals: { id: string; name: string }[];
+}> = ({ isOpen, onClose, onSave, liabilityToEdit, goals }) => {
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
     const [name, setName] = useState('');
     const [type, setType] = useState<Liability['type']>('Personal Loan');
     const [amount, setAmount] = useState('');
     const [status, setStatus] = useState<Liability['status']>('Active');
     const [owner, setOwner] = useState('');
+    const [goalId, setGoalId] = useState('');
 
     React.useEffect(() => {
         if (liabilityToEdit) {
@@ -49,6 +56,7 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
             setAmount(String(Math.abs(liabilityToEdit.amount)));
             setStatus(liabilityToEdit.status ?? 'Active');
             setOwner(liabilityToEdit.owner ?? '');
+            setGoalId(liabilityToEdit.goalId ?? '');
         } else {
             const learnedType = getLearnedDefault('liability-add', 'type') as Liability['type'] | undefined;
             const validTypes: Liability['type'][] = ['Credit Card', 'Loan', 'Personal Loan', 'Mortgage', 'Receivable'];
@@ -57,6 +65,7 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
             setAmount('');
             setStatus('Active');
             setOwner('');
+            setGoalId('');
         }
     }, [liabilityToEdit, isOpen, getLearnedDefault]);
 
@@ -69,7 +78,7 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
             type,
             amount: type === 'Receivable' ? value : -value,
             status,
-            goalId: liabilityToEdit?.goalId,
+            goalId: goalId || undefined,
             owner: owner.trim() || undefined,
         };
         onSave(newLiability);
@@ -110,6 +119,20 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father for managed wealth (excluded from your net worth)." /></label>
                     <input type="text" placeholder="e.g. Father, Spouse or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="input-base"/>
                 </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                        Link to goal (optional)
+                        <InfoHint text="Connect this liability/receivable to a life goal for easier tracking and reconciliation." />
+                    </label>
+                    <select value={goalId} onChange={e => setGoalId(e.target.value)} className="select-base">
+                        <option value="">No linked goal</option>
+                        {goals.map((g) => (
+                            <option key={g.id} value={g.id}>
+                                {g.name}
+                            </option>
+                        ))}
+                    </select>
+                </div>
                 {liabilityToEdit && (
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
@@ -126,7 +149,7 @@ const LiabilityModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (
     );
 };
 
-const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void; onMarkPaid: (l: Liability) => void; canMarkPaid: boolean; canEdit: boolean; onGoToAccounts?: () => void }> = ({ liability, onEdit, onMarkPaid, canMarkPaid, canEdit, onGoToAccounts }) => {
+const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void; onMarkPaid: (l: Liability) => void; canMarkPaid: boolean; canEdit: boolean; onGoToAccounts?: () => void; goalName?: string | null }> = ({ liability, onEdit, onMarkPaid, canMarkPaid, canEdit, onGoToAccounts, goalName }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const isPaid = (liability.status ?? 'Active') === 'Paid';
     const getIcon = (type: Liability['type']) => {
@@ -150,6 +173,7 @@ const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void;
                             {liability.type}
                             {isPaid && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-slate-200 text-slate-700">Paid (reference)</span>}
                             <OwnerBadge owner={liability.owner} />
+                            {goalName && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700">Goal: {goalName}</span>}
                         </p>
                     </div>
                 </div>
@@ -173,7 +197,7 @@ const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void;
     );
 };
 
-const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void; onMarkPaid: (l: Liability) => void; canMarkPaid: boolean }> = ({ liability, onEdit, onMarkPaid, canMarkPaid }) => {
+const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void; onMarkPaid: (l: Liability) => void; canMarkPaid: boolean; goalName?: string | null }> = ({ liability, onEdit, onMarkPaid, canMarkPaid, goalName }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const isPaid = (liability.status ?? 'Active') === 'Paid';
     return (
@@ -183,9 +207,10 @@ const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) =>
                     <BanknotesIcon className={`h-8 w-8 ${isPaid ? 'text-slate-400' : 'text-emerald-500'}`} />
                     <div>
                         <h3 className="font-bold text-dark text-lg">{liability.name}</h3>
-                        <p className="text-sm text-gray-500 flex items-center gap-2">
+                        <p className="text-sm text-gray-500 flex items-center gap-2 flex-wrap">
                             Owed to you
                             {isPaid && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-slate-200 text-slate-700">Paid (reference)</span>}
+                            {goalName && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700">Goal: {goalName}</span>}
                         </p>
                     </div>
                 </div>
@@ -235,6 +260,10 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     const debts = useMemo(() => allDebts.filter(l => matchesStatusFilter(l, statusFilter)), [allDebts, statusFilter]);
     const receivables = useMemo(() => allReceivables.filter(l => matchesStatusFilter(l, statusFilter)), [allReceivables, statusFilter]);
     const liabilityIds = useMemo(() => new Set((data?.liabilities ?? []).map(l => l.id)), [data?.liabilities]);
+    const goalNameById = useMemo(
+        () => new Map<string, string>((data?.goals ?? []).map((g) => [g.id, g.name])),
+        [data?.goals],
+    );
 
     /** Checking + savings only, SAR equivalent (mixed USD/SAR accounts). */
     const liquidCheckingSavingsSar = useMemo(() => {
@@ -566,6 +595,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                                 canMarkPaid={liabilityIds.has(liab.id)}
                                 canEdit={liabilityIds.has(liab.id)}
                                 onGoToAccounts={setActivePage ? () => setActivePage('Accounts') : undefined}
+                                goalName={liab.goalId ? goalNameById.get(liab.goalId) ?? null : null}
                             />
                         ))}
                     </div>
@@ -579,7 +609,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 ) : (
                     <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                         {receivables.map(liab => (
-                            <ReceivableCard key={liab.id} liability={liab} onEdit={l => handleOpenModal(l)} onMarkPaid={handleMarkPaid} canMarkPaid={liabilityIds.has(liab.id)} />
+                            <ReceivableCard key={liab.id} liability={liab} onEdit={l => handleOpenModal(l)} onMarkPaid={handleMarkPaid} canMarkPaid={liabilityIds.has(liab.id)} goalName={liab.goalId ? goalNameById.get(liab.goalId) ?? null : null} />
                         ))}
                     </div>
                 )}
@@ -593,7 +623,13 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 buttonLabel="Get AI Liabilities Insights"
             />
 
-            <LiabilityModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveLiability} liabilityToEdit={liabilityToEdit} />
+            <LiabilityModal
+                isOpen={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                onSave={handleSaveLiability}
+                liabilityToEdit={liabilityToEdit}
+                goals={(data?.goals ?? []).map((g) => ({ id: g.id, name: g.name }))}
+            />
         </PageLayout>
     );
 };

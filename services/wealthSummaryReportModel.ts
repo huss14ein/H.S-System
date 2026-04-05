@@ -19,6 +19,7 @@ import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './t
 import { computeLiquidNetWorth } from './liquidNetWorth';
 import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
+import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 
 export type GetAvailableCashFn = (accountId: string) => { SAR: number; USD: number };
 
@@ -128,7 +129,7 @@ export function computeMonthlyReportFinancialKpis(
         accounts as Account[],
         investments as any,
       );
-      return sum + toSAR(t.total ?? 0, currency, sarPerUsd);
+      return sum + toSAR(getInvestmentTransactionCashAmount(t as any), currency, sarPerUsd);
     }, 0);
   const totalWithdrawnSar = invTx
     .filter((t: { type?: string }) => isInvestmentTransactionType(t.type, 'withdrawal'))
@@ -138,9 +139,41 @@ export function computeMonthlyReportFinancialKpis(
         accounts as Account[],
         investments as any,
       );
-      return sum + toSAR(t.total ?? 0, currency, sarPerUsd);
+      return sum + toSAR(getInvestmentTransactionCashAmount(t as any), currency, sarPerUsd);
     }, 0);
-  const netCapital = totalInvestedSar - totalWithdrawnSar;
+  const buysSar = invTx
+    .filter((t: { type?: string }) => isInvestmentTransactionType(t.type, 'buy'))
+    .reduce((sum: number, t: { total?: number; currency?: string; accountId?: string }) => {
+      const currency = inferInvestmentTransactionCurrency(
+        { currency: t.currency as 'SAR' | 'USD' | undefined, accountId: t.accountId ?? '' },
+        accounts as Account[],
+        investments as any,
+      );
+      return sum + toSAR(getInvestmentTransactionCashAmount(t as any), currency, sarPerUsd);
+    }, 0);
+  const sellsSar = invTx
+    .filter((t: { type?: string }) => isInvestmentTransactionType(t.type, 'sell'))
+    .reduce((sum: number, t: { total?: number; currency?: string; accountId?: string }) => {
+      const currency = inferInvestmentTransactionCurrency(
+        { currency: t.currency as 'SAR' | 'USD' | undefined, accountId: t.accountId ?? '' },
+        accounts as Account[],
+        investments as any,
+      );
+      return sum + toSAR(getInvestmentTransactionCashAmount(t as any), currency, sarPerUsd);
+    }, 0);
+  const dividendsSar = invTx
+    .filter((t: { type?: string }) => isInvestmentTransactionType(t.type, 'dividend'))
+    .reduce((sum: number, t: { total?: number; currency?: string; accountId?: string }) => {
+      const currency = inferInvestmentTransactionCurrency(
+        { currency: t.currency as 'SAR' | 'USD' | undefined, accountId: t.accountId ?? '' },
+        accounts as Account[],
+        investments as any,
+      );
+      return sum + toSAR(getInvestmentTransactionCashAmount(t as any), currency, sarPerUsd);
+    }, 0);
+  const inferredInvestedSar = Math.max(0, buysSar - sellsSar - dividendsSar + brokerageCashSAR + totalWithdrawnSar);
+  const effectiveInvestedSar = totalInvestedSar > 0 ? totalInvestedSar : inferredInvestedSar;
+  const netCapital = Math.max(0, effectiveInvestedSar - totalWithdrawnSar);
   const totalGainLoss = totalInvestmentsValue - netCapital;
   const roi = netCapital > 0 ? totalGainLoss / netCapital : 0;
 
@@ -357,6 +390,39 @@ export function computeWealthSummaryReportModel(
       amount: Number(l.amount ?? 0),
       status: String(l.status ?? ''),
     })),
+    investmentSummary: {
+      platformCount: personalAccounts.filter((a: { type?: string }) => a.type === 'Investment').length,
+      portfolioCount: personalInvestments.length,
+      holdingCount: investmentTreemapData.length,
+      platformCashSar: personalAccounts
+        .filter((a: { type?: string }) => a.type === 'Investment')
+        .reduce((sum: number, a: { id: string }) => sum + tradableCashBucketToSAR(getAvailableCashForAccount(a.id), sarPerUsd), 0),
+      holdingsValueSar: investmentTreemapData.reduce((sum, h) => sum + Number(h.currentValueSar ?? 0), 0),
+    },
+    platforms: personalAccounts
+      .filter((a: { type?: string }) => a.type === 'Investment')
+      .map((a: { id: string; name?: string; currency?: string }) => {
+        const cash = getAvailableCashForAccount(a.id);
+        return {
+          name: String(a.name ?? ''),
+          currency: String(a.currency ?? 'SAR'),
+          cashSar: Number(cash.SAR ?? 0),
+          cashUsd: Number(cash.USD ?? 0),
+          cashTotalSar: tradableCashBucketToSAR(cash, sarPerUsd),
+        };
+      }),
+    portfolios: personalInvestments.map((p: { name?: string; accountId?: string; currency?: string; holdings?: { currentValue?: number }[] }) => {
+      const holdings = p.holdings ?? [];
+      const valueSar = holdings.reduce((sum: number, h: { currentValue?: number }) => sum + toSAR(Number(h.currentValue ?? 0), cur(p.currency), sarPerUsd), 0);
+      const platform = personalAccounts.find((a: { id: string }) => a.id === p.accountId);
+      return {
+        name: String(p.name ?? ''),
+        platformName: String(platform?.name ?? p.accountId ?? ''),
+        currency: String(p.currency ?? 'USD'),
+        holdingsCount: holdings.length,
+        holdingsValueSar: Number(valueSar || 0),
+      };
+    }),
   };
 
   return {

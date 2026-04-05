@@ -38,6 +38,7 @@ import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import { pushNetWorthSnapshot, listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { subscriptionSpendMonthly } from '../services/transactionIntelligence';
+import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { salaryToExpenseCoverage } from '../services/salaryExpenseCoverage';
 import { generateNextBestActions } from '../services/nextBestActionEngine';
 import { useTodosOptional } from '../context/TodosContext';
@@ -475,7 +476,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 const txCurrency = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as 'SAR' | 'USD';
                 const day = (t.date ?? '').slice(0, 10);
                 const dayRate = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, exchangeRate) : spotRate;
-                const sar = toSAR(t.total ?? 0, txCurrency, dayRate);
+                const sar = toSAR(getInvestmentTransactionCashAmount(t as any), txCurrency, dayRate);
                 const inPlanCurrency = planCurrency === 'SAR' ? sar : sar / spotRate;
                 return sum + inPlanCurrency;
             }, 0);
