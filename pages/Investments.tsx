@@ -81,6 +81,7 @@ import {
     portfolioBelongsToAccount,
     resolveCanonicalAccountId,
 } from '../utils/investmentLedgerCurrency';
+import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import {
     computePersonalCommoditiesContributionSAR,
     computePersonalPlatformsRollupSAR,
@@ -195,7 +196,7 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
             })
             .reduce((sum, t) => {
                 const txCurrency = inferInvestmentTransactionCurrency(t, accounts, investments);
-                return sum + convertAmount(t.total || 0, txCurrency, planCurrency);
+                return sum + convertAmount(getInvestmentTransactionCashAmount(t as any), txCurrency, planCurrency);
             }, 0);
 
         const corePct = plan?.coreAllocation ?? 0.7;
@@ -350,18 +351,54 @@ const priorityRank = (p?: Goal['priority']) => (p === 'High' ? 0 : p === 'Medium
 /** Surfaces savings & life goals from the Goals page (not only retirement) so progress is visible before drilling into tabs. */
 const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGoals }) => {
     const { data } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
+    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+    const goalCurrentByIdSar = useMemo(() => {
+        const map = new Map<string, number>();
+        const addToGoal = (goalId: string, valueSar: number) => {
+            if (!goalId) return;
+            map.set(goalId, (map.get(goalId) ?? 0) + (Number.isFinite(valueSar) ? valueSar : 0));
+        };
+
+        const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
+        assets.forEach((a: { goalId?: string; value?: number }) => {
+            if (!a.goalId) return;
+            addToGoal(a.goalId, Number(a.value) || 0);
+        });
+
+        const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        investments.forEach((p: { goalId?: string; currency?: string; holdings?: { goalId?: string; currentValue?: number }[] }) => {
+            const pGoalId = p.goalId ?? '';
+            let portfolioResidual = 0;
+            (p.holdings ?? []).forEach((h: { goalId?: string; currentValue?: number }) => {
+                const valueSar = toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd);
+                if (h.goalId) addToGoal(h.goalId, valueSar);
+                else if (pGoalId) portfolioResidual += valueSar;
+            });
+            if (pGoalId && portfolioResidual > 0) addToGoal(pGoalId, portfolioResidual);
+        });
+
+        return map;
+    }, [data?.assets, data?.investments, (data as any)?.personalAssets, (data as any)?.personalInvestments, sarPerUsd]);
     const sortedGoals = useMemo(() => {
-        const list = (data?.goals ?? []).filter((g) => Number(g.targetAmount) > 0);
-        return [...list].sort((a, b) => {
+        const normalized = (data?.goals ?? [])
+            .map((g: any) => ({
+                ...g,
+                targetResolved: Math.max(0, Number(g?.targetAmount ?? g?.target_amount ?? 0) || 0),
+                currentResolved: Math.max(0, Number(goalCurrentByIdSar.get(g.id) ?? 0) || 0),
+                deadlineResolved: String(g?.deadline ?? g?.targetDate ?? g?.target_date ?? ''),
+            }))
+            .filter((g: any) => g.targetResolved > 0);
+        return [...normalized].sort((a: any, b: any) => {
             const pr = priorityRank(a.priority) - priorityRank(b.priority);
             if (pr !== 0) return pr;
-            const da = new Date(a.deadline).getTime();
-            const db = new Date(b.deadline).getTime();
+            const da = new Date(a.deadlineResolved).getTime();
+            const db = new Date(b.deadlineResolved).getTime();
             if (Number.isFinite(da) && Number.isFinite(db) && da !== db) return da - db;
-            return (Number(b.targetAmount) || 0) - (Number(a.targetAmount) || 0);
+            return (Number(b.targetResolved) || 0) - (Number(a.targetResolved) || 0);
         });
-    }, [data?.goals]);
+    }, [data?.goals, goalCurrentByIdSar]);
     const displayGoals = sortedGoals.slice(0, 6);
 
     if (sortedGoals.length === 0) {
@@ -415,8 +452,8 @@ const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGo
             </div>
             <div className="p-4 sm:p-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {displayGoals.map((g) => {
-                    const target = Math.max(0, Number(g.targetAmount) || 0);
-                    const current = Math.max(0, Number(g.currentAmount) || 0);
+                    const target = Math.max(0, Number((g as any).targetResolved) || 0);
+                    const current = Math.max(0, Number((g as any).currentResolved) || 0);
                     const pct = target > 0 ? Math.min(100, (current / target) * 100) : 0;
                     const remaining = Math.max(0, target - current);
                     const isRetirement = /retirement|تقاعد|pension|معاش|retire/i.test(g.name || '');
@@ -467,7 +504,7 @@ const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGo
                                 </div>
                                 <div className="text-right">
                                     <dt className="text-slate-500">Deadline</dt>
-                                    <dd className="font-semibold text-slate-800">{g.deadline ? new Date(g.deadline).toLocaleDateString() : '—'}</dd>
+                                    <dd className="font-semibold text-slate-800">{(g as any).deadlineResolved ? new Date((g as any).deadlineResolved).toLocaleDateString() : '—'}</dd>
                                 </div>
                             </dl>
                         </div>
@@ -539,11 +576,12 @@ const RecordTradeModal: React.FC<{
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const efRunway = useEmergencyFund(data ?? null);
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
-    /** Checking/Savings + tradable cash on investment platforms (SAR), so runway matches money moved to a broker. */
+    /** Tradable cash on personal investment platforms only (SAR). */
     const liquidCashSARForBuyPolicy = useMemo(() => {
         if (!data) return 0;
         const { personalAccounts } = getPersonalWealthData(data);
-        return totalLiquidCashSARFromAccounts(personalAccounts, getAvailableCashForAccount, sarPerUsd);
+        const investmentAccounts = personalAccounts.filter((a: Account) => a.type === 'Investment');
+        return totalLiquidCashSARFromAccounts(investmentAccounts, getAvailableCashForAccount, sarPerUsd);
     }, [data, getAvailableCashForAccount, sarPerUsd]);
     const runwayMonthsForBuyPolicy = useMemo(() => {
         const exp = efRunway.monthlyCoreExpenses;
@@ -2113,6 +2151,7 @@ const PlatformCard: React.FC<{
     /** If set, card headline / ROI use only these portfolios (e.g. personal); `portfolios` still drives the holdings tables. */
     metricsPortfolios?: InvestmentPortfolio[];
     transactions: InvestmentTransaction[];
+    metricsTransactions?: InvestmentTransaction[];
     goals: Goal[];
     sarPerUsd: number;
     availableCashByCurrency?: { SAR: number; USD: number };
@@ -2127,7 +2166,7 @@ const PlatformCard: React.FC<{
     isExpanded: boolean;
     onToggleExpanded: () => void;
 }> = (props) => {
-    const { platform, portfolios, metricsPortfolios, transactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded } = props;
+    const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded } = props;
     const portfoliosForMetrics = metricsPortfolios ?? portfolios;
     const showPersonalScopeNote = portfolios.length > portfoliosForMetrics.length;
     const { formatCurrencyString } = useFormatCurrency();
@@ -2156,7 +2195,7 @@ const PlatformCard: React.FC<{
         () =>
             computePlatformCardMetrics({
                 portfolios: portfoliosForMetrics,
-                transactions,
+                transactions: metricsTransactions ?? transactions,
                 accounts: dataCtx?.accounts ?? [],
                 allInvestments: investmentsForInfer,
                 sarPerUsd,
@@ -2164,7 +2203,7 @@ const PlatformCard: React.FC<{
                 simulatedPrices,
                 platformCurrency,
             }),
-        [portfoliosForMetrics, transactions, simulatedPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx?.accounts, investmentsForInfer],
+        [portfoliosForMetrics, transactions, metricsTransactions, simulatedPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx?.accounts, investmentsForInfer],
     );
 
     const holdingsWithGains = (holdings: Holding[], bookCurrency: TradeCurrency) =>
@@ -2282,32 +2321,26 @@ const PlatformCard: React.FC<{
                             Available Cash
                         </dt>
                         <dd className="metric-value w-full mt-1.5 flex flex-col items-center justify-center text-base sm:text-lg text-slate-900 tabular-nums leading-tight">
-                            {availableCashByCurrency.SAR === 0 && availableCashByCurrency.USD === 0 ? (
-                                <span className="text-slate-500">—</span>
-                            ) : (
-                                <>
-                                    <div className="flex justify-center">
-                                        <CurrencyDualDisplay value={availableCashSAR} inCurrency="SAR" digits={0} size="lg" weight="bold" />
-                                    </div>
-                                    <span className="relative mt-1 inline-flex items-center justify-center gap-1 text-[11px] font-medium text-slate-500 group/cash-buckets">
-                                        <span>By bucket</span>
-                                        <span
-                                            role="tooltip"
-                                            className="pointer-events-none absolute left-1/2 bottom-full z-30 mb-2 w-max max-w-[min(18rem,90vw)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700 shadow-lg opacity-0 transition-opacity group-hover/cash-buckets:opacity-100"
-                                        >
-                                            <span className="font-semibold tabular-nums text-slate-900 block">
-                                                {formatCurrencyString(availableCashByCurrency.SAR, { inCurrency: 'SAR', digits: 0 })}
-                                            </span>
-                                            <span className="font-semibold tabular-nums text-slate-900 block mt-1">
-                                                {formatCurrencyString(availableCashByCurrency.USD, { inCurrency: 'USD', digits: 0 })}
-                                            </span>
-                                            <span className="text-[11px] text-slate-500 mt-1.5 block leading-snug">
-                                                Actual ledger balances (not FX-converted). Hover the main amount for pooled buying power in SAR with USD equivalent.
-                                            </span>
-                                        </span>
+                            <div className="flex justify-center">
+                                <CurrencyDualDisplay value={availableCashSAR} inCurrency="SAR" digits={0} size="lg" weight="bold" />
+                            </div>
+                            <span className="relative mt-1 inline-flex items-center justify-center gap-1 text-[11px] font-medium text-slate-500 group/cash-buckets">
+                                <span>By bucket</span>
+                                <span
+                                    role="tooltip"
+                                    className="pointer-events-none absolute left-1/2 bottom-full z-30 mb-2 w-max max-w-[min(18rem,90vw)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700 shadow-lg opacity-0 transition-opacity group-hover/cash-buckets:opacity-100"
+                                >
+                                    <span className="font-semibold tabular-nums text-slate-900 block">
+                                        {formatCurrencyString(availableCashByCurrency.SAR, { inCurrency: 'SAR', digits: 0 })}
                                     </span>
-                                </>
-                            )}
+                                    <span className="font-semibold tabular-nums text-slate-900 block mt-1">
+                                        {formatCurrencyString(availableCashByCurrency.USD, { inCurrency: 'USD', digits: 0 })}
+                                    </span>
+                                    <span className="text-[11px] text-slate-500 mt-1.5 block leading-snug">
+                                        Actual ledger balances (not FX-converted). Hover the main amount for pooled buying power in SAR with USD equivalent.
+                                    </span>
+                                </span>
+                            </span>
                         </dd>
                     </div>
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
@@ -2608,19 +2641,58 @@ const PlatformView: React.FC<{
         const personalInv = getPersonalInvestments(data);
         const investmentTransactions = data?.investmentTransactions ?? [];
         const investmentAccounts = accounts.filter((acc) => acc.type === 'Investment').sort((a, b) => a.name.localeCompare(b.name));
-        return investmentAccounts.map((account) => ({
-            account,
-            portfoliosAll: invList.filter((p) => portfolioBelongsToAccount(p, account, accList)),
-            portfoliosPersonal: personalInv.filter((p) => portfolioBelongsToAccount(p, account, accList)),
-            transactions: investmentTransactions
+        return investmentAccounts.map((account) => {
+            const portfoliosAll = invList.filter((p) => portfolioBelongsToAccount(p, account, accList));
+            const portfoliosPersonal = personalInv.filter((p) => portfolioBelongsToAccount(p, account, accList));
+            const accountTx = investmentTransactions
                 .filter((t) => {
                     const raw = t.accountId ?? (t as { account_id?: string }).account_id ?? '';
                     const canon = resolveCanonicalAccountId(raw, accList);
                     return canon === account.id || raw === account.id;
                 })
-                .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
-            availableCashByCurrency: getAvailableCashForAccount(account.id),
-        }));
+                .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+            const hasMixedOwnership = portfoliosAll.length > portfoliosPersonal.length;
+            const personalPortfolioIds = new Set(portfoliosPersonal.map((p) => p.id).filter(Boolean));
+            const canSafelyIncludeUnassignedFlows = hasMixedOwnership && personalPortfolioIds.size === 1;
+            const transactionsForMetrics = hasMixedOwnership
+                ? accountTx.filter((t) => {
+                    const pid = t.portfolioId ?? (t as { portfolio_id?: string }).portfolio_id ?? '';
+                    if (pid) return personalPortfolioIds.has(pid);
+                    // Many legacy deposit/withdraw/dividend rows are account-level (no portfolioId).
+                    // When there is only one personal portfolio under this account, include them to avoid dropping real cash.
+                    return canSafelyIncludeUnassignedFlows;
+                })
+                : accountTx;
+
+            const metricsAvailableCashByCurrency = hasMixedOwnership
+                ? (() => {
+                    let sar = 0;
+                    let usd = 0;
+                    transactionsForMetrics.forEach((t) => {
+                        const cur = inferInvestmentTransactionCurrency(t, accList, invList);
+                        const amt = getInvestmentTransactionCashAmount(t as any);
+                        if (!Number.isFinite(amt) || !(amt > 0)) return;
+                        const type = String(t.type ?? '').toLowerCase();
+                        const delta = type === 'deposit' || type === 'sell' || type === 'dividend'
+                            ? amt
+                            : (type === 'withdrawal' || type === 'buy' ? -amt : 0);
+                        if (cur === 'SAR') sar += delta;
+                        else usd += delta;
+                    });
+                    return { SAR: Math.max(0, sar), USD: Math.max(0, usd) };
+                })()
+                : getAvailableCashForAccount(account.id);
+
+            return {
+                account,
+                portfoliosAll,
+                portfoliosPersonal,
+                transactions: accountTx,
+                transactionsForMetrics,
+                availableCashByCurrency: metricsAvailableCashByCurrency,
+            };
+        });
     }, [data, getAvailableCashForAccount]);
 
     const totalPlatforms = platformsData.length;
@@ -2746,6 +2818,7 @@ const PlatformView: React.FC<{
                         portfolios={p.portfoliosAll}
                         metricsPortfolios={p.portfoliosPersonal}
                         transactions={p.transactions}
+                        metricsTransactions={p.transactionsForMetrics}
                         goals={data?.goals ?? []}
                         sarPerUsd={sarPerUsd}
                         availableCashByCurrency={p.availableCashByCurrency}
@@ -2791,7 +2864,7 @@ const ANALYST_DEFAULTS = {
 };
 
 const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => void; onOpenWealthUltra?: () => void; onOpenRecordTrade?: (trade: { ticker: string; amount: number; reason?: string; price?: number; quantity?: number; tradeCurrency?: TradeCurrency }) => void }> = ({ onNavigateToTab, onOpenWealthUltra, onOpenRecordTrade }) => {
-    const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog } = useContext(DataContext)!;
+    const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { isAiAvailable, aiHealthChecked } = useAI();
     const { exchangeRate } = useCurrency();
@@ -2812,6 +2885,19 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const personalPortfolios = useMemo(() => getPersonalInvestments(data ?? null), [data]);
     const [selectedPortfolioId, setSelectedPortfolioId] = useState<string | null>(null);
     const universePortfolioId = selectedPortfolioId ?? personalPortfolios[0]?.id ?? null;
+    const selectedPortfolio = useMemo(
+        () => personalPortfolios.find((p) => p.id === universePortfolioId) ?? null,
+        [personalPortfolios, universePortfolioId],
+    );
+    const selectedPortfolioAvailableCash = useMemo(() => {
+        const raw = selectedPortfolio?.accountId ?? (selectedPortfolio as { account_id?: string } | null)?.account_id ?? null;
+        if (!raw) return { SAR: 0, USD: 0 };
+        return getAvailableCashForAccount(raw);
+    }, [selectedPortfolio, getAvailableCashForAccount]);
+    const selectedPortfolioAvailableCashInPlanCurrency = useMemo(() => {
+        const c: TradeCurrency = String(plan?.budgetCurrency ?? 'SAR').toUpperCase() === 'USD' ? 'USD' : 'SAR';
+        return availableTradableCashInLedgerCurrency(selectedPortfolioAvailableCash, c, sarPerUsd);
+    }, [selectedPortfolioAvailableCash, plan?.budgetCurrency, sarPerUsd]);
     const [newTicker, setNewTicker] = useState({ ticker: '', name: '' });
     useEffect(() => {
         if (personalPortfolios.length > 0 && selectedPortfolioId === null) {
@@ -2917,8 +3003,17 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
     const universeHealth = useMemo(() => {
         const actionable = unifiedUniverse.filter(t => t.status === 'Core' || t.status === 'High-Upside');
-        const monthlyWeightTotal = actionable.reduce((sum, t) => sum + (t.monthly_weight || 0), 0);
-        const overMaxCount = actionable.filter(t => (t.monthly_weight || 0) > (t.max_position_weight || 1)).length;
+        const coreAlloc = plan.coreAllocation ?? 0.7;
+        const upsideAlloc = plan.upsideAllocation ?? 0.3;
+        const monthlyWeightTotal = actionable.reduce((sum, t) => {
+            const sleeveAlloc = t.status === 'Core' ? coreAlloc : (t.status === 'High-Upside' ? upsideAlloc : 0);
+            return sum + (t.monthly_weight || 0) * sleeveAlloc;
+        }, 0);
+        const overMaxCount = actionable.filter((t) => {
+            const sleeveAlloc = t.status === 'Core' ? coreAlloc : (t.status === 'High-Upside' ? upsideAlloc : 0);
+            const effectiveWeight = (t.monthly_weight || 0) * sleeveAlloc;
+            return effectiveWeight > (t.max_position_weight || 1);
+        }).length;
         const unmappedCount = unifiedUniverse.filter(t => !t.source?.includes('Universe')).length;
         return {
             totalCount: unifiedUniverse.length,
@@ -2927,7 +3022,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             overMaxCount,
             unmappedCount,
         };
-    }, [unifiedUniverse]);
+    }, [unifiedUniverse, plan.coreAllocation, plan.upsideAllocation]);
 
     const filteredAndSortedUniverse = useMemo(() => {
         let list = unifiedUniverse;
@@ -2941,7 +3036,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         return list;
     }, [unifiedUniverse, universeFilter, universeSort]);
 
-    // Auto-derive suggested monthly budget from recent buy activity (last 6 months) with source label
+    // Auto-derive suggested monthly budget from selected portfolio cash first, then history.
     const { suggestedMonthlyBudget, suggestedBudgetSource } = useMemo(() => {
         const budgetCurrency = (plan?.budgetCurrency as TradeCurrency) || 'SAR';
         const convertAmount = (amount: number, fromCurrency: TradeCurrency, toCurrency: TradeCurrency) => {
@@ -2949,6 +3044,12 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             if (fromCurrency === toCurrency) return amount;
             return fromCurrency === 'USD' && toCurrency === 'SAR' ? amount * sarPerUsd : amount / sarPerUsd;
         };
+        if (selectedPortfolioAvailableCashInPlanCurrency > 0) {
+            return {
+                suggestedMonthlyBudget: Math.round(selectedPortfolioAvailableCashInPlanCurrency),
+                suggestedBudgetSource: 'Available cash in selected portfolio account',
+            };
+        }
 
         const buys = (data?.investmentTransactions ?? []).filter(t => t.type === 'buy');
         const sixMonthsAgo = new Date();
@@ -2959,7 +3060,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             const d = new Date(t.date);
             const key = `${d.getFullYear()}-${d.getMonth()}`;
             const txnCurrency = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
-            const rawAmount = t.total ?? (t.quantity * (t.price ?? 0));
+            const rawAmount = getInvestmentTransactionCashAmount(t as any);
             const convertedAmount = convertAmount(rawAmount, txnCurrency, budgetCurrency);
             byMonth.set(key, (byMonth.get(key) ?? 0) + convertedAmount);
         });
@@ -2980,7 +3081,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             return { suggestedMonthlyBudget: derivedFromPortfolio, suggestedBudgetSource: '~2.5% of portfolio value' };
         }
         return { suggestedMonthlyBudget: 2500, suggestedBudgetSource: 'Default starter amount' };
-    }, [data?.investmentTransactions, data?.investments, (data as any)?.personalInvestments, sarPerUsd, plan?.budgetCurrency]);
+    }, [data?.investmentTransactions, data?.investments, (data as any)?.personalInvestments, sarPerUsd, plan?.budgetCurrency, selectedPortfolioAvailableCashInPlanCurrency]);
 
     const addWatchlistAndHoldingsToUniverse = async () => {
         const toAdd = unifiedUniverse.filter(t => t.source !== 'Universe' && !t.source?.includes('Universe'));
@@ -3095,10 +3196,14 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         ? `Minimum order size is higher than your monthly budget; no single order can be placed.`
         : null;
 
-    const selectedPortfolio = useMemo(
-        () => personalPortfolios.find((p) => p.id === universePortfolioId) ?? null,
-        [personalPortfolios, universePortfolioId],
-    );
+    const effectiveDeployBudget = useMemo(() => {
+        const monthly = Math.max(0, Number(plan.monthlyBudget ?? 0));
+        const available = Math.max(0, Number(selectedPortfolioAvailableCashInPlanCurrency ?? 0));
+        if (!(available > 0)) return monthly;
+        return Math.min(monthly, available);
+    }, [plan.monthlyBudget, selectedPortfolioAvailableCashInPlanCurrency]);
+    const previewCoreShareAmount = effectiveDeployBudget * (plan.coreAllocation ?? 0);
+    const previewUpsideShareAmount = effectiveDeployBudget * (plan.upsideAllocation ?? 0);
     const holdingsFallbackUniverse = useMemo<UniverseTicker[]>(() => (
         (selectedPortfolio?.holdings ?? [])
             .filter((h) => Boolean((h.symbol || '').trim()))
@@ -3117,13 +3222,13 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     // Live execution preview: estimated order counts from current budget and min order size
     const executionPreview = useMemo(() => {
         const minOrder = plan.brokerConstraints?.minimumOrderSize ?? 0;
-        const coreShare = coreShareAmount;
-        const upsideShare = upsideShareAmount;
+        const coreShare = previewCoreShareAmount;
+        const upsideShare = previewUpsideShareAmount;
         if (!Number.isFinite(minOrder) || minOrder <= 0) return { coreOrders: 0, upsideOrders: 0, totalOrders: 0 };
         const coreOrders = Math.floor(coreShare / minOrder);
         const upsideOrders = Math.floor(upsideShare / minOrder);
         return { coreOrders, upsideOrders, totalOrders: coreOrders + upsideOrders };
-    }, [coreShareAmount, upsideShareAmount, plan.brokerConstraints?.minimumOrderSize]);
+    }, [previewCoreShareAmount, previewUpsideShareAmount, plan.brokerConstraints?.minimumOrderSize]);
 
     const executionUniverse = useMemo<UniverseTicker[]>(() => (
         unifiedUniverse.map((t) => ({
@@ -3338,10 +3443,20 @@ Save anyway?`)) return;
         if (universe.length === 0) return;
 
         const actionable = universe.filter(t => isActionableUniverseStatus(t.status));
-        const actionableCount = actionable.length;
-        const rawWeightsById = new Map(actionable.map((t) => [t.id, (t.monthly_weight && t.monthly_weight > 0) ? t.monthly_weight : 1]));
-        const rawTotal = Array.from(rawWeightsById.values()).reduce((sum, v) => sum + v, 0);
-        const fallbackWeight = actionableCount > 0 ? 1 / actionableCount : 0;
+        const coreActionable = actionable.filter((t) => t.status === 'Core');
+        const upsideActionable = actionable.filter((t) => t.status === 'High-Upside');
+        const normalizeSleeveById = (rows: UniverseTicker[]) => {
+            const rawById = new Map(rows.map((t) => [t.id, (t.monthly_weight && t.monthly_weight > 0) ? t.monthly_weight : 1]));
+            const rawTotal = Array.from(rawById.values()).reduce((sum, v) => sum + v, 0);
+            const fallback = rows.length > 0 ? 1 / rows.length : 0;
+            return new Map(rows.map((t) => {
+                const source = rawById.get(t.id) ?? 1;
+                const normalized = rawTotal > 0 ? (source / rawTotal) : fallback;
+                return [t.id, Number(normalized.toFixed(6))] as const;
+            }));
+        };
+        const coreNormalizedById = normalizeSleeveById(coreActionable);
+        const upsideNormalizedById = normalizeSleeveById(upsideActionable);
 
         for (const ticker of universe) {
             if (!isActionableUniverseStatus(ticker.status)) {
@@ -3356,8 +3471,10 @@ Save anyway?`)) return;
                 continue;
             }
 
-            const sourceWeight = rawWeightsById.get(ticker.id) ?? 1;
-            const normalizedWeight = rawTotal > 0 ? (sourceWeight / rawTotal) : fallbackWeight;
+            const normalizedWeight =
+                ticker.status === 'Core'
+                    ? (coreNormalizedById.get(ticker.id) ?? 0)
+                    : (upsideNormalizedById.get(ticker.id) ?? 0);
             const nextMax = (ticker.max_position_weight && ticker.max_position_weight > 0)
                 ? ticker.max_position_weight
                 : (ticker.status === 'Core' ? 0.25 : 0.2);
@@ -4010,8 +4127,11 @@ Save anyway?`)) return;
                         {actionableCount > 0 && (plan.monthlyBudget ?? 0) > 0 && (
                             <div className="mb-4 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-xs text-indigo-900">
                                 <span className="font-medium">Preview:</span> Running now would deploy{' '}
-                                <CurrencyDualDisplay value={coreShareAmount + upsideShareAmount} inCurrency={planCurrency} digits={0} size="base" weight="bold" className="text-indigo-950 inline" />{' '}
+                                <CurrencyDualDisplay value={previewCoreShareAmount + previewUpsideShareAmount} inCurrency={planCurrency} digits={0} size="base" weight="bold" className="text-indigo-950 inline" />{' '}
                                 across ~<strong>{executionPreview.totalOrders}</strong> orders (Core ~{executionPreview.coreOrders}, Upside ~{executionPreview.upsideOrders}).
+                                {(plan.monthlyBudget ?? 0) > effectiveDeployBudget + 1e-9 && (
+                                    <span className="ml-1 text-indigo-800">Capped by available portfolio cash.</span>
+                                )}
                             </div>
                         )}
                         {executionUniverse.filter((t) => t.status === 'Core' || t.status === 'High-Upside').length === 0 && holdingsFallbackUniverse.length > 0 && (
@@ -4487,27 +4607,75 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     const totalDailyPnL = platformsDailyPnL + commoditiesDailySAR;
 
     // Capital flows: deposit/withdrawal on personal investment platforms (canonical account id)
-    const invTxs = (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => txHitsPersonalInvestment(t) && t.type === 'deposit');
-    const wdrTxs = (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => txHitsPersonalInvestment(t) && t.type === 'withdrawal');
+    const personalInvTxs = (data?.investmentTransactions ?? []).filter((t: InvestmentTransaction) => txHitsPersonalInvestment(t));
+    const invTxs = personalInvTxs.filter((t: InvestmentTransaction) => t.type === 'deposit');
+    const wdrTxs = personalInvTxs.filter((t: InvestmentTransaction) => t.type === 'withdrawal');
+    const buyTxs = personalInvTxs.filter((t: InvestmentTransaction) => t.type === 'buy');
+    const sellTxs = personalInvTxs.filter((t: InvestmentTransaction) => t.type === 'sell');
+    const divTxs = personalInvTxs.filter((t: InvestmentTransaction) => t.type === 'dividend');
     const accList = data?.accounts ?? [];
     const invPortfolios = portfolios;
-    let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0;
+    let invSAR = 0, invUSD = 0, wdrSAR = 0, wdrUSD = 0, buySAR = 0, buyUSD = 0, sellSAR = 0, sellUSD = 0, divSAR = 0, divUSD = 0;
     invTxs.forEach((t: InvestmentTransaction) => {
         const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
-        if (c === 'SAR') invSAR += t.total ?? 0;
-        else invUSD += t.total ?? 0;
+        const amt = getInvestmentTransactionCashAmount(t as any);
+        if (c === 'SAR') invSAR += amt;
+        else invUSD += amt;
     });
     wdrTxs.forEach((t: InvestmentTransaction) => {
         const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
-        if (c === 'SAR') wdrSAR += t.total ?? 0;
-        else wdrUSD += t.total ?? 0;
+        const amt = getInvestmentTransactionCashAmount(t as any);
+        if (c === 'SAR') wdrSAR += amt;
+        else wdrUSD += amt;
     });
-    const totalInvestedSAR = invSAR + invUSD * rate;
+    buyTxs.forEach((t: InvestmentTransaction) => {
+        const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
+        const amt = getInvestmentTransactionCashAmount(t as any);
+        if (c === 'SAR') buySAR += amt;
+        else buyUSD += amt;
+    });
+    sellTxs.forEach((t: InvestmentTransaction) => {
+        const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
+        const amt = getInvestmentTransactionCashAmount(t as any);
+        if (c === 'SAR') sellSAR += amt;
+        else sellUSD += amt;
+    });
+    divTxs.forEach((t: InvestmentTransaction) => {
+        const c = inferInvestmentTransactionCurrency(t, accList, invPortfolios);
+        const amt = getInvestmentTransactionCashAmount(t as any);
+        if (c === 'SAR') divSAR += amt;
+        else divUSD += amt;
+    });
+    const totalInvestedSARRaw = invSAR + invUSD * rate;
     const totalWithdrawnSAR = wdrSAR + wdrUSD * rate;
+    const personalInvestmentAccounts = getPersonalAccounts(data).filter((a) => a.type === 'Investment');
+    const personalCashInSar = personalInvestmentAccounts.reduce((sum, a) => {
+      return sum + tradableCashBucketToSAR(getAvailableCashForAccount(a.id), rate);
+    }, 0);
+    const inferredInvestedFromLedgerSAR = Math.max(
+      0,
+      (buySAR + buyUSD * rate) - (sellSAR + sellUSD * rate) - (divSAR + divUSD * rate) + personalCashInSar + totalWithdrawnSAR,
+    );
     const commodityCost = allCommodities.reduce((sum: number, ch: { purchaseValue?: number }) => sum + toSAR(ch.purchaseValue ?? 0, 'USD', rate), 0);
-    const netCapital = totalInvestedSAR - totalWithdrawnSAR + commodityCost;
+    const holdingsCostBasisSAR = portfolios.reduce((sum: number, p: any) => {
+      const book: 'USD' | 'SAR' = p?.currency === 'USD' ? 'USD' : 'SAR';
+      const cost = (p?.holdings ?? []).reduce(
+        (s: number, h: any) => s + Math.max(0, (Number(h?.avgCost) || 0) * (Number(h?.quantity) || 0)),
+        0,
+      );
+      return sum + toSAR(cost, book, rate);
+    }, 0);
+    const totalInvestedSAR =
+      totalInvestedSARRaw > 0
+        ? totalInvestedSARRaw
+        : inferredInvestedFromLedgerSAR > 0
+          ? inferredInvestedFromLedgerSAR
+          : holdingsCostBasisSAR;
+    const computedNetCapital = totalInvestedSAR - totalWithdrawnSAR + commodityCost;
+    const netCapital = computedNetCapital > 0 ? computedNetCapital : holdingsCostBasisSAR + commodityCost;
     const totalGainLoss = totalValue - netCapital;
-    const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
+    const roiRaw = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
+    const roi = Number.isFinite(roiRaw) ? roiRaw : 0;
 
     const previousTotalValue = totalValue - totalDailyPnL;
     const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;

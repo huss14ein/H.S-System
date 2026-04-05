@@ -22,6 +22,7 @@ import { usePrivacyMask } from '../context/PrivacyContext';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
+import { isSupportedPageAction } from '../utils/pageActions';
 interface HeaderProps {
   activePage: Page;
   setActivePage: (page: Page) => void;
@@ -111,11 +112,15 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
     if (triggerPageActionPair) triggerPageActionPair('Notifications', 'notifications-tab:alerts');
     else setActivePage('Notifications');
   };
-  const openNotificationTarget = (notification: { id: string; pageLink: Page }) => {
+  const openNotificationTarget = (notification: { id: string; pageLink: Page; pageAction?: string }) => {
     setIsNotificationsPreviewOpen(false);
     setIsTasksPreviewOpen(false);
     notificationsContext?.markAsRead(notification.id);
-    setActivePage(notification.pageLink);
+    if (triggerPageActionPair && notification.pageAction && isSupportedPageAction(notification.pageLink, notification.pageAction)) {
+      triggerPageActionPair(notification.pageLink, notification.pageAction);
+    } else {
+      setActivePage(notification.pageLink);
+    }
   };
 
   const openTasksPage = () => {
@@ -383,7 +388,11 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                     setIsTasksPreviewOpen(false);
                     setIsNotificationsPreviewOpen((v) => !v);
                   }}
-                  className="relative p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all"
+                  className={`relative p-2.5 rounded-2xl transition-all border ${
+                    notificationCount > 0
+                      ? 'text-primary bg-primary/5 border-primary/20 shadow-sm hover:bg-primary/10'
+                      : 'text-gray-400 border-transparent hover:text-primary hover:bg-gray-50'
+                  }`}
                   aria-label={`Notifications${notificationCount > 0 ? `, ${notificationCount} unread` : ''}`}
                   aria-expanded={isNotificationsPreviewOpen}
                 >

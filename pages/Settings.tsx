@@ -28,6 +28,7 @@ import { useNotifications } from '../context/NotificationsContext';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import AIAdvisor from '../components/AIAdvisor';
+import Modal from '../components/Modal';
 import { clearAiProxySessionBlock } from '../services/geminiService';
 import {
   computeProfileSetupPercent,
@@ -74,6 +75,18 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
     const [auditFilter, setAuditFilter] = useState<{ entity?: AuditEntity; search: string }>({ search: '' });
     const [capitalPreviewAmount, setCapitalPreviewAmount] = useState(50000);
+    const [isHtmlReportOptionsOpen, setIsHtmlReportOptionsOpen] = useState(false);
+    const [htmlReportSections, setHtmlReportSections] = useState({
+        includeSnapshot: true,
+        includeCashflow: true,
+        includeRisk: true,
+        includeInvestmentsOverview: true,
+        includePlatforms: true,
+        includePortfolios: true,
+        includeHoldings: true,
+        includeAssets: true,
+        includeLiabilities: true,
+    });
     const [tradingPolicyLocal, setTradingPolicyLocal] = useState<TradingPolicy>(() => loadTradingPolicy());
     const ef = useEmergencyFund(data ?? null);
     const { maskSensitive, setMaskSensitive, playNotificationSound, setPlayNotificationSound } = usePrivacyMask();
@@ -981,12 +994,9 @@ const hasData = accountsForEmptyCheck.length > 0;
                                     <button
                                         type="button"
                                         className="btn-outline text-sm"
-                                        onClick={() => {
-                                            const h = generateWealthSummaryReportHtml(wealthSummaryPayload);
-                                            if (!openHtmlForPrint(h)) showToast('Allow pop-ups to print.', 'error');
-                                        }}
+                                        onClick={() => setIsHtmlReportOptionsOpen(true)}
                                     >
-                                        Print HTML
+                                        Print HTML (choose sections)
                                     </button>
                                 </>
                             )}
@@ -1100,6 +1110,50 @@ const hasData = accountsForEmptyCheck.length > 0;
                     </div>
                 </div>
             </SectionCard>
+
+            <Modal isOpen={isHtmlReportOptionsOpen} onClose={() => setIsHtmlReportOptionsOpen(false)} title="Choose HTML report sections">
+                <div className="space-y-3 text-sm text-slate-700">
+                    <p className="text-slate-600">Select what to include before extracting/printing the report.</p>
+                    {[
+                        ['includeSnapshot', 'Net worth snapshot'],
+                        ['includeCashflow', 'Cashflow & efficiency'],
+                        ['includeRisk', 'Resilience & risk'],
+                        ['includeInvestmentsOverview', 'Investments overview'],
+                        ['includePlatforms', 'Investment platforms'],
+                        ['includePortfolios', 'Investment portfolios'],
+                        ['includeHoldings', 'Holding details'],
+                        ['includeAssets', 'Asset details'],
+                        ['includeLiabilities', 'Liability details'],
+                    ].map(([key, label]) => (
+                        <label key={key} className="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                checked={(htmlReportSections as Record<string, boolean>)[key]}
+                                onChange={(e) => setHtmlReportSections((prev) => ({ ...prev, [key]: e.target.checked }))}
+                            />
+                            <span>{label}</span>
+                        </label>
+                    ))}
+                    <div className="flex justify-end gap-2 pt-2">
+                        <button type="button" className="btn-outline text-sm" onClick={() => setIsHtmlReportOptionsOpen(false)}>Cancel</button>
+                        <button
+                            type="button"
+                            className="btn-primary text-sm"
+                            onClick={() => {
+                                if (!wealthSummaryPayload) {
+                                    showToast('Add data to generate.', 'error');
+                                    return;
+                                }
+                                const h = generateWealthSummaryReportHtml(wealthSummaryPayload, htmlReportSections);
+                                if (!openHtmlForPrint(h)) showToast('Allow pop-ups to print.', 'error');
+                                setIsHtmlReportOptionsOpen(false);
+                            }}
+                        >
+                            Generate HTML report
+                        </button>
+                    </div>
+                </div>
+            </Modal>
 
             <SectionCard id="data-management" title="Data Management" collapsible collapsibleSummary="Backup, restore">
                 <div className="space-y-4">
