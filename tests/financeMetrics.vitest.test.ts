@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { normalizedMonthlyExpenseSar } from '../services/financeMetrics';
+import { normalizedMonthlyExpense, normalizedMonthlyExpenseSar } from '../services/financeMetrics';
 import type { Account, Transaction } from '../types';
+
+function toIsoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(date: Date, days: number): Date {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
 
 describe('normalizedMonthlyExpenseSar', () => {
   const sarPerUsd = 3.75;
@@ -34,7 +42,52 @@ describe('normalizedMonthlyExpenseSar', () => {
         type: 'expense',
       },
     ];
-    const avg = normalizedMonthlyExpenseSar(txs, accounts, sarPerUsd, { monthsLookback: 1 });
+    const endOfMonth = new Date(y, now.getMonth() + 1, 0, 23, 59, 59, 999);
+    const avg = normalizedMonthlyExpenseSar(txs, accounts, sarPerUsd, { monthsLookback: 1, endDate: endOfMonth });
     expect(avg).toBeCloseTo((100 * 3.75 + 400) / 1, 5);
+  });
+
+  it('excludes future-dated expenses in the current month by default', () => {
+    const now = new Date();
+    const future = addDays(now, 2);
+
+    const txs: Transaction[] = [
+      {
+        id: 'past',
+        date: toIsoDate(now),
+        description: 'past',
+        amount: -100,
+        category: 'Food',
+        accountId: 'a-sar',
+        type: 'expense',
+      },
+      {
+        id: 'future',
+        date: toIsoDate(future),
+        description: 'future',
+        amount: -900,
+        category: 'Food',
+        accountId: 'a-sar',
+        type: 'expense',
+      },
+    ];
+
+    const avg = normalizedMonthlyExpenseSar(txs, accounts, sarPerUsd, { monthsLookback: 1, endDate: now });
+    expect(avg).toBeCloseTo(100, 5);
+  });
+});
+
+describe('normalizedMonthlyExpense', () => {
+  it('excludes future-dated expenses in the current month when endDate is now', () => {
+    const now = new Date();
+    const future = addDays(now, 2);
+
+    const txs = [
+      { date: toIsoDate(now), amount: -120, type: 'expense', category: 'Food' },
+      { date: toIsoDate(future), amount: -880, type: 'expense', category: 'Food' },
+    ];
+
+    const avg = normalizedMonthlyExpense(txs, { monthsLookback: 1, endDate: now });
+    expect(avg).toBeCloseTo(120, 5);
   });
 });
