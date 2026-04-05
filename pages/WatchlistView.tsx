@@ -222,6 +222,10 @@ const AddWatchlistItemModal: React.FC<{
                                 autoCorrect="off"
                                 autoCapitalize="characters"
                                 spellCheck={false}
+                                data-gramm="false"
+                                data-gramm_editor="false"
+                                data-enable-grammarly="false"
+                                data-lpignore="true"
                                 inputMode="text"
                                 aria-describedby="add-wl-hint add-wl-popular"
                             />
