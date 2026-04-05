@@ -3005,8 +3005,17 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
     const universeHealth = useMemo(() => {
         const actionable = unifiedUniverse.filter(t => t.status === 'Core' || t.status === 'High-Upside');
-        const monthlyWeightTotal = actionable.reduce((sum, t) => sum + (t.monthly_weight || 0), 0);
-        const overMaxCount = actionable.filter(t => (t.monthly_weight || 0) > (t.max_position_weight || 1)).length;
+        const coreAlloc = plan.coreAllocation ?? 0.7;
+        const upsideAlloc = plan.upsideAllocation ?? 0.3;
+        const monthlyWeightTotal = actionable.reduce((sum, t) => {
+            const sleeveAlloc = t.status === 'Core' ? coreAlloc : (t.status === 'High-Upside' ? upsideAlloc : 0);
+            return sum + (t.monthly_weight || 0) * sleeveAlloc;
+        }, 0);
+        const overMaxCount = actionable.filter((t) => {
+            const sleeveAlloc = t.status === 'Core' ? coreAlloc : (t.status === 'High-Upside' ? upsideAlloc : 0);
+            const effectiveWeight = (t.monthly_weight || 0) * sleeveAlloc;
+            return effectiveWeight > (t.max_position_weight || 1);
+        }).length;
         const unmappedCount = unifiedUniverse.filter(t => !t.source?.includes('Universe')).length;
         return {
             totalCount: unifiedUniverse.length,
@@ -3015,7 +3024,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
             overMaxCount,
             unmappedCount,
         };
-    }, [unifiedUniverse]);
+    }, [unifiedUniverse, plan.coreAllocation, plan.upsideAllocation]);
 
     const filteredAndSortedUniverse = useMemo(() => {
         let list = unifiedUniverse;
@@ -3436,10 +3445,20 @@ Save anyway?`)) return;
         if (universe.length === 0) return;
 
         const actionable = universe.filter(t => isActionableUniverseStatus(t.status));
-        const actionableCount = actionable.length;
-        const rawWeightsById = new Map(actionable.map((t) => [t.id, (t.monthly_weight && t.monthly_weight > 0) ? t.monthly_weight : 1]));
-        const rawTotal = Array.from(rawWeightsById.values()).reduce((sum, v) => sum + v, 0);
-        const fallbackWeight = actionableCount > 0 ? 1 / actionableCount : 0;
+        const coreActionable = actionable.filter((t) => t.status === 'Core');
+        const upsideActionable = actionable.filter((t) => t.status === 'High-Upside');
+        const normalizeSleeveById = (rows: UniverseTicker[]) => {
+            const rawById = new Map(rows.map((t) => [t.id, (t.monthly_weight && t.monthly_weight > 0) ? t.monthly_weight : 1]));
+            const rawTotal = Array.from(rawById.values()).reduce((sum, v) => sum + v, 0);
+            const fallback = rows.length > 0 ? 1 / rows.length : 0;
+            return new Map(rows.map((t) => {
+                const source = rawById.get(t.id) ?? 1;
+                const normalized = rawTotal > 0 ? (source / rawTotal) : fallback;
+                return [t.id, Number(normalized.toFixed(6))] as const;
+            }));
+        };
+        const coreNormalizedById = normalizeSleeveById(coreActionable);
+        const upsideNormalizedById = normalizeSleeveById(upsideActionable);
 
         for (const ticker of universe) {
             if (!isActionableUniverseStatus(ticker.status)) {
@@ -3454,8 +3473,10 @@ Save anyway?`)) return;
                 continue;
             }
 
-            const sourceWeight = rawWeightsById.get(ticker.id) ?? 1;
-            const normalizedWeight = rawTotal > 0 ? (sourceWeight / rawTotal) : fallbackWeight;
+            const normalizedWeight =
+                ticker.status === 'Core'
+                    ? (coreNormalizedById.get(ticker.id) ?? 0)
+                    : (upsideNormalizedById.get(ticker.id) ?? 0);
             const nextMax = (ticker.max_position_weight && ticker.max_position_weight > 0)
                 ? ticker.max_position_weight
                 : (ticker.status === 'Core' ? 0.25 : 0.2);
