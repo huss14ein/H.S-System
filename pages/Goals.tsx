@@ -24,6 +24,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { computeGoalFundingPlan } from '../services/goalFundingRouter';
+import { computeGoalMonthlyAllocation } from '../services/goalAllocation';
 import { monteCarloGoalSuccess } from '../services/portfolioConstruction';
 import { projectedGoalCompletionDate, goalFundingGap as goalGapShared } from '../services/goalMetrics';
 import { detectGoalConflict, goalFeasibilityCheck, type GoalConflict } from '../services/goalConflictEngine';
@@ -221,7 +222,7 @@ const GoalConflictAndFeasibilitySection: React.FC<{
   );
 };
 
-const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void; monthlySavings: number; onSeeInPlan?: () => void }> = ({ goal, onEdit, onDelete, monthlySavings, onSeeInPlan }) => {
+const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void; monthlySavings: number; allocationPercent?: number; onSeeInPlan?: () => void }> = ({ goal, onEdit, onDelete, monthlySavings, allocationPercent, onSeeInPlan }) => {
     const { data } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
@@ -304,7 +305,8 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         const progressPercent = Math.min(100, Math.max(0, progressPercentRaw));
         const remainingAmount = Math.max(0, targetAmt - currentAmount);
         const requiredMonthlyContribution = monthsLeft > 0 ? remainingAmount / monthsLeft : remainingAmount;
-        const projectedMonthlyContribution = monthlySavings * ((goal.savingsAllocationPercent || 0) / 100);
+        const effectiveAllocationPercent = allocationPercent ?? goal.savingsAllocationPercent ?? 0;
+        const projectedMonthlyContribution = computeGoalMonthlyAllocation(monthlySavings, effectiveAllocationPercent);
 
         let status: 'On Track' | 'Needs Attention' | 'At Risk' = 'On Track';
         if (progressPercent >= 100) {
@@ -321,7 +323,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         const borderColor = status === 'At Risk' ? 'border-danger' : status === 'Needs Attention' ? 'border-warning' : 'border-success';
 
         return { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution, borderColor };
-    }, [goal, monthlySavings, calculatedCurrentAmount]);
+    }, [goal, monthlySavings, calculatedCurrentAmount, allocationPercent]);
 
     const completionAtRequired = useMemo(() => {
         const g = { ...goal, currentAmount: calculatedCurrentAmount } as Goal;
@@ -652,11 +654,11 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void; pageAction?: strin
 
     const totalAllocation = useMemo(() => Object.values(allocations).reduce((sum: number, p: number) => sum + p, 0), [allocations]);
     
-    const handleSaveAllocations = () => {
+    const handleSaveAllocations = async () => {
         trackAction('save-allocation', 'Goals');
         const allocationArray = Object.entries(allocations).map(([id, savingsAllocationPercent]) => ({ id, savingsAllocationPercent }));
-        updateGoalAllocations(allocationArray);
-        alert("Savings allocation strategy saved!");
+        const ok = await updateGoalAllocations(allocationArray);
+        if (ok) alert("Savings allocation strategy saved!");
     };
 
     const efGoals = useEmergencyFund(data ?? null);
@@ -860,6 +862,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void; pageAction?: strin
                     onEdit={() => handleOpenModal(goal)}
                     onDelete={() => handleOpenDeleteModal(goal)}
                     monthlySavings={averageMonthlySavings}
+                    allocationPercent={allocations[goal.id]}
                     onSeeInPlan={setActivePage ? () => setActivePage('Plan') : undefined}
                 />
             </div>
