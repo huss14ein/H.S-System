@@ -91,7 +91,7 @@ interface DataContextType {
   addGoal: (goal: Goal) => Promise<void>;
   updateGoal: (goal: Goal) => Promise<void>;
   deleteGoal: (goalId: string) => Promise<void>;
-  updateGoalAllocations: (allocations: { id: string, savingsAllocationPercent: number }[]) => Promise<void>;
+  updateGoalAllocations: (allocations: { id: string, savingsAllocationPercent: number }[]) => Promise<boolean>;
   addLiability: (liability: Liability) => Promise<void>;
   updateLiability: (liability: Liability) => Promise<void>;
   deleteLiability: (liabilityId: string) => Promise<void>;
@@ -1247,11 +1247,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (error) console.error("Error deleting goal:", error);
       else setData(prev => ({ ...prev, goals: prev.goals.filter(g => g.id !== goalId) }));
     };
-    const updateGoalAllocations = async (allocations: { id: string, savingsAllocationPercent: number }[]) => {
-      if(!supabase || !auth?.user) return;
+    const updateGoalAllocations = async (allocations: { id: string, savingsAllocationPercent: number }[]): Promise<boolean> => {
+      if(!supabase || !auth?.user) return false;
       for (const a of allocations) {
         const v = validateGoalAllocation({ savingsAllocationPercent: a.savingsAllocationPercent });
-        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return false; }
       }
       const db = supabase;
       for (const a of allocations) {
@@ -1268,7 +1268,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (lastErr) {
           console.error("Error updating goal allocations:", lastErr);
           toast(`Failed to save allocations: ${lastErr.message}`, 'error');
-          return;
+          return false;
         }
       }
       setData(prev => ({
@@ -1278,6 +1278,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return newAlloc ? { ...g, savingsAllocationPercent: newAlloc.savingsAllocationPercent } : g;
           }),
       }));
+      return true;
     };
 
     // --- Liabilities ---
