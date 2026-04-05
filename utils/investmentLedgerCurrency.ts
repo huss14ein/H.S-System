@@ -19,6 +19,28 @@ export function resolveCanonicalAccountId(candidate: string | undefined, account
   return resolveAccountId(c, accounts) ?? c;
 }
 
+/**
+ * Resolve a transaction's platform account id from any supported shape:
+ * - direct accountId / account_id on transaction
+ * - inferred from linked portfolioId / portfolio_id
+ * Returns canonical Account.id when possible.
+ */
+export function resolveInvestmentTransactionAccountId(
+  t: Partial<InvestmentTransaction> & { account_id?: string; portfolio_id?: string },
+  accounts: Account[],
+  investments: InvestmentPortfolio[],
+): string {
+  const directRaw = (t.accountId ?? t.account_id ?? '').trim();
+  if (directRaw) return resolveCanonicalAccountId(directRaw, accounts);
+
+  const pid = (t.portfolioId ?? t.portfolio_id ?? '').trim();
+  if (!pid) return '';
+  const linkedPortfolio = investments.find((p) => p.id === pid);
+  const portfolioRaw = ((linkedPortfolio as { account_id?: string } | undefined)?.account_id ?? linkedPortfolio?.accountId ?? '').trim();
+  if (!portfolioRaw) return '';
+  return resolveCanonicalAccountId(portfolioRaw, accounts);
+}
+
 /** True if a portfolio is linked to this platform account (handles legacy `account_id` aliases). */
 export function portfolioBelongsToAccount(
   portfolio: Pick<InvestmentPortfolio, 'accountId'>,
@@ -63,14 +85,20 @@ export function ledgerCurrencyInvestmentToCash(toCashAccount: Account | undefine
  * Legacy rows without `currency`: infer from linked account’s portfolios (single-currency platforms), else SAR.
  */
 export function inferInvestmentTransactionCurrency(
-  t: Pick<InvestmentTransaction, 'currency' | 'accountId'>,
+  t: Pick<InvestmentTransaction, 'currency' | 'accountId'> & { account_id?: string; portfolioId?: string; portfolio_id?: string },
   accounts: Account[],
   investments: InvestmentPortfolio[],
 ): TradeCurrency {
   if (t.currency === 'SAR' || t.currency === 'USD') return t.currency;
-  const aid = t.accountId ?? '';
+  const aid = resolveInvestmentTransactionAccountId(t, accounts, investments);
   if (!aid) return 'SAR';
-  const accPortfolios = investments.filter((p) => resolveAccountId(p.accountId, accounts) === aid || p.accountId === aid);
+  const accPortfolios = investments.filter((p) => {
+    const portfolioAccount = resolveCanonicalAccountId(
+      ((p as { account_id?: string }).account_id ?? p.accountId ?? '').trim(),
+      accounts,
+    );
+    return portfolioAccount === aid;
+  });
   const curs = new Set((accPortfolios.length ? accPortfolios : []).map((p) => (p.currency as TradeCurrency) || 'USD'));
   if (curs.size === 1) {
     const one = [...curs][0];

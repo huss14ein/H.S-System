@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Account, FinancialData, Holding, InvestmentPortfolio, InvestmentTransaction } from '../types';
 import {
+  computePersonalPlatformCardRow,
   computePersonalPlatformsRollupSAR,
   computePlatformCardMetrics,
 } from '../services/investmentPlatformCardMetrics';
@@ -287,5 +288,70 @@ describe('Personal platforms rollup (KPI alignment)', () => {
     const core = computePersonalInvestmentKpisSar(data, SAR_PER_USD, getCash);
     expect(core.totalInvestedSar).toBeCloseTo(5_000, 5);
     expect(core.netCapitalSar).toBeCloseTo(5_000, 5);
+  });
+
+  it('shared KPI core resolves portfolio-linked transactions with missing accountId', () => {
+    const getCash = () => ({ SAR: 2_000, USD: 0 });
+    const data = {
+      accounts: [baseAccount()],
+      investments: [basePortfolio({ id: 'pf-linked', accountId: PLATFORM_ID, currency: 'USD' as const })],
+      investmentTransactions: [
+        {
+          id: 'd1',
+          portfolio_id: 'pf-linked',
+          type: 'deposit',
+          total: 1_000,
+          date: '2025-06-10',
+          symbol: 'CASH',
+          quantity: 0,
+          price: 0,
+        },
+      ],
+      transactions: [],
+      budgets: [],
+      goals: [],
+      commodityHoldings: [],
+      assets: [],
+      liabilities: [],
+    } as unknown as FinancialData;
+
+    const core = computePersonalInvestmentKpisSar(data, SAR_PER_USD, getCash);
+    // inferred currency is USD from the single linked USD portfolio.
+    expect(core.totalInvestedSar).toBeCloseTo(3_750, 5);
+  });
+
+  it('platform row metrics include account flows linked by portfolio_id when accountId is missing', () => {
+    const getCash = () => ({ SAR: 3_750, USD: 0 });
+    const data = {
+      accounts: [baseAccount()],
+      investments: [basePortfolio({ id: 'pf-linked', accountId: PLATFORM_ID, currency: 'USD' as const })],
+      investmentTransactions: [
+        {
+          id: 'd1',
+          portfolio_id: 'pf-linked',
+          type: 'deposit',
+          total: 1_000,
+          date: '2025-06-10',
+          symbol: 'CASH',
+          quantity: 0,
+          price: 0,
+        },
+      ],
+      transactions: [],
+      budgets: [],
+      goals: [],
+      commodityHoldings: [],
+      assets: [],
+      liabilities: [],
+    } as unknown as FinancialData;
+
+    const row = computePersonalPlatformCardRow(baseAccount(), data, {
+      sarPerUsd: SAR_PER_USD,
+      simulatedPrices: {},
+      getAvailableCashForAccount: getCash,
+    });
+    expect(row.totalInvestedSAR).toBeCloseTo(3_750, 5);
+    expect(row.totalValueInSAR).toBeCloseTo(3_750, 5);
+    expect(row.totalGainLossSAR).toBeCloseTo(0, 5);
   });
 });

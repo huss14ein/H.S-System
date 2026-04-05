@@ -1,6 +1,6 @@
 import type { Account, FinancialData, Holding, InvestmentPortfolio, InvestmentTransaction } from '../types';
 import { getAllInvestmentsValueInSAR, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
-import { inferInvestmentTransactionCurrency, resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
+import { inferInvestmentTransactionCurrency, resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 
@@ -44,15 +44,23 @@ export function computePersonalInvestmentKpisSar(
   const totalInvestmentsValueSar = holdingsValueSar + brokerageCashSar;
 
   const txHitsPersonalInvestment = (t: InvestmentTransaction) => {
-    const raw = (t.accountId ?? (t as { account_id?: string }).account_id ?? '').trim();
-    if (!raw) return false;
-    const canonical = resolveCanonicalAccountId(raw, accounts);
-    return personalAccountIds.has(canonical) || personalAccountIds.has(raw);
+    const accountId = resolveInvestmentTransactionAccountId(
+      t as InvestmentTransaction & { account_id?: string; portfolio_id?: string },
+      accounts,
+      investments,
+    );
+    return !!accountId && personalAccountIds.has(accountId);
   };
   const invTx = (data.investmentTransactions ?? []).filter((t) => txHitsPersonalInvestment(t as InvestmentTransaction)) as InvestmentTransaction[];
   const invTxSar = (t: InvestmentTransaction) => {
     const currency = inferInvestmentTransactionCurrency(
-      { accountId: t.accountId ?? (t as { account_id?: string }).account_id ?? '', currency: t.currency as 'SAR' | 'USD' | undefined },
+      {
+        accountId: t.accountId,
+        account_id: (t as { account_id?: string }).account_id,
+        portfolioId: t.portfolioId,
+        portfolio_id: (t as { portfolio_id?: string }).portfolio_id,
+        currency: t.currency as 'SAR' | 'USD' | undefined,
+      },
       accounts,
       investments,
     );

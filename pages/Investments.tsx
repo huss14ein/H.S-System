@@ -80,6 +80,7 @@ import {
     inferInvestmentTransactionCurrency,
     portfolioBelongsToAccount,
     resolveCanonicalAccountId,
+    resolveInvestmentTransactionAccountId,
 } from '../utils/investmentLedgerCurrency';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import {
@@ -190,7 +191,11 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
 
         const monthlyInvested = (data?.investmentTransactions ?? [])
             .filter(t => {
-                const aid = t.accountId ?? (t as { account_id?: string }).account_id;
+                const aid = resolveInvestmentTransactionAccountId(
+                    t as InvestmentTransaction & { account_id?: string; portfolio_id?: string },
+                    accounts,
+                    investments,
+                );
                 if (!aid || !personalAccountIds.has(aid)) return false;
                 const d = new Date(t.date);
                 return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy';
@@ -2647,9 +2652,14 @@ const PlatformView: React.FC<{
             const portfoliosPersonal = personalInv.filter((p) => portfolioBelongsToAccount(p, account, accList));
             const accountTx = investmentTransactions
                 .filter((t) => {
-                    const raw = t.accountId ?? (t as { account_id?: string }).account_id ?? '';
-                    const canon = resolveCanonicalAccountId(raw, accList);
-                    return canon === account.id || raw === account.id;
+                    const txAccountId = resolveInvestmentTransactionAccountId(
+                        t as InvestmentTransaction & { account_id?: string; portfolio_id?: string },
+                        accList,
+                        invList,
+                    );
+                    if (!txAccountId) return false;
+                    const canon = resolveCanonicalAccountId(txAccountId, accList);
+                    return canon === account.id || txAccountId === account.id;
                 })
                 .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 

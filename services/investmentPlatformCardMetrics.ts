@@ -9,6 +9,7 @@ import { holdingUsesLiveQuote } from '../utils/holdingValuation';
 import {
   inferInvestmentTransactionCurrency,
   portfolioBelongsToAccount,
+  resolveInvestmentTransactionAccountId,
   resolveCanonicalAccountId,
 } from '../utils/investmentLedgerCurrency';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
@@ -273,9 +274,14 @@ export function computePersonalPlatformCardRow(
   const txRaw = data.investmentTransactions ?? [];
   const transactions = txRaw
     .filter((t) => {
-      const raw = t.accountId ?? (t as { account_id?: string }).account_id ?? '';
-      const canon = resolveCanonicalAccountId(raw, accounts);
-      return canon === account.id || raw === account.id;
+      const txAccountId = resolveInvestmentTransactionAccountId(
+        t as InvestmentTransaction & { account_id?: string; portfolio_id?: string },
+        accounts,
+        data.investments ?? [],
+      );
+      if (!txAccountId) return false;
+      const canon = resolveCanonicalAccountId(txAccountId, accounts);
+      return canon === account.id || txAccountId === account.id;
     })
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   const currencies = [...new Set(portfoliosOnAccount.map((p) => (p.currency || 'USD') as TradeCurrency))];
