@@ -11,7 +11,7 @@ alter table public.transactions
   add column if not exists recurring_id uuid;
 
 -- Backfill from legacy camelCase columns when present.
-do $$
+do $migrate$
 declare
   v_uuid_pattern constant text := '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$';
   v_sql text;
@@ -62,7 +62,7 @@ begin
       raise notice 'Skipping recurring_id backfill from "recurringId" due to cast/shape mismatch on some rows.';
     end;
   end if;
-end $$;
+end $migrate$;
 
 create index if not exists idx_transactions_account_id on public.transactions(account_id);
 create index if not exists idx_transactions_budget_category on public.transactions(budget_category);
@@ -83,7 +83,7 @@ returns table (
 language sql
 security definer
 set search_path = public
-as $$
+as $rpc$
   select
     t.id,
     t.user_id,
@@ -95,6 +95,6 @@ as $$
   from public.transactions t
   where lower(coalesce(t.status, '')) = 'pending'
   order by t.date desc, t.id desc;
-$$;
+$rpc$;
 
 grant execute on function public.get_pending_transactions_for_admin() to authenticated;
