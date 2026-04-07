@@ -228,25 +228,51 @@ async function parseExcel(file: File): Promise<string> {
 /**
  * Extract transactions from SMS text using patterns
  */
-function extractTransactionsFromSMS(smsText: string, accountId: string): Transaction[] {
+function normalizeArabicDigits(input: string): string {
+  const arabicIndic = '٠١٢٣٤٥٦٧٨٩';
+  return input.replace(/[٠-٩]/g, (d) => String(arabicIndic.indexOf(d)));
+}
+
+function parseSmsAmount(raw: string): number {
+  const normalized = normalizeArabicDigits(raw)
+    .replace(/[٬,]/g, '')
+    .replace(/[٫]/g, '.')
+    .replace(/\s/g, '');
+  const cleaned = normalized.replace(/[^0-9.]/g, '');
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function extractSmsDate(line: string): string | null {
+  const normalized = normalizeArabicDigits(line);
+  const m1 = normalized.match(/\b(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})\b/);
+  if (m1) return m1[1];
+  const m2 = normalized.match(/\b(\d{4}[\/-]\d{1,2}[\/-]\d{1,2})\b/);
+  if (m2) return m2[1];
+  return null;
+}
+
+export function extractTransactionsFromSMS(smsText: string, accountId: string): Transaction[] {
   const transactions: Transaction[] = [];
   const lines = smsText.split('\n').filter(line => line.trim());
   
   // Common SMS patterns for KSA banks
   const patterns = [
     // Al Rajhi Bank pattern
-    /(?:Al Rajhi|الراجحي)[:\s]+SAR\s+([\d,]+\.?\d*)\s+(?:debited|credited|withdrawn|deposited|paid|received)\s+from\s+(?:A\/C|Account)\s*\*?(\d+)\s+on\s+(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
+    /(?:Al Rajhi|الراجحي)[:\s]+SAR\s+([\d٠-٩,\.٫٬]+)\s+(?:debited|credited|withdrawn|deposited|paid|received)\s+from\s+(?:A\/C|Account)\s*\*?(\d+)\s+on\s+(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     // STC pattern
-    /STC[:\s]+(?:Payment|Transaction)\s+of\s+SAR\s+([\d,]+\.?\d*)\s+(?:received|paid|debited)\s+on\s+(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
+    /STC[:\s]+(?:Payment|Transaction)\s+of\s+SAR\s+([\d٠-٩,\.٫٬]+)\s+(?:received|paid|debited)\s+on\s+(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
     // Generic pattern
-    /([A-Za-z\s]+)[:\s]+SAR\s+([\d,]+\.?\d*)\s+(?:debited|credited|withdrawn|deposited|paid|received|purchase|payment)\s+(?:from|to|on|at)\s+([^\n]+)/i,
+    /([A-Za-z\s]+)[:\s]+SAR\s+([\d٠-٩,\.٫٬]+)\s+(?:debited|credited|withdrawn|deposited|paid|received|purchase|payment)\s+(?:from|to|on|at)\s+([^\n]+)/i,
     // Date-first pattern
-    /(\d{1,2}\/\d{1,2}\/\d{2,4})[:\s]+([A-Za-z\s]+)[:\s]+SAR\s+([\d,]+\.?\d*)/i,
+    /(\d{1,2}\/\d{1,2}\/\d{2,4})[:\s]+([A-Za-z\s]+)[:\s]+SAR\s+([\d٠-٩,\.٫٬]+)/i,
   ];
   
   for (const line of lines) {
+    const normalizedLine = normalizeArabicDigits(line);
+    let matchedByPattern = false;
     for (const pattern of patterns) {
-      const match = line.match(pattern);
+      const match = normalizedLine.match(pattern);
       if (match) {
         let amount = 0;
         let description = '';
@@ -255,35 +281,37 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
         
         // Extract based on pattern
         if (pattern.source.includes('Al Rajhi')) {
-          amount = parseFloat(match[1].replace(/,/g, ''));
+          amount = parseSmsAmount(match[1]);
           dateStr = match[3];
-          description = line.substring(0, line.indexOf('SAR')).trim();
-          isDebit = /debited|withdrawn|paid/i.test(line);
+          const sarIndex = normalizedLine.toUpperCase().indexOf('SAR');
+          description = (sarIndex > 0 ? normalizedLine.substring(0, sarIndex) : normalizedLine).trim();
+          isDebit = /debited|withdrawn|paid|purchase|خصم|شراء|سحب/i.test(normalizedLine);
         } else if (pattern.source.includes('STC')) {
-          amount = parseFloat(match[1].replace(/,/g, ''));
+          amount = parseSmsAmount(match[1]);
           dateStr = match[2];
           description = 'STC Payment';
-          isDebit = /paid|debited/i.test(line);
+          isDebit = /paid|debited|خصم|سداد/i.test(normalizedLine);
         } else if (pattern.source.includes('Date-first')) {
           dateStr = match[1];
           description = match[2].trim();
-          amount = parseFloat(match[3].replace(/,/g, ''));
-          isDebit = /debited|withdrawn|paid|purchase/i.test(line);
+          amount = parseSmsAmount(match[3]);
+          isDebit = /debited|withdrawn|paid|purchase|خصم|شراء|سحب/i.test(normalizedLine);
         } else {
           // Generic pattern
           description = match[1]?.trim() || '';
-          amount = parseFloat(match[2]?.replace(/,/g, '') || '0');
-          isDebit = /debited|withdrawn|paid|purchase/i.test(line);
+          amount = parseSmsAmount(match[2] || '0');
+          isDebit = /debited|withdrawn|paid|purchase|خصم|شراء|سحب/i.test(normalizedLine);
           
           // Try to extract date from the rest
-          const dateMatch = match[3]?.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/);
+          const dateMatch = match[3]?.match(/(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/);
           if (dateMatch) {
             dateStr = dateMatch[1];
           }
         }
         
         if (amount > 0 && description) {
-          const date = parseDate(dateStr || new Date().toISOString().split('T')[0]);
+          const extractedDate = dateStr || extractSmsDate(normalizedLine) || new Date().toISOString().split('T')[0];
+          const date = parseDate(extractedDate);
           const category = inferCategory(description);
           
           transactions.push({
@@ -297,7 +325,36 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
             status: 'Approved'
           });
         }
+        matchedByPattern = true;
         break; // Found a match, move to next line
+      }
+    }
+
+    if (matchedByPattern) continue;
+
+    // Fallback parse: any SAR/SR/ريال amount + direction keywords.
+    const fallbackAmount = normalizedLine.match(/(?:SAR|SR|ريال)\s*([0-9٠-٩][0-9٠-٩,\.]*)/i);
+    if (fallbackAmount) {
+      const amount = parseSmsAmount(fallbackAmount[1]);
+      if (amount > 0) {
+        const isDebit = /debited|withdrawn|paid|purchase|خصم|شراء|سحب|دفعت/i.test(normalizedLine);
+        const date = parseDate(extractSmsDate(normalizedLine) || new Date().toISOString().slice(0, 10));
+        const description = normalizedLine
+          .replace(/(?:SAR|SR|ريال)\s*[0-9٠-٩][0-9٠-٩,\.]*/i, '')
+          .replace(/\b\d{1,4}[\/-]\d{1,2}[\/-]\d{1,4}\b/g, '')
+          .trim();
+        if (description) {
+          transactions.push({
+            id: `sms-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            date: date.toISOString().split('T')[0],
+            description,
+            amount: isDebit ? -Math.abs(amount) : Math.abs(amount),
+            category: inferCategory(description),
+            accountId,
+            type: isDebit ? 'expense' : 'income',
+            status: 'Approved'
+          });
+        }
       }
     }
   }
