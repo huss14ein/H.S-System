@@ -6,6 +6,8 @@ import PageLoading from '../components/PageLoading';
 import SectionCard from '../components/SectionCard';
 import Modal from '../components/Modal';
 import { DocumentArrowUpIcon, CheckCircleIcon, ClockIcon } from '../components/icons';
+import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
+import { InformationCircleIcon } from '../components/icons/InformationCircleIcon';
 import { StatementIcons } from '../constants/statementIcons';
 import { parseBankStatement, parseSMSTransactions, parseTradingStatement, validateFile } from '../services/statementParser';
 import { Transaction, InvestmentTransaction, Page } from '../types';
@@ -47,6 +49,11 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     amountRange: { min: number; max: number; total: number } | null;
   } | null>(null);
   const [currentStatementId, setCurrentStatementId] = useState<string | null>(null);
+  const [uiNotice, setUiNotice] = useState<{
+    kind: 'success' | 'error' | 'warning' | 'info';
+    title: string;
+    message: string;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const stmtInvSymbols = useMemo(
@@ -64,6 +71,28 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
 
   const bankAccounts = (data?.accounts ?? []).filter(a => a.type !== 'Investment');
   const investmentAccounts = (data?.accounts ?? []).filter(a => a.type === 'Investment');
+  const budgetCategories = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (data?.budgets ?? [])
+            .map((b) => (b.category ?? '').trim())
+            .filter((c) => c.length > 0),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [data?.budgets],
+  );
+  const suggestedCategories = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          ['Food', 'Transportation', 'Housing', 'Utilities', 'Shopping', 'Entertainment', 'Health', 'Education', 'Income', ...(budgetCategories ?? [])]
+            .map((c) => String(c || '').trim())
+            .filter((c) => c.length > 0),
+        ),
+      ),
+    [budgetCategories],
+  );
   const selectedAccountObj = useMemo(
     () => (data?.accounts ?? []).find((a) => a.id === selectedAccount) ?? null,
     [data?.accounts, selectedAccount],
@@ -90,6 +119,21 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     return warnings;
   }, [activeTab, bankAccounts.length, investmentAccounts.length, parseStats]);
 
+  const showNotice = (kind: 'success' | 'error' | 'warning' | 'info', title: string, message: string) => {
+    setUiNotice({ kind, title, message });
+  };
+
+  const normalizeExtractedTransactions = useMemo(
+    () => (rows: Transaction[]) =>
+      rows.map((tx) => ({
+        ...tx,
+        accountId: tx.accountId || selectedAccount || '',
+        category: tx.category || 'Uncategorized',
+        budgetCategory: tx.budgetCategory ?? '',
+      })),
+    [selectedAccount],
+  );
+
   // When switching tabs, clear file state and fix account selection so it matches the tab
   useEffect(() => {
     setUploadedFile(null);
@@ -107,11 +151,11 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     if (!file) return;
 
     if (activeTab === 'bank' && !selectedAccount) {
-      alert('Please select an account before uploading a bank statement.');
+      showNotice('warning', 'Account required', 'Please select an account before uploading a bank statement.');
       return;
     }
     if (activeTab === 'trading' && !selectedAccount) {
-      alert('Please select an investment account before uploading a trading statement.');
+      showNotice('warning', 'Investment account required', 'Please select an investment account before uploading a trading statement.');
       return;
     }
 
@@ -147,7 +191,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         setParseStats(result.validation?.statistics ?? null);
       } else {
         const result = await parseBankStatement(file, selectedAccount);
-        transactions = result.transactions;
+        transactions = normalizeExtractedTransactions(result.transactions);
         setExtractedTransactions(transactions);
         if (result.warnings) setValidationWarnings(result.warnings);
         if (result.errors) setValidationErrors(result.errors);
@@ -185,12 +229,12 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         setProcessingProgress(100);
         setIsReviewModalOpen(true);
       } else {
-        alert('No transactions found in the uploaded file. Please check the file format.');
+        showNotice('warning', 'No transactions found', 'No transactions were extracted from the uploaded file. Please check the file format/content.');
       }
     } catch (error) {
       console.error('Error processing file:', error);
       setProcessingError(error instanceof Error ? error.message : 'Failed to process file');
-      alert(`Error processing file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      showNotice('error', 'Upload failed', error instanceof Error ? error.message : 'Unknown error while processing file.');
     } finally {
       setIsProcessingFile(false);
       setProcessingProgress(0);
@@ -199,12 +243,12 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
 
   const handleSMSPaste = async () => {
     if (!smsText.trim()) {
-      alert('Please paste SMS transaction text');
+      showNotice('warning', 'SMS text required', 'Please paste SMS transaction text.');
       return;
     }
 
     if (!selectedAccount) {
-      alert('Please select an account');
+      showNotice('warning', 'Account required', 'Please select an account for SMS transactions.');
       return;
     }
 
@@ -215,13 +259,14 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     try {
       setProcessingProgress(30);
       const result = await parseSMSTransactions(smsText, selectedAccount);
-      setExtractedTransactions(result.transactions);
+      const normalizedSms = normalizeExtractedTransactions(result.transactions);
+      setExtractedTransactions(normalizedSms);
       if (result.warnings) setValidationWarnings(result.warnings);
       if (result.errors) setValidationErrors(result.errors);
       setParseStats(result.validation?.statistics ?? null);
       setProcessingProgress(70);
       
-      if (result.transactions.length > 0) {
+      if (normalizedSms.length > 0) {
         try {
           const statement = await commitParsedStatementFromUpload({
             file: new File([smsText], `sms-transactions-${Date.now()}.txt`, { type: 'text/plain' }),
@@ -231,7 +276,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
               accountType: selectedAccountTypeForStatement,
             },
             accountId: selectedAccount || null,
-            bankTransactions: result.transactions,
+            bankTransactions: normalizedSms,
           });
           setCurrentStatementId(statement.id);
         } catch (error) {
@@ -239,16 +284,16 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         }
         
         // Check for duplicates
-        checkForDuplicates(result.transactions, []);
+        checkForDuplicates(normalizedSms, []);
         setProcessingProgress(100);
         setIsReviewModalOpen(true);
       } else {
-        alert('No transactions found in the SMS text. Please check the format.');
+        showNotice('warning', 'No SMS transactions found', 'No transactions were extracted from the SMS text. Please check message format.');
       }
     } catch (error) {
       console.error('Error parsing SMS:', error);
       setProcessingError(error instanceof Error ? error.message : 'Failed to parse SMS');
-      alert(`Error parsing SMS: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      showNotice('error', 'SMS parsing failed', error instanceof Error ? error.message : 'Unknown error while parsing SMS.');
     } finally {
       setIsProcessingFile(false);
       setProcessingProgress(0);
@@ -316,6 +361,17 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     setSelectedTransactions(nonDuplicates);
   };
 
+  const updateExtractedTransaction = (index: number, patch: Partial<Transaction>) => {
+    setExtractedTransactions((prev) =>
+      prev.map((row, i) => (i === index ? { ...row, ...patch } : row)),
+    );
+  };
+
+  const updateExtractedTransactionAmount = (index: number, rawValue: string) => {
+    const n = Number(rawValue);
+    updateExtractedTransaction(index, { amount: Number.isFinite(n) ? n : 0 });
+  };
+
   const handleApproveTransactions = async () => {
     try {
       const transactionsToImport = extractedTransactions.filter((_, i) => selectedTransactions.has(i));
@@ -324,7 +380,25 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       );
 
       if (transactionsToImport.length === 0 && investmentTransactionsToImport.length === 0) {
-        alert('Please select at least one transaction to import.');
+        showNotice('warning', 'Nothing selected', 'Please select at least one transaction to import.');
+        return;
+      }
+
+      const missingAccountRows = transactionsToImport.filter((tx) => !(tx.accountId || selectedAccount));
+      if (missingAccountRows.length > 0) {
+        showNotice('error', 'Missing account mapping', `${missingAccountRows.length} transaction(s) are missing an account. Please choose an account per row before importing.`);
+        return;
+      }
+
+      const invalidDateRows = transactionsToImport.filter((tx) => Number.isNaN(new Date(tx.date).getTime()));
+      if (invalidDateRows.length > 0) {
+        showNotice('error', 'Invalid dates', `${invalidDateRows.length} transaction(s) have invalid dates. Please fix dates in review table.`);
+        return;
+      }
+
+      const invalidAmountRows = transactionsToImport.filter((tx) => !Number.isFinite(Number(tx.amount)) || Number(tx.amount) === 0);
+      if (invalidAmountRows.length > 0) {
+        showNotice('warning', 'Amount check', `${invalidAmountRows.length} transaction(s) have zero/invalid amounts. Update amounts or deselect them.`);
         return;
       }
 
@@ -336,11 +410,11 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       for (const tx of transactionsToImport) {
         await addTransaction({
           date: tx.date,
-          description: tx.description,
-          amount: tx.amount,
-          category: tx.category,
-          accountId: tx.accountId,
-          budgetCategory: tx.budgetCategory,
+          description: (tx.description || '').trim() || 'Statement Import',
+          amount: Number(tx.amount),
+          category: tx.category || 'Uncategorized',
+          accountId: tx.accountId || selectedAccount,
+          budgetCategory: tx.budgetCategory || undefined,
           subcategory: tx.subcategory,
           type: tx.type,
           transactionNature: tx.transactionNature,
@@ -368,7 +442,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         setProcessingProgress((processed / total) * 100);
       }
 
-      alert(`Successfully imported ${transactionsToImport.length + investmentTransactionsToImport.length} transactions!`);
+      showNotice('success', 'Import complete', `Successfully imported ${transactionsToImport.length + investmentTransactionsToImport.length} transaction(s).`);
       setIsReviewModalOpen(false);
       setExtractedTransactions([]);
       setExtractedInvestmentTransactions([]);
@@ -386,7 +460,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       }
     } catch (error) {
       console.error('Error saving transactions:', error);
-      alert(`Failed to save transactions: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      showNotice('error', 'Import failed', error instanceof Error ? error.message : 'Unknown error while saving transactions.');
     }
   };
 
@@ -439,6 +513,42 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       }
     >
       <div className="space-y-6">
+        {uiNotice && (
+          <div
+            className={`rounded-xl border px-4 py-3 flex items-start justify-between gap-3 ${
+              uiNotice.kind === 'success'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                : uiNotice.kind === 'error'
+                ? 'bg-rose-50 border-rose-200 text-rose-900'
+                : uiNotice.kind === 'warning'
+                ? 'bg-amber-50 border-amber-200 text-amber-900'
+                : 'bg-sky-50 border-sky-200 text-sky-900'
+            }`}
+            role="status"
+            aria-live="polite"
+          >
+            <div className="flex items-start gap-2">
+              {uiNotice.kind === 'success' ? (
+                <CheckCircleIcon className="h-5 w-5 mt-0.5 text-emerald-600" />
+              ) : uiNotice.kind === 'error' || uiNotice.kind === 'warning' ? (
+                <ExclamationTriangleIcon className="h-5 w-5 mt-0.5 text-amber-600" />
+              ) : (
+                <InformationCircleIcon className="h-5 w-5 mt-0.5 text-sky-600" />
+              )}
+              <div>
+                <p className="text-sm font-semibold">{uiNotice.title}</p>
+                <p className="text-sm opacity-90">{uiNotice.message}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setUiNotice(null)}
+              className="text-xs px-2 py-1 rounded-md bg-white/70 hover:bg-white border border-current/20"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
         {setupValidationWarnings.length > 0 && (
           <SectionCard title="Statement upload validation checks" collapsible collapsibleSummary="Setup and parser checks" defaultExpanded>
             <ul className="space-y-1 text-sm text-amber-800">
@@ -890,8 +1000,10 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Date</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Description</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Account</th>
                         <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase">Amount</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Category</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Budget Link</th>
                         <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase">Status</th>
                       </tr>
                     </thead>
@@ -913,13 +1025,62 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                                 className="rounded border-slate-300 text-primary focus:ring-primary disabled:opacity-50"
                               />
                             </td>
-                            <td className="px-4 py-3 text-sm text-slate-900">{new Date(tx.date).toLocaleDateString()}</td>
-                            <td className="px-4 py-3 text-sm text-slate-900">{tx.description}</td>
-                            <td className={`px-4 py-3 text-sm text-right font-medium ${tx.amount >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                              {tx.amount >= 0 ? '+' : '-'}
-                              {formatCurrencyString(Math.abs(tx.amount), { inCurrency: selectedAccountCurrency })}
+                            <td className="px-4 py-3 text-sm text-slate-900">
+                              <input
+                                type="date"
+                                value={tx.date}
+                                onChange={(e) => updateExtractedTransaction(index, { date: e.target.value })}
+                                className="w-36 p-1.5 border border-slate-300 rounded-md text-xs"
+                              />
                             </td>
-                            <td className="px-4 py-3 text-sm text-slate-600">{tx.category || 'Uncategorized'}</td>
+                            <td className="px-4 py-3 text-sm text-slate-900">
+                              <input
+                                value={tx.description || ''}
+                                onChange={(e) => updateExtractedTransaction(index, { description: e.target.value })}
+                                className="w-56 p-1.5 border border-slate-300 rounded-md text-xs"
+                              />
+                            </td>
+                            <td className="px-4 py-3 text-sm text-slate-900">
+                              <select
+                                value={tx.accountId || selectedAccount}
+                                onChange={(e) => updateExtractedTransaction(index, { accountId: e.target.value })}
+                                className="w-44 p-1.5 border border-slate-300 rounded-md text-xs"
+                              >
+                                <option value="">Select account...</option>
+                                {bankAccounts.map((acc) => (
+                                  <option key={acc.id} value={acc.id}>{acc.name}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className={`px-4 py-3 text-sm text-right font-medium ${tx.amount >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={Number.isFinite(Number(tx.amount)) ? tx.amount : 0}
+                                onChange={(e) => updateExtractedTransactionAmount(index, e.target.value)}
+                                className="w-28 p-1.5 border border-slate-300 rounded-md text-xs text-right"
+                              />
+                            </td>
+                            <td className="px-4 py-3 text-sm text-slate-600">
+                              <input
+                                list="statement-category-suggestions"
+                                value={tx.category || ''}
+                                onChange={(e) => updateExtractedTransaction(index, { category: e.target.value })}
+                                className="w-40 p-1.5 border border-slate-300 rounded-md text-xs"
+                              />
+                            </td>
+                            <td className="px-4 py-3 text-sm text-slate-600">
+                              <select
+                                value={tx.budgetCategory || ''}
+                                onChange={(e) => updateExtractedTransaction(index, { budgetCategory: e.target.value || undefined })}
+                                className="w-40 p-1.5 border border-slate-300 rounded-md text-xs"
+                              >
+                                <option value="">No budget link</option>
+                                {budgetCategories.map((cat) => (
+                                  <option key={cat} value={cat}>{cat}</option>
+                                ))}
+                              </select>
+                            </td>
                             <td className="px-4 py-3 text-center">
                               {isDuplicate ? (
                                 <span className="px-2 py-1 bg-amber-100 text-amber-800 rounded-full text-xs font-medium">
@@ -941,6 +1102,11 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                     </tbody>
                   </table>
                 </div>
+                <datalist id="statement-category-suggestions">
+                  {suggestedCategories.map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
               </div>
             )}
 

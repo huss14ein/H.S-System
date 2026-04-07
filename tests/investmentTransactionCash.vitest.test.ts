@@ -10,6 +10,10 @@ describe('getInvestmentTransactionCashAmount', () => {
     expect(getInvestmentTransactionCashAmount({ type: 'deposit', amount: 5000 } as any)).toBe(5000);
   });
 
+  it('falls back to amount when total is zero placeholder', () => {
+    expect(getInvestmentTransactionCashAmount({ type: 'deposit', total: 0, amount: 5000 } as any)).toBe(5000);
+  });
+
   it('derives buy amount from quantity*price plus fees when total is missing', () => {
     expect(getInvestmentTransactionCashAmount({ type: 'buy', quantity: 10, price: 100, fees: 5 } as any)).toBe(1005);
   });
