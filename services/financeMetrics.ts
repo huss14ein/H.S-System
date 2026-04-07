@@ -18,9 +18,8 @@ export function normalizedMonthlyExpense(
   opts?: { monthsLookback?: number; endDate?: Date }
 ): number {
   const monthsLookback = opts?.monthsLookback ?? 6;
-  const now = new Date();
-  const end = opts?.endDate ?? now;
-  const start = new Date(now.getFullYear(), now.getMonth() - monthsLookback, 1);
+  const end = opts?.endDate ?? new Date();
+  const start = new Date(end.getFullYear(), end.getMonth() - monthsLookback, 1);
   const byMonth = new Map<string, number>();
   transactions.forEach((t) => {
     if (!countsAsExpenseForCashflowKpi(t) || !t.date) return;
@@ -44,9 +43,8 @@ export function normalizedMonthlyExpenseSar(
 ): number {
   const accById = new Map(accounts.map((a) => [a.id, a]));
   const monthsLookback = opts?.monthsLookback ?? 6;
-  const now = new Date();
-  const end = opts?.endDate ?? now;
-  const start = new Date(now.getFullYear(), now.getMonth() - monthsLookback, 1);
+  const end = opts?.endDate ?? new Date();
+  const start = new Date(end.getFullYear(), end.getMonth() - monthsLookback, 1);
   const byMonth = new Map<string, number>();
   transactions.forEach((t) => {
     if (!countsAsExpenseForCashflowKpi(t) || !t.date) return;

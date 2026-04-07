@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { normalizedMonthlyExpense, normalizedMonthlyExpenseSar } from '../services/financeMetrics';
 import type { Account, Transaction } from '../types';
 
+function toIsoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(date: Date, days: number): Date {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
 describe('normalizedMonthlyExpenseSar', () => {
   const sarPerUsd = 3.75;
   const accounts: Account[] = [
@@ -41,15 +49,12 @@ describe('normalizedMonthlyExpenseSar', () => {
 
   it('excludes future-dated expenses in the current month by default', () => {
     const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const today = String(now.getDate()).padStart(2, '0');
-    const futureDay = String(Math.min(28, now.getDate() + 2)).padStart(2, '0');
+    const future = addDays(now, 2);
 
     const txs: Transaction[] = [
       {
         id: 'past',
-        date: `${y}-${m}-${today}`,
+        date: toIsoDate(now),
         description: 'past',
         amount: -100,
         category: 'Food',
@@ -58,7 +63,7 @@ describe('normalizedMonthlyExpenseSar', () => {
       },
       {
         id: 'future',
-        date: `${y}-${m}-${futureDay}`,
+        date: toIsoDate(future),
         description: 'future',
         amount: -900,
         category: 'Food',
@@ -75,14 +80,11 @@ describe('normalizedMonthlyExpenseSar', () => {
 describe('normalizedMonthlyExpense', () => {
   it('excludes future-dated expenses in the current month when endDate is now', () => {
     const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const today = String(now.getDate()).padStart(2, '0');
-    const futureDay = String(Math.min(28, now.getDate() + 2)).padStart(2, '0');
+    const future = addDays(now, 2);
 
     const txs = [
-      { date: `${y}-${m}-${today}`, amount: -120, type: 'expense', category: 'Food' },
-      { date: `${y}-${m}-${futureDay}`, amount: -880, type: 'expense', category: 'Food' },
+      { date: toIsoDate(now), amount: -120, type: 'expense', category: 'Food' },
+      { date: toIsoDate(future), amount: -880, type: 'expense', category: 'Food' },
     ];
 
     const avg = normalizedMonthlyExpense(txs, { monthsLookback: 1, endDate: now });
