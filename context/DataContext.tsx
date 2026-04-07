@@ -91,7 +91,7 @@ interface DataContextType {
   addGoal: (goal: Goal) => Promise<void>;
   updateGoal: (goal: Goal) => Promise<void>;
   deleteGoal: (goalId: string) => Promise<void>;
-  updateGoalAllocations: (allocations: { id: string, savingsAllocationPercent: number }[]) => Promise<void>;
+  updateGoalAllocations: (allocations: { id: string, savingsAllocationPercent: number }[]) => Promise<boolean>;
   addLiability: (liability: Liability) => Promise<void>;
   updateLiability: (liability: Liability) => Promise<void>;
   deleteLiability: (liabilityId: string) => Promise<void>;
@@ -1247,11 +1247,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (error) console.error("Error deleting goal:", error);
       else setData(prev => ({ ...prev, goals: prev.goals.filter(g => g.id !== goalId) }));
     };
-    const updateGoalAllocations = async (allocations: { id: string, savingsAllocationPercent: number }[]) => {
-      if(!supabase || !auth?.user) return;
+    const updateGoalAllocations = async (allocations: { id: string, savingsAllocationPercent: number }[]): Promise<boolean> => {
+      if(!supabase || !auth?.user) return false;
       for (const a of allocations) {
         const v = validateGoalAllocation({ savingsAllocationPercent: a.savingsAllocationPercent });
-        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return false; }
       }
       const db = supabase;
       for (const a of allocations) {
@@ -1268,7 +1268,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (lastErr) {
           console.error("Error updating goal allocations:", lastErr);
           toast(`Failed to save allocations: ${lastErr.message}`, 'error');
-          return;
+          return false;
         }
       }
       setData(prev => ({
@@ -1278,6 +1278,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return newAlloc ? { ...g, savingsAllocationPercent: newAlloc.savingsAllocationPercent } : g;
           }),
       }));
+      return true;
     };
 
     // --- Liabilities ---
@@ -3014,14 +3015,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             normalizedTx.push({ accId, tx: t });
         });
 
-        const hasInvestmentLedgerRows = new Set(normalizedTx.map((x) => x.accId));
+        const hasDepositLedgerRows = new Set(
+            normalizedTx
+                .filter(({ tx }) => String(tx.type ?? '').toLowerCase() === 'deposit')
+                .map(({ accId }) => accId),
+        );
         (data?.accounts ?? []).forEach((acc: Account) => {
             if (acc.type !== 'Investment') return;
             const accId = resolveCanonicalAccountId(acc.id, data?.accounts ?? []) ?? acc.id;
             if (!accId) return;
             if (!(accId in map)) map[accId] = { SAR: 0, USD: 0 };
-            // Legacy seed only: if this account already has ledger rows, treat `account.balance` as display-only and avoid double counting.
-            if (hasInvestmentLedgerRows.has(accId)) return;
+            // Preserve legacy opening balances when migrated ledgers are partial (e.g. buys/sells without initial deposit).
+            // If a deposit row exists for the account, that row is treated as canonical opening cash to avoid double counting.
+            if (hasDepositLedgerRows.has(accId)) return;
             const openingBalance = Math.max(0, Number(acc.balance ?? 0));
             if (!Number.isFinite(openingBalance) || openingBalance <= 0) return;
             const baseCur: TradeCurrency = acc.currency === 'USD' ? 'USD' : 'SAR';

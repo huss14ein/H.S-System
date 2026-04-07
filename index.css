@@ -281,6 +281,11 @@
         overflow-wrap: normal;
         hyphens: none;
     }
+    .platform-card .platform-metrics .metric-value.metric-value--allow-overflow {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+    }
     .platform-card .platform-card-body {
         padding: var(--card-pad);
         display: flex;
