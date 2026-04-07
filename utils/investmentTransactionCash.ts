@@ -6,8 +6,10 @@ import type { InvestmentTransaction } from '../types';
  */
 export function getInvestmentTransactionCashAmount(tx: Partial<InvestmentTransaction> & { amount?: number; fees?: number }): number {
   const type = String(tx.type ?? '').toLowerCase();
-  const total = Number((tx as any).total ?? tx.amount ?? 0);
-  if (Number.isFinite(total) && total > 0) return total;
+  const rawTotal = Number((tx as any).total);
+  if (Number.isFinite(rawTotal) && rawTotal > 0) return rawTotal;
+  const rawAmount = Number(tx.amount);
+  if (Number.isFinite(rawAmount) && rawAmount > 0) return rawAmount;
 
   if (type !== 'buy' && type !== 'sell') return 0;
 
