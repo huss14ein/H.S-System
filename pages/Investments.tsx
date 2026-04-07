@@ -2326,7 +2326,7 @@ const PlatformCard: React.FC<{
                         >
                             Available Cash
                         </dt>
-                        <dd className="metric-value w-full mt-1.5 flex flex-col items-center justify-center text-base sm:text-lg text-slate-900 tabular-nums leading-tight">
+                        <dd className="metric-value metric-value--allow-overflow w-full mt-1.5 flex flex-col items-center justify-center text-base sm:text-lg text-slate-900 tabular-nums leading-tight">
                             <div className="flex justify-center">
                                 <CurrencyDualDisplay value={availableCashSAR} inCurrency="SAR" digits={0} size="lg" weight="bold" />
                             </div>

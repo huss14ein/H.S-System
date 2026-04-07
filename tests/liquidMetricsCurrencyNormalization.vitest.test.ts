@@ -40,7 +40,7 @@ describe('liquid metrics currency normalization', () => {
 
   it('computes liquidity runway using SAR-normalized cash and expenses', () => {
     const today = new Date();
-    const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-15`;
+    const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
     const data = {
       accounts: [
         { id: 'chk-usd', name: 'USD Checking', type: 'Checking', balance: 1000, currency: 'USD' },
