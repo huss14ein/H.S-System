@@ -36,7 +36,7 @@ export function normalizedMonthlyExpense(
 ): number {
   const monthsLookback = opts?.monthsLookback ?? 6;
   const now = opts?.endDate ?? new Date();
-  const end = opts?.endDate ?? now;
+  const end = opts?.endDate ?? new Date(now.getFullYear(), now.getMonth() + 1, 0);
   const start = new Date(now.getFullYear(), now.getMonth() - monthsLookback, 1);
   const startDay = toLocalCalendarDay(start);
   const endDay = toLocalCalendarDay(end);
@@ -64,7 +64,7 @@ export function normalizedMonthlyExpenseSar(
   const accById = new Map(accounts.map((a) => [a.id, a]));
   const monthsLookback = opts?.monthsLookback ?? 6;
   const now = opts?.endDate ?? new Date();
-  const end = opts?.endDate ?? now;
+  const end = opts?.endDate ?? new Date(now.getFullYear(), now.getMonth() + 1, 0);
   const start = new Date(now.getFullYear(), now.getMonth() - monthsLookback, 1);
   const startDay = toLocalCalendarDay(start);
   const endDay = toLocalCalendarDay(end);
