@@ -22,6 +22,7 @@ describe('parseSMSTransactions', () => {
     expect(tx.amount).toBeCloseTo(-5.75, 2);
     expect(tx.description.toUpperCase()).toBe('DUBAI PLA');
     expect(tx.type).toBe('expense');
+    expect(tx.date).toBe('2026-04-08');
   });
 
   it('extracts multiple SMS transactions even without blank lines between messages', async () => {
@@ -46,5 +47,12 @@ SAR 21.50
     const res = await pending;
     expect(res.warnings?.join(' ')).toContain('timed out');
     expect(res.transactions.length).toBeGreaterThan(0);
+  });
+
+  it('prioritizes transaction amount markers over balance values', async () => {
+    const sms = `رصيد SAR 593.65\nلدى:DUBAI PLA\nSAR مبلغ:5.75\n8/4/26`;
+    const res = await parseSMSTransactions(sms, 'acc-4');
+    expect(res.transactions.length).toBeGreaterThan(0);
+    expect(Math.abs(res.transactions[0].amount)).toBeCloseTo(5.75, 2);
   });
 });

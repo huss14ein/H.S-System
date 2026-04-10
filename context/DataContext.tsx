@@ -851,16 +851,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const variants: Record<string, unknown>[] = [
             payloadWithSnakeCase,
             payloadWithCamelCase,
-            payloadWithSnakeCaseCore,
-            payloadWithCamelCaseCore,
         ];
         const hasNote =
             transactionClean.note != null && String(transactionClean.note).trim() !== '';
         if (hasNote) {
             const { note: _n1, ...camelNoNote } = { ...payloadWithCamelCase };
             const { note: _n2, ...snakeNoNote } = { ...payloadWithSnakeCase };
-            variants.push(camelNoNote, snakeNoNote);
+            // Try full payloads without note before falling back to minimal core payloads,
+            // so legacy schemas missing only `note` keep metadata columns intact.
+            variants.push(snakeNoNote, camelNoNote);
         }
+        variants.push(payloadWithSnakeCaseCore, payloadWithCamelCaseCore);
         return variants;
     };
 

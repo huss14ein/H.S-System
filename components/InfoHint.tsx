@@ -24,7 +24,7 @@ const HOVER_CLOSE_MS = 400;
 const HOVER_OPEN_DELAY_MS = 120;
 
 const InfoHint: React.FC<InfoHintProps> = ({ text, placement = 'auto', popoverAlign = 'left', hintId, hintPage }) => {
-  if (!String(text ?? '').trim()) return null;
+  const hasText = String(text ?? '').trim().length > 0;
   const tooltipId = useId();
   const instanceId = `hint-${tooltipId}`;
   const [open, setOpen] = useState(false);
@@ -196,6 +196,8 @@ const InfoHint: React.FC<InfoHintProps> = ({ text, placement = 'auto', popoverAl
       {text}
     </div>
   ) : null;
+
+  if (!hasText) return null;
 
   return (
     <span className="relative z-[60] inline-flex h-4 w-4 shrink-0 items-center justify-center align-middle leading-none self-center">

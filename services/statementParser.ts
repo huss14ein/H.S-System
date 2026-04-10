@@ -255,6 +255,9 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
   ];
   
   for (const line of lines) {
+    if (/(balance|رصيد)/i.test(line) && !/(amount|مبلغ|debited|credited|paid|received|purchase|withdrawn|deposited|خصم|شراء|دفع|استلام|إيداع)/i.test(line)) {
+      continue;
+    }
     for (const pattern of patterns) {
       const match = line.match(pattern);
       if (match) {
@@ -292,7 +295,7 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
           }
         }
         
-        if (amount > 0 && description) {
+        if (amount > 0 && description && !/(balance|رصيد)/i.test(description)) {
           const canonicalDescription = canonicalizeTransactionDescription(description);
           const date = parseDate(dateStr || new Date().toISOString().split('T')[0]);
           const category = inferCategory(canonicalDescription);
@@ -322,17 +325,12 @@ function extractTransactionsFromSMSHeuristic(smsText: string, accountId: string)
   const out: Transaction[] = [];
 
   blocks.forEach((block, idx) => {
-    const amountMatch =
-      block.match(/(?:SAR|ر\.?س|ريال)\s*[:\-]?\s*([\d,]+(?:\.\d+)?)/i) ??
-      block.match(/([\d,]+(?:\.\d+)?)\s*(?:SAR|ر\.?س|ريال)/i);
-    const amount = Number((amountMatch?.[1] ?? '0').replace(/,/g, ''));
+    const amount = extractSmsAmount(block);
     if (!Number.isFinite(amount) || amount <= 0) return;
 
     const dateMatch = block.match(/(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/);
     const parsedDate = parseDate(dateMatch?.[1] ?? '');
-    const dateIso = Number.isNaN(parsedDate.getTime())
-      ? new Date().toISOString().slice(0, 10)
-      : parsedDate.toISOString().slice(0, 10);
+    const dateIso = formatLocalYmd(Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate);
 
     const explicitDesc =
       block.match(/(?:لدى|merchant|at|from)\s*[:\-]?\s*([A-Za-z0-9&\-. ]{2,})/i)?.[1]?.trim() ??
@@ -365,15 +363,10 @@ function extractTransactionsFromSMSHeuristic(smsText: string, accountId: string)
   for (let i = 0; i < lines.length; i++) {
     if (!dateRe.test(lines[i])) continue;
     const window = [lines[i], lines[i - 1], lines[i - 2], lines[i + 1]].filter(Boolean).join('\n');
-    const amountMatch =
-      window.match(/(?:SAR|ر\.?س|ريال)\s*[:\-]?\s*([\d,]+(?:\.\d+)?)/i) ??
-      window.match(/([\d,]+(?:\.\d+)?)\s*(?:SAR|ر\.?س|ريال)/i);
-    const amount = Number((amountMatch?.[1] ?? '0').replace(/,/g, ''));
+    const amount = extractSmsAmount(window);
     if (!Number.isFinite(amount) || amount <= 0) continue;
     const parsedDate = parseDate(lines[i]);
-    const dateIso = Number.isNaN(parsedDate.getTime())
-      ? new Date().toISOString().slice(0, 10)
-      : parsedDate.toISOString().slice(0, 10);
+    const dateIso = formatLocalYmd(Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate);
     const descLine =
       [lines[i - 1], lines[i - 2], lines[i + 1]]
         .filter(Boolean)
@@ -429,6 +422,35 @@ function splitSmsIntoBlocks(smsText: string): string[] {
   }
   if (current.length) blocks.push(current.join('\n').trim());
   return blocks.filter(Boolean);
+}
+
+function extractSmsAmount(block: string): number {
+  const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
+  const parseNum = (raw: string | undefined) => Number((raw ?? '0').replace(/,/g, ''));
+  const moneyAfterCurrency = /(?:SAR|ر\.?س|ريال)[^\d]{0,16}([\d,]+(?:\.\d+)?)/i;
+  const moneyBeforeCurrency = /([\d,]+(?:\.\d+)?)\s*(?:SAR|ر\.?س|ريال)/i;
+  const withAmountLabel = lines.find((line) => /(amount|مبلغ)/i.test(line));
+  const labelMatch = withAmountLabel?.match(moneyAfterCurrency)
+    ?? withAmountLabel?.match(moneyBeforeCurrency);
+  if (labelMatch) return parseNum(labelMatch[1]);
+
+  const nonBalance = lines.filter((line) => !/(balance|رصيد)/i.test(line));
+  for (const line of nonBalance) {
+    const m = line.match(moneyAfterCurrency)
+      ?? line.match(moneyBeforeCurrency);
+    if (m) return parseNum(m[1]);
+  }
+
+  const anyMatch = block.match(moneyAfterCurrency)
+    ?? block.match(moneyBeforeCurrency);
+  return parseNum(anyMatch?.[1]);
+}
+
+function formatLocalYmd(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 /**
