@@ -1,4 +1,4 @@
-import React, { useState, useContext, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useContext, useRef, useEffect, useMemo, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useStatementProcessing } from '../context/StatementProcessingContext';
 import PageLayout from '../components/PageLayout';
@@ -87,6 +87,59 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     if (selectedAccountObj.type === 'Investment') return 'investment';
     return 'checking';
   }, [selectedAccountObj, activeTab]);
+
+  const autoMapBudgetCategory = useCallback((tx: Transaction): string | undefined => {
+    const budgetCategories = (data?.budgets ?? []).map((b) => String(b.category || '').trim()).filter(Boolean);
+    if (budgetCategories.length === 0) return tx.budgetCategory;
+    if (tx.budgetCategory && budgetCategories.includes(tx.budgetCategory)) return tx.budgetCategory;
+    if (tx.type !== 'expense') return undefined;
+
+    const normalize = (v: string) => v.toLowerCase().replace(/[^a-z0-9\u0600-\u06FF ]/g, ' ').replace(/\s+/g, ' ').trim();
+    const txDesc = normalize(String(tx.description || ''));
+    const txCat = normalize(String(tx.category || ''));
+    const history = (data?.transactions ?? []).filter((h) => h.type === 'expense' && !!h.budgetCategory);
+
+    // 1) Learn from historical description matches first (most reliable).
+    const histMatch = history.find((h) => {
+      const hd = normalize(String(h.description || ''));
+      return hd.length >= 4 && (txDesc.includes(hd) || hd.includes(txDesc));
+    });
+    if (histMatch?.budgetCategory) return histMatch.budgetCategory;
+
+    // 2) Score budget categories by direct/keyword overlap with category + description.
+    const keywords: Record<string, string[]> = {
+      food: ['food', 'restaurant', 'cafe', 'grocery', 'grocer', 'مطعم', 'مقهى', 'بقالة'],
+      transport: ['fuel', 'uber', 'taxi', 'transport', 'metro', 'وقود', 'نقل', 'سيارة'],
+      housing: ['rent', 'housing', 'apartment', 'utilities', 'إيجار', 'سكن'],
+      shopping: ['shopping', 'store', 'market', 'amazon', 'متجر', 'تسوق'],
+      health: ['pharmacy', 'clinic', 'hospital', 'health', 'صيدلية', 'مستشفى', 'صحة'],
+      entertainment: ['cinema', 'netflix', 'spotify', 'game', 'ترفيه', 'سينما'],
+      education: ['school', 'tuition', 'course', 'education', 'تعليم', 'جامعة'],
+      travel: ['hotel', 'airline', 'travel', 'trip', 'سفر', 'رحلة', 'فندق'],
+      bills: ['bill', 'electricity', 'water', 'internet', 'فاتورة', 'كهرباء', 'مياه', 'انترنت'],
+    };
+
+    const scored = budgetCategories.map((budgetCat) => {
+      const b = normalize(budgetCat);
+      let score = 0;
+      if (txCat && (b.includes(txCat) || txCat.includes(b))) score += 4;
+      if (txDesc && (txDesc.includes(b) || b.includes(txDesc))) score += 3;
+      Object.values(keywords).forEach((words) => {
+        const hit = words.some((w) => txDesc.includes(w) || txCat.includes(w));
+        if (hit && words.some((w) => b.includes(w))) score += 2;
+      });
+      return { budgetCat, score };
+    }).sort((a, b) => b.score - a.score);
+
+    return scored[0]?.score > 0 ? scored[0].budgetCat : undefined;
+  }, [data?.budgets, data?.transactions]);
+
+  const enrichTransactionsWithBudgetMapping = useCallback((rows: Transaction[]): Transaction[] => {
+    return rows.map((tx) => ({
+      ...tx,
+      budgetCategory: autoMapBudgetCategory(tx),
+    }));
+  }, [autoMapBudgetCategory]);
   const setupValidationWarnings = useMemo(() => {
     const warnings: string[] = [];
     if ((activeTab === 'bank' || activeTab === 'sms') && bankAccounts.length === 0) {
@@ -160,7 +213,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         setParseStats(result.validation?.statistics ?? null);
       } else {
         const result = await parseBankStatement(file, selectedAccount);
-        transactions = result.transactions;
+        transactions = enrichTransactionsWithBudgetMapping(result.transactions);
         setExtractedTransactions(transactions);
         if (result.warnings) setValidationWarnings(result.warnings);
         if (result.errors) setValidationErrors(result.errors);
@@ -229,13 +282,14 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     try {
       setProcessingProgress(30);
       const result = await parseSMSTransactions(smsText, selectedAccount);
-      setExtractedTransactions(result.transactions);
+      const mapped = enrichTransactionsWithBudgetMapping(result.transactions);
+      setExtractedTransactions(mapped);
       if (result.warnings) setValidationWarnings(result.warnings);
       if (result.errors) setValidationErrors(result.errors);
       setParseStats(result.validation?.statistics ?? null);
       setProcessingProgress(70);
       
-      if (result.transactions.length > 0) {
+      if (mapped.length > 0) {
         try {
           const statement = await commitParsedStatementFromUpload({
             file: new File([smsText], `sms-transactions-${Date.now()}.txt`, { type: 'text/plain' }),
@@ -245,7 +299,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
               accountType: selectedAccountTypeForStatement,
             },
             accountId: selectedAccount || null,
-            bankTransactions: result.transactions,
+            bankTransactions: mapped,
           });
           setCurrentStatementId(statement.id);
         } catch (error) {
@@ -253,7 +307,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         }
         
         // Check for duplicates
-        checkForDuplicates(result.transactions, []);
+        checkForDuplicates(mapped, []);
         setProcessingProgress(100);
         setIsReviewModalOpen(true);
       } else {
