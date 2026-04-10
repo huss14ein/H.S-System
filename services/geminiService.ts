@@ -8,6 +8,7 @@ import { DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { fetchStooq } from './stooqClient';
 import { fetchGeminiProxyHealthStatus, getGeminiProxyEndpoints } from './aiProxyEndpoints';
+import { computeGoalMonthlyAllocation, normalizeGoalAllocationPercent } from './goalAllocation';
 
 // --- Model Constants ---
 const FAST_MODEL = 'gemini-3-flash-preview';
@@ -440,19 +441,28 @@ export function clearAiProxySessionBlock(): void {
     }
 }
 
-async function invokeGeminiProxy(payload: { model: string, contents: any, config?: any }): Promise<any> {
+async function invokeGeminiProxy(payload: { model: string, contents: any, config?: any, signal?: AbortSignal }): Promise<any> {
     clearAiProxySessionBlock();
     const endpoints = getGeminiProxyEndpoints();
     let lastError: Error | null = null;
 
     for (const endpoint of endpoints) {
         const controller = new AbortController();
+        const externalSignal = payload.signal;
+        const onExternalAbort = () => controller.abort();
+        if (externalSignal) {
+            if (externalSignal.aborted) {
+                throw new DOMException('Aborted', 'AbortError');
+            }
+            externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+        }
         const timeoutId = setTimeout(() => controller.abort(), 25000);
         try {
+            const { signal: _unusedSignal, ...safePayload } = payload;
             const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
+                body: JSON.stringify(safePayload),
                 signal: controller.signal,
             });
 
@@ -493,6 +503,7 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
             break;
         } finally {
             clearTimeout(timeoutId);
+            if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
         }
     }
 
@@ -536,7 +547,7 @@ export async function probeGeminiProxyHealth(): Promise<{
 // Unified AI invocation function. Proxy-only for security (prevents client-bundle key exposure).
 // Do not send systemInstruction with responseMimeType application/json + responseSchema — Gemini returns 400 when both are set.
 // For JSON structured responses, prepend PERSONAL_WEALTH_SCOPE to string prompts so scope is preserved without systemInstruction.
-export async function invokeAI(payload: { model: string, contents: any, config?: any }): Promise<any> {
+export async function invokeAI(payload: { model: string, contents: any, config?: any, signal?: AbortSignal }): Promise<any> {
     const rawConfig = payload.config ?? {};
     const isJsonMime = rawConfig.responseMimeType === 'application/json';
     // Strip systemInstruction for JSON responses — Gemini rejects systemInstruction + responseSchema together (400).
@@ -1775,7 +1786,7 @@ export const getGoalAIPlan = async (goal: Goal, monthlySavings: number, calculat
         const monthsLeft = Math.max(0, (deadline.getFullYear() - now.getFullYear()) * 12 + deadline.getMonth() - now.getMonth());
         const remainingAmount = Math.max(0, goal.targetAmount - calculatedCurrentAmount);
         const requiredMonthlyContribution = monthsLeft > 0 ? remainingAmount / monthsLeft : remainingAmount;
-        const projectedMonthlyContribution = monthlySavings * ((goal.savingsAllocationPercent || 0) / 100);
+        const projectedMonthlyContribution = computeGoalMonthlyAllocation(monthlySavings, goal.savingsAllocationPercent);
 
         const prompt = `
             You are Finova AI, a very clever expert financial and investment advisor. Analyze this goal and provide a direct, concise plan in Markdown. Speak as a senior advisor with clear, actionable guidance.
@@ -1830,7 +1841,7 @@ export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: n
             return `- ${goal.name}: ${progress.toFixed(0)}% complete`;
         }).join('\n');
 
-        const totalAllocatedPercent = goals.reduce((sum, g) => sum + (g.savingsAllocationPercent || 0), 0);
+        const totalAllocatedPercent = goals.reduce((sum, g) => sum + normalizeGoalAllocationPercent(g.savingsAllocationPercent), 0);
         const allocatedSavings = monthlySavings * (totalAllocatedPercent / 100);
 
         const unallocated = monthlySavings - allocatedSavings;

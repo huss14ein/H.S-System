@@ -24,6 +24,7 @@ import { getInvestmentTransactionCashAmount } from '../utils/investmentTransacti
 import { auditChangeLog } from '../services/auditLog';
 import { toast } from './ToastContext';
 import { validateAccount, validateGoal, validateHolding, validateTrade, validateTransactionCore, validateSettings, validateBackup, validateLiability, validateCommodityHolding, validateBudget, validateAsset, validatePlannedTrade, validateUniverseTicker, validatePortfolio, validateRecurringTransaction, validatePriceAlert, validateZakatPayment, validateWatchlistItem, validateGoalAllocation, validateTickerStatus, validateInvestmentPlan, validateExecutionLog } from '../services/dataQuality/validation';
+import { canPostTransactionToAccount } from '../services/dataQuality/accountPostingPolicy';
 import { parseSplitsFromNote } from '../services/transactionSplitNote';
 import { applyBuyToHolding, consolidateHoldingsBySymbol } from '../services/holdingMath';
 import { roundAvgCostPerUnit, roundMoney, roundQuantity } from '../utils/money';
@@ -31,6 +32,7 @@ import { normalizeCoreUpsideAllocations } from '../utils/investmentPlanAllocatio
 import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/investmentPlanPerPortfolio';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
+import { deltaForInvestmentTrade, netInvestmentBalanceFromTransactions } from '../services/investmentBalanceDelta';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
@@ -283,7 +285,18 @@ function normalizeAccount(raw: any): Account {
     }
     const id = raw.id ?? raw.account_id ?? (raw as any).uuid ?? '';
     const name = String(raw.name ?? '');
-    const type = (raw.type === 'Savings' || raw.type === 'Investment' || raw.type === 'Credit' ? raw.type : 'Checking') as Account['type'];
+    const rawType = String(raw.type ?? '').trim().toLowerCase();
+    const type = (
+        raw.type === 'Savings' || raw.type === 'Investment' || raw.type === 'Credit'
+            ? raw.type
+            : rawType.includes('invest')
+                ? 'Investment'
+                : rawType.includes('sav')
+                    ? 'Savings'
+                    : rawType.includes('credit')
+                        ? 'Credit'
+                        : 'Checking'
+    ) as Account['type'];
     const balance = roundMoney(Number(raw.balance ?? 0));
     const linkedAccountIds = raw.linkedAccountIds ?? raw.linked_account_ids;
     const cur = raw.currency;
@@ -767,55 +780,103 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const transferGroupId = (transactionClean as { transferGroupId?: string; transfer_group_id?: string }).transferGroupId ?? (transactionClean as any).transfer_group_id;
         const transferRole = (transactionClean as { transferRole?: string; transfer_role?: string }).transferRole ?? (transactionClean as any).transfer_role;
 
-        const payloadWithSnakeCase: Record<string, unknown> = { ...transactionClean };
-        delete payloadWithSnakeCase.accountId;
-        delete payloadWithSnakeCase.budgetCategory;
-        delete payloadWithSnakeCase.recurringId;
-        delete payloadWithSnakeCase.transferGroupId;
-        delete payloadWithSnakeCase.transferRole;
-        if (recId !== undefined) payloadWithSnakeCase.recurring_id = recId;
-        if (budgetCat !== undefined) payloadWithSnakeCase.budget_category = budgetCat;
-        if (accountId !== undefined) payloadWithSnakeCase.account_id = accountId;
-        if (transferGroupId !== undefined) payloadWithSnakeCase.transfer_group_id = transferGroupId;
-        if (transferRole !== undefined) payloadWithSnakeCase.transfer_role = transferRole;
+        const base = {
+            date: transactionClean.date,
+            description: transactionClean.description,
+            amount: transactionClean.amount,
+            category: transactionClean.category,
+            type: transactionClean.type,
+            note: (transactionClean as { note?: string }).note,
+            status: (transactionClean as { status?: string }).status,
+            subcategory: (transactionClean as { subcategory?: string }).subcategory,
+            expenseType: (transactionClean as { expenseType?: string; expense_type?: string }).expenseType ?? (transactionClean as any).expense_type,
+            transactionNature: (transactionClean as { transactionNature?: string; transaction_nature?: string }).transactionNature ?? (transactionClean as any).transaction_nature,
+            categoryId: (transactionClean as { categoryId?: string; category_id?: string }).categoryId ?? (transactionClean as any).category_id,
+            statementId: (transactionClean as { statementId?: string; statement_id?: string }).statementId ?? (transactionClean as any).statement_id,
+        } as const;
 
-        const payloadWithCamelCase: Record<string, unknown> = { ...transactionClean };
-        delete payloadWithCamelCase.account_id;
-        delete payloadWithCamelCase.budget_category;
-        delete payloadWithCamelCase.recurring_id;
-        delete payloadWithCamelCase.transfer_group_id;
-        delete payloadWithCamelCase.transfer_role;
-        if (recId !== undefined) payloadWithCamelCase.recurringId = recId;
-        if (budgetCat !== undefined) payloadWithCamelCase.budgetCategory = budgetCat;
-        if (accountId !== undefined) payloadWithCamelCase.accountId = accountId;
-        if (transferGroupId !== undefined) payloadWithCamelCase.transferGroupId = transferGroupId;
-        if (transferRole !== undefined) payloadWithCamelCase.transferRole = transferRole;
+        const compact = (obj: Record<string, unknown>) => {
+            const out: Record<string, unknown> = {};
+            Object.entries(obj).forEach(([k, v]) => {
+                if (v !== undefined) out[k] = v;
+            });
+            return out;
+        };
 
-        const payloadWithSnakeCaseNoOptional: Record<string, unknown> = { ...payloadWithSnakeCase };
-        delete payloadWithSnakeCaseNoOptional.recurring_id;
-        delete payloadWithSnakeCaseNoOptional.budget_category;
-        delete payloadWithSnakeCaseNoOptional.transfer_group_id;
-        delete payloadWithSnakeCaseNoOptional.transfer_role;
+        const payloadWithSnakeCase = compact({
+            date: base.date,
+            description: base.description,
+            amount: base.amount,
+            category: base.category,
+            type: base.type,
+            note: base.note,
+            status: base.status,
+            subcategory: base.subcategory,
+            expense_type: base.expenseType,
+            transaction_nature: base.transactionNature,
+            category_id: base.categoryId,
+            statement_id: base.statementId,
+            recurring_id: recId,
+            budget_category: budgetCat,
+            account_id: accountId,
+            transfer_group_id: transferGroupId,
+            transfer_role: transferRole,
+        });
 
-        const payloadWithCamelCaseNoOptional: Record<string, unknown> = { ...payloadWithCamelCase };
-        delete payloadWithCamelCaseNoOptional.recurringId;
-        delete payloadWithCamelCaseNoOptional.budgetCategory;
-        delete payloadWithCamelCaseNoOptional.transferGroupId;
-        delete payloadWithCamelCaseNoOptional.transferRole;
+        const payloadWithCamelCase = compact({
+            date: base.date,
+            description: base.description,
+            amount: base.amount,
+            category: base.category,
+            type: base.type,
+            note: base.note,
+            status: base.status,
+            subcategory: base.subcategory,
+            expenseType: base.expenseType,
+            transactionNature: base.transactionNature,
+            categoryId: base.categoryId,
+            statementId: base.statementId,
+            recurringId: recId,
+            budgetCategory: budgetCat,
+            accountId: accountId,
+            transferGroupId: transferGroupId,
+            transferRole: transferRole,
+        });
+
+        const payloadWithSnakeCaseCore = compact({
+            date: base.date,
+            description: base.description,
+            amount: base.amount,
+            category: base.category,
+            type: base.type,
+            status: base.status,
+            account_id: accountId,
+        });
+
+        const payloadWithCamelCaseCore = compact({
+            date: base.date,
+            description: base.description,
+            amount: base.amount,
+            category: base.category,
+            type: base.type,
+            status: base.status,
+            accountId: accountId,
+        });
 
         const variants: Record<string, unknown>[] = [
-            payloadWithCamelCase,
             payloadWithSnakeCase,
-            payloadWithSnakeCaseNoOptional,
-            payloadWithCamelCaseNoOptional,
+            payloadWithCamelCase,
         ];
         const hasNote =
             transactionClean.note != null && String(transactionClean.note).trim() !== '';
         if (hasNote) {
             const { note: _n1, ...camelNoNote } = { ...payloadWithCamelCase };
             const { note: _n2, ...snakeNoNote } = { ...payloadWithSnakeCase };
-            variants.push(camelNoNote, snakeNoNote);
+            // Try full payloads without note before falling back to minimal core payloads,
+            // so legacy schemas missing only `note` keep metadata columns intact.
+            variants.push(snakeNoNote, camelNoNote);
         }
+        variants.push(payloadWithSnakeCaseCore, payloadWithCamelCaseCore);
         return variants;
     };
 
@@ -872,6 +933,23 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const ownerId = auth.user.id;
             const filterOwnedRows = <T extends { user_id?: string }>(rows: T[] | null | undefined): T[] =>
                 ((rows || []) as T[]).filter((r) => r?.user_id === ownerId);
+            const normalizedInvestmentTransactions = filterOwnedRows(investmentTransactions.data as any[]).map((t: any) => {
+                const norm = normalizeInvestmentTransaction(t);
+                const resolved = resolveAccountId(norm.accountId, normalizedAccounts);
+                return resolved ? { ...norm, accountId: resolved } : norm;
+            });
+            const ownedAccounts = filterOwnedRows(normalizedAccounts);
+            const reconciledInvestmentAccounts = ownedAccounts.map((acc) => {
+                if (acc.type !== 'Investment') return acc;
+                const ledgerNet = roundMoney(netInvestmentBalanceFromTransactions(acc.id, normalizedInvestmentTransactions as any[]));
+                return { ...acc, balance: ledgerNet };
+            });
+            const driftedInvestmentAccounts = reconciledInvestmentAccounts
+                .filter((acc) => acc.type === 'Investment')
+                .filter((acc) => {
+                    const original = ownedAccounts.find((a) => a.id === acc.id);
+                    return Math.abs((original?.balance ?? 0) - acc.balance) > 0.01;
+                });
 
             // Check if user is admin (has special email or role)
             const isAdmin = auth.user.email?.toLowerCase().includes('admin') || 
@@ -922,7 +1000,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
 
             setData({
-                accounts: filterOwnedRows(normalizedAccounts),
+                accounts: reconciledInvestmentAccounts,
                 assets: filterOwnedRows(assets.data as any[]).map(normalizeAssetRow),
                 liabilities: filterOwnedRows(((liabilities.data as any[]) || []).map(normalizeLiability)),
                 goals: filterOwnedRows(goals.data as any[]).map(normalizeGoalRow),
@@ -941,11 +1019,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         holdings,
                     };
                 }),
-                investmentTransactions: filterOwnedRows(investmentTransactions.data as any[]).map((t: any) => {
-                    const norm = normalizeInvestmentTransaction(t);
-                    const resolved = resolveAccountId(norm.accountId, normalizedAccounts);
-                    return resolved ? { ...norm, accountId: resolved } : norm;
-                }),
+                investmentTransactions: normalizedInvestmentTransactions,
                 budgets: filterOwnedRows(budgets.data as any[]).map((b: any) => ({
                     ...b,
                     period: b.period ?? 'monthly',
@@ -981,6 +1055,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 allTransactions: allTransactionsData.map(normalizeTransaction),
                 allBudgets: allBudgetsData,
             });
+
+            if (driftedInvestmentAccounts.length > 0) {
+                await Promise.allSettled(
+                    driftedInvestmentAccounts.map((acc) =>
+                        db
+                            .from('accounts')
+                            .update({ balance: acc.balance })
+                            .match({ id: acc.id, user_id: ownerId }),
+                    ),
+                );
+            }
         } catch (error) {
             console.error("Error fetching financial data:", error);
         } finally {
@@ -1478,16 +1563,31 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await supabase.from('budget_shared_transactions').upsert(payload).then(() => {}, () => {});
     };
 
-    /** Keep Checking/Savings `balance` aligned with the cash ledger (`transaction.amount` sums).
+    /** Keep Checking/Savings/Credit `balance` aligned with the personal transaction ledger.
      * Uses cashBalanceAccumulatorRef when multiple transactions hit the same account in a loop (e.g. applyRecurringForMonth). */
-    const applyCashAccountDeltaForTransaction = async (accountId: string | undefined, delta: number) => {
+    const applyLedgerAccountDeltaForTransaction = async (accountId: string | undefined, delta: number) => {
         if (!accountId || !supabase || !auth?.user) return;
         const d = Number(delta);
         if (!Number.isFinite(d) || d === 0) return;
         const up = updatePlatformRef.current;
         if (!up) return;
         const acc = (data?.accounts ?? []).find((a) => a.id === accountId);
-        if (!acc || (acc.type !== 'Checking' && acc.type !== 'Savings')) return;
+        if (!acc || (acc.type !== 'Checking' && acc.type !== 'Savings' && acc.type !== 'Credit')) return;
+        const prevBalance = cashBalanceAccumulatorRef.current[accountId] ?? Number(acc.balance ?? 0);
+        const newBalance = prevBalance + d;
+        cashBalanceAccumulatorRef.current[accountId] = newBalance;
+        await up({ ...acc, balance: newBalance }, { fromTransactionDelta: true });
+    };
+
+    /** Keep Investment platform `balance` aligned with investment transaction cash flows (buy/sell/deposit/withdrawal/dividend). */
+    const applyInvestmentAccountDeltaForTrade = async (accountId: string | undefined, delta: number) => {
+        if (!accountId || !supabase || !auth?.user) return;
+        const d = Number(delta);
+        if (!Number.isFinite(d) || d === 0) return;
+        const up = updatePlatformRef.current;
+        if (!up) return;
+        const acc = (data?.accounts ?? []).find((a) => a.id === accountId);
+        if (!acc || acc.type !== 'Investment') return;
         const prevBalance = cashBalanceAccumulatorRef.current[accountId] ?? Number(acc.balance ?? 0);
         const newBalance = prevBalance + d;
         cashBalanceAccumulatorRef.current[accountId] = newBalance;
@@ -1507,6 +1607,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
         if (!core.valid) {
             toast(core.errors.join('\n'), 'error');
+            return;
+        }
+        const postingAccount = (data?.accounts ?? []).find((a) => a.id === transaction.accountId);
+        const postingPolicy = canPostTransactionToAccount(postingAccount);
+        if (!postingPolicy.allowed) {
+            toast(postingPolicy.reason ?? 'Transaction blocked by account posting policy.', 'error');
             return;
         }
         const db = supabase;
@@ -1534,7 +1640,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         if(error) {
             console.error("Error adding transaction:", error);
-            toast(`Failed to add transaction: ${error.message}`, 'error');
+            const msg = String(error?.message || 'Unknown error');
+            const detail = String(error?.details || '');
+            const accountColMissing =
+                /accountid|account_id/i.test(msg) && /column|schema cache|could not find/i.test(`${msg} ${detail}`);
+            toast(
+                accountColMissing
+                    ? 'Failed to add transaction: transactions table is missing accountId/account_id mapping. Run the latest Supabase migrations and refresh schema cache.'
+                    : `Failed to add transaction: ${msg}`,
+                'error'
+            );
             throw error;
         }
         if (newTx) {
@@ -1548,7 +1663,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 summary: `${normalized.type}: ${String(normalized.description ?? '').slice(0, 120)} · ${normalized.amount}`,
                 userId: auth.user.id,
             });
-            await applyCashAccountDeltaForTransaction(normalized.accountId, Number(normalized.amount) || 0);
+            await applyLedgerAccountDeltaForTransaction(normalized.accountId, Number(normalized.amount) || 0);
         }
     };
     const addTransfer = async (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string, feeAmount?: number) => {
@@ -1572,6 +1687,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         const fromAcc = (data?.accounts ?? []).find((a) => a.id === fromAccountId);
         const toAcc = (data?.accounts ?? []).find((a) => a.id === toAccountId);
+        const fromPostingPolicy = canPostTransactionToAccount(fromAcc);
+        if (!fromPostingPolicy.allowed) {
+            toast(fromPostingPolicy.reason ?? 'Transfer blocked by account posting policy.', 'error');
+            return;
+        }
+        const toPostingPolicy = canPostTransactionToAccount(toAcc);
+        if (!toPostingPolicy.allowed) {
+            toast(toPostingPolicy.reason ?? 'Transfer blocked by account posting policy.', 'error');
+            return;
+        }
         const fromName = fromAcc?.name ?? fromAccountId;
         const toName = toAcc?.name ?? toAccountId;
         const dateStr = date ?? new Date().toISOString().split('T')[0];
@@ -1611,6 +1736,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         if (!invFetch.error && invFetch.data) {
                             const normalizedInv = normalizeInvestmentTransaction(invFetch.data);
                             setData(prev => ({ ...prev, investmentTransactions: [normalizedInv, ...prev.investmentTransactions] }));
+                            await applyInvestmentAccountDeltaForTrade(
+                                normalizedInv.accountId,
+                                deltaForInvestmentTrade(normalizedInv.type, Number(normalizedInv.total) || 0),
+                            );
                         }
                     }
                     if (cashIds.length > 0) {
@@ -1631,7 +1760,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                     summary: `${row.type}: ${String(row.description ?? '').slice(0, 120)} · ${row.amount}`,
                                     userId: auth.user.id,
                                 });
-                                await applyCashAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
+                                await applyLedgerAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
                             }
                         }
                     }
@@ -1714,6 +1843,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         if (!invFetch.error && invFetch.data) {
                             const normalizedInv = normalizeInvestmentTransaction(invFetch.data);
                             setData(prev => ({ ...prev, investmentTransactions: [normalizedInv, ...prev.investmentTransactions] }));
+                            await applyInvestmentAccountDeltaForTrade(
+                                normalizedInv.accountId,
+                                deltaForInvestmentTrade(normalizedInv.type, Number(normalizedInv.total) || 0),
+                            );
                         }
                     }
                     if (cashIds.length > 0) {
@@ -1734,7 +1867,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                     summary: `${row.type}: ${String(row.description ?? '').slice(0, 120)} · ${row.amount}`,
                                     userId: auth.user.id,
                                 });
-                                await applyCashAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
+                                await applyLedgerAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
                             }
                         }
                     }
@@ -1824,7 +1957,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     summary: `${row.type}: ${String(row.description ?? '').slice(0, 120)} · ${row.amount}`,
                     userId: auth.user.id,
                 });
-                await applyCashAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
+                await applyLedgerAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
             }
             return;
         }
@@ -1901,15 +2034,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         else {
             const prev = data?.transactions?.find((t) => t.id === transaction.id);
             const normalized = normalizeTransaction(transaction as any);
+            const postingAccount = (data?.accounts ?? []).find((a) => a.id === normalized.accountId);
+            const postingPolicy = canPostTransactionToAccount(postingAccount);
+            if (!postingPolicy.allowed) {
+                toast(postingPolicy.reason ?? 'Transaction blocked by account posting policy.', 'error');
+                return;
+            }
             if (prev) {
                 if (prev.accountId === normalized.accountId) {
-                    await applyCashAccountDeltaForTransaction(
+                    await applyLedgerAccountDeltaForTransaction(
                         normalized.accountId,
                         (Number(normalized.amount) || 0) - (Number(prev.amount) || 0)
                     );
                 } else {
-                    await applyCashAccountDeltaForTransaction(prev.accountId, -(Number(prev.amount) || 0));
-                    await applyCashAccountDeltaForTransaction(normalized.accountId, Number(normalized.amount) || 0);
+                    await applyLedgerAccountDeltaForTransaction(prev.accountId, -(Number(prev.amount) || 0));
+                    await applyLedgerAccountDeltaForTransaction(normalized.accountId, Number(normalized.amount) || 0);
                 }
             }
             setData(prevState => ({ ...prevState, transactions: prevState.transactions.map(t => t.id === transaction.id ? normalized : t) }));
@@ -1930,7 +2069,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { error } = await db.from('transactions').delete().match({ id: transactionId, user_id: auth.user.id });
         if(error) console.error("Error deleting transaction:", error);
         else {
-            await applyCashAccountDeltaForTransaction(prevTx?.accountId, -(Number(prevTx?.amount) || 0));
+            await applyLedgerAccountDeltaForTransaction(prevTx?.accountId, -(Number(prevTx?.amount) || 0));
             setData(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.id !== transactionId) }));
             await removeSharedBudgetTransactionMirror(transactionId);
             auditChangeLog({
@@ -2477,6 +2616,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 `Cannot withdraw ${roundMoney(tradeTotal).toLocaleString()} ${txCurrency}. Available cash is ${roundMoney(availableInTxCurrency).toLocaleString()} ${txCurrency} (pooled from ${roundMoney(availableBefore.SAR).toLocaleString()} SAR + ${roundMoney(availableBefore.USD).toLocaleString()} USD).`,
             );
         }
+        const investmentBalanceDelta = deltaForInvestmentTrade(tradeData.type, tradeTotal);
 
         // 3. Log the transaction to the database
         let newTransaction: any = null;
@@ -2520,6 +2660,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (txError) { console.error("Error recording transaction:", txError); throw txError; }
         if (newTransaction) {
             setData(prev => ({ ...prev, investmentTransactions: [normalizeInvestmentTransaction(newTransaction), ...prev.investmentTransactions] }));
+            await applyInvestmentAccountDeltaForTrade(accountIdForInsert, investmentBalanceDelta);
         }
         
         // 3. For deposits/withdrawals with linked accounts, create corresponding cash account transactions
@@ -2637,6 +2778,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 } else {
                     rollbackSucceeded = true;
                     setData(prev => ({ ...prev, investmentTransactions: prev.investmentTransactions.filter(t => t.id !== newTransaction.id) }));
+                    await applyInvestmentAccountDeltaForTrade(accountIdForInsert, -investmentBalanceDelta);
                 }
             }
             await fetchData();
