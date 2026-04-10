@@ -20,6 +20,13 @@ describe('canPostTransactionToAccount', () => {
     expect(canPostTransactionToAccount(checking).allowed).toBe(true);
   });
 
+  it('allows inbound transfer posting on non-positive non-credit accounts', () => {
+    const investmentZero = { id: 'inv1', type: 'Investment', balance: 0 } as Account;
+    const checkingZero = { id: 'a4', type: 'Checking', balance: 0 } as Account;
+    expect(canPostTransactionToAccount(investmentZero, { transactionType: 'income', category: 'Transfer' }).allowed).toBe(true);
+    expect(canPostTransactionToAccount(checkingZero, { transactionType: 'income', category: 'Transfer' }).allowed).toBe(true);
+  });
+
   it('blocks posting when account is missing', () => {
     expect(canPostTransactionToAccount(undefined).allowed).toBe(false);
   });

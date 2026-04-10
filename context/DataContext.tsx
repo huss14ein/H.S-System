@@ -1610,7 +1610,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         const postingAccount = (data?.accounts ?? []).find((a) => a.id === transaction.accountId);
-        const postingPolicy = canPostTransactionToAccount(postingAccount);
+        const postingPolicy = canPostTransactionToAccount(postingAccount, {
+            transactionType: transaction.type,
+            category: transaction.category,
+        });
         if (!postingPolicy.allowed) {
             toast(postingPolicy.reason ?? 'Transaction blocked by account posting policy.', 'error');
             return;
@@ -1687,14 +1690,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         const fromAcc = (data?.accounts ?? []).find((a) => a.id === fromAccountId);
         const toAcc = (data?.accounts ?? []).find((a) => a.id === toAccountId);
-        const fromPostingPolicy = canPostTransactionToAccount(fromAcc);
+        const fromPostingPolicy = canPostTransactionToAccount(fromAcc, {
+            transactionType: 'expense',
+            category: 'Transfer',
+        });
         if (!fromPostingPolicy.allowed) {
             toast(fromPostingPolicy.reason ?? 'Transfer blocked by account posting policy.', 'error');
-            return;
-        }
-        const toPostingPolicy = canPostTransactionToAccount(toAcc);
-        if (!toPostingPolicy.allowed) {
-            toast(toPostingPolicy.reason ?? 'Transfer blocked by account posting policy.', 'error');
             return;
         }
         const fromName = fromAcc?.name ?? fromAccountId;
@@ -2035,7 +2036,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const prev = data?.transactions?.find((t) => t.id === transaction.id);
             const normalized = normalizeTransaction(transaction as any);
             const postingAccount = (data?.accounts ?? []).find((a) => a.id === normalized.accountId);
-            const postingPolicy = canPostTransactionToAccount(postingAccount);
+            const postingPolicy = canPostTransactionToAccount(postingAccount, {
+                transactionType: normalized.type,
+                category: normalized.category,
+            });
             if (!postingPolicy.allowed) {
                 toast(postingPolicy.reason ?? 'Transaction blocked by account posting policy.', 'error');
                 return;
