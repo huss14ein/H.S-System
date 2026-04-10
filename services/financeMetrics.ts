@@ -10,6 +10,23 @@ export type TxLike = {
   amount?: number;
 };
 
+const ISO_CALENDAR_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function toLocalCalendarDay(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function toTransactionCalendarDay(rawDate: string): string | null {
+  const dayPrefix = (rawDate ?? '').slice(0, 10);
+  if (ISO_CALENDAR_DAY_RE.test(dayPrefix)) return dayPrefix;
+  const parsed = new Date(rawDate);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return toLocalCalendarDay(parsed);
+}
+
 /**
  * Average monthly external (non-transfer) expenses over months that have data in the lookback window.
  */
@@ -19,14 +36,16 @@ export function normalizedMonthlyExpense(
 ): number {
   const monthsLookback = opts?.monthsLookback ?? 6;
   const now = opts?.endDate ?? new Date();
-  const end = opts?.endDate ?? new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const end = opts?.endDate ?? new Date(now.getFullYear(), now.getMonth() + 1, 0);
   const start = new Date(now.getFullYear(), now.getMonth() - monthsLookback, 1);
+  const startDay = toLocalCalendarDay(start);
+  const endDay = toLocalCalendarDay(end);
   const byMonth = new Map<string, number>();
   transactions.forEach((t) => {
     if (!countsAsExpenseForCashflowKpi(t) || !t.date) return;
-    const d = new Date(t.date);
-    if (d < start || d > end) return;
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const day = toTransactionCalendarDay(t.date);
+    if (!day || day < startDay || day > endDay) return;
+    const key = day.slice(0, 7);
     byMonth.set(key, (byMonth.get(key) ?? 0) + Math.abs(Number(t.amount) || 0));
   });
   if (byMonth.size === 0) return 0;
@@ -45,15 +64,17 @@ export function normalizedMonthlyExpenseSar(
   const accById = new Map(accounts.map((a) => [a.id, a]));
   const monthsLookback = opts?.monthsLookback ?? 6;
   const now = opts?.endDate ?? new Date();
-  const end = opts?.endDate ?? new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const end = opts?.endDate ?? new Date(now.getFullYear(), now.getMonth() + 1, 0);
   const start = new Date(now.getFullYear(), now.getMonth() - monthsLookback, 1);
+  const startDay = toLocalCalendarDay(start);
+  const endDay = toLocalCalendarDay(end);
   const byMonth = new Map<string, number>();
   transactions.forEach((t) => {
     if (!countsAsExpenseForCashflowKpi(t) || !t.date) return;
-    const d = new Date(t.date);
-    if (d < start || d > end) return;
+    const day = toTransactionCalendarDay(t.date);
+    if (!day || day < startDay || day > endDay) return;
     const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const key = day.slice(0, 7);
     byMonth.set(key, (byMonth.get(key) ?? 0) + toSAR(Math.abs(Number(t.amount) || 0), cur, sarPerUsd));
   });
   if (byMonth.size === 0) return 0;

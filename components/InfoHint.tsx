@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useId
 import { createPortal } from 'react-dom';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { INFOHINT_CLOSE_OTHERS } from './infoHintEvents';
+import { InformationCircleIcon } from './icons/InformationCircleIcon';
 
 interface InfoHintProps {
   text: string;
@@ -23,6 +24,7 @@ const HOVER_CLOSE_MS = 400;
 const HOVER_OPEN_DELAY_MS = 120;
 
 const InfoHint: React.FC<InfoHintProps> = ({ text, placement = 'auto', popoverAlign = 'left', hintId, hintPage }) => {
+  if (!String(text ?? '').trim()) return null;
   const tooltipId = useId();
   const instanceId = `hint-${tooltipId}`;
   const [open, setOpen] = useState(false);
@@ -207,12 +209,12 @@ const InfoHint: React.FC<InfoHintProps> = ({ text, placement = 'auto', popoverAl
         onPointerEnter={(e) => {
           if (e.pointerType === 'mouse' || e.pointerType === 'pen') scheduleOpenFromHover();
         }}
-        className="relative inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-gray-300 text-[10px] font-bold leading-none text-gray-600 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-primary/30 touch-manipulation"
+        className="relative inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-slate-400 hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 touch-manipulation"
         aria-label="More information"
         aria-expanded={open}
         aria-describedby={open ? tooltipId : undefined}
       >
-        !
+        <InformationCircleIcon className="h-4 w-4" aria-hidden="true" />
       </button>
       {typeof document !== 'undefined' && panel ? createPortal(panel, document.body) : null}
     </span>
