@@ -222,6 +222,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     }
 
     setProcessingError(null);
+    setImportResultMessage(null);
     setIsProcessingFile(true);
     setProcessingProgress(10);
 
@@ -256,7 +257,10 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         setProcessingProgress(100);
         setIsReviewModalOpen(true);
       } else {
-        alert('No transactions found in the SMS text. Please check the format.');
+        const guidance = 'No transactions were detected from this SMS text. Try pasting each SMS as a separate block (blank line between messages), and keep amount/date lines intact.';
+        setProcessingError(guidance);
+        setValidationWarnings((prev) => [...prev, guidance]);
+        alert(guidance);
       }
     } catch (error) {
       console.error('Error parsing SMS:', error);

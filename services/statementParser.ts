@@ -87,6 +87,7 @@ export async function parseSMSTransactions(
   try {
     // First try pattern-based extraction for common SMS formats
     const patternTransactions = extractTransactionsFromSMS(smsText, accountId);
+    const heuristicTransactions = extractTransactionsFromSMSHeuristic(smsText, accountId);
     let aiTimedOut = false;
 
     // Then use AI to extract any additional transactions, but cap wait time to keep SMS import responsive.
@@ -99,7 +100,7 @@ export async function parseSMSTransactions(
     ]);
     
     // Merge and deduplicate
-    const allTransactions = [...patternTransactions, ...aiTransactions];
+    const allTransactions = [...patternTransactions, ...heuristicTransactions, ...aiTransactions];
     const uniqueTransactions = deduplicateTransactions(allTransactions);
     
     // Validate extracted transactions
@@ -113,7 +114,7 @@ export async function parseSMSTransactions(
       confidence: validation.isValid ? 0.90 : Math.max(0, 0.90 - (validation.errors.length * 0.1)),
       errors: validation.errors,
       warnings: aiTimedOut
-        ? [...(validation.warnings ?? []), 'AI extraction timed out after 4s; parsed pattern-based SMS results only.']
+        ? [...(validation.warnings ?? []), 'AI extraction timed out after 4s; parsed pattern/heuristic SMS results only.']
         : validation.warnings,
       validation
     };
@@ -312,6 +313,54 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
   }
   
   return transactions;
+}
+
+/** Fallback parser for multiline/mixed-language SMS blocks. */
+function extractTransactionsFromSMSHeuristic(smsText: string, accountId: string): Transaction[] {
+  const blocks = smsText
+    .split(/\n\s*\n+/)
+    .map((b) => b.trim())
+    .filter(Boolean);
+  const out: Transaction[] = [];
+
+  blocks.forEach((block, idx) => {
+    const amountMatch =
+      block.match(/(?:SAR|ر\.?س|ريال)\s*[:\-]?\s*([\d,]+(?:\.\d+)?)/i) ??
+      block.match(/([\d,]+(?:\.\d+)?)\s*(?:SAR|ر\.?س|ريال)/i);
+    const amount = Number((amountMatch?.[1] ?? '0').replace(/,/g, ''));
+    if (!Number.isFinite(amount) || amount <= 0) return;
+
+    const dateMatch = block.match(/(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/);
+    const parsedDate = parseDate(dateMatch?.[1] ?? '');
+    const dateIso = Number.isNaN(parsedDate.getTime())
+      ? new Date().toISOString().slice(0, 10)
+      : parsedDate.toISOString().slice(0, 10);
+
+    const explicitDesc =
+      block.match(/(?:لدى|merchant|at|from)\s*[:\-]?\s*([A-Za-z0-9&\-. ]{2,})/i)?.[1]?.trim() ??
+      block
+        .split('\n')
+        .map((line) => line.trim())
+        .find((line) => /[A-Za-z]{3,}/.test(line) && !/SAR|balance|رصيد|مبلغ/i.test(line));
+    const description = (explicitDesc || `SMS Transaction ${idx + 1}`).slice(0, 120).trim();
+
+    const isDebit = /debited|withdrawn|purchase|payment|paid|شراء|سحب|خصم|دفع|نقاط البيع/i.test(block);
+    const signed = isDebit ? -Math.abs(amount) : Math.abs(amount);
+    const category = inferCategory(description);
+
+    out.push({
+      id: `sms-heur-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 9)}`,
+      date: dateIso,
+      description,
+      amount: signed,
+      category,
+      accountId,
+      type: signed < 0 ? 'expense' : 'income',
+      status: 'Approved',
+    });
+  });
+
+  return out;
 }
 
 /**
