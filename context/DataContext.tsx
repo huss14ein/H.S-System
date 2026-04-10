@@ -32,6 +32,7 @@ import { normalizeCoreUpsideAllocations } from '../utils/investmentPlanAllocatio
 import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/investmentPlanPerPortfolio';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
+import { deltaForInvestmentTrade } from '../services/investmentBalanceDelta';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
@@ -1543,6 +1544,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await up({ ...acc, balance: newBalance }, { fromTransactionDelta: true });
     };
 
+    /** Keep Investment platform `balance` aligned with investment transaction cash flows (buy/sell/deposit/withdrawal/dividend). */
+    const applyInvestmentAccountDeltaForTrade = async (accountId: string | undefined, delta: number) => {
+        if (!accountId || !supabase || !auth?.user) return;
+        const d = Number(delta);
+        if (!Number.isFinite(d) || d === 0) return;
+        const up = updatePlatformRef.current;
+        if (!up) return;
+        const acc = (data?.accounts ?? []).find((a) => a.id === accountId);
+        if (!acc || acc.type !== 'Investment') return;
+        const prevBalance = cashBalanceAccumulatorRef.current[accountId] ?? Number(acc.balance ?? 0);
+        const newBalance = prevBalance + d;
+        cashBalanceAccumulatorRef.current[accountId] = newBalance;
+        await up({ ...acc, balance: newBalance }, { fromTransactionDelta: true });
+    };
+
     const addTransaction = async (transaction: Omit<Transaction, 'id' | 'user_id'>) => {
         if(!supabase || !auth?.user) {
             toast("You must be logged in to add a transaction.", 'error');
@@ -2557,6 +2573,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 `Cannot withdraw ${roundMoney(tradeTotal).toLocaleString()} ${txCurrency}. Available cash is ${roundMoney(availableInTxCurrency).toLocaleString()} ${txCurrency} (pooled from ${roundMoney(availableBefore.SAR).toLocaleString()} SAR + ${roundMoney(availableBefore.USD).toLocaleString()} USD).`,
             );
         }
+        const investmentBalanceDelta = deltaForInvestmentTrade(tradeData.type, tradeTotal);
 
         // 3. Log the transaction to the database
         let newTransaction: any = null;
@@ -2600,6 +2617,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (txError) { console.error("Error recording transaction:", txError); throw txError; }
         if (newTransaction) {
             setData(prev => ({ ...prev, investmentTransactions: [normalizeInvestmentTransaction(newTransaction), ...prev.investmentTransactions] }));
+            await applyInvestmentAccountDeltaForTrade(accountIdForInsert, investmentBalanceDelta);
         }
         
         // 3. For deposits/withdrawals with linked accounts, create corresponding cash account transactions
@@ -2717,6 +2735,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 } else {
                     rollbackSucceeded = true;
                     setData(prev => ({ ...prev, investmentTransactions: prev.investmentTransactions.filter(t => t.id !== newTransaction.id) }));
+                    await applyInvestmentAccountDeltaForTrade(accountIdForInsert, -investmentBalanceDelta);
                 }
             }
             await fetchData();
