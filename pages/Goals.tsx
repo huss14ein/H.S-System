@@ -24,6 +24,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { computeGoalFundingPlan } from '../services/goalFundingRouter';
+import { computeGoalMonthlyAllocation } from '../services/goalAllocation';
 import { monteCarloGoalSuccess } from '../services/portfolioConstruction';
 import { projectedGoalCompletionDate, goalFundingGap as goalGapShared } from '../services/goalMetrics';
 import { detectGoalConflict, goalFeasibilityCheck, type GoalConflict } from '../services/goalConflictEngine';
@@ -304,7 +305,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         const progressPercent = Math.min(100, Math.max(0, progressPercentRaw));
         const remainingAmount = Math.max(0, targetAmt - currentAmount);
         const requiredMonthlyContribution = monthsLeft > 0 ? remainingAmount / monthsLeft : remainingAmount;
-        const projectedMonthlyContribution = monthlySavings * ((goal.savingsAllocationPercent || 0) / 100);
+        const projectedMonthlyContribution = computeGoalMonthlyAllocation(monthlySavings, goal.savingsAllocationPercent);
 
         let status: 'On Track' | 'Needs Attention' | 'At Risk' = 'On Track';
         if (progressPercent >= 100) {
