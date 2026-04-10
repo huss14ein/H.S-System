@@ -87,9 +87,12 @@ export async function parseSMSTransactions(
   try {
     // First try pattern-based extraction for common SMS formats
     const patternTransactions = extractTransactionsFromSMS(smsText, accountId);
-    
-    // Then use AI to extract any additional transactions
-    const aiTransactions = await extractTransactionsFromText(smsText, accountId, 'sms');
+
+    // Then use AI to extract any additional transactions, but cap wait time to keep SMS import responsive.
+    const aiTransactions = await Promise.race<Transaction[]>([
+      extractTransactionsFromText(smsText, accountId, 'sms'),
+      new Promise<Transaction[]>((resolve) => setTimeout(() => resolve([]), 4000)),
+    ]);
     
     // Merge and deduplicate
     const allTransactions = [...patternTransactions, ...aiTransactions];

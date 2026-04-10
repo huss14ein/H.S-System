@@ -69,6 +69,16 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     [data?.accounts, selectedAccount],
   );
   const selectedAccountCurrency = selectedAccountObj?.currency === 'USD' ? 'USD' : 'SAR';
+
+  const budgetCategoryOptions = useMemo(
+    () => Array.from(new Set((data?.budgets ?? []).map((b) => String(b.category || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [data?.budgets],
+  );
+  const transactionCategoryOptions = useMemo(() => {
+    const existing = (data?.transactions ?? []).map((t) => String(t.category || '').trim()).filter(Boolean);
+    const extracted = extractedTransactions.map((t) => String(t.category || '').trim()).filter(Boolean);
+    return Array.from(new Set([...existing, ...extracted])).sort((a, b) => a.localeCompare(b));
+  }, [data?.transactions, extractedTransactions]);
   const selectedAccountTypeForStatement = useMemo<'checking' | 'savings' | 'credit' | 'investment'>(() => {
     if (!selectedAccountObj) return activeTab === 'trading' ? 'investment' : 'checking';
     if (selectedAccountObj.type === 'Savings') return 'savings';
@@ -332,40 +342,59 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       const total = transactionsToImport.length + investmentTransactionsToImport.length;
       let processed = 0;
 
-      // Save regular transactions
-      for (const tx of transactionsToImport) {
-        await addTransaction({
-          date: tx.date,
-          description: tx.description,
-          amount: tx.amount,
-          category: tx.category,
-          accountId: tx.accountId,
-          budgetCategory: tx.budgetCategory,
-          subcategory: tx.subcategory,
-          type: tx.type,
-          transactionNature: tx.transactionNature,
-          expenseType: tx.expenseType,
-          status: tx.status || 'Approved',
-          statementId: currentStatementId || undefined
-        });
-        processed++;
-        setProcessingProgress((processed / total) * 100);
+      const importErrors: string[] = [];
+      const tasks: Array<() => Promise<void>> = [
+        ...transactionsToImport.map((tx, idx) => async () => {
+          try {
+            await addTransaction({
+              date: tx.date,
+              description: tx.description,
+              amount: tx.amount,
+              category: tx.category,
+              accountId: tx.accountId,
+              budgetCategory: tx.budgetCategory,
+              subcategory: tx.subcategory,
+              type: tx.type,
+              transactionNature: tx.transactionNature,
+              expenseType: tx.expenseType,
+              status: tx.status || 'Approved',
+              statementId: currentStatementId || undefined,
+            });
+          } catch (e) {
+            importErrors.push(`Bank tx #${idx + 1}: ${e instanceof Error ? e.message : String(e || 'Unknown error')}`);
+          } finally {
+            processed++;
+            setProcessingProgress((processed / total) * 100);
+          }
+        }),
+        ...investmentTransactionsToImport.map((tx, idx) => async () => {
+          try {
+            await recordTrade({
+              accountId: tx.accountId,
+              date: tx.date,
+              type: tx.type,
+              symbol: tx.symbol,
+              quantity: tx.quantity,
+              price: tx.price,
+              total: tx.total,
+              currency: tx.currency,
+            });
+          } catch (e) {
+            importErrors.push(`Investment tx #${idx + 1}: ${e instanceof Error ? e.message : String(e || 'Unknown error')}`);
+          } finally {
+            processed++;
+            setProcessingProgress((processed / total) * 100);
+          }
+        }),
+      ];
+
+      const concurrency = 4;
+      for (let i = 0; i < tasks.length; i += concurrency) {
+        await Promise.all(tasks.slice(i, i + concurrency).map((run) => run()));
       }
 
-      // Save investment transactions using recordTrade
-      for (const tx of investmentTransactionsToImport) {
-        await recordTrade({
-          accountId: tx.accountId,
-          date: tx.date,
-          type: tx.type,
-          symbol: tx.symbol,
-          quantity: tx.quantity,
-          price: tx.price,
-          total: tx.total,
-          currency: tx.currency
-        });
-        processed++;
-        setProcessingProgress((processed / total) * 100);
+      if (importErrors.length > 0) {
+        throw new Error(importErrors.slice(0, 3).join(' | '));
       }
 
       alert(`Successfully imported ${transactionsToImport.length + investmentTransactionsToImport.length} transactions!`);
@@ -415,6 +444,11 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       }
       return next;
     });
+  };
+
+
+  const handleExtractedTransactionEdit = (index: number, patch: Partial<Transaction>) => {
+    setExtractedTransactions((prev) => prev.map((tx, i) => (i === index ? { ...tx, ...patch } : tx)));
   };
 
   if (loading || !data) {
@@ -892,6 +926,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                         <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Description</th>
                         <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase">Amount</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Category</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Budget</th>
                         <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase">Status</th>
                       </tr>
                     </thead>
@@ -919,7 +954,32 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                               {tx.amount >= 0 ? '+' : '-'}
                               {formatCurrencyString(Math.abs(tx.amount), { inCurrency: selectedAccountCurrency })}
                             </td>
-                            <td className="px-4 py-3 text-sm text-slate-600">{tx.category || 'Uncategorized'}</td>
+                            <td className="px-4 py-3 text-sm text-slate-600 min-w-[180px]">
+                              <input
+                                value={tx.category || ''}
+                                onChange={(e) => handleExtractedTransactionEdit(index, { category: e.target.value })}
+                                list={`stmt-category-options-${index}`}
+                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                placeholder="Category"
+                              />
+                              <datalist id={`stmt-category-options-${index}`}>
+                                {transactionCategoryOptions.map((opt) => (
+                                  <option key={opt} value={opt} />
+                                ))}
+                              </datalist>
+                            </td>
+                            <td className="px-4 py-3 text-sm text-slate-600 min-w-[180px]">
+                              <select
+                                value={tx.budgetCategory || ''}
+                                onChange={(e) => handleExtractedTransactionEdit(index, { budgetCategory: e.target.value || undefined })}
+                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                              >
+                                <option value="">No budget link</option>
+                                {budgetCategoryOptions.map((opt) => (
+                                  <option key={opt} value={opt}>{opt}</option>
+                                ))}
+                              </select>
+                            </td>
                             <td className="px-4 py-3 text-center">
                               {isDuplicate ? (
                                 <span className="px-2 py-1 bg-amber-100 text-amber-800 rounded-full text-xs font-medium">
