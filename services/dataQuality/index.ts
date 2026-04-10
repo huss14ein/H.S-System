@@ -9,8 +9,10 @@ export {
 export {
   transactionNetForAccount,
   reconcileCashAccountBalance,
+  reconcileCreditAccountBalance,
   reconcileCashAccountBalance as reconcileAccountBalance,
   type CashAccountReconciliation,
+  type CreditAccountReconciliation,
 } from './accountReconciliation';
 
 export {

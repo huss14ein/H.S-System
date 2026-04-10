@@ -1524,16 +1524,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await supabase.from('budget_shared_transactions').upsert(payload).then(() => {}, () => {});
     };
 
-    /** Keep Checking/Savings `balance` aligned with the cash ledger (`transaction.amount` sums).
+    /** Keep Checking/Savings/Credit `balance` aligned with the personal transaction ledger.
      * Uses cashBalanceAccumulatorRef when multiple transactions hit the same account in a loop (e.g. applyRecurringForMonth). */
-    const applyCashAccountDeltaForTransaction = async (accountId: string | undefined, delta: number) => {
+    const applyLedgerAccountDeltaForTransaction = async (accountId: string | undefined, delta: number) => {
         if (!accountId || !supabase || !auth?.user) return;
         const d = Number(delta);
         if (!Number.isFinite(d) || d === 0) return;
         const up = updatePlatformRef.current;
         if (!up) return;
         const acc = (data?.accounts ?? []).find((a) => a.id === accountId);
-        if (!acc || (acc.type !== 'Checking' && acc.type !== 'Savings')) return;
+        if (!acc || (acc.type !== 'Checking' && acc.type !== 'Savings' && acc.type !== 'Credit')) return;
         const prevBalance = cashBalanceAccumulatorRef.current[accountId] ?? Number(acc.balance ?? 0);
         const newBalance = prevBalance + d;
         cashBalanceAccumulatorRef.current[accountId] = newBalance;
@@ -1603,7 +1603,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 summary: `${normalized.type}: ${String(normalized.description ?? '').slice(0, 120)} · ${normalized.amount}`,
                 userId: auth.user.id,
             });
-            await applyCashAccountDeltaForTransaction(normalized.accountId, Number(normalized.amount) || 0);
+            await applyLedgerAccountDeltaForTransaction(normalized.accountId, Number(normalized.amount) || 0);
         }
     };
     const addTransfer = async (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string, feeAmount?: number) => {
@@ -1686,7 +1686,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                     summary: `${row.type}: ${String(row.description ?? '').slice(0, 120)} · ${row.amount}`,
                                     userId: auth.user.id,
                                 });
-                                await applyCashAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
+                                await applyLedgerAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
                             }
                         }
                     }
@@ -1789,7 +1789,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                     summary: `${row.type}: ${String(row.description ?? '').slice(0, 120)} · ${row.amount}`,
                                     userId: auth.user.id,
                                 });
-                                await applyCashAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
+                                await applyLedgerAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
                             }
                         }
                     }
@@ -1879,7 +1879,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     summary: `${row.type}: ${String(row.description ?? '').slice(0, 120)} · ${row.amount}`,
                     userId: auth.user.id,
                 });
-                await applyCashAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
+                await applyLedgerAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
             }
             return;
         }
@@ -1958,13 +1958,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const normalized = normalizeTransaction(transaction as any);
             if (prev) {
                 if (prev.accountId === normalized.accountId) {
-                    await applyCashAccountDeltaForTransaction(
+                    await applyLedgerAccountDeltaForTransaction(
                         normalized.accountId,
                         (Number(normalized.amount) || 0) - (Number(prev.amount) || 0)
                     );
                 } else {
-                    await applyCashAccountDeltaForTransaction(prev.accountId, -(Number(prev.amount) || 0));
-                    await applyCashAccountDeltaForTransaction(normalized.accountId, Number(normalized.amount) || 0);
+                    await applyLedgerAccountDeltaForTransaction(prev.accountId, -(Number(prev.amount) || 0));
+                    await applyLedgerAccountDeltaForTransaction(normalized.accountId, Number(normalized.amount) || 0);
                 }
             }
             setData(prevState => ({ ...prevState, transactions: prevState.transactions.map(t => t.id === transaction.id ? normalized : t) }));
@@ -1985,7 +1985,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { error } = await db.from('transactions').delete().match({ id: transactionId, user_id: auth.user.id });
         if(error) console.error("Error deleting transaction:", error);
         else {
-            await applyCashAccountDeltaForTransaction(prevTx?.accountId, -(Number(prevTx?.amount) || 0));
+            await applyLedgerAccountDeltaForTransaction(prevTx?.accountId, -(Number(prevTx?.amount) || 0));
             setData(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.id !== transactionId) }));
             await removeSharedBudgetTransactionMirror(transactionId);
             auditChangeLog({
