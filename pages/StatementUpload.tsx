@@ -38,6 +38,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
   const [selectedTransactions, setSelectedTransactions] = useState<Set<number>>(new Set());
   const [validationWarnings, setValidationWarnings] = useState<string[]>([]);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [importResultMessage, setImportResultMessage] = useState<string | null>(null);
   const [parseStats, setParseStats] = useState<{
     totalTransactions: number;
     validTransactions: number;
@@ -129,6 +130,8 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     setProcessingError(null);
     setValidationWarnings([]);
     setValidationErrors([]);
+    setImportResultMessage(null);
+    setImportResultMessage(null);
     setParseStats(null);
     setIsProcessingFile(true);
     setProcessingProgress(10);
@@ -328,59 +331,84 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
 
   const handleApproveTransactions = async () => {
     try {
-      const transactionsToImport = extractedTransactions.filter((_, i) => selectedTransactions.has(i));
-      const investmentTransactionsToImport = extractedInvestmentTransactions.filter((_, i) => 
-        selectedTransactions.has(extractedTransactions.length + i)
-      );
+      setImportResultMessage(null);
+      const selectedBankRows = extractedTransactions
+        .map((tx, idx) => ({ tx, idx }))
+        .filter(({ idx }) => selectedTransactions.has(idx));
+      const selectedInvestmentRows = extractedInvestmentTransactions
+        .map((tx, idx) => ({ tx, idx, absoluteIdx: extractedTransactions.length + idx }))
+        .filter(({ absoluteIdx }) => selectedTransactions.has(absoluteIdx));
 
-      if (transactionsToImport.length === 0 && investmentTransactionsToImport.length === 0) {
+      if (selectedBankRows.length === 0 && selectedInvestmentRows.length === 0) {
         alert('Please select at least one transaction to import.');
         return;
       }
 
       setProcessingProgress(0);
-      const total = transactionsToImport.length + investmentTransactionsToImport.length;
+      const total = selectedBankRows.length + selectedInvestmentRows.length;
       let processed = 0;
 
       const importErrors: string[] = [];
+      const succeededIndices = new Set<number>();
+      const failedIndices = new Set<number>();
       const tasks: Array<() => Promise<void>> = [
-        ...transactionsToImport.map((tx, idx) => async () => {
+        ...selectedBankRows.map(({ tx, idx }, displayIdx) => async () => {
           try {
-            await addTransaction({
-              date: tx.date,
-              description: tx.description,
-              amount: tx.amount,
-              category: tx.category,
-              accountId: tx.accountId,
-              budgetCategory: tx.budgetCategory,
-              subcategory: tx.subcategory,
-              type: tx.type,
-              transactionNature: tx.transactionNature,
-              expenseType: tx.expenseType,
-              status: tx.status || 'Approved',
-              statementId: currentStatementId || undefined,
-            });
+            for (let attempt = 0; attempt < 2; attempt++) {
+              try {
+                await addTransaction({
+                  date: tx.date,
+                  description: tx.description,
+                  amount: tx.amount,
+                  category: tx.category,
+                  accountId: tx.accountId,
+                  budgetCategory: tx.budgetCategory,
+                  subcategory: tx.subcategory,
+                  type: tx.type,
+                  transactionNature: tx.transactionNature,
+                  expenseType: tx.expenseType,
+                  status: tx.status || 'Approved',
+                  statementId: currentStatementId || undefined,
+                });
+                succeededIndices.add(idx);
+                failedIndices.delete(idx);
+                return;
+              } catch (inner) {
+                if (attempt >= 1) throw inner;
+              }
+            }
           } catch (e) {
-            importErrors.push(`Bank tx #${idx + 1}: ${e instanceof Error ? e.message : String(e || 'Unknown error')}`);
+            failedIndices.add(idx);
+            importErrors.push(`Bank tx #${displayIdx + 1}: ${e instanceof Error ? e.message : String(e || 'Unknown error')}`);
           } finally {
             processed++;
             setProcessingProgress((processed / total) * 100);
           }
         }),
-        ...investmentTransactionsToImport.map((tx, idx) => async () => {
+        ...selectedInvestmentRows.map(({ tx, absoluteIdx }, displayIdx) => async () => {
           try {
-            await recordTrade({
-              accountId: tx.accountId,
-              date: tx.date,
-              type: tx.type,
-              symbol: tx.symbol,
-              quantity: tx.quantity,
-              price: tx.price,
-              total: tx.total,
-              currency: tx.currency,
-            });
+            for (let attempt = 0; attempt < 2; attempt++) {
+              try {
+                await recordTrade({
+                  accountId: tx.accountId,
+                  date: tx.date,
+                  type: tx.type,
+                  symbol: tx.symbol,
+                  quantity: tx.quantity,
+                  price: tx.price,
+                  total: tx.total,
+                  currency: tx.currency,
+                });
+                succeededIndices.add(absoluteIdx);
+                failedIndices.delete(absoluteIdx);
+                return;
+              } catch (inner) {
+                if (attempt >= 1) throw inner;
+              }
+            }
           } catch (e) {
-            importErrors.push(`Investment tx #${idx + 1}: ${e instanceof Error ? e.message : String(e || 'Unknown error')}`);
+            failedIndices.add(absoluteIdx);
+            importErrors.push(`Investment tx #${displayIdx + 1}: ${e instanceof Error ? e.message : String(e || 'Unknown error')}`);
           } finally {
             processed++;
             setProcessingProgress((processed / total) * 100);
@@ -393,25 +421,35 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         await Promise.all(tasks.slice(i, i + concurrency).map((run) => run()));
       }
 
-      if (importErrors.length > 0) {
-        throw new Error(importErrors.slice(0, 3).join(' | '));
+      const importedCount = succeededIndices.size;
+      const failedCount = failedIndices.size;
+
+      if (failedCount === 0) {
+        alert(`Successfully imported ${importedCount} transaction(s)!`);
+        setIsReviewModalOpen(false);
+        setExtractedTransactions([]);
+        setExtractedInvestmentTransactions([]);
+        setDuplicateTransactions(new Set());
+        setSelectedTransactions(new Set());
+        setValidationWarnings([]);
+        setValidationErrors([]);
+        setParseStats(null);
+        setCurrentStatementId(null);
+        setProcessingProgress(0);
+        setSmsText('');
+        setUploadedFile(null);
+        setImportResultMessage(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      } else {
+        setSelectedTransactions(new Set(failedIndices));
+        setProcessingProgress(0);
+        setImportResultMessage(`Imported ${importedCount} transaction(s). ${failedCount} failed — review and retry selected rows.`);
       }
 
-      alert(`Successfully imported ${transactionsToImport.length + investmentTransactionsToImport.length} transactions!`);
-      setIsReviewModalOpen(false);
-      setExtractedTransactions([]);
-      setExtractedInvestmentTransactions([]);
-      setDuplicateTransactions(new Set());
-      setSelectedTransactions(new Set());
-      setValidationWarnings([]);
-      setValidationErrors([]);
-      setParseStats(null);
-      setCurrentStatementId(null);
-      setProcessingProgress(0);
-      setSmsText('');
-      setUploadedFile(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+      if (importErrors.length > 0) {
+        alert(`Import completed with issues: ${importErrors.slice(0, 3).join(' | ')}`);
       }
     } catch (error) {
       console.error('Error saving transactions:', error);
@@ -850,6 +888,12 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
               </div>
             )}
 
+            {importResultMessage && (
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-sm text-blue-800">{importResultMessage}</p>
+              </div>
+            )}
+
             {/* Progress Indicator */}
             {processingProgress > 0 && processingProgress < 100 && (
               <div className="space-y-2">
@@ -1119,6 +1163,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                   setDuplicateTransactions(new Set());
                   setValidationWarnings([]);
                   setValidationErrors([]);
+                  setImportResultMessage(null);
                 }}
                 className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
               >

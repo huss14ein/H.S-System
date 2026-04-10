@@ -87,11 +87,15 @@ export async function parseSMSTransactions(
   try {
     // First try pattern-based extraction for common SMS formats
     const patternTransactions = extractTransactionsFromSMS(smsText, accountId);
+    let aiTimedOut = false;
 
     // Then use AI to extract any additional transactions, but cap wait time to keep SMS import responsive.
     const aiTransactions = await Promise.race<Transaction[]>([
       extractTransactionsFromText(smsText, accountId, 'sms'),
-      new Promise<Transaction[]>((resolve) => setTimeout(() => resolve([]), 4000)),
+      new Promise<Transaction[]>((resolve) => setTimeout(() => {
+        aiTimedOut = true;
+        resolve([]);
+      }, 4000)),
     ]);
     
     // Merge and deduplicate
@@ -108,7 +112,9 @@ export async function parseSMSTransactions(
       }),
       confidence: validation.isValid ? 0.90 : Math.max(0, 0.90 - (validation.errors.length * 0.1)),
       errors: validation.errors,
-      warnings: validation.warnings,
+      warnings: aiTimedOut
+        ? [...(validation.warnings ?? []), 'AI extraction timed out after 4s; parsed pattern-based SMS results only.']
+        : validation.warnings,
       validation
     };
   } catch (error) {

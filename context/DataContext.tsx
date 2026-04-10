@@ -1579,7 +1579,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         if(error) {
             console.error("Error adding transaction:", error);
-            toast(`Failed to add transaction: ${error.message}`, 'error');
+            const msg = String(error?.message || 'Unknown error');
+            const detail = String(error?.details || '');
+            const accountColMissing =
+                /accountid|account_id/i.test(msg) && /column|schema cache|could not find/i.test(`${msg} ${detail}`);
+            toast(
+                accountColMissing
+                    ? 'Failed to add transaction: transactions table is missing accountId/account_id mapping. Run the latest Supabase migrations and refresh schema cache.'
+                    : `Failed to add transaction: ${msg}`,
+                'error'
+            );
             throw error;
         }
         if (newTx) {
