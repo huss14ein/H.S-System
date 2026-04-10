@@ -767,47 +767,92 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const transferGroupId = (transactionClean as { transferGroupId?: string; transfer_group_id?: string }).transferGroupId ?? (transactionClean as any).transfer_group_id;
         const transferRole = (transactionClean as { transferRole?: string; transfer_role?: string }).transferRole ?? (transactionClean as any).transfer_role;
 
-        const payloadWithSnakeCase: Record<string, unknown> = { ...transactionClean };
-        delete payloadWithSnakeCase.accountId;
-        delete payloadWithSnakeCase.budgetCategory;
-        delete payloadWithSnakeCase.recurringId;
-        delete payloadWithSnakeCase.transferGroupId;
-        delete payloadWithSnakeCase.transferRole;
-        if (recId !== undefined) payloadWithSnakeCase.recurring_id = recId;
-        if (budgetCat !== undefined) payloadWithSnakeCase.budget_category = budgetCat;
-        if (accountId !== undefined) payloadWithSnakeCase.account_id = accountId;
-        if (transferGroupId !== undefined) payloadWithSnakeCase.transfer_group_id = transferGroupId;
-        if (transferRole !== undefined) payloadWithSnakeCase.transfer_role = transferRole;
+        const base = {
+            date: transactionClean.date,
+            description: transactionClean.description,
+            amount: transactionClean.amount,
+            category: transactionClean.category,
+            type: transactionClean.type,
+            note: (transactionClean as { note?: string }).note,
+            status: (transactionClean as { status?: string }).status,
+            subcategory: (transactionClean as { subcategory?: string }).subcategory,
+            expenseType: (transactionClean as { expenseType?: string; expense_type?: string }).expenseType ?? (transactionClean as any).expense_type,
+            transactionNature: (transactionClean as { transactionNature?: string; transaction_nature?: string }).transactionNature ?? (transactionClean as any).transaction_nature,
+            categoryId: (transactionClean as { categoryId?: string; category_id?: string }).categoryId ?? (transactionClean as any).category_id,
+            statementId: (transactionClean as { statementId?: string; statement_id?: string }).statementId ?? (transactionClean as any).statement_id,
+        } as const;
 
-        const payloadWithCamelCase: Record<string, unknown> = { ...transactionClean };
-        delete payloadWithCamelCase.account_id;
-        delete payloadWithCamelCase.budget_category;
-        delete payloadWithCamelCase.recurring_id;
-        delete payloadWithCamelCase.transfer_group_id;
-        delete payloadWithCamelCase.transfer_role;
-        if (recId !== undefined) payloadWithCamelCase.recurringId = recId;
-        if (budgetCat !== undefined) payloadWithCamelCase.budgetCategory = budgetCat;
-        if (accountId !== undefined) payloadWithCamelCase.accountId = accountId;
-        if (transferGroupId !== undefined) payloadWithCamelCase.transferGroupId = transferGroupId;
-        if (transferRole !== undefined) payloadWithCamelCase.transferRole = transferRole;
+        const compact = (obj: Record<string, unknown>) => {
+            const out: Record<string, unknown> = {};
+            Object.entries(obj).forEach(([k, v]) => {
+                if (v !== undefined) out[k] = v;
+            });
+            return out;
+        };
 
-        const payloadWithSnakeCaseNoOptional: Record<string, unknown> = { ...payloadWithSnakeCase };
-        delete payloadWithSnakeCaseNoOptional.recurring_id;
-        delete payloadWithSnakeCaseNoOptional.budget_category;
-        delete payloadWithSnakeCaseNoOptional.transfer_group_id;
-        delete payloadWithSnakeCaseNoOptional.transfer_role;
+        const payloadWithSnakeCase = compact({
+            date: base.date,
+            description: base.description,
+            amount: base.amount,
+            category: base.category,
+            type: base.type,
+            note: base.note,
+            status: base.status,
+            subcategory: base.subcategory,
+            expense_type: base.expenseType,
+            transaction_nature: base.transactionNature,
+            category_id: base.categoryId,
+            statement_id: base.statementId,
+            recurring_id: recId,
+            budget_category: budgetCat,
+            account_id: accountId,
+            transfer_group_id: transferGroupId,
+            transfer_role: transferRole,
+        });
 
-        const payloadWithCamelCaseNoOptional: Record<string, unknown> = { ...payloadWithCamelCase };
-        delete payloadWithCamelCaseNoOptional.recurringId;
-        delete payloadWithCamelCaseNoOptional.budgetCategory;
-        delete payloadWithCamelCaseNoOptional.transferGroupId;
-        delete payloadWithCamelCaseNoOptional.transferRole;
+        const payloadWithCamelCase = compact({
+            date: base.date,
+            description: base.description,
+            amount: base.amount,
+            category: base.category,
+            type: base.type,
+            note: base.note,
+            status: base.status,
+            subcategory: base.subcategory,
+            expenseType: base.expenseType,
+            transactionNature: base.transactionNature,
+            categoryId: base.categoryId,
+            statementId: base.statementId,
+            recurringId: recId,
+            budgetCategory: budgetCat,
+            accountId: accountId,
+            transferGroupId: transferGroupId,
+            transferRole: transferRole,
+        });
+
+        const payloadWithSnakeCaseCore = compact({
+            date: base.date,
+            description: base.description,
+            amount: base.amount,
+            category: base.category,
+            type: base.type,
+            account_id: accountId,
+        });
+
+        const payloadWithCamelCaseCore = compact({
+            date: base.date,
+            description: base.description,
+            amount: base.amount,
+            category: base.category,
+            type: base.type,
+            accountId: accountId,
+        });
 
         const variants: Record<string, unknown>[] = [
-            payloadWithCamelCase,
             payloadWithSnakeCase,
-            payloadWithSnakeCaseNoOptional,
-            payloadWithCamelCaseNoOptional,
+            payloadWithCamelCase,
+            payloadWithSnakeCaseCore,
+            payloadWithCamelCaseCore,
         ];
         const hasNote =
             transactionClean.note != null && String(transactionClean.note).trim() !== '';
@@ -1534,7 +1579,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         if(error) {
             console.error("Error adding transaction:", error);
-            toast(`Failed to add transaction: ${error.message}`, 'error');
+            const msg = String(error?.message || 'Unknown error');
+            const detail = String(error?.details || '');
+            const accountColMissing =
+                /accountid|account_id/i.test(msg) && /column|schema cache|could not find/i.test(`${msg} ${detail}`);
+            toast(
+                accountColMissing
+                    ? 'Failed to add transaction: transactions table is missing accountId/account_id mapping. Run the latest Supabase migrations and refresh schema cache.'
+                    : `Failed to add transaction: ${msg}`,
+                'error'
+            );
             throw error;
         }
         if (newTx) {

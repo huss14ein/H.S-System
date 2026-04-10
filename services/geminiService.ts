@@ -8,6 +8,7 @@ import { DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { fetchStooq } from './stooqClient';
 import { fetchGeminiProxyHealthStatus, getGeminiProxyEndpoints } from './aiProxyEndpoints';
+import { computeGoalMonthlyAllocation, normalizeGoalAllocationPercent } from './goalAllocation';
 
 // --- Model Constants ---
 const FAST_MODEL = 'gemini-3-flash-preview';
@@ -1775,7 +1776,7 @@ export const getGoalAIPlan = async (goal: Goal, monthlySavings: number, calculat
         const monthsLeft = Math.max(0, (deadline.getFullYear() - now.getFullYear()) * 12 + deadline.getMonth() - now.getMonth());
         const remainingAmount = Math.max(0, goal.targetAmount - calculatedCurrentAmount);
         const requiredMonthlyContribution = monthsLeft > 0 ? remainingAmount / monthsLeft : remainingAmount;
-        const projectedMonthlyContribution = monthlySavings * ((goal.savingsAllocationPercent || 0) / 100);
+        const projectedMonthlyContribution = computeGoalMonthlyAllocation(monthlySavings, goal.savingsAllocationPercent);
 
         const prompt = `
             You are Finova AI, a very clever expert financial and investment advisor. Analyze this goal and provide a direct, concise plan in Markdown. Speak as a senior advisor with clear, actionable guidance.
@@ -1830,7 +1831,7 @@ export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: n
             return `- ${goal.name}: ${progress.toFixed(0)}% complete`;
         }).join('\n');
 
-        const totalAllocatedPercent = goals.reduce((sum, g) => sum + (g.savingsAllocationPercent || 0), 0);
+        const totalAllocatedPercent = goals.reduce((sum, g) => sum + normalizeGoalAllocationPercent(g.savingsAllocationPercent), 0);
         const allocatedSavings = monthlySavings * (totalAllocatedPercent / 100);
 
         const unallocated = monthlySavings - allocatedSavings;
