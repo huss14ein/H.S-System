@@ -20,7 +20,6 @@ import {
     resolveCashAccountCurrency,
 } from '../utils/investmentLedgerCurrency';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
-import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { auditChangeLog } from '../services/auditLog';
 import { toast } from './ToastContext';
 import { validateAccount, validateGoal, validateHolding, validateTrade, validateTransactionCore, validateSettings, validateBackup, validateLiability, validateCommodityHolding, validateBudget, validateAsset, validatePlannedTrade, validateUniverseTicker, validatePortfolio, validateRecurringTransaction, validatePriceAlert, validateZakatPayment, validateWatchlistItem, validateGoalAllocation, validateTickerStatus, validateInvestmentPlan, validateExecutionLog } from '../services/dataQuality/validation';
@@ -3143,54 +3142,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const availableCashByAccountId = useMemo(() => {
         const map: Record<string, { SAR: number; USD: number }> = {};
-        const normalizedTx: Array<{ accId: string; tx: InvestmentTransaction }> = [];
-        (data.investmentTransactions || []).forEach((t: InvestmentTransaction) => {
-            const portfolioId = t.portfolioId ?? (t as any).portfolio_id;
-            const linkedPortfolio: any = portfolioId ? (data?.investments ?? []).find((p: any) => p.id === portfolioId) : undefined;
-            const fallbackPortfolioAccount = portfolioId
-                ? resolveAccountId(
-                      linkedPortfolio?.accountId ?? linkedPortfolio?.account_id,
-                      data?.accounts ?? [],
-                  )
-                : undefined;
-            const raw = t.accountId ?? (t as any).account_id ?? fallbackPortfolioAccount;
-            if (!raw) return;
-            const accId = resolveCanonicalAccountId(String(raw), data?.accounts ?? []);
-            if (!accId) return;
-            normalizedTx.push({ accId, tx: t });
-        });
-
-        const hasInvestmentLedgerRows = new Set(normalizedTx.map((x) => x.accId));
         (data?.accounts ?? []).forEach((acc: Account) => {
             if (acc.type !== 'Investment') return;
             const accId = resolveCanonicalAccountId(acc.id, data?.accounts ?? []) ?? acc.id;
             if (!accId) return;
             if (!(accId in map)) map[accId] = { SAR: 0, USD: 0 };
-            // Legacy seed only: if this account already has ledger rows, treat `account.balance` as display-only and avoid double counting.
-            if (hasInvestmentLedgerRows.has(accId)) return;
-            const openingBalance = Math.max(0, Number(acc.balance ?? 0));
-            if (!Number.isFinite(openingBalance) || openingBalance <= 0) return;
+            // Authoritative source: account.balance (kept in sync from investment ledger writes/reconciliation).
+            const openingBalance = Number(acc.balance ?? 0);
+            if (!Number.isFinite(openingBalance)) return;
             const baseCur: TradeCurrency = acc.currency === 'USD' ? 'USD' : 'SAR';
             map[accId][baseCur] += openingBalance;
         });
-
-        normalizedTx.forEach(({ accId, tx: t }) => {
-            if (!(accId in map)) map[accId] = { SAR: 0, USD: 0 };
-            const amt = getInvestmentTransactionCashAmount(t as any);
-            if (!Number.isFinite(amt)) return;
-            const cur = inferInvestmentTransactionCurrency(t, data?.accounts ?? [], data?.investments ?? []);
-            const txType = String(t.type ?? '').toLowerCase();
-            const delta = txType === 'deposit' || txType === 'sell' || txType === 'dividend'
-                ? amt
-                : (txType === 'withdrawal' || txType === 'buy' ? -amt : 0);
-            map[accId][cur] += delta;
-        });
-        Object.keys(map).forEach(accId => {
-            map[accId].SAR = Math.max(0, map[accId].SAR);
-            map[accId].USD = Math.max(0, map[accId].USD);
-        });
         return map;
-    }, [data?.investmentTransactions, data?.accounts, data?.investments]);
+    }, [data?.accounts]);
 
     const getAvailableCashForAccount = useCallback((accountId: string): { SAR: number; USD: number } => {
         const canonical = resolveCanonicalAccountId(accountId, data?.accounts ?? []) ?? accountId;
