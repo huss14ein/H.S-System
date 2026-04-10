@@ -87,12 +87,33 @@ export async function parseSMSTransactions(
   try {
     // First try pattern-based extraction for common SMS formats
     const patternTransactions = extractTransactionsFromSMS(smsText, accountId);
-    
-    // Then use AI to extract any additional transactions
-    const aiTransactions = await extractTransactionsFromText(smsText, accountId, 'sms');
+    const heuristicTransactions = extractTransactionsFromSMSHeuristic(smsText, accountId);
+    let aiTimedOut = false;
+
+    // Then use AI to extract any additional transactions, but cap wait time to keep SMS import responsive.
+    const aiController = new AbortController();
+    const aiTimeoutId = setTimeout(() => {
+      aiTimedOut = true;
+      aiController.abort();
+    }, 4000);
+    let aiTransactions: Transaction[] = [];
+    try {
+      aiTransactions = await extractTransactionsFromText(smsText, accountId, 'sms', aiController.signal);
+    } catch (error) {
+      const abortErr = error as { name?: string };
+      if (!(abortErr && abortErr.name === 'AbortError')) {
+        throw error;
+      }
+    } finally {
+      clearTimeout(aiTimeoutId);
+    }
     
     // Merge and deduplicate
-    const allTransactions = [...patternTransactions, ...aiTransactions];
+    const allTransactions = normalizeTransactionsDateConvention([
+      ...patternTransactions,
+      ...heuristicTransactions,
+      ...aiTransactions,
+    ]);
     const uniqueTransactions = deduplicateTransactions(allTransactions);
     
     // Validate extracted transactions
@@ -105,7 +126,9 @@ export async function parseSMSTransactions(
       }),
       confidence: validation.isValid ? 0.90 : Math.max(0, 0.90 - (validation.errors.length * 0.1)),
       errors: validation.errors,
-      warnings: validation.warnings,
+      warnings: aiTimedOut
+        ? [...(validation.warnings ?? []), 'AI extraction timed out after 4s; parsed pattern/heuristic SMS results only.']
+        : validation.warnings,
       validation
     };
   } catch (error) {
@@ -245,6 +268,9 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
   ];
   
   for (const line of lines) {
+    if (/(balance|رصيد)/i.test(line) && !/(amount|مبلغ|debited|credited|paid|received|purchase|withdrawn|deposited|خصم|شراء|دفع|استلام|إيداع)/i.test(line)) {
+      continue;
+    }
     for (const pattern of patterns) {
       const match = line.match(pattern);
       if (match) {
@@ -282,14 +308,15 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
           }
         }
         
-        if (amount > 0 && description) {
-          const date = parseDate(dateStr || new Date().toISOString().split('T')[0]);
-          const category = inferCategory(description);
+        if (amount > 0 && description && !/(balance|رصيد)/i.test(description)) {
+          const canonicalDescription = canonicalizeTransactionDescription(description);
+          const date = parseDate(dateStr || formatLocalYmd(new Date()));
+          const category = inferCategory(canonicalDescription);
           
           transactions.push({
             id: `sms-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            date: date.toISOString().split('T')[0],
-            description: description.trim(),
+            date: formatLocalYmd(date),
+            description: canonicalDescription,
             amount: isDebit ? -Math.abs(amount) : Math.abs(amount),
             category,
             accountId,
@@ -305,13 +332,148 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
   return transactions;
 }
 
+/** Fallback parser for multiline/mixed-language SMS blocks. */
+function extractTransactionsFromSMSHeuristic(smsText: string, accountId: string): Transaction[] {
+  const blocks = splitSmsIntoBlocks(smsText);
+  const out: Transaction[] = [];
+
+  blocks.forEach((block, idx) => {
+    const amount = extractSmsAmount(block);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+
+    const dateMatch = block.match(/(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/);
+    const parsedDate = parseDate(dateMatch?.[1] ?? '');
+    const dateIso = formatLocalYmd(Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate);
+
+    const explicitDesc =
+      block.match(/(?:لدى|merchant|at|from)\s*[:\-]?\s*([A-Za-z0-9&\-. ]{2,})/i)?.[1]?.trim() ??
+      block
+        .split('\n')
+        .map((line) => line.trim())
+        .find((line) => /[A-Za-z]{3,}/.test(line) && !/SAR|balance|رصيد|مبلغ/i.test(line));
+    const description = canonicalizeTransactionDescription((explicitDesc || `SMS Transaction ${idx + 1}`).slice(0, 120).trim());
+
+    const isDebit = /debited|withdrawn|purchase|payment|paid|شراء|سحب|خصم|دفع|نقاط البيع/i.test(block);
+    const signed = isDebit ? -Math.abs(amount) : Math.abs(amount);
+    const category = inferCategory(description);
+
+    out.push({
+      id: `sms-heur-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 9)}`,
+      date: dateIso,
+      description,
+      amount: signed,
+      category,
+      accountId,
+      type: signed < 0 ? 'expense' : 'income',
+      status: 'Approved',
+    });
+  });
+
+  // Second pass: line-window extraction for tightly packed multi-SMS text.
+  const dateRe = /\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}/;
+  const lines = smsText.split('\n').map((l) => l.trim()).filter(Boolean);
+  const signatures = new Set(out.map((t) => `${t.date}|${t.amount}|${t.description.toLowerCase()}`));
+  for (let i = 0; i < lines.length; i++) {
+    if (!dateRe.test(lines[i])) continue;
+    const window = [lines[i], lines[i - 1], lines[i - 2], lines[i + 1]].filter(Boolean).join('\n');
+    const amount = extractSmsAmount(window);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    const parsedDate = parseDate(lines[i]);
+    const dateIso = formatLocalYmd(Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate);
+    const descLine =
+      [lines[i - 1], lines[i - 2], lines[i + 1]]
+        .filter(Boolean)
+        .find((line) => /[A-Za-z]{3,}/.test(line) && !/SAR|balance|رصيد|مبلغ/i.test(line)) ?? `SMS Transaction ${i + 1}`;
+    const isDebit = /debited|withdrawn|purchase|payment|paid|شراء|سحب|خصم|دفع|نقاط البيع/i.test(window);
+    const signed = isDebit ? -Math.abs(amount) : Math.abs(amount);
+    const description = canonicalizeTransactionDescription(descLine.slice(0, 120).trim());
+    const sig = `${dateIso}|${signed}|${description.toLowerCase()}`;
+    if (signatures.has(sig)) continue;
+    signatures.add(sig);
+    out.push({
+      id: `sms-heur-line-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 9)}`,
+      date: dateIso,
+      description,
+      amount: signed,
+      category: inferCategory(description),
+      accountId,
+      type: signed < 0 ? 'expense' : 'income',
+      status: 'Approved',
+    });
+  }
+
+  return out;
+}
+
+/** Split raw SMS paste into transaction-like blocks (blank lines OR starter lines). */
+function splitSmsIntoBlocks(smsText: string): string[] {
+  const byBlank = smsText
+    .split(/\n\s*\n+/)
+    .map((b) => b.trim())
+    .filter(Boolean);
+  if (byBlank.length > 1) return byBlank;
+
+  const lines = smsText.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (lines.length <= 1) return lines;
+  const blocks: string[] = [];
+  let current: string[] = [];
+  const startRe = /(purchase|payment|transaction|debited|credited|withdrawn|received|شراء|سحب|خصم|نقاط البيع)/i;
+  const dateRe = /\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}/;
+
+  for (const line of lines) {
+    const startsNew = startRe.test(line) && current.length > 0;
+    if (startsNew) {
+      blocks.push(current.join('\n').trim());
+      current = [line];
+      continue;
+    }
+    current.push(line);
+    if (dateRe.test(line) && current.length >= 3) {
+      blocks.push(current.join('\n').trim());
+      current = [];
+    }
+  }
+  if (current.length) blocks.push(current.join('\n').trim());
+  return blocks.filter(Boolean);
+}
+
+function extractSmsAmount(block: string): number {
+  const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
+  const parseNum = (raw: string | undefined) => Number((raw ?? '0').replace(/,/g, ''));
+  const moneyAfterCurrency = /(?:SAR|ر\.?س|ريال)[^\d]{0,16}([\d,]+(?:\.\d+)?)/i;
+  const moneyBeforeCurrency = /([\d,]+(?:\.\d+)?)\s*(?:SAR|ر\.?س|ريال)/i;
+  const withAmountLabel = lines.find((line) => /(amount|مبلغ)/i.test(line));
+  const labelMatch = withAmountLabel?.match(moneyAfterCurrency)
+    ?? withAmountLabel?.match(moneyBeforeCurrency);
+  if (labelMatch) return parseNum(labelMatch[1]);
+
+  const nonBalance = lines.filter((line) => !/(balance|رصيد)/i.test(line));
+  for (const line of nonBalance) {
+    const m = line.match(moneyAfterCurrency)
+      ?? line.match(moneyBeforeCurrency);
+    if (m) return parseNum(m[1]);
+  }
+
+  const anyMatch = block.match(moneyAfterCurrency)
+    ?? block.match(moneyBeforeCurrency);
+  return parseNum(anyMatch?.[1]);
+}
+
+function formatLocalYmd(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 /**
  * Extract transactions from text using AI
  */
 async function extractTransactionsFromText(
   text: string,
   accountId: string,
-  source: 'bank' | 'sms'
+  source: 'bank' | 'sms',
+  signal?: AbortSignal
 ): Promise<Transaction[]> {
   if (!text.trim()) {
     return [];
@@ -346,7 +508,8 @@ Only return valid JSON, no other text.`;
 
     const response = await invokeAI({
       model: 'gemini-3-flash-preview',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }]
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      signal,
     });
 
     const responseText = response?.candidates?.[0]?.content?.parts?.[0]?.text || response?.text || '';
@@ -359,16 +522,20 @@ Only return valid JSON, no other text.`;
 
     const parsed = JSON.parse(jsonMatch[0]);
     
-    return parsed.map((tx: any) => ({
+    return parsed.map((tx: any) => {
+      const parsedDate = parseDate(String(tx.date || ''));
+      const date = Number.isNaN(parsedDate.getTime()) ? formatLocalYmd(new Date()) : formatLocalYmd(parsedDate);
+      return ({
       id: `ai-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      date: tx.date || new Date().toISOString().split('T')[0],
+      date,
       description: tx.description || 'Unknown Transaction',
       amount: typeof tx.amount === 'number' ? tx.amount : parseFloat(tx.amount) || 0,
       category: capitalizeCategoryName(tx.category || 'Uncategorized'),
       accountId,
       type: tx.type || (tx.amount < 0 ? 'expense' : 'income'),
       status: 'Approved' as const
-    }));
+    });
+    });
   } catch (error) {
     console.error('Error extracting transactions with AI:', error);
     return [];
@@ -469,25 +636,20 @@ function getFileType(fileName: string): 'pdf' | 'csv' | 'xlsx' | 'xls' | 'ofx' |
 }
 
 function parseDate(dateStr: string): Date {
-  // Try different date formats
-  const formats = [
-    /(\d{1,2})\/(\d{1,2})\/(\d{4})/, // DD/MM/YYYY
-    /(\d{1,2})\/(\d{1,2})\/(\d{2})/, // DD/MM/YY
-    /(\d{4})-(\d{2})-(\d{2})/, // YYYY-MM-DD
-  ];
-  
-  for (const format of formats) {
-    const match = dateStr.match(format);
-    if (match) {
-      if (format.source.includes('YYYY-MM-DD')) {
-        return new Date(match[0]);
-      } else {
-        const day = parseInt(match[1]);
-        const month = parseInt(match[2]) - 1;
-        const year = parseInt(match[3].length === 2 ? `20${match[3]}` : match[3]);
-        return new Date(year, month, day);
-      }
-    }
+  const iso = String(dateStr || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    const year = parseInt(iso[1], 10);
+    const month = parseInt(iso[2], 10) - 1;
+    const day = parseInt(iso[3], 10);
+    return new Date(year, month, day);
+  }
+  const slash = String(dateStr || '').trim().match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+  if (slash) {
+    const day = parseInt(slash[1], 10);
+    const month = parseInt(slash[2], 10) - 1;
+    const y = slash[3];
+    const year = parseInt(y.length === 2 ? `20${y}` : y, 10);
+    return new Date(year, month, day);
   }
   
   // Fallback to today
@@ -495,41 +657,62 @@ function parseDate(dateStr: string): Date {
 }
 
 function inferCategory(description: string): string {
-  const desc = description.toLowerCase();
-  
-  const categoryMap: Record<string, string> = {
+  const desc = description
+    .toLowerCase()
+    .replace(/[^a-z0-9\u0600-\u06FF ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!desc) return 'Uncategorized';
+
+  const merchantOverrides: Record<string, string> = {
     'starbucks': 'Food',
-    'coffee': 'Food',
-    'restaurant': 'Food',
-    'grocery': 'Food',
-    'supermarket': 'Food',
-    'panda': 'Food',
     'carrefour': 'Food',
+    'tamimi': 'Food',
+    'panda': 'Food',
+    'careem': 'Transportation',
     'uber': 'Transportation',
-    'taxi': 'Transportation',
-    'fuel': 'Transportation',
-    'petrol': 'Transportation',
-    'gas': 'Transportation',
-    'rent': 'Housing',
-    'electricity': 'Utilities',
-    'water': 'Utilities',
-    'internet': 'Utilities',
+    'netflix': 'Entertainment',
+    'shahid': 'Entertainment',
     'stc': 'Telecommunications',
     'mobily': 'Telecommunications',
     'zain': 'Telecommunications',
-    'netflix': 'Entertainment',
-    'shahid': 'Entertainment',
-    'salary': 'Income',
-    'deposit': 'Income',
+    'jarir': 'Shopping',
+    'amazon': 'Shopping',
   };
-  
-  for (const [keyword, category] of Object.entries(categoryMap)) {
-    if (desc.includes(keyword)) {
-      return category;
-    }
+  for (const [merchant, category] of Object.entries(merchantOverrides)) {
+    if (desc.includes(merchant)) return category;
   }
-  
-  return 'Uncategorized';
+
+  const categoryKeywords: Record<string, string[]> = {
+    Income: ['salary', 'payroll', 'deposit', 'راتب', 'ايداع', 'تحويل وارد'],
+    Food: ['food', 'restaurant', 'cafe', 'coffee', 'grocery', 'supermarket', 'مطعم', 'مقهى', 'قهوة', 'بقالة', 'سوبرماركت'],
+    Transportation: ['uber', 'taxi', 'fuel', 'petrol', 'gas', 'transport', 'metro', 'وقود', 'بنزين', 'نقل', 'تكسي'],
+    Housing: ['rent', 'lease', 'apartment', 'housing', 'إيجار', 'سكن', 'شقة'],
+    Utilities: ['electricity', 'water', 'internet', 'utility', 'كهرباء', 'مياه', 'انترنت', 'فاتورة'],
+    Telecommunications: ['mobile', 'phone', 'sim', 'telecom', 'اتصالات', 'جوال', 'شريحة'],
+    Entertainment: ['cinema', 'movie', 'game', 'subscription', 'ترفيه', 'سينما', 'اشتراك'],
+    Shopping: ['shopping', 'store', 'retail', 'mall', 'متجر', 'تسوق', 'مول'],
+    Health: ['pharmacy', 'clinic', 'hospital', 'medical', 'صيدلية', 'عيادة', 'مستشفى'],
+    Education: ['school', 'tuition', 'course', 'education', 'جامعة', 'مدرسة', 'تعليم'],
+    Travel: ['hotel', 'airline', 'flight', 'travel', 'ferry', 'فندق', 'طيران', 'سفر'],
+  };
+
+  let best: { category: string; score: number } = { category: 'Uncategorized', score: 0 };
+  for (const [category, words] of Object.entries(categoryKeywords)) {
+    const score = words.reduce((sum, w) => sum + (desc.includes(w) ? (w.length > 4 ? 2 : 1) : 0), 0);
+    if (score > best.score) best = { category, score };
+  }
+  return best.score > 0 ? best.category : 'Uncategorized';
+}
+
+function canonicalizeTransactionDescription(raw: string): string {
+  const cleaned = String(raw || '')
+    .replace(/^(بطاقة|card|account|a\/c)\s*[:\-]?\s*/i, '')
+    .replace(/^(لدى|at|merchant|from)\s*[:\-]?\s*/i, '')
+    .replace(/\b(sar|balance|رصيد|مبلغ)\b.*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned || 'Transaction';
 }
 
 /**
@@ -760,5 +943,13 @@ function deduplicateTransactions(transactions: Transaction[]): Transaction[] {
     }
     seen.add(key);
     return true;
+  });
+}
+
+function normalizeTransactionsDateConvention(transactions: Transaction[]): Transaction[] {
+  return transactions.map((tx) => {
+    const parsed = parseDate(String(tx.date || ''));
+    const date = Number.isNaN(parsed.getTime()) ? formatLocalYmd(new Date()) : formatLocalYmd(parsed);
+    return { ...tx, date };
   });
 }
