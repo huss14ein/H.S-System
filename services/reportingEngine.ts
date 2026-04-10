@@ -373,63 +373,94 @@ export function generateWealthSummaryReportHtml(
       <td>${escapeHtml(l.status || '')}</td>
     </tr>`)
     .join('');
+  const trendTone = (v: number): 'good' | 'bad' | 'neutral' => (v > 0 ? 'good' : v < 0 ? 'bad' : 'neutral');
+  const savingsTone = (v: number): 'good' | 'warn' | 'bad' => (v >= 20 ? 'good' : v >= 10 ? 'warn' : 'bad');
+  const runwayTone = (v: number): 'good' | 'warn' | 'bad' => (v >= 6 ? 'good' : v >= 3 ? 'warn' : 'bad');
+  const toneClass = (tone: 'good' | 'warn' | 'bad' | 'neutral') => `tone-${tone}`;
+  const metricCard = (label: string, value: string, tone: 'good' | 'warn' | 'bad' | 'neutral' = 'neutral') => `
+    <article class="card ${toneClass(tone)}" role="listitem" aria-label="${escapeHtml(label)}">
+      <div class="k">${escapeHtml(label)}</div>
+      <div class="v">${value}</div>
+    </article>
+  `;
   return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Wealth Summary Report</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; color: #0f172a; margin: 28px; }
-    .muted { color: #475569; }
-    h1 { margin: 0 0 6px 0; font-size: 24px; }
-    h2 { margin: 22px 0 8px 0; font-size: 16px; }
-    .card { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; margin-bottom: 10px; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .k { font-size: 12px; color: #64748b; margin-bottom: 3px; }
-    .v { font-size: 18px; font-weight: 600; }
-    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
-    th, td { border: 1px solid #e2e8f0; padding: 7px; }
-    th { background: #f8fafc; text-align: left; }
-    .foot { margin-top: 18px; font-size: 12px; color: #64748b; }
-    @media print { body { margin: 16px; } }
+    :root { --bg:#f8fafc; --surface:#ffffff; --ink:#0f172a; --muted:#475569; --line:#e2e8f0; --brand:#0ea5e9; --good:#16a34a; --warn:#d97706; --bad:#dc2626; --neutral:#334155; }
+    * { box-sizing: border-box; }
+    body { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; color: var(--ink); margin: 0; background: linear-gradient(180deg,#f0f9ff 0%, var(--bg) 28%, var(--bg) 100%); }
+    .container { max-width: 1160px; margin: 0 auto; padding: 24px; }
+    .header { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; box-shadow: 0 8px 24px rgba(15,23,42,.05); }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .chip { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:4px 10px; background:#fff; }
+    .chip::before { content:''; width:7px; height:7px; border-radius:999px; background:var(--brand); }
+    .muted { color: var(--muted); }
+    h1 { margin: 0; font-size: clamp(1.25rem, 2.4vw, 1.7rem); letter-spacing: .01em; }
+    h2 { margin: 24px 0 10px 0; font-size: 16px; letter-spacing: .01em; }
+    .section { margin-top: 14px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+    .card { border: 1px solid var(--line); border-left: 5px solid var(--neutral); border-radius: 12px; padding: 12px; background: var(--surface); min-height: 78px; }
+    .k { font-size: 12px; color: var(--muted); margin-bottom: 4px; line-height: 1.3; }
+    .v { font-size: 19px; font-weight: 700; line-height: 1.25; }
+    .tone-good { border-left-color: var(--good); }
+    .tone-warn { border-left-color: var(--warn); }
+    .tone-bad { border-left-color: var(--bad); }
+    .tone-neutral { border-left-color: var(--neutral); }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+    table { width: 100%; border-collapse: collapse; margin-top: 0; font-size: 12px; min-width: 680px; }
+    th, td { border-bottom: 1px solid var(--line); padding: 9px 8px; vertical-align: top; }
+    th { background: #f1f5f9; text-align: left; font-weight: 700; font-size: 12px; letter-spacing: .01em; }
+    tr:nth-child(even) td { background: #fcfdff; }
+    .foot { margin-top: 18px; font-size: 12px; color: var(--muted); }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } .container { padding: 14px; } }
+    @media print { body { background: #fff; } .container { padding: 12px; max-width: none; } .header { box-shadow:none; } }
   </style>
 </head>
 <body>
-  <h1>Wealth Summary Report</h1>
-  <div class="muted">Generated: ${new Date(input.generatedAtIso).toLocaleString()}</div>
-  <div class="muted">Currency: ${escapeHtml(input.currency)}</div>
+  <main class="container" aria-label="Wealth summary report">
+  <header class="header">
+    <h1>Wealth Summary Report</h1>
+    <div class="meta">
+      <span class="chip">Generated: ${new Date(input.generatedAtIso).toLocaleString()}</span>
+      <span class="chip">Currency: ${escapeHtml(input.currency)}</span>
+    </div>
+  </header>
 
-  ${cfg.includeSnapshot ? `<h2>Net Worth Snapshot</h2>
-  <div class="grid">
-    <div class="card"><div class="k">Net Worth</div><div class="v">${money(input.netWorth)}</div></div>
-    <div class="card"><div class="k">Trend vs Last Month</div><div class="v">${pct(input.netWorthTrendPct)}</div></div>
-    <div class="card"><div class="k">Liquid Net Worth</div><div class="v">${money(input.liquidNetWorth)}</div></div>
-    <div class="card"><div class="k">Wealth Under Management</div><div class="v">${money(input.managedWealthTotal)}</div></div>
-  </div>` : ''}
+  ${cfg.includeSnapshot ? `<section class="section"><h2>Net Worth Snapshot</h2>
+  <div class="grid" role="list">
+    ${metricCard('Net Worth', money(input.netWorth), trendTone(input.netWorthTrendPct))}
+    ${metricCard('Trend vs Last Month', pct(input.netWorthTrendPct), trendTone(input.netWorthTrendPct))}
+    ${metricCard('Liquid Net Worth', money(input.liquidNetWorth), 'neutral')}
+    ${metricCard('Wealth Under Management', money(input.managedWealthTotal), 'neutral')}
+  </div></section>` : ''}
 
-  ${cfg.includeCashflow ? `<h2>Cashflow & Efficiency (Current Month)</h2>
-  <div class="grid">
-    <div class="card"><div class="k">Income</div><div class="v">${money(input.monthlyIncome)}</div></div>
-    <div class="card"><div class="k">Expenses</div><div class="v">${money(input.monthlyExpenses)}</div></div>
-    <div class="card"><div class="k">Net P&L</div><div class="v">${money(input.monthlyPnL)}</div></div>
-    <div class="card"><div class="k">Savings Rate</div><div class="v">${pct(input.savingsRatePct)}</div></div>
-    <div class="card"><div class="k">Debt-to-Asset Ratio</div><div class="v">${pct(input.debtToAssetRatioPct)}</div></div>
-    <div class="card"><div class="k">Investment Style</div><div class="v">${escapeHtml(input.investmentStyle)}</div></div>
-  </div>` : ''}
+  ${cfg.includeCashflow ? `<section class="section"><h2>Cashflow & Efficiency (Current Month)</h2>
+  <div class="grid" role="list">
+    ${metricCard('Income', money(input.monthlyIncome), 'good')}
+    ${metricCard('Expenses', money(input.monthlyExpenses), 'warn')}
+    ${metricCard('Net P&L', money(input.monthlyPnL), trendTone(input.monthlyPnL))}
+    ${metricCard('Savings Rate', pct(input.savingsRatePct), savingsTone(input.savingsRatePct))}
+    ${metricCard('Debt-to-Asset Ratio', pct(input.debtToAssetRatioPct), input.debtToAssetRatioPct > 40 ? 'bad' : input.debtToAssetRatioPct > 20 ? 'warn' : 'good')}
+    ${metricCard('Investment Style', escapeHtml(input.investmentStyle), 'neutral')}
+  </div></section>` : ''}
 
-  ${cfg.includeRisk ? `<h2>Resilience & Risk</h2>
-  <div class="grid">
-    <div class="card"><div class="k">Emergency Fund Coverage</div><div class="v">${n(input.emergencyFundMonths).toFixed(1)} months</div></div>
+  ${cfg.includeRisk ? `<section class="section"><h2>Resilience & Risk</h2>
+  <div class="grid" role="list">
+    ${metricCard('Emergency Fund Coverage', `${n(input.emergencyFundMonths).toFixed(1)} months`, runwayTone(input.emergencyFundMonths))}
     <div class="card"><div class="k">Emergency Fund Target</div><div class="v">${money(input.emergencyFundTargetAmount)}</div></div>
     <div class="card"><div class="k">Emergency Fund Shortfall</div><div class="v">${money(input.emergencyFundShortfall)}</div></div>
     <div class="card"><div class="k">Risk Lane</div><div class="v">${escapeHtml(input.riskLane)}</div></div>
-    <div class="card"><div class="k">Liquidity Runway</div><div class="v">${n(input.liquidityRunwayMonths).toFixed(1)} months</div></div>
+    ${metricCard('Liquidity Runway', `${n(input.liquidityRunwayMonths).toFixed(1)} months`, runwayTone(input.liquidityRunwayMonths))}
     <div class="card"><div class="k">Discipline Score</div><div class="v">${n(input.disciplineScore).toFixed(0)} / 100</div></div>
     <div class="card"><div class="k">Household Stress Status</div><div class="v">${escapeHtml(input.householdStressLabel)}</div></div>
     <div class="card"><div class="k">Household Stress Pressure Months</div><div class="v">${n(input.householdStressPressureMonths).toFixed(0)} month(s)</div></div>
     <div class="card"><div class="k">Shock Drill Severity</div><div class="v">${escapeHtml(input.shockDrillSeverity)}</div></div>
     <div class="card"><div class="k">Shock Drill Estimated Gap</div><div class="v">${money(input.shockDrillEstimatedGap)}</div></div>
-  </div>` : ''}
+  </div></section>` : ''}
 
   ${cfg.includeInvestmentsOverview ? `<h2>Investment Summary</h2>
   <div class="grid">
@@ -440,20 +471,20 @@ export function generateWealthSummaryReportHtml(
     <div class="card"><div class="k">Holdings Value (SAR)</div><div class="v">${money(input.investmentSummary?.holdingsValueSar ?? 0)}</div></div>
   </div>` : ''}
 
-  ${cfg.includePlatforms ? `<h2>Investment Platforms</h2>
-  <table>
+  ${cfg.includePlatforms ? `<section class="section"><h2>Investment Platforms</h2>
+  <div class="table-wrap"><table>
     <thead><tr><th>Platform</th><th>Currency</th><th>Cash (SAR)</th><th>Cash (USD)</th><th>Total Cash (SAR)</th></tr></thead>
     <tbody>${platformRows || '<tr><td colspan="5" class="muted">No platform cash rows.</td></tr>'}</tbody>
-  </table>` : ''}
+  </table></div></section>` : ''}
 
-  ${cfg.includePortfolios ? `<h2>Investment Portfolios</h2>
-  <table>
+  ${cfg.includePortfolios ? `<section class="section"><h2>Investment Portfolios</h2>
+  <div class="table-wrap"><table>
     <thead><tr><th>Portfolio</th><th>Platform</th><th>Currency</th><th>Holdings</th><th>Value (SAR)</th></tr></thead>
     <tbody>${portfolioRows || '<tr><td colspan="5" class="muted">No portfolios.</td></tr>'}</tbody>
-  </table>` : ''}
+  </table></div></section>` : ''}
 
-  ${cfg.includeHoldings ? `<h2>Holding Details (Position by Position)</h2>
-  <table>
+  ${cfg.includeHoldings ? `<section class="section"><h2>Holding Details (Position by Position)</h2>
+  <div class="table-wrap"><table>
     <thead>
       <tr>
         <th>Symbol</th>
@@ -469,10 +500,10 @@ export function generateWealthSummaryReportHtml(
     <tbody>
       ${holdingsRows || '<tr><td colspan="8">No holdings found.</td></tr>'}
     </tbody>
-  </table>` : ''}
+  </table></div></section>` : ''}
 
-  ${cfg.includeAssets ? `<h2>Asset Details</h2>
-  <table>
+  ${cfg.includeAssets ? `<section class="section"><h2>Asset Details</h2>
+  <div class="table-wrap"><table>
     <thead>
       <tr>
         <th>Name</th>
@@ -483,10 +514,10 @@ export function generateWealthSummaryReportHtml(
     <tbody>
       ${assetsRows || '<tr><td colspan="3">No assets found.</td></tr>'}
     </tbody>
-  </table>` : ''}
+  </table></div></section>` : ''}
 
-  ${cfg.includeLiabilities ? `<h2>Liability Details</h2>
-  <table>
+  ${cfg.includeLiabilities ? `<section class="section"><h2>Liability Details</h2>
+  <div class="table-wrap"><table>
     <thead>
       <tr>
         <th>Name</th>
@@ -498,9 +529,10 @@ export function generateWealthSummaryReportHtml(
     <tbody>
       ${liabilitiesRows || '<tr><td colspan="4">No liabilities found.</td></tr>'}
     </tbody>
-  </table>` : ''}
+  </table></div></section>` : ''}
 
   <div class="foot">Prepared by Finova. This summary is informational and does not constitute financial advice.</div>
+  </main>
 </body>
 </html>`;
 }

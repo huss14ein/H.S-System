@@ -9,8 +9,10 @@ export {
 export {
   transactionNetForAccount,
   reconcileCashAccountBalance,
+  reconcileCreditAccountBalance,
   reconcileCashAccountBalance as reconcileAccountBalance,
   type CashAccountReconciliation,
+  type CreditAccountReconciliation,
 } from './accountReconciliation';
 
 export {
@@ -23,3 +25,17 @@ export {
   type StaleMarketSummary,
   type GetStaleQuoteSymbolsOptions,
 } from './marketDataStale';
+
+export {
+  buildFinancialIntegrityReport,
+  type IntegrityIssue,
+  type IntegritySeverity,
+  type AccountLedgerSummary,
+  type TransferGroupSummary,
+  type FinancialIntegrityReport,
+} from './financialIntegrity';
+
+export {
+  canPostTransactionToAccount,
+  type AccountPostingPolicyResult,
+} from './accountPostingPolicy';
