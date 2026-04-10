@@ -285,7 +285,18 @@ function normalizeAccount(raw: any): Account {
     }
     const id = raw.id ?? raw.account_id ?? (raw as any).uuid ?? '';
     const name = String(raw.name ?? '');
-    const type = (raw.type === 'Savings' || raw.type === 'Investment' || raw.type === 'Credit' ? raw.type : 'Checking') as Account['type'];
+    const rawType = String(raw.type ?? '').trim().toLowerCase();
+    const type = (
+        raw.type === 'Savings' || raw.type === 'Investment' || raw.type === 'Credit'
+            ? raw.type
+            : rawType.includes('invest')
+                ? 'Investment'
+                : rawType.includes('sav')
+                    ? 'Savings'
+                    : rawType.includes('credit')
+                        ? 'Credit'
+                        : 'Checking'
+    ) as Account['type'];
     const balance = roundMoney(Number(raw.balance ?? 0));
     const linkedAccountIds = raw.linkedAccountIds ?? raw.linked_account_ids;
     const cur = raw.currency;
