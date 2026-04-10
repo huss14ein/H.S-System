@@ -317,10 +317,7 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
 
 /** Fallback parser for multiline/mixed-language SMS blocks. */
 function extractTransactionsFromSMSHeuristic(smsText: string, accountId: string): Transaction[] {
-  const blocks = smsText
-    .split(/\n\s*\n+/)
-    .map((b) => b.trim())
-    .filter(Boolean);
+  const blocks = splitSmsIntoBlocks(smsText);
   const out: Transaction[] = [];
 
   blocks.forEach((block, idx) => {
@@ -360,7 +357,77 @@ function extractTransactionsFromSMSHeuristic(smsText: string, accountId: string)
     });
   });
 
+  // Second pass: line-window extraction for tightly packed multi-SMS text.
+  const dateRe = /\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}/;
+  const lines = smsText.split('\n').map((l) => l.trim()).filter(Boolean);
+  const signatures = new Set(out.map((t) => `${t.date}|${t.amount}|${t.description.toLowerCase()}`));
+  for (let i = 0; i < lines.length; i++) {
+    if (!dateRe.test(lines[i])) continue;
+    const window = [lines[i], lines[i - 1], lines[i - 2], lines[i + 1]].filter(Boolean).join('\n');
+    const amountMatch =
+      window.match(/(?:SAR|ر\.?س|ريال)\s*[:\-]?\s*([\d,]+(?:\.\d+)?)/i) ??
+      window.match(/([\d,]+(?:\.\d+)?)\s*(?:SAR|ر\.?س|ريال)/i);
+    const amount = Number((amountMatch?.[1] ?? '0').replace(/,/g, ''));
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    const parsedDate = parseDate(lines[i]);
+    const dateIso = Number.isNaN(parsedDate.getTime())
+      ? new Date().toISOString().slice(0, 10)
+      : parsedDate.toISOString().slice(0, 10);
+    const descLine =
+      [lines[i - 1], lines[i - 2], lines[i + 1]]
+        .filter(Boolean)
+        .find((line) => /[A-Za-z]{3,}/.test(line) && !/SAR|balance|رصيد|مبلغ/i.test(line)) ?? `SMS Transaction ${i + 1}`;
+    const isDebit = /debited|withdrawn|purchase|payment|paid|شراء|سحب|خصم|دفع|نقاط البيع/i.test(window);
+    const signed = isDebit ? -Math.abs(amount) : Math.abs(amount);
+    const description = descLine.slice(0, 120).trim();
+    const sig = `${dateIso}|${signed}|${description.toLowerCase()}`;
+    if (signatures.has(sig)) continue;
+    signatures.add(sig);
+    out.push({
+      id: `sms-heur-line-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 9)}`,
+      date: dateIso,
+      description,
+      amount: signed,
+      category: inferCategory(description),
+      accountId,
+      type: signed < 0 ? 'expense' : 'income',
+      status: 'Approved',
+    });
+  }
+
   return out;
+}
+
+/** Split raw SMS paste into transaction-like blocks (blank lines OR starter lines). */
+function splitSmsIntoBlocks(smsText: string): string[] {
+  const byBlank = smsText
+    .split(/\n\s*\n+/)
+    .map((b) => b.trim())
+    .filter(Boolean);
+  if (byBlank.length > 1) return byBlank;
+
+  const lines = smsText.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (lines.length <= 1) return lines;
+  const blocks: string[] = [];
+  let current: string[] = [];
+  const startRe = /(purchase|payment|transaction|debited|credited|withdrawn|received|شراء|سحب|خصم|نقاط البيع)/i;
+  const dateRe = /\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}/;
+
+  for (const line of lines) {
+    const startsNew = startRe.test(line) && current.length > 0;
+    if (startsNew) {
+      blocks.push(current.join('\n').trim());
+      current = [line];
+      continue;
+    }
+    current.push(line);
+    if (dateRe.test(line) && current.length >= 3) {
+      blocks.push(current.join('\n').trim());
+      current = [];
+    }
+  }
+  if (current.length) blocks.push(current.join('\n').trim());
+  return blocks.filter(Boolean);
 }
 
 /**
