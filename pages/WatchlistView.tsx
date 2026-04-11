@@ -955,6 +955,10 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
     };
 
     const handleRemoveBucket = (bucketId: string) => {
+        const bucket = watchlistBuckets.find((b) => b.id === bucketId);
+        const bucketName = bucket?.name?.trim() || 'this';
+        const confirmed = window.confirm(`Are you sure you want to remove "${bucketName}" watchlist?`);
+        if (!confirmed) return;
         setWatchlistBuckets((prev) => prev.filter((b) => b.id !== bucketId));
         setActiveBucketId('all');
     };

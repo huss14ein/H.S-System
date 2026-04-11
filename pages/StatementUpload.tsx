@@ -13,8 +13,6 @@ import InfoHint from '../components/InfoHint';
 import { findDuplicateTransactions } from '../services/dataQuality';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import AIAdvisor from '../components/AIAdvisor';
-import { useCompanyNames } from '../hooks/useSymbolCompanyName';
-import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 
 interface StatementUploadProps {
   setActivePage?: (page: Page) => void;
@@ -49,19 +47,6 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
   } | null>(null);
   const [currentStatementId, setCurrentStatementId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const stmtInvSymbols = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          extractedInvestmentTransactions
-            .map((tx) => (tx.symbol || '').trim())
-            .filter((s) => s.length >= 2 && s !== 'CASH'),
-        ),
-      ),
-    [extractedInvestmentTransactions],
-  );
-  const { names: stmtCompanyNames } = useCompanyNames(stmtInvSymbols);
 
   const bankAccounts = (data?.accounts ?? []).filter(a => a.type !== 'Investment');
   const investmentAccounts = (data?.accounts ?? []).filter(a => a.type === 'Investment');
@@ -564,6 +549,24 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
 
   const handleExtractedTransactionEdit = (index: number, patch: Partial<Transaction>) => {
     setExtractedTransactions((prev) => prev.map((tx, i) => (i === index ? { ...tx, ...patch } : tx)));
+  };
+
+  const handleExtractedInvestmentTransactionEdit = (index: number, patch: Partial<InvestmentTransaction>) => {
+    setExtractedInvestmentTransactions((prev) =>
+      prev.map((tx, i) => {
+        if (i !== index) return tx;
+        const next = { ...tx, ...patch };
+        const qtyChanged = Object.prototype.hasOwnProperty.call(patch, 'quantity');
+        const priceChanged = Object.prototype.hasOwnProperty.call(patch, 'price');
+        const totalChanged = Object.prototype.hasOwnProperty.call(patch, 'total');
+        if ((qtyChanged || priceChanged) && !totalChanged) {
+          const q = Number(next.quantity) || 0;
+          const p = Number(next.price) || 0;
+          if (q > 0 && p > 0) next.total = q * p;
+        }
+        return next;
+      }),
+    );
   };
 
   if (loading || !data) {
@@ -1180,32 +1183,71 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                                 className="rounded border-slate-300 text-primary focus:ring-primary disabled:opacity-50"
                               />
                             </td>
-                            <td className="px-4 py-3 text-sm text-slate-900">{new Date(tx.date).toLocaleDateString()}</td>
+                            <td className="px-4 py-3 text-sm text-slate-900 min-w-[140px]">
+                              <input
+                                type="date"
+                                value={String(tx.date || '').slice(0, 10)}
+                                onChange={(e) => handleExtractedInvestmentTransactionEdit(index, { date: e.target.value })}
+                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                              />
+                            </td>
                             <td className="px-4 py-3 text-sm text-slate-900">
-                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                tx.type === 'buy' ? 'bg-emerald-100 text-emerald-800' :
-                                tx.type === 'sell' ? 'bg-rose-100 text-rose-800' :
-                                'bg-blue-100 text-blue-800'
-                              }`}>
-                                {tx.type.toUpperCase()}
-                              </span>
+                              <select
+                                value={tx.type}
+                                onChange={(e) => handleExtractedInvestmentTransactionEdit(index, { type: e.target.value as InvestmentTransaction['type'] })}
+                                className="rounded-md border border-slate-300 px-2 py-1 text-sm"
+                              >
+                                <option value="buy">BUY</option>
+                                <option value="sell">SELL</option>
+                                <option value="deposit">DEPOSIT</option>
+                                <option value="withdrawal">WITHDRAWAL</option>
+                                <option value="dividend">DIVIDEND</option>
+                              </select>
                             </td>
-                            <td className="px-4 py-3 text-sm font-medium text-slate-900 min-w-0 max-w-[180px]">
-                              {tx.symbol === 'CASH' || !tx.symbol ? (
-                                '—'
-                              ) : (
-                                <ResolvedSymbolLabel
-                                  symbol={tx.symbol}
-                                  names={stmtCompanyNames}
-                                  layout="inline"
-                                  symbolClassName="font-medium text-slate-900"
+                            <td className="px-4 py-3 text-sm font-medium text-slate-900 min-w-[180px]">
+                              <input
+                                value={tx.symbol || ''}
+                                onChange={(e) => handleExtractedInvestmentTransactionEdit(index, { symbol: e.target.value.toUpperCase() })}
+                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                placeholder="Symbol (e.g. AAPL)"
+                              />
+                            </td>
+                            <td className="px-4 py-3 text-sm text-right text-slate-900 min-w-[120px]">
+                              <input
+                                type="number"
+                                step="0.0001"
+                                value={Number.isFinite(Number(tx.quantity)) ? tx.quantity : 0}
+                                onChange={(e) => handleExtractedInvestmentTransactionEdit(index, { quantity: Number(e.target.value) || 0 })}
+                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm text-right"
+                              />
+                            </td>
+                            <td className="px-4 py-3 text-sm text-right text-slate-900 min-w-[120px]">
+                              <input
+                                type="number"
+                                step="0.0001"
+                                value={Number.isFinite(Number(tx.price)) ? tx.price : 0}
+                                onChange={(e) => handleExtractedInvestmentTransactionEdit(index, { price: Number(e.target.value) || 0 })}
+                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm text-right"
+                              />
+                            </td>
+                            <td className="px-4 py-3 text-sm text-right font-medium text-slate-900 min-w-[170px]">
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={Number.isFinite(Number(tx.total)) ? tx.total : 0}
+                                  onChange={(e) => handleExtractedInvestmentTransactionEdit(index, { total: Number(e.target.value) || 0 })}
+                                  className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm text-right"
                                 />
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-right text-slate-900">{tx.quantity}</td>
-                            <td className="px-4 py-3 text-sm text-right text-slate-900">{tx.price.toFixed(2)}</td>
-                            <td className="px-4 py-3 text-sm text-right font-medium text-slate-900">
-                              {tx.total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {tx.currency || 'SAR'}
+                                <select
+                                  value={(tx.currency === 'USD' ? 'USD' : 'SAR') as 'USD' | 'SAR'}
+                                  onChange={(e) => handleExtractedInvestmentTransactionEdit(index, { currency: e.target.value as 'USD' | 'SAR' })}
+                                  className="rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                >
+                                  <option value="SAR">SAR</option>
+                                  <option value="USD">USD</option>
+                                </select>
+                              </div>
                             </td>
                             <td className="px-4 py-3 text-center">
                               {isDuplicate ? (

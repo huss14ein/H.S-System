@@ -163,8 +163,19 @@ export async function parseTradingStatement(
       throw new Error(`Unsupported file type: ${fileType}`);
     }
 
-    // Extract investment transactions using AI
-    const transactions = await extractInvestmentTransactionsFromText(text, accountId || '');
+    const statementCurrency = inferStatementCurrency(text);
+    const structuredWarnings: string[] = [];
+    // First pass: deterministic parser for broker statement table rows.
+    const parsedFromRows = extractInvestmentTransactionsFromStructuredText(text, accountId || '', {
+      statementCurrency,
+      warnings: structuredWarnings,
+    });
+    // Second pass: AI extraction as fallback/enrichment.
+    const aiTransactions = await extractInvestmentTransactionsFromText(text, accountId || '');
+    const transactions = dedupeInvestmentTransactions([
+      ...parsedFromRows,
+      ...aiTransactions,
+    ]);
     
     // Validate extracted transactions
     const validation = validateTransactions([], transactions);
@@ -175,9 +186,11 @@ export async function parseTradingStatement(
         return !isNaN(txDate.getTime()) && transactions[i].symbol && 
                transactions[i].quantity !== undefined && transactions[i].price !== undefined;
       }),
-      confidence: validation.isValid ? 0.80 : Math.max(0, 0.80 - (validation.errors.length * 0.1)),
+      confidence: validation.isValid
+        ? (parsedFromRows.length > 0 ? 0.92 : 0.80)
+        : Math.max(0, 0.80 - (validation.errors.length * 0.1)),
       errors: validation.errors,
-      warnings: validation.warnings,
+      warnings: [...(validation.warnings ?? []), ...structuredWarnings],
       validation
     };
   } catch (error) {
@@ -194,22 +207,18 @@ export async function parseTradingStatement(
  * Extract text from PDF using browser APIs or fallback
  */
 async function extractTextFromPDF(file: File): Promise<string> {
-  // For now, use a simple approach - in production, you'd use a PDF parsing library
-  // like pdf.js or send to a backend service with proper OCR
-  
   try {
-    // Try to use FileReader to read as text (works for some PDFs)
-    const text = await file.text();
-    
-    // If that doesn't work well, we'll use AI to extract from the raw bytes
-    // For now, return the text and let AI handle extraction
-    return text;
-  } catch (error) {
-    // Fallback: convert to base64 and use AI
+    const direct = await file.text();
+    // If direct text looks like binary, use byte-stream extraction.
+    if (direct && /[A-Za-z]{3,}/.test(direct) && !/[\u0000-\u0008]/.test(direct)) return direct;
     const arrayBuffer = await file.arrayBuffer();
-    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-    
-    // Use AI to extract text from PDF
+    return extractLikelyTextFromPdfBytes(new Uint8Array(arrayBuffer));
+  } catch (error) {
+    const arrayBuffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    const extracted = extractLikelyTextFromPdfBytes(bytes);
+    if (extracted.trim()) return extracted;
+    const base64 = btoa(String.fromCharCode(...bytes));
     return await extractTextFromPDFWithAI(base64);
   }
 }
@@ -617,6 +626,166 @@ Only return valid JSON, no other text.`;
     console.error('Error extracting investment transactions with AI:', error);
     return [];
   }
+}
+
+function extractLikelyTextFromPdfBytes(bytes: Uint8Array): string {
+  const latin1 = new TextDecoder('latin1').decode(bytes);
+  const chunks: string[] = [];
+
+  // Common PDF text operators: (...) Tj and [...] TJ
+  const tjRegex = /\(([^()]*)\)\s*Tj/g;
+  let m: RegExpExecArray | null;
+  while ((m = tjRegex.exec(latin1)) !== null) {
+    const txt = m[1].replace(/\\\(/g, '(').replace(/\\\)/g, ')').replace(/\\\\/g, '\\');
+    if (txt.trim()) chunks.push(txt);
+  }
+
+  // Fallback: printable runs
+  if (chunks.length < 10) {
+    const printable = latin1.match(/[A-Za-z0-9@._\-/: ]{6,}/g) || [];
+    chunks.push(...printable);
+  }
+
+  return chunks.join('\n');
+}
+
+export function extractInvestmentTransactionsFromStructuredText(
+  text: string,
+  accountId: string,
+  opts?: { statementCurrency?: 'SAR' | 'USD'; warnings?: string[] },
+): InvestmentTransaction[] {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const out: InvestmentTransaction[] = [];
+  const seen = new Set<string>();
+  const localWarn = new Set<string>();
+
+  for (const line of lines) {
+    if (!/^\d{2}\/\d{2}\/\d{4}/.test(line)) continue;
+    const cols = line.split(/\s{2,}/).map((c) => c.trim()).filter(Boolean);
+    if (cols.length < 3) continue;
+
+    const datePart = cols[0];
+    const date = parseDate(datePart.split(' ')[0]);
+    const dateYmd = formatLocalYmd(date);
+    const description = cols.length >= 3 ? cols[2] : line;
+    const numericTokens = (line.match(/-?\d[\d,]*\.\d+/g) || []).map((v) => parseNumber(v)).filter((n) => Number.isFinite(n));
+    const amountFromTail = numericTokens.length >= 2 ? numericTokens[numericTokens.length - 2] : 0;
+    const debit = parseNumber(cols[3]);
+    const credit = parseNumber(cols[4]);
+
+    let parsed: InvestmentTransaction | null = null;
+    const buy = description.match(/Purchase of Security\s+([\d.,]+)\s+([A-Z0-9.\-]+)\s+@\s*(USD|SAR)\s*([\d.,]+)/i);
+    if (buy) {
+      const quantity = parseNumber(buy[1]);
+      const symbol = String(buy[2] || '').toUpperCase();
+      const quoteCurrency = String(buy[3] || 'USD').toUpperCase() === 'USD' ? 'USD' : 'SAR';
+      let currency: 'SAR' | 'USD' = quoteCurrency;
+      let price = parseNumber(buy[4]);
+      const total = amountFromTail > 0 ? amountFromTail : debit > 0 ? debit : Math.max(0, quantity * price);
+      if (opts?.statementCurrency && opts.statementCurrency !== quoteCurrency && quantity > 0 && total > 0) {
+        currency = opts.statementCurrency;
+        price = total / quantity;
+        localWarn.add(`Converted buy rows from quote ${quoteCurrency} into statement currency ${opts.statementCurrency} using total/quantity.`);
+      }
+      parsed = {
+        id: `stmt-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date: dateYmd,
+        type: 'buy',
+        symbol,
+        quantity,
+        price,
+        total,
+        currency,
+      } as InvestmentTransaction;
+    }
+
+    const sell = description.match(/Sale of Security\s+([\d.,]+)\s+([A-Z0-9.\-]+)\s+@\s*(USD|SAR)\s*([\d.,]+)/i);
+    if (!parsed && sell) {
+      const quantity = parseNumber(sell[1]);
+      const symbol = String(sell[2] || '').toUpperCase();
+      const quoteCurrency = String(sell[3] || 'USD').toUpperCase() === 'USD' ? 'USD' : 'SAR';
+      let currency: 'SAR' | 'USD' = quoteCurrency;
+      let price = parseNumber(sell[4]);
+      const total = amountFromTail > 0 ? amountFromTail : credit > 0 ? credit : Math.max(0, quantity * price);
+      if (opts?.statementCurrency && opts.statementCurrency !== quoteCurrency && quantity > 0 && total > 0) {
+        currency = opts.statementCurrency;
+        price = total / quantity;
+        localWarn.add(`Converted sell rows from quote ${quoteCurrency} into statement currency ${opts.statementCurrency} using total/quantity.`);
+      }
+      parsed = {
+        id: `stmt-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date: dateYmd,
+        type: 'sell',
+        symbol,
+        quantity,
+        price,
+        total,
+        currency,
+      } as InvestmentTransaction;
+    }
+
+    if (!parsed && /cash deposit|wire in/i.test(description)) {
+      parsed = {
+        id: `stmt-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date: dateYmd,
+        type: 'deposit',
+        symbol: 'CASH',
+        quantity: 0,
+        price: 0,
+        total: amountFromTail > 0 ? amountFromTail : credit > 0 ? credit : 0,
+        currency: opts?.statementCurrency ?? 'SAR',
+      } as InvestmentTransaction;
+    }
+
+    if (!parsed && /cash withdrawal|wire out/i.test(description)) {
+      parsed = {
+        id: `stmt-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date: dateYmd,
+        type: 'withdrawal',
+        symbol: 'CASH',
+        quantity: 0,
+        price: 0,
+        total: amountFromTail > 0 ? amountFromTail : debit > 0 ? debit : 0,
+        currency: opts?.statementCurrency ?? 'SAR',
+      } as InvestmentTransaction;
+    }
+
+    if (!parsed || !(parsed.total > 0)) continue;
+    const key = `${parsed.date}|${parsed.type}|${parsed.symbol}|${parsed.quantity}|${parsed.price}|${parsed.total}|${parsed.currency}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(parsed);
+  }
+  if (opts?.warnings && localWarn.size > 0) opts.warnings.push(...Array.from(localWarn));
+  return out;
+}
+
+function dedupeInvestmentTransactions(rows: InvestmentTransaction[]): InvestmentTransaction[] {
+  const seen = new Set<string>();
+  const out: InvestmentTransaction[] = [];
+  for (const r of rows) {
+    const k = `${r.date}|${r.type}|${r.symbol}|${Number(r.quantity).toFixed(6)}|${Number(r.price).toFixed(6)}|${Number(r.total).toFixed(6)}|${r.currency ?? ''}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(r);
+  }
+  return out;
+}
+
+function parseNumber(v: unknown): number {
+  const raw = String(v ?? '').replace(/,/g, '').trim();
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function inferStatementCurrency(text: string): 'SAR' | 'USD' | undefined {
+  const m = text.match(/Transaction\s+Statement\s*\((SAR|USD)\)/i) || text.match(/\((SAR|USD)\)/i);
+  if (!m) return undefined;
+  return String(m[1]).toUpperCase() === 'USD' ? 'USD' : 'SAR';
 }
 
 /**

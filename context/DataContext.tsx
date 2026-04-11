@@ -31,7 +31,8 @@ import { normalizeCoreUpsideAllocations } from '../utils/investmentPlanAllocatio
 import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/investmentPlanPerPortfolio';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
-import { deltaForInvestmentTrade, netInvestmentBalanceFromTransactions } from '../services/investmentBalanceDelta';
+import { deltaForInvestmentTrade } from '../services/investmentBalanceDelta';
+import { computeAvailableCashByAccountMap } from '../services/investmentCashLedger';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
@@ -82,6 +83,11 @@ function mergeWealthUltraSystemConfigFromRow(
 /** Stable fallback for deployable accounts so memo deps don’t churn each render when lists are missing. */
 const EMPTY_ACCOUNTS_FOR_DEPLOY: Account[] = [];
 const HOLDING_QUANTITY_EPSILON = 0.00001;
+const toAccountBaseCashBalance = (acc: Account, cash: { SAR: number; USD: number }, sarPerUsd: number): number => {
+    const fx = Number.isFinite(sarPerUsd) && sarPerUsd > 0 ? sarPerUsd : DEFAULT_SAR_PER_USD;
+    if (acc.currency === 'USD') return roundMoney((cash.USD ?? 0) + (cash.SAR ?? 0) / fx);
+    return roundMoney((cash.SAR ?? 0) + (cash.USD ?? 0) * fx);
+};
 
 interface DataContextType {
   data: FinancialData;
@@ -941,10 +947,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 return resolved ? { ...norm, accountId: resolved } : norm;
             });
             const ownedAccounts = filterOwnedRows(normalizedAccounts);
+            const fxSeedRaw = Number(
+                (investmentPlan.data as any[])?.[0]?.fx_rate ??
+                (investmentPlan.data as any[])?.[0]?.fxRate ??
+                DEFAULT_SAR_PER_USD,
+            );
+            const fxSeed = Number.isFinite(fxSeedRaw) && fxSeedRaw > 0 ? fxSeedRaw : DEFAULT_SAR_PER_USD;
+            const ledgerCashMap = computeAvailableCashByAccountMap({
+                accounts: ownedAccounts,
+                investments: filterOwnedRows(investments.data as any[]) as any[],
+                investmentTransactions: normalizedInvestmentTransactions,
+                sarPerUsd: fxSeed,
+            });
             const reconciledInvestmentAccounts = ownedAccounts.map((acc) => {
                 if (acc.type !== 'Investment') return acc;
-                const ledgerNet = roundMoney(netInvestmentBalanceFromTransactions(acc.id, normalizedInvestmentTransactions as any[]));
-                return { ...acc, balance: ledgerNet };
+                const cash = ledgerCashMap[acc.id] ?? { SAR: 0, USD: 0 };
+                return { ...acc, balance: toAccountBaseCashBalance(acc, cash, fxSeed) };
             });
             const driftedInvestmentAccounts = reconciledInvestmentAccounts
                 .filter((acc) => acc.type === 'Investment')
@@ -1104,23 +1122,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const investmentAccounts = (data.accounts ?? []).filter((a: Account) => a.type === 'Investment');
         if (investmentAccounts.length === 0) return;
 
-        const normalizedTx = (data.investmentTransactions ?? []).map((t: InvestmentTransaction) => {
-            const portfolioId = t.portfolioId ?? (t as any).portfolio_id;
-            const linkedPortfolio: any = portfolioId ? (data.investments ?? []).find((p: any) => p.id === portfolioId) : undefined;
-            const fallbackPortfolioAccount = portfolioId
-                ? resolveAccountId(
-                      linkedPortfolio?.accountId ?? linkedPortfolio?.account_id,
-                      data.accounts ?? [],
-                  )
-                : undefined;
-            const raw = t.accountId ?? (t as any).account_id ?? fallbackPortfolioAccount;
-            const accId = raw ? (resolveCanonicalAccountId(String(raw), data.accounts ?? []) ?? String(raw)) : '';
-            return { ...t, accountId: accId };
+        const fx = resolveSarPerUsd(data as FinancialData);
+        const ledgerCashMap = computeAvailableCashByAccountMap({
+            accounts: data.accounts ?? [],
+            investments: data.investments ?? [],
+            investmentTransactions: data.investmentTransactions ?? [],
+            sarPerUsd: fx,
         });
 
         const drifted = investmentAccounts
             .map((acc) => {
-                const expected = roundMoney(netInvestmentBalanceFromTransactions(acc.id, normalizedTx as any[]));
+                const cash = ledgerCashMap[acc.id] ?? { SAR: 0, USD: 0 };
+                const expected = toAccountBaseCashBalance(acc, cash, fx);
                 const current = roundMoney(Number(acc.balance ?? 0));
                 return { id: acc.id, expected, current, drift: roundMoney(expected - current) };
             })
@@ -1641,16 +1654,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     /** Keep Investment platform `balance` aligned with investment transaction cash flows (buy/sell/deposit/withdrawal/dividend). */
-    const applyInvestmentAccountDeltaForTrade = async (accountId: string | undefined, delta: number) => {
+    const applyInvestmentAccountDeltaForTrade = async (accountId: string | undefined, _delta: number) => {
         if (!accountId || !supabase || !auth?.user) return;
-        const d = Number(delta);
-        if (!Number.isFinite(d) || d === 0) return;
         const up = updatePlatformRef.current;
         if (!up) return;
         const acc = (data?.accounts ?? []).find((a) => a.id === accountId);
         if (!acc || acc.type !== 'Investment') return;
-        const prevBalance = cashBalanceAccumulatorRef.current[accountId] ?? Number(acc.balance ?? 0);
-        const newBalance = prevBalance + d;
+        const fx = resolveSarPerUsd(data as FinancialData);
+        const ledgerCashMap = computeAvailableCashByAccountMap({
+            accounts: data?.accounts ?? [],
+            investments: data?.investments ?? [],
+            investmentTransactions: data?.investmentTransactions ?? [],
+            sarPerUsd: fx,
+        });
+        const cash = ledgerCashMap[accountId] ?? { SAR: 0, USD: 0 };
+        const newBalance = toAccountBaseCashBalance(acc, cash, fx);
         cashBalanceAccumulatorRef.current[accountId] = newBalance;
         await up({ ...acc, balance: newBalance }, { fromTransactionDelta: true });
     };
@@ -1698,6 +1716,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (!isMissingColumnError(error) && String(error?.message || '').toLowerCase().indexOf('note') < 0) break;
         }
         if (savedWithoutNote) {
+            /**
+             * Always use app-side `recordTrade` path for investment↔cash transfers so transfer currency
+             * is persisted consistently (RPC path may omit currency on some DB schemas).
+             */
             try {
                 toast('Transaction saved, but split/memo was not stored: add column `note` on `transactions`. Run supabase/migrations/add_transactions_note.sql in Supabase SQL.', 'info');
             } catch {}
@@ -1776,61 +1798,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 return;
             }
             const linkedCashAccountId = links.length > 0 ? fromAccountId : undefined;
-            if (linkedCashAccountId) {
-                const rpcRes = await supabase.rpc('create_investment_cash_transfer_with_fee', {
-                    p_investment_account_id: toAccountId,
-                    p_cash_account_id: linkedCashAccountId,
-                    p_direction: 'cash_to_investment',
-                    p_amount: absAmount,
-                    p_fee_amount: fee,
-                    p_date: dateStr,
-                    p_cash_description: descOut,
-                    p_fee_description: `Transfer fee to ${toName}`,
-                    p_transfer_group_id: transferGroupId,
-                } as any);
-                const rpcError = rpcRes.error;
-                const rpcRows = (rpcRes.data as Array<{ investment_transaction_id?: string; cash_transaction_ids?: string[] }> | null) ?? null;
-                if (!rpcError && rpcRows && rpcRows[0]) {
-                    const invId = rpcRows[0].investment_transaction_id;
-                    const cashIds = rpcRows[0].cash_transaction_ids ?? [];
-                    if (invId) {
-                        const invFetch = await supabase.from('investment_transactions').select('*').eq('id', invId).single();
-                        if (!invFetch.error && invFetch.data) {
-                            const normalizedInv = normalizeInvestmentTransaction(invFetch.data);
-                            setData(prev => ({ ...prev, investmentTransactions: [normalizedInv, ...prev.investmentTransactions] }));
-                            await applyInvestmentAccountDeltaForTrade(
-                                normalizedInv.accountId,
-                                deltaForInvestmentTrade(normalizedInv.type, Number(normalizedInv.total) || 0),
-                            );
-                        }
-                    }
-                    if (cashIds.length > 0) {
-                        const cashFetch = await supabase.from('transactions').select('*').in('id', cashIds);
-                        const txRows = (cashFetch.data ?? []).map((r: any) => normalizeTransaction(r))
-                            .sort((a, b) => {
-                                const rank = (v: Transaction) => (v.transferRole === 'principal_out' ? 0 : v.transferRole === 'fee' ? 1 : 2);
-                                return rank(a) - rank(b);
-                            });
-                        if (txRows.length > 0) {
-                            setData(prev => ({ ...prev, transactions: [...txRows, ...prev.transactions] }));
-                            for (const row of txRows) {
-                                await syncSharedBudgetTransactionMirror(row as any);
-                                auditChangeLog({
-                                    action: 'create',
-                                    entity: 'transaction',
-                                    entityId: row.id,
-                                    summary: `${row.type}: ${String(row.description ?? '').slice(0, 120)} · ${row.amount}`,
-                                    userId: auth.user.id,
-                                });
-                                await applyLedgerAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
-                            }
-                        }
-                    }
-                    return;
-                }
-                const missingRpc = rpcError?.code === 'PGRST202' || (String(rpcError?.message || '').toLowerCase().includes('function') && String(rpcError?.message || '').toLowerCase().includes('does not exist'));
-                if (rpcError && !missingRpc) throw rpcError;
-            }
+            /**
+             * Use app-side `recordTrade` so investment cash transfer rows carry an explicit currency
+             * and stay consistent with ledger calculations.
+             */
             try {
                 await recordTrade({
                     type: 'deposit',
@@ -1883,61 +1854,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 return;
             }
             const linkedCashAccountId = links.length > 0 ? toAccountId : undefined;
-            if (linkedCashAccountId) {
-                const rpcRes = await supabase.rpc('create_investment_cash_transfer_with_fee', {
-                    p_investment_account_id: fromAccountId,
-                    p_cash_account_id: linkedCashAccountId,
-                    p_direction: 'investment_to_cash',
-                    p_amount: absAmount,
-                    p_fee_amount: fee,
-                    p_date: dateStr,
-                    p_cash_description: descIn,
-                    p_fee_description: `Transfer fee from ${fromName}`,
-                    p_transfer_group_id: transferGroupId,
-                } as any);
-                const rpcError = rpcRes.error;
-                const rpcRows = (rpcRes.data as Array<{ investment_transaction_id?: string; cash_transaction_ids?: string[] }> | null) ?? null;
-                if (!rpcError && rpcRows && rpcRows[0]) {
-                    const invId = rpcRows[0].investment_transaction_id;
-                    const cashIds = rpcRows[0].cash_transaction_ids ?? [];
-                    if (invId) {
-                        const invFetch = await supabase.from('investment_transactions').select('*').eq('id', invId).single();
-                        if (!invFetch.error && invFetch.data) {
-                            const normalizedInv = normalizeInvestmentTransaction(invFetch.data);
-                            setData(prev => ({ ...prev, investmentTransactions: [normalizedInv, ...prev.investmentTransactions] }));
-                            await applyInvestmentAccountDeltaForTrade(
-                                normalizedInv.accountId,
-                                deltaForInvestmentTrade(normalizedInv.type, Number(normalizedInv.total) || 0),
-                            );
-                        }
-                    }
-                    if (cashIds.length > 0) {
-                        const cashFetch = await supabase.from('transactions').select('*').in('id', cashIds);
-                        const txRows = (cashFetch.data ?? []).map((r: any) => normalizeTransaction(r))
-                            .sort((a, b) => {
-                                const rank = (v: Transaction) => (v.transferRole === 'principal_in' ? 0 : v.transferRole === 'fee' ? 1 : 2);
-                                return rank(a) - rank(b);
-                            });
-                        if (txRows.length > 0) {
-                            setData(prev => ({ ...prev, transactions: [...txRows, ...prev.transactions] }));
-                            for (const row of txRows) {
-                                await syncSharedBudgetTransactionMirror(row as any);
-                                auditChangeLog({
-                                    action: 'create',
-                                    entity: 'transaction',
-                                    entityId: row.id,
-                                    summary: `${row.type}: ${String(row.description ?? '').slice(0, 120)} · ${row.amount}`,
-                                    userId: auth.user.id,
-                                });
-                                await applyLedgerAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
-                            }
-                        }
-                    }
-                    return;
-                }
-                const missingRpc = rpcError?.code === 'PGRST202' || (String(rpcError?.message || '').toLowerCase().includes('function') && String(rpcError?.message || '').toLowerCase().includes('does not exist'));
-                if (rpcError && !missingRpc) throw rpcError;
-            }
+            /**
+             * Use app-side `recordTrade` so investment cash transfer rows carry an explicit currency
+             * and stay consistent with ledger calculations.
+             */
             try {
                 await recordTrade({
                     type: 'withdrawal',
@@ -1969,12 +1889,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 });
             }
             if (fee > 0) {
+                const feeAccountId = linkedCashAccountId ?? fromAccountId;
                 await addTransaction({
                     date: dateStr,
                     description: `Transfer fee from ${fromName}`,
                     amount: -fee,
                     type: 'expense',
-                    accountId: fromAccountId,
+                    accountId: feeAccountId,
                     category: 'Fee',
                     transferGroupId,
                     transferRole: 'fee',
@@ -3202,21 +3123,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
-    const availableCashByAccountId = useMemo(() => {
-        const map: Record<string, { SAR: number; USD: number }> = {};
-        (data?.accounts ?? []).forEach((acc: Account) => {
-            if (acc.type !== 'Investment') return;
-            const accId = resolveCanonicalAccountId(acc.id, data?.accounts ?? []) ?? acc.id;
-            if (!accId) return;
-            if (!(accId in map)) map[accId] = { SAR: 0, USD: 0 };
-            // Authoritative source: account.balance (kept in sync from investment ledger writes/reconciliation).
-            const openingBalance = Number(acc.balance ?? 0);
-            if (!Number.isFinite(openingBalance)) return;
-            const baseCur: TradeCurrency = acc.currency === 'USD' ? 'USD' : 'SAR';
-            map[accId][baseCur] += openingBalance;
-        });
-        return map;
-    }, [data?.accounts]);
+    const availableCashByAccountId = useMemo(() => computeAvailableCashByAccountMap({
+        accounts: data?.accounts ?? [],
+        investments: data?.investments ?? [],
+        investmentTransactions: data?.investmentTransactions ?? [],
+        sarPerUsd: resolveSarPerUsd(data as FinancialData),
+    }), [data?.accounts, data?.investments, data?.investmentTransactions, data]);
 
     const getAvailableCashForAccount = useCallback((accountId: string): { SAR: number; USD: number } => {
         const canonical = resolveCanonicalAccountId(accountId, data?.accounts ?? []) ?? accountId;

@@ -39,6 +39,11 @@ export interface PlatformCardMetrics {
   netCapitalSAR: number;
 }
 
+export interface PlatformMetricValidationResult {
+  ok: boolean;
+  issues: string[];
+}
+
 export interface ComputePlatformCardMetricsArgs {
   portfolios: InvestmentPortfolio[];
   transactions: InvestmentTransaction[];
@@ -241,7 +246,7 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
         ? cashUSD + cashSAR / rate
         : cashSAR + cashUSD * rate;
 
-  return {
+  const out: PlatformCardMetrics = {
     totalValue,
     totalValueInSAR,
     totalGainLoss,
@@ -256,6 +261,94 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
     totalWithdrawnSAR,
     netCapitalSAR,
   };
+  return sanitizeAndValidatePlatformMetrics(out, platformCurrency, rate);
+}
+
+const RECONCILIATION_EPSILON = 1e-6;
+
+function sanitizeFinite(value: number): number {
+  return Number.isFinite(value) ? value : 0;
+}
+
+/** Strict arithmetic checks for platform KPI consistency. */
+export function validatePlatformMetrics(
+  metrics: PlatformCardMetrics,
+  platformCurrency: TradeCurrency | undefined,
+  sarPerUsd: number,
+): PlatformMetricValidationResult {
+  const issues: string[] = [];
+  const rate = sanitizeFinite(sarPerUsd) > 0 ? sarPerUsd : 1;
+  const m = metrics;
+
+  for (const [k, v] of Object.entries(m)) {
+    if (!Number.isFinite(v)) issues.push(`${k} is not finite`);
+  }
+
+  const derivedGain = m.totalValueInSAR - m.netCapitalSAR;
+  if (Math.abs(derivedGain - m.totalGainLossSAR) > RECONCILIATION_EPSILON) {
+    issues.push('totalGainLossSAR mismatch with totalValueInSAR - netCapitalSAR');
+  }
+
+  const derivedNetCapital = Math.max(0, m.totalInvestedSAR - m.totalWithdrawnSAR);
+  if (Math.abs(derivedNetCapital - m.netCapitalSAR) > RECONCILIATION_EPSILON) {
+    issues.push('netCapitalSAR mismatch with totalInvestedSAR - totalWithdrawnSAR');
+  }
+
+  const expectedTotalValue =
+    platformCurrency === 'USD' ? m.totalValueInSAR / rate
+      : platformCurrency === 'SAR' ? m.totalValueInSAR
+      : m.totalValueInSAR;
+  if (Math.abs(expectedTotalValue - m.totalValue) > RECONCILIATION_EPSILON) {
+    issues.push('totalValue mismatch with platformCurrency conversion');
+  }
+
+  return { ok: issues.length === 0, issues };
+}
+
+function sanitizeAndValidatePlatformMetrics(
+  metrics: PlatformCardMetrics,
+  platformCurrency: TradeCurrency | undefined,
+  sarPerUsd: number,
+): PlatformCardMetrics {
+  const rate = sanitizeFinite(sarPerUsd) > 0 ? sarPerUsd : 1;
+  const safe: PlatformCardMetrics = {
+    totalValue: sanitizeFinite(metrics.totalValue),
+    totalValueInSAR: sanitizeFinite(metrics.totalValueInSAR),
+    totalGainLoss: sanitizeFinite(metrics.totalGainLoss),
+    dailyPnL: sanitizeFinite(metrics.dailyPnL),
+    totalInvested: Math.max(0, sanitizeFinite(metrics.totalInvested)),
+    totalWithdrawn: Math.max(0, sanitizeFinite(metrics.totalWithdrawn)),
+    roi: sanitizeFinite(metrics.roi),
+    totalAvailable: Math.max(0, sanitizeFinite(metrics.totalAvailable)),
+    totalGainLossSAR: sanitizeFinite(metrics.totalGainLossSAR),
+    dailyPnLSAR: sanitizeFinite(metrics.dailyPnLSAR),
+    totalInvestedSAR: Math.max(0, sanitizeFinite(metrics.totalInvestedSAR)),
+    totalWithdrawnSAR: Math.max(0, sanitizeFinite(metrics.totalWithdrawnSAR)),
+    netCapitalSAR: Math.max(0, sanitizeFinite(metrics.netCapitalSAR)),
+  };
+
+  // Canonical derivations (single source of truth).
+  safe.netCapitalSAR = Math.max(0, safe.totalInvestedSAR - safe.totalWithdrawnSAR);
+  safe.totalGainLossSAR = safe.totalValueInSAR - safe.netCapitalSAR;
+  safe.totalGainLoss =
+    platformCurrency === 'USD' ? safe.totalGainLossSAR / rate
+      : platformCurrency === 'SAR' ? safe.totalGainLossSAR
+      : safe.totalGainLossSAR;
+  safe.totalValue =
+    platformCurrency === 'USD' ? safe.totalValueInSAR / rate
+      : platformCurrency === 'SAR' ? safe.totalValueInSAR
+      : safe.totalValueInSAR;
+  safe.totalInvested =
+    platformCurrency === 'USD' ? safe.totalInvestedSAR / rate
+      : platformCurrency === 'SAR' ? safe.totalInvestedSAR
+      : safe.totalInvestedSAR;
+  safe.totalWithdrawn =
+    platformCurrency === 'USD' ? safe.totalWithdrawnSAR / rate
+      : platformCurrency === 'SAR' ? safe.totalWithdrawnSAR
+      : safe.totalWithdrawnSAR;
+  safe.roi = safe.netCapitalSAR > 0 ? (safe.totalGainLossSAR / safe.netCapitalSAR) * 100 : 0;
+
+  return safe;
 }
 
 /** One investment platform row: personal portfolios on that account + ledger + cash (same rules as PlatformCard). */
