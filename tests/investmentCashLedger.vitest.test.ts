@@ -10,7 +10,7 @@ function portfolioUSD(): InvestmentPortfolio {
   return { id: 'pf-1', name: 'US', accountId: 'inv-1', currency: 'USD', holdings: [] } as InvestmentPortfolio;
 }
 
-function tx(partial: Partial<InvestmentTransaction> & Pick<InvestmentTransaction, 'id' | 'type' | 'total'>): InvestmentTransaction {
+function tx(partial: Partial<InvestmentTransaction> & Pick<InvestmentTransaction, 'id' | 'type' | 'total'> & { created_at?: string }): InvestmentTransaction {
   return {
     id: partial.id,
     accountId: partial.accountId ?? 'inv-1',
@@ -21,7 +21,8 @@ function tx(partial: Partial<InvestmentTransaction> & Pick<InvestmentTransaction
     price: partial.price ?? 0,
     total: partial.total,
     currency: partial.currency,
-  } as InvestmentTransaction;
+    ...(partial.created_at ? { created_at: partial.created_at } : {}),
+  } as unknown as InvestmentTransaction;
 }
 
 describe('computeAvailableCashByAccountMap', () => {
@@ -65,6 +66,22 @@ describe('computeAvailableCashByAccountMap', () => {
     });
 
     expect(map['inv-1'].SAR).toBeCloseTo(2500, 6);
+    expect(map['inv-1'].USD).toBeCloseTo(0, 6);
+  });
+
+  it('processes transactions in deterministic chronological order even when input is prepended', () => {
+    const map = computeAvailableCashByAccountMap({
+      accounts: [invAccount({ currency: 'SAR' as any })],
+      investments: [portfolioUSD()],
+      investmentTransactions: [
+        // Newer row prepended first in app flow; buy should still execute after older deposit.
+        tx({ id: 'new-buy', date: '2026-01-11', type: 'buy', total: 1000, currency: 'USD', symbol: 'AAPL', quantity: 10, price: 100, created_at: '2026-01-11T10:00:00Z' }),
+        tx({ id: 'old-dep', date: '2026-01-10', type: 'deposit', total: 10000, currency: 'SAR', created_at: '2026-01-10T10:00:00Z' }),
+      ],
+      sarPerUsd: 3.75,
+    });
+
+    expect(map['inv-1'].SAR).toBeCloseTo(6250, 6);
     expect(map['inv-1'].USD).toBeCloseTo(0, 6);
   });
 });

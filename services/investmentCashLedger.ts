@@ -23,7 +23,20 @@ export function computeAvailableCashByAccountMap(args: {
     txCountByAccount[accId] = 0;
   });
 
-  investmentTransactions.forEach((t) => {
+  const orderedTransactions = [...investmentTransactions]
+    .map((t, idx) => ({ t, idx }))
+    .sort((a, b) => {
+      const ta = Date.parse(String((a.t as any).created_at ?? (a.t as any).createdAt ?? a.t.date ?? ''));
+      const tb = Date.parse(String((b.t as any).created_at ?? (b.t as any).createdAt ?? b.t.date ?? ''));
+      const va = Number.isFinite(ta) ? ta : 0;
+      const vb = Number.isFinite(tb) ? tb : 0;
+      if (va !== vb) return va - vb;
+      // Preserve caller order for exact timestamp ties.
+      return a.idx - b.idx;
+    })
+    .map((x) => x.t);
+
+  orderedTransactions.forEach((t) => {
     const rawAccountId = resolveInvestmentTransactionAccountId(
       t as InvestmentTransaction & { account_id?: string; portfolio_id?: string },
       accounts,

@@ -43,6 +43,21 @@ describe('structured trading statement parser', () => {
     expect(rows[0].price).toBeCloseTo(504 / 30, 5);
   });
 
+  it('uses statement currency for wire deposit/withdrawal rows to avoid SAR defaulting', () => {
+    const text = [
+      'Transaction Statement (USD)',
+      '13/01/2026 19:21:55  J2026-42097720  Cash Deposit - Wire In    3,000.00000   3,002.69390',
+      '14/01/2026 19:21:55  J2026-42097721  Cash Withdrawal - Wire Out    500.00000   2,502.69390',
+    ].join('\n');
+
+    const rows = extractInvestmentTransactionsFromStructuredText(text, 'acc-1', { statementCurrency: 'USD' });
+    expect(rows.length).toBe(2);
+    expect(rows[0].currency).toBe('USD');
+    expect(rows[1].currency).toBe('USD');
+    expect(rows[0].type).toBe('deposit');
+    expect(rows[1].type).toBe('withdrawal');
+  });
+
   it('falls back to heuristic parsing for less-structured broker rows', () => {
     const text = [
       '2026-01-07 Buy 30 PTLO.US @ 4.48 USD total 134.40',

@@ -1654,17 +1654,39 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     /** Keep Investment platform `balance` aligned with investment transaction cash flows (buy/sell/deposit/withdrawal/dividend). */
-    const applyInvestmentAccountDeltaForTrade = async (accountId: string | undefined, _delta: number) => {
+    const applyInvestmentAccountDeltaForTrade = async (
+        accountId: string | undefined,
+        _delta: number,
+        opts?: { includeTransaction?: InvestmentTransaction; excludeTransactionId?: string },
+    ) => {
         if (!accountId || !supabase || !auth?.user) return;
         const up = updatePlatformRef.current;
         if (!up) return;
         const acc = (data?.accounts ?? []).find((a) => a.id === accountId);
         if (!acc || acc.type !== 'Investment') return;
         const fx = resolveSarPerUsd(data as FinancialData);
+        const baseInvestmentTx = [...(data?.investmentTransactions ?? [])];
+        if (opts?.excludeTransactionId) {
+            const ex = String(opts.excludeTransactionId);
+            for (let i = baseInvestmentTx.length - 1; i >= 0; i--) {
+                if (String((baseInvestmentTx[i] as any).id || '') === ex) baseInvestmentTx.splice(i, 1);
+            }
+        }
+        if (opts?.includeTransaction) {
+            const pending = normalizeInvestmentTransaction(opts.includeTransaction);
+            if (pending?.id) {
+                const id = String((pending as any).id);
+                const idx = baseInvestmentTx.findIndex((t) => String((t as any).id || '') === id);
+                if (idx >= 0) baseInvestmentTx[idx] = pending;
+                else baseInvestmentTx.unshift(pending);
+            } else {
+                baseInvestmentTx.unshift(pending);
+            }
+        }
         const ledgerCashMap = computeAvailableCashByAccountMap({
             accounts: data?.accounts ?? [],
             investments: data?.investments ?? [],
-            investmentTransactions: data?.investmentTransactions ?? [],
+            investmentTransactions: baseInvestmentTx,
             sarPerUsd: fx,
         });
         const cash = ledgerCashMap[accountId] ?? { SAR: 0, USD: 0 };
@@ -2645,8 +2667,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         if (txError) { console.error("Error recording transaction:", txError); throw txError; }
         if (newTransaction) {
-            setData(prev => ({ ...prev, investmentTransactions: [normalizeInvestmentTransaction(newTransaction), ...prev.investmentTransactions] }));
-            await applyInvestmentAccountDeltaForTrade(accountIdForInsert, investmentBalanceDelta);
+            const normalizedInserted = normalizeInvestmentTransaction(newTransaction);
+            setData(prev => ({ ...prev, investmentTransactions: [normalizedInserted, ...prev.investmentTransactions] }));
+            await applyInvestmentAccountDeltaForTrade(accountIdForInsert, investmentBalanceDelta, { includeTransaction: normalizedInserted });
         }
         
         // 3. For deposits/withdrawals with linked accounts, create corresponding cash account transactions
@@ -2764,7 +2787,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 } else {
                     rollbackSucceeded = true;
                     setData(prev => ({ ...prev, investmentTransactions: prev.investmentTransactions.filter(t => t.id !== newTransaction.id) }));
-                    await applyInvestmentAccountDeltaForTrade(accountIdForInsert, -investmentBalanceDelta);
+                    await applyInvestmentAccountDeltaForTrade(accountIdForInsert, -investmentBalanceDelta, { excludeTransactionId: newTransaction.id });
                 }
             }
             await fetchData();

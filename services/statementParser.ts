@@ -1250,8 +1250,12 @@ function normalizeSymbol(raw: unknown): string {
 
 function inferStatementCurrency(text: string): 'SAR' | 'USD' | undefined {
   const m = text.match(/Transaction\s+Statement\s*\((SAR|USD)\)/i) || text.match(/\((SAR|USD)\)/i);
-  if (!m) return undefined;
-  return String(m[1]).toUpperCase() === 'USD' ? 'USD' : 'SAR';
+  if (m) return String(m[1]).toUpperCase() === 'USD' ? 'USD' : 'SAR';
+
+  const usdHits = (text.match(/@\s*USD\b|\bUSD\b|\$/gi) || []).length;
+  const sarHits = (text.match(/@\s*SAR\b|\bSAR\b|Saudi\s+Riyal|Riyal/gi) || []).length;
+  if (usdHits === 0 && sarHits === 0) return undefined;
+  return usdHits > sarHits ? 'USD' : 'SAR';
 }
 
 /**

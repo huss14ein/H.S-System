@@ -6,16 +6,25 @@ alter table public.accounts
 alter table public.investment_transactions
   add column if not exists currency text check (currency is null or currency in ('SAR', 'USD'));
 
--- 1) Prefer linked cash account currency for deposit/withdrawal rows.
+-- 1) Prefer linked cash account currency for deposit/withdrawal rows when known.
 update public.investment_transactions it
-set currency = case when a.currency = 'USD' then 'USD' else 'SAR' end
+set currency = a.currency
 from public.accounts a
 where (it.currency is null or it.currency not in ('SAR', 'USD'))
   and it.type in ('deposit', 'withdrawal')
   and it.linked_cash_account_id is not null
-  and a.id = it.linked_cash_account_id;
+  and a.id = it.linked_cash_account_id
+  and a.currency in ('SAR', 'USD');
 
--- 2) For remaining rows, infer from account's portfolio currency when unique.
+-- 2) For remaining rows, infer from row-level portfolio currency.
+update public.investment_transactions it
+set currency = p.currency
+from public.investment_portfolios p
+where (it.currency is null or it.currency not in ('SAR', 'USD'))
+  and p.id = it.portfolio_id
+  and p.currency in ('SAR', 'USD');
+
+-- 3) For still-remaining rows, infer from account's portfolio currency when unique.
 with account_currency as (
   select
     p.account_id,
@@ -34,7 +43,7 @@ where (it.currency is null or it.currency not in ('SAR', 'USD'))
   and ac.inferred_currency is not null
   and it.account_id = ac.account_id;
 
--- 3) Hard fallback to SAR so KPI math never runs with unknown currency.
+-- 4) Hard fallback to SAR so KPI math never runs with unknown currency.
 update public.investment_transactions
 set currency = 'SAR'
 where currency is null or currency not in ('SAR', 'USD');
@@ -105,10 +114,27 @@ begin
     raise exception using errcode = '42501', message = 'Cash account not accessible';
   end if;
 
-  select case when a.currency = 'USD' then 'USD' else 'SAR' end
+  select
+    case
+      when a.currency in ('SAR', 'USD') then a.currency
+      else null
+    end
   into v_cash_currency
   from public.accounts a
   where a.id = p_cash_account_id;
+
+  if v_cash_currency is null then
+    select
+      case
+        when count(distinct p.currency) = 1 then min(p.currency)
+        else null
+      end
+    into v_cash_currency
+    from public.investment_portfolios p
+    where p.account_id = p_investment_account_id
+      and p.currency in ('SAR', 'USD');
+  end if;
+  v_cash_currency := coalesce(v_cash_currency, 'SAR');
 
   v_trade_type := case when p_direction = 'cash_to_investment' then 'deposit' else 'withdrawal' end;
 
