@@ -1871,12 +1871,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 });
             }
             if (fee > 0) {
+                const feeAccountId = linkedCashAccountId ?? fromAccountId;
                 await addTransaction({
                     date: dateStr,
                     description: `Transfer fee from ${fromName}`,
                     amount: -fee,
                     type: 'expense',
-                    accountId: fromAccountId,
+                    accountId: feeAccountId,
                     category: 'Fee',
                     transferGroupId,
                     transferRole: 'fee',
