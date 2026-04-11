@@ -31,7 +31,7 @@ import { normalizeCoreUpsideAllocations } from '../utils/investmentPlanAllocatio
 import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/investmentPlanPerPortfolio';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
-import { deltaForInvestmentTrade, netInvestmentBalanceFromTransactions } from '../services/investmentBalanceDelta';
+import { deltaForInvestmentTrade } from '../services/investmentBalanceDelta';
 import { computeAvailableCashByAccountMap } from '../services/investmentCashLedger';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
@@ -83,6 +83,11 @@ function mergeWealthUltraSystemConfigFromRow(
 /** Stable fallback for deployable accounts so memo deps don’t churn each render when lists are missing. */
 const EMPTY_ACCOUNTS_FOR_DEPLOY: Account[] = [];
 const HOLDING_QUANTITY_EPSILON = 0.00001;
+const toAccountBaseCashBalance = (acc: Account, cash: { SAR: number; USD: number }, sarPerUsd: number): number => {
+    const fx = Number.isFinite(sarPerUsd) && sarPerUsd > 0 ? sarPerUsd : DEFAULT_SAR_PER_USD;
+    if (acc.currency === 'USD') return roundMoney((cash.USD ?? 0) + (cash.SAR ?? 0) / fx);
+    return roundMoney((cash.SAR ?? 0) + (cash.USD ?? 0) * fx);
+};
 
 interface DataContextType {
   data: FinancialData;
@@ -942,10 +947,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 return resolved ? { ...norm, accountId: resolved } : norm;
             });
             const ownedAccounts = filterOwnedRows(normalizedAccounts);
+            const fxSeedRaw = Number(
+                (investmentPlan.data as any[])?.[0]?.fx_rate ??
+                (investmentPlan.data as any[])?.[0]?.fxRate ??
+                DEFAULT_SAR_PER_USD,
+            );
+            const fxSeed = Number.isFinite(fxSeedRaw) && fxSeedRaw > 0 ? fxSeedRaw : DEFAULT_SAR_PER_USD;
+            const ledgerCashMap = computeAvailableCashByAccountMap({
+                accounts: ownedAccounts,
+                investments: filterOwnedRows(investments.data as any[]) as any[],
+                investmentTransactions: normalizedInvestmentTransactions,
+                sarPerUsd: fxSeed,
+            });
             const reconciledInvestmentAccounts = ownedAccounts.map((acc) => {
                 if (acc.type !== 'Investment') return acc;
-                const ledgerNet = roundMoney(netInvestmentBalanceFromTransactions(acc.id, normalizedInvestmentTransactions as any[]));
-                return { ...acc, balance: ledgerNet };
+                const cash = ledgerCashMap[acc.id] ?? { SAR: 0, USD: 0 };
+                return { ...acc, balance: toAccountBaseCashBalance(acc, cash, fxSeed) };
             });
             const driftedInvestmentAccounts = reconciledInvestmentAccounts
                 .filter((acc) => acc.type === 'Investment')
@@ -1105,23 +1122,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const investmentAccounts = (data.accounts ?? []).filter((a: Account) => a.type === 'Investment');
         if (investmentAccounts.length === 0) return;
 
-        const normalizedTx = (data.investmentTransactions ?? []).map((t: InvestmentTransaction) => {
-            const portfolioId = t.portfolioId ?? (t as any).portfolio_id;
-            const linkedPortfolio: any = portfolioId ? (data.investments ?? []).find((p: any) => p.id === portfolioId) : undefined;
-            const fallbackPortfolioAccount = portfolioId
-                ? resolveAccountId(
-                      linkedPortfolio?.accountId ?? linkedPortfolio?.account_id,
-                      data.accounts ?? [],
-                  )
-                : undefined;
-            const raw = t.accountId ?? (t as any).account_id ?? fallbackPortfolioAccount;
-            const accId = raw ? (resolveCanonicalAccountId(String(raw), data.accounts ?? []) ?? String(raw)) : '';
-            return { ...t, accountId: accId };
+        const fx = resolveSarPerUsd(data as FinancialData);
+        const ledgerCashMap = computeAvailableCashByAccountMap({
+            accounts: data.accounts ?? [],
+            investments: data.investments ?? [],
+            investmentTransactions: data.investmentTransactions ?? [],
+            sarPerUsd: fx,
         });
 
         const drifted = investmentAccounts
             .map((acc) => {
-                const expected = roundMoney(netInvestmentBalanceFromTransactions(acc.id, normalizedTx as any[]));
+                const cash = ledgerCashMap[acc.id] ?? { SAR: 0, USD: 0 };
+                const expected = toAccountBaseCashBalance(acc, cash, fx);
                 const current = roundMoney(Number(acc.balance ?? 0));
                 return { id: acc.id, expected, current, drift: roundMoney(expected - current) };
             })
@@ -1642,16 +1654,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     /** Keep Investment platform `balance` aligned with investment transaction cash flows (buy/sell/deposit/withdrawal/dividend). */
-    const applyInvestmentAccountDeltaForTrade = async (accountId: string | undefined, delta: number) => {
+    const applyInvestmentAccountDeltaForTrade = async (accountId: string | undefined, _delta: number) => {
         if (!accountId || !supabase || !auth?.user) return;
-        const d = Number(delta);
-        if (!Number.isFinite(d) || d === 0) return;
         const up = updatePlatformRef.current;
         if (!up) return;
         const acc = (data?.accounts ?? []).find((a) => a.id === accountId);
         if (!acc || acc.type !== 'Investment') return;
-        const prevBalance = cashBalanceAccumulatorRef.current[accountId] ?? Number(acc.balance ?? 0);
-        const newBalance = prevBalance + d;
+        const fx = resolveSarPerUsd(data as FinancialData);
+        const ledgerCashMap = computeAvailableCashByAccountMap({
+            accounts: data?.accounts ?? [],
+            investments: data?.investments ?? [],
+            investmentTransactions: data?.investmentTransactions ?? [],
+            sarPerUsd: fx,
+        });
+        const cash = ledgerCashMap[accountId] ?? { SAR: 0, USD: 0 };
+        const newBalance = toAccountBaseCashBalance(acc, cash, fx);
         cashBalanceAccumulatorRef.current[accountId] = newBalance;
         await up({ ...acc, balance: newBalance }, { fromTransactionDelta: true });
     };
