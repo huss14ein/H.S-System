@@ -981,6 +981,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                   <div>Detected file type: {tradingParseDebug.fileType}</div>
                   <div>Extracted text length: {tradingParseDebug.extractedTextLength}</div>
                   <div>Structured matches: {tradingParseDebug.parserMatches.structured}</div>
+                  <div>Awaed-table matches: {tradingParseDebug.parserMatches.awaedTable}</div>
                   <div>Token-stream matches: {tradingParseDebug.parserMatches.tokenStream}</div>
                   <div>Global-pattern matches: {tradingParseDebug.parserMatches.globalPattern}</div>
                   <div>Heuristic matches: {tradingParseDebug.parserMatches.heuristic}</div>

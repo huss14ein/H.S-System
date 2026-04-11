@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractInvestmentTransactionsFromStructuredText, extractInvestmentTransactionsFromHeuristicText, extractInvestmentTransactionsFromTokenStream, extractInvestmentTransactionsFromGlobalPattern } from '../services/statementParser';
+import { extractInvestmentTransactionsFromStructuredText, extractInvestmentTransactionsFromHeuristicText, extractInvestmentTransactionsFromTokenStream, extractInvestmentTransactionsFromGlobalPattern, extractInvestmentTransactionsFromAwaedTable } from '../services/statementParser';
 
 describe('structured trading statement parser', () => {
   it('parses purchase/sale and wire-in rows from broker-style table lines', () => {
@@ -89,5 +89,25 @@ describe('structured trading statement parser', () => {
     expect(rows.some((r) => r.type === 'buy' && r.symbol === 'PTLO.US')).toBe(true);
     expect(rows.some((r) => r.type === 'deposit')).toBe(true);
     expect(rows.some((r) => r.type === 'sell' && r.symbol === 'NVO.US')).toBe(true);
+  });
+
+  it('parses Awaed-style table rows with debit/credit/balance columns', () => {
+    const text = [
+      'Transaction Statement (SAR)',
+      '07/01/2026 23:42:26  Ordf 41458367  Purchase of Security 30.00 PTLO.US @ USD 4.48  504.00000    2.69390',
+      '13/01/2026 19:21:55  J2026-42097720  Cash Deposit - Wire In    3,000.00000   3,002.69390',
+      '23/01/2026 18:10:21  Ordf 43694695  Sale of Security 1.00 NVO.US @ USD 64.00    240.00000   240.76890',
+    ].join('\n');
+
+    const rows = extractInvestmentTransactionsFromAwaedTable(text, 'acc-1', { statementCurrency: 'SAR' });
+    expect(rows.length).toBe(3);
+    const buy = rows.find((r) => r.type === 'buy');
+    const dep = rows.find((r) => r.type === 'deposit');
+    const sell = rows.find((r) => r.type === 'sell');
+    expect(buy?.total).toBeCloseTo(504);
+    expect(dep?.total).toBeCloseTo(3000);
+    expect(sell?.total).toBeCloseTo(240);
+    expect(buy?.currency).toBe('SAR');
+    expect(sell?.currency).toBe('SAR');
   });
 });

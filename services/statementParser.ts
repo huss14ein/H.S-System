@@ -29,6 +29,7 @@ export interface TradingParseDebug {
   fileType: string;
   extractedTextLength: number;
   parserMatches: {
+    awaedTable: number;
     structured: number;
     tokenStream: number;
     globalPattern: number;
@@ -179,6 +180,10 @@ export async function parseTradingStatement(
 
     const statementCurrency = inferStatementCurrency(text);
     const structuredWarnings: string[] = [];
+    const parsedFromAwaedTable = extractInvestmentTransactionsFromAwaedTable(text, accountId || '', {
+      statementCurrency,
+      warnings: structuredWarnings,
+    });
     // First pass: deterministic parser for broker statement table rows.
     const parsedFromRows = extractInvestmentTransactionsFromStructuredText(text, accountId || '', {
       statementCurrency,
@@ -200,6 +205,7 @@ export async function parseTradingStatement(
     });
     const aiTransactions = await extractInvestmentTransactionsFromText(text, accountId || '');
     const transactions = dedupeInvestmentTransactions([
+      ...parsedFromAwaedTable,
       ...parsedFromRows,
       ...parsedFromTokenStream,
       ...parsedFromGlobalPattern,
@@ -213,6 +219,7 @@ export async function parseTradingStatement(
         structured: parsedFromRows.length,
         tokenStream: parsedFromTokenStream.length,
         globalPattern: parsedFromGlobalPattern.length,
+        awaedTable: parsedFromAwaedTable.length,
         heuristic: heuristicRows.length,
         ai: aiTransactions.length,
         totalDeduped: transactions.length,
@@ -230,7 +237,7 @@ export async function parseTradingStatement(
                transactions[i].quantity !== undefined && transactions[i].price !== undefined;
       }),
       confidence: validation.isValid
-        ? (parsedFromRows.length > 0 || parsedFromTokenStream.length > 0 || parsedFromGlobalPattern.length > 0 || heuristicRows.length > 0 ? 0.92 : 0.80)
+        ? (parsedFromAwaedTable.length > 0 || parsedFromRows.length > 0 || parsedFromTokenStream.length > 0 || parsedFromGlobalPattern.length > 0 || heuristicRows.length > 0 ? 0.92 : 0.80)
         : Math.max(0, 0.80 - (validation.errors.length * 0.1)),
       errors: validation.errors,
       warnings: [
@@ -843,6 +850,134 @@ export function extractInvestmentTransactionsFromStructuredText(
     out.push(parsed);
   }
   if (opts?.warnings && localWarn.size > 0) opts.warnings.push(...Array.from(localWarn));
+  return out;
+}
+
+export function extractInvestmentTransactionsFromAwaedTable(
+  text: string,
+  accountId: string,
+  opts?: { statementCurrency?: 'SAR' | 'USD'; warnings?: string[] },
+): InvestmentTransaction[] {
+  const lines = String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const out: InvestmentTransaction[] = [];
+  const seen = new Set<string>();
+  const statementCurrency = opts?.statementCurrency ?? inferStatementCurrency(text) ?? 'SAR';
+
+  for (const line of lines) {
+    const datePrefix = line.match(/^(\d{2}\/\d{2}\/\d{4})\s+\d{2}:\d{2}:\d{2}\s+/);
+    if (!datePrefix) continue;
+    const date = formatLocalYmd(parseDate(datePrefix[1]));
+    const description = line.replace(/^(\d{2}\/\d{2}\/\d{4})\s+\d{2}:\d{2}:\d{2}\s+([A-Za-z0-9-]+(?:\s+(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]+)?)\s+/, '');
+    const numericTokens = (line.match(/-?\d[\d,]*\.\d+/g) || []).map((v) => parseNumber(v)).filter((n) => Number.isFinite(n));
+    const amount = numericTokens.length >= 2 ? numericTokens[numericTokens.length - 2] : numericTokens.length === 1 ? numericTokens[0] : 0;
+
+    let parsed: InvestmentTransaction | null = null;
+    const buyMatch = description.match(/Purchase of Security\s+([\d.,]+)\s+([A-Z0-9.\-]+)\s+@\s*(USD|SAR)\s*([\d.,]+)/i);
+    if (buyMatch) {
+      const quantity = parseNumber(buyMatch[1]);
+      const symbol = String(buyMatch[2] || '').toUpperCase();
+      const quoteCurrency = String(buyMatch[3] || 'USD').toUpperCase() === 'USD' ? 'USD' : 'SAR';
+      const quotedPrice = parseNumber(buyMatch[4]);
+      const total = amount > 0 ? amount : Math.max(0, quantity * quotedPrice);
+      const currency = statementCurrency !== quoteCurrency && quantity > 0 && total > 0 ? statementCurrency : quoteCurrency;
+      const price = currency === quoteCurrency ? quotedPrice : total / quantity;
+      parsed = {
+        id: `stmt-a-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date,
+        type: 'buy',
+        symbol,
+        quantity,
+        price,
+        total,
+        currency,
+      };
+    }
+
+    const sellMatch = description.match(/Sale of Security\s+([\d.,]+)\s+([A-Z0-9.\-]+)\s+@\s*(USD|SAR)\s*([\d.,]+)/i);
+    if (!parsed && sellMatch) {
+      const quantity = parseNumber(sellMatch[1]);
+      const symbol = String(sellMatch[2] || '').toUpperCase();
+      const quoteCurrency = String(sellMatch[3] || 'USD').toUpperCase() === 'USD' ? 'USD' : 'SAR';
+      const quotedPrice = parseNumber(sellMatch[4]);
+      const total = amount > 0 ? amount : Math.max(0, quantity * quotedPrice);
+      const currency = statementCurrency !== quoteCurrency && quantity > 0 && total > 0 ? statementCurrency : quoteCurrency;
+      const price = currency === quoteCurrency ? quotedPrice : total / quantity;
+      parsed = {
+        id: `stmt-a-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date,
+        type: 'sell',
+        symbol,
+        quantity,
+        price,
+        total,
+        currency,
+      };
+    }
+
+    if (!parsed && /(Purchase of Security|Sale of Security)/i.test(description)) {
+      const qtySym = description.match(/Security\s+([\d.,]+)\s+([A-Z0-9.\-]+)/i);
+      const pxCur = description.match(/@\s*(USD|SAR)\s*([\d.,]+)/i);
+      if (qtySym && pxCur) {
+        const quantity = parseNumber(qtySym[1]);
+        const symbol = String(qtySym[2] || '').toUpperCase();
+        const quoteCurrency = String(pxCur[1] || 'USD').toUpperCase() === 'USD' ? 'USD' : 'SAR';
+        const quotedPrice = parseNumber(pxCur[2]);
+        const total = amount > 0 ? amount : Math.max(0, quantity * quotedPrice);
+        const currency = statementCurrency !== quoteCurrency && quantity > 0 && total > 0 ? statementCurrency : quoteCurrency;
+        const price = currency === quoteCurrency ? quotedPrice : total / quantity;
+        parsed = {
+          id: `stmt-a-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          accountId,
+          date,
+          type: /Sale of Security/i.test(description) ? 'sell' : 'buy',
+          symbol,
+          quantity,
+          price,
+          total,
+          currency,
+        };
+      }
+    }
+
+    if (!parsed && /Cash Deposit\s*-\s*Wire In/i.test(description)) {
+      parsed = {
+        id: `stmt-a-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date,
+        type: 'deposit',
+        symbol: 'CASH',
+        quantity: 0,
+        price: 0,
+        total: amount,
+        currency: statementCurrency,
+      };
+    }
+
+    if (!parsed && /Cash Withdrawal\s*-\s*Wire Out/i.test(description)) {
+      parsed = {
+        id: `stmt-a-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date,
+        type: 'withdrawal',
+        symbol: 'CASH',
+        quantity: 0,
+        price: 0,
+        total: amount,
+        currency: statementCurrency,
+      };
+    }
+
+    if (!parsed || !(parsed.total > 0)) continue;
+    const key = `${parsed.date}|${parsed.type}|${parsed.symbol}|${parsed.quantity}|${parsed.price}|${parsed.total}|${parsed.currency}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(parsed);
+  }
+  if (out.length > 0 && opts?.warnings) {
+    opts.warnings.push('Parsed rows from Awaed-style statement table format.');
+  }
   return out;
 }
 
