@@ -25,6 +25,20 @@ export interface ValidationResult {
   };
 }
 
+export interface TradingParseDebug {
+  fileType: string;
+  extractedTextLength: number;
+  parserMatches: {
+    structured: number;
+    tokenStream: number;
+    globalPattern: number;
+    heuristic: number;
+    ai: number;
+    totalDeduped: number;
+  };
+  sampleText: string;
+}
+
 /**
  * Parse bank statement from uploaded file
  */
@@ -32,9 +46,8 @@ export async function parseBankStatement(
   file: File,
   accountId: string
 ): Promise<ParseResult> {
-  const fileType = getFileType(file.name);
-  
   try {
+    const fileType = await detectFileType(file);
     let text = '';
     
     if (fileType === 'pdf') {
@@ -47,7 +60,7 @@ export async function parseBankStatement(
     } else if (fileType === 'xlsx' || fileType === 'xls') {
       text = await parseExcel(file);
     } else {
-      throw new Error(`Unsupported file type: ${fileType}`);
+      throw new Error(`Unsupported file type: ${fileType}. Please upload PDF, CSV, Excel, OFX, QFX, or TXT statement files.`);
     }
 
     // Use AI to extract transactions from text
@@ -147,24 +160,65 @@ export async function parseSMSTransactions(
 export async function parseTradingStatement(
   file: File,
   accountId: string
-): Promise<{ transactions: InvestmentTransaction[]; confidence: number; errors?: string[]; warnings?: string[]; validation?: ValidationResult }> {
-  const fileType = getFileType(file.name);
-  
+): Promise<{ transactions: InvestmentTransaction[]; confidence: number; errors?: string[]; warnings?: string[]; validation?: ValidationResult; debug?: TradingParseDebug }> {
   try {
+    const fileType = await detectFileType(file);
     let text = '';
     
     if (fileType === 'pdf') {
       text = await extractTextFromPDF(file);
     } else if (fileType === 'csv') {
       text = await parseCSV(file);
+    } else if (fileType === 'ofx' || fileType === 'qfx' || fileType === 'txt') {
+      text = await parseCSV(file);
     } else if (fileType === 'xlsx' || fileType === 'xls') {
       text = await parseExcel(file);
     } else {
-      throw new Error(`Unsupported file type: ${fileType}`);
+      throw new Error(`Unsupported file type: ${fileType}. Please upload PDF, CSV, Excel, OFX, QFX, or TXT statement files.`);
     }
 
-    // Extract investment transactions using AI
-    const transactions = await extractInvestmentTransactionsFromText(text, accountId || '');
+    const statementCurrency = inferStatementCurrency(text);
+    const structuredWarnings: string[] = [];
+    // First pass: deterministic parser for broker statement table rows.
+    const parsedFromRows = extractInvestmentTransactionsFromStructuredText(text, accountId || '', {
+      statementCurrency,
+      warnings: structuredWarnings,
+    });
+    // 1.5 pass: token-stream parser for flattened PDF extraction where line breaks are missing.
+    const parsedFromTokenStream = extractInvestmentTransactionsFromTokenStream(text, accountId || '', {
+      statementCurrency,
+      warnings: structuredWarnings,
+    });
+    const parsedFromGlobalPattern = extractInvestmentTransactionsFromGlobalPattern(text, accountId || '', {
+      statementCurrency,
+      warnings: structuredWarnings,
+    });
+    // Second pass: AI extraction as fallback/enrichment.
+    const heuristicRows = extractInvestmentTransactionsFromHeuristicText(text, accountId || '', {
+      statementCurrency,
+      warnings: structuredWarnings,
+    });
+    const aiTransactions = await extractInvestmentTransactionsFromText(text, accountId || '');
+    const transactions = dedupeInvestmentTransactions([
+      ...parsedFromRows,
+      ...parsedFromTokenStream,
+      ...parsedFromGlobalPattern,
+      ...heuristicRows,
+      ...aiTransactions,
+    ]);
+    const debug: TradingParseDebug = {
+      fileType,
+      extractedTextLength: text.length,
+      parserMatches: {
+        structured: parsedFromRows.length,
+        tokenStream: parsedFromTokenStream.length,
+        globalPattern: parsedFromGlobalPattern.length,
+        heuristic: heuristicRows.length,
+        ai: aiTransactions.length,
+        totalDeduped: transactions.length,
+      },
+      sampleText: text.replace(/\s+/g, ' ').trim().slice(0, 320),
+    };
     
     // Validate extracted transactions
     const validation = validateTransactions([], transactions);
@@ -175,10 +229,17 @@ export async function parseTradingStatement(
         return !isNaN(txDate.getTime()) && transactions[i].symbol && 
                transactions[i].quantity !== undefined && transactions[i].price !== undefined;
       }),
-      confidence: validation.isValid ? 0.80 : Math.max(0, 0.80 - (validation.errors.length * 0.1)),
+      confidence: validation.isValid
+        ? (parsedFromRows.length > 0 || parsedFromTokenStream.length > 0 || parsedFromGlobalPattern.length > 0 || heuristicRows.length > 0 ? 0.92 : 0.80)
+        : Math.max(0, 0.80 - (validation.errors.length * 0.1)),
       errors: validation.errors,
-      warnings: validation.warnings,
-      validation
+      warnings: [
+        ...(validation.warnings ?? []),
+        ...structuredWarnings,
+        ...(transactions.length === 0 ? ['No investment transactions were recognized. If this is a text statement, ensure each row includes date, type, symbol, quantity, and price/amount.'] : []),
+      ],
+      validation,
+      debug,
     };
   } catch (error) {
     console.error('Error parsing trading statement:', error);
@@ -194,34 +255,64 @@ export async function parseTradingStatement(
  * Extract text from PDF using browser APIs or fallback
  */
 async function extractTextFromPDF(file: File): Promise<string> {
-  // For now, use a simple approach - in production, you'd use a PDF parsing library
-  // like pdf.js or send to a backend service with proper OCR
-  
   try {
-    // Try to use FileReader to read as text (works for some PDFs)
-    const text = await file.text();
-    
-    // If that doesn't work well, we'll use AI to extract from the raw bytes
-    // For now, return the text and let AI handle extraction
-    return text;
-  } catch (error) {
-    // Fallback: convert to base64 and use AI
+    const direct = await file.text();
+    // If direct text looks like binary, use byte-stream extraction.
+    if (direct && /[A-Za-z]{3,}/.test(direct) && !/[\u0000-\u0008]/.test(direct)) return direct;
     const arrayBuffer = await file.arrayBuffer();
-    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-    
-    // Use AI to extract text from PDF
-    return await extractTextFromPDFWithAI(base64);
+    const bytes = new Uint8Array(arrayBuffer);
+    const extracted = extractLikelyTextFromPdfBytes(bytes);
+    if (extracted.trim().length >= 64) return extracted;
+    const aiText = await extractTextFromPDFWithAI(bytes, file.type || 'application/pdf');
+    return aiText.trim() || extracted;
+  } catch (error) {
+    const arrayBuffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    const extracted = extractLikelyTextFromPdfBytes(bytes);
+    if (extracted.trim().length >= 64) return extracted;
+    const aiText = await extractTextFromPDFWithAI(bytes, file.type || 'application/pdf');
+    return aiText.trim() || extracted;
   }
 }
 
 /**
  * Extract text from PDF using AI (fallback)
  */
-async function extractTextFromPDFWithAI(_base64: string): Promise<string> {
-  // In a real implementation, you'd send this to a backend service
-  // that uses OCR or PDF parsing libraries
-  // For now, return empty and let the AI extraction handle it
-  return '';
+async function extractTextFromPDFWithAI(bytes: Uint8Array, mimeType: string): Promise<string> {
+  try {
+    const base64 = bytesToBase64(bytes);
+    const prompt = [
+      'Extract readable text from this PDF statement for downstream parser ingestion.',
+      'Return plain text only.',
+      'Preserve transaction-like row ordering whenever possible.',
+      'Do not summarize. Do not add commentary.',
+    ].join(' ');
+    const response = await invokeAI({
+      model: 'gemini-3-flash-preview',
+      contents: [{
+        role: 'user',
+        parts: [
+          { text: prompt },
+          { inlineData: { mimeType: mimeType || 'application/pdf', data: base64 } },
+        ],
+      }],
+    });
+    const responseText = response?.candidates?.[0]?.content?.parts?.[0]?.text || response?.text || '';
+    return String(responseText || '').trim();
+  } catch (error) {
+    console.warn('AI PDF text extraction fallback failed:', error);
+    return '';
+  }
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const chunk = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += chunk) {
+    const slice = bytes.subarray(i, i + chunk);
+    binary += String.fromCharCode(...slice);
+  }
+  return btoa(binary);
 }
 
 /**
@@ -619,10 +710,414 @@ Only return valid JSON, no other text.`;
   }
 }
 
+function extractLikelyTextFromPdfBytes(bytes: Uint8Array): string {
+  const latin1 = new TextDecoder('latin1').decode(bytes);
+  const chunks: string[] = [];
+
+  // Common PDF text operators: (...) Tj and [...] TJ
+  const tjRegex = /\(([^()]*)\)\s*Tj/g;
+  let m: RegExpExecArray | null;
+  while ((m = tjRegex.exec(latin1)) !== null) {
+    const txt = m[1].replace(/\\\(/g, '(').replace(/\\\)/g, ')').replace(/\\\\/g, '\\');
+    if (txt.trim()) chunks.push(txt);
+  }
+
+  // Fallback: printable runs
+  if (chunks.length < 10) {
+    const printable = latin1.match(/[A-Za-z0-9@._\-/: ]{6,}/g) || [];
+    chunks.push(...printable);
+  }
+
+  return chunks.join('\n');
+}
+
+export function extractInvestmentTransactionsFromStructuredText(
+  text: string,
+  accountId: string,
+  opts?: { statementCurrency?: 'SAR' | 'USD'; warnings?: string[] },
+): InvestmentTransaction[] {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const out: InvestmentTransaction[] = [];
+  const seen = new Set<string>();
+  const localWarn = new Set<string>();
+
+  for (const line of lines) {
+    if (!/^\d{2}\/\d{2}\/\d{4}/.test(line)) continue;
+    const cols = line.split(/\s{2,}/).map((c) => c.trim()).filter(Boolean);
+    if (cols.length < 3) continue;
+
+    const datePart = cols[0];
+    const date = parseDate(datePart.split(' ')[0]);
+    const dateYmd = formatLocalYmd(date);
+    const description = cols.length >= 3 ? cols[2] : line;
+    const numericTokens = (line.match(/-?\d[\d,]*\.\d+/g) || []).map((v) => parseNumber(v)).filter((n) => Number.isFinite(n));
+    const amountFromTail = numericTokens.length >= 2 ? numericTokens[numericTokens.length - 2] : 0;
+    const debit = parseNumber(cols[3]);
+    const credit = parseNumber(cols[4]);
+
+    let parsed: InvestmentTransaction | null = null;
+    const buy = description.match(/Purchase of Security\s+([\d.,]+)\s+([A-Z0-9.\-]+)\s+@\s*(USD|SAR)\s*([\d.,]+)/i);
+    if (buy) {
+      const quantity = parseNumber(buy[1]);
+      const symbol = String(buy[2] || '').toUpperCase();
+      const quoteCurrency = String(buy[3] || 'USD').toUpperCase() === 'USD' ? 'USD' : 'SAR';
+      let currency: 'SAR' | 'USD' = quoteCurrency;
+      let price = parseNumber(buy[4]);
+      const total = amountFromTail > 0 ? amountFromTail : debit > 0 ? debit : Math.max(0, quantity * price);
+      if (opts?.statementCurrency && opts.statementCurrency !== quoteCurrency && quantity > 0 && total > 0) {
+        currency = opts.statementCurrency;
+        price = total / quantity;
+        localWarn.add(`Converted buy rows from quote ${quoteCurrency} into statement currency ${opts.statementCurrency} using total/quantity.`);
+      }
+      parsed = {
+        id: `stmt-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date: dateYmd,
+        type: 'buy',
+        symbol,
+        quantity,
+        price,
+        total,
+        currency,
+      } as InvestmentTransaction;
+    }
+
+    const sell = description.match(/Sale of Security\s+([\d.,]+)\s+([A-Z0-9.\-]+)\s+@\s*(USD|SAR)\s*([\d.,]+)/i);
+    if (!parsed && sell) {
+      const quantity = parseNumber(sell[1]);
+      const symbol = String(sell[2] || '').toUpperCase();
+      const quoteCurrency = String(sell[3] || 'USD').toUpperCase() === 'USD' ? 'USD' : 'SAR';
+      let currency: 'SAR' | 'USD' = quoteCurrency;
+      let price = parseNumber(sell[4]);
+      const total = amountFromTail > 0 ? amountFromTail : credit > 0 ? credit : Math.max(0, quantity * price);
+      if (opts?.statementCurrency && opts.statementCurrency !== quoteCurrency && quantity > 0 && total > 0) {
+        currency = opts.statementCurrency;
+        price = total / quantity;
+        localWarn.add(`Converted sell rows from quote ${quoteCurrency} into statement currency ${opts.statementCurrency} using total/quantity.`);
+      }
+      parsed = {
+        id: `stmt-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date: dateYmd,
+        type: 'sell',
+        symbol,
+        quantity,
+        price,
+        total,
+        currency,
+      } as InvestmentTransaction;
+    }
+
+    if (!parsed && /cash deposit|wire in/i.test(description)) {
+      parsed = {
+        id: `stmt-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date: dateYmd,
+        type: 'deposit',
+        symbol: 'CASH',
+        quantity: 0,
+        price: 0,
+        total: amountFromTail > 0 ? amountFromTail : credit > 0 ? credit : 0,
+        currency: opts?.statementCurrency ?? 'SAR',
+      } as InvestmentTransaction;
+    }
+
+    if (!parsed && /cash withdrawal|wire out/i.test(description)) {
+      parsed = {
+        id: `stmt-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date: dateYmd,
+        type: 'withdrawal',
+        symbol: 'CASH',
+        quantity: 0,
+        price: 0,
+        total: amountFromTail > 0 ? amountFromTail : debit > 0 ? debit : 0,
+        currency: opts?.statementCurrency ?? 'SAR',
+      } as InvestmentTransaction;
+    }
+
+    if (!parsed || !(parsed.total > 0)) continue;
+    const key = `${parsed.date}|${parsed.type}|${parsed.symbol}|${parsed.quantity}|${parsed.price}|${parsed.total}|${parsed.currency}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(parsed);
+  }
+  if (opts?.warnings && localWarn.size > 0) opts.warnings.push(...Array.from(localWarn));
+  return out;
+}
+
+export function extractInvestmentTransactionsFromHeuristicText(
+  text: string,
+  accountId: string,
+  opts?: { statementCurrency?: 'SAR' | 'USD'; warnings?: string[] },
+): InvestmentTransaction[] {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const out: InvestmentTransaction[] = [];
+  const seen = new Set<string>();
+
+  const toYmd = (raw: string) => formatLocalYmd(parseDate(raw));
+  const push = (tx: InvestmentTransaction) => {
+    if (!(tx.total > 0)) return;
+    const key = `${tx.date}|${tx.type}|${tx.symbol}|${tx.quantity}|${tx.price}|${tx.total}|${tx.currency}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(tx);
+  };
+
+  for (const line of lines) {
+    const dateMatch = line.match(/(\d{4}-\d{2}-\d{2}|\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/);
+    if (!dateMatch) continue;
+    const date = toYmd(dateMatch[1]);
+    const currency = /(?:\bUSD\b|\$)/i.test(line) ? 'USD' : (opts?.statementCurrency ?? 'SAR');
+
+    const trade = line.match(/(?:buy|purchase|sell|sale)\s+([\d.,]+)\s+([A-Z0-9.\-]+)(?:\s*@\s*(?:USD|SAR|\$)?\s*([\d.,]+))?/i);
+    if (trade) {
+      const type = /(sell|sale)/i.test(line) ? 'sell' : 'buy';
+      const quantity = parseNumber(trade[1]);
+      const symbol = String(trade[2] || '').toUpperCase();
+      const price = parseNumber(trade[3]);
+      const amountHit = line.match(/(?:amount|total|value)\s*[:=]?\s*(?:USD|SAR|\$)?\s*([\d,]+(?:\.\d+)?)/i);
+      const total = amountHit ? parseNumber(amountHit[1]) : Math.max(0, quantity * price);
+      push({
+        id: `stmt-h-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date,
+        type: type as 'buy' | 'sell',
+        symbol,
+        quantity,
+        price: price > 0 ? price : quantity > 0 ? total / quantity : 0,
+        total,
+        currency,
+      });
+      continue;
+    }
+
+    if (/(deposit|wire in|cash in|top ?up)/i.test(line)) {
+      const amountHit = line.match(/(?:USD|SAR|\$)?\s*([\d,]+(?:\.\d+)?)/);
+      const total = amountHit ? parseNumber(amountHit[1]) : 0;
+      push({
+        id: `stmt-h-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date,
+        type: 'deposit',
+        symbol: 'CASH',
+        quantity: 0,
+        price: 0,
+        total,
+        currency,
+      });
+      continue;
+    }
+
+    if (/(withdrawal|wire out|cash out)/i.test(line)) {
+      const amountHit = line.match(/(?:USD|SAR|\$)?\s*([\d,]+(?:\.\d+)?)/);
+      const total = amountHit ? parseNumber(amountHit[1]) : 0;
+      push({
+        id: `stmt-h-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date,
+        type: 'withdrawal',
+        symbol: 'CASH',
+        quantity: 0,
+        price: 0,
+        total,
+        currency,
+      });
+    }
+  }
+  if (out.length > 0 && opts?.warnings) {
+    opts.warnings.push('Some investment rows were parsed using heuristic fallback because structured format detection was weak.');
+  }
+  return out;
+}
+
+export function extractInvestmentTransactionsFromTokenStream(
+  text: string,
+  accountId: string,
+  opts?: { statementCurrency?: 'SAR' | 'USD'; warnings?: string[] },
+): InvestmentTransaction[] {
+  const compact = String(text || '')
+    .replace(/\r?\n/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!compact) return [];
+
+  const out: InvestmentTransaction[] = [];
+  const seen = new Set<string>();
+  const push = (tx: InvestmentTransaction) => {
+    if (!(tx.total > 0)) return;
+    const key = `${tx.date}|${tx.type}|${tx.symbol}|${tx.quantity}|${tx.price}|${tx.total}|${tx.currency}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(tx);
+  };
+
+  const currencyByText = (row: string): 'USD' | 'SAR' =>
+    (/\bUSD\b|\$/i.test(row) ? 'USD' : (opts?.statementCurrency ?? 'SAR'));
+
+  const refPattern = '[A-Za-z0-9-]+(?:\\s+[A-Za-z0-9-]+)?';
+  const buySellRegex = new RegExp(`(\\d{2}\\/\\d{2}\\/\\d{4}(?:\\s+\\d{2}:\\d{2}:\\d{2})?)\\s+${refPattern}\\s+(Purchase of Security|Sale of Security)\\s+([\\d.,]+)\\s+([A-Z0-9.\\-]+)\\s+@\\s*(USD|SAR)\\s*([\\d.,]+)\\s+([\\d,]+(?:\\.\\d+)?)`, 'gi');
+  let m: RegExpExecArray | null;
+  while ((m = buySellRegex.exec(compact)) !== null) {
+    const date = formatLocalYmd(parseDate(String(m[1]).split(' ')[0]));
+    const type = /sale/i.test(String(m[2])) ? 'sell' : 'buy';
+    const quantity = parseNumber(m[3]);
+    const symbol = String(m[4] || '').toUpperCase();
+    const quoteCurrency = String(m[5] || 'SAR').toUpperCase() === 'USD' ? 'USD' : 'SAR';
+    const quotedPrice = parseNumber(m[6]);
+    const amount = parseNumber(m[7]);
+    let currency: 'USD' | 'SAR' = quoteCurrency;
+    let price = quotedPrice;
+    if (opts?.statementCurrency && opts.statementCurrency !== quoteCurrency && quantity > 0 && amount > 0) {
+      currency = opts.statementCurrency;
+      price = amount / quantity;
+    }
+    push({
+      id: `stmt-c-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      accountId,
+      date,
+      type: type as 'buy' | 'sell',
+      symbol,
+      quantity,
+      price,
+      total: amount,
+      currency,
+    });
+  }
+
+  const depositRegex = new RegExp(`(\\d{2}\\/\\d{2}\\/\\d{4}(?:\\s+\\d{2}:\\d{2}:\\d{2})?)\\s+${refPattern}\\s+Cash Deposit\\s*-\\s*Wire In\\s+([\\d,]+(?:\\.\\d+)?)`, 'gi');
+  while ((m = depositRegex.exec(compact)) !== null) {
+    const date = formatLocalYmd(parseDate(String(m[1]).split(' ')[0]));
+    const total = parseNumber(m[2]);
+    push({
+      id: `stmt-c-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      accountId,
+      date,
+      type: 'deposit',
+      symbol: 'CASH',
+      quantity: 0,
+      price: 0,
+      total,
+      currency: currencyByText(m[0]),
+    });
+  }
+
+  const withdrawalRegex = new RegExp(`(\\d{2}\\/\\d{2}\\/\\d{4}(?:\\s+\\d{2}:\\d{2}:\\d{2})?)\\s+${refPattern}\\s+Cash Withdrawal\\s*-\\s*Wire Out\\s+([\\d,]+(?:\\.\\d+)?)`, 'gi');
+  while ((m = withdrawalRegex.exec(compact)) !== null) {
+    const date = formatLocalYmd(parseDate(String(m[1]).split(' ')[0]));
+    const total = parseNumber(m[2]);
+    push({
+      id: `stmt-c-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      accountId,
+      date,
+      type: 'withdrawal',
+      symbol: 'CASH',
+      quantity: 0,
+      price: 0,
+      total,
+      currency: currencyByText(m[0]),
+    });
+  }
+
+  if (out.length > 0 && opts?.warnings) {
+    opts.warnings.push('Parsed statement rows from compact PDF token stream (line breaks were missing).');
+  }
+  return out;
+}
+
+export function extractInvestmentTransactionsFromGlobalPattern(
+  text: string,
+  accountId: string,
+  opts?: { statementCurrency?: 'SAR' | 'USD'; warnings?: string[] },
+): InvestmentTransaction[] {
+  const compact = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!compact) return [];
+  const out: InvestmentTransaction[] = [];
+  const seen = new Set<string>();
+  const push = (tx: InvestmentTransaction) => {
+    if (!(tx.total > 0)) return;
+    const key = `${tx.date}|${tx.type}|${tx.symbol}|${tx.quantity}|${tx.price}|${tx.total}|${tx.currency}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(tx);
+  };
+
+  const buySell = /(\d{1,2}\/\d{1,2}\/\d{4}).{0,80}?(Purchase of Security|Sale of Security)\s+([\d.,]+)\s+([A-Z0-9.\-]+)\s+@\s*(USD|SAR)\s*([\d.,]+)\s+([\d,]+(?:\.\d+)?)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = buySell.exec(compact)) !== null) {
+    const date = formatLocalYmd(parseDate(m[1]));
+    const quantity = parseNumber(m[3]);
+    const symbol = String(m[4] || '').toUpperCase();
+    const quoteCurrency = String(m[5] || 'SAR').toUpperCase() === 'USD' ? 'USD' : 'SAR';
+    let price = parseNumber(m[6]);
+    const total = parseNumber(m[7]);
+    let currency: 'SAR' | 'USD' = quoteCurrency;
+    if (opts?.statementCurrency && opts.statementCurrency !== quoteCurrency && quantity > 0 && total > 0) {
+      currency = opts.statementCurrency;
+      price = total / quantity;
+    }
+    push({
+      id: `stmt-g-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      accountId,
+      date,
+      type: /sale/i.test(m[2]) ? 'sell' : 'buy',
+      symbol,
+      quantity,
+      price,
+      total,
+      currency,
+    });
+  }
+
+  const cashInOut = /(\d{1,2}\/\d{1,2}\/\d{4}).{0,80}?(Cash Deposit\s*-\s*Wire In|Cash Withdrawal\s*-\s*Wire Out)\s+([\d,]+(?:\.\d+)?)/gi;
+  while ((m = cashInOut.exec(compact)) !== null) {
+    push({
+      id: `stmt-g-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      accountId,
+      date: formatLocalYmd(parseDate(m[1])),
+      type: /withdrawal/i.test(m[2]) ? 'withdrawal' : 'deposit',
+      symbol: 'CASH',
+      quantity: 0,
+      price: 0,
+      total: parseNumber(m[3]),
+      currency: opts?.statementCurrency ?? 'SAR',
+    });
+  }
+
+  if (out.length > 0 && opts?.warnings) {
+    opts.warnings.push('Recovered transactions using global-pattern parser fallback.');
+  }
+  return out;
+}
+
+function dedupeInvestmentTransactions(rows: InvestmentTransaction[]): InvestmentTransaction[] {
+  const seen = new Set<string>();
+  const out: InvestmentTransaction[] = [];
+  for (const r of rows) {
+    const k = `${r.date}|${r.type}|${r.symbol}|${Number(r.quantity).toFixed(6)}|${Number(r.price).toFixed(6)}|${Number(r.total).toFixed(6)}|${r.currency ?? ''}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(r);
+  }
+  return out;
+}
+
+function parseNumber(v: unknown): number {
+  const raw = String(v ?? '').replace(/,/g, '').trim();
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function inferStatementCurrency(text: string): 'SAR' | 'USD' | undefined {
+  const m = text.match(/Transaction\s+Statement\s*\((SAR|USD)\)/i) || text.match(/\((SAR|USD)\)/i);
+  if (!m) return undefined;
+  return String(m[1]).toUpperCase() === 'USD' ? 'USD' : 'SAR';
+}
+
 /**
  * Helper functions
  */
-function getFileType(fileName: string): 'pdf' | 'csv' | 'xlsx' | 'xls' | 'ofx' | 'qfx' {
+function getFileType(fileName: string): 'pdf' | 'csv' | 'xlsx' | 'xls' | 'ofx' | 'qfx' | 'txt' | 'unknown' {
   const extension = fileName.split('.').pop()?.toLowerCase();
   switch (extension) {
     case 'pdf': return 'pdf';
@@ -631,8 +1126,26 @@ function getFileType(fileName: string): 'pdf' | 'csv' | 'xlsx' | 'xls' | 'ofx' |
     case 'xls': return 'xls';
     case 'ofx': return 'ofx';
     case 'qfx': return 'qfx';
-    default: return 'pdf';
+    case 'txt': return 'txt';
+    default: return 'unknown';
   }
+}
+
+async function detectFileType(file: File): Promise<'pdf' | 'csv' | 'xlsx' | 'xls' | 'ofx' | 'qfx' | 'txt' | 'unknown'> {
+  const byExt = getFileType(file.name);
+  if (byExt !== 'unknown') return byExt;
+  const mime = String(file.type || '').toLowerCase();
+  if (mime.includes('pdf')) return 'pdf';
+  if (mime.includes('csv')) return 'csv';
+  if (mime.includes('spreadsheet') || mime.includes('excel') || mime.includes('sheet')) return 'xlsx';
+  if (mime.includes('text/')) return 'txt';
+
+  const head = (await file.slice(0, 2048).text()).trim();
+  if (!head) return 'unknown';
+  if (head.startsWith('%PDF')) return 'pdf';
+  if (/<OFX>|<BANKMSGSRSV1>|<INVSTMTRS>/i.test(head)) return 'ofx';
+  if (/[,;\t]/.test(head) && /\d/.test(head)) return 'csv';
+  return 'txt';
 }
 
 function parseDate(dateStr: string): Date {
@@ -912,14 +1425,22 @@ export function validateFile(file: File): { isValid: boolean; error?: string } {
   }
 
   // Check file type
-  const allowedExtensions = ['.pdf', '.csv', '.xlsx', '.xls', '.ofx', '.qfx'];
+  const allowedExtensions = ['.pdf', '.csv', '.xlsx', '.xls', '.ofx', '.qfx', '.txt'];
   const fileName = file.name.toLowerCase();
   const hasValidExtension = allowedExtensions.some(ext => fileName.endsWith(ext));
+  const mime = String(file.type || '').toLowerCase();
+  const hasAllowedMime =
+    mime.includes('pdf') ||
+    mime.includes('csv') ||
+    mime.includes('text/') ||
+    mime.includes('spreadsheet') ||
+    mime.includes('excel') ||
+    mime.includes('sheet');
 
-  if (!hasValidExtension) {
+  if (!hasValidExtension && !hasAllowedMime) {
     return {
       isValid: false,
-      error: `Unsupported file type. Allowed types: ${allowedExtensions.join(', ')}`
+      error: `Unsupported file type. Allowed types: ${allowedExtensions.join(', ')} (or equivalent MIME types).`
     };
   }
 
