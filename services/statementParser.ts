@@ -32,9 +32,8 @@ export async function parseBankStatement(
   file: File,
   accountId: string
 ): Promise<ParseResult> {
-  const fileType = getFileType(file.name);
-  
   try {
+    const fileType = await detectFileType(file);
     let text = '';
     
     if (fileType === 'pdf') {
@@ -47,7 +46,7 @@ export async function parseBankStatement(
     } else if (fileType === 'xlsx' || fileType === 'xls') {
       text = await parseExcel(file);
     } else {
-      throw new Error(`Unsupported file type: ${fileType}`);
+      throw new Error(`Unsupported file type: ${fileType}. Please upload PDF, CSV, Excel, OFX, QFX, or TXT statement files.`);
     }
 
     // Use AI to extract transactions from text
@@ -148,9 +147,8 @@ export async function parseTradingStatement(
   file: File,
   accountId: string
 ): Promise<{ transactions: InvestmentTransaction[]; confidence: number; errors?: string[]; warnings?: string[]; validation?: ValidationResult }> {
-  const fileType = getFileType(file.name);
-  
   try {
+    const fileType = await detectFileType(file);
     let text = '';
     
     if (fileType === 'pdf') {
@@ -160,7 +158,7 @@ export async function parseTradingStatement(
     } else if (fileType === 'xlsx' || fileType === 'xls') {
       text = await parseExcel(file);
     } else {
-      throw new Error(`Unsupported file type: ${fileType}`);
+      throw new Error(`Unsupported file type: ${fileType}. Please upload PDF, CSV, Excel, OFX, QFX, or TXT statement files.`);
     }
 
     const statementCurrency = inferStatementCurrency(text);
@@ -171,9 +169,14 @@ export async function parseTradingStatement(
       warnings: structuredWarnings,
     });
     // Second pass: AI extraction as fallback/enrichment.
+    const heuristicRows = extractInvestmentTransactionsFromHeuristicText(text, accountId || '', {
+      statementCurrency,
+      warnings: structuredWarnings,
+    });
     const aiTransactions = await extractInvestmentTransactionsFromText(text, accountId || '');
     const transactions = dedupeInvestmentTransactions([
       ...parsedFromRows,
+      ...heuristicRows,
       ...aiTransactions,
     ]);
     
@@ -187,10 +190,14 @@ export async function parseTradingStatement(
                transactions[i].quantity !== undefined && transactions[i].price !== undefined;
       }),
       confidence: validation.isValid
-        ? (parsedFromRows.length > 0 ? 0.92 : 0.80)
+        ? (parsedFromRows.length > 0 || heuristicRows.length > 0 ? 0.92 : 0.80)
         : Math.max(0, 0.80 - (validation.errors.length * 0.1)),
       errors: validation.errors,
-      warnings: [...(validation.warnings ?? []), ...structuredWarnings],
+      warnings: [
+        ...(validation.warnings ?? []),
+        ...structuredWarnings,
+        ...(transactions.length === 0 ? ['No investment transactions were recognized. If this is a text statement, ensure each row includes date, type, symbol, quantity, and price/amount.'] : []),
+      ],
       validation
     };
   } catch (error) {
@@ -764,6 +771,91 @@ export function extractInvestmentTransactionsFromStructuredText(
   return out;
 }
 
+export function extractInvestmentTransactionsFromHeuristicText(
+  text: string,
+  accountId: string,
+  opts?: { statementCurrency?: 'SAR' | 'USD'; warnings?: string[] },
+): InvestmentTransaction[] {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const out: InvestmentTransaction[] = [];
+  const seen = new Set<string>();
+
+  const toYmd = (raw: string) => formatLocalYmd(parseDate(raw));
+  const push = (tx: InvestmentTransaction) => {
+    if (!(tx.total > 0)) return;
+    const key = `${tx.date}|${tx.type}|${tx.symbol}|${tx.quantity}|${tx.price}|${tx.total}|${tx.currency}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(tx);
+  };
+
+  for (const line of lines) {
+    const dateMatch = line.match(/(\d{4}-\d{2}-\d{2}|\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/);
+    if (!dateMatch) continue;
+    const date = toYmd(dateMatch[1]);
+    const currency = /(?:\bUSD\b|\$)/i.test(line) ? 'USD' : (opts?.statementCurrency ?? 'SAR');
+
+    const trade = line.match(/(?:buy|purchase|sell|sale)\s+([\d.,]+)\s+([A-Z0-9.\-]+)(?:\s*@\s*(?:USD|SAR|\$)?\s*([\d.,]+))?/i);
+    if (trade) {
+      const type = /(sell|sale)/i.test(line) ? 'sell' : 'buy';
+      const quantity = parseNumber(trade[1]);
+      const symbol = String(trade[2] || '').toUpperCase();
+      const price = parseNumber(trade[3]);
+      const amountHit = line.match(/(?:amount|total|value)\s*[:=]?\s*(?:USD|SAR|\$)?\s*([\d,]+(?:\.\d+)?)/i);
+      const total = amountHit ? parseNumber(amountHit[1]) : Math.max(0, quantity * price);
+      push({
+        id: `stmt-h-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date,
+        type: type as 'buy' | 'sell',
+        symbol,
+        quantity,
+        price: price > 0 ? price : quantity > 0 ? total / quantity : 0,
+        total,
+        currency,
+      });
+      continue;
+    }
+
+    if (/(deposit|wire in|cash in|top ?up)/i.test(line)) {
+      const amountHit = line.match(/(?:USD|SAR|\$)?\s*([\d,]+(?:\.\d+)?)/);
+      const total = amountHit ? parseNumber(amountHit[1]) : 0;
+      push({
+        id: `stmt-h-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date,
+        type: 'deposit',
+        symbol: 'CASH',
+        quantity: 0,
+        price: 0,
+        total,
+        currency,
+      });
+      continue;
+    }
+
+    if (/(withdrawal|wire out|cash out)/i.test(line)) {
+      const amountHit = line.match(/(?:USD|SAR|\$)?\s*([\d,]+(?:\.\d+)?)/);
+      const total = amountHit ? parseNumber(amountHit[1]) : 0;
+      push({
+        id: `stmt-h-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        accountId,
+        date,
+        type: 'withdrawal',
+        symbol: 'CASH',
+        quantity: 0,
+        price: 0,
+        total,
+        currency,
+      });
+    }
+  }
+  if (out.length > 0 && opts?.warnings) {
+    opts.warnings.push('Some investment rows were parsed using heuristic fallback because structured format detection was weak.');
+  }
+  return out;
+}
+
 function dedupeInvestmentTransactions(rows: InvestmentTransaction[]): InvestmentTransaction[] {
   const seen = new Set<string>();
   const out: InvestmentTransaction[] = [];
@@ -791,7 +883,7 @@ function inferStatementCurrency(text: string): 'SAR' | 'USD' | undefined {
 /**
  * Helper functions
  */
-function getFileType(fileName: string): 'pdf' | 'csv' | 'xlsx' | 'xls' | 'ofx' | 'qfx' {
+function getFileType(fileName: string): 'pdf' | 'csv' | 'xlsx' | 'xls' | 'ofx' | 'qfx' | 'txt' | 'unknown' {
   const extension = fileName.split('.').pop()?.toLowerCase();
   switch (extension) {
     case 'pdf': return 'pdf';
@@ -800,8 +892,26 @@ function getFileType(fileName: string): 'pdf' | 'csv' | 'xlsx' | 'xls' | 'ofx' |
     case 'xls': return 'xls';
     case 'ofx': return 'ofx';
     case 'qfx': return 'qfx';
-    default: return 'pdf';
+    case 'txt': return 'txt';
+    default: return 'unknown';
   }
+}
+
+async function detectFileType(file: File): Promise<'pdf' | 'csv' | 'xlsx' | 'xls' | 'ofx' | 'qfx' | 'txt' | 'unknown'> {
+  const byExt = getFileType(file.name);
+  if (byExt !== 'unknown') return byExt;
+  const mime = String(file.type || '').toLowerCase();
+  if (mime.includes('pdf')) return 'pdf';
+  if (mime.includes('csv')) return 'csv';
+  if (mime.includes('spreadsheet') || mime.includes('excel') || mime.includes('sheet')) return 'xlsx';
+  if (mime.includes('text/')) return 'txt';
+
+  const head = (await file.slice(0, 2048).text()).trim();
+  if (!head) return 'unknown';
+  if (head.startsWith('%PDF')) return 'pdf';
+  if (/<OFX>|<BANKMSGSRSV1>|<INVSTMTRS>/i.test(head)) return 'ofx';
+  if (/[,;\t]/.test(head) && /\d/.test(head)) return 'csv';
+  return 'txt';
 }
 
 function parseDate(dateStr: string): Date {
@@ -1081,14 +1191,22 @@ export function validateFile(file: File): { isValid: boolean; error?: string } {
   }
 
   // Check file type
-  const allowedExtensions = ['.pdf', '.csv', '.xlsx', '.xls', '.ofx', '.qfx'];
+  const allowedExtensions = ['.pdf', '.csv', '.xlsx', '.xls', '.ofx', '.qfx', '.txt'];
   const fileName = file.name.toLowerCase();
   const hasValidExtension = allowedExtensions.some(ext => fileName.endsWith(ext));
+  const mime = String(file.type || '').toLowerCase();
+  const hasAllowedMime =
+    mime.includes('pdf') ||
+    mime.includes('csv') ||
+    mime.includes('text/') ||
+    mime.includes('spreadsheet') ||
+    mime.includes('excel') ||
+    mime.includes('sheet');
 
-  if (!hasValidExtension) {
+  if (!hasValidExtension && !hasAllowedMime) {
     return {
       isValid: false,
-      error: `Unsupported file type. Allowed types: ${allowedExtensions.join(', ')}`
+      error: `Unsupported file type. Allowed types: ${allowedExtensions.join(', ')} (or equivalent MIME types).`
     };
   }
 

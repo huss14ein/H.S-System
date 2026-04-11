@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractInvestmentTransactionsFromStructuredText } from '../services/statementParser';
+import { extractInvestmentTransactionsFromStructuredText, extractInvestmentTransactionsFromHeuristicText } from '../services/statementParser';
 
 describe('structured trading statement parser', () => {
   it('parses purchase/sale and wire-in rows from broker-style table lines', () => {
@@ -41,5 +41,21 @@ describe('structured trading statement parser', () => {
     expect(rows[0].currency).toBe('SAR');
     expect(rows[0].total).toBeCloseTo(504, 5);
     expect(rows[0].price).toBeCloseTo(504 / 30, 5);
+  });
+
+  it('falls back to heuristic parsing for less-structured broker rows', () => {
+    const text = [
+      '2026-01-07 Buy 30 PTLO.US @ 4.48 USD total 134.40',
+      '2026-01-13 Deposit USD 3,000.00',
+      '2026-01-23 Sell 1 NVO.US @ 64.00 USD total 64.00',
+    ].join('\n');
+
+    const rows = extractInvestmentTransactionsFromHeuristicText(text, 'acc-1', { statementCurrency: 'USD' });
+    expect(rows.length).toBe(3);
+    expect(rows[0].type).toBe('buy');
+    expect(rows[1].type).toBe('deposit');
+    expect(rows[2].type).toBe('sell');
+    expect(rows[0].symbol).toBe('PTLO.US');
+    expect(rows[0].currency).toBe('USD');
   });
 });
