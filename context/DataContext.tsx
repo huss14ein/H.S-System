@@ -32,6 +32,7 @@ import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/inve
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
 import { deltaForInvestmentTrade, netInvestmentBalanceFromTransactions } from '../services/investmentBalanceDelta';
+import { computeAvailableCashByAccountMap } from '../services/investmentCashLedger';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
@@ -3105,21 +3106,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
-    const availableCashByAccountId = useMemo(() => {
-        const map: Record<string, { SAR: number; USD: number }> = {};
-        (data?.accounts ?? []).forEach((acc: Account) => {
-            if (acc.type !== 'Investment') return;
-            const accId = resolveCanonicalAccountId(acc.id, data?.accounts ?? []) ?? acc.id;
-            if (!accId) return;
-            if (!(accId in map)) map[accId] = { SAR: 0, USD: 0 };
-            // Authoritative source: account.balance (kept in sync from investment ledger writes/reconciliation).
-            const openingBalance = Number(acc.balance ?? 0);
-            if (!Number.isFinite(openingBalance)) return;
-            const baseCur: TradeCurrency = acc.currency === 'USD' ? 'USD' : 'SAR';
-            map[accId][baseCur] += openingBalance;
-        });
-        return map;
-    }, [data?.accounts]);
+    const availableCashByAccountId = useMemo(() => computeAvailableCashByAccountMap({
+        accounts: data?.accounts ?? [],
+        investments: data?.investments ?? [],
+        investmentTransactions: data?.investmentTransactions ?? [],
+    }), [data?.accounts, data?.investments, data?.investmentTransactions]);
 
     const getAvailableCashForAccount = useCallback((accountId: string): { SAR: number; USD: number } => {
         const canonical = resolveCanonicalAccountId(accountId, data?.accounts ?? []) ?? accountId;
