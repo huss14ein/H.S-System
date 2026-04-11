@@ -7,8 +7,11 @@ export function computeAvailableCashByAccountMap(args: {
   accounts: Account[];
   investments: InvestmentPortfolio[];
   investmentTransactions: InvestmentTransaction[];
+  sarPerUsd?: number;
 }): Record<string, { SAR: number; USD: number }> {
   const { accounts, investments, investmentTransactions } = args;
+  const sarPerUsd = Number(args.sarPerUsd);
+  const fx = Number.isFinite(sarPerUsd) && sarPerUsd > 0 ? sarPerUsd : 3.75;
   const map: Record<string, { SAR: number; USD: number }> = {};
   const txCountByAccount: Record<string, number> = {};
 
@@ -33,7 +36,40 @@ export function computeAvailableCashByAccountMap(args: {
     const signed = deltaForInvestmentTrade(String(t.type ?? ''), amount);
     if (!Number.isFinite(signed) || signed === 0) return;
     const cur = inferInvestmentTransactionCurrency(t, accounts, investments);
-    map[accId][cur === 'USD' ? 'USD' : 'SAR'] += signed;
+    const bucket = map[accId];
+    if (cur === 'USD') {
+      if (signed >= 0) {
+        bucket.USD += signed;
+      } else {
+        let spendUsd = -signed;
+        const usdUsed = Math.min(bucket.USD, spendUsd);
+        bucket.USD -= usdUsed;
+        spendUsd -= usdUsed;
+        if (spendUsd > 0) {
+          const sarNeeded = spendUsd * fx;
+          const sarUsed = Math.min(bucket.SAR, sarNeeded);
+          bucket.SAR -= sarUsed;
+          spendUsd -= sarUsed / fx;
+        }
+        if (spendUsd > 0) bucket.USD -= spendUsd;
+      }
+    } else {
+      if (signed >= 0) {
+        bucket.SAR += signed;
+      } else {
+        let spendSar = -signed;
+        const sarUsed = Math.min(bucket.SAR, spendSar);
+        bucket.SAR -= sarUsed;
+        spendSar -= sarUsed;
+        if (spendSar > 0) {
+          const usdNeeded = spendSar / fx;
+          const usdUsed = Math.min(bucket.USD, usdNeeded);
+          bucket.USD -= usdUsed;
+          spendSar -= usdUsed * fx;
+        }
+        if (spendSar > 0) bucket.SAR -= spendSar;
+      }
+    }
     txCountByAccount[accId] = (txCountByAccount[accId] ?? 0) + 1;
   });
 

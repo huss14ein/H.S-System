@@ -25,7 +25,7 @@ function tx(partial: Partial<InvestmentTransaction> & Pick<InvestmentTransaction
 }
 
 describe('computeAvailableCashByAccountMap', () => {
-  it('keeps USD trade deductions in USD bucket (does not deduct SAR)', () => {
+  it('USD buy can consume SAR bucket by FX conversion when USD bucket is empty', () => {
     const map = computeAvailableCashByAccountMap({
       accounts: [invAccount({ currency: 'SAR' as any })],
       investments: [portfolioUSD()],
@@ -33,10 +33,28 @@ describe('computeAvailableCashByAccountMap', () => {
         tx({ id: 'd-sar', type: 'deposit', total: 10000, currency: 'SAR' }),
         tx({ id: 'b-usd', type: 'buy', total: 1000, currency: 'USD', symbol: 'AAPL', quantity: 5, price: 200 }),
       ],
+      sarPerUsd: 3.75,
     });
 
-    expect(map['inv-1'].SAR).toBeCloseTo(10000, 6);
-    expect(map['inv-1'].USD).toBeCloseTo(-1000, 6);
+    expect(map['inv-1'].SAR).toBeCloseTo(6250, 6);
+    expect(map['inv-1'].USD).toBeCloseTo(0, 6);
+  });
+
+  it('USD buy first consumes USD bucket when available', () => {
+    const map = computeAvailableCashByAccountMap({
+      accounts: [invAccount({ currency: 'SAR' as any })],
+      investments: [portfolioUSD()],
+      investmentTransactions: [
+        tx({ id: 'd-sar', type: 'deposit', total: 10000, currency: 'SAR' }),
+        tx({ id: 'd-usd', type: 'deposit', total: 600, currency: 'USD' }),
+        tx({ id: 'b-usd', type: 'buy', total: 1000, currency: 'USD', symbol: 'AAPL', quantity: 5, price: 200 }),
+      ],
+      sarPerUsd: 3.75,
+    });
+
+    // 600 USD consumed first, remaining 400 USD converted from SAR => 1,500 SAR.
+    expect(map['inv-1'].SAR).toBeCloseTo(8500, 6);
+    expect(map['inv-1'].USD).toBeCloseTo(0, 6);
   });
 
   it('falls back to account balance only when account has no investment ledger rows', () => {

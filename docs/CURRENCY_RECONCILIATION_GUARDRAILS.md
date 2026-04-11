@@ -3,7 +3,7 @@
 This project enforces the following rules for investment cash/KPI correctness:
 
 1. **Ledger cash is bucketed by transaction currency (`SAR` / `USD`) per investment account.**
-2. **Trade totals are posted to their own currency bucket** (e.g., USD buy reduces USD cash, not SAR cash).
+2. **Trade totals debit the trade-currency bucket first, then auto-convert from the other bucket at FX when needed** (e.g., USD buy uses USD cash first, then SAR converted at `sarPerUsd`).
 3. **KPI display conversion happens only at read/report time** using configured FX (`sarPerUsd`).
 4. **Legacy fallback to `accounts.balance` is allowed only when an account has zero investment ledger rows.**
 5. **Platform KPI reconciliation identities must hold**:

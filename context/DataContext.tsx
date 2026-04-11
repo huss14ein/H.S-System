@@ -3110,7 +3110,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         accounts: data?.accounts ?? [],
         investments: data?.investments ?? [],
         investmentTransactions: data?.investmentTransactions ?? [],
-    }), [data?.accounts, data?.investments, data?.investmentTransactions]);
+        sarPerUsd: resolveSarPerUsd(data as FinancialData),
+    }), [data?.accounts, data?.investments, data?.investmentTransactions, data]);
 
     const getAvailableCashForAccount = useCallback((accountId: string): { SAR: number; USD: number } => {
         const canonical = resolveCanonicalAccountId(accountId, data?.accounts ?? []) ?? accountId;
