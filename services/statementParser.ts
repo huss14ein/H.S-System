@@ -253,25 +253,59 @@ async function extractTextFromPDF(file: File): Promise<string> {
     // If direct text looks like binary, use byte-stream extraction.
     if (direct && /[A-Za-z]{3,}/.test(direct) && !/[\u0000-\u0008]/.test(direct)) return direct;
     const arrayBuffer = await file.arrayBuffer();
-    return extractLikelyTextFromPdfBytes(new Uint8Array(arrayBuffer));
+    const bytes = new Uint8Array(arrayBuffer);
+    const extracted = extractLikelyTextFromPdfBytes(bytes);
+    if (extracted.trim().length >= 64) return extracted;
+    const aiText = await extractTextFromPDFWithAI(bytes, file.type || 'application/pdf');
+    return aiText.trim() || extracted;
   } catch (error) {
     const arrayBuffer = await file.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
     const extracted = extractLikelyTextFromPdfBytes(bytes);
-    if (extracted.trim()) return extracted;
-    const base64 = btoa(String.fromCharCode(...bytes));
-    return await extractTextFromPDFWithAI(base64);
+    if (extracted.trim().length >= 64) return extracted;
+    const aiText = await extractTextFromPDFWithAI(bytes, file.type || 'application/pdf');
+    return aiText.trim() || extracted;
   }
 }
 
 /**
  * Extract text from PDF using AI (fallback)
  */
-async function extractTextFromPDFWithAI(_base64: string): Promise<string> {
-  // In a real implementation, you'd send this to a backend service
-  // that uses OCR or PDF parsing libraries
-  // For now, return empty and let the AI extraction handle it
-  return '';
+async function extractTextFromPDFWithAI(bytes: Uint8Array, mimeType: string): Promise<string> {
+  try {
+    const base64 = bytesToBase64(bytes);
+    const prompt = [
+      'Extract readable text from this PDF statement for downstream parser ingestion.',
+      'Return plain text only.',
+      'Preserve transaction-like row ordering whenever possible.',
+      'Do not summarize. Do not add commentary.',
+    ].join(' ');
+    const response = await invokeAI({
+      model: 'gemini-3-flash-preview',
+      contents: [{
+        role: 'user',
+        parts: [
+          { text: prompt },
+          { inlineData: { mimeType: mimeType || 'application/pdf', data: base64 } },
+        ],
+      }],
+    });
+    const responseText = response?.candidates?.[0]?.content?.parts?.[0]?.text || response?.text || '';
+    return String(responseText || '').trim();
+  } catch (error) {
+    console.warn('AI PDF text extraction fallback failed:', error);
+    return '';
+  }
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const chunk = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += chunk) {
+    const slice = bytes.subarray(i, i + chunk);
+    binary += String.fromCharCode(...slice);
+  }
+  return btoa(binary);
 }
 
 /**
