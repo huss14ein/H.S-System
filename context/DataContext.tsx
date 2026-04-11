@@ -1698,6 +1698,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (!isMissingColumnError(error) && String(error?.message || '').toLowerCase().indexOf('note') < 0) break;
         }
         if (savedWithoutNote) {
+            /**
+             * Always use app-side `recordTrade` path for investment↔cash transfers so transfer currency
+             * is persisted consistently (RPC path may omit currency on some DB schemas).
+             */
             try {
                 toast('Transaction saved, but split/memo was not stored: add column `note` on `transactions`. Run supabase/migrations/add_transactions_note.sql in Supabase SQL.', 'info');
             } catch {}
@@ -1776,61 +1780,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 return;
             }
             const linkedCashAccountId = links.length > 0 ? fromAccountId : undefined;
-            if (linkedCashAccountId) {
-                const rpcRes = await supabase.rpc('create_investment_cash_transfer_with_fee', {
-                    p_investment_account_id: toAccountId,
-                    p_cash_account_id: linkedCashAccountId,
-                    p_direction: 'cash_to_investment',
-                    p_amount: absAmount,
-                    p_fee_amount: fee,
-                    p_date: dateStr,
-                    p_cash_description: descOut,
-                    p_fee_description: `Transfer fee to ${toName}`,
-                    p_transfer_group_id: transferGroupId,
-                } as any);
-                const rpcError = rpcRes.error;
-                const rpcRows = (rpcRes.data as Array<{ investment_transaction_id?: string; cash_transaction_ids?: string[] }> | null) ?? null;
-                if (!rpcError && rpcRows && rpcRows[0]) {
-                    const invId = rpcRows[0].investment_transaction_id;
-                    const cashIds = rpcRows[0].cash_transaction_ids ?? [];
-                    if (invId) {
-                        const invFetch = await supabase.from('investment_transactions').select('*').eq('id', invId).single();
-                        if (!invFetch.error && invFetch.data) {
-                            const normalizedInv = normalizeInvestmentTransaction(invFetch.data);
-                            setData(prev => ({ ...prev, investmentTransactions: [normalizedInv, ...prev.investmentTransactions] }));
-                            await applyInvestmentAccountDeltaForTrade(
-                                normalizedInv.accountId,
-                                deltaForInvestmentTrade(normalizedInv.type, Number(normalizedInv.total) || 0),
-                            );
-                        }
-                    }
-                    if (cashIds.length > 0) {
-                        const cashFetch = await supabase.from('transactions').select('*').in('id', cashIds);
-                        const txRows = (cashFetch.data ?? []).map((r: any) => normalizeTransaction(r))
-                            .sort((a, b) => {
-                                const rank = (v: Transaction) => (v.transferRole === 'principal_out' ? 0 : v.transferRole === 'fee' ? 1 : 2);
-                                return rank(a) - rank(b);
-                            });
-                        if (txRows.length > 0) {
-                            setData(prev => ({ ...prev, transactions: [...txRows, ...prev.transactions] }));
-                            for (const row of txRows) {
-                                await syncSharedBudgetTransactionMirror(row as any);
-                                auditChangeLog({
-                                    action: 'create',
-                                    entity: 'transaction',
-                                    entityId: row.id,
-                                    summary: `${row.type}: ${String(row.description ?? '').slice(0, 120)} · ${row.amount}`,
-                                    userId: auth.user.id,
-                                });
-                                await applyLedgerAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
-                            }
-                        }
-                    }
-                    return;
-                }
-                const missingRpc = rpcError?.code === 'PGRST202' || (String(rpcError?.message || '').toLowerCase().includes('function') && String(rpcError?.message || '').toLowerCase().includes('does not exist'));
-                if (rpcError && !missingRpc) throw rpcError;
-            }
+            /**
+             * Use app-side `recordTrade` so investment cash transfer rows carry an explicit currency
+             * and stay consistent with ledger calculations.
+             */
             try {
                 await recordTrade({
                     type: 'deposit',
@@ -1883,61 +1836,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 return;
             }
             const linkedCashAccountId = links.length > 0 ? toAccountId : undefined;
-            if (linkedCashAccountId) {
-                const rpcRes = await supabase.rpc('create_investment_cash_transfer_with_fee', {
-                    p_investment_account_id: fromAccountId,
-                    p_cash_account_id: linkedCashAccountId,
-                    p_direction: 'investment_to_cash',
-                    p_amount: absAmount,
-                    p_fee_amount: fee,
-                    p_date: dateStr,
-                    p_cash_description: descIn,
-                    p_fee_description: `Transfer fee from ${fromName}`,
-                    p_transfer_group_id: transferGroupId,
-                } as any);
-                const rpcError = rpcRes.error;
-                const rpcRows = (rpcRes.data as Array<{ investment_transaction_id?: string; cash_transaction_ids?: string[] }> | null) ?? null;
-                if (!rpcError && rpcRows && rpcRows[0]) {
-                    const invId = rpcRows[0].investment_transaction_id;
-                    const cashIds = rpcRows[0].cash_transaction_ids ?? [];
-                    if (invId) {
-                        const invFetch = await supabase.from('investment_transactions').select('*').eq('id', invId).single();
-                        if (!invFetch.error && invFetch.data) {
-                            const normalizedInv = normalizeInvestmentTransaction(invFetch.data);
-                            setData(prev => ({ ...prev, investmentTransactions: [normalizedInv, ...prev.investmentTransactions] }));
-                            await applyInvestmentAccountDeltaForTrade(
-                                normalizedInv.accountId,
-                                deltaForInvestmentTrade(normalizedInv.type, Number(normalizedInv.total) || 0),
-                            );
-                        }
-                    }
-                    if (cashIds.length > 0) {
-                        const cashFetch = await supabase.from('transactions').select('*').in('id', cashIds);
-                        const txRows = (cashFetch.data ?? []).map((r: any) => normalizeTransaction(r))
-                            .sort((a, b) => {
-                                const rank = (v: Transaction) => (v.transferRole === 'principal_in' ? 0 : v.transferRole === 'fee' ? 1 : 2);
-                                return rank(a) - rank(b);
-                            });
-                        if (txRows.length > 0) {
-                            setData(prev => ({ ...prev, transactions: [...txRows, ...prev.transactions] }));
-                            for (const row of txRows) {
-                                await syncSharedBudgetTransactionMirror(row as any);
-                                auditChangeLog({
-                                    action: 'create',
-                                    entity: 'transaction',
-                                    entityId: row.id,
-                                    summary: `${row.type}: ${String(row.description ?? '').slice(0, 120)} · ${row.amount}`,
-                                    userId: auth.user.id,
-                                });
-                                await applyLedgerAccountDeltaForTransaction(row.accountId, Number(row.amount) || 0);
-                            }
-                        }
-                    }
-                    return;
-                }
-                const missingRpc = rpcError?.code === 'PGRST202' || (String(rpcError?.message || '').toLowerCase().includes('function') && String(rpcError?.message || '').toLowerCase().includes('does not exist'));
-                if (rpcError && !missingRpc) throw rpcError;
-            }
+            /**
+             * Use app-side `recordTrade` so investment cash transfer rows carry an explicit currency
+             * and stay consistent with ledger calculations.
+             */
             try {
                 await recordTrade({
                     type: 'withdrawal',
