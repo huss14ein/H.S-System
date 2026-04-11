@@ -875,7 +875,7 @@ export function extractInvestmentTransactionsFromAwaedTable(
     const buyMatch = description.match(/Purchase of Security\s+([\d.,]+)\s+([A-Z0-9.\-]+)\s+@\s*(USD|SAR)\s*([\d.,]+)/i);
     if (buyMatch) {
       const quantity = parseNumber(buyMatch[1]);
-      const symbol = String(buyMatch[2] || '').toUpperCase();
+      const symbol = normalizeSymbol(buyMatch[2]);
       const quoteCurrency = String(buyMatch[3] || 'USD').toUpperCase() === 'USD' ? 'USD' : 'SAR';
       const quotedPrice = parseNumber(buyMatch[4]);
       const total = amount > 0 ? amount : Math.max(0, quantity * quotedPrice);
@@ -897,7 +897,7 @@ export function extractInvestmentTransactionsFromAwaedTable(
     const sellMatch = description.match(/Sale of Security\s+([\d.,]+)\s+([A-Z0-9.\-]+)\s+@\s*(USD|SAR)\s*([\d.,]+)/i);
     if (!parsed && sellMatch) {
       const quantity = parseNumber(sellMatch[1]);
-      const symbol = String(sellMatch[2] || '').toUpperCase();
+      const symbol = normalizeSymbol(sellMatch[2]);
       const quoteCurrency = String(sellMatch[3] || 'USD').toUpperCase() === 'USD' ? 'USD' : 'SAR';
       const quotedPrice = parseNumber(sellMatch[4]);
       const total = amount > 0 ? amount : Math.max(0, quantity * quotedPrice);
@@ -921,7 +921,7 @@ export function extractInvestmentTransactionsFromAwaedTable(
       const pxCur = description.match(/@\s*(USD|SAR)\s*([\d.,]+)/i);
       if (qtySym && pxCur) {
         const quantity = parseNumber(qtySym[1]);
-        const symbol = String(qtySym[2] || '').toUpperCase();
+        const symbol = normalizeSymbol(qtySym[2]);
         const quoteCurrency = String(pxCur[1] || 'USD').toUpperCase() === 'USD' ? 'USD' : 'SAR';
         const quotedPrice = parseNumber(pxCur[2]);
         const total = amount > 0 ? amount : Math.max(0, quantity * quotedPrice);
@@ -1241,6 +1241,11 @@ function parseNumber(v: unknown): number {
   const raw = String(v ?? '').replace(/,/g, '').trim();
   const n = Number(raw);
   return Number.isFinite(n) ? n : 0;
+}
+
+function normalizeSymbol(raw: unknown): string {
+  const v = String(raw ?? '').toUpperCase().trim();
+  return v.replace(/[^A-Z0-9.\-]/g, '');
 }
 
 function inferStatementCurrency(text: string): 'SAR' | 'USD' | undefined {
