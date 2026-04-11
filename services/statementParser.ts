@@ -25,6 +25,19 @@ export interface ValidationResult {
   };
 }
 
+export interface TradingParseDebug {
+  fileType: string;
+  extractedTextLength: number;
+  parserMatches: {
+    structured: number;
+    tokenStream: number;
+    heuristic: number;
+    ai: number;
+    totalDeduped: number;
+  };
+  sampleText: string;
+}
+
 /**
  * Parse bank statement from uploaded file
  */
@@ -146,7 +159,7 @@ export async function parseSMSTransactions(
 export async function parseTradingStatement(
   file: File,
   accountId: string
-): Promise<{ transactions: InvestmentTransaction[]; confidence: number; errors?: string[]; warnings?: string[]; validation?: ValidationResult }> {
+): Promise<{ transactions: InvestmentTransaction[]; confidence: number; errors?: string[]; warnings?: string[]; validation?: ValidationResult; debug?: TradingParseDebug }> {
   try {
     const fileType = await detectFileType(file);
     let text = '';
@@ -187,6 +200,18 @@ export async function parseTradingStatement(
       ...heuristicRows,
       ...aiTransactions,
     ]);
+    const debug: TradingParseDebug = {
+      fileType,
+      extractedTextLength: text.length,
+      parserMatches: {
+        structured: parsedFromRows.length,
+        tokenStream: parsedFromTokenStream.length,
+        heuristic: heuristicRows.length,
+        ai: aiTransactions.length,
+        totalDeduped: transactions.length,
+      },
+      sampleText: text.replace(/\s+/g, ' ').trim().slice(0, 320),
+    };
     
     // Validate extracted transactions
     const validation = validateTransactions([], transactions);
@@ -206,7 +231,8 @@ export async function parseTradingStatement(
         ...structuredWarnings,
         ...(transactions.length === 0 ? ['No investment transactions were recognized. If this is a text statement, ensure each row includes date, type, symbol, quantity, and price/amount.'] : []),
       ],
-      validation
+      validation,
+      debug,
     };
   } catch (error) {
     console.error('Error parsing trading statement:', error);

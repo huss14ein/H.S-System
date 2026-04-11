@@ -7,7 +7,7 @@ import SectionCard from '../components/SectionCard';
 import Modal from '../components/Modal';
 import { DocumentArrowUpIcon, CheckCircleIcon, ClockIcon } from '../components/icons';
 import { StatementIcons } from '../constants/statementIcons';
-import { parseBankStatement, parseSMSTransactions, parseTradingStatement, validateFile } from '../services/statementParser';
+import { parseBankStatement, parseSMSTransactions, parseTradingStatement, validateFile, type TradingParseDebug } from '../services/statementParser';
 import { Transaction, InvestmentTransaction, Page } from '../types';
 import InfoHint from '../components/InfoHint';
 import { findDuplicateTransactions } from '../services/dataQuality';
@@ -45,6 +45,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     dateRange: { start: string; end: string } | null;
     amountRange: { min: number; max: number; total: number } | null;
   } | null>(null);
+  const [tradingParseDebug, setTradingParseDebug] = useState<TradingParseDebug | null>(null);
   const [currentStatementId, setCurrentStatementId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -157,6 +158,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
   useEffect(() => {
     setUploadedFile(null);
     setProcessingError(null);
+    setTradingParseDebug(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (activeTab === 'trading') {
       if (selectedAccount && !investmentAccounts.some(a => a.id === selectedAccount)) setSelectedAccount('');
@@ -185,6 +187,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     setImportResultMessage(null);
     setImportResultMessage(null);
     setParseStats(null);
+    setTradingParseDebug(null);
     setIsProcessingFile(true);
     setProcessingProgress(10);
 
@@ -210,6 +213,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         if (result.warnings) setValidationWarnings(result.warnings);
         if (result.errors) setValidationErrors(result.errors);
         setParseStats(result.validation?.statistics ?? null);
+        setTradingParseDebug(result.debug ?? null);
       } else {
         const result = await parseBankStatement(file, selectedAccount);
         transactions = enrichTransactionsWithBudgetMapping(result.transactions);
@@ -217,6 +221,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         if (result.warnings) setValidationWarnings(result.warnings);
         if (result.errors) setValidationErrors(result.errors);
         setParseStats(result.validation?.statistics ?? null);
+        setTradingParseDebug(null);
       }
       
       setProcessingProgress(80);
@@ -966,6 +971,28 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                   </div>
                 </div>
               </div>
+            )}
+            {activeTab === 'trading' && tradingParseDebug && (
+              <details className="p-4 bg-indigo-50 border border-indigo-200 rounded-lg">
+                <summary className="text-sm font-semibold text-indigo-800 cursor-pointer">
+                  Parser diagnostics (for troubleshooting)
+                </summary>
+                <div className="mt-3 grid grid-cols-2 md:grid-cols-3 gap-2 text-xs text-indigo-900">
+                  <div>Detected file type: {tradingParseDebug.fileType}</div>
+                  <div>Extracted text length: {tradingParseDebug.extractedTextLength}</div>
+                  <div>Structured matches: {tradingParseDebug.parserMatches.structured}</div>
+                  <div>Token-stream matches: {tradingParseDebug.parserMatches.tokenStream}</div>
+                  <div>Heuristic matches: {tradingParseDebug.parserMatches.heuristic}</div>
+                  <div>AI matches: {tradingParseDebug.parserMatches.ai}</div>
+                  <div className="md:col-span-3">Final deduped rows: {tradingParseDebug.parserMatches.totalDeduped}</div>
+                  <div className="md:col-span-3">
+                    <p className="font-medium mb-1">Extracted text preview:</p>
+                    <p className="rounded border border-indigo-200 bg-white p-2 break-words">
+                      {tradingParseDebug.sampleText || 'No text preview available'}
+                    </p>
+                  </div>
+                </div>
+              </details>
             )}
 
             {importResultMessage && (
