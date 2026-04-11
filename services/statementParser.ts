@@ -155,6 +155,8 @@ export async function parseTradingStatement(
       text = await extractTextFromPDF(file);
     } else if (fileType === 'csv') {
       text = await parseCSV(file);
+    } else if (fileType === 'ofx' || fileType === 'qfx' || fileType === 'txt') {
+      text = await parseCSV(file);
     } else if (fileType === 'xlsx' || fileType === 'xls') {
       text = await parseExcel(file);
     } else {
@@ -168,6 +170,11 @@ export async function parseTradingStatement(
       statementCurrency,
       warnings: structuredWarnings,
     });
+    // 1.5 pass: token-stream parser for flattened PDF extraction where line breaks are missing.
+    const parsedFromTokenStream = extractInvestmentTransactionsFromTokenStream(text, accountId || '', {
+      statementCurrency,
+      warnings: structuredWarnings,
+    });
     // Second pass: AI extraction as fallback/enrichment.
     const heuristicRows = extractInvestmentTransactionsFromHeuristicText(text, accountId || '', {
       statementCurrency,
@@ -176,6 +183,7 @@ export async function parseTradingStatement(
     const aiTransactions = await extractInvestmentTransactionsFromText(text, accountId || '');
     const transactions = dedupeInvestmentTransactions([
       ...parsedFromRows,
+      ...parsedFromTokenStream,
       ...heuristicRows,
       ...aiTransactions,
     ]);
@@ -190,7 +198,7 @@ export async function parseTradingStatement(
                transactions[i].quantity !== undefined && transactions[i].price !== undefined;
       }),
       confidence: validation.isValid
-        ? (parsedFromRows.length > 0 || heuristicRows.length > 0 ? 0.92 : 0.80)
+        ? (parsedFromRows.length > 0 || parsedFromTokenStream.length > 0 || heuristicRows.length > 0 ? 0.92 : 0.80)
         : Math.max(0, 0.80 - (validation.errors.length * 0.1)),
       errors: validation.errors,
       warnings: [
@@ -852,6 +860,100 @@ export function extractInvestmentTransactionsFromHeuristicText(
   }
   if (out.length > 0 && opts?.warnings) {
     opts.warnings.push('Some investment rows were parsed using heuristic fallback because structured format detection was weak.');
+  }
+  return out;
+}
+
+export function extractInvestmentTransactionsFromTokenStream(
+  text: string,
+  accountId: string,
+  opts?: { statementCurrency?: 'SAR' | 'USD'; warnings?: string[] },
+): InvestmentTransaction[] {
+  const compact = String(text || '')
+    .replace(/\r?\n/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!compact) return [];
+
+  const out: InvestmentTransaction[] = [];
+  const seen = new Set<string>();
+  const push = (tx: InvestmentTransaction) => {
+    if (!(tx.total > 0)) return;
+    const key = `${tx.date}|${tx.type}|${tx.symbol}|${tx.quantity}|${tx.price}|${tx.total}|${tx.currency}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(tx);
+  };
+
+  const currencyByText = (row: string): 'USD' | 'SAR' =>
+    (/\bUSD\b|\$/i.test(row) ? 'USD' : (opts?.statementCurrency ?? 'SAR'));
+
+  const refPattern = '[A-Za-z0-9-]+(?:\\s+[A-Za-z0-9-]+)?';
+  const buySellRegex = new RegExp(`(\\d{2}\\/\\d{2}\\/\\d{4}(?:\\s+\\d{2}:\\d{2}:\\d{2})?)\\s+${refPattern}\\s+(Purchase of Security|Sale of Security)\\s+([\\d.,]+)\\s+([A-Z0-9.\\-]+)\\s+@\\s*(USD|SAR)\\s*([\\d.,]+)\\s+([\\d,]+(?:\\.\\d+)?)`, 'gi');
+  let m: RegExpExecArray | null;
+  while ((m = buySellRegex.exec(compact)) !== null) {
+    const date = formatLocalYmd(parseDate(String(m[1]).split(' ')[0]));
+    const type = /sale/i.test(String(m[2])) ? 'sell' : 'buy';
+    const quantity = parseNumber(m[3]);
+    const symbol = String(m[4] || '').toUpperCase();
+    const quoteCurrency = String(m[5] || 'SAR').toUpperCase() === 'USD' ? 'USD' : 'SAR';
+    const quotedPrice = parseNumber(m[6]);
+    const amount = parseNumber(m[7]);
+    let currency: 'USD' | 'SAR' = quoteCurrency;
+    let price = quotedPrice;
+    if (opts?.statementCurrency && opts.statementCurrency !== quoteCurrency && quantity > 0 && amount > 0) {
+      currency = opts.statementCurrency;
+      price = amount / quantity;
+    }
+    push({
+      id: `stmt-c-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      accountId,
+      date,
+      type: type as 'buy' | 'sell',
+      symbol,
+      quantity,
+      price,
+      total: amount,
+      currency,
+    });
+  }
+
+  const depositRegex = new RegExp(`(\\d{2}\\/\\d{2}\\/\\d{4}(?:\\s+\\d{2}:\\d{2}:\\d{2})?)\\s+${refPattern}\\s+Cash Deposit\\s*-\\s*Wire In\\s+([\\d,]+(?:\\.\\d+)?)`, 'gi');
+  while ((m = depositRegex.exec(compact)) !== null) {
+    const date = formatLocalYmd(parseDate(String(m[1]).split(' ')[0]));
+    const total = parseNumber(m[2]);
+    push({
+      id: `stmt-c-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      accountId,
+      date,
+      type: 'deposit',
+      symbol: 'CASH',
+      quantity: 0,
+      price: 0,
+      total,
+      currency: currencyByText(m[0]),
+    });
+  }
+
+  const withdrawalRegex = new RegExp(`(\\d{2}\\/\\d{2}\\/\\d{4}(?:\\s+\\d{2}:\\d{2}:\\d{2})?)\\s+${refPattern}\\s+Cash Withdrawal\\s*-\\s*Wire Out\\s+([\\d,]+(?:\\.\\d+)?)`, 'gi');
+  while ((m = withdrawalRegex.exec(compact)) !== null) {
+    const date = formatLocalYmd(parseDate(String(m[1]).split(' ')[0]));
+    const total = parseNumber(m[2]);
+    push({
+      id: `stmt-c-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      accountId,
+      date,
+      type: 'withdrawal',
+      symbol: 'CASH',
+      quantity: 0,
+      price: 0,
+      total,
+      currency: currencyByText(m[0]),
+    });
+  }
+
+  if (out.length > 0 && opts?.warnings) {
+    opts.warnings.push('Parsed statement rows from compact PDF token stream (line breaks were missing).');
   }
   return out;
 }

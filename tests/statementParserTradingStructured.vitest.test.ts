@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractInvestmentTransactionsFromStructuredText, extractInvestmentTransactionsFromHeuristicText } from '../services/statementParser';
+import { extractInvestmentTransactionsFromStructuredText, extractInvestmentTransactionsFromHeuristicText, extractInvestmentTransactionsFromTokenStream } from '../services/statementParser';
 
 describe('structured trading statement parser', () => {
   it('parses purchase/sale and wire-in rows from broker-style table lines', () => {
@@ -57,5 +57,24 @@ describe('structured trading statement parser', () => {
     expect(rows[2].type).toBe('sell');
     expect(rows[0].symbol).toBe('PTLO.US');
     expect(rows[0].currency).toBe('USD');
+  });
+
+  it('parses flattened PDF token streams where row line-breaks are missing', () => {
+    const flattened = [
+      'Transaction Statement (SAR)',
+      '07/01/2026 23:42:26 Ordf 41458367 Purchase of Security 30.00 PTLO.US @ USD 4.48 504.00000 2.69390',
+      '13/01/2026 19:21:55 J2026-42097720 Cash Deposit - Wire In 3,000.00000 3,002.69390',
+      '23/01/2026 18:10:21 Ordf 43694695 Sale of Security 1.00 NVO.US @ USD 64.00 240.00000 240.76890',
+    ].join(' ');
+
+    const rows = extractInvestmentTransactionsFromTokenStream(flattened, 'acc-1', { statementCurrency: 'SAR' });
+    expect(rows.length).toBe(3);
+    const buy = rows.find((r) => r.type === 'buy');
+    const deposit = rows.find((r) => r.type === 'deposit');
+    const sell = rows.find((r) => r.type === 'sell');
+    expect(buy?.symbol).toBe('PTLO.US');
+    expect(buy?.currency).toBe('SAR');
+    expect(deposit?.total).toBeCloseTo(3000);
+    expect(sell?.symbol).toBe('NVO.US');
   });
 });
