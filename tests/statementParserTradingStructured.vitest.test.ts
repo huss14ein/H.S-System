@@ -1,0 +1,32 @@
+import { describe, it, expect } from 'vitest';
+import { extractInvestmentTransactionsFromStructuredText } from '../services/statementParser';
+
+describe('structured trading statement parser', () => {
+  it('parses purchase/sale and wire-in rows from broker-style table lines', () => {
+    const text = [
+      '07/01/2026 23:42:26  Ordf 41458367  Purchase of Security 30.00 PTLO.US @ USD 4.48  504.00000    2.69390',
+      '13/01/2026 19:21:55  J2026-42097720  Cash Deposit - Wire In    3,000.00000   3,002.69390',
+      '23/01/2026 18:10:21  Ordf 43694695  Sale of Security 1.00 NVO.US @ USD 64.00    240.00000   240.76890',
+    ].join('\n');
+
+    const rows = extractInvestmentTransactionsFromStructuredText(text, 'acc-1');
+    expect(rows.length).toBe(3);
+
+    const buy = rows.find((r) => r.type === 'buy');
+    expect(buy?.symbol).toBe('PTLO.US');
+    expect(buy?.quantity).toBeCloseTo(30);
+    expect(buy?.price).toBeCloseTo(4.48);
+    expect(buy?.currency).toBe('USD');
+    expect(buy?.total).toBeCloseTo(504);
+
+    const dep = rows.find((r) => r.type === 'deposit');
+    expect(dep?.symbol).toBe('CASH');
+    expect(dep?.total).toBeCloseTo(3000);
+
+    const sell = rows.find((r) => r.type === 'sell');
+    expect(sell?.symbol).toBe('NVO.US');
+    expect(sell?.quantity).toBeCloseTo(1);
+    expect(sell?.price).toBeCloseTo(64);
+    expect(sell?.currency).toBe('USD');
+  });
+});
