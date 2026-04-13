@@ -55,8 +55,8 @@ export async function parseBankStatement(
       text = await extractTextFromPDF(file);
     } else if (fileType === 'csv') {
       text = await parseCSV(file);
-    } else if (fileType === 'ofx' || fileType === 'qfx') {
-      // OFX/QFX are text-based; parse as text and let extractor normalize rows.
+    } else if (fileType === 'ofx' || fileType === 'qfx' || fileType === 'txt') {
+      // OFX/QFX/TXT are text-based; parse as text and let extractor normalize rows.
       text = await parseCSV(file);
     } else if (fileType === 'xlsx' || fileType === 'xls') {
       text = await parseExcel(file);
