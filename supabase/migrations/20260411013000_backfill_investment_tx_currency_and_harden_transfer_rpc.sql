@@ -16,13 +16,27 @@ where (it.currency is null or it.currency not in ('SAR', 'USD'))
   and a.id = it.linked_cash_account_id
   and a.currency in ('SAR', 'USD');
 
--- 2) For remaining rows, infer from row-level portfolio currency.
-update public.investment_transactions it
-set currency = p.currency
-from public.investment_portfolios p
-where (it.currency is null or it.currency not in ('SAR', 'USD'))
-  and p.id = it.portfolio_id
-  and p.currency in ('SAR', 'USD');
+-- 2) For remaining rows, infer from row-level portfolio currency when column exists.
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'investment_transactions'
+      and column_name = 'portfolio_id'
+  ) then
+    execute $sql$
+      update public.investment_transactions it
+      set currency = p.currency
+      from public.investment_portfolios p
+      where (it.currency is null or it.currency not in ('SAR', 'USD'))
+        and p.id = it.portfolio_id
+        and p.currency in ('SAR', 'USD')
+    $sql$;
+  end if;
+end
+$$;
 
 -- 3) For still-remaining rows, infer from account's portfolio currency when unique.
 with account_currency as (
