@@ -286,7 +286,7 @@ export interface InvestmentTransaction {
   /** When present (e.g. DB column), ties the row to a portfolio for scoping. */
   portfolioId?: string;
   date: string;
-  type: 'buy' | 'sell' | 'dividend' | 'deposit' | 'withdrawal';
+  type: 'buy' | 'sell' | 'dividend' | 'deposit' | 'withdrawal' | 'fee' | 'vat';
   symbol: string;
   quantity: number;
   price: number;

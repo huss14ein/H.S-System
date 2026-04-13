@@ -7,14 +7,12 @@ import SectionCard from '../components/SectionCard';
 import Modal from '../components/Modal';
 import { DocumentArrowUpIcon, CheckCircleIcon, ClockIcon } from '../components/icons';
 import { StatementIcons } from '../constants/statementIcons';
-import { parseBankStatement, parseSMSTransactions, parseTradingStatement, validateFile } from '../services/statementParser';
+import { parseBankStatement, parseSMSTransactions, parseTradingStatement, validateFile, type TradingParseDebug } from '../services/statementParser';
 import { Transaction, InvestmentTransaction, Page } from '../types';
 import InfoHint from '../components/InfoHint';
 import { findDuplicateTransactions } from '../services/dataQuality';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import AIAdvisor from '../components/AIAdvisor';
-import { useCompanyNames } from '../hooks/useSymbolCompanyName';
-import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 
 interface StatementUploadProps {
   setActivePage?: (page: Page) => void;
@@ -47,21 +45,9 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     dateRange: { start: string; end: string } | null;
     amountRange: { min: number; max: number; total: number } | null;
   } | null>(null);
+  const [tradingParseDebug, setTradingParseDebug] = useState<TradingParseDebug | null>(null);
   const [currentStatementId, setCurrentStatementId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const stmtInvSymbols = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          extractedInvestmentTransactions
-            .map((tx) => (tx.symbol || '').trim())
-            .filter((s) => s.length >= 2 && s !== 'CASH'),
-        ),
-      ),
-    [extractedInvestmentTransactions],
-  );
-  const { names: stmtCompanyNames } = useCompanyNames(stmtInvSymbols);
 
   const bankAccounts = (data?.accounts ?? []).filter(a => a.type !== 'Investment');
   const investmentAccounts = (data?.accounts ?? []).filter(a => a.type === 'Investment');
@@ -172,6 +158,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
   useEffect(() => {
     setUploadedFile(null);
     setProcessingError(null);
+    setTradingParseDebug(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (activeTab === 'trading') {
       if (selectedAccount && !investmentAccounts.some(a => a.id === selectedAccount)) setSelectedAccount('');
@@ -200,6 +187,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     setImportResultMessage(null);
     setImportResultMessage(null);
     setParseStats(null);
+    setTradingParseDebug(null);
     setIsProcessingFile(true);
     setProcessingProgress(10);
 
@@ -225,6 +213,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         if (result.warnings) setValidationWarnings(result.warnings);
         if (result.errors) setValidationErrors(result.errors);
         setParseStats(result.validation?.statistics ?? null);
+        setTradingParseDebug(result.debug ?? null);
       } else {
         const result = await parseBankStatement(file, selectedAccount);
         transactions = enrichTransactionsWithBudgetMapping(result.transactions);
@@ -232,6 +221,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         if (result.warnings) setValidationWarnings(result.warnings);
         if (result.errors) setValidationErrors(result.errors);
         setParseStats(result.validation?.statistics ?? null);
+        setTradingParseDebug(null);
       }
       
       setProcessingProgress(80);
@@ -404,6 +394,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
   const handleApproveTransactions = async () => {
     try {
       setImportResultMessage(null);
+      const parserParsedCount = extractedInvestmentTransactions.length;
       const selectedBankRows = extractedTransactions
         .map((tx, idx) => ({ tx, idx }))
         .filter(({ idx }) => selectedTransactions.has(idx));
@@ -421,8 +412,45 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       let processed = 0;
 
       const importErrors: string[] = [];
+      const rejectionReasons: string[] = [];
       const succeededIndices = new Set<number>();
       const failedIndices = new Set<number>();
+      let insertedTradeTransactions = 0;
+      let insertedCashLedgerRows = 0;
+      let recomputeExecuted = false;
+      let finalCashDelta = 0;
+      let finalPositionDelta = 0;
+
+      const normalizedInvestmentRows = selectedInvestmentRows.map(({ tx, idx, absoluteIdx }) => ({
+        absoluteIdx,
+        displayIdx: idx + 1,
+        tx: {
+          ...tx,
+          date: String(tx.date || '').slice(0, 10),
+          symbol: String(tx.symbol || '').trim().toUpperCase(),
+          quantity: Number(tx.quantity) || 0,
+          price: Number(tx.price) || 0,
+          total: Number(tx.total) || 0,
+          currency: tx.currency === 'USD' ? 'USD' : 'SAR',
+        } as InvestmentTransaction,
+      }));
+      const duplicateInvestmentCount = normalizedInvestmentRows.filter(({ absoluteIdx }) => duplicateTransactions.has(absoluteIdx)).length;
+      const rejectedInvestmentRows = normalizedInvestmentRows.filter(({ tx, displayIdx }) => {
+        const reasons: string[] = [];
+        if (!tx.date) reasons.push('missing date');
+        if (!tx.symbol) reasons.push('missing symbol');
+        if (!(tx.total > 0)) reasons.push('total must be > 0');
+        if ((tx.type === 'buy' || tx.type === 'sell') && !(tx.quantity > 0)) reasons.push('quantity must be > 0 for buy/sell');
+        if ((tx.type === 'buy' || tx.type === 'sell') && !(tx.price > 0)) reasons.push('price must be > 0 for buy/sell');
+        if (!['buy', 'sell', 'deposit', 'withdrawal', 'dividend', 'fee', 'vat'].includes(String(tx.type))) reasons.push('unsupported type');
+        if (reasons.length > 0) {
+          rejectionReasons.push(`Investment row #${displayIdx}: ${reasons.join(', ')}`);
+          return true;
+        }
+        return false;
+      });
+      const validatedInvestmentRows = normalizedInvestmentRows.filter((row) => !rejectedInvestmentRows.some((r) => r.absoluteIdx === row.absoluteIdx));
+
       const bankTasks: Array<() => Promise<void>> = [
         ...selectedBankRows.map(({ tx, idx }, displayIdx) => async () => {
           try {
@@ -459,11 +487,11 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         }),
       ];
       const investmentTasks: Array<() => Promise<void>> = [
-        ...selectedInvestmentRows.map(({ tx, absoluteIdx }, displayIdx) => async () => {
+        ...validatedInvestmentRows.map(({ tx, absoluteIdx, displayIdx }, taskIdx) => async () => {
           try {
             for (let attempt = 0; attempt < 2; attempt++) {
               try {
-                await recordTrade({
+                const result = await recordTrade({
                   accountId: tx.accountId,
                   date: tx.date,
                   type: tx.type,
@@ -473,6 +501,11 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                   total: tx.total,
                   currency: tx.currency,
                 });
+                insertedTradeTransactions += Number(result?.insertedTradeTransactions || 0);
+                insertedCashLedgerRows += Number(result?.insertedCashLedgerRows || 0);
+                if (result?.recomputed) recomputeExecuted = true;
+                finalCashDelta += Number(result?.cashDelta || 0);
+                finalPositionDelta += Number(result?.positionDelta || 0);
                 succeededIndices.add(absoluteIdx);
                 failedIndices.delete(absoluteIdx);
                 return;
@@ -482,7 +515,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
             }
           } catch (e) {
             failedIndices.add(absoluteIdx);
-            importErrors.push(`Investment tx #${displayIdx + 1}: ${e instanceof Error ? e.message : String(e || 'Unknown error')}`);
+            importErrors.push(`Investment tx #${taskIdx + 1} (row ${displayIdx}): ${e instanceof Error ? e.message : String(e || 'Unknown error')}`);
           } finally {
             processed++;
             setProcessingProgress((processed / total) * 100);
@@ -498,11 +531,37 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         await run();
       }
 
+      const importSummary = {
+        parsed: parserParsedCount,
+        normalized: normalizedInvestmentRows.length,
+        rejected: rejectedInvestmentRows.length,
+        duplicate: duplicateInvestmentCount,
+        validated: validatedInvestmentRows.length,
+        imported: insertedTradeTransactions,
+        cashLedgerInserted: insertedCashLedgerRows,
+        recomputed: recomputeExecuted,
+        finalCashDelta,
+        finalPositionDelta,
+      };
+      const selectedInvestmentCount = selectedInvestmentRows.length;
+      if (selectedInvestmentCount > 0 && validatedInvestmentRows.length > 0 && insertedTradeTransactions === 0) {
+        throw new Error(`Import failed: selected ${selectedInvestmentCount} investment rows and validated ${validatedInvestmentRows.length}, but inserted 0 trades. ${[...rejectionReasons, ...importErrors].slice(0, 3).join(' | ') || 'All rows were dropped/failed.'}`);
+      }
+      const validatedCashImpact = validatedInvestmentRows.filter(({ tx }) => ['buy', 'sell', 'deposit', 'withdrawal', 'dividend', 'fee', 'vat'].includes(tx.type)).length;
+      if (validatedCashImpact > 0 && insertedCashLedgerRows === 0) {
+        throw new Error('Import failed: cash-impact rows were validated but 0 cash-ledger rows were inserted.');
+      }
+      if (selectedInvestmentCount > 0 && normalizedInvestmentRows.length > 0 && validatedInvestmentRows.length === 0) {
+        throw new Error(`Import failed: all parsed rows were dropped during validation. ${rejectionReasons.slice(0, 3).join(' | ')}`);
+      }
+
       const importedCount = succeededIndices.size;
       const failedCount = failedIndices.size;
 
       if (failedCount === 0) {
-        alert(`Successfully imported ${importedCount} transaction(s)!`);
+        alert(
+          `Successfully imported ${importedCount} transaction(s).\nSummary: parsed=${importSummary.parsed}, normalized=${importSummary.normalized}, duplicates=${importSummary.duplicate}, rejected=${importSummary.rejected}, imported=${importSummary.imported}, cashLedgerInserted=${importSummary.cashLedgerInserted}, recomputed=${importSummary.recomputed ? 'yes' : 'no'}, cashDelta=${importSummary.finalCashDelta}, positionDelta=${importSummary.finalPositionDelta}.`,
+        );
         setIsReviewModalOpen(false);
         setExtractedTransactions([]);
         setExtractedInvestmentTransactions([]);
@@ -522,7 +581,9 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       } else {
         setSelectedTransactions(new Set(failedIndices));
         setProcessingProgress(0);
-        setImportResultMessage(`Imported ${importedCount} transaction(s). ${failedCount} failed — review and retry selected rows.`);
+        setImportResultMessage(
+          `Imported ${importedCount} transaction(s). ${failedCount} failed. Summary: parsed=${importSummary.parsed}, normalized=${importSummary.normalized}, duplicates=${importSummary.duplicate}, rejected=${importSummary.rejected}, imported=${importSummary.imported}, cashLedgerInserted=${importSummary.cashLedgerInserted}, recomputed=${importSummary.recomputed ? 'yes' : 'no'}.`,
+        );
       }
 
       if (importErrors.length > 0) {
@@ -564,6 +625,24 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
 
   const handleExtractedTransactionEdit = (index: number, patch: Partial<Transaction>) => {
     setExtractedTransactions((prev) => prev.map((tx, i) => (i === index ? { ...tx, ...patch } : tx)));
+  };
+
+  const handleExtractedInvestmentTransactionEdit = (index: number, patch: Partial<InvestmentTransaction>) => {
+    setExtractedInvestmentTransactions((prev) =>
+      prev.map((tx, i) => {
+        if (i !== index) return tx;
+        const next = { ...tx, ...patch };
+        const qtyChanged = Object.prototype.hasOwnProperty.call(patch, 'quantity');
+        const priceChanged = Object.prototype.hasOwnProperty.call(patch, 'price');
+        const totalChanged = Object.prototype.hasOwnProperty.call(patch, 'total');
+        if ((qtyChanged || priceChanged) && !totalChanged) {
+          const q = Number(next.quantity) || 0;
+          const p = Number(next.price) || 0;
+          if (q > 0 && p > 0) next.total = q * p;
+        }
+        return next;
+      }),
+    );
   };
 
   if (loading || !data) {
@@ -964,6 +1043,30 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                 </div>
               </div>
             )}
+            {activeTab === 'trading' && tradingParseDebug && (
+              <details className="p-4 bg-indigo-50 border border-indigo-200 rounded-lg">
+                <summary className="text-sm font-semibold text-indigo-800 cursor-pointer">
+                  Parser diagnostics (for troubleshooting)
+                </summary>
+                <div className="mt-3 grid grid-cols-2 md:grid-cols-3 gap-2 text-xs text-indigo-900">
+                  <div>Detected file type: {tradingParseDebug.fileType}</div>
+                  <div>Extracted text length: {tradingParseDebug.extractedTextLength}</div>
+                  <div>Structured matches: {tradingParseDebug.parserMatches.structured}</div>
+                  <div>Awaed-table matches: {tradingParseDebug.parserMatches.awaedTable}</div>
+                  <div>Token-stream matches: {tradingParseDebug.parserMatches.tokenStream}</div>
+                  <div>Global-pattern matches: {tradingParseDebug.parserMatches.globalPattern}</div>
+                  <div>Heuristic matches: {tradingParseDebug.parserMatches.heuristic}</div>
+                  <div>AI matches: {tradingParseDebug.parserMatches.ai}</div>
+                  <div className="md:col-span-3">Final deduped rows: {tradingParseDebug.parserMatches.totalDeduped}</div>
+                  <div className="md:col-span-3">
+                    <p className="font-medium mb-1">Extracted text preview:</p>
+                    <p className="rounded border border-indigo-200 bg-white p-2 break-words">
+                      {tradingParseDebug.sampleText || 'No text preview available'}
+                    </p>
+                  </div>
+                </div>
+              </details>
+            )}
 
             {importResultMessage && (
               <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
@@ -1180,32 +1283,73 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                                 className="rounded border-slate-300 text-primary focus:ring-primary disabled:opacity-50"
                               />
                             </td>
-                            <td className="px-4 py-3 text-sm text-slate-900">{new Date(tx.date).toLocaleDateString()}</td>
+                            <td className="px-4 py-3 text-sm text-slate-900 min-w-[140px]">
+                              <input
+                                type="date"
+                                value={String(tx.date || '').slice(0, 10)}
+                                onChange={(e) => handleExtractedInvestmentTransactionEdit(index, { date: e.target.value })}
+                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                              />
+                            </td>
                             <td className="px-4 py-3 text-sm text-slate-900">
-                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                tx.type === 'buy' ? 'bg-emerald-100 text-emerald-800' :
-                                tx.type === 'sell' ? 'bg-rose-100 text-rose-800' :
-                                'bg-blue-100 text-blue-800'
-                              }`}>
-                                {tx.type.toUpperCase()}
-                              </span>
+                              <select
+                                value={tx.type}
+                                onChange={(e) => handleExtractedInvestmentTransactionEdit(index, { type: e.target.value as InvestmentTransaction['type'] })}
+                                className="rounded-md border border-slate-300 px-2 py-1 text-sm"
+                              >
+                                <option value="buy">BUY</option>
+                                <option value="sell">SELL</option>
+                                <option value="deposit">DEPOSIT</option>
+                                <option value="withdrawal">WITHDRAWAL</option>
+                                <option value="dividend">DIVIDEND</option>
+                                <option value="fee">FEE</option>
+                                <option value="vat">VAT</option>
+                              </select>
                             </td>
-                            <td className="px-4 py-3 text-sm font-medium text-slate-900 min-w-0 max-w-[180px]">
-                              {tx.symbol === 'CASH' || !tx.symbol ? (
-                                '—'
-                              ) : (
-                                <ResolvedSymbolLabel
-                                  symbol={tx.symbol}
-                                  names={stmtCompanyNames}
-                                  layout="inline"
-                                  symbolClassName="font-medium text-slate-900"
+                            <td className="px-4 py-3 text-sm font-medium text-slate-900 min-w-[180px]">
+                              <input
+                                value={tx.symbol || ''}
+                                onChange={(e) => handleExtractedInvestmentTransactionEdit(index, { symbol: e.target.value.toUpperCase() })}
+                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                placeholder="Symbol (e.g. AAPL)"
+                              />
+                            </td>
+                            <td className="px-4 py-3 text-sm text-right text-slate-900 min-w-[120px]">
+                              <input
+                                type="number"
+                                step="0.0001"
+                                value={Number.isFinite(Number(tx.quantity)) ? tx.quantity : 0}
+                                onChange={(e) => handleExtractedInvestmentTransactionEdit(index, { quantity: Number(e.target.value) || 0 })}
+                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm text-right"
+                              />
+                            </td>
+                            <td className="px-4 py-3 text-sm text-right text-slate-900 min-w-[120px]">
+                              <input
+                                type="number"
+                                step="0.0001"
+                                value={Number.isFinite(Number(tx.price)) ? tx.price : 0}
+                                onChange={(e) => handleExtractedInvestmentTransactionEdit(index, { price: Number(e.target.value) || 0 })}
+                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm text-right"
+                              />
+                            </td>
+                            <td className="px-4 py-3 text-sm text-right font-medium text-slate-900 min-w-[170px]">
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={Number.isFinite(Number(tx.total)) ? tx.total : 0}
+                                  onChange={(e) => handleExtractedInvestmentTransactionEdit(index, { total: Number(e.target.value) || 0 })}
+                                  className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm text-right"
                                 />
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-right text-slate-900">{tx.quantity}</td>
-                            <td className="px-4 py-3 text-sm text-right text-slate-900">{tx.price.toFixed(2)}</td>
-                            <td className="px-4 py-3 text-sm text-right font-medium text-slate-900">
-                              {tx.total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {tx.currency || 'SAR'}
+                                <select
+                                  value={(tx.currency === 'USD' ? 'USD' : 'SAR') as 'USD' | 'SAR'}
+                                  onChange={(e) => handleExtractedInvestmentTransactionEdit(index, { currency: e.target.value as 'USD' | 'SAR' })}
+                                  className="rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                >
+                                  <option value="SAR">SAR</option>
+                                  <option value="USD">USD</option>
+                                </select>
+                              </div>
                             </td>
                             <td className="px-4 py-3 text-center">
                               {isDuplicate ? (
