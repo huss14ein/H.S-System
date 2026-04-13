@@ -165,11 +165,11 @@ export function validateTrade(input: {
 }): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
   const type = input.type;
-  const isCashFlow = type === 'deposit' || type === 'withdrawal';
+  const isCashFlow = type === 'deposit' || type === 'withdrawal' || type === 'fee' || type === 'vat';
 
   if (isCashFlow) {
     const total = safeNumber(input.total, NaN);
-    if (Number.isNaN(total) || total <= 0) errors.push('Deposit/withdrawal amount must be a positive number.');
+    if (Number.isNaN(total) || total <= 0) errors.push(`${type === 'fee' || type === 'vat' ? 'Fee/VAT' : 'Deposit/withdrawal'} amount must be a positive number.`);
   } else if (type === 'dividend') {
     const total = safeNumber(input.total, NaN);
     if (Number.isNaN(total) || total <= 0) errors.push('Dividend cash amount must be a positive number.');

@@ -6,6 +6,8 @@ export function deltaForInvestmentTrade(tradeType: string, total: number): numbe
   if (tradeType === 'deposit') return abs;
   if (tradeType === 'withdrawal') return -abs;
   if (tradeType === 'dividend') return abs;
+  if (tradeType === 'fee') return -abs;
+  if (tradeType === 'vat') return -abs;
   return 0;
 }
 
