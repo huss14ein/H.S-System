@@ -536,7 +536,7 @@ const RecordTradeModal: React.FC<{
     /** Simulated/live quote by symbol — used to suggest price when the field is empty. */
     simulatedPrices?: { [symbol: string]: { price: number; change: number; changePercent: number } };
     initialData?: Partial<{
-        tradeType: 'buy' | 'sell';
+        tradeType: 'buy' | 'sell' | 'dividend';
         symbol: string;
         name: string;
         quantity: number;
@@ -554,11 +554,12 @@ const RecordTradeModal: React.FC<{
     const { currency: appCurrency, exchangeRate } = useCurrency();
     const [accountId, setAccountId] = useState('');
     const [portfolioId, setPortfolioId] = useState('');
-    const [type, setType] = useState<'buy' | 'sell'>('buy');
+    const [type, setType] = useState<'buy' | 'sell' | 'dividend'>('buy');
     const [tradeCurrency, setTradeCurrency] = useState<TradeCurrency>(appCurrency);
     const [symbol, setSymbol] = useState('');
     const [quantity, setQuantity] = useState('');
     const [price, setPrice] = useState('');
+    const [dividendAmount, setDividendAmount] = useState('');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [goalId, setGoalId] = useState<string | undefined>(undefined);
     const [holdingName, setHoldingName] = useState('');
@@ -633,6 +634,7 @@ const RecordTradeModal: React.FC<{
     
     const resetForm = () => {
         setType('buy'); setSymbol(''); setQuantity(''); setPrice('');
+        setDividendAmount('');
         setDate(new Date().toISOString().split('T')[0]);
         setHoldingName('');
         setHoldingAssetClass('Stock');
@@ -670,6 +672,7 @@ const RecordTradeModal: React.FC<{
                 const resolvedQuantity = prefQuantity ?? (prefAmount && resolvedPrice && resolvedPrice > 0 ? prefAmount / resolvedPrice : null);
                 setQuantity(typeof resolvedQuantity === 'number' && Number.isFinite(resolvedQuantity) ? String(Number(resolvedQuantity.toFixed(8))) : '');
                 setPrice(typeof resolvedPrice === 'number' && Number.isFinite(resolvedPrice) ? String(Number(resolvedPrice.toFixed(8))) : '');
+                setDividendAmount(typeof prefAmount === 'number' && Number.isFinite(prefAmount) && prefAmount > 0 ? String(Number(prefAmount.toFixed(8))) : '');
                 setAmountToInvest(prefAmount);
                 setExecutedPlanId(initialData.executedPlanId);
                 if (initialData.tradeCurrency) setTradeCurrency(initialData.tradeCurrency);
@@ -683,10 +686,10 @@ const RecordTradeModal: React.FC<{
                 resetForm();
                 const learnedAccount = getLearnedDefault('record-trade', 'accountId') as string | undefined;
                 const learnedPortfolio = getLearnedDefault('record-trade', 'portfolioId') as string | undefined;
-                const learnedType = getLearnedDefault('record-trade', 'type') as 'buy' | 'sell' | undefined;
+                const learnedType = getLearnedDefault('record-trade', 'type') as 'buy' | 'sell' | 'dividend' | undefined;
                 const learnedCurrency = getLearnedDefault('record-trade', 'tradeCurrency') as TradeCurrency | undefined;
                 if (learnedAccount && investmentAccounts.some((a) => a.id === learnedAccount)) setAccountId(learnedAccount);
-                if (learnedType && ['buy', 'sell'].includes(learnedType)) setType(learnedType as 'buy' | 'sell');
+                if (learnedType && ['buy', 'sell', 'dividend'].includes(learnedType)) setType(learnedType as 'buy' | 'sell' | 'dividend');
                 if (learnedCurrency && (learnedCurrency === 'SAR' || learnedCurrency === 'USD')) setTradeCurrency(learnedCurrency);
                 if (learnedPortfolio && portfolios.some((p) => p.id === learnedPortfolio)) setPortfolioId(learnedPortfolio);
             }
@@ -1012,6 +1015,11 @@ const RecordTradeModal: React.FC<{
         const parsedQuantity = parseFloat(quantity);
         const parsedPrice = parseFloat(price);
         if (!symbol.trim()) return 'Symbol is required.';
+        if (type === 'dividend') {
+            const parsedDividendAmount = parseFloat(dividendAmount);
+            if (!Number.isFinite(parsedDividendAmount) || parsedDividendAmount <= 0) return 'Dividend amount must be greater than 0.';
+            return null;
+        }
         if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) return 'Quantity must be greater than 0.';
         if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) return 'Price must be greater than 0.';
         if (type === 'buy' && isNewHolding && !holdingName.trim()) return 'Company name is required for a new holding.';
@@ -1043,7 +1051,7 @@ const RecordTradeModal: React.FC<{
             }
         }
         return null;
-    }, [portfolioId, quantity, price, symbol, type, isNewHolding, holdingName, manualValuation, manualCurrentValue, isManualExisting, tradeCurrency, portfolios, availableCashInLedgerCurrency, availableCashByCurrency.SAR, availableCashByCurrency.USD, sarPerUsd, formatCurrencyString, feeAmount]);
+    }, [portfolioId, quantity, price, dividendAmount, symbol, type, isNewHolding, holdingName, manualValuation, manualCurrentValue, isManualExisting, tradeCurrency, portfolios, availableCashInLedgerCurrency, availableCashByCurrency.SAR, availableCashByCurrency.USD, sarPerUsd, formatCurrencyString, feeAmount]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -1090,15 +1098,17 @@ const RecordTradeModal: React.FC<{
                 }
             }
             const useManualFund = type === 'buy' && ((isNewHolding && manualValuation) || isManualExisting);
+            const parsedDividendAmount = parseFloat(dividendAmount);
             await onSave({
                 accountId, portfolioId, type,
                 symbol: symbol.toUpperCase().trim(),
                 name: isNewHolding ? holdingName : undefined,
-                quantity: parseFloat(quantity) || 0,
-                price: parseFloat(price) || 0,
+                quantity: type === 'dividend' ? 0 : (parseFloat(quantity) || 0),
+                price: type === 'dividend' ? 0 : (parseFloat(price) || 0),
+                ...(type === 'dividend' ? { total: parsedDividendAmount || 0 } : {}),
                 date,
                 currency: tradeCurrency,
-                ...(feeAmount > 0 ? { fees: feeAmount } : {}),
+                ...((type === 'buy' || type === 'sell') && feeAmount > 0 ? { fees: feeAmount } : {}),
                 ...(goalId && { goalId }),
                 ...(type === 'buy' && isNewHolding ? { assetClass: holdingAssetClass } : {}),
                 ...(useManualFund ? { holdingType: 'manual_fund' } : {}),
@@ -1207,6 +1217,7 @@ const RecordTradeModal: React.FC<{
                     <div className="flex flex-wrap gap-x-4 gap-y-1">
                         <label className="flex items-center"><input type="radio" value="buy" checked={type === 'buy'} onChange={() => setType('buy')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Buy</span></label>
                         <label className="flex items-center"><input type="radio" value="sell" checked={type === 'sell'} onChange={() => setType('sell')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Sell</span></label>
+                        <label className="flex items-center"><input type="radio" value="dividend" checked={type === 'dividend'} onChange={() => setType('dividend')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Dividend</span></label>
                     </div>
                     <div className="flex items-center gap-2">
                         <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Currency</span>
@@ -1252,7 +1263,7 @@ const RecordTradeModal: React.FC<{
                         <p className="mt-1 text-xs text-slate-500">Pick a short unique code you will reuse for buys/sells to this plan (not a stock ticker).</p>
                     )}
                 </div>
-                {isNewHolding && (
+                {isNewHolding && type !== 'dividend' && (
                     <div>
                         <label htmlFor="holdingName" className="flex items-center gap-2 text-sm font-medium text-gray-700">
                             Company Name
@@ -1313,6 +1324,7 @@ const RecordTradeModal: React.FC<{
                         </label>
                     </div>
                 )}
+                {type !== 'dividend' && (
                 <div className="grid grid-cols-2 gap-4">
                      <div>
                         <label htmlFor="quantity" className="block text-sm font-medium text-gray-700">
@@ -1327,6 +1339,29 @@ const RecordTradeModal: React.FC<{
                         <input type="number" id="price" value={price} onChange={handlePriceChange} required min="0" step="any" className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
                     </div>
                 </div>
+                )}
+                {type === 'dividend' && (
+                    <div>
+                        <label htmlFor="dividend-amount" className="block text-sm font-medium text-gray-700">
+                            Dividend amount
+                        </label>
+                        <input
+                            type="number"
+                            id="dividend-amount"
+                            min="0"
+                            step="any"
+                            value={dividendAmount}
+                            onChange={(e) => setDividendAmount(e.target.value)}
+                            required
+                            className="mt-1 w-full p-2 border border-gray-300 rounded-md"
+                            placeholder={`Amount in ${tradeCurrency}`}
+                        />
+                        <p className="mt-1 text-xs text-slate-500">
+                            Cash credited by this dividend in <strong>{tradeCurrency}</strong>. This updates platform tradable cash and all dividend KPIs.
+                        </p>
+                    </div>
+                )}
+                {type !== 'dividend' && (
                 <div>
                     <label htmlFor="trade-fees" className="block text-sm font-medium text-gray-700">
                         Fees / commission (optional)
@@ -1343,9 +1378,10 @@ const RecordTradeModal: React.FC<{
                     />
                     <p className="mt-1 text-xs text-slate-500">
                         In <strong>{tradeCurrency}</strong> (portfolio base). Buys: cash out = gross + fees. Sells: cash in = gross − fees. Per-share cost basis still uses price × quantity only.
-                    </p>
-                </div>
-                {tradeNotional != null && netCashImpact != null && (
+                        </p>
+                    </div>
+                )}
+                {type !== 'dividend' && tradeNotional != null && netCashImpact != null && (
                     <div className="text-sm text-slate-600 -mt-1 space-y-1 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2">
                         <p className="flex flex-wrap items-center gap-1">
                             <span>Gross notional (qty × price):</span>

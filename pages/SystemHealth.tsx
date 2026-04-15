@@ -6,7 +6,7 @@ import { resolveSarPerUsd } from '../utils/currencyMath';
 import { useCurrency } from '../context/CurrencyContext';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import AIAdvisor from '../components/AIAdvisor';
-import { getMarketStatus, getMarketHolidays, finnhubFetch, type MarketStatusItem, type MarketHoliday } from '../services/finnhubService';
+import { getMarketStatus, getMarketHolidays, finnhubFetch, resolveQuotePrice, type MarketStatusItem, type MarketHoliday } from '../services/finnhubService';
 import { DataContext } from '../context/DataContext';
 import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
@@ -144,7 +144,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
         if (response.status === 429) throw new Error('Rate limit exceeded (60/min). Try again in a minute.');
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const quote = await response.json();
-        const price = Number(quote?.c);
+        const price = resolveQuotePrice(quote ?? {});
         if (!Number.isFinite(price) || price <= 0) throw new Error('Invalid Finnhub quote payload.');
         const duration = Math.round(performance.now() - start);
         return { status: duration > 2000 ? 'Degraded Performance' : 'Operational', responseTime: duration };

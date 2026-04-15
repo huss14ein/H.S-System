@@ -738,6 +738,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
     const [selectedPendingIds, setSelectedPendingIds] = useState<string[]>([]);
     const [isBulkReviewing, setIsBulkReviewing] = useState(false);
+    const [pendingBudgetEdits, setPendingBudgetEdits] = useState<Record<string, string>>({});
     const [sharedAccounts, setSharedAccounts] = useState<Account[]>([]);
 
     const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
@@ -831,7 +832,13 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 .map((r) => ({
                     id: String(r.account_id ?? r.id ?? ''),
                     name: String(r.name ?? 'Shared Account'),
-                    type: (r.type === 'Savings' || r.type === 'Investment' || r.type === 'Credit' ? r.type : 'Checking') as Account['type'],
+                    type: (() => {
+                        const t = String(r.type ?? '').trim().toLowerCase();
+                        if (t.includes('credit')) return 'Credit';
+                        if (t.includes('invest')) return 'Investment';
+                        if (t.includes('sav')) return 'Savings';
+                        return 'Checking';
+                    })() as Account['type'],
                     balance: Number(r.balance ?? 0),
                     owner: r.owner ?? undefined,
                 }))
@@ -913,6 +920,13 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 budgetCategory: row.budgetCategory ?? row.budget_category ?? null,
             }));
             setAdminPendingTransactions(normalized);
+            setPendingBudgetEdits((prev) => {
+                const next: Record<string, string> = {};
+                normalized.forEach((row: any) => {
+                    next[String(row.id)] = prev[String(row.id)] ?? String(row.budgetCategory ?? '').trim();
+                });
+                return next;
+            });
             setSelectedPendingIds((prev) => prev.filter((id) => normalized.some((row: any) => row.id === id)));
             setIsPendingLoading(false);
         };
@@ -1095,8 +1109,34 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         await supabase.from('transactions').update(patch).eq('id', transactionId).in('status', ['Pending', 'pending']);
     };
 
+    const persistPendingBudgetCategory = async (transactionId: string, budgetCategory: string | undefined) => {
+        if (!supabase) return;
+        const normalizedBudget = String(budgetCategory ?? '').trim();
+        const payloads = [{ budget_category: normalizedBudget || null }, { budgetCategory: normalizedBudget || null }];
+        for (const payload of payloads) {
+            const { error } = await supabase
+                .from('transactions')
+                .update(payload as any)
+                .eq('id', transactionId)
+                .in('status', ['Pending', 'pending']);
+            if (!error) break;
+        }
+        setAdminPendingTransactions((prev) =>
+            prev.map((t) => (String(t.id) === String(transactionId) ? { ...t, budgetCategory: normalizedBudget || undefined } : t)),
+        );
+    };
+
     const reviewPendingTransaction = async (transactionId: string, status: 'Approved' | 'Rejected') => {
         if (!supabase) return;
+        const pendingRow = adminPendingTransactions.find((t) => String(t.id) === String(transactionId));
+        const selectedBudget = String(pendingBudgetEdits[transactionId] ?? pendingRow?.budgetCategory ?? '').trim();
+        if (status === 'Approved') {
+            if (!selectedBudget) {
+                alert('Please map this transaction to a budget category before approval.');
+                return;
+            }
+            await persistPendingBudgetCategory(transactionId, selectedBudget);
+        }
 
         if (status === 'Approved') {
             const { data: approved, error: approveError } = await supabase.rpc('approve_pending_transaction', {
@@ -1178,6 +1218,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             // Successfully approved - remove from UI
             setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
             setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+            setPendingBudgetEdits((prev) => {
+                const next = { ...prev };
+                delete next[transactionId];
+                return next;
+            });
             setPendingRefreshKey((k) => k + 1);
         } else {
             const reason = window.prompt('Optional rejection reason for audit/history:');
@@ -1218,6 +1263,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             // Successfully rejected - remove from UI
             setAdminPendingTransactions(prev => prev.filter(t => t.id !== transactionId));
             setSelectedPendingIds((prev) => prev.filter((id) => id !== transactionId));
+            setPendingBudgetEdits((prev) => {
+                const next = { ...prev };
+                delete next[transactionId];
+                return next;
+            });
             setPendingRefreshKey((k) => k + 1);
         }
     };
@@ -1338,6 +1388,20 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                         </label>
                                         <p className="font-semibold">{pending.description}</p>
                                         <p className="text-xs text-gray-500">{pending.budgetCategory || 'Unmapped'} • {new Date(pending.date).toLocaleDateString()}</p>
+                                        <div className="mt-1">
+                                            <label htmlFor={`pending-budget-${pending.id}`} className="sr-only">Map to budget</label>
+                                            <select
+                                                id={`pending-budget-${pending.id}`}
+                                                value={pendingBudgetEdits[String(pending.id)] ?? pending.budgetCategory ?? ''}
+                                                onChange={(e) => setPendingBudgetEdits((prev) => ({ ...prev, [String(pending.id)]: e.target.value }))}
+                                                className="text-xs rounded border border-slate-300 px-2 py-1"
+                                            >
+                                                <option value="">Map to budget…</option>
+                                                {budgetCategories.map((c) => (
+                                                    <option key={`${pending.id}-${c}`} value={c}>{c}</option>
+                                                ))}
+                                            </select>
+                                        </div>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <span className="font-semibold text-amber-700">
@@ -1403,7 +1467,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 </div>
                 <ul className="divide-y divide-slate-100">
                     {filteredTransactions.map((transaction: Transaction) => (
-                        <li key={transaction.id} className="list-row">
+                        <li key={transaction.id} className="list-row flex-col items-start sm:flex-row sm:items-center">
                             <div className="flex-1 min-w-0">
                                 <p className="font-semibold text-dark">{transaction.description}</p>
                                 <div className="text-sm text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
@@ -1422,9 +1486,9 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                     )}
                                 </div>
                             </div>
-                            <div className="flex items-center gap-3 flex-shrink-0">
+                            <div className="flex w-full sm:w-auto items-center justify-between sm:justify-end gap-2 sm:gap-3 flex-shrink-0">
                                 <p
-                                    className={`font-bold text-lg tabular-nums ${
+                                    className={`font-bold text-base sm:text-lg tabular-nums text-right leading-tight break-words max-w-[13.5rem] sm:max-w-none ${
                                         transaction.amount > 0 ? 'text-success' : transaction.amount < 0 ? 'text-danger' : 'text-dark'
                                     }`}
                                 >
