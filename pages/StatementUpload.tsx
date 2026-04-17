@@ -408,7 +408,6 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       }
 
       setProcessingProgress(0);
-      const total = selectedBankRows.length + selectedInvestmentRows.length;
       let processed = 0;
 
       const importErrors: string[] = [];
@@ -451,8 +450,39 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       });
       const validatedInvestmentRows = normalizedInvestmentRows.filter((row) => !rejectedInvestmentRows.some((r) => r.absoluteIdx === row.absoluteIdx));
 
+      const normalizedBankRows = selectedBankRows.map(({ tx, idx }, displayIdx) => ({
+        idx,
+        displayIdx: displayIdx + 1,
+        tx: {
+          ...tx,
+          date: String(tx.date || '').slice(0, 10),
+          description: String(tx.description || '').trim(),
+          category: String(tx.category || '').trim(),
+          budgetCategory: String(tx.budgetCategory || '').trim() || undefined,
+          amount: Number(tx.amount) || 0,
+          type: tx.type === 'income' ? 'income' : 'expense',
+        } as Transaction,
+      }));
+      const rejectedBankRows = normalizedBankRows.filter(({ tx, displayIdx }) => {
+        const reasons: string[] = [];
+        if (!tx.date) reasons.push('missing date');
+        if (!tx.description) reasons.push('missing description');
+        if (!Number.isFinite(Number(tx.amount)) || Number(tx.amount) === 0) reasons.push('amount must be non-zero');
+        if (tx.type === 'expense' && !String(tx.budgetCategory || '').trim()) reasons.push('missing budget mapping');
+        if (reasons.length > 0) {
+          rejectionReasons.push(`Bank row #${displayIdx}: ${reasons.join(', ')}`);
+          return true;
+        }
+        return false;
+      });
+      const validatedBankRows = normalizedBankRows.filter((row) => !rejectedBankRows.some((r) => r.idx === row.idx));
+      const total = validatedBankRows.length + validatedInvestmentRows.length;
+      if (total === 0) {
+        throw new Error(`Import failed: all selected rows were dropped during validation. ${rejectionReasons.slice(0, 3).join(' | ') || 'No valid rows after validation.'}`);
+      }
+
       const bankTasks: Array<() => Promise<void>> = [
-        ...selectedBankRows.map(({ tx, idx }, displayIdx) => async () => {
+        ...validatedBankRows.map(({ tx, idx, displayIdx }) => async () => {
           try {
             for (let attempt = 0; attempt < 2; attempt++) {
               try {
@@ -479,7 +509,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
             }
           } catch (e) {
             failedIndices.add(idx);
-            importErrors.push(`Bank tx #${displayIdx + 1}: ${e instanceof Error ? e.message : String(e || 'Unknown error')}`);
+            importErrors.push(`Bank tx #${displayIdx}: ${e instanceof Error ? e.message : String(e || 'Unknown error')}`);
           } finally {
             processed++;
             setProcessingProgress((processed / total) * 100);
