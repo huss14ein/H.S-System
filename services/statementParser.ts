@@ -99,9 +99,10 @@ export async function parseSMSTransactions(
   accountId: string
 ): Promise<ParseResult> {
   try {
+    const normalizedSmsText = normalizeSmsTextForParsing(smsText);
     // First try pattern-based extraction for common SMS formats
-    const patternTransactions = extractTransactionsFromSMS(smsText, accountId);
-    const heuristicTransactions = extractTransactionsFromSMSHeuristic(smsText, accountId);
+    const patternTransactions = extractTransactionsFromSMS(normalizedSmsText, accountId);
+    const heuristicTransactions = extractTransactionsFromSMSHeuristic(normalizedSmsText, accountId);
     let aiTimedOut = false;
 
     // Then use AI to extract any additional transactions, but cap wait time to keep SMS import responsive.
@@ -112,7 +113,7 @@ export async function parseSMSTransactions(
     }, 4000);
     let aiTransactions: Transaction[] = [];
     try {
-      aiTransactions = await extractTransactionsFromText(smsText, accountId, 'sms', aiController.signal);
+      aiTransactions = await extractTransactionsFromText(normalizedSmsText, accountId, 'sms', aiController.signal);
     } catch (error) {
       const abortErr = error as { name?: string };
       if (!(abortErr && abortErr.name === 'AbortError')) {
@@ -500,6 +501,15 @@ function extractTransactionsFromSMSHeuristic(smsText: string, accountId: string)
     });
   }
 
+  // Third pass: date-anchored extraction for compact pastes where multiple SMS were copied in one paragraph.
+  const anchored = extractTransactionsFromSmsDateAnchors(smsText, accountId);
+  for (const tx of anchored) {
+    const sig = `${tx.date}|${tx.amount}|${tx.description.toLowerCase()}`;
+    if (signatures.has(sig)) continue;
+    signatures.add(sig);
+    out.push(tx);
+  }
+
   return out;
 }
 
@@ -555,6 +565,70 @@ function extractSmsAmount(block: string): number {
   const anyMatch = block.match(moneyAfterCurrency)
     ?? block.match(moneyBeforeCurrency);
   return parseNum(anyMatch?.[1]);
+}
+
+function extractTransactionsFromSmsDateAnchors(smsText: string, accountId: string): Transaction[] {
+  const results: Transaction[] = [];
+  const dateAnchors = [...smsText.matchAll(/(?:(\d{1,2}:\d{2})\s*)?(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/g)];
+  if (!dateAnchors.length) return results;
+  for (let i = 0; i < dateAnchors.length; i++) {
+    const current = dateAnchors[i];
+    const start = Math.max(0, (current.index ?? 0) - 220);
+    const end = i + 1 < dateAnchors.length ? (dateAnchors[i + 1].index ?? smsText.length) : Math.min(smsText.length, (current.index ?? 0) + 220);
+    const segment = smsText.slice(start, end);
+    const amount = extractSmsAmount(segment);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+
+    const parsedDate = parseDate(current[2] || '');
+    const dateIso = formatLocalYmd(Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate);
+    const description = canonicalizeTransactionDescription(extractSmsDescription(segment, i));
+    const isDebit = /(debited|withdrawn|purchase|payment|paid|spent|شراء|سحب|خصم|دفع|نقاط البيع|شراء عبر)/i.test(segment);
+    const signed = isDebit ? -Math.abs(amount) : Math.abs(amount);
+    results.push({
+      id: `sms-anchor-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 9)}`,
+      date: dateIso,
+      description,
+      amount: signed,
+      category: inferCategory(description),
+      accountId,
+      type: signed < 0 ? 'expense' : 'income',
+      status: 'Approved',
+    });
+  }
+  return results;
+}
+
+function extractSmsDescription(segment: string, idx: number): string {
+  const lineBased = segment
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => /[A-Za-z\u0600-\u06FF]{3,}/.test(line) && !/balance|رصيد|sar|مبلغ|amount|^\d{1,2}:\d{2}/i.test(line));
+  if (lineBased) return lineBased.slice(0, 120);
+  const merchantMatch =
+    segment.match(/(?:merchant|at|from|لدى)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-. ]{2,80})/i)?.[1]?.trim() ??
+    segment.match(/(?:purchase|payment|transaction|عملية)\s*(?:at|لدى)?\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-. ]{2,80})/i)?.[1]?.trim();
+  return (merchantMatch || `SMS Transaction ${idx + 1}`).slice(0, 120);
+}
+
+function normalizeArabicIndicDigits(input: string): string {
+  const arabicIndic = '٠١٢٣٤٥٦٧٨٩';
+  const easternArabicIndic = '۰۱۲۳۴۵۶۷۸۹';
+  return String(input || '')
+    .replace(/٫/g, '.')
+    .replace(/٬/g, ',')
+    .replace(/[٠-٩]/g, (d) => String(arabicIndic.indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String(easternArabicIndic.indexOf(d)));
+}
+
+function normalizeSmsTextForParsing(smsText: string): string {
+  const normalizedDigits = normalizeArabicIndicDigits(smsText);
+  return normalizedDigits
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/(?:\.\s+|;\s+|،\s+)(?=(?:\d{1,2}:\d{2}\s*)?\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}\b)/g, '\n')
+    .replace(/([^\n])\s+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|payment|purchase|transaction|debited|credited|withdrawn|received)\b)/gi, '$1\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function formatLocalYmd(date: Date): string {
