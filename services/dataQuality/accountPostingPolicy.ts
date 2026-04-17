@@ -20,7 +20,8 @@ export function canPostTransactionToAccount(
   input?: AccountPostingPolicyInput
 ): AccountPostingPolicyResult {
   if (!account) return { allowed: false, reason: 'Account not found.' };
-  if (account.type === 'Credit') return { allowed: true };
+  const rawType = String((account as { type?: unknown }).type ?? '').trim().toLowerCase();
+  if (rawType === 'credit') return { allowed: true };
   // Allow inbound transfers so users can fund depleted accounts/platforms.
   const isTransferIn = input?.transactionType === 'income' && String(input?.category || '').trim().toLowerCase() === 'transfer';
   if (isTransferIn) return { allowed: true };
