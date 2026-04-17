@@ -498,7 +498,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
       
       {/* Mobile Menu */}
       {isMobileMenuOpen && (
-        <div className="fixed inset-0 z-40 bg-white lg:hidden">
+        <div className="fixed inset-0 z-[120] bg-white lg:hidden">
             <div className="px-4 pt-4 flex justify-between items-center border-b border-gray-100 pb-4">
                 <div className="flex items-center space-x-2">
                     <HSLogo className="h-8 w-8 text-primary" />
