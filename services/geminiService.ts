@@ -1,7 +1,7 @@
 import type { FunctionDeclaration } from '@google/genai';
 import { SchemaType } from './geminiSchemaTypes';
 import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transaction, Budget, FinancialData, InvestmentPortfolio, CommodityHolding, FeedItem, PersonaAnalysis, InvestmentPlanSettings, UniverseTicker, InvestmentPlanExecutionResult, ProposedTrade, TradeCurrency } from '../types';
-import { finnhubFetch, toFinnhubSymbol, fromFinnhubSymbol, canonicalQuoteLookupKey, toStooqSymbol, getFinnhubQuoteCandidates } from './finnhubService';
+import { finnhubFetch, toFinnhubSymbol, fromFinnhubSymbol, canonicalQuoteLookupKey, toStooqSymbol, getFinnhubQuoteCandidates, resolveQuotePrice } from './finnhubService';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { capitalizeCategoryName } from '../utils/categoryFormat';
 import { DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
@@ -292,12 +292,18 @@ const getFinnhubLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
                 const response = await finnhubFetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(finnhubSymbol)}&token=${encodeURIComponent(token)}`);
                 if (!response.ok) continue;
                 const row = await response.json();
-                const price = Number(row?.c ?? row?.pc ?? row?.p);
-                let change = Number(row?.d ?? 0);
-                let changePercent = Number(row?.dp ?? 0);
+                const price = resolveQuotePrice(row ?? {});
                 if (!Number.isFinite(price) || price <= 0) continue;
-                if (!Number.isFinite(change)) change = 0;
-                if (!Number.isFinite(changePercent)) changePercent = 0;
+                const prevCloseRaw = Number(row?.pc);
+                const prevClose = Number.isFinite(prevCloseRaw) && prevCloseRaw > 0 ? prevCloseRaw : price;
+                const rawChange = Number(row?.d);
+                const change = Number.isFinite(rawChange) ? rawChange : price - prevClose;
+                const rawChangePercent = Number(row?.dp);
+                const changePercent = Number.isFinite(rawChangePercent)
+                    ? rawChangePercent
+                    : prevClose > 0
+                        ? (change / prevClose) * 100
+                        : 0;
                 const quote = { price, change, changePercent };
                 const displayKey = fromFinnhubSymbol(finnhubSymbol);
                 const rawUpper = (rawSymbol || '').trim().toUpperCase();
@@ -2294,7 +2300,7 @@ export async function getFinnhubCommodityPrices(
                 );
                 if (res.ok) {
                     const row = await res.json();
-                    const v = Number(row?.c ?? row?.pc ?? row?.p);
+                    const v = resolveQuotePrice(row ?? {});
                     if (Number.isFinite(v) && v > 0) priceUsd = v;
                 }
             }

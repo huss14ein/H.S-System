@@ -32,7 +32,6 @@ import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/inve
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
 import { deltaForInvestmentTrade } from '../services/investmentBalanceDelta';
-import { computeAvailableCashByAccountMap } from '../services/investmentCashLedger';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
@@ -83,12 +82,6 @@ function mergeWealthUltraSystemConfigFromRow(
 /** Stable fallback for deployable accounts so memo deps don’t churn each render when lists are missing. */
 const EMPTY_ACCOUNTS_FOR_DEPLOY: Account[] = [];
 const HOLDING_QUANTITY_EPSILON = 0.00001;
-const toAccountBaseCashBalance = (acc: Account, cash: { SAR: number; USD: number }, sarPerUsd: number): number => {
-    const fx = Number.isFinite(sarPerUsd) && sarPerUsd > 0 ? sarPerUsd : DEFAULT_SAR_PER_USD;
-    if (acc.currency === 'USD') return roundMoney((cash.USD ?? 0) + (cash.SAR ?? 0) / fx);
-    return roundMoney((cash.SAR ?? 0) + (cash.USD ?? 0) * fx);
-};
-
 interface DataContextType {
   data: FinancialData;
   loading: boolean;
@@ -615,9 +608,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updatePlatformRef = useRef<((platform: Account, opts?: { fromTransactionDelta?: boolean }) => Promise<void>) | null>(null);
     /** Accumulator for cash account deltas during recurring-apply loops; avoids stale balance when multiple txs hit the same account. */
     const cashBalanceAccumulatorRef = useRef<Record<string, number>>({});
-    /** Guard for automatic investment balance reconciliation (prevents overlapping writeback loops). */
-    const investmentBalanceReconcileInFlightRef = useRef(false);
-    const investmentBalanceReconcileLastSignatureRef = useRef('');
 
     const normalizeHolding = (holding: any): Holding => {
         const holdingType = holding.holdingType ?? holding.holding_type ?? 'ticker';
@@ -954,30 +944,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 return resolved ? { ...norm, accountId: resolved } : norm;
             });
             const ownedAccounts = filterOwnedRows(normalizedAccounts);
-            const fxSeedRaw = Number(
-                (investmentPlan.data as any[])?.[0]?.fx_rate ??
-                (investmentPlan.data as any[])?.[0]?.fxRate ??
-                DEFAULT_SAR_PER_USD,
-            );
-            const fxSeed = Number.isFinite(fxSeedRaw) && fxSeedRaw > 0 ? fxSeedRaw : DEFAULT_SAR_PER_USD;
-            const ledgerCashMap = computeAvailableCashByAccountMap({
-                accounts: ownedAccounts,
-                investments: filterOwnedRows(investments.data as any[]) as any[],
-                investmentTransactions: normalizedInvestmentTransactions,
-                sarPerUsd: fxSeed,
-            });
-            const reconciledInvestmentAccounts = ownedAccounts.map((acc) => {
-                if (acc.type !== 'Investment') return acc;
-                const cash = ledgerCashMap[acc.id] ?? { SAR: 0, USD: 0 };
-                return { ...acc, balance: toAccountBaseCashBalance(acc, cash, fxSeed) };
-            });
-            const driftedInvestmentAccounts = reconciledInvestmentAccounts
-                .filter((acc) => acc.type === 'Investment')
-                .filter((acc) => {
-                    const original = ownedAccounts.find((a) => a.id === acc.id);
-                    return Math.abs((original?.balance ?? 0) - acc.balance) > 0.01;
-                });
-
             // Check if user is admin (has special email or role)
             const isAdmin = auth.user.email?.toLowerCase().includes('admin') || 
                            auth.user.email?.toLowerCase().includes('hussein') ||
@@ -1027,7 +993,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
 
             setData({
-                accounts: reconciledInvestmentAccounts,
+                accounts: ownedAccounts,
                 assets: filterOwnedRows(assets.data as any[]).map(normalizeAssetRow),
                 liabilities: filterOwnedRows(((liabilities.data as any[]) || []).map(normalizeLiability)),
                 goals: filterOwnedRows(goals.data as any[]).map(normalizeGoalRow),
@@ -1083,16 +1049,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 allBudgets: allBudgetsData,
             });
 
-            if (driftedInvestmentAccounts.length > 0) {
-                await Promise.allSettled(
-                    driftedInvestmentAccounts.map((acc) =>
-                        db
-                            .from('accounts')
-                            .update({ balance: acc.balance })
-                            .match({ id: acc.id, user_id: ownerId }),
-                    ),
-                );
-            }
         } catch (error) {
             console.error("Error fetching financial data:", error);
         } finally {
@@ -1122,60 +1078,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     useEffect(() => {
         hydrateSarPerUsdDailySeries(data, resolveSarPerUsd(data ?? null, DEFAULT_SAR_PER_USD));
     }, [data, dataResetKey]);
-
-    /** Self-heal investment account balances from ledger across all pages/flows (trade, transfer, import, restore). */
-    useEffect(() => {
-        if (!data || loading || investmentBalanceReconcileInFlightRef.current) return;
-        const investmentAccounts = (data.accounts ?? []).filter((a: Account) => a.type === 'Investment');
-        if (investmentAccounts.length === 0) return;
-
-        const fx = resolveSarPerUsd(data as FinancialData);
-        const ledgerCashMap = computeAvailableCashByAccountMap({
-            accounts: data.accounts ?? [],
-            investments: data.investments ?? [],
-            investmentTransactions: data.investmentTransactions ?? [],
-            sarPerUsd: fx,
-        });
-
-        const drifted = investmentAccounts
-            .map((acc) => {
-                const cash = ledgerCashMap[acc.id] ?? { SAR: 0, USD: 0 };
-                const expected = toAccountBaseCashBalance(acc, cash, fx);
-                const current = roundMoney(Number(acc.balance ?? 0));
-                return { id: acc.id, expected, current, drift: roundMoney(expected - current) };
-            })
-            .filter((x) => Math.abs(x.drift) > 0.01);
-        if (drifted.length === 0) return;
-
-        const signature = drifted.map((d) => `${d.id}:${d.expected}`).sort().join('|');
-        if (signature === investmentBalanceReconcileLastSignatureRef.current) return;
-        investmentBalanceReconcileLastSignatureRef.current = signature;
-        investmentBalanceReconcileInFlightRef.current = true;
-        const db = supabase;
-        const ownerId = auth?.user?.id;
-
-        setData((prev) => ({
-            ...prev,
-            accounts: prev.accounts.map((a) => {
-                const fix = drifted.find((d) => d.id === a.id);
-                return fix ? { ...a, balance: fix.expected } : a;
-            }),
-        }));
-
-        (async () => {
-            if (!db || !ownerId) return;
-            await Promise.allSettled(
-                drifted.map((d) =>
-                    db
-                        .from('accounts')
-                        .update({ balance: d.expected })
-                        .match({ id: d.id, user_id: ownerId }),
-                ),
-            );
-        })().finally(() => {
-            investmentBalanceReconcileInFlightRef.current = false;
-        });
-    }, [data, loading, supabase, auth?.user?.id]);
 
     // Helper to add user_id to any object
     const withUser = (obj: any) => ({ ...obj, user_id: auth?.user?.id });
@@ -1663,41 +1565,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     /** Keep Investment platform `balance` aligned with investment transaction cash flows (buy/sell/deposit/withdrawal/dividend). */
     const applyInvestmentAccountDeltaForTrade = async (
         accountId: string | undefined,
-        _delta: number,
-        opts?: { includeTransaction?: InvestmentTransaction; excludeTransactionId?: string },
+        delta: number,
+        _opts?: { includeTransaction?: InvestmentTransaction; excludeTransactionId?: string },
     ) => {
         if (!accountId || !supabase || !auth?.user) return;
+        const d = Number(delta);
+        if (!Number.isFinite(d) || d === 0) return;
         const up = updatePlatformRef.current;
         if (!up) return;
         const acc = (data?.accounts ?? []).find((a) => a.id === accountId);
         if (!acc || acc.type !== 'Investment') return;
-        const fx = resolveSarPerUsd(data as FinancialData);
-        const baseInvestmentTx = [...(data?.investmentTransactions ?? [])];
-        if (opts?.excludeTransactionId) {
-            const ex = String(opts.excludeTransactionId);
-            for (let i = baseInvestmentTx.length - 1; i >= 0; i--) {
-                if (String((baseInvestmentTx[i] as any).id || '') === ex) baseInvestmentTx.splice(i, 1);
-            }
-        }
-        if (opts?.includeTransaction) {
-            const pending = normalizeInvestmentTransaction(opts.includeTransaction);
-            if (pending?.id) {
-                const id = String((pending as any).id);
-                const idx = baseInvestmentTx.findIndex((t) => String((t as any).id || '') === id);
-                if (idx >= 0) baseInvestmentTx[idx] = pending;
-                else baseInvestmentTx.unshift(pending);
-            } else {
-                baseInvestmentTx.unshift(pending);
-            }
-        }
-        const ledgerCashMap = computeAvailableCashByAccountMap({
-            accounts: data?.accounts ?? [],
-            investments: data?.investments ?? [],
-            investmentTransactions: baseInvestmentTx,
-            sarPerUsd: fx,
-        });
-        const cash = ledgerCashMap[accountId] ?? { SAR: 0, USD: 0 };
-        const newBalance = toAccountBaseCashBalance(acc, cash, fx);
+        const prevBalance = cashBalanceAccumulatorRef.current[accountId] ?? Number(acc.balance ?? 0);
+        const newBalance = roundMoney(prevBalance + d);
         cashBalanceAccumulatorRef.current[accountId] = newBalance;
         await up({ ...acc, balance: newBalance }, { fromTransactionDelta: true });
     };
@@ -3197,18 +3076,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
-    const availableCashByAccountId = useMemo(() => computeAvailableCashByAccountMap({
-        accounts: data?.accounts ?? [],
-        investments: data?.investments ?? [],
-        investmentTransactions: data?.investmentTransactions ?? [],
-        sarPerUsd: resolveSarPerUsd(data as FinancialData),
-    }), [data?.accounts, data?.investments, data?.investmentTransactions, data]);
-
     const getAvailableCashForAccount = useCallback((accountId: string): { SAR: number; USD: number } => {
         const canonical = resolveCanonicalAccountId(accountId, data?.accounts ?? []) ?? accountId;
-        const v = availableCashByAccountId[canonical] ?? { SAR: 0, USD: 0 };
-        return { SAR: v.SAR, USD: v.USD };
-    }, [availableCashByAccountId, data?.accounts]);
+        const acc = (data?.accounts ?? []).find((a) => a.id === canonical);
+        if (!acc || acc.type !== 'Investment') return { SAR: 0, USD: 0 };
+        const cur = acc.currency === 'USD' ? 'USD' : 'SAR';
+        const bal = Number(acc.balance ?? 0);
+        if (!Number.isFinite(bal)) return { SAR: 0, USD: 0 };
+        return cur === 'USD' ? { SAR: 0, USD: bal } : { SAR: bal, USD: 0 };
+    }, [data?.accounts]);
 
     /**
      * Personal wealth slices must use the getters — not a raw merge from getPersonalWealthData.
