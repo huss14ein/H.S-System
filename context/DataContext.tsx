@@ -804,7 +804,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             subcategory: (transactionClean as { subcategory?: string }).subcategory,
             expenseType: (transactionClean as { expenseType?: string; expense_type?: string }).expenseType ?? (transactionClean as any).expense_type,
             transactionNature: (transactionClean as { transactionNature?: string; transaction_nature?: string }).transactionNature ?? (transactionClean as any).transaction_nature,
-            categoryId: (transactionClean as { categoryId?: string; category_id?: string }).categoryId ?? (transactionClean as any).category_id,
             statementId: (transactionClean as { statementId?: string; statement_id?: string }).statementId ?? (transactionClean as any).statement_id,
         } as const;
 
@@ -815,26 +814,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             });
             return out;
         };
-
-        const payloadWithSnakeCase = compact({
-            date: base.date,
-            description: base.description,
-            amount: base.amount,
-            category: base.category,
-            type: base.type,
-            note: base.note,
-            status: base.status,
-            subcategory: base.subcategory,
-            expense_type: base.expenseType,
-            transaction_nature: base.transactionNature,
-            category_id: base.categoryId,
-            statement_id: base.statementId,
-            recurring_id: recId,
-            budget_category: budgetCat,
-            account_id: accountId,
-            transfer_group_id: transferGroupId,
-            transfer_role: transferRole,
-        });
 
         const payloadWithCamelCase = compact({
             date: base.date,
@@ -847,23 +826,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             subcategory: base.subcategory,
             expenseType: base.expenseType,
             transactionNature: base.transactionNature,
-            categoryId: base.categoryId,
             statementId: base.statementId,
             recurringId: recId,
             budgetCategory: budgetCat,
             accountId: accountId,
             transferGroupId: transferGroupId,
             transferRole: transferRole,
-        });
-
-        const payloadWithSnakeCaseCore = compact({
-            date: base.date,
-            description: base.description,
-            amount: base.amount,
-            category: base.category,
-            type: base.type,
-            status: base.status,
-            account_id: accountId,
         });
 
         const payloadWithCamelCaseCore = compact({
@@ -876,20 +844,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             accountId: accountId,
         });
 
-        const variants: Record<string, unknown>[] = [
-            payloadWithSnakeCase,
-            payloadWithCamelCase,
-        ];
+        const variants: Record<string, unknown>[] = [payloadWithCamelCase];
         const hasNote =
             transactionClean.note != null && String(transactionClean.note).trim() !== '';
         if (hasNote) {
             const { note: _n1, ...camelNoNote } = { ...payloadWithCamelCase };
-            const { note: _n2, ...snakeNoNote } = { ...payloadWithSnakeCase };
             // Try full payloads without note before falling back to minimal core payloads,
             // so legacy schemas missing only `note` keep metadata columns intact.
-            variants.push(snakeNoNote, camelNoNote);
+            variants.push(camelNoNote);
         }
-        variants.push(payloadWithSnakeCaseCore, payloadWithCamelCaseCore);
+        variants.push(payloadWithCamelCaseCore);
         return variants;
     };
 
@@ -1648,7 +1612,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 /accountid|account_id/i.test(msg) && /column|schema cache|could not find/i.test(`${msg} ${detail}`);
             toast(
                 accountColMissing
-                    ? 'Failed to add transaction: transactions table is missing accountId/account_id mapping. Run the latest Supabase migrations and refresh schema cache.'
+                    ? 'Failed to add transaction: transactions table is missing accountId. Run the latest Supabase migrations and refresh schema cache.'
                     : `Failed to add transaction: ${msg}`,
                 'error'
             );
