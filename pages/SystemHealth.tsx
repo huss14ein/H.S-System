@@ -14,7 +14,7 @@ import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangle
 import { XCircleIcon } from '../components/icons/XCircleIcon';
 import { CloudIcon } from '../components/icons/CloudIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
-import { reconcileCashAccountBalance } from '../services/dataQuality';
+import { reconcileCashAccountBalance, reconcileCreditAccountBalance } from '../services/dataQuality';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { reconcileHoldings, reconciliationExceptionReport } from '../services/reconciliationEngine';
 import DashboardKpiQualityPanel from '../components/DashboardKpiQualityPanel';
@@ -322,6 +322,22 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       })
       .filter((x): x is NonNullable<typeof x> => x != null);
 
+    const creditExceptions = accounts
+      .filter((a) => a.type === 'Credit')
+      .map((a) => {
+        const r = reconcileCreditAccountBalance(a as Account, transactions);
+        if (r == null || !r.showWarning) return null;
+        const bookCurrency: 'USD' | 'SAR' = a.currency === 'USD' ? 'USD' : 'SAR';
+        return {
+          accountId: r.accountId,
+          drift: r.drift,
+          showWarning: r.showWarning,
+          bookCurrency,
+          accountLabel: a.name?.trim() || r.accountId,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x != null);
+
     const holdings: Holding[] = getPersonalInvestments(financialData).flatMap((p) => (p.holdings ?? [])) as Holding[];
     const invAccountIds = new Set(accounts.filter((a) => a.type === 'Investment').map((a) => a.id));
     const investmentTxs: InvestmentTransaction[] = (financialData.investmentTransactions ?? []).filter((t) =>
@@ -354,7 +370,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     }).filter((h) => Math.abs(h.drift) >= 0.0001);
 
     const reconciliation = reconciliationExceptionReport({
-      cashExceptions,
+      cashExceptions: [...cashExceptions, ...creditExceptions],
       holdingExceptions,
     });
 
@@ -383,10 +399,19 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
         severity: r.severity,
       })),
     ];
+    if (missingCategory) {
+      combined.push({
+        code: 'RECONCILE_BUDGET_MAPPING',
+        message: 'Approved expense rows are missing budget mapping.',
+        entity: 'transaction',
+        entityId: 'budgetCategory',
+        severity: 'warning',
+      } as any);
+    }
     combined.forEach((ex: any) => pushException(ex));
     const queue = getExceptionQueue();
 
-    return { integrityOk: integrity.ok, integrityExceptions: integrity.exceptions, brokenRefs, cashExceptions, holdingExceptions, reconciliation, repairSuggestions, queue };
+    return { integrityOk: integrity.ok, integrityExceptions: integrity.exceptions, brokenRefs, cashExceptions, creditExceptions, holdingExceptions, reconciliation, repairSuggestions, queue };
   }, [appDataCtx]);
 
   const sarPerUsdHealth = useMemo(
@@ -493,7 +518,12 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
               </p>
               {integritySummary.reconciliation.length > 0 && (
                 <p className="text-xs text-slate-500 mt-1">
-                  Reconciliation warnings: {integritySummary.reconciliation.length} (cash drift + holding drift).
+                  Reconciliation warnings: {integritySummary.reconciliation.length} (cash + credit + holdings + budget mapping checks).
+                </p>
+              )}
+              {(integritySummary.creditExceptions?.length ?? 0) > 0 && (
+                <p className="text-xs text-slate-500 mt-1">
+                  Credit-account drift warnings: {integritySummary.creditExceptions.length}.
                 </p>
               )}
             </div>
