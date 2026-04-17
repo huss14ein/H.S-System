@@ -59,10 +59,19 @@ const TransactionReviewModal: React.FC<TransactionReviewModalProps> = ({ isOpen,
         }
     };
 
+    const normalizeTransactionForUpdate = (tx: Transaction): Transaction => {
+        const raw = tx as Transaction & { account_id?: string; budget_category?: string };
+        return {
+            ...tx,
+            accountId: tx.accountId ?? raw.account_id ?? '',
+            budgetCategory: tx.budgetCategory ?? raw.budget_category ?? tx.budgetCategory,
+        };
+    };
+
     const handleSave = async () => {
         if (!currentTransaction || !selectedCategory || !updateTransaction) return;
-
-        await updateTransaction({ ...currentTransaction, budgetCategory: selectedCategory });
+        const normalized = normalizeTransactionForUpdate(currentTransaction);
+        await updateTransaction({ ...normalized, budgetCategory: selectedCategory });
 
         if (currentIndex < transactions.length - 1) {
             setCurrentIndex(prev => prev + 1);
@@ -80,14 +89,17 @@ const TransactionReviewModal: React.FC<TransactionReviewModalProps> = ({ isOpen,
     }
 
     if (!isOpen || !currentTransaction || !updateTransaction) return null;
+    const normalizedCurrentTransaction = normalizeTransactionForUpdate(currentTransaction);
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Review Transactions (${currentIndex + 1} of ${transactions.length})`}>
             <div className="space-y-4">
                 <div className="bg-gray-50 p-4 rounded-lg border">
-                    <div className="flex justify-between items-baseline">
-                        <p className="font-semibold text-lg text-dark">{currentTransaction.description}</p>
-                        <p className="font-bold text-red-600">{formatCurrencyString(currentTransaction.amount, { inCurrency: transactionBookCurrency(currentTransaction, accountsById), showSecondary: true })}</p>
+                    <div className="flex flex-col gap-1 sm:flex-row sm:justify-between sm:items-start sm:gap-4">
+                        <p className="font-semibold text-lg text-dark break-words">{currentTransaction.description}</p>
+                        <p className="font-bold text-red-600 text-base sm:text-lg leading-tight break-words sm:text-right sm:max-w-[14rem]">
+                            {formatCurrencyString(normalizedCurrentTransaction.amount, { inCurrency: transactionBookCurrency(normalizedCurrentTransaction, accountsById), showSecondary: true })}
+                        </p>
                     </div>
                     <p className="text-sm text-gray-500">{new Date(currentTransaction.date).toLocaleDateString()}</p>
                 </div>
