@@ -32,7 +32,6 @@ import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/inve
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
 import { deltaForInvestmentTrade } from '../services/investmentBalanceDelta';
-import { computeAvailableCashByAccountMap } from '../services/investmentCashLedger';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
@@ -43,7 +42,7 @@ const initialData: FinancialData = {
     investmentPlan: {
         monthlyBudget: 0, budgetCurrency: 'SAR', executionCurrency: 'USD', fxRateSource: 'GoogleFinance:CURRENCY:SARUSD',
         coreAllocation: 0.7, upsideAllocation: 0.3, minimumUpsidePercentage: 25,
-        stale_days: 5, min_coverage_threshold: 0.8, redirect_policy: 'priority', target_provider: 'Finnhub',
+        stale_days: 5, min_coverage_threshold: 3, redirect_policy: 'priority', target_provider: 'Finnhub',
         corePortfolio: [], upsideSleeve: [], brokerConstraints: {
             allowFractionalShares: false, minimumOrderSize: 1, roundingRule: 'round', leftoverCashRule: 'hold'
         }
@@ -56,6 +55,14 @@ const initialData: FinancialData = {
     wealthUltraConfig: getDefaultWealthUltraSystemConfig(),
     budgetRequests: [],
 };
+
+function normalizeMinCoverageThreshold(raw: unknown, fallback = initialData.investmentPlan.min_coverage_threshold): number {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) return fallback;
+    // Legacy rows sometimes stored decimal coverage values (e.g. 0.8). Convert to valid integer.
+    const normalized = n > 0 && n < 1 ? Math.ceil(n) : Math.round(n);
+    return Math.max(0, Math.min(50, normalized));
+}
 
 function mergeWealthUltraSystemConfigFromRow(
     row: Record<string, unknown> | null | undefined,
@@ -83,12 +90,6 @@ function mergeWealthUltraSystemConfigFromRow(
 /** Stable fallback for deployable accounts so memo deps don’t churn each render when lists are missing. */
 const EMPTY_ACCOUNTS_FOR_DEPLOY: Account[] = [];
 const HOLDING_QUANTITY_EPSILON = 0.00001;
-const toAccountBaseCashBalance = (acc: Account, cash: { SAR: number; USD: number }, sarPerUsd: number): number => {
-    const fx = Number.isFinite(sarPerUsd) && sarPerUsd > 0 ? sarPerUsd : DEFAULT_SAR_PER_USD;
-    if (acc.currency === 'USD') return roundMoney((cash.USD ?? 0) + (cash.SAR ?? 0) / fx);
-    return roundMoney((cash.SAR ?? 0) + (cash.USD ?? 0) * fx);
-};
-
 interface DataContextType {
   data: FinancialData;
   loading: boolean;
@@ -244,7 +245,7 @@ function normalizeInvestmentPlan(raw: any): InvestmentPlanSettings {
         upsideAllocation: upside,
         minimumUpsidePercentage: Number(raw.minimum_upside_percentage ?? raw.minimumUpsidePercentage ?? initialData.investmentPlan.minimumUpsidePercentage),
         stale_days: Number(raw.stale_days ?? initialData.investmentPlan.stale_days),
-        min_coverage_threshold: Number(raw.min_coverage_threshold ?? initialData.investmentPlan.min_coverage_threshold),
+        min_coverage_threshold: normalizeMinCoverageThreshold(raw.min_coverage_threshold ?? initialData.investmentPlan.min_coverage_threshold),
         redirect_policy: (raw.redirect_policy ?? initialData.investmentPlan.redirect_policy) as 'priority' | 'pro-rata',
         target_provider: String(raw.target_provider ?? raw.targetProvider ?? initialData.investmentPlan.target_provider),
         corePortfolio: Array.isArray(raw.core_portfolio ?? raw.corePortfolio) ? (raw.core_portfolio ?? raw.corePortfolio) : initialData.investmentPlan.corePortfolio,
@@ -566,7 +567,7 @@ function investmentPlanToRow(plan: InvestmentPlanSettings): Record<string, unkno
         upside_allocation: plan.upsideAllocation,
         minimum_upside_percentage: plan.minimumUpsidePercentage,
         stale_days: plan.stale_days,
-        min_coverage_threshold: plan.min_coverage_threshold,
+        min_coverage_threshold: normalizeMinCoverageThreshold(plan.min_coverage_threshold),
         redirect_policy: plan.redirect_policy,
         target_provider: plan.target_provider,
         core_portfolio: plan.corePortfolio,
@@ -615,9 +616,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updatePlatformRef = useRef<((platform: Account, opts?: { fromTransactionDelta?: boolean }) => Promise<void>) | null>(null);
     /** Accumulator for cash account deltas during recurring-apply loops; avoids stale balance when multiple txs hit the same account. */
     const cashBalanceAccumulatorRef = useRef<Record<string, number>>({});
-    /** Guard for automatic investment balance reconciliation (prevents overlapping writeback loops). */
-    const investmentBalanceReconcileInFlightRef = useRef(false);
-    const investmentBalanceReconcileLastSignatureRef = useRef('');
 
     const normalizeHolding = (holding: any): Holding => {
         const holdingType = holding.holdingType ?? holding.holding_type ?? 'ticker';
@@ -752,6 +750,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const message = `${error?.message || ''} ${error?.details || ''}`.toLowerCase();
         return error?.code === '42703' || error?.code === 'PGRST204' || message.includes('column') || message.includes('schema cache');
     };
+    const formatDbError = (error: any): string => {
+        if (!error) return 'Unknown database error.';
+        if (error instanceof Error) return error.message;
+        const msg = String(error?.message ?? '').trim();
+        const details = String(error?.details ?? '').trim();
+        const hint = String(error?.hint ?? '').trim();
+        const code = String(error?.code ?? '').trim();
+        return [msg, details, hint, code ? `code=${code}` : '']
+            .filter((x) => x.length > 0)
+            .join(' | ') || 'Unknown database error.';
+    };
 
     const goalPayloadVariants = (goal: Goal) => {
         const p = normalizeGoalPriority(goal.priority);
@@ -806,7 +815,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             subcategory: (transactionClean as { subcategory?: string }).subcategory,
             expenseType: (transactionClean as { expenseType?: string; expense_type?: string }).expenseType ?? (transactionClean as any).expense_type,
             transactionNature: (transactionClean as { transactionNature?: string; transaction_nature?: string }).transactionNature ?? (transactionClean as any).transaction_nature,
-            categoryId: (transactionClean as { categoryId?: string; category_id?: string }).categoryId ?? (transactionClean as any).category_id,
             statementId: (transactionClean as { statementId?: string; statement_id?: string }).statementId ?? (transactionClean as any).statement_id,
         } as const;
 
@@ -817,26 +825,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             });
             return out;
         };
-
-        const payloadWithSnakeCase = compact({
-            date: base.date,
-            description: base.description,
-            amount: base.amount,
-            category: base.category,
-            type: base.type,
-            note: base.note,
-            status: base.status,
-            subcategory: base.subcategory,
-            expense_type: base.expenseType,
-            transaction_nature: base.transactionNature,
-            category_id: base.categoryId,
-            statement_id: base.statementId,
-            recurring_id: recId,
-            budget_category: budgetCat,
-            account_id: accountId,
-            transfer_group_id: transferGroupId,
-            transfer_role: transferRole,
-        });
 
         const payloadWithCamelCase = compact({
             date: base.date,
@@ -849,23 +837,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             subcategory: base.subcategory,
             expenseType: base.expenseType,
             transactionNature: base.transactionNature,
-            categoryId: base.categoryId,
             statementId: base.statementId,
             recurringId: recId,
             budgetCategory: budgetCat,
             accountId: accountId,
             transferGroupId: transferGroupId,
             transferRole: transferRole,
-        });
-
-        const payloadWithSnakeCaseCore = compact({
-            date: base.date,
-            description: base.description,
-            amount: base.amount,
-            category: base.category,
-            type: base.type,
-            status: base.status,
-            account_id: accountId,
         });
 
         const payloadWithCamelCaseCore = compact({
@@ -878,20 +855,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             accountId: accountId,
         });
 
-        const variants: Record<string, unknown>[] = [
-            payloadWithSnakeCase,
-            payloadWithCamelCase,
-        ];
+        const variants: Record<string, unknown>[] = [payloadWithCamelCase];
         const hasNote =
             transactionClean.note != null && String(transactionClean.note).trim() !== '';
         if (hasNote) {
             const { note: _n1, ...camelNoNote } = { ...payloadWithCamelCase };
-            const { note: _n2, ...snakeNoNote } = { ...payloadWithSnakeCase };
             // Try full payloads without note before falling back to minimal core payloads,
             // so legacy schemas missing only `note` keep metadata columns intact.
-            variants.push(snakeNoNote, camelNoNote);
+            variants.push(camelNoNote);
         }
-        variants.push(payloadWithSnakeCaseCore, payloadWithCamelCaseCore);
+        variants.push(payloadWithCamelCaseCore);
         return variants;
     };
 
@@ -954,30 +927,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 return resolved ? { ...norm, accountId: resolved } : norm;
             });
             const ownedAccounts = filterOwnedRows(normalizedAccounts);
-            const fxSeedRaw = Number(
-                (investmentPlan.data as any[])?.[0]?.fx_rate ??
-                (investmentPlan.data as any[])?.[0]?.fxRate ??
-                DEFAULT_SAR_PER_USD,
-            );
-            const fxSeed = Number.isFinite(fxSeedRaw) && fxSeedRaw > 0 ? fxSeedRaw : DEFAULT_SAR_PER_USD;
-            const ledgerCashMap = computeAvailableCashByAccountMap({
-                accounts: ownedAccounts,
-                investments: filterOwnedRows(investments.data as any[]) as any[],
-                investmentTransactions: normalizedInvestmentTransactions,
-                sarPerUsd: fxSeed,
-            });
-            const reconciledInvestmentAccounts = ownedAccounts.map((acc) => {
-                if (acc.type !== 'Investment') return acc;
-                const cash = ledgerCashMap[acc.id] ?? { SAR: 0, USD: 0 };
-                return { ...acc, balance: toAccountBaseCashBalance(acc, cash, fxSeed) };
-            });
-            const driftedInvestmentAccounts = reconciledInvestmentAccounts
-                .filter((acc) => acc.type === 'Investment')
-                .filter((acc) => {
-                    const original = ownedAccounts.find((a) => a.id === acc.id);
-                    return Math.abs((original?.balance ?? 0) - acc.balance) > 0.01;
-                });
-
             // Check if user is admin (has special email or role)
             const isAdmin = auth.user.email?.toLowerCase().includes('admin') || 
                            auth.user.email?.toLowerCase().includes('hussein') ||
@@ -1027,7 +976,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
 
             setData({
-                accounts: reconciledInvestmentAccounts,
+                accounts: ownedAccounts,
                 assets: filterOwnedRows(assets.data as any[]).map(normalizeAssetRow),
                 liabilities: filterOwnedRows(((liabilities.data as any[]) || []).map(normalizeLiability)),
                 goals: filterOwnedRows(goals.data as any[]).map(normalizeGoalRow),
@@ -1083,16 +1032,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 allBudgets: allBudgetsData,
             });
 
-            if (driftedInvestmentAccounts.length > 0) {
-                await Promise.allSettled(
-                    driftedInvestmentAccounts.map((acc) =>
-                        db
-                            .from('accounts')
-                            .update({ balance: acc.balance })
-                            .match({ id: acc.id, user_id: ownerId }),
-                    ),
-                );
-            }
         } catch (error) {
             console.error("Error fetching financial data:", error);
         } finally {
@@ -1122,60 +1061,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     useEffect(() => {
         hydrateSarPerUsdDailySeries(data, resolveSarPerUsd(data ?? null, DEFAULT_SAR_PER_USD));
     }, [data, dataResetKey]);
-
-    /** Self-heal investment account balances from ledger across all pages/flows (trade, transfer, import, restore). */
-    useEffect(() => {
-        if (!data || loading || investmentBalanceReconcileInFlightRef.current) return;
-        const investmentAccounts = (data.accounts ?? []).filter((a: Account) => a.type === 'Investment');
-        if (investmentAccounts.length === 0) return;
-
-        const fx = resolveSarPerUsd(data as FinancialData);
-        const ledgerCashMap = computeAvailableCashByAccountMap({
-            accounts: data.accounts ?? [],
-            investments: data.investments ?? [],
-            investmentTransactions: data.investmentTransactions ?? [],
-            sarPerUsd: fx,
-        });
-
-        const drifted = investmentAccounts
-            .map((acc) => {
-                const cash = ledgerCashMap[acc.id] ?? { SAR: 0, USD: 0 };
-                const expected = toAccountBaseCashBalance(acc, cash, fx);
-                const current = roundMoney(Number(acc.balance ?? 0));
-                return { id: acc.id, expected, current, drift: roundMoney(expected - current) };
-            })
-            .filter((x) => Math.abs(x.drift) > 0.01);
-        if (drifted.length === 0) return;
-
-        const signature = drifted.map((d) => `${d.id}:${d.expected}`).sort().join('|');
-        if (signature === investmentBalanceReconcileLastSignatureRef.current) return;
-        investmentBalanceReconcileLastSignatureRef.current = signature;
-        investmentBalanceReconcileInFlightRef.current = true;
-        const db = supabase;
-        const ownerId = auth?.user?.id;
-
-        setData((prev) => ({
-            ...prev,
-            accounts: prev.accounts.map((a) => {
-                const fix = drifted.find((d) => d.id === a.id);
-                return fix ? { ...a, balance: fix.expected } : a;
-            }),
-        }));
-
-        (async () => {
-            if (!db || !ownerId) return;
-            await Promise.allSettled(
-                drifted.map((d) =>
-                    db
-                        .from('accounts')
-                        .update({ balance: d.expected })
-                        .match({ id: d.id, user_id: ownerId }),
-                ),
-            );
-        })().finally(() => {
-            investmentBalanceReconcileInFlightRef.current = false;
-        });
-    }, [data, loading, supabase, auth?.user?.id]);
 
     // Helper to add user_id to any object
     const withUser = (obj: any) => ({ ...obj, user_id: auth?.user?.id });
@@ -1663,41 +1548,26 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     /** Keep Investment platform `balance` aligned with investment transaction cash flows (buy/sell/deposit/withdrawal/dividend). */
     const applyInvestmentAccountDeltaForTrade = async (
         accountId: string | undefined,
-        _delta: number,
+        delta: number,
         opts?: { includeTransaction?: InvestmentTransaction; excludeTransactionId?: string },
     ) => {
         if (!accountId || !supabase || !auth?.user) return;
+        const d = Number(delta);
+        if (!Number.isFinite(d) || d === 0) return;
         const up = updatePlatformRef.current;
         if (!up) return;
         const acc = (data?.accounts ?? []).find((a) => a.id === accountId);
         if (!acc || acc.type !== 'Investment') return;
-        const fx = resolveSarPerUsd(data as FinancialData);
-        const baseInvestmentTx = [...(data?.investmentTransactions ?? [])];
-        if (opts?.excludeTransactionId) {
-            const ex = String(opts.excludeTransactionId);
-            for (let i = baseInvestmentTx.length - 1; i >= 0; i--) {
-                if (String((baseInvestmentTx[i] as any).id || '') === ex) baseInvestmentTx.splice(i, 1);
-            }
-        }
-        if (opts?.includeTransaction) {
-            const pending = normalizeInvestmentTransaction(opts.includeTransaction);
-            if (pending?.id) {
-                const id = String((pending as any).id);
-                const idx = baseInvestmentTx.findIndex((t) => String((t as any).id || '') === id);
-                if (idx >= 0) baseInvestmentTx[idx] = pending;
-                else baseInvestmentTx.unshift(pending);
-            } else {
-                baseInvestmentTx.unshift(pending);
-            }
-        }
-        const ledgerCashMap = computeAvailableCashByAccountMap({
-            accounts: data?.accounts ?? [],
-            investments: data?.investments ?? [],
-            investmentTransactions: baseInvestmentTx,
-            sarPerUsd: fx,
-        });
-        const cash = ledgerCashMap[accountId] ?? { SAR: 0, USD: 0 };
-        const newBalance = toAccountBaseCashBalance(acc, cash, fx);
+        const accountCurrency: TradeCurrency = acc.currency === 'USD' ? 'USD' : 'SAR';
+        const txCurrencyRaw = opts?.includeTransaction?.currency;
+        const txCurrency: TradeCurrency =
+            txCurrencyRaw === 'USD' || txCurrencyRaw === 'SAR' ? txCurrencyRaw : accountCurrency;
+        const sarPerUsd = resolveSarPerUsd(data ?? null);
+        const deltaInAccountCurrency = txCurrency === accountCurrency
+            ? d
+            : fromSAR(toSAR(d, txCurrency, sarPerUsd), accountCurrency, sarPerUsd);
+        const prevBalance = cashBalanceAccumulatorRef.current[accountId] ?? Number(acc.balance ?? 0);
+        const newBalance = roundMoney(prevBalance + deltaInAccountCurrency);
         cashBalanceAccumulatorRef.current[accountId] = newBalance;
         await up({ ...acc, balance: newBalance }, { fromTransactionDelta: true });
     };
@@ -1761,7 +1631,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 /accountid|account_id/i.test(msg) && /column|schema cache|could not find/i.test(`${msg} ${detail}`);
             toast(
                 accountColMissing
-                    ? 'Failed to add transaction: transactions table is missing accountId/account_id mapping. Run the latest Supabase migrations and refresh schema cache.'
+                    ? 'Failed to add transaction: transactions table is missing accountId. Run the latest Supabase migrations and refresh schema cache.'
                     : `Failed to add transaction: ${msg}`,
                 'error'
             );
@@ -2891,7 +2761,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { data: newHolding, error } = await supabase.from('commodity_holdings').insert(withUser(row)).select().single();
         if (error) {
             console.error("Error adding commodity:", error);
-            throw error;
+            throw new Error(`Failed to add commodity: ${formatDbError(error)}`);
         }
         if (newHolding) setData(prev => ({ ...prev, commodityHoldings: [...prev.commodityHoldings, normalizeCommodityHolding(newHolding)] }));
     };
@@ -2906,7 +2776,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { error } = await supabase.from('commodity_holdings').update(row).match({ id: holding.id, user_id: auth.user.id });
         if (error) {
             console.error(error);
-            throw error;
+            throw new Error(`Failed to update commodity: ${formatDbError(error)}`);
         }
         setData(prev => ({ ...prev, commodityHoldings: prev.commodityHoldings.map(h => h.id === holding.id ? holding : h) }));
     };
@@ -3056,7 +2926,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const saveInvestmentPlan = async (plan: InvestmentPlanSettings, portfolioId?: string) => {
         if (!supabase || !auth?.user) return;
-        const mergedPlan: InvestmentPlanSettings =
+        const mergedPlanRaw: InvestmentPlanSettings =
             portfolioId && data?.investmentPlan
                 ? {
                       ...data.investmentPlan,
@@ -3066,6 +2936,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                       },
                   }
                 : plan;
+        const mergedPlan: InvestmentPlanSettings = {
+            ...mergedPlanRaw,
+            min_coverage_threshold: normalizeMinCoverageThreshold(mergedPlanRaw.min_coverage_threshold),
+        };
         const v = validateInvestmentPlan({
             monthlyBudget: mergedPlan.monthlyBudget,
             coreAllocation: mergedPlan.coreAllocation,
@@ -3197,18 +3071,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
-    const availableCashByAccountId = useMemo(() => computeAvailableCashByAccountMap({
-        accounts: data?.accounts ?? [],
-        investments: data?.investments ?? [],
-        investmentTransactions: data?.investmentTransactions ?? [],
-        sarPerUsd: resolveSarPerUsd(data as FinancialData),
-    }), [data?.accounts, data?.investments, data?.investmentTransactions, data]);
-
     const getAvailableCashForAccount = useCallback((accountId: string): { SAR: number; USD: number } => {
         const canonical = resolveCanonicalAccountId(accountId, data?.accounts ?? []) ?? accountId;
-        const v = availableCashByAccountId[canonical] ?? { SAR: 0, USD: 0 };
-        return { SAR: v.SAR, USD: v.USD };
-    }, [availableCashByAccountId, data?.accounts]);
+        const acc = (data?.accounts ?? []).find((a) => a.id === canonical);
+        if (!acc || acc.type !== 'Investment') return { SAR: 0, USD: 0 };
+        const cur = acc.currency === 'USD' ? 'USD' : 'SAR';
+        const bal = Number(acc.balance ?? 0);
+        if (!Number.isFinite(bal)) return { SAR: 0, USD: 0 };
+        return cur === 'USD' ? { SAR: 0, USD: bal } : { SAR: bal, USD: 0 };
+    }, [data?.accounts]);
 
     /**
      * Personal wealth slices must use the getters — not a raw merge from getPersonalWealthData.
