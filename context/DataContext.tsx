@@ -750,6 +750,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const message = `${error?.message || ''} ${error?.details || ''}`.toLowerCase();
         return error?.code === '42703' || error?.code === 'PGRST204' || message.includes('column') || message.includes('schema cache');
     };
+    const formatDbError = (error: any): string => {
+        if (!error) return 'Unknown database error.';
+        if (error instanceof Error) return error.message;
+        const msg = String(error?.message ?? '').trim();
+        const details = String(error?.details ?? '').trim();
+        const hint = String(error?.hint ?? '').trim();
+        const code = String(error?.code ?? '').trim();
+        return [msg, details, hint, code ? `code=${code}` : '']
+            .filter((x) => x.length > 0)
+            .join(' | ') || 'Unknown database error.';
+    };
 
     const goalPayloadVariants = (goal: Goal) => {
         const p = normalizeGoalPriority(goal.priority);
@@ -2750,7 +2761,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { data: newHolding, error } = await supabase.from('commodity_holdings').insert(withUser(row)).select().single();
         if (error) {
             console.error("Error adding commodity:", error);
-            throw error;
+            throw new Error(`Failed to add commodity: ${formatDbError(error)}`);
         }
         if (newHolding) setData(prev => ({ ...prev, commodityHoldings: [...prev.commodityHoldings, normalizeCommodityHolding(newHolding)] }));
     };
@@ -2765,7 +2776,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { error } = await supabase.from('commodity_holdings').update(row).match({ id: holding.id, user_id: auth.user.id });
         if (error) {
             console.error(error);
-            throw error;
+            throw new Error(`Failed to update commodity: ${formatDbError(error)}`);
         }
         setData(prev => ({ ...prev, commodityHoldings: prev.commodityHoldings.map(h => h.id === holding.id ? holding : h) }));
     };

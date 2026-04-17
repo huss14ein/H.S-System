@@ -289,6 +289,23 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
         return 'OTHER';
     }
 
+    const formatUnknownError = (error: unknown): string => {
+        if (error instanceof Error) return error.message;
+        if (typeof error === 'string') return error;
+        if (error && typeof error === 'object') {
+            const obj = error as Record<string, unknown>;
+            const msg = String(obj.message ?? '').trim();
+            const details = String(obj.details ?? '').trim();
+            const hint = String(obj.hint ?? '').trim();
+            const code = String(obj.code ?? '').trim();
+            const fallbackJson = (() => {
+                try { return JSON.stringify(obj); } catch { return ''; }
+            })();
+            return [msg, details, hint, code ? `code=${code}` : '', fallbackJson].filter(Boolean).join(' | ') || 'Unknown error';
+        }
+        return String(error);
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setFormError(null);
@@ -356,7 +373,7 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
             else await onSave(holdingData);
             onClose();
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = formatUnknownError(error);
             setFormError(message);
             const missing = message.match(/Missing column detected:\s*([a-zA-Z0-9_]+)/i)?.[1];
             const variantCount = message.match(/Tried\s*(\d+)\s*payload variants?/i)?.[1];
