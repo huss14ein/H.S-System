@@ -33,6 +33,24 @@ import { encodeNoteWithSplits } from '../services/transactionSplitNote';
 import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
+import { exportCashTransactionsToCsv } from '../services/reportingEngine';
+
+/** Local calendar month YYYY-MM for `<input type="month">` defaults. */
+function calendarMonthIso(date = new Date()) {
+    const y = date.getFullYear();
+    const m = date.getMonth() + 1;
+    return `${y}-${String(m).padStart(2, '0')}`;
+}
+
+function startOfUtcDayFromYmd(ymd: string): Date {
+    const [y, m, d] = ymd.split('-').map(Number);
+    return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
+}
+
+function endOfUtcDayFromYmd(ymd: string): Date {
+    const [y, m, d] = ymd.split('-').map(Number);
+    return new Date(y, (m || 1) - 1, d || 1, 23, 59, 59, 999);
+}
 
 /**
  * Income-specific categories. Do not include "Transfer" / "Transfers": those labels are reserved for
@@ -750,36 +768,42 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     
     const [filters, setFilters] = useState({ 
         accountId: 'all', 
-        month: new Date().toISOString().slice(0, 7),
+        month: calendarMonthIso(),
         nature: 'all' as 'all' | 'Fixed' | 'Variable',
         expenseType: 'all' as 'all' | 'Core' | 'Discretionary',
         budgetCategory: 'all' as 'all' | string,
     });
 
+    const defaultMonthDateBounds = useMemo(() => {
+        const [y, m] = filters.month.split('-').map(Number);
+        if (!Number.isFinite(y) || !Number.isFinite(m)) {
+            const key = calendarMonthIso();
+            const [yy, mm] = key.split('-').map(Number);
+            const last = new Date(yy, mm, 0).getDate();
+            return {
+                from: `${yy}-${String(mm).padStart(2, '0')}-01`,
+                to: `${yy}-${String(mm).padStart(2, '0')}-${String(last).padStart(2, '0')}`,
+            };
+        }
+        const last = new Date(y, m, 0).getDate();
+        return {
+            from: `${y}-${String(m).padStart(2, '0')}-01`,
+            to: `${y}-${String(m).padStart(2, '0')}-${String(last).padStart(2, '0')}`,
+        };
+    }, [filters.month]);
+
+    const [exportAccountId, setExportAccountId] = useState<string>('all');
+    const [exportDateFrom, setExportDateFrom] = useState('');
+    const [exportDateTo, setExportDateTo] = useState('');
+
     useEffect(() => {
-        if (!pageAction) return;
-        if (pageAction === 'open-transaction-modal') {
-            handleOpenTransactionModal();
-            clearPageAction?.();
-            return;
-        }
-        if (pageAction.startsWith('filter-by-budget:')) {
-            const [, rawCategory, rawPeriod, rawYear, rawMonth] = pageAction.split(':');
-            const category = rawCategory || '';
-            const period = String(rawPeriod || 'monthly').toLowerCase();
-            const year = Number(rawYear) || new Date().getFullYear();
-            const month = Math.min(12, Math.max(1, Number(rawMonth) || new Date().getMonth() + 1));
-            const monthIso = period === 'yearly'
-                ? `${year.toString().padStart(4, '0')}-01`
-                : `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}`;
-            setFilters((prev) => ({
-                ...prev,
-                month: monthIso,
-                budgetCategory: category || 'all',
-            }));
-            clearPageAction?.();
-        }
-    }, [pageAction, clearPageAction]);
+        setExportDateFrom(defaultMonthDateBounds.from);
+        setExportDateTo(defaultMonthDateBounds.to);
+    }, [defaultMonthDateBounds.from, defaultMonthDateBounds.to]);
+
+    useEffect(() => {
+        setExportAccountId(filters.accountId);
+    }, [filters.accountId]);
 
     useEffect(() => {
         const loadGovernanceData = async () => {
@@ -975,6 +999,77 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         });
     }, [data?.transactions, (data as any)?.personalTransactions, filters, userRole, permittedBudgetCategories, sharedBudgetCategories]);
 
+    const filteredTransactionsForExport = useMemo(() => {
+        const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
+        const start = exportDateFrom ? startOfUtcDayFromYmd(exportDateFrom) : null;
+        const end = exportDateTo ? endOfUtcDayFromYmd(exportDateTo) : null;
+        const baseTransactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        return baseTransactions.filter((t: Transaction) => {
+            const transactionDate = new Date(t.date);
+            const inPeriod =
+                start && end ? transactionDate >= start && transactionDate <= end : false;
+            const isAccountMatch = exportAccountId === 'all' || t.accountId === exportAccountId;
+            const txBudget = String(t.budgetCategory ?? t.category ?? '').trim();
+            const isPermitted = userRole === 'Admin' || !txBudget || allowedRestrictedCategories.has(txBudget);
+            return inPeriod && isAccountMatch && isPermitted;
+        });
+    }, [
+        data?.transactions,
+        (data as any)?.personalTransactions,
+        exportAccountId,
+        exportDateFrom,
+        exportDateTo,
+        userRole,
+        permittedBudgetCategories,
+        sharedBudgetCategories,
+    ]);
+
+    const handleExportFilteredCsv = useCallback(() => {
+        if (!exportDateFrom || !exportDateTo) {
+            alert('Choose a start and end date for export.');
+            return;
+        }
+        const start = startOfUtcDayFromYmd(exportDateFrom);
+        const end = endOfUtcDayFromYmd(exportDateTo);
+        if (start > end) {
+            alert('End date must be on or after start date.');
+            return;
+        }
+        if (filteredTransactionsForExport.length === 0) {
+            alert('No transactions match this account and period.');
+            return;
+        }
+        const rows = filteredTransactionsForExport.map((t: Transaction) => ({
+            id: t.id,
+            date: t.date,
+            description: t.description,
+            amount: t.amount,
+            category: t.category,
+            budgetCategory: t.budgetCategory,
+            subcategory: t.subcategory,
+            type: t.type,
+            transactionNature: t.transactionNature,
+            expenseType: t.expenseType,
+            status: t.status,
+            accountId: t.accountId,
+            accountName: accountsById.get(t.accountId)?.name ?? '',
+            transferGroupId: t.transferGroupId,
+            transferRole: t.transferRole,
+        }));
+        const csv = exportCashTransactionsToCsv(rows);
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const accSlug =
+            exportAccountId === 'all'
+                ? 'all-accounts'
+                : (accountsById.get(exportAccountId)?.name ?? exportAccountId).replace(/[^\w\-]+/g, '_').slice(0, 48);
+        a.href = url;
+        a.download = `finova-transactions-${accSlug}-${exportDateFrom}_to_${exportDateTo}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }, [exportDateFrom, exportDateTo, filteredTransactionsForExport, accountsById, exportAccountId]);
+
     const { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown } = useMemo(() => {
         const fx = resolveSarPerUsd(data, exchangeRate);
         const accountsMap = new Map<string, Account>(availableAccounts.map((a: Account) => [a.id, a]));
@@ -1033,6 +1128,31 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         setTransactionToEdit(transaction);
         setIsTransactionModalOpen(true);
     };
+
+    useEffect(() => {
+        if (!pageAction) return;
+        if (pageAction === 'open-transaction-modal') {
+            handleOpenTransactionModal();
+            clearPageAction?.();
+            return;
+        }
+        if (pageAction.startsWith('filter-by-budget:')) {
+            const [, rawCategory, rawPeriod, rawYear, rawMonth] = pageAction.split(':');
+            const category = rawCategory || '';
+            const period = String(rawPeriod || 'monthly').toLowerCase();
+            const year = Number(rawYear) || new Date().getFullYear();
+            const month = Math.min(12, Math.max(1, Number(rawMonth) || new Date().getMonth() + 1));
+            const monthIso = period === 'yearly'
+                ? `${year.toString().padStart(4, '0')}-01`
+                : `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}`;
+            setFilters((prev) => ({
+                ...prev,
+                month: monthIso,
+                budgetCategory: category || 'all',
+            }));
+            clearPageAction?.();
+        }
+    }, [pageAction, clearPageAction]);
 
     const handleSaveTransaction = (transaction: Omit<Transaction, 'id'> | Transaction) => {
         const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
@@ -1464,6 +1584,63 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                         <FilterButton label="Core" value="Core" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
                         <FilterButton label="Discretionary" value="Discretionary" current={filters.expenseType} onClick={(v) => setFilters(f => ({...f, expenseType: v as any}))} />
                     </div>
+                    <span className="hidden sm:inline text-xs text-slate-400 shrink-0" aria-hidden="true">·</span>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setExportDateFrom(defaultMonthDateBounds.from);
+                            setExportDateTo(defaultMonthDateBounds.to);
+                            setExportAccountId(filters.accountId);
+                        }}
+                        className="text-xs font-medium text-primary hover:underline whitespace-nowrap"
+                        title="Set export dates to match the selected month and account filter"
+                    >
+                        Sync export with filters
+                    </button>
+                </div>
+                <div className="mb-4 p-3 rounded-xl border border-slate-200 bg-white flex flex-wrap items-end gap-3">
+                    <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">Export account</label>
+                        <select
+                            value={exportAccountId}
+                            onChange={(e) => setExportAccountId(e.target.value)}
+                            className="select-base text-sm min-w-[180px]"
+                            aria-label="Account for CSV export"
+                        >
+                            <option value="all">All accounts</option>
+                            {availableAccounts.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                    {c.name}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">From date</label>
+                        <input
+                            type="date"
+                            value={exportDateFrom}
+                            onChange={(e) => setExportDateFrom(e.target.value)}
+                            className="input-base text-sm"
+                            aria-label="Export period start date"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">To date</label>
+                        <input
+                            type="date"
+                            value={exportDateTo}
+                            onChange={(e) => setExportDateTo(e.target.value)}
+                            className="input-base text-sm"
+                            aria-label="Export period end date"
+                        />
+                    </div>
+                    <button type="button" className="btn-primary text-sm py-2" onClick={handleExportFilteredCsv}>
+                        Export CSV ({filteredTransactionsForExport.length})
+                    </button>
+                    <p className="text-xs text-slate-500 w-full sm:w-auto flex-1 min-w-[200px]">
+                        Includes every cash-account transaction row in range (including transfers between accounts). Investment trades use the Investments page exports.
+                    </p>
                 </div>
                 <ul className="divide-y divide-slate-100">
                     {filteredTransactions.map((transaction: Transaction) => (

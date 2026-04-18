@@ -103,6 +103,9 @@ describe('wealth summary report exports', () => {
       includeSnapshot: true,
       includeCashflow: false,
       includeRisk: false,
+      includeInvestmentsOverview: false,
+      includePlatforms: false,
+      includePortfolios: false,
       includeHoldings: false,
       includeAssets: true,
       includeLiabilities: false,
@@ -110,6 +113,9 @@ describe('wealth summary report exports', () => {
     expect(html).toContain('Net Worth Snapshot');
     expect(html).not.toContain('Cashflow & Efficiency');
     expect(html).not.toContain('Resilience & Risk');
+    expect(html).not.toContain('Investment Summary');
+    expect(html).not.toContain('Investment Platforms');
+    expect(html).not.toContain('Investment Portfolios');
     expect(html).not.toContain('Holding Details (Position by Position)');
     expect(html).toContain('Asset Details');
     expect(html).not.toContain('Liability Details');

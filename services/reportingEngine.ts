@@ -64,6 +64,50 @@ function toCsv(rows: Record<string, unknown>[]): string {
   return [headers.join(','), ...rows.map((r) => headers.map((h) => escape(r[h])).join(','))].join('\n');
 }
 
+/** Cash/bank transactions for CSV export (`Transaction` ledger rows only). */
+export interface TransactionExportRow {
+  id?: string;
+  date: string;
+  description: string;
+  amount: number;
+  category: string;
+  accountId: string;
+  accountName?: string;
+  budgetCategory?: string;
+  subcategory?: string;
+  type: string;
+  transactionNature?: string;
+  expenseType?: string;
+  status?: string;
+  transferGroupId?: string;
+  transferRole?: string;
+}
+
+/**
+ * Build CSV for filtered cash ledger rows (account + inclusive date period).
+ */
+export function exportCashTransactionsToCsv(rows: TransactionExportRow[]): string {
+  if (!rows.length) return '';
+  const normalized = rows.map((r) => ({
+    date: String(r.date ?? ''),
+    description: String(r.description ?? ''),
+    amount: typeof r.amount === 'number' && Number.isFinite(r.amount) ? r.amount : '',
+    category: String(r.category ?? ''),
+    budgetCategory: String(r.budgetCategory ?? ''),
+    subcategory: String(r.subcategory ?? ''),
+    type: String(r.type ?? ''),
+    transactionNature: String(r.transactionNature ?? ''),
+    expenseType: String(r.expenseType ?? ''),
+    status: String(r.status ?? ''),
+    accountId: String(r.accountId ?? ''),
+    accountName: String(r.accountName ?? ''),
+    transferGroupId: String(r.transferGroupId ?? ''),
+    transferRole: String(r.transferRole ?? ''),
+    id: String(r.id ?? ''),
+  }));
+  return toCsv(normalized as unknown as Record<string, unknown>[]);
+}
+
 function escapeHtml(value: unknown): string {
   return String(value ?? '')
     .replace(/&/g, '&amp;')

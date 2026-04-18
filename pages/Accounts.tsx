@@ -29,6 +29,13 @@ import InfoHint from '../components/InfoHint';
 import OwnerBadge from '../components/OwnerBadge';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
+
+/** Local calendar month YYYY-MM (avoid UTC drift from `toISOString()` on month boundaries). */
+function calendarMonthIso(date = new Date()) {
+    const y = date.getFullYear();
+    const m = date.getMonth() + 1;
+    return `${y}-${String(m).padStart(2, '0')}`;
+}
 import { useCurrency } from '../context/CurrencyContext';
 import { tradableCashBucketToSAR, resolveSarPerUsd, toSAR, fromSAR } from '../utils/currencyMath';
 import { reconcileCashAccountBalance, type CashAccountReconciliation } from '../services/dataQuality';
@@ -364,6 +371,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const [transferSubview, setTransferSubview] = useState<'scheduled' | 'history'>('scheduled');
     const [transferHistoryFilterFrom, setTransferHistoryFilterFrom] = useState<string>('all');
     const [transferHistoryFilterTo, setTransferHistoryFilterTo] = useState<string>('all');
+    const [transferHistoryMonth, setTransferHistoryMonth] = useState(() => calendarMonthIso());
     const [reschedulePair, setReschedulePair] = useState<ScheduledTransferPair | null>(null);
     const [rescheduleDay, setRescheduleDay] = useState('1');
     const [rescheduleAmount, setRescheduleAmount] = useState('');
@@ -614,12 +622,20 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     }, [data?.transactions, (data as any)?.personalTransactions, data?.investmentTransactions, (data as any)?.personalInvestmentTransactions]);
 
     const filteredTransferHistory = useMemo(() => {
+        const [hy, hm] = transferHistoryMonth.split('-').map(Number);
+        const monthStart =
+            Number.isFinite(hy) && Number.isFinite(hm)
+                ? new Date(hy, hm - 1, 1)
+                : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+        const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0, 23, 59, 59, 999);
         return transferHistory.filter((p) => {
+            const d = new Date(p.date);
+            if (Number.isNaN(d.getTime()) || d < monthStart || d > monthEnd) return false;
             if (transferHistoryFilterFrom !== 'all' && p.fromAccountId !== transferHistoryFilterFrom) return false;
             if (transferHistoryFilterTo !== 'all' && p.toAccountId !== transferHistoryFilterTo) return false;
             return true;
         });
-    }, [transferHistory, transferHistoryFilterFrom, transferHistoryFilterTo]);
+    }, [transferHistory, transferHistoryMonth, transferHistoryFilterFrom, transferHistoryFilterTo]);
 
     const handleOpenAccountModal = (account: Account | null = null) => { setAccountToEdit(account); setIsAccountModalOpen(true); };
 
@@ -1097,6 +1113,16 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 <>
                 <div className="flex flex-wrap items-center gap-3 mb-3">
                     <div className="flex items-center gap-2">
+                        <label className="text-xs font-medium text-slate-600 whitespace-nowrap">Month</label>
+                        <input
+                            type="month"
+                            value={transferHistoryMonth}
+                            onChange={(e) => setTransferHistoryMonth(e.target.value)}
+                            className="input-base text-sm py-1.5 min-w-[140px]"
+                            aria-label="Filter transfers by month"
+                        />
+                    </div>
+                    <div className="flex items-center gap-2">
                         <label className="text-xs font-medium text-slate-600 whitespace-nowrap">From</label>
                         <select value={transferHistoryFilterFrom} onChange={(e) => setTransferHistoryFilterFrom(e.target.value)} className="select-base text-sm py-1.5 min-w-[140px]">
                             <option value="all">All accounts</option>
@@ -1114,8 +1140,16 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             ))}
                         </select>
                     </div>
-                    {(transferHistoryFilterFrom !== 'all' || transferHistoryFilterTo !== 'all') && (
-                        <button type="button" onClick={() => { setTransferHistoryFilterFrom('all'); setTransferHistoryFilterTo('all'); }} className="text-xs font-medium text-slate-500 hover:text-slate-700 flex items-center gap-1">
+                    {(transferHistoryFilterFrom !== 'all' || transferHistoryFilterTo !== 'all' || transferHistoryMonth !== calendarMonthIso()) && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setTransferHistoryFilterFrom('all');
+                                setTransferHistoryFilterTo('all');
+                                setTransferHistoryMonth(calendarMonthIso());
+                            }}
+                            className="text-xs font-medium text-slate-500 hover:text-slate-700 flex items-center gap-1"
+                        >
                             <XMarkIcon className="h-4 w-4" /> Clear filters
                         </button>
                     )}
