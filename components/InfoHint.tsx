@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useId
 import { createPortal } from 'react-dom';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { INFOHINT_CLOSE_OTHERS } from './infoHintEvents';
-import { InformationCircleIcon } from './icons/InformationCircleIcon';
 
 interface InfoHintProps {
   text: string;
@@ -216,7 +215,12 @@ const InfoHint: React.FC<InfoHintProps> = ({ text, placement = 'auto', popoverAl
         aria-expanded={open}
         aria-describedby={open ? tooltipId : undefined}
       >
-        <InformationCircleIcon className="h-4 w-4" aria-hidden="true" />
+        <span
+          aria-hidden="true"
+          className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-current text-[10px] font-semibold leading-none"
+        >
+          i
+        </span>
       </button>
       {typeof document !== 'undefined' && panel ? createPortal(panel, document.body) : null}
     </span>

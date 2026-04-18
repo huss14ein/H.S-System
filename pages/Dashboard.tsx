@@ -504,7 +504,12 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             const now = new Date();
             const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
             const d = data as any;
-            const transactions = d?.personalTransactions ?? data?.transactions ?? [];
+            const rawTransactions = d?.personalTransactions ?? data?.transactions ?? [];
+            const transactions = (rawTransactions as Array<Transaction & { account_id?: string; budget_category?: string }>).map((t) => ({
+                ...t,
+                accountId: t.accountId ?? t.account_id ?? '',
+                budgetCategory: t.budgetCategory ?? t.budget_category ?? '',
+            }));
             const accounts = d?.personalAccounts ?? data?.accounts ?? [];
             const investments = d?.personalInvestments ?? data?.investments ?? [];
             const accountsById = new Map(accounts.map((a: Account) => [a.id, a]));

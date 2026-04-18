@@ -460,10 +460,10 @@ const hasData = accountsForEmptyCheck.length > 0;
                     <p className="text-slate-700 leading-relaxed text-sm sm:text-base">
                         Personalize how the app works for you: risk level, alerts, notifications, and data. Look for the{' '}
                         <span
-                            className="inline-flex h-5 w-5 align-middle items-center justify-center rounded-full border border-slate-300 text-[11px] font-bold text-slate-600 mx-0.5"
+                            className="inline-flex h-5 w-5 align-middle items-center justify-center rounded-full border border-slate-300 text-[11px] font-semibold text-slate-600 mx-0.5"
                             aria-hidden
                         >
-                            !
+                            i
                         </span>{' '}
                         icon — hover (or tap on mobile) to read a short explanation. No finance degree needed.
                     </p>

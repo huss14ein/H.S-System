@@ -424,16 +424,12 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             return sum + toSAR(Number(acc.balance) || 0, cur, sarPerUsd);
         }, 0);
 
-        /** Tradable cash per investment platform (investment transaction ledger), not holdings market value. */
-        const investmentsWithTradableBalance = investmentAccountsList.map((acc: { id: string; [k: string]: unknown }) => {
+        const totalInvestmentTradableCash = investmentAccountsList.reduce((sum: number, acc: { id: string }) => {
             const bucket = getAvailableCashForAccount(acc.id);
-            const tradableSar = tradableCashBucketToSAR(bucket, sarPerUsd);
-            return { ...acc, balance: tradableSar };
-        });
+            return sum + tradableCashBucketToSAR(bucket, sarPerUsd);
+        }, 0);
 
-        const totalInvestmentTradableCash = investmentsWithTradableBalance.reduce((sum: number, acc: { balance?: number }) => sum + (acc.balance ?? 0), 0);
-
-        return { cashAccounts: cash, creditAccounts: credit, investmentAccounts: investmentsWithTradableBalance, totalCash, totalCredit, totalInvestmentTradableCash };
+        return { cashAccounts: cash, creditAccounts: credit, investmentAccounts: investmentAccountsList, totalCash, totalCredit, totalInvestmentTradableCash };
     }, [data?.accounts, (data as any)?.personalAccounts, sarPerUsd, getAvailableCashForAccount]);
 
     const spendableBalanceSar = useCallback(
@@ -1206,7 +1202,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             {orderedInvestmentAccounts.map((acc) => {
                         const linkedCount = (data?.investments ?? []).filter((p: { accountId?: string; account_id?: string }) => (p.accountId ?? (p as any).account_id) === acc.id).length;
                         return (
-                            <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={linkedCount} balanceMetricLabel="Cash for trading" />
+                            <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={linkedCount} balanceMetricLabel="Current Balance" />
                         );
                     })}
                 </div>

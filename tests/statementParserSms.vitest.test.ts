@@ -63,4 +63,32 @@ SAR 21.50
     expect(res.transactions.length).toBeGreaterThan(0);
     expect(Math.abs(res.transactions[0].amount)).toBeCloseTo(5.75, 2);
   });
+
+  it('extracts transactions from compact one-paragraph SMS paste', async () => {
+    const sms = `شراء عبر نقاط البيع لدى:DUBAI PLA SAR مبلغ:5.75 SAR رصيد:593.65 19:56 8/4/26 Payment at CAFE NERO SAR 21.50 9/4/26`;
+    const res = await parseSMSTransactions(sms, 'acc-5');
+    expect(res.transactions.length).toBeGreaterThanOrEqual(2);
+    expect(res.transactions.some((t) => Math.abs(t.amount) === 21.5)).toBe(true);
+  });
+
+  it('handles Arabic-Indic numerals in SMS amount/date', async () => {
+    const sms = `شراء عبر نقاط البيع\nلدى: DUBAI PLA\nSAR مبلغ:٥٫٧٥\n٨/٤/٢٦`;
+    const res = await parseSMSTransactions(sms, 'acc-6');
+    expect(res.transactions.length).toBeGreaterThan(0);
+    expect(Math.abs(res.transactions[0].amount)).toBeCloseTo(5.75, 2);
+    expect(res.transactions[0].date).toBe('2026-04-08');
+  });
+
+  it('parses Al-Rajhi style SMS that use SR (not SAR) and mixed Arabic/English lines', async () => {
+    const sms = `شراء إنترنت بــ SR 30.24
+عبر 7365 ؛ فيزا-ابل باي
+__HUNGERSTA
+SR رصيد:1750.6
+10:32 18/4/26`;
+    const res = await parseSMSTransactions(sms, 'acc-7');
+    expect(res.transactions.length).toBeGreaterThan(0);
+    expect(Math.abs(res.transactions[0].amount)).toBeCloseTo(30.24, 2);
+    expect(res.transactions[0].type).toBe('expense');
+    expect(res.transactions[0].date).toBe('2026-04-18');
+  });
 });
