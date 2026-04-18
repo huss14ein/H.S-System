@@ -201,7 +201,7 @@ const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) =>
     const { formatCurrencyString } = useFormatCurrency();
     const isPaid = (liability.status ?? 'Active') === 'Paid';
     return (
-        <div className={`section-card flex flex-col justify-between hover:shadow-lg transition-shadow duration-300 border-l-4 ${isPaid ? 'border-slate-300 bg-slate-50/50' : 'border-emerald-500'}`}>
+        <div className={`section-card flex flex-col justify-between hover:shadow-lg transition-shadow duration-300 ${isPaid ? 'opacity-90 border-l-4 border-l-slate-300 bg-slate-50/50' : ''}`}>
             <div className="flex justify-between items-start">
                 <div className="flex items-center space-x-3">
                     <BanknotesIcon className={`h-8 w-8 ${isPaid ? 'text-slate-400' : 'text-emerald-500'}`} />

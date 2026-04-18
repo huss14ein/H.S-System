@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getGoalAIPlan } from '../services/geminiService';
-import { Goal, Page } from '../types';
+import { Goal, Liability, Page } from '../types';
 import { RocketLaunchIcon } from '../components/icons/RocketLaunchIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
@@ -32,6 +32,7 @@ import { useSelfLearning } from '../context/SelfLearningContext';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import { formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
+import { receivableContributionForGoal } from '../services/goalReceivableContribution';
 
 // A more visual progress bar specific for goals
 const GoalProgressBar: React.FC<{ progress: number; colorClass: string }> = ({ progress, colorClass }) => {
@@ -242,44 +243,54 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         return Array.from(new Set(syms.filter((s) => s.length >= 2)));
     }, [data?.investments, goal.id]);
     const { names: goalHoldingNames } = useCompanyNames(goalLinkSymbols);
-    const linkedLiabilities = useMemo(
-        () => ((data as any)?.personalLiabilities ?? data?.liabilities ?? []).filter((l: { goalId?: string }) => l.goalId === goal.id),
-        [data?.liabilities, (data as any)?.personalLiabilities, goal.id],
-    );
+        const personalLiabilities = useMemo(
+            () => ((data as any)?.personalLiabilities ?? data?.liabilities ?? []) as Liability[],
+            [data?.liabilities, (data as any)?.personalLiabilities],
+        );
+        const linkedLiabilities = useMemo(
+            () => personalLiabilities.filter((l) => l.goalId === goal.id),
+            [personalLiabilities, goal.id],
+        );
 
-    const { linkedAssets, calculatedCurrentAmount } = useMemo(() => {
-        const linkedItems: { name: string, value: number }[] = [];
-        const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
-        const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        const { linkedAssets, calculatedCurrentAmount } = useMemo(() => {
+            const linkedItems: { name: string; value: number }[] = [];
+            const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
+            const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
 
-        assets.filter((a: { goalId?: string }) => a.goalId === goal.id).forEach((a: { name?: string; value?: number }) => {
-            linkedItems.push({ name: a.name ?? '—', value: a.value ?? 0 });
-        });
-
-        investments.forEach((p: { goalId?: string; name?: string; currency?: string; holdings?: { goalId?: string; symbol?: string; currentValue?: number; name?: string }[] }) => {
-            const holdings = p.holdings ?? [];
-            let portfolioResidualForGoal = 0;
-            holdings.forEach((h: { goalId?: string; symbol?: string; name?: string; currentValue?: number }) => {
-                const resolvedGoalId = h.goalId || p.goalId;
-                if (resolvedGoalId !== goal.id) return;
-                const valueSar = toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd);
-                // Holding goal link has priority; otherwise the platform goal applies.
-                if (h.goalId) {
-                    linkedItems.push({
-                        name: `${p.name}: ${formatSymbolWithCompany(h.symbol ?? '', h.name, goalHoldingNames)}`,
-                        value: valueSar,
-                    });
-                } else portfolioResidualForGoal += valueSar;
+            assets.filter((a: { goalId?: string }) => a.goalId === goal.id).forEach((a: { name?: string; value?: number }) => {
+                linkedItems.push({ name: a.name ?? '—', value: a.value ?? 0 });
             });
-            if (portfolioResidualForGoal > 0) {
-                linkedItems.push({ name: `Portfolio: ${p.name}`, value: portfolioResidualForGoal });
-            }
-        });
 
-        const totalValue = linkedItems.reduce((sum, item) => sum + (item.value ?? 0), 0);
+            investments.forEach((p: { goalId?: string; name?: string; currency?: string; holdings?: { goalId?: string; symbol?: string; currentValue?: number; name?: string }[] }) => {
+                const holdings = p.holdings ?? [];
+                let portfolioResidualForGoal = 0;
+                holdings.forEach((h: { goalId?: string; symbol?: string; name?: string; currentValue?: number }) => {
+                    const resolvedGoalId = h.goalId || p.goalId;
+                    if (resolvedGoalId !== goal.id) return;
+                    const valueSar = toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd);
+                    // Holding goal link has priority; otherwise the platform goal applies.
+                    if (h.goalId) {
+                        linkedItems.push({
+                            name: `${p.name}: ${formatSymbolWithCompany(h.symbol ?? '', h.name, goalHoldingNames)}`,
+                            value: valueSar,
+                        });
+                    } else portfolioResidualForGoal += valueSar;
+                });
+                if (portfolioResidualForGoal > 0) {
+                    linkedItems.push({ name: `Portfolio: ${p.name}`, value: portfolioResidualForGoal });
+                }
+            });
 
-        return { linkedAssets: linkedItems, calculatedCurrentAmount: totalValue };
-    }, [data?.assets, data?.investments, goal.id, sarPerUsd, goalHoldingNames]);
+            personalLiabilities.forEach((l) => {
+                const v = receivableContributionForGoal(l, goal.id);
+                if (v <= 0) return;
+                linkedItems.push({ name: `${l.name || 'Receivable'} (owed to you)`, value: v });
+            });
+
+            const totalValue = linkedItems.reduce((sum, item) => sum + (item.value ?? 0), 0);
+
+            return { linkedAssets: linkedItems, calculatedCurrentAmount: totalValue };
+        }, [data?.assets, data?.investments, goal.id, sarPerUsd, goalHoldingNames, personalLiabilities]);
 
     const handleGetAIPlan = useCallback(async () => {
         setIsLoading(true);
@@ -445,16 +456,23 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                 )}
                 {linkedLiabilities.length > 0 && (
                     <div className="mt-3 border-t pt-3">
-                        <p className="text-xs font-semibold text-gray-700 mb-1">Linked liabilities</p>
+                        <p className="text-xs font-semibold text-gray-700 mb-1">Linked liabilities & receivables</p>
                         <ul className="space-y-1 text-sm">
-                            {linkedLiabilities.slice(0, 4).map((liab: { id: string; name?: string; amount?: number; status?: string }) => (
-                                <li key={liab.id} className="flex justify-between items-center">
-                                    <span className="text-gray-600 break-words" title={liab.name ?? 'Liability'}>{liab.name ?? 'Liability'}</span>
-                                    <span className="font-medium text-danger ml-2">{formatCurrencyString(Math.abs(liab.amount ?? 0), { digits: 0 })}{(liab.status ?? 'Active') === 'Paid' ? ' (Paid)' : ''}</span>
-                                </li>
-                            ))}
+                            {linkedLiabilities.slice(0, 4).map((liab: Liability) => {
+                                const isRecv = liab.type === 'Receivable' && (liab.amount ?? 0) > 0;
+                                const amtStr = `${formatCurrencyString(Math.abs(liab.amount ?? 0), { digits: 0 })}${(liab.status ?? 'Active') === 'Paid' ? ' (Paid)' : ''}`;
+                                return (
+                                    <li key={liab.id} className="flex justify-between items-center gap-2">
+                                        <span className="text-gray-600 break-words" title={liab.name ?? ''}>
+                                            {liab.name ?? 'Entry'}
+                                            {isRecv ? <span className="text-emerald-700 font-normal ml-1">(owed to you)</span> : null}
+                                        </span>
+                                        <span className={`font-medium ml-2 shrink-0 ${isRecv ? 'text-emerald-700' : 'text-danger'}`}>{amtStr}</span>
+                                    </li>
+                                );
+                            })}
                             {linkedLiabilities.length > 4 && (
-                                <li className="text-xs text-gray-500">+{linkedLiabilities.length - 4} more linked liabilities</li>
+                                <li className="text-xs text-gray-500">+{linkedLiabilities.length - 4} more linked items</li>
                             )}
                         </ul>
                     </div>
@@ -553,6 +571,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void; pageAction?: strin
         let totalCurrent = 0;
         const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
         const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        const personalLiabilitiesForGoals = ((data as any)?.personalLiabilities ?? data?.liabilities ?? []) as Liability[];
         const goals = data?.goals ?? [];
         const goalAssetValues = new Map<string, number>();
 
@@ -576,6 +595,14 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void; pageAction?: strin
             }
         });
 
+        personalLiabilitiesForGoals.forEach((l) => {
+            const gid = l.goalId;
+            if (!gid) return;
+            const v = receivableContributionForGoal(l, gid);
+            if (v <= 0) return;
+            goalAssetValues.set(gid, (goalAssetValues.get(gid) || 0) + v);
+        });
+
         goals.forEach(goal => {
             totalTarget += (goal.targetAmount ?? 0);
             totalCurrent += goalAssetValues.get(goal.id) || 0;
@@ -584,7 +611,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void; pageAction?: strin
         const goalCurrentAmountByGoalId: Record<string, number> = {};
         goals.forEach(g => { goalCurrentAmountByGoalId[g.id] = goalAssetValues.get(g.id) || 0; });
         return { totalTargetAmount: totalTarget, totalCurrentAmount: totalCurrent, goalCurrentAmountByGoalId };
-    }, [data?.goals, data?.assets, data?.investments, sarPerUsd]);
+    }, [data?.goals, data?.assets, data?.investments, data?.liabilities, (data as any)?.personalLiabilities, sarPerUsd]);
     
     const overallProgress = totalTargetAmount > 0 ? (totalCurrentAmount / totalTargetAmount) * 100 : 0;
 
