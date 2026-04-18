@@ -75,6 +75,23 @@ const CommodityHoldingModal: React.FC<{
         return 'OTHER';
     }
 
+    const formatUnknownError = (error: unknown): string => {
+        if (error instanceof Error) return error.message;
+        if (typeof error === 'string') return error;
+        if (error && typeof error === 'object') {
+            const obj = error as Record<string, unknown>;
+            const msg = String(obj.message ?? '').trim();
+            const details = String(obj.details ?? '').trim();
+            const hint = String(obj.hint ?? '').trim();
+            const code = String(obj.code ?? '').trim();
+            const fallbackJson = (() => {
+                try { return JSON.stringify(obj); } catch { return ''; }
+            })();
+            return [msg, details, hint, code ? `code=${code}` : '', fallbackJson].filter(Boolean).join(' | ') || 'Unknown error';
+        }
+        return String(error);
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setFormError(null);
@@ -137,6 +154,8 @@ const CommodityHoldingModal: React.FC<{
             if (holdingToEdit) await onSave({ ...holdingToEdit, ...holdingData });
             else await onSave(holdingData);
             onClose();
+        } catch (error) {
+            setFormError(formatUnknownError(error));
         } finally {
             setIsSubmitting(false);
         }

@@ -164,6 +164,16 @@ export function canonicalQuoteLookupKey(symbol: string): string {
   return fromFinnhubSymbol(toFinnhubSymbol(symbol));
 }
 
+/** Finnhub quote fallback: some symbols (notably Tadawul on some plans) return `c=0` while `pc` is populated. */
+export function resolveQuotePrice(row: { c?: unknown; p?: unknown; pc?: unknown; o?: unknown }): number {
+  const candidates = [row?.c, row?.p, row?.pc, row?.o];
+  for (const v of candidates) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return NaN;
+}
+
 /** Map Finnhub quote/profile symbol back to app display keys (e.g. TADAWUL:2222 → 2222.SR). */
 export function fromFinnhubSymbol(finnhubSymbol: string): string {
   const upper = (finnhubSymbol || '').toUpperCase().trim();
@@ -457,17 +467,23 @@ export async function getQuote(symbol: string): Promise<QuoteWith52W | null> {
     try {
       const data = await get<QuoteWith52W & { p?: number }>('/quote', { symbol: candidate });
       if (!data) continue;
-      const price = Number(data.c ?? data.pc ?? data.p);
+      const price = resolveQuotePrice(data);
       if (!Number.isFinite(price) || price <= 0) continue;
+      const prevClose = Number(data.pc);
+      const safePrevClose = Number.isFinite(prevClose) && prevClose > 0 ? prevClose : price;
+      const rawDelta = Number(data.d);
+      const delta = Number.isFinite(rawDelta) ? rawDelta : price - safePrevClose;
+      const rawDeltaPct = Number(data.dp);
+      const deltaPct = Number.isFinite(rawDeltaPct) ? rawDeltaPct : safePrevClose > 0 ? (delta / safePrevClose) * 100 : 0;
       return {
         ...data,
         c: price,
-        d: Number(data.d ?? 0),
-        dp: Number(data.dp ?? 0),
+        d: delta,
+        dp: deltaPct,
         h: Number(data.h ?? price),
         l: Number(data.l ?? price),
         o: Number(data.o ?? price),
-        pc: Number(data.pc ?? price),
+        pc: safePrevClose,
       };
     } catch {
       // Try next candidate symbol form.

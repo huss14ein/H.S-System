@@ -17,6 +17,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { fetchLiveGoldPriceSarPerGram } from '../utils/commodityLiveValue';
 import { summarizeZakatableCommoditiesForZakat, summarizeZakatableInvestmentsForZakat } from '../services/zakatInvestmentValuation';
+import { computeDeductibleLiabilities } from '../services/zakatLiabilityMath';
 import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestments, getPersonalLiabilities } from '../utils/wealthScope';
 import AIAdvisor from '../components/AIAdvisor';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
@@ -147,13 +148,12 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
     const deductibleLiabilities = useMemo(() => {
         const accounts = getPersonalAccounts(data);
         const liabilities = getPersonalLiabilities(data);
-        const shortTermDebts = accounts
-            .filter((a) => a.type === 'Credit' && (a.balance ?? 0) < 0)
-            .reduce((sum: number, acc) => sum + toSAR(Math.abs(acc.balance ?? 0), acc.currency, sarPerUsd), 0);
-        // Only debts (amount < 0) are deductible; receivables (amount > 0) are assets and must not reduce zakatable wealth
-        const trackedLiabilities = liabilities.filter((l: { status?: string; amount?: number }) => l.status === 'Active' && (l.amount ?? 0) < 0).reduce((sum: number, liability: { amount?: number }) => sum + Math.abs(liability.amount ?? 0), 0);
-        const total = shortTermDebts + trackedLiabilities + otherDebts;
-        return { shortTermDebts, trackedLiabilities, otherDebts, total };
+        return computeDeductibleLiabilities({
+            accounts,
+            liabilities,
+            otherDebts,
+            sarPerUsd,
+        });
     }, [otherDebts, data, sarPerUsd]);
     
     const netZakatableWealth = useMemo(() => Math.max(0, zakatableAssets.total - deductibleLiabilities.total), [zakatableAssets, deductibleLiabilities]);
