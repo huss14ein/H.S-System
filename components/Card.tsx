@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import InfoHint from './InfoHint';
 import { ArrowTrendingUpIcon } from './icons/ArrowTrendingUpIcon';
 import { ArrowTrendingDownIcon } from './icons/ArrowTrendingDownIcon';
 
@@ -49,7 +50,7 @@ const normalizeDisplayNode = (raw: React.ReactNode): React.ReactNode => {
   return raw;
 };
 
-const Card: React.FC<CardProps> = ({ title, value, trend, onClick, ariaLabel, valueColor, indicatorColor, icon, density = 'compact' }) => {
+const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, ariaLabel, valueColor, indicatorColor, icon, density = 'compact' }) => {
   const displayValue = normalizeDisplayNode(value);
   const displayTrend = typeof trend === 'string' && isInvalidDisplayToken(trend) ? undefined : trend;
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
@@ -91,6 +92,7 @@ const Card: React.FC<CardProps> = ({ title, value, trend, onClick, ariaLabel, va
 
   const flashClass = flash === 'up' ? 'flash-green' : flash === 'down' ? 'flash-red' : '';
   const compact = density === 'compact';
+  const tooltipText = typeof tooltip === 'string' ? tooltip.trim() : '';
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!onClick) return;
@@ -109,10 +111,15 @@ const Card: React.FC<CardProps> = ({ title, value, trend, onClick, ariaLabel, va
       onClick={onClick}
       onKeyDown={handleKeyDown}
     >
-      {/* Header: title + icon/tooltip — same layout for all cards */}
+      {/* Header: title + optional InfoHint (tooltip prop) + metric icon */}
       <div className="flex items-center justify-between gap-2 min-h-[28px] flex-shrink-0 min-w-0">
         <h3 className={`metric-label flex-1 min-w-0 ${compact ? 'text-xs' : 'text-sm'} font-medium text-slate-500 uppercase tracking-wide`}>{title}</h3>
-        {icon ? <div className="flex-shrink-0">{icon}</div> : null}
+        {(tooltipText || icon) && (
+          <div className="flex flex-shrink-0 items-center gap-1">
+            {tooltipText ? <InfoHint text={tooltipText} popoverAlign="right" /> : null}
+            {icon ? <div>{icon}</div> : null}
+          </div>
+        )}
       </div>
       {/* Value + trend: allow full visibility without clipping. */}
       <div className="mt-2 flex-1 min-h-0 flex flex-col justify-center min-w-0 overflow-visible">
