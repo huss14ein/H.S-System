@@ -78,4 +78,31 @@ SAR 21.50
     expect(Math.abs(res.transactions[0].amount)).toBeCloseTo(5.75, 2);
     expect(res.transactions[0].date).toBe('2026-04-08');
   });
+
+  it('parses NBSP-separated SAR amounts and ISO dates (common bank SMS)', async () => {
+    const sms =
+      'SNB ALAHli\nPurchase SAR\u00a0150.50\nBalance SAR\u00a012,340.00\n2026-04-08 14:22';
+    const res = await parseSMSTransactions(sms, 'acc-nbsp');
+    expect(res.transactions.length).toBeGreaterThan(0);
+    const amounts = res.transactions.map((t) => Math.abs(t.amount)).sort((a, b) => b - a);
+    expect(amounts[0]).toBeCloseTo(12340, 2);
+    expect(amounts.some((x) => Math.abs(x - 150.5) < 0.01)).toBe(true);
+    expect(res.transactions.some((t) => t.date === '2026-04-08')).toBe(true);
+  });
+
+  it('parses dotted numeric dates (DD.MM.YYYY)', async () => {
+    const sms = `POS Purchase\nMerchant: TEST STORE\nAmt SAR 42.00\nBal SAR 1000.00\n08.04.2026`;
+    const res = await parseSMSTransactions(sms, 'acc-dot');
+    expect(res.transactions.length).toBeGreaterThan(0);
+    expect(res.transactions.some((t) => Math.abs(t.amount) === 42)).toBe(true);
+    expect(res.transactions.some((t) => t.date === '2026-04-08')).toBe(true);
+  });
+
+  it('still extracts SMS when AI extraction fails (pattern/heuristic only)', async () => {
+    vi.mocked(invokeAI).mockRejectedValueOnce(new Error('network'));
+    const sms = `Debit alert\nSAR 75.25 debited\n2026-01-15`;
+    const res = await parseSMSTransactions(sms, 'acc-ai-fail');
+    expect(res.transactions.length).toBeGreaterThan(0);
+    expect(Math.abs(res.transactions[0].amount)).toBeCloseTo(75.25, 2);
+  });
 });
