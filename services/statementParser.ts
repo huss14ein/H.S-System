@@ -566,8 +566,21 @@ function splitSmsIntoBlocks(smsText: string): string[] {
 function extractSmsAmount(block: string): number {
   const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
   const parseNum = (raw: string | undefined) => Number((raw ?? '0').replace(/,/g, ''));
-  const moneyAfterCurrency = /(?:SAR|USD|EUR|\$|ر\.?س|ريال)[^\d]{0,20}([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)/i;
-  const moneyBeforeCurrency = /([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)\s*(?:SAR|USD|EUR|\$|ر\.?س|ريال)\b/i;
+  const compact = String(block || '').replace(/\s+/g, ' ').trim();
+
+  /** KSA SMS often uses "SR" (not SAR) and Arabic "بـSR 57.5" on purchase lines (e.g. STC Yaqoot). */
+  const arabPurchaseSr =
+    compact.match(/شراء[\s\S]{0,500}?\bبـ\s*SR\s*([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)\b/i) ??
+    compact.match(/شراء[\s\S]{0,300}?\bSR\s*([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)\b/i);
+  if (arabPurchaseSr) {
+    const n = parseNum(arabPurchaseSr[1]);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+
+  const moneyAfterCurrency =
+    /(?:SAR|SR|USD|EUR|\$|ر\.?س|ريال)[^\d]{0,20}([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)/i;
+  const moneyBeforeCurrency =
+    /([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)\s*(?:SAR|SR|USD|EUR|\$|ر\.?س|ريال)\b/i;
   const kdPattern = /([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)\s*(?:KD|KWD|د\.ك)\b/i;
 
   const withAmountLabel = lines.find((line) => /(amount|مبلغ)/i.test(line));
@@ -582,9 +595,12 @@ function extractSmsAmount(block: string): number {
     if (Number.isFinite(n) && n > 0) return n;
   }
 
-  const nonBalance = lines.filter((line) => !(/^(?:.*\s)?(balance|رصيد)\s*:?$/i.test(line) && !/(amount|مبلغ)/i.test(line)));
+  const nonBalance = lines.filter((line) => {
+    if (/(?:^|\s)(?:balance|رصيد)\s*:/i.test(line) && !/(amount|مبلغ|شراء|purchase)/i.test(line)) return false;
+    return true;
+  });
   for (const line of nonBalance) {
-    if (/(balance|رصيد)\s*:?\s*$/i.test(line) && !/(amount|مبلغ)/i.test(line)) continue;
+    if (/(?:^|\s)(?:balance|رصيد)\s*:/i.test(line) && !/(amount|مبلغ|شراء)/i.test(line)) continue;
     const m = line.match(moneyAfterCurrency)
       ?? line.match(moneyBeforeCurrency)
       ?? line.match(kdPattern);
@@ -656,7 +672,7 @@ function extractTransactionsFromSmsCurrencyAnchors(smsText: string, accountId: s
   const seen = new Set<string>();
   /** Currency before amount, amount before currency, or USD with $ */
   const pairRe =
-    /\b(?:SAR|USD|EUR|ريال|ر\.س)\s*[:\u00A0]?\s*([\d]{1,3}(?:,\d{3})*(?:\.\d{1,4})?|[\d]+(?:\.\d{1,4})?)|\b([\d]{1,3}(?:,\d{3})*(?:\.\d{1,4})?|[\d]+(?:\.\d{1,4})?)\s*(?:SAR|USD|EUR|ريال|ر\.س)\b|\$\s*([\d]{1,3}(?:,\d{3})*(?:\.\d{1,4})?|[\d]+(?:\.\d{1,4})?)/gi;
+    /\b(?:SAR|SR|USD|EUR|ريال|ر\.س)\s*[:\u00A0]?\s*([\d]{1,3}(?:,\d{3})*(?:\.\d{1,4})?|[\d]+(?:\.\d{1,4})?)|\b([\d]{1,3}(?:,\d{3})*(?:\.\d{1,4})?|[\d]+(?:\.\d{1,4})?)\s*(?:SAR|SR|USD|EUR|ريال|ر\.س)\b|\$\s*([\d]{1,3}(?:,\d{3})*(?:\.\d{1,4})?|[\d]+(?:\.\d{1,4})?)/gi;
 
   let m: RegExpExecArray | null;
   let idx = 0;
@@ -718,12 +734,22 @@ function extractSmsDescription(segment: string, idx: number): string {
   const lineBased = segment
     .split('\n')
     .map((line) => line.trim())
-    .find((line) => /[A-Za-z\u0600-\u06FF]{3,}/.test(line) && !/balance|رصيد|sar|مبلغ|amount|^\d{1,2}:\d{2}/i.test(line));
+    .find(
+      (line) =>
+        /[A-Za-z\u0600-\u06FF]{3,}/.test(line) &&
+        !/^\s*رصيد\s*:/i.test(line) &&
+        !/balance|رصيد|مبلغ|amount|^\d{1,2}:\d{2}/i.test(line),
+    );
   if (lineBased) return lineBased.slice(0, 120);
   const merchantMatch =
-    segment.match(/(?:merchant|at|from|لدى)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-. ]{2,80})/i)?.[1]?.trim() ??
+    segment.match(/(?:merchant|at|from|لدى|لـ)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-. ]{2,80})/i)?.[1]?.trim() ??
     segment.match(/(?:purchase|payment|transaction|عملية)\s*(?:at|لدى)?\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-. ]{2,80})/i)?.[1]?.trim();
-  return (merchantMatch || `SMS Transaction ${idx + 1}`).slice(0, 120);
+  const purchaseLine = segment
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => /شراء/i.test(l) && /(?:SR|SAR|بـ\s*SR|ريال)/i.test(l));
+  const arabPurchaseTitle = purchaseLine?.replace(/\s*بـ\s*SR.*$/i, '').replace(/\s+SR.*$/i, '').trim();
+  return (merchantMatch || arabPurchaseTitle || `SMS Transaction ${idx + 1}`).slice(0, 120);
 }
 
 function normalizeArabicIndicDigits(input: string): string {
@@ -739,11 +765,12 @@ function normalizeArabicIndicDigits(input: string): string {
 function normalizeSmsTextForParsing(smsText: string): string {
   const normalizedDigits = normalizeArabicIndicDigits(smsText);
   return normalizedDigits
+    .replace(/[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, '')
     .replace(/\u00a0/g, ' ')
     .replace(/\r/g, '\n')
     .replace(/[ \t]+/g, ' ')
     .replace(/(?:\.\s+|;\s+|،\s+)(?=(?:\d{1,2}:\d{2}\s*)?(?:\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})\b)/g, '\n')
-    .replace(/([^\n])\s+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|payment|purchase|transaction|debited|credited|withdrawn|received)\b)/gi, '$1\n')
+    .replace(/([^\n])\s+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|لـ|payment|purchase|transaction|debited|credited|withdrawn|received)\b)/gi, '$1\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
