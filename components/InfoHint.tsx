@@ -93,17 +93,6 @@ const InfoHint: React.FC<InfoHintProps> = ({ text, placement = 'auto', popoverAl
     return () => window.removeEventListener(INFOHINT_CLOSE_OTHERS, onOthers);
   }, [instanceId, clearOpenTimer]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onScrollOrResize = () => setOpen(false);
-    window.addEventListener('scroll', onScrollOrResize, true);
-    window.addEventListener('resize', onScrollOrResize);
-    return () => {
-      window.removeEventListener('scroll', onScrollOrResize, true);
-      window.removeEventListener('resize', onScrollOrResize);
-    };
-  }, [open]);
-
   useEffect(() => () => {
     clearCloseTimer();
     clearOpenTimer();
