@@ -28,6 +28,12 @@
     @apply bg-light font-sans text-dark antialiased text-[15px] leading-6;
   }
 
+  /* Mobile drawer is a full-screen foreground surface; hide all inline InfoHint "!" triggers underneath it. */
+  body.mobile-menu-open .infohint-trigger {
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+
   /**
    * Prevent browser/extension inline-control icons from rendering inside text-like inputs
    * (clear/search/credentials/contacts overlays) which can appear as stray symbols on all pages.

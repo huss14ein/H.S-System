@@ -200,7 +200,10 @@ const InfoHint: React.FC<InfoHintProps> = ({ text, placement = 'auto', popoverAl
   if (!hasText) return null;
 
   return (
-    <span className="relative z-[60] inline-flex h-4 w-4 shrink-0 items-center justify-center align-middle leading-none self-center">
+    <span
+      data-infohint-trigger="true"
+      className="infohint-trigger relative z-[60] inline-flex h-4 w-4 shrink-0 items-center justify-center align-middle leading-none self-center"
+    >
       <button
         ref={triggerRef}
         type="button"

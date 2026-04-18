@@ -23,6 +23,7 @@ import { resolveSarPerUsd } from '../utils/currencyMath';
 import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import { isSupportedPageAction } from '../utils/pageActions';
+import { INFOHINT_CLOSE_OTHERS } from './infoHintEvents';
 interface HeaderProps {
   activePage: Page;
   setActivePage: (page: Page) => void;
@@ -209,6 +210,17 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
       target,
     };
   }, [data, exchangeRate]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.body.classList.toggle('mobile-menu-open', isMobileMenuOpen);
+    if (isMobileMenuOpen) {
+      window.dispatchEvent(new CustomEvent(INFOHINT_CLOSE_OTHERS, { detail: { except: '__none__' } }));
+    }
+    return () => {
+      document.body.classList.remove('mobile-menu-open');
+    };
+  }, [isMobileMenuOpen]);
 
   return (
     <header className="bg-white border-b border-gray-100 sticky top-0 z-30 shadow-sm">
