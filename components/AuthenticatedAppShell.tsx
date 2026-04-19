@@ -148,7 +148,7 @@ const AuthenticatedAppShell: React.FC = () => {
       case 'Liabilities': return <Liabilities setActivePage={setActivePage} />;
       case 'Transactions': return <Transactions {...actionProps} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Budgets': return <Budgets {...actionProps} triggerPageAction={triggerPageAction} setActivePage={setActivePage} />;
-      case 'Goals': return <Goals setActivePage={setActivePage} pageAction={pageAction} clearPageAction={clearPageAction} />;
+      case 'Goals': return <Goals setActivePage={setActivePage} pageAction={pageAction} clearPageAction={clearPageAction} triggerPageAction={triggerPageAction} />;
       case 'Forecast': return <Forecast setActivePage={setActivePage} />;
       case 'Analysis': return <Analysis setActivePage={setActivePage} />;
       case 'Zakat': return <Zakat setActivePage={setActivePage} />;

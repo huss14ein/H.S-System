@@ -18,7 +18,7 @@ import {
   type RiskConstraints,
   type HouseholdConstraints,
 } from '../services/engineIntegration';
-import type { Holding, InvestmentPortfolio } from '../types';
+import type { Holding, InvestmentPortfolio, Page } from '../types';
 
 function mapInvestmentsForContext(
   investments: InvestmentPortfolio[]
@@ -67,7 +67,13 @@ export interface UseFinancialEnginesIntegrationResult {
   /** Cross-engine analysis: alerts, investment/budget recommendations, summary */
   analysis: CrossEngineAnalysis | null;
   /** Prioritized action queue for control tower / dashboards */
-  actionQueue: Array<{ action: string; priority: number; category: string; details: string }>;
+  actionQueue: Array<{
+    action: string;
+    priority: number;
+    category: string;
+    details: string;
+    links?: Array<{ label: string; page: Page; action?: string }>;
+  }>;
   /** Validate an investment action against cash/risk/household constraints */
   validateAction: (action: { type: 'buy' | 'sell'; symbol: string; amount: number }) =>
     { isValid: boolean; reasons: string[]; warnings: string[] };
