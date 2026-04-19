@@ -125,13 +125,13 @@ export async function parseSMSTransactions(
       clearTimeout(aiTimeoutId);
     }
     
-    // Merge and deduplicate
+    // Merge and dedupe: deterministic parsers first; AI may duplicate the same SMS with weaker labels.
     const allTransactions = normalizeTransactionsDateConvention([
       ...patternTransactions,
       ...heuristicTransactions,
       ...aiTransactions,
     ]);
-    const uniqueTransactions = deduplicateTransactions(allTransactions);
+    const uniqueTransactions = mergeSmsDedupedTransactions(allTransactions);
     
     // Validate extracted transactions
     const validation = validateTransactions(uniqueTransactions);
@@ -452,7 +452,7 @@ function extractTransactionsFromSMSHeuristic(smsText: string, accountId: string)
     const dateIso = formatLocalYmd(Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate);
 
     const explicitDesc =
-      block.match(/(?:لدى|merchant|at|from)\s*[:\-]?\s*([A-Za-z0-9&\-. ]{2,})/i)?.[1]?.trim() ??
+      block.match(/(?:لدى|لـ|merchant|at|from)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-. ]{2,})/i)?.[1]?.trim() ??
       block
         .split('\n')
         .map((line) => line.trim())
@@ -613,6 +613,17 @@ function extractSmsAmount(block: string): number {
   });
   for (const line of nonBalance) {
     if (/(?:^|\s)(?:balance|رصيد)\s*:/i.test(line) && !/(amount|مبلغ|شراء)/i.test(line)) continue;
+    // Purchase / operation line: take that amount first (avoids matching a later "رصيد" on the same line).
+    let purchaseLine =
+      line.match(/شراء[^\n]*?بـ\s*SR\s*([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)/i) ??
+      line.match(/شراء[^\n]*?\bSR\s*([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)\b/i);
+    if (!purchaseLine && (/(?:^|\s)مبلغ(?:\s*العملية)?\s*[:\-]?\s*[\d]/i.test(line) || /operation\s*amount/i.test(line))) {
+      purchaseLine = line.match(moneyAfterCurrency) ?? line.match(moneyBeforeCurrency);
+    }
+    if (purchaseLine) {
+      const n = parseNum(purchaseLine[1]);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
     const m = line.match(moneyAfterCurrency)
       ?? line.match(moneyBeforeCurrency)
       ?? line.match(kdPattern);
@@ -697,9 +708,24 @@ function extractTransactionsFromSmsCurrencyAnchors(smsText: string, accountId: s
     }
 
     const at = m.index ?? 0;
+    const headToMatch = smsText.slice(0, at).trimEnd();
+    if (/(?:رصيد|balance|bal)\s*:\s*$/i.test(headToMatch)) {
+      idx++;
+      continue;
+    }
+
     const windowStart = Math.max(0, at - 260);
     const windowEnd = Math.min(smsText.length, at + 140);
     const segment = smsText.slice(windowStart, windowEnd);
+
+    const lineStart = smsText.lastIndexOf('\n', Math.max(0, at - 1)) + 1;
+    const lineEndNl = smsText.indexOf('\n', at);
+    const lineEnd = lineEndNl === -1 ? smsText.length : lineEndNl;
+    const amountLine = smsText.slice(lineStart, lineEnd).trim();
+    if (/^(?:balance|bal|رصيد)\b/i.test(amountLine) && !/(amount|مبلغ|عملية|purchase|amt)/i.test(amountLine)) {
+      idx++;
+      continue;
+    }
 
     const looksLikeBalanceOnly =
       /\b(balance|رصيد)\b/i.test(segment) &&
@@ -743,6 +769,11 @@ function extractTransactionsFromSmsCurrencyAnchors(smsText: string, accountId: s
 }
 
 function extractSmsDescription(segment: string, idx: number): string {
+  const merchantFirst =
+    segment.match(/(?:merchant|at|from|لدى|لـ)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-. ]{2,80})/i)?.[1]?.trim() ?? '';
+  if (merchantFirst && !/^لـ?\s*sr\b/i.test(merchantFirst)) {
+    return merchantFirst.slice(0, 120);
+  }
   const lineBased = segment
     .split('\n')
     .map((line) => line.trim())
@@ -750,7 +781,8 @@ function extractSmsDescription(segment: string, idx: number): string {
       (line) =>
         /[A-Za-z\u0600-\u06FF]{3,}/.test(line) &&
         !/^\s*رصيد\s*:/i.test(line) &&
-        !/balance|رصيد|مبلغ|amount|^\d{1,2}:\d{2}/i.test(line),
+        !/balance|رصيد|مبلغ|amount|^\d{1,2}:\d{2}/i.test(line) &&
+        !/^\s*شراء\b/u.test(line),
     );
   if (lineBased) return lineBased.slice(0, 120);
   const merchantMatch =
@@ -1644,7 +1676,7 @@ function inferCategory(description: string): string {
     Food: ['food', 'restaurant', 'cafe', 'coffee', 'grocery', 'supermarket', 'مطعم', 'مقهى', 'قهوة', 'بقالة', 'سوبرماركت'],
     Transportation: ['uber', 'taxi', 'fuel', 'petrol', 'gas', 'transport', 'metro', 'وقود', 'بنزين', 'نقل', 'تكسي'],
     Housing: ['rent', 'lease', 'apartment', 'housing', 'إيجار', 'سكن', 'شقة'],
-    Utilities: ['electricity', 'water', 'internet', 'utility', 'كهرباء', 'مياه', 'انترنت', 'فاتورة'],
+    Utilities: ['electricity', 'water', 'internet', 'utility', 'كهرباء', 'مياه', 'انترنت', 'إنترنت', 'فاتورة'],
     Telecommunications: ['mobile', 'phone', 'sim', 'telecom', 'اتصالات', 'جوال', 'شريحة'],
     Entertainment: ['cinema', 'movie', 'game', 'subscription', 'ترفيه', 'سينما', 'اشتراك'],
     Shopping: ['shopping', 'store', 'retail', 'mall', 'متجر', 'تسوق', 'مول'],
@@ -1898,13 +1930,64 @@ export function validateFile(file: File): { isValid: boolean; error?: string } {
   return { isValid: true };
 }
 
-function deduplicateTransactions(transactions: Transaction[]): Transaction[] {
-  const seen = new Set<string>();
-  return transactions.filter(tx => {
-    const key = `${tx.date}-${tx.description}-${tx.amount}`;
-    if (seen.has(key)) {
-      return false;
+/** Prefer deterministic SMS parser rows over AI duplicates for the same date/amount direction. */
+function smsTransactionPreferenceScore(tx: Transaction): number {
+  let s = 0;
+  const id = String(tx.id ?? '');
+  if (id.startsWith('ai-')) s -= 6;
+  const desc = String(tx.description ?? '').trim();
+  if (/^sms transaction\s+\d+$/i.test(desc)) s -= 5;
+  if (/^transaction$/i.test(desc)) s -= 3;
+  if (/^unknown\b/i.test(desc)) s -= 4;
+  s += Math.min(24, desc.length / 6);
+  const cat = String(tx.category ?? '').trim();
+  if (cat && cat !== 'Uncategorized') s += 2;
+  if (/^sms-heur|^sms-anchor|^sms-ccy|^sms-/.test(id)) s += 4;
+  return s;
+}
+
+function mergeSmsDedupedTransactions(transactions: Transaction[]): Transaction[] {
+  const groups = new Map<string, Transaction[]>();
+  for (const tx of transactions) {
+    const date = String(tx.date ?? '').slice(0, 10);
+    const amt = Number(tx.amount);
+    if (!Number.isFinite(amt) || amt === 0) continue;
+    const mag = Math.abs(amt).toFixed(4);
+    const key = `${date}|${mag}`;
+    const arr = groups.get(key) ?? [];
+    arr.push(tx);
+    groups.set(key, arr);
+  }
+
+  const resolved: Transaction[] = [];
+  for (const [, arr] of groups) {
+    if (arr.length === 1) {
+      resolved.push(arr[0]);
+      continue;
     }
+    const hasNeg = arr.some((t) => Number(t.amount) < 0);
+    const hasPos = arr.some((t) => Number(t.amount) > 0);
+    const pool = hasNeg && hasPos ? arr.filter((t) => Number(t.amount) < 0) : arr;
+
+    let best = pool[0];
+    for (let i = 1; i < pool.length; i++) {
+      const tx = pool[i];
+      const st = smsTransactionPreferenceScore(tx);
+      const sb = smsTransactionPreferenceScore(best);
+      if (st > sb) best = tx;
+      else if (st === sb && String(tx.description ?? '').length > String(best.description ?? '').length) best = tx;
+    }
+    resolved.push(best);
+  }
+
+  return dedupeTxByDateAmount(resolved);
+}
+
+function dedupeTxByDateAmount(rows: Transaction[]): Transaction[] {
+  const seen = new Set<string>();
+  return rows.filter((tx) => {
+    const key = `${tx.date}|${Number(tx.amount).toFixed(4)}|${String(tx.description ?? '').toLowerCase()}`;
+    if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });

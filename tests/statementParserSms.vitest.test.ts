@@ -128,4 +128,22 @@ SAR 21.50
     const res = await parseSMSTransactions(sms, 'acc-br');
     expect(res.transactions.some((t) => Math.abs(t.amount + 57.5) < 0.01)).toBe(true);
   });
+
+  it('prefers deterministic SMS parse when AI returns a duplicate amount for the same date', async () => {
+    vi.mocked(invokeAI).mockResolvedValueOnce({
+      candidates: [{ content: { parts: [{ text: '[{"date":"2026-04-08","description":"Unknown POS","amount":-5.75,"type":"expense","category":"Shopping"}]' }] } }],
+    });
+    const sms = `شراء عبر نقاط البيع\nلدى:DUBAI PLA\nSAR مبلغ:5.75\n8/4/26`;
+    const res = await parseSMSTransactions(sms, 'acc-ai-dup');
+    const debit = Math.abs(-5.75);
+    expect(res.transactions.filter((t) => Math.abs(Math.abs(t.amount) - debit) < 0.001).length).toBe(1);
+    expect(res.transactions.some((t) => /DUBAI\s+PLA/i.test(t.description))).toBe(true);
+  });
+
+  it('uses purchase amount when balance appears on same line after purchase', async () => {
+    const sms = 'شراء إنترنت بـSR 57.5 رصيد:1977.14 SR 17/4/26';
+    const res = await parseSMSTransactions(sms, 'acc-inline-bal');
+    expect(res.transactions.some((t) => Math.abs(t.amount + 57.5) < 0.01)).toBe(true);
+    expect(res.transactions.every((t) => Math.abs(t.amount) < 500)).toBe(true);
+  });
 });

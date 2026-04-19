@@ -13,6 +13,7 @@ import InfoHint from '../components/InfoHint';
 import { findDuplicateTransactions } from '../services/dataQuality';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import AIAdvisor from '../components/AIAdvisor';
+import { resolveBudgetCategoryForImportedExpense } from '../services/budgetCategoryResolve';
 
 interface StatementUploadProps {
   setActivePage?: (page: Page) => void;
@@ -131,7 +132,12 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       return { budgetCat, score };
     }).sort((a, b) => b.score - a.score);
 
-    return scored[0]?.score >= 1.2 ? scored[0].budgetCat : undefined;
+    if (scored[0]?.score >= 1.2) return scored[0].budgetCat;
+
+    const resolved = resolveBudgetCategoryForImportedExpense(tx, budgetCategories);
+    if (resolved) return resolved;
+
+    return budgetCategories.length === 1 ? budgetCategories[0] : undefined;
   }, [data?.budgets, data?.transactions]);
 
   const enrichTransactionsWithBudgetMapping = useCallback((rows: Transaction[]): Transaction[] => {
