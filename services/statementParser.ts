@@ -568,10 +568,22 @@ function extractSmsAmount(block: string): number {
   const parseNum = (raw: string | undefined) => Number((raw ?? '0').replace(/,/g, ''));
   const compact = String(block || '').replace(/\s+/g, ' ').trim();
 
-  /** KSA SMS often uses "SR" (not SAR) and Arabic "بـSR 57.5" on purchase lines (e.g. STC Yaqoot). */
+  /**
+   * KSA SMS: "SR" (not SAR) and "بـSR" on one line, e.g. `شراء إنترنت بـSR 57.5`.
+   * Do not use \b before Arabic (JS word boundary is Latin-oriented and often fails after spaces).
+   */
+  for (const line of lines) {
+    const oneLine =
+      line.match(/شراء[^\n]*?بـ\s*SR\s*([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)/i) ??
+      line.match(/شراء[^\n]*?\bSR\s*([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)\b/i);
+    if (oneLine) {
+      const n = parseNum(oneLine[1]);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+  }
   const arabPurchaseSr =
-    compact.match(/شراء[\s\S]{0,500}?\bبـ\s*SR\s*([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)\b/i) ??
-    compact.match(/شراء[\s\S]{0,300}?\bSR\s*([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)\b/i);
+    compact.match(/شراء[\s\S]{0,500}?(?:^|\s)بـ\s*SR\s*([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)(?=\s|$)/i) ??
+    compact.match(/شراء[\s\S]{0,300}?(?:^|\s)SR\s*([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)(?=\s|$)/i);
   if (arabPurchaseSr) {
     const n = parseNum(arabPurchaseSr[1]);
     if (Number.isFinite(n) && n > 0) return n;
