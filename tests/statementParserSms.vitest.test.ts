@@ -105,4 +105,27 @@ SAR 21.50
     expect(res.transactions.length).toBeGreaterThan(0);
     expect(Math.abs(res.transactions[0].amount)).toBeCloseTo(75.25, 2);
   });
+
+  it('parses STC/Yaqoot-style Arabic SMS with SR and لـ merchant (RTL marks)', async () => {
+    const sms = [
+      'شراء إنترنت بـSR 57.5 ',
+      'عبر 7365 ;فيزا-ابل باي',
+      'لـyaqoot 02',
+      'رصيد:1977.14 SR',
+      '\u061C17/4/26 8:51',
+    ].join('\n');
+    const res = await parseSMSTransactions(sms, 'acc-yaqoot');
+    expect(res.transactions.length).toBeGreaterThan(0);
+    const debit = res.transactions.find((t) => Math.abs(t.amount + 57.5) < 0.01);
+    expect(debit).toBeDefined();
+    expect(debit!.type).toBe('expense');
+    expect(debit!.date).toBe('2026-04-17');
+    expect(debit!.description.toLowerCase()).toContain('yaqoot');
+  });
+
+  it('parses شراء إنترنت بـSR on single line without \\b-Arabic boundary bug', async () => {
+    const sms = 'شراء إنترنت بـSR 57.5\r\nرصيد: 100 SR\r\n17/4/26';
+    const res = await parseSMSTransactions(sms, 'acc-br');
+    expect(res.transactions.some((t) => Math.abs(t.amount + 57.5) < 0.01)).toBe(true);
+  });
 });
