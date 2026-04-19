@@ -168,26 +168,150 @@ const GoalConflictAndFeasibilitySection: React.FC<{
   goals: (Goal & { currentAmount?: number })[];
   monthlySurplusForGoals: number;
   allocations: Record<string, number>;
-  formatCurrencyString?: (n: number, opts?: { digits?: number }) => string;
-}> = ({ goals, monthlySurplusForGoals, allocations }) => {
+  formatCurrencyString: (n: number, opts?: { digits?: number }) => string;
+  setActivePage?: (page: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
+  onEditGoalById?: (goalId: string) => void;
+}> = ({ goals, monthlySurplusForGoals, allocations, formatCurrencyString, setActivePage, triggerPageAction, onEditGoalById }) => {
   const conflicts = useMemo(
     () => detectGoalConflict({ goals, monthlySurplusForGoals }),
     [goals, monthlySurplusForGoals]
   );
   const activeGoals = useMemo(() => goals.filter(g => (g.targetAmount ?? 0) > (g.currentAmount ?? 0)), [goals]);
+  const [expandedConflictIdx, setExpandedConflictIdx] = useState<number | null>(null);
+  const scrollToId = useCallback((id: string) => {
+    window.setTimeout(() => {
+      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+  }, []);
+  const focusGoalCard = useCallback(
+    (goalId: string) => {
+      if (!goalId) return;
+      if (triggerPageAction) triggerPageAction('Goals', `focus-goal:${encodeURIComponent(goalId)}`);
+      else scrollToId(`goal-card-${goalId}`);
+    },
+    [triggerPageAction, scrollToId],
+  );
+
   return (
     <CollapsibleSection title="Goal conflict & feasibility" summary={conflicts.length > 0 ? `${conflicts.length} conflict(s) detected` : 'No conflicts'} className="border border-amber-200 bg-amber-50/40">
       <p className="text-xs text-slate-600 mb-3">
         Detects when the same cash is funding too many goals or target dates are not achievable with current surplus.
       </p>
       {conflicts.length > 0 ? (
-        <ul className="space-y-2 mb-4">
-          {conflicts.map((c: GoalConflict, i: number) => (
-            <li key={i} className="flex items-start gap-2 text-sm text-amber-900 bg-amber-100/80 rounded-lg px-3 py-2">
-              <ExclamationTriangleIcon className="h-5 w-5 flex-shrink-0 mt-0.5" />
-              <span>{c.message}</span>
-            </li>
-          ))}
+        <ul className="space-y-3 mb-4">
+          {conflicts.map((c: GoalConflict, i: number) => {
+            const req = c.requiredMonthlyTotal;
+            const sur = c.surplusMonthly;
+            const shortfallOverall =
+              typeof req === 'number' && typeof sur === 'number' ? Math.max(0, req - sur) : null;
+            const expanded = expandedConflictIdx === i;
+            return (
+              <li key={i} className="rounded-xl border border-amber-300/70 bg-white/95 shadow-sm overflow-hidden">
+                <div className="flex items-start gap-2 px-3 py-2.5">
+                  <ExclamationTriangleIcon className="h-5 w-5 flex-shrink-0 mt-0.5 text-amber-700" aria-hidden />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <p className="text-sm font-medium text-amber-950 leading-snug">{c.message}</p>
+                    {(shortfallOverall != null && shortfallOverall > 0 && c.reason === 'same_cash_source') ||
+                    (c.reason === 'impossible_date' &&
+                      typeof c.neededPerMonth === 'number' &&
+                      typeof c.surplusMonthly === 'number') ? (
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600 tabular-nums bg-slate-50/90 rounded-lg px-2 py-1.5 border border-slate-100">
+                        {c.reason === 'same_cash_source' && shortfallOverall != null && (
+                          <span title="Rough gap between total required savings (all goals) and your monthly surplus">
+                            <strong className="text-slate-800">Gap:</strong> {formatCurrencyString(shortfallOverall, { digits: 0 })}/mo
+                          </span>
+                        )}
+                        {c.reason === 'impossible_date' &&
+                          typeof c.neededPerMonth === 'number' &&
+                          typeof c.surplusMonthly === 'number' && (
+                          <>
+                            <span>
+                              <strong className="text-slate-800">Need:</strong> {formatCurrencyString(c.neededPerMonth, { digits: 0 })}/mo
+                            </span>
+                            <span>
+                              <strong className="text-slate-800">Have:</strong> {formatCurrencyString(c.surplusMonthly, { digits: 0 })}/mo
+                            </span>
+                            <span className="text-amber-800 font-medium">
+                              Short {formatCurrencyString(Math.max(0, c.neededPerMonth - c.surplusMonthly), { digits: 0 })}/mo
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    ) : null}
+                    <div className="flex flex-wrap gap-2 pt-0.5">
+                      {c.reason === 'same_cash_source' && (
+                        <>
+                          <button
+                            type="button"
+                            className="btn-primary text-xs py-1.5 px-2.5"
+                            onClick={() => scrollToId('goals-savings-allocation')}
+                          >
+                            Adjust allocation %
+                          </button>
+                          <button type="button" className="btn-outline text-xs py-1.5 px-2.5" onClick={() => scrollToId('goals-cards-grid')}>
+                            Review goals
+                          </button>
+                          {setActivePage && (
+                            <button type="button" className="btn-outline text-xs py-1.5 px-2.5" onClick={() => setActivePage('Plan')}>
+                              Open Plan
+                            </button>
+                          )}
+                        </>
+                      )}
+                      {c.reason === 'impossible_date' && c.goalIds[0] && (
+                        <>
+                          {onEditGoalById && (
+                            <button
+                              type="button"
+                              className="btn-primary text-xs py-1.5 px-2.5"
+                              onClick={() => onEditGoalById(c.goalIds[0])}
+                            >
+                              Edit goal / deadline
+                            </button>
+                          )}
+                          <button type="button" className="btn-outline text-xs py-1.5 px-2.5" onClick={() => focusGoalCard(c.goalIds[0])}>
+                            Jump to goal card
+                          </button>
+                          {setActivePage && (
+                            <button type="button" className="btn-outline text-xs py-1.5 px-2.5" onClick={() => setActivePage('Plan')}>
+                              Open Plan
+                            </button>
+                          )}
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-slate-600 hover:text-primary underline underline-offset-2"
+                        onClick={() => setExpandedConflictIdx(expanded ? null : i)}
+                      >
+                        {expanded ? 'Hide' : 'Why & how to fix'}
+                      </button>
+                    </div>
+                    {expanded && (
+                      <div className="text-xs text-slate-600 leading-relaxed border-t border-amber-100 pt-2 mt-1 space-y-2">
+                        {c.reason === 'same_cash_source' && (
+                          <>
+                            <p>
+                              We sum <strong>(target − saved) ÷ months left</strong> for each goal with a deadline. If that total is much higher than your average monthly surplus, the same pool of cash cannot fund every goal on time.
+                            </p>
+                            <p className="text-slate-700">
+                              <strong>Try:</strong> lower individual % allocations, extend deadlines for lower-priority goals, increase surplus (expenses/budget), or narrow targets.
+                            </p>
+                          </>
+                        )}
+                        {c.reason === 'impossible_date' && (
+                          <p>
+                            For <strong>{c.goalName ?? 'this goal'}</strong>, closing the gap by the deadline needs more per month than your current surplus allows. Extend the deadline, reduce the target, raise savings capacity, or deprioritize other goals.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       ) : (
         <p className="text-sm text-slate-700 mb-4">No conflicts detected. Total required monthly fits within your surplus.</p>
@@ -495,7 +619,12 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
     );
 };
 
-const Goals: React.FC<{ setActivePage?: (page: Page) => void; pageAction?: string | null; clearPageAction?: () => void }> = ({ setActivePage, pageAction, clearPageAction }) => {
+const Goals: React.FC<{
+  setActivePage?: (page: Page) => void;
+  pageAction?: string | null;
+  clearPageAction?: () => void;
+  triggerPageAction?: (page: Page, action: string) => void;
+}> = ({ setActivePage, pageAction, clearPageAction, triggerPageAction }) => {
     const { data, loading, addGoal, updateGoal, deleteGoal, updateGoalAllocations } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const { exchangeRate } = useCurrency();
@@ -654,6 +783,16 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void; pageAction?: strin
     }, [data?.goals, goalCurrentAmountByGoalId]);
     
     const handleOpenModal = (goal: Goal | null = null) => { if (!goal) trackAction('add-goal', 'Goals'); setGoalToEdit(goal); setIsModalOpen(true); };
+    const openGoalEditorById = useCallback(
+        (goalId: string) => {
+            const g = (data?.goals ?? []).find((x) => x.id === goalId);
+            if (g) {
+                setGoalToEdit(g);
+                setIsModalOpen(true);
+            }
+        },
+        [data?.goals],
+    );
     const handleOpenDeleteModal = (goal: Goal) => { setGoalToDelete(goal); setIsDeleteModalOpen(true); };
     
     const handleSaveGoal = async (goal: Goal) => {
@@ -785,7 +924,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void; pageAction?: strin
         </SectionCard>
       )}
 
-      <SectionCard title="Savings Allocation Strategy" className="bg-gradient-to-br from-white via-slate-50 to-primary/5 border-slate-100" collapsible collapsibleSummary="Allocate %" defaultExpanded>
+      <SectionCard id="goals-savings-allocation" title="Savings Allocation Strategy" className="bg-gradient-to-br from-white via-slate-50 to-primary/5 border-slate-100" collapsible collapsibleSummary="Allocate %" defaultExpanded>
         <p className="text-sm text-gray-500 mb-4">Allocate your average monthly savings of <span className="font-bold text-dark">{formatCurrencyString(averageMonthlySavings)}</span> across your goals.</p>
         <div className="space-y-3">
             {goalsByPriority.map(goal => (
@@ -849,6 +988,10 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void; pageAction?: strin
         goals={(data?.goals ?? []).map(g => ({ ...g, currentAmount: goalCurrentAmountByGoalId[g.id] ?? 0 }))}
         monthlySurplusForGoals={averageMonthlySavings}
         allocations={allocations}
+        formatCurrencyString={formatCurrencyString}
+        setActivePage={setActivePage}
+        triggerPageAction={triggerPageAction}
+        onEditGoalById={openGoalEditorById}
       />
 
       <CollapsibleSection title="Bonus / windfall allocation ideas" summary="Dynamic split based on current goals" className="border border-slate-200">
@@ -876,7 +1019,7 @@ const Goals: React.FC<{ setActivePage?: (page: Page) => void; pageAction?: strin
 
       <AIAdvisor pageContext="goals" contextData={{ goals: data?.goals ?? [], monthlySavings: averageMonthlySavings }}/>
       
-       <div className="cards-grid grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
+       <div id="goals-cards-grid" className="cards-grid grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
         {goalsByPriority.map(goal => (
             <div
                 key={goal.id}

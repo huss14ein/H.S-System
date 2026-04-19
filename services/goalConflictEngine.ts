@@ -24,6 +24,14 @@ export interface GoalConflict {
   goalIds: string[];
   reason: 'same_cash_source' | 'impossible_date' | 'low_priority_hurts_high' | 'house_delayed_by_trading' | 'travel_reduces_emergency';
   message: string;
+  /** Sum of required monthly savings across active goals (same basis as message). */
+  requiredMonthlyTotal?: number;
+  /** Monthly surplus used in the check. */
+  surplusMonthly?: number;
+  /** For impossible_date: gap / months left. */
+  neededPerMonth?: number;
+  /** For impossible_date: goal display name. */
+  goalName?: string;
 }
 
 /**
@@ -53,6 +61,8 @@ export function detectGoalConflict(args: {
       goalIds: goals.filter((g) => targetAmount(g) > currentAmount(g)).map((g) => g.id),
       reason: 'same_cash_source',
       message: `Total required monthly (${requiredTotal.toFixed(0)}) exceeds available surplus (${surplus.toFixed(0)}). Same cash is funding too many goals.`,
+      requiredMonthlyTotal: requiredTotal,
+      surplusMonthly: surplus,
     });
   }
 
@@ -68,6 +78,9 @@ export function detectGoalConflict(args: {
         goalIds: [g.id],
         reason: 'impossible_date',
         message: `Target date for "${g.name}" is not achievable with current surplus (need ${neededPerMonth.toFixed(0)}/mo, have ${surplus.toFixed(0)}).`,
+        neededPerMonth,
+        surplusMonthly: surplus,
+        goalName: g.name,
       });
     }
   });

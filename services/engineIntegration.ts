@@ -3,7 +3,7 @@
  * Ensures consistent constraint sharing and cross-engine communication
  */
 
-import { Transaction, Account, Budget, Goal } from '../types';
+import { Transaction, Account, Budget, Goal, Page } from '../types';
 import { generateCashflowStressSignals, calculateDynamicBaselines } from './enhancedBudgetEngine';
 import { countsAsExpenseForCashflowKpi } from './transactionFilters';
 import { detectRecurringBillPatterns } from './hybridBudgetCategorization';
@@ -134,6 +134,8 @@ export interface CrossEngineAlert {
   message: string;
   suggestedAction?: string;
   relatedMetrics?: Record<string, number>;
+  /** Quick navigation from Dashboard / control tower */
+  links?: Array<{ label: string; page: Page; action?: string }>;
 }
 
 /**
@@ -265,7 +267,12 @@ export function runCrossEngineAnalysis(context: UnifiedFinancialContext): CrossE
       category: 'cash',
       message: `Cashflow buffer critically low (${context.cash.cashflowBuffer.toFixed(1)} months)`,
       suggestedAction: 'Pause non-essential investments, focus on building emergency reserve',
-      relatedMetrics: { cashflowBuffer: context.cash.cashflowBuffer }
+      relatedMetrics: { cashflowBuffer: context.cash.cashflowBuffer },
+      links: [
+        { label: 'Accounts & cash', page: 'Accounts' },
+        { label: 'Summary', page: 'Summary' },
+        { label: 'Budgets', page: 'Budgets' },
+      ],
     });
     
     recommendations.push({
@@ -285,19 +292,31 @@ export function runCrossEngineAnalysis(context: UnifiedFinancialContext): CrossE
       category: 'risk',
       message: `Portfolio risk elevated (${context.risk.currentPortfolioRisk}/100)`,
       suggestedAction: 'Consider rebalancing to reduce concentration risk',
-      relatedMetrics: { portfolioRisk: context.risk.currentPortfolioRisk }
+      relatedMetrics: { portfolioRisk: context.risk.currentPortfolioRisk },
+      links: [{ label: 'Investments', page: 'Investments' }, { label: 'Wealth Ultra', page: 'Wealth Ultra' }],
     });
   }
   
   // Check household stress signals
   const criticalStress = context.household.cashflowStressSignals.find(s => s.type === 'critical');
   if (criticalStress) {
+    const shortfall = /shortfall/i.test(criticalStress.message);
     alerts.push({
       severity: 'critical',
       category: 'household',
       message: criticalStress.message,
       suggestedAction: criticalStress.recommendedAction,
-      relatedMetrics: { impact: criticalStress.impact }
+      relatedMetrics: { impact: criticalStress.impact },
+      links: shortfall
+        ? [
+            { label: 'Transactions', page: 'Transactions' },
+            { label: 'Budgets', page: 'Budgets' },
+            { label: 'Plan', page: 'Plan' },
+          ]
+        : [
+            { label: 'Accounts', page: 'Accounts' },
+            { label: 'Transactions', page: 'Transactions' },
+          ],
     });
   }
   
@@ -399,8 +418,20 @@ export function validateInvestmentAction(
  */
 export function generatePrioritizedActionQueue(
   analysis: CrossEngineAnalysis
-): Array<{ action: string; priority: number; category: string; details: string }> {
-  const actions: Array<{ action: string; priority: number; category: string; details: string }> = [];
+): Array<{
+  action: string;
+  priority: number;
+  category: string;
+  details: string;
+  links?: Array<{ label: string; page: Page; action?: string }>;
+}> {
+  const actions: Array<{
+    action: string;
+    priority: number;
+    category: string;
+    details: string;
+    links?: Array<{ label: string; page: Page; action?: string }>;
+  }> = [];
   
   // Critical alerts first
   analysis.alerts
@@ -410,7 +441,8 @@ export function generatePrioritizedActionQueue(
         action: 'URGENT: ' + alert.message,
         priority: 100,
         category: alert.category,
-        details: alert.suggestedAction || 'Immediate attention required'
+        details: alert.suggestedAction || 'Immediate attention required',
+        links: alert.links,
       });
     });
   
@@ -446,7 +478,8 @@ export function generatePrioritizedActionQueue(
         action: 'Warning: ' + alert.message,
         priority: 50,
         category: alert.category,
-        details: alert.suggestedAction || 'Review recommended'
+        details: alert.suggestedAction || 'Review recommended',
+        links: alert.links,
       });
     });
   
