@@ -1,12 +1,15 @@
 
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useContext } from 'react';
 import Header from './Header';
 import { Page } from '../types';
 import QuickActionsSidebar from './QuickActionsSidebar';
 import CommandPalette from './CommandPalette';
 import LiveAdvisorModal from './LiveAdvisorModal';
 import { useTrackPageVisit } from '../context/SelfLearningContext';
+import { DataContext } from '../context/DataContext';
+import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
+import CrossEngineAlertsBanner from './CrossEngineAlertsBanner';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -28,6 +31,8 @@ const Layout: React.FC<LayoutProps> = ({
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isLiveAdvisorOpen, setIsLiveAdvisorOpen] = useState(false);
   const mainContentRef = useRef<HTMLElement>(null);
+  const { data } = useContext(DataContext)!;
+  const { ready, analysis, actionQueue } = useFinancialEnginesIntegration();
 
   const skipToMainContent = () => {
     mainContentRef.current?.focus();
@@ -76,6 +81,15 @@ const Layout: React.FC<LayoutProps> = ({
         className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 lg:p-8 w-full"
       >
         <div className="max-w-7xl mx-auto w-full animate-fadeIn min-w-0">
+          {data && (
+            <CrossEngineAlertsBanner
+              ready={ready}
+              analysis={analysis ?? undefined}
+              actionQueue={actionQueue}
+              setActivePage={setActivePage}
+              triggerPageAction={triggerPageAction}
+            />
+          )}
           {children}
         </div>
       </main>
