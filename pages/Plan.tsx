@@ -40,7 +40,8 @@ import { getPersonalTransactions, getPersonalAccounts } from '../utils/wealthSco
 import { resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { buildAnnualPlanRows, formatAnnualPlanIncomeHint, type AnnualPlanRow } from '../services/annualPlanFromData';
 import { goalsWithResolvedCurrentAmount } from '../services/goalResolvedTotals';
-import { computeGoalMonthlyAllocation } from '../services/goalAllocation';
+import { computeGoalMonthlyFundingEnvelopeSar } from '../services/goalProjectionFunding';
+import { normalizeGoalAllocationPercent } from '../services/goalAllocation';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -407,6 +408,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         const monthlySurplusAfterInvestment = (totals?.projectedNet ?? 0) / 12;
 
         return goalsResolved.map((g) => {
+            const env = computeGoalMonthlyFundingEnvelopeSar({ goal: g, data, sarPerUsd });
             const target = Number(g.targetAmount ?? (g as any).target_amount ?? 0);
             const current = Math.max(0, Number(g.currentAmount ?? 0));
             const shortfall = Math.max(0, target - current);
@@ -418,7 +420,11 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 : 0;
             const requiredPerMonth = monthsRemaining > 0 && shortfall > 0 ? shortfall / monthsRemaining : shortfall;
 
-            const projectedMonthly = computeGoalMonthlyAllocation(monthlySurplusAfterInvestment, g.savingsAllocationPercent ?? 0);
+            const pct = normalizeGoalAllocationPercent(g.savingsAllocationPercent ?? 0);
+            const projectedMonthly =
+                env.envelopeMonthly > 0
+                    ? env.envelopeMonthly
+                    : monthlySurplusAfterInvestment * (pct / 100);
             let statusCard: 'On Track' | 'Needs Attention' | 'At Risk' | null = null;
             if (shortfall <= 0 || target <= 0) statusCard = null;
             else if (monthsRemaining <= 0) statusCard = 'At Risk';
@@ -452,7 +458,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 monthsToReachAtCurrentSurplus,
             };
         });
-    }, [goalsResolved, totals?.projectedNet]);
+    }, [goalsResolved, totals?.projectedNet, data, sarPerUsd]);
 
     const householdBudgetEngine = useMemo(() => {
         const monthlyIncomePlanned = MONTHS.map((_, i) => {

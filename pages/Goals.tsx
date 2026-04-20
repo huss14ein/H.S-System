@@ -24,7 +24,6 @@ import { useCurrency } from '../context/CurrencyContext';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { computeGoalFundingPlan } from '../services/goalFundingRouter';
-import { computeGoalMonthlyAllocation } from '../services/goalAllocation';
 import { monteCarloGoalSuccess } from '../services/portfolioConstruction';
 import { projectedGoalCompletionDate, goalFundingGap as goalGapShared } from '../services/goalMetrics';
 import { detectGoalConflict, goalFeasibilityCheck, type GoalConflict } from '../services/goalConflictEngine';
@@ -34,6 +33,10 @@ import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import { formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
 import { receivableContributionForGoal } from '../services/goalReceivableContribution';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
+import {
+    computeGoalMonthlyFundingEnvelopeSar,
+    rollingSurplusAfterAllGoalBudgetReservations,
+} from '../services/goalProjectionFunding';
 
 // A more visual progress bar specific for goals
 const GoalProgressBar: React.FC<{ progress: number; colorClass: string }> = ({ progress, colorClass }) => {
@@ -353,7 +356,7 @@ const GoalConflictAndFeasibilitySection: React.FC<{
   );
 };
 
-const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void; monthlySavings: number; onSeeInPlan?: () => void }> = ({ goal, onEdit, onDelete, monthlySavings, onSeeInPlan }) => {
+const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void; onSeeInPlan?: () => void }> = ({ goal, onEdit, onDelete, onSeeInPlan }) => {
     const { data } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
@@ -422,12 +425,20 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
             return { linkedAssets: linkedItems, calculatedCurrentAmount: totalValue };
         }, [data?.assets, data?.investments, goal.id, sarPerUsd, goalHoldingNames, personalLiabilities]);
 
+    const fundingEnvelope = useMemo(
+        () => computeGoalMonthlyFundingEnvelopeSar({ goal, data: data ?? null, sarPerUsd }),
+        [goal, data, sarPerUsd],
+    );
+
     const handleGetAIPlan = useCallback(async () => {
         setIsLoading(true);
-        const plan = await getGoalAIPlan(goal, monthlySavings, calculatedCurrentAmount);
+        const rollingAfter = rollingSurplusAfterAllGoalBudgetReservations(data ?? null);
+        const plan = await getGoalAIPlan(goal, rollingAfter, calculatedCurrentAmount, {
+            projectedMonthlyOverride: fundingEnvelope.envelopeMonthly,
+        });
         setAiPlan(plan);
         setIsLoading(false);
-    }, [goal, monthlySavings, calculatedCurrentAmount]);
+    }, [goal, calculatedCurrentAmount, data, fundingEnvelope.envelopeMonthly]);
     
 
     const { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution, borderColor } = useMemo(() => {
@@ -446,7 +457,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         const progressPercent = Math.min(100, Math.max(0, progressPercentRaw));
         const remainingAmount = Math.max(0, targetAmt - currentAmount);
         const requiredMonthlyContribution = monthsLeft > 0 ? remainingAmount / monthsLeft : remainingAmount;
-        const projectedMonthlyContribution = computeGoalMonthlyAllocation(monthlySavings, goal.savingsAllocationPercent);
+        const projectedMonthlyContribution = fundingEnvelope.envelopeMonthly;
 
         let status: 'On Track' | 'Needs Attention' | 'At Risk' = 'On Track';
         if (progressPercent >= 100) {
@@ -463,7 +474,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
         const borderColor = status === 'At Risk' ? 'border-danger' : status === 'Needs Attention' ? 'border-warning' : 'border-success';
 
         return { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution, borderColor };
-    }, [goal, monthlySavings, calculatedCurrentAmount]);
+    }, [goal, calculatedCurrentAmount, fundingEnvelope.envelopeMonthly]);
 
     const completionAtRequired = useMemo(() => {
         const g = { ...goal, currentAmount: calculatedCurrentAmount } as Goal;
@@ -545,9 +556,24 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                     )}
                 </div>
                 <div className="space-y-2">
+                    {(fundingEnvelope.assignedBudgetMonthly > 0 || fundingEnvelope.allocationSliceMonthly > 0) && (
+                        <p className="text-[11px] text-slate-500 leading-snug">
+                            {fundingEnvelope.assignedBudgetMonthly > 0 && (
+                                <span>
+                                    Linked budget: {formatCurrencyString(fundingEnvelope.assignedBudgetMonthly, { digits: 0 })}/mo
+                                </span>
+                            )}
+                            {fundingEnvelope.assignedBudgetMonthly > 0 && fundingEnvelope.allocationSliceMonthly > 0 && ' · '}
+                            {fundingEnvelope.allocationSliceMonthly > 0 && (
+                                <span>
+                                    + savings % of remaining surplus: {formatCurrencyString(fundingEnvelope.allocationSliceMonthly, { digits: 0 })}/mo
+                                </span>
+                            )}
+                        </p>
+                    )}
                     <div>
                         <div className="flex justify-between items-center text-xs mb-0.5">
-                            <span className="font-medium text-gray-600">Projected Monthly</span>
+                            <span className="font-medium text-gray-600">Projected monthly (envelope)</span>
                             <span className="font-bold">{formatCurrencyString(projectedMonthlyContribution, { digits: 0 })}</span>
                         </div>
                         <div className="h-2 w-full bg-gray-200 rounded-full">
@@ -700,6 +726,8 @@ const Goals: React.FC<{
         const totalNet = Array.from(monthlyNet.values()).reduce((sum, net) => sum + net, 0);
         return Math.max(0, totalNet / monthlyNet.size);
     }, [data?.transactions, (data as any)?.personalTransactions]);
+
+    const surplusForConflictEngine = useMemo(() => rollingSurplusAfterAllGoalBudgetReservations(data ?? null), [data?.budgets, data]);
 
     const resolvedGoalTotalsMap = useMemo(() => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd), [data, sarPerUsd]);
 
@@ -902,7 +930,11 @@ const Goals: React.FC<{
       )}
 
       <SectionCard id="goals-savings-allocation" title="Savings Allocation Strategy" className="bg-gradient-to-br from-white via-slate-50 to-primary/5 border-slate-100" collapsible collapsibleSummary="Allocate %" defaultExpanded>
-        <p className="text-sm text-gray-500 mb-4">Allocate your average monthly savings of <span className="font-bold text-dark">{formatCurrencyString(averageMonthlySavings)}</span> across your goals.</p>
+        <p className="text-sm text-gray-500 mb-4">
+            Rolling surplus (6 mo avg): <span className="font-bold text-dark">{formatCurrencyString(averageMonthlySavings)}</span>
+            {' · '}
+            After reserved goal-linked budgets: <span className="font-bold text-dark">{formatCurrencyString(surplusForConflictEngine)}</span> — allocate % across goals below (budget envelopes linked on the Budgets page count first).
+        </p>
         <div className="space-y-3">
             {goalsByPriority.map(goal => (
                  <div key={goal.id} className="grid grid-cols-5 items-center gap-4">
@@ -963,7 +995,7 @@ const Goals: React.FC<{
 
       <GoalConflictAndFeasibilitySection
         goals={(data?.goals ?? []).map(g => ({ ...g, currentAmount: goalCurrentAmountByGoalId[g.id] ?? 0 }))}
-        monthlySurplusForGoals={averageMonthlySavings}
+        monthlySurplusForGoals={surplusForConflictEngine}
         allocations={allocations}
         formatCurrencyString={formatCurrencyString}
         setActivePage={setActivePage}
@@ -1008,7 +1040,6 @@ const Goals: React.FC<{
                     goal={goal}
                     onEdit={() => handleOpenModal(goal)}
                     onDelete={() => handleOpenDeleteModal(goal)}
-                    monthlySavings={averageMonthlySavings}
                     onSeeInPlan={setActivePage ? () => setActivePage('Plan') : undefined}
                 />
             </div>

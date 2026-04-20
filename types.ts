@@ -315,6 +315,8 @@ export interface Budget {
   tier?: BudgetTier;
   /** Optional: account ID to route surplus/deficit for this budget (e.g. savings account). */
   destinationAccountId?: string;
+  /** Optional: life goal this envelope funds (goal-based projections use linked budgets first). */
+  goalId?: string;
 }
 
 
