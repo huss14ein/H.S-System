@@ -50,7 +50,6 @@ import { generateNextBestActions } from '../services/nextBestActionEngine';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { runShockDrill } from '../services/shockDrillEngine';
 import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
-import { buildUnifiedFinancialContext, runCrossEngineAnalysis } from '../services/engineIntegration';
 import { lifestyleGuardrailCheck, discretionarySpendApproval } from '../services/lifestyleGuardrailEngine';
 import { monthlyProvisionNeeded } from '../services/provisionEngine';
 import { computeLiquidityRunwayFromData } from '../services/liquidityRunwayEngine';
@@ -64,6 +63,8 @@ import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { getPersonalInvestments } from '../utils/wealthScope';
+import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
+import CrossEngineAlertsBanner from '../components/CrossEngineAlertsBanner';
 
 function estimateMonthlyDebtServiceSar(liabilities: Liability[]): number {
   let sum = 0;
@@ -127,6 +128,7 @@ interface LogicEnginesHubProps {
 const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, triggerPageAction, dataTick = 0 }) => {
   const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
   const { trackAction } = useSelfLearning();
+  const engines = useFinancialEnginesIntegration();
   const ef = useEmergencyFund(data ?? null);
   const { formatCurrencyString } = useFormatCurrency();
   const { exchangeRate } = useCurrency();
@@ -460,15 +462,6 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
   const shock = useMemo(() => runShockDrill(data ?? null, 'market_crash'), [data]);
   const scenarioTw = useMemo(() => buildBaselineScenarioTimeline(data ?? null, 10, netWorth * 1.25), [data, netWorth]);
 
-  const unified = useMemo(() => {
-    try {
-      const ctx = buildUnifiedFinancialContext(scoped.txs, scoped.accounts, scoped.budgets, scoped.goals, scoped.investmentsFlat);
-      return runCrossEngineAnalysis(ctx);
-    } catch {
-      return null;
-    }
-  }, [scoped.txs, scoped.accounts, scoped.budgets, scoped.goals, scoped.investmentsFlat]);
-
   const trackedSymbolCount = useMemo(() => {
     const w = (data?.watchlist ?? [])
       .map((x: { symbol?: string }) => (x.symbol ?? '').trim().toUpperCase())
@@ -490,7 +483,7 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
       runwayMonths: liquidityRunway?.monthsOfRunway ?? 0,
       emergencyMonthsCovered: ef.monthsCovered,
       usdToSarRate: sarPerUsd,
-      alertCount: unified?.alerts?.length ?? 0,
+      alertCount: engines.analysis?.alerts?.length ?? 0,
       symbolCount: trackedSymbolCount,
     }),
     [
@@ -503,7 +496,7 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
       liquidityRunway?.monthsOfRunway,
       ef.monthsCovered,
       sarPerUsd,
-      unified?.alerts?.length,
+      engines.analysis?.alerts?.length,
       trackedSymbolCount,
     ]
   );
@@ -851,19 +844,22 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
         </SectionCard>
 
         <SectionCard title="Engine integration (cross-engine)" collapsible collapsibleSummary="Alerts and recs">
-          {unified ? (
+          {engines.analysis ? (
             <>
-              <p className="text-sm text-gray-700 mb-2">
-                Alerts: {unified.alerts.length} · Investment recs: {unified.investmentRecommendations.length} · Budget recs:{' '}
-                {unified.budgetRecommendations.length}
+              <p className="text-sm text-gray-700 mb-3">
+                Live from the same engine as the app header: budget, cash, risk, and household signals. Also: investment recs:{' '}
+                {engines.analysis.investmentRecommendations.length} · budget recs: {engines.analysis.budgetRecommendations.length}
               </p>
-              <ul className="text-xs text-gray-600 space-y-1 max-h-40 overflow-y-auto">
-                {unified.alerts.slice(0, 8).map((al, i) => (
-                  <li key={i}>
-                    [{al.severity}] {al.message}
-                  </li>
-                ))}
-              </ul>
+              {setActivePage && (
+                <CrossEngineAlertsBanner
+                  variant="embedded"
+                  ready={engines.ready}
+                  analysis={engines.analysis}
+                  actionQueue={engines.actionQueue}
+                  setActivePage={setActivePage}
+                  triggerPageAction={triggerPageAction}
+                />
+              )}
             </>
           ) : (
             <p className="text-sm text-gray-500">Integration analysis unavailable.</p>

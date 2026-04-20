@@ -13,6 +13,7 @@ import { CalendarDaysIcon } from '../components/icons/CalendarDaysIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
+import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
 import TransactionReviewModal from '../components/TransactionReviewModal';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
@@ -26,7 +27,6 @@ import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import { CreditCardIcon } from '../components/icons/CreditCardIcon';
 import { DocumentArrowUpIcon } from '../components/icons/DocumentArrowUpIcon';
 import { GoldBarIcon } from '../components/icons/GoldBarIcon';
-import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
 import { UsersIcon } from '../components/icons/UsersIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
@@ -45,7 +45,6 @@ import { generateNextBestActions } from '../services/nextBestActionEngine';
 import { useTodosOptional } from '../context/TodosContext';
 import { computeTaskCounts, compareActionableTodos, isTaskSnoozed, todayIsoDate } from '../services/todoModel';
 import type { TodoItem } from '../types';
-import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import { savingsRateSar } from '../services/financeMetrics';
 import { debtStressScore } from '../services/debtEngines';
@@ -59,7 +58,6 @@ import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { logKpiReconciliationDrift } from '../services/kpiDriftTelemetry';
 import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
 import { useSelfLearning } from '../context/SelfLearningContext';
-import { BoltIcon } from '../components/icons/BoltIcon';
 import { useDashboardReconciliationPrefs } from '../hooks/useDashboardReconciliationPrefs';
 
 interface ExtendedBudget extends Budget {
@@ -413,9 +411,6 @@ const AI_SUMMARY_LANG_KEY = 'finova_dashboard_ai_summary_lang_v1';
 const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
     const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
-    const { actionQueue, analysis, ready } = useFinancialEnginesIntegration();
-    const [openEngineAlertIdx, setOpenEngineAlertIdx] = useState<number | null>(null);
-    const [openEngineActionIdx, setOpenEngineActionIdx] = useState<number | null>(null);
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
@@ -905,164 +900,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                     <button type="button" onClick={() => setActivePage('Analysis')} className="text-primary font-medium hover:underline text-sm">
                         Details in Analysis →
                     </button>
-                </div>
-            )}
-
-            {ready && (actionQueue.length > 0 || (analysis?.alerts?.length ?? 0) > 0) && (
-                <div
-                    className="mb-4 relative overflow-hidden rounded-2xl border-2 border-amber-400/90 bg-gradient-to-br from-amber-50 via-white to-orange-50/60 shadow-[0_4px_24px_-4px_rgba(245,158,11,0.35)] ring-1 ring-amber-200/70"
-                    role="region"
-                    aria-label="Cross-engine actions and alerts"
-                >
-                    <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b from-amber-500 via-orange-500 to-rose-500" aria-hidden />
-                    <div className="pl-6 pr-4 py-4 sm:pl-7">
-                        <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-4">
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-md shadow-amber-500/30">
-                                <BoltIcon className="h-5 w-5" aria-hidden />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                                <h3 className="text-base font-bold tracking-tight text-slate-900">Cross-engine actions & alerts</h3>
-                                <p className="text-xs text-slate-600 mt-0.5">Budget, cashflow, risk, and Wealth Ultra engines combined—review these first.</p>
-                            </div>
-                            <div className="flex flex-wrap gap-2 w-full sm:w-auto sm:justify-end">
-                                {(analysis?.alerts?.length ?? 0) > 0 && (
-                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-200 bg-rose-100 px-3 py-1 text-xs font-bold uppercase tracking-wide text-rose-900 shadow-sm">
-                                        <ExclamationTriangleIcon className="h-3.5 w-3.5 text-rose-600" aria-hidden />
-                                        {analysis!.alerts!.length} alert{analysis!.alerts!.length === 1 ? '' : 's'}
-                                    </span>
-                                )}
-                                {actionQueue.length > 0 && (
-                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-100 px-3 py-1 text-xs font-bold uppercase tracking-wide text-sky-900 shadow-sm">
-                                        <ClipboardDocumentListIcon className="h-3.5 w-3.5 text-sky-600" aria-hidden />
-                                        {actionQueue.length} action{actionQueue.length === 1 ? '' : 's'}
-                                    </span>
-                                )}
-                            </div>
-                        </div>
-
-                        {analysis?.alerts && analysis.alerts.length > 0 && (
-                            <div className="mb-4 rounded-xl border-2 border-amber-300/80 bg-amber-50/95 p-3 shadow-inner">
-                                <p className="text-[11px] font-bold uppercase tracking-wider text-amber-900/90 mb-2 flex items-center gap-2">
-                                    <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse motion-reduce:animate-none" aria-hidden />
-                                    Alerts
-                                </p>
-                                <ul className="space-y-2">
-                                    {analysis.alerts.slice(0, 3).map((a, i) => {
-                                        const open = openEngineAlertIdx === i;
-                                        return (
-                                        <li
-                                            key={i}
-                                            className="rounded-lg border border-amber-200/60 bg-white/80 shadow-sm overflow-hidden"
-                                        >
-                                            <div className="flex items-start gap-2.5 px-3 py-2.5 text-sm font-medium text-amber-950">
-                                            <ExclamationTriangleIcon className="h-5 w-5 shrink-0 text-amber-600" aria-hidden />
-                                            <span className="min-w-0 flex-1 leading-snug">{a.message}</span>
-                                            </div>
-                                            {a.suggestedAction && (
-                                                <div className="px-3 pb-2 text-xs text-amber-900/90 border-t border-amber-100/80 bg-amber-50/50">
-                                                    <p className="pt-2"><strong className="font-semibold text-slate-800">Suggested:</strong> {a.suggestedAction}</p>
-                                                </div>
-                                            )}
-                                            <div className="flex flex-wrap items-center gap-2 px-3 pb-2.5 pt-1 border-t border-amber-100/60 bg-white/60">
-                                                {(a.links ?? []).map((lnk) => (
-                                                    <button
-                                                        key={`${lnk.label}-${lnk.page}`}
-                                                        type="button"
-                                                        onClick={() => {
-                                                            if (lnk.action && triggerPageAction) triggerPageAction(lnk.page, lnk.action);
-                                                            else setActivePage(lnk.page);
-                                                        }}
-                                                        className="text-xs font-semibold text-primary hover:underline"
-                                                    >
-                                                        {lnk.label} →
-                                                    </button>
-                                                ))}
-                                                <button
-                                                    type="button"
-                                                    className="text-xs text-slate-600 hover:text-slate-900 ml-auto"
-                                                    onClick={() => setOpenEngineAlertIdx(open ? null : i)}
-                                                    aria-expanded={open}
-                                                >
-                                                    {open ? 'Hide details' : 'Details'}
-                                                </button>
-                                            </div>
-                                            {open && a.relatedMetrics && Object.keys(a.relatedMetrics).length > 0 && (
-                                                <div className="px-3 pb-2.5 text-[11px] text-slate-600 font-mono bg-slate-50/90 border-t border-slate-100">
-                                                    {Object.entries(a.relatedMetrics).map(([k, v]) => (
-                                                        <span key={k} className="mr-3">{k}: {typeof v === 'number' ? v.toFixed(2) : v}</span>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </li>
-                                    );})}
-                                </ul>
-                            </div>
-                        )}
-
-                        {actionQueue.length > 0 && (
-                            <div className="rounded-xl border-2 border-sky-300/80 bg-sky-50/95 p-3 shadow-inner">
-                                <p className="text-[11px] font-bold uppercase tracking-wider text-sky-900/90 mb-2 flex items-center gap-2">
-                                    <span className="inline-block h-2 w-2 rounded-full bg-sky-500" aria-hidden />
-                                    Prioritized actions
-                                </p>
-                                <ul className="space-y-2">
-                                    {actionQueue.slice(0, 5).map((item, i) => {
-                                        const p = Math.round(item.priority);
-                                        const priorityClass =
-                                            p <= 2
-                                                ? 'border-red-300 bg-red-100 text-red-900'
-                                                : p <= 4
-                                                  ? 'border-amber-300 bg-amber-100 text-amber-950'
-                                                  : 'border-slate-200 bg-slate-100 text-slate-800';
-                                        const open = openEngineActionIdx === i;
-                                        return (
-                                            <li
-                                                key={i}
-                                                className="rounded-lg border border-sky-200/70 bg-white/90 text-sm text-slate-800 shadow-sm overflow-hidden"
-                                            >
-                                                <div className="flex items-start justify-between gap-3 px-3 py-2.5">
-                                                <span className="min-w-0 flex-1 leading-snug font-medium">{item.action}</span>
-                                                <span
-                                                    className={`shrink-0 inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-bold tabular-nums ${priorityClass}`}
-                                                    title={`Priority ${p} (lower = more urgent)`}
-                                                >
-                                                    P{p}
-                                                </span>
-                                                </div>
-                                                {item.details && (
-                                                    <div className="px-3 pb-2 text-xs text-slate-600 border-t border-sky-100 bg-sky-50/40">
-                                                        <p className="pt-1.5">{item.details}</p>
-                                                    </div>
-                                                )}
-                                                <div className="flex flex-wrap gap-2 px-3 pb-2.5 items-center border-t border-sky-100/70 bg-white/70">
-                                                    {(item.links ?? []).map((lnk) => (
-                                                        <button
-                                                            key={`${lnk.label}-${lnk.page}-${i}`}
-                                                            type="button"
-                                                            onClick={() => {
-                                                                if (lnk.action && triggerPageAction) triggerPageAction(lnk.page, lnk.action);
-                                                                else setActivePage(lnk.page);
-                                                            }}
-                                                            className="text-xs font-semibold text-primary hover:underline"
-                                                        >
-                                                            {lnk.label} →
-                                                        </button>
-                                                    ))}
-                                                    <button
-                                                        type="button"
-                                                        className="text-xs text-slate-600 hover:text-slate-900 ml-auto"
-                                                        onClick={() => setOpenEngineActionIdx(open ? null : i)}
-                                                    >
-                                                        {open ? 'Hide' : 'More'}
-                                                    </button>
-                                                </div>
-                                            </li>
-                                        );
-                                    })}
-                                </ul>
-                            </div>
-                        )}
-                    </div>
                 </div>
             )}
 

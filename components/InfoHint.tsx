@@ -175,7 +175,7 @@ const InfoHint: React.FC<InfoHintProps> = ({ text, placement = 'auto', popoverAl
       id={tooltipId}
       ref={panelRef}
       style={panelStyle}
-      className="z-[500] overflow-y-auto rounded-md border border-slate-200 bg-white p-3 text-xs text-slate-700 shadow-xl leading-relaxed whitespace-normal break-words text-left pointer-events-auto"
+      className="z-[10000] overflow-y-auto rounded-md border border-slate-200 bg-white p-3 text-xs text-slate-700 shadow-xl leading-relaxed whitespace-normal break-words text-left pointer-events-auto"
       role="tooltip"
       onClick={stopParent}
       onMouseDown={stopParent}
@@ -191,7 +191,7 @@ const InfoHint: React.FC<InfoHintProps> = ({ text, placement = 'auto', popoverAl
   return (
     <span
       data-infohint-trigger="true"
-      className="infohint-trigger relative z-[60] inline-flex h-4 w-4 shrink-0 items-center justify-center align-middle leading-none self-center"
+      className="infohint-trigger relative z-[100] inline-flex h-4 w-4 shrink-0 items-center justify-center align-middle leading-none self-center"
     >
       <button
         ref={triggerRef}
