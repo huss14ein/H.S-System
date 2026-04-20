@@ -3,7 +3,9 @@
  * Minimal implementation for build compatibility.
  */
 
+import type { FinancialData } from '../types';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
+import { computeGoalResolvedAmountsSar } from './goalResolvedTotals';
 
 export interface HouseholdMonthlyOverride {
   monthIndex?: number;
@@ -154,6 +156,23 @@ export function mapGoalsForRouting(goals: Array<{ id?: string; name?: string; ta
     currentAmount: Number(g.currentAmount ?? 0),
     deadline: String(g.deadline ?? ''),
   }));
+}
+
+/** Merge `currentAmount` with resolved linked-wealth SAR (same basis as Goals page). */
+export function mergeGoalRowsWithResolvedCurrentSar<T extends { id?: string; currentAmount?: number }>(
+  goals: T[] | null | undefined,
+  financialData: FinancialData | null | undefined,
+  sarPerUsd: number,
+): T[] {
+  const resolved = computeGoalResolvedAmountsSar(financialData, sarPerUsd);
+  return (goals ?? []).map((g) => {
+    const id = String(g.id ?? '');
+    const fromResolved = id ? resolved.get(id) : undefined;
+    return {
+      ...g,
+      currentAmount: fromResolved !== undefined ? fromResolved : Number(g.currentAmount ?? 0),
+    };
+  });
 }
 
 export function sumLiquidCash(accounts: Array<{ type?: string; balance?: number }>): number {
@@ -674,6 +693,9 @@ export function buildHouseholdEngineInputFromPlanData(
     profile?: HouseholdEngineProfile;
     monthlyOverrides?: HouseholdMonthlyOverride[];
     config?: HouseholdEngineConfig;
+    /** When set with `sarPerUsd`, goal `currentAmount` is replaced with resolved linked-wealth totals. */
+    financialData?: FinancialData | null;
+    sarPerUsd?: number;
   }
 ): HouseholdBudgetPlanInput {
   const salary = options?.expectedMonthlySalary ?? (monthlyIncomePlanned?.length ? monthlyIncomePlanned.reduce((a, b) => a + b, 0) / monthlyIncomePlanned.length : 0);
@@ -687,7 +709,12 @@ export function buildHouseholdEngineInputFromPlanData(
     ? monthlyExpenseActual.slice(0, 12)
     : Array(12).fill(0);
   const liquidBalance = sumLiquidCash(accounts);
-  const goalsMapped = mapGoalsForRouting(goals);
+  const rate = Number(options?.sarPerUsd);
+  const goalsForEngine =
+    options?.financialData != null && Number.isFinite(rate) && rate > 0
+      ? mergeGoalRowsWithResolvedCurrentSar(goals, options.financialData, rate)
+      : goals;
+  const goalsMapped = mapGoalsForRouting(goalsForEngine);
   return {
     monthlySalaryPlan,
     monthlyActualIncome,
@@ -714,6 +741,9 @@ export function buildHouseholdEngineInputFromData(
     profile?: HouseholdEngineProfile;
     monthlyOverrides?: HouseholdMonthlyOverride[];
     config?: HouseholdEngineConfig;
+    /** When set with `sarPerUsd`, goal `currentAmount` uses resolved linked-wealth totals (Goals page parity). */
+    financialData?: FinancialData | null;
+    sarPerUsd?: number;
   }
 ): HouseholdBudgetPlanInput {
   const year = options?.year ?? new Date().getFullYear();
@@ -735,7 +765,12 @@ export function buildHouseholdEngineInputFromData(
     if (monthlyActualIncome[i] === 0) monthlyActualIncome[i] = salary;
   }
   const liquidBalance = sumLiquidCash(accounts);
-  const goalsMapped = mapGoalsForRouting(goals);
+  const rate = Number(options?.sarPerUsd);
+  const goalsForEngine =
+    options?.financialData != null && Number.isFinite(rate) && rate > 0
+      ? mergeGoalRowsWithResolvedCurrentSar(goals, options.financialData, rate)
+      : goals;
+  const goalsMapped = mapGoalsForRouting(goalsForEngine);
   return {
     monthlySalaryPlan,
     monthlyActualIncome,

@@ -3,9 +3,20 @@ import type { Goal } from '../types';
 const PRIORITY_ORDER: Record<string, number> = { High: 0, Medium: 1, Low: 2 };
 
 /** After completing a goal, suggest next funding target by priority then deadline. */
-export function suggestWaterfallNextGoal(completedGoalId: string, goals: Goal[]): Goal | null {
+export function suggestWaterfallNextGoal(
+  completedGoalId: string,
+  goals: Goal[],
+  /** Optional resolved saved amounts (SAR), same basis as Goals page — overrides `goal.currentAmount`. */
+  resolvedCurrentByGoalId?: Map<string, number>,
+): Goal | null {
   const open = goals.filter((g) => g.id !== completedGoalId);
-  const notMet = open.filter((g) => (g.currentAmount ?? 0) < (g.targetAmount ?? 1));
+  const notMet = open.filter((g) => {
+    const cur =
+      resolvedCurrentByGoalId != null && resolvedCurrentByGoalId.has(g.id)
+        ? (resolvedCurrentByGoalId.get(g.id) ?? 0)
+        : (g.currentAmount ?? 0);
+    return cur < (g.targetAmount ?? 1);
+  });
   if (notMet.length === 0) return null;
   return [...notMet].sort((a, b) => {
     const pa = PRIORITY_ORDER[a.priority || 'Medium'] ?? 1;

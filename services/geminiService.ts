@@ -4,11 +4,17 @@ import { KPISummary, Holding, Goal, InvestmentTransaction, WatchlistItem, Transa
 import { finnhubFetch, toFinnhubSymbol, fromFinnhubSymbol, canonicalQuoteLookupKey, toStooqSymbol, getFinnhubQuoteCandidates, resolveQuotePrice } from './finnhubService';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { capitalizeCategoryName } from '../utils/categoryFormat';
-import { DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
+import { DEFAULT_SAR_PER_USD, resolveSarPerUsd } from '../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { fetchStooq } from './stooqClient';
 import { fetchGeminiProxyHealthStatus, getGeminiProxyEndpoints } from './aiProxyEndpoints';
 import { computeGoalMonthlyAllocation, normalizeGoalAllocationPercent } from './goalAllocation';
+import { computeGoalResolvedAmountsSar, resolvedGoalAmountsFingerprint, formatGoalsProgressForPrompt } from './goalResolvedTotals';
+
+function sarPerUsdForResolvedGoals(data: FinancialData | null | undefined): number {
+  const r = resolveSarPerUsd(data, undefined);
+  return Number.isFinite(r) && r > 0 ? r : DEFAULT_SAR_PER_USD;
+}
 
 // --- Model Constants ---
 const FAST_MODEL = 'gemini-3-flash-preview';
@@ -717,15 +723,17 @@ const getTopHoldingSymbol = (investments: InvestmentPortfolio[]): string => {
 
 
 export const getAIFeedInsights = async (data: FinancialData): Promise<FeedItem[]> => {
-    const cacheKey = `getAIFeedInsights:${(data?.transactions ?? []).length}:${(data?.goals ?? []).length}:${(data?.budgets ?? []).length}`;
+    const resolvedFp = resolvedGoalAmountsFingerprint(data, sarPerUsdForResolvedGoals(data));
+    const cacheKey = `getAIFeedInsights:${(data?.transactions ?? []).length}:${(data?.goals ?? []).length}:${(data?.budgets ?? []).length}:${resolvedFp}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
 
     try {
         const personalTx = (data as any)?.personalTransactions ?? data?.transactions ?? [];
         const personalInv = (data as any)?.personalInvestments ?? data?.investments ?? [];
+        const goalsProgressResolved = formatGoalsProgressForPrompt(data, sarPerUsdForResolvedGoals(data));
         const prompt = `You are Finova AI, expert financial advisor. Return 4-5 feed items as JSON. Brief: each title = one punchy line; each description = one sentence with a number or action.
-Data: Recent tx: ${personalTx.slice(0, 5).map((t: { description?: string; amount?: number }) => `${t.description ?? ''} ${t.amount ?? 0}`).join('; ')}. Budgets: ${(data?.budgets ?? []).map(b => `${b.category ?? ''} ${b.limit ?? 0}`).join('; ')}. Goals: ${(data?.goals ?? []).map(g => `${g.name ?? ''} ${((g.targetAmount ?? 0) > 0 ? (((g.currentAmount ?? 0) / (g.targetAmount ?? 1)) * 100).toFixed(0) : '0')}%`).join('; ')}. Top holding: ${getTopHoldingSymbol(personalInv)}.
+Data: Recent tx: ${personalTx.slice(0, 5).map((t: { description?: string; amount?: number }) => `${t.description ?? ''} ${t.amount ?? 0}`).join('; ')}. Budgets: ${(data?.budgets ?? []).map(b => `${b.category ?? ''} ${b.limit ?? 0}`).join('; ')}. Goal progress (resolved linked wealth % of target): ${goalsProgressResolved || 'None'}. Top holding: ${getTopHoldingSymbol(personalInv)}.
 Each item: type (BUDGET|GOAL|INVESTMENT|SAVINGS), title (short), description (one sentence, specific), emoji (single). Prioritize what matters most.`;
 
         const response = await invokeAI({
@@ -1252,7 +1260,8 @@ export const getAIInvestmentOverviewAnalysis = async (
 
 export const getAIExecutiveSummary = async (data: FinancialData): Promise<string> => {
     const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
-    const cacheKey = `getAIExecutiveSummary:${transactions.length}:${((data as any)?.personalInvestments ?? data?.investments ?? []).length}`;
+    const resolvedFp = resolvedGoalAmountsFingerprint(data, sarPerUsdForResolvedGoals(data));
+    const cacheKey = `getAIExecutiveSummary:${transactions.length}:${((data as any)?.personalInvestments ?? data?.investments ?? []).length}:${resolvedFp}`;
     const cached = getFromCache(cacheKey);
     if(cached) return cached;
 
@@ -1278,17 +1287,12 @@ export const getAIExecutiveSummary = async (data: FinancialData): Promise<string
         .map(b => `${b.category} (${b.percentage.toFixed(0)}% used)`)
         .join(', ');
     
-    const goalProgress = (data?.goals ?? []).map((g: { name?: string; currentAmount?: number; targetAmount?: number }) => {
-        const currentAmount = g.currentAmount ?? 0;
-        const targetAmount = g.targetAmount ?? 0;
-        const progress = targetAmount > 0 ? (currentAmount / targetAmount) * 100 : 0;
-        return `${g.name ?? ''} (${progress.toFixed(0)}%)`;
-    }).join(', ');
+    const goalProgress = formatGoalsProgressForPrompt(data, sarPerUsdForResolvedGoals(data));
 
     const prompt = `
         You are Finova AI, a very clever expert financial and investment advisor. Analyze the user's data and return a short, direct executive summary in Markdown only (no HTML). Speak with authority and insight.
 
-        Data: This month P&L ${monthlyPnL.toLocaleString()} SAR; budgets near limit (>90%): ${overspentBudgets || 'None'}; goal progress: ${goalProgress || 'No goals set'}.
+        Data: This month P&L ${monthlyPnL.toLocaleString()} SAR; budgets near limit (>90%): ${overspentBudgets || 'None'}; goal progress (resolved linked wealth): ${goalProgress || 'No goals set'}.
 
         Use exactly these ### section headers (one sentence or 2-3 bullets each; be specific with numbers):
         ### Overall Financial Health
@@ -1836,16 +1840,15 @@ export const getGoalAIPlan = async (goal: Goal, monthlySavings: number, calculat
 
 export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: number, allData: FinancialData): Promise<string> => {
     try {
-        const assets = (allData as any)?.personalAssets ?? allData.assets ?? [];
-        const investments = (allData as any)?.personalInvestments ?? allData.investments ?? [];
-         const goalDataWithProgress = goals.map(goal => {
-            const linkedItemsValue = assets.filter((a: { goalId?: string; value?: number }) => a.goalId === goal.id).reduce((sum: number, a: { value?: number }) => sum + (a.value ?? 0), 0) +
-                                  investments.flatMap((p: { holdings?: { goalId?: string; currentValue?: number }[] }) => p.holdings ?? []).filter((h: { goalId?: string }) => h.goalId === goal.id).reduce((sum: number, h: { currentValue?: number }) => sum + (h.currentValue ?? 0), 0);
-            
-            const currentAmount = linkedItemsValue;
-            const progress = goal.targetAmount > 0 ? (currentAmount / goal.targetAmount) * 100 : 0;
-            return `- ${goal.name}: ${progress.toFixed(0)}% complete`;
-        }).join('\n');
+        const sar = sarPerUsdForResolvedGoals(allData);
+        const resolved = computeGoalResolvedAmountsSar(allData, sar);
+        const goalDataWithProgress = goals
+            .map((goal) => {
+                const currentAmount = resolved.get(goal.id) ?? 0;
+                const progress = goal.targetAmount > 0 ? (currentAmount / goal.targetAmount) * 100 : 0;
+                return `- ${goal.name}: ${progress.toFixed(0)}% (resolved toward target, linked assets + investments + receivables)`;
+            })
+            .join('\n');
 
         const totalAllocatedPercent = goals.reduce((sum, g) => sum + normalizeGoalAllocationPercent(g.savingsAllocationPercent), 0);
         const allocatedSavings = monthlySavings * (totalAllocatedPercent / 100);

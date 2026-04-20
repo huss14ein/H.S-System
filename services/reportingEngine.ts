@@ -118,14 +118,24 @@ function escapeHtml(value: unknown): string {
 }
 
 export function exportGoalStatus(args: {
-  goals: { id: string; name: string; targetAmount: number; currentAmount: number; deadline: string }[];
+  goals: {
+    id: string;
+    name: string;
+    targetAmount: number;
+    /** Stored ledger field (may omit linked wealth). */
+    currentAmount: number;
+    deadline: string;
+    /** Optional: resolved toward goal (linked assets + investments + receivables), SAR — same basis as Goals page. */
+    savedAmountResolvedSar?: number;
+  }[];
 }): string {
   return toCsv(
     args.goals.map((g) => ({
       id: g.id,
       name: g.name,
       targetAmount: g.targetAmount,
-      currentAmount: g.currentAmount,
+      currentAmountStored: g.currentAmount,
+      savedAmountResolvedSar: g.savedAmountResolvedSar ?? '',
       deadline: g.deadline,
     }))
   );

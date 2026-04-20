@@ -71,7 +71,6 @@ import { learnAndAutoAdjust } from '../services/aiBudgetAutomation';
 import { getPersonalTransactions } from '../utils/wealthScope';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
-import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import AIAdvisor from '../components/AIAdvisor';
 
 
@@ -542,16 +541,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const incomeWithData = incomeByMonth.filter((v) => v > 0);
         const suggested = incomeWithData.length > 0 ? Math.round(incomeWithData.reduce((a, b) => a + b, 0) / incomeWithData.length) : 0;
 
-        const resolvedGoals = computeGoalResolvedAmountsSar(data ?? null, sarPerUsd);
-        const goalsForEngine = (data?.goals ?? []).map((g) => ({
-            ...g,
-            currentAmount: resolvedGoals.get(g.id) ?? g.currentAmount ?? 0,
-        }));
-
         const input = buildHouseholdEngineInputFromData(
             transactions as Array<{ date: string; type?: string; amount?: number }>,
             accounts as Array<{ type?: string; balance?: number }>,
-            goalsForEngine as any[],
+            (data?.goals ?? []) as any[],
             {
                 year: currentYear,
                 expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : (suggested > 0 ? suggested : undefined),
@@ -559,6 +552,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 kids: householdKids,
                 profile: engineProfile,
                 monthlyOverrides: householdOverrides,
+                financialData: data ?? null,
+                sarPerUsd,
             }
         );
         const result = buildHouseholdBudgetPlan(input);
