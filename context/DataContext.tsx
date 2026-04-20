@@ -2553,6 +2553,114 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 tradePayload.currency = pc === 'SAR' || pc === 'USD' ? pc : 'SAR';
             }
         }
+
+        /** Atomic investment ↔ linked cash ledger (migration `create_investment_cash_transfer_with_fee`). Fees stay on addTransfer/addTransaction path. */
+        if (
+            isCashFlow &&
+            linkedCashAccountId &&
+            investmentAccount &&
+            (tradeData.type === 'deposit' || tradeData.type === 'withdrawal')
+        ) {
+            const dateSlice =
+                typeof trade.date === 'string' && trade.date.length >= 10 ? trade.date.slice(0, 10) : String(trade.date ?? '').slice(0, 10);
+            const cashRpcPayload = {
+                p_investment_account_id: accountIdForInsert,
+                p_cash_account_id: linkedCashAccountId,
+                p_direction: tradeData.type === 'deposit' ? 'cash_to_investment' : 'investment_to_cash',
+                p_amount: tradeTotal,
+                p_fee_amount: 0,
+                p_date: dateSlice || new Date().toISOString().slice(0, 10),
+                p_cash_description:
+                    tradeData.type === 'deposit'
+                        ? `Transfer to ${investmentAccount.name}`
+                        : `Transfer from ${investmentAccount.name}`,
+                p_fee_description: null as string | null,
+                p_transfer_group_id: (trade as { transferGroupId?: string }).transferGroupId ?? null,
+            };
+            const invRpcRes = await supabase.rpc('create_investment_cash_transfer_with_fee', cashRpcPayload as Record<string, unknown>);
+            const invRpcErr = invRpcRes.error as { code?: string; message?: string } | null;
+            const invRpcRowRaw = invRpcRes.data as
+                | { investment_transaction_id?: string; cash_transaction_ids?: string[] }
+                | { investment_transaction_id?: string; cash_transaction_ids?: string[] }[]
+                | null;
+            const invRpcRow = Array.isArray(invRpcRowRaw) ? invRpcRowRaw[0] : invRpcRowRaw;
+            const missingInvestRpc =
+                invRpcErr?.code === 'PGRST202' ||
+                (String(invRpcErr?.message || '').toLowerCase().includes('function') &&
+                    String(invRpcErr?.message || '').toLowerCase().includes('does not exist'));
+
+            if (!invRpcErr && invRpcRow?.investment_transaction_id) {
+                const invId = invRpcRow.investment_transaction_id;
+                const cashIds = Array.isArray(invRpcRow.cash_transaction_ids) ? invRpcRow.cash_transaction_ids : [];
+
+                const { data: invFetched, error: invFetchErr } = await supabase
+                    .from('investment_transactions')
+                    .select('*')
+                    .eq('id', invId)
+                    .maybeSingle();
+                if (invFetchErr) console.error(invFetchErr);
+                if (!invFetched) {
+                    tradeSubmissionInFlightRef.current = false;
+                    throw new Error(
+                        invFetchErr?.message ??
+                            'Atomic transfer RPC succeeded but investment transaction could not be loaded. Refresh and verify balances.',
+                    );
+                }
+                const normalizedInserted = normalizeInvestmentTransaction(invFetched);
+                setData((prev) => ({
+                    ...prev,
+                    investmentTransactions: [normalizedInserted, ...prev.investmentTransactions],
+                }));
+                await applyInvestmentAccountDeltaForTrade(accountIdForInsert, investmentBalanceDelta, {
+                    includeTransaction: normalizedInserted,
+                });
+                recomputed = true;
+                insertedInvestmentTransactionId = String(normalizedInserted.id || '');
+                insertedTradeTransactions = 1;
+
+                for (const cid of cashIds) {
+                    if (!cid) continue;
+                    const { data: cashRow, error: cashFetchErr } = await supabase.from('transactions').select('*').eq('id', cid).maybeSingle();
+                    if (cashFetchErr) console.warn(cashFetchErr);
+                    if (!cashRow) continue;
+                    const nt = normalizeTransaction(cashRow);
+                    setData((prev) => ({ ...prev, transactions: [nt, ...prev.transactions] }));
+                    await syncSharedBudgetTransactionMirror(nt as any);
+                    auditChangeLog({
+                        action: 'create',
+                        entity: 'transaction',
+                        entityId: nt.id,
+                        summary: `${nt.type}: ${String(nt.description ?? '').slice(0, 120)} · ${nt.amount}`,
+                        userId: auth.user.id,
+                    });
+                    await applyLedgerAccountDeltaForTransaction(nt.accountId, Number(nt.amount) || 0);
+                }
+
+                insertedCashLedgerRows = cashIds.filter(Boolean).length;
+                tradeSubmissionInFlightRef.current = false;
+                return {
+                    insertedInvestmentTransactionId,
+                    insertedTradeTransactions,
+                    insertedCashLedgerRows,
+                    recomputed,
+                    cashDelta: cashDeltaOut,
+                    positionDelta: positionDeltaOut,
+                };
+            }
+            if (invRpcErr && !missingInvestRpc) {
+                console.error(invRpcErr);
+                throw invRpcErr;
+            }
+            if (missingInvestRpc) {
+                try {
+                    toast(
+                        'Investment cash transfer saved via legacy path. For atomic deposit/withdrawal + cash rows, deploy migration `20260328101000_add_investment_cash_transfer_rpc.sql` (and latest fixes).',
+                        'info',
+                    );
+                } catch {}
+            }
+        }
+
         for (const payload of tradePayloadVariants(tradePayload)) {
             const result = await supabase.from('investment_transactions').insert(withUser(payload)).select().single();
             newTransaction = result.data;
