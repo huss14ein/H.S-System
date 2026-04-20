@@ -33,6 +33,7 @@ import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import { formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
 import { receivableContributionForGoal } from '../services/goalReceivableContribution';
+import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 
 // A more visual progress bar specific for goals
 const GoalProgressBar: React.FC<{ progress: number; colorClass: string }> = ({ progress, colorClass }) => {
@@ -172,10 +173,11 @@ const GoalConflictAndFeasibilitySection: React.FC<{
   setActivePage?: (page: Page) => void;
   triggerPageAction?: (page: Page, action: string) => void;
   onEditGoalById?: (goalId: string) => void;
-}> = ({ goals, monthlySurplusForGoals, allocations, formatCurrencyString, setActivePage, triggerPageAction, onEditGoalById }) => {
+  resolvedCurrentByGoalId: Map<string, number>;
+}> = ({ goals, monthlySurplusForGoals, allocations, formatCurrencyString, setActivePage, triggerPageAction, onEditGoalById, resolvedCurrentByGoalId }) => {
   const conflicts = useMemo(
-    () => detectGoalConflict({ goals, monthlySurplusForGoals }),
-    [goals, monthlySurplusForGoals]
+    () => detectGoalConflict({ goals, monthlySurplusForGoals, resolvedCurrentByGoalId }),
+    [goals, monthlySurplusForGoals, resolvedCurrentByGoalId]
   );
   const activeGoals = useMemo(() => goals.filter(g => (g.targetAmount ?? 0) > (g.currentAmount ?? 0)), [goals]);
   const [expandedConflictIdx, setExpandedConflictIdx] = useState<number | null>(null);
@@ -323,7 +325,11 @@ const GoalConflictAndFeasibilitySection: React.FC<{
             {activeGoals.map(goal => {
               const pct = allocations[goal.id] ?? 0;
               const monthlyContribution = monthlySurplusForGoals * (pct / 100);
-              const result = goalFeasibilityCheck({ goal: { ...goal, currentAmount: goal.currentAmount ?? 0 }, monthlyContribution });
+              const result = goalFeasibilityCheck({
+                goal: { ...goal, currentAmount: goal.currentAmount ?? 0 },
+                monthlyContribution,
+                resolvedCurrentAmount: resolvedCurrentByGoalId.get(goal.id) ?? goal.currentAmount ?? 0,
+              });
               const feasibilityText = result.feasible
                 ? 'Feasible'
                 : result.reason === 'no_deadline'
@@ -695,52 +701,23 @@ const Goals: React.FC<{
         return Math.max(0, totalNet / monthlyNet.size);
     }, [data?.transactions, (data as any)?.personalTransactions]);
 
+    const resolvedGoalTotalsMap = useMemo(() => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd), [data, sarPerUsd]);
+
     const { totalTargetAmount, totalCurrentAmount, goalCurrentAmountByGoalId } = useMemo(() => {
         let totalTarget = 0;
         let totalCurrent = 0;
-        const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
-        const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
-        const personalLiabilitiesForGoals = ((data as any)?.personalLiabilities ?? data?.liabilities ?? []) as Liability[];
         const goals = data?.goals ?? [];
-        const goalAssetValues = new Map<string, number>();
-
-        assets.forEach((a: { goalId?: string; value?: number }) => {
-            if (a.goalId) {
-                goalAssetValues.set(a.goalId, (goalAssetValues.get(a.goalId) || 0) + (a.value ?? 0));
-            }
-        });
-
-        investments.forEach((p: { goalId?: string; currency?: string; holdings?: { goalId?: string; currentValue?: number }[] }) => {
-            const holdings = p.holdings ?? [];
-            if (p.goalId) {
-                const portfolioValue = holdings.reduce((sum: number, h: { currentValue?: number }) => sum + toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd), 0);
-                goalAssetValues.set(p.goalId, (goalAssetValues.get(p.goalId) || 0) + portfolioValue);
-            } else {
-                holdings.forEach((h: { goalId?: string; currentValue?: number }) => {
-                    if (h.goalId) {
-                        goalAssetValues.set(h.goalId, (goalAssetValues.get(h.goalId) || 0) + toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd));
-                    }
-                });
-            }
-        });
-
-        personalLiabilitiesForGoals.forEach((l) => {
-            const gid = l.goalId;
-            if (!gid) return;
-            const v = receivableContributionForGoal(l, gid);
-            if (v <= 0) return;
-            goalAssetValues.set(gid, (goalAssetValues.get(gid) || 0) + v);
-        });
-
-        goals.forEach(goal => {
-            totalTarget += (goal.targetAmount ?? 0);
-            totalCurrent += goalAssetValues.get(goal.id) || 0;
-        });
-
         const goalCurrentAmountByGoalId: Record<string, number> = {};
-        goals.forEach(g => { goalCurrentAmountByGoalId[g.id] = goalAssetValues.get(g.id) || 0; });
+
+        goals.forEach((goal) => {
+            totalTarget += goal.targetAmount ?? 0;
+            const cur = resolvedGoalTotalsMap.get(goal.id) ?? 0;
+            goalCurrentAmountByGoalId[goal.id] = cur;
+            totalCurrent += cur;
+        });
+
         return { totalTargetAmount: totalTarget, totalCurrentAmount: totalCurrent, goalCurrentAmountByGoalId };
-    }, [data?.goals, data?.assets, data?.investments, data?.liabilities, (data as any)?.personalLiabilities, sarPerUsd]);
+    }, [data?.goals, resolvedGoalTotalsMap]);
     
     const overallProgress = totalTargetAmount > 0 ? (totalCurrentAmount / totalTargetAmount) * 100 : 0;
 
@@ -762,8 +739,8 @@ const Goals: React.FC<{
     }, [data?.transactions, averageMonthlySavings]);
 
     const fundingPlan = useMemo(
-        () => computeGoalFundingPlan(data, projectedAnnualSurplus),
-        [data, projectedAnnualSurplus]
+        () => computeGoalFundingPlan(data, projectedAnnualSurplus, exchangeRate),
+        [data, projectedAnnualSurplus, exchangeRate]
     );
 
     const goalsByPriority = useMemo(() => {
@@ -992,6 +969,7 @@ const Goals: React.FC<{
         setActivePage={setActivePage}
         triggerPageAction={triggerPageAction}
         onEditGoalById={openGoalEditorById}
+        resolvedCurrentByGoalId={resolvedGoalTotalsMap}
       />
 
       <CollapsibleSection title="Bonus / windfall allocation ideas" summary="Dynamic split based on current goals" className="border border-slate-200">

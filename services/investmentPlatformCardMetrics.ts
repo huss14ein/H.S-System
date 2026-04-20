@@ -25,6 +25,9 @@ export type SimulatedPriceMap = Record<string, { price: number; change?: number;
 export interface PlatformCardMetrics {
   totalValue: number;
   totalValueInSAR: number;
+  /** Holdings / positions only — excludes broker cash (tradable cash bucket). Same FX basis as total value. */
+  holdingsValue: number;
+  holdingsValueInSAR: number;
   totalGainLoss: number;
   dailyPnL: number;
   totalInvested: number;
@@ -105,7 +108,14 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
     { SAR: availableCashByCurrency.SAR ?? 0, USD: availableCashByCurrency.USD ?? 0 },
     rate,
   );
-  const totalValueInSAR = valueSarFromSim + valueSarFromStored + (valueUsdFromStored + valueUsdFromSim) * rate + cashInSar;
+  const holdingsValueInSAR = valueSarFromSim + valueSarFromStored + (valueUsdFromStored + valueUsdFromSim) * rate;
+  const totalValueInSAR = holdingsValueInSAR + cashInSar;
+  const holdingsValue =
+    platformCurrency === 'SAR'
+      ? holdingsValueInSAR
+      : platformCurrency === 'USD'
+        ? holdingsValueInSAR / rate
+        : holdingsValueInSAR;
   const totalValue =
     platformCurrency === 'SAR'
       ? totalValueInSAR
@@ -249,6 +259,8 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
   const out: PlatformCardMetrics = {
     totalValue,
     totalValueInSAR,
+    holdingsValue,
+    holdingsValueInSAR,
     totalGainLoss,
     dailyPnL,
     totalInvested,
@@ -314,6 +326,8 @@ function sanitizeAndValidatePlatformMetrics(
   const safe: PlatformCardMetrics = {
     totalValue: sanitizeFinite(metrics.totalValue),
     totalValueInSAR: sanitizeFinite(metrics.totalValueInSAR),
+    holdingsValue: sanitizeFinite(metrics.holdingsValue),
+    holdingsValueInSAR: sanitizeFinite(metrics.holdingsValueInSAR),
     totalGainLoss: sanitizeFinite(metrics.totalGainLoss),
     dailyPnL: sanitizeFinite(metrics.dailyPnL),
     totalInvested: Math.max(0, sanitizeFinite(metrics.totalInvested)),
@@ -347,6 +361,12 @@ function sanitizeAndValidatePlatformMetrics(
       : platformCurrency === 'SAR' ? safe.totalWithdrawnSAR
       : safe.totalWithdrawnSAR;
   safe.roi = safe.netCapitalSAR > 0 ? (safe.totalGainLossSAR / safe.netCapitalSAR) * 100 : 0;
+
+  safe.holdingsValueInSAR = Math.max(0, sanitizeFinite(metrics.holdingsValueInSAR));
+  safe.holdingsValue =
+    platformCurrency === 'USD' ? safe.holdingsValueInSAR / rate
+      : platformCurrency === 'SAR' ? safe.holdingsValueInSAR
+      : safe.holdingsValueInSAR;
 
   return safe;
 }

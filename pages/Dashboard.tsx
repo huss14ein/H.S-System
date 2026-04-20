@@ -55,6 +55,7 @@ import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccou
 import { computePersonalNetWorthChartBucketsSAR } from '../services/personalNetWorth';
 import { computeMonthlyReportFinancialKpis, computeWealthSummaryReportModel } from '../services/wealthSummaryReportModel';
 import { reconcileDashboardVsSummaryKpis } from '../services/kpiReconciliation';
+import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { logKpiReconciliationDrift } from '../services/kpiDriftTelemetry';
 import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
 import { useSelfLearning } from '../context/SelfLearningContext';
@@ -694,6 +695,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         const liquidityScore = Math.min(100, (emergencyFund.monthsCovered / EMERGENCY_FUND_TARGET_MONTHS) * 100);
         hydrateSarPerUsdDailySeries(data, exchangeRate);
         const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+        const goalResolved = computeGoalResolvedAmountsSar(data, sarPerUsd);
         const now = new Date();
         const savingsThisMonth = savingsRateSar(txs, accounts, now, sarPerUsd);
         const savingsRolling = averageSavingsRateSarRolling(txs, accounts, data, exchangeRate, 3);
@@ -701,7 +703,11 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         const totalMonthlyDebt = liabilities.reduce((s: number, l: { monthlyPayment?: number }) => s + (l.monthlyPayment ?? 0), 0);
         const grossMonthlyIncome = avgMonthlyIncomeSar6Mo > 0 ? avgMonthlyIncomeSar6Mo : 1;
         const debtResult = debtStressScore(totalMonthlyDebt, grossMonthlyIncome, liquidCashSar);
-        const goalTotalCurrent = goals.reduce((s: number, g: { currentAmount?: number }) => s + (g.currentAmount ?? 0), 0);
+        const goalTotalCurrent = goals.reduce((s: number, g: { id?: string; currentAmount?: number }) => {
+            const id = (g as { id?: string }).id;
+            const resolved = id ? goalResolved.get(id) : undefined;
+            return s + (typeof resolved === 'number' ? resolved : (g.currentAmount ?? 0));
+        }, 0);
         const goalProgressScore = goalTotalTarget > 0 ? Math.min(100, (goalTotalCurrent / goalTotalTarget) * 100) : 100;
         const budgetVariance = (kpiSummary as { budgetVariance?: number }).budgetVariance ?? 0;
         const expenseControlScore = budgetVariance >= 0 ? Math.min(100, 50 + budgetVariance / 100) : Math.max(0, 50 + budgetVariance / 100);

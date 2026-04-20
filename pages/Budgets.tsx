@@ -71,6 +71,7 @@ import { learnAndAutoAdjust } from '../services/aiBudgetAutomation';
 import { getPersonalTransactions } from '../utils/wealthScope';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import AIAdvisor from '../components/AIAdvisor';
 
 
@@ -541,10 +542,16 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const incomeWithData = incomeByMonth.filter((v) => v > 0);
         const suggested = incomeWithData.length > 0 ? Math.round(incomeWithData.reduce((a, b) => a + b, 0) / incomeWithData.length) : 0;
 
+        const resolvedGoals = computeGoalResolvedAmountsSar(data ?? null, sarPerUsd);
+        const goalsForEngine = (data?.goals ?? []).map((g) => ({
+            ...g,
+            currentAmount: resolvedGoals.get(g.id) ?? g.currentAmount ?? 0,
+        }));
+
         const input = buildHouseholdEngineInputFromData(
             transactions as Array<{ date: string; type?: string; amount?: number }>,
             accounts as Array<{ type?: string; balance?: number }>,
-            (data?.goals ?? []) as any[],
+            goalsForEngine as any[],
             {
                 year: currentYear,
                 expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : (suggested > 0 ? suggested : undefined),
@@ -562,7 +569,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 const forecasts = predictFutureMonths(result.months, 3);
                 setPredictiveForecasts(forecasts);
                 
-                const commonScenarios = generateCommonScenarios(result, input.goals.map((g) => ({ name: g.name, remaining: Math.max(0, (g.targetAmount ?? 0) - (g.currentAmount ?? 0)) })));
+                const commonScenarios = generateCommonScenarios(result, input.goals.map((g) => ({ name: g.name, remaining: Math.max(0, (g.targetAmount ?? 0) - Number(g.currentAmount ?? 0)) })));
                 setScenarios(commonScenarios);
                 
                        const detectedAnomalies = detectAnomalies(result.months);
@@ -585,7 +592,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                }
         
         return result;
-    }, [data?.transactions, data?.accounts, (data as any)?.personalTransactions, (data as any)?.personalAccounts, data?.goals, currentYear, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
+    }, [data?.transactions, data?.accounts, (data as any)?.personalTransactions, (data as any)?.personalAccounts, data?.goals, data, sarPerUsd, currentYear, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
 
     const suggestedMonthlySalary = useMemo(() => {
         const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];

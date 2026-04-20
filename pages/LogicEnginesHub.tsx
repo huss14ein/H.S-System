@@ -47,6 +47,7 @@ import { recalculateCostBasisAfterAction } from '../services/corporateActions';
 import { compareToBenchmark } from '../services/benchmarkService';
 import { computeRiskLaneFromData } from '../services/riskLaneEngine';
 import { generateNextBestActions } from '../services/nextBestActionEngine';
+import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { runShockDrill } from '../services/shockDrillEngine';
 import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
 import { buildUnifiedFinancialContext, runCrossEngineAnalysis } from '../services/engineIntegration';
@@ -426,15 +427,21 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
   );
   const debtStress = useMemo(() => debtStressScore(monthlyDebt, Math.max(1, income), liquid), [monthlyDebt, income, liquid]);
 
+  const goalResolvedMap = useMemo(() => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd), [data, sarPerUsd]);
+
   const goalAlerts = useMemo(
     () =>
-      scoped.goals.map((g) => ({
-        goalId: g.id,
-        name: g.name,
-        gapPct: g.targetAmount > 0 ? Math.max(0, (1 - g.currentAmount / g.targetAmount) * 100) : 0,
-        allocPct: g.savingsAllocationPercent ?? 0,
-      })),
-    [scoped.goals]
+      scoped.goals.map((g) => {
+        const saved = goalResolvedMap.get(g.id) ?? Number(g.currentAmount ?? 0);
+        const tgt = Number(g.targetAmount ?? 0);
+        return {
+          goalId: g.id,
+          name: g.name,
+          gapPct: tgt > 0 ? Math.max(0, (1 - saved / tgt) * 100) : 0,
+          allocPct: g.savingsAllocationPercent ?? 0,
+        };
+      }),
+    [scoped.goals, goalResolvedMap]
   );
 
   const nextActions = useMemo(

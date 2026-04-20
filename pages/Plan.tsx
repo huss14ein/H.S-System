@@ -39,6 +39,8 @@ import { countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { getPersonalTransactions, getPersonalAccounts } from '../utils/wealthScope';
 import { resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { buildAnnualPlanRows, formatAnnualPlanIncomeHint, type AnnualPlanRow } from '../services/annualPlanFromData';
+import { goalsWithResolvedCurrentAmount } from '../services/goalResolvedTotals';
+import { computeGoalMonthlyAllocation } from '../services/goalAllocation';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -396,12 +398,17 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     }, [processedPlanData, year]);
 
     // Goals: when will you reach them? Required per month vs projected surplus (after expenses + investment)
+    const goalsResolved = useMemo(
+        () => goalsWithResolvedCurrentAmount(data, sarPerUsd),
+        [data, sarPerUsd],
+    );
+
     const goalsAnalysis = useMemo(() => {
         const monthlySurplusAfterInvestment = (totals?.projectedNet ?? 0) / 12;
 
-        return (goals as { id: string; name: string; targetAmount?: number; target_amount?: number; currentAmount?: number; current_amount?: number; deadline?: string; targetDate?: string }[]).map(g => {
+        return goalsResolved.map((g) => {
             const target = Number(g.targetAmount ?? (g as any).target_amount ?? 0);
-            const current = Number(g.currentAmount ?? (g as any).current_amount ?? 0);
+            const current = Math.max(0, Number(g.currentAmount ?? 0));
             const shortfall = Math.max(0, target - current);
             const deadlineStr = g.deadline ?? (g as any).targetDate ?? '';
             const deadlineDate = deadlineStr ? new Date(deadlineStr) : null;
@@ -410,11 +417,21 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 ? Math.ceil((deadlineDate.getTime() - now.getTime()) / (30.44 * 24 * 60 * 60 * 1000))
                 : 0;
             const requiredPerMonth = monthsRemaining > 0 && shortfall > 0 ? shortfall / monthsRemaining : shortfall;
+
+            const projectedMonthly = computeGoalMonthlyAllocation(monthlySurplusAfterInvestment, g.savingsAllocationPercent ?? 0);
+            let statusCard: 'On Track' | 'Needs Attention' | 'At Risk' | null = null;
+            if (shortfall <= 0 || target <= 0) statusCard = null;
+            else if (monthsRemaining <= 0) statusCard = 'At Risk';
+            else if (projectedMonthly > 0 && projectedMonthly < requiredPerMonth * 0.5) statusCard = 'At Risk';
+            else if (projectedMonthly > 0 && projectedMonthly < requiredPerMonth * 0.8) statusCard = 'Needs Attention';
+            else statusCard = 'On Track';
+
             let status: 'funded' | 'on_track' | 'need_more' = 'funded';
             if (shortfall > 0) {
-                status = monthlySurplusAfterInvestment >= requiredPerMonth ? 'on_track' : 'need_more';
+                if (statusCard === 'At Risk' || statusCard === 'Needs Attention') status = 'need_more';
+                else status = 'on_track';
             }
-            // At current surplus, how many months to reach this goal? (undefined if surplus <= 0 or funded)
+
             const monthsToReachAtCurrentSurplus = shortfall > 0 && monthlySurplusAfterInvestment > 0
                 ? Math.ceil(shortfall / monthlySurplusAfterInvestment)
                 : undefined;
@@ -429,11 +446,13 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 monthsRemaining,
                 requiredPerMonth,
                 status,
+                statusCard,
                 monthlySurplusAfterInvestment,
+                projectedMonthlyAllocation: projectedMonthly,
                 monthsToReachAtCurrentSurplus,
             };
         });
-    }, [goals, totals, processedPlanData]);
+    }, [goalsResolved, totals?.projectedNet]);
 
     const householdBudgetEngine = useMemo(() => {
         const monthlyIncomePlanned = MONTHS.map((_, i) => {
@@ -932,9 +951,9 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             <div className="bg-white p-6 rounded-xl shadow border border-slate-200">
                 <h3 className="text-lg font-semibold text-dark mb-1 flex items-center gap-2">
                     <ScaleIcon className="h-5 w-5 text-primary" /> Goals & when you'll reach them
-                    <InfoHint text="Each goal is compared to your projected monthly surplus (after expenses and investment). On track = you can save enough per month by the deadline; Need more = increase savings or extend the deadline." />
+                    <InfoHint text="Saved amounts include linked assets, investments, and active receivables (same as Goals). Status compares your allocation % of plan surplus to the monthly amount needed by the deadline." />
                 </h3>
-                <p className="text-sm text-gray-500 mb-4">Based on your plan surplus this year and each goal's deadline.</p>
+                <p className="text-sm text-gray-500 mb-4">Uses resolved balances from your wealth links and this year&apos;s projected plan surplus.</p>
                 {goalsAnalysis.length === 0 ? (
                     <div className="py-6 text-center text-gray-500 bg-slate-50 rounded-lg border border-dashed border-slate-200">
                         <p className="font-medium text-slate-600">No goals yet</p>
@@ -950,6 +969,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                             <div
                                 key={g.id}
                                 className={`p-4 rounded-xl border-2 ${
+                                    g.statusCard === 'At Risk' ? 'bg-rose-50/80 border-rose-200' :
+                                    g.statusCard === 'Needs Attention' ? 'bg-amber-50/80 border-amber-200' :
                                     g.status === 'funded' ? 'bg-emerald-50/80 border-emerald-200' :
                                     g.status === 'on_track' ? 'bg-blue-50/80 border-blue-200' :
                                     'bg-amber-50/80 border-amber-200'
@@ -958,11 +979,19 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                                 <div className="flex justify-between items-start">
                                     <span className="font-semibold text-dark">{g.name}</span>
                                     <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                                        g.status === 'funded' ? 'bg-emerald-200 text-emerald-800' :
-                                        g.status === 'on_track' ? 'bg-blue-200 text-blue-800' :
-                                        'bg-amber-200 text-amber-800'
+                                        g.statusCard === 'On Track'
+                                            ? 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                                            : g.statusCard === 'Needs Attention'
+                                              ? 'bg-amber-100 text-amber-950 border border-amber-200'
+                                              : g.statusCard === 'At Risk'
+                                                ? 'bg-rose-100 text-rose-900 border border-rose-200'
+                                                : g.status === 'funded'
+                                                  ? 'bg-emerald-200 text-emerald-800'
+                                                  : g.status === 'on_track'
+                                                    ? 'bg-blue-200 text-blue-800'
+                                                    : 'bg-amber-200 text-amber-800'
                                     }`}>
-                                        {g.status === 'funded' ? 'Funded' : g.status === 'on_track' ? 'On track' : 'Need more'}
+                                        {g.statusCard ?? (g.status === 'funded' ? 'Funded' : g.status === 'on_track' ? 'On track' : 'Need more')}
                                     </span>
                                 </div>
                                 <div className="mt-2 text-sm text-gray-600 space-y-0.5">
@@ -971,8 +1000,11 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                                         <>
                                             <p>Shortfall: {formatCurrencyString(g.shortfall)} by {g.deadline ? g.deadline.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) : '—'}</p>
                                             <p>Required: <strong>{formatCurrencyString(g.requiredPerMonth, { digits: 0 })}/month</strong>
+                                                {g.projectedMonthlyAllocation > 0 && (
+                                                    <span className="text-slate-600"> · Allocated from plan surplus: <strong>{formatCurrencyString(g.projectedMonthlyAllocation, { digits: 0 })}/mo</strong></span>
+                                                )}
                                                 {g.status === 'need_more' && g.monthlySurplusAfterInvestment >= 0 && (
-                                                    <span className="text-amber-700"> (you have ~{formatCurrencyString(g.monthlySurplusAfterInvestment, { digits: 0 })}/month surplus)</span>
+                                                    <span className="text-amber-700"> (plan surplus ~{formatCurrencyString(g.monthlySurplusAfterInvestment, { digits: 0 })}/month)</span>
                                                 )}
                                             </p>
                                             {g.monthsToReachAtCurrentSurplus != null && (
