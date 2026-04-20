@@ -37,19 +37,27 @@ export interface GoalConflict {
 /**
  * Detect conflicts: too many goals funded from same capacity, impossible target dates, priority clashes.
  */
+function resolvedSaved(g: Goal, map?: Map<string, number>): number {
+  if (map?.has(g.id)) return Math.max(0, map.get(g.id) ?? 0);
+  return currentAmount(g);
+}
+
 export function detectGoalConflict(args: {
   goals: Goal[];
   /** Monthly surplus available for goals (after essentials). */
   monthlySurplusForGoals: number;
   /** Optional: monthly already allocated to "house" goal. */
   monthlyToHouseGoal?: number;
+  /** Goal id → resolved saved amount SAR (assets + investments + receivables). Overrides stored currentAmount when provided. */
+  resolvedCurrentByGoalId?: Map<string, number>;
 }): GoalConflict[] {
   const conflicts: GoalConflict[] = [];
   const goals = args.goals ?? [];
   const surplus = Math.max(0, args.monthlySurplusForGoals ?? 0);
+  const resolvedMap = args.resolvedCurrentByGoalId;
 
   const requiredTotal = goals.reduce((s, g) => {
-    const gap = Math.max(0, targetAmount(g) - currentAmount(g));
+    const gap = Math.max(0, targetAmount(g) - resolvedSaved(g, resolvedMap));
     const end = targetDate(g);
     if (gap <= 0 || !end) return s;
     const months = Math.max(1, (end.getFullYear() - new Date().getFullYear()) * 12 + (end.getMonth() - new Date().getMonth()));
@@ -58,7 +66,7 @@ export function detectGoalConflict(args: {
 
   if (surplus > 0 && requiredTotal > surplus * 1.2) {
     conflicts.push({
-      goalIds: goals.filter((g) => targetAmount(g) > currentAmount(g)).map((g) => g.id),
+      goalIds: goals.filter((g) => targetAmount(g) > resolvedSaved(g, resolvedMap)).map((g) => g.id),
       reason: 'same_cash_source',
       message: `Total required monthly (${requiredTotal.toFixed(0)}) exceeds available surplus (${surplus.toFixed(0)}). Same cash is funding too many goals.`,
       requiredMonthlyTotal: requiredTotal,
@@ -69,7 +77,7 @@ export function detectGoalConflict(args: {
   goals.forEach((g) => {
     const end = targetDate(g);
     if (!end) return;
-    const gap = Math.max(0, targetAmount(g) - currentAmount(g));
+    const gap = Math.max(0, targetAmount(g) - resolvedSaved(g, resolvedMap));
     if (gap <= 0) return;
     const monthsLeft = Math.max(0, (end.getFullYear() - new Date().getFullYear()) * 12 + (end.getMonth() - new Date().getMonth()));
     const neededPerMonth = gap / Math.max(1, monthsLeft);
@@ -95,6 +103,8 @@ export function goalFeasibilityCheck(args: {
   goal: Goal;
   monthlyContribution: number;
   fromDate?: Date;
+  /** When set, overrides goal.currentAmount for gap math (aligned with Goals page). */
+  resolvedCurrentAmount?: number;
 }): {
   feasible: boolean;
   monthsNeeded: number | null;
@@ -102,7 +112,11 @@ export function goalFeasibilityCheck(args: {
   reason: 'funded' | 'no_deadline' | 'no_contribution' | 'timeline';
 } {
   const from = args.fromDate ?? new Date();
-  const gap = Math.max(0, targetAmount(args.goal) - currentAmount(args.goal));
+  const saved =
+    typeof args.resolvedCurrentAmount === 'number' && Number.isFinite(args.resolvedCurrentAmount)
+      ? Math.max(0, args.resolvedCurrentAmount)
+      : currentAmount(args.goal);
+  const gap = Math.max(0, targetAmount(args.goal) - saved);
   const end = targetDate(args.goal);
   if (gap <= 0) return { feasible: true, monthsNeeded: 0, monthsAvailable: null, reason: 'funded' };
   if (!end) return { feasible: false, monthsNeeded: null, monthsAvailable: null, reason: 'no_deadline' };

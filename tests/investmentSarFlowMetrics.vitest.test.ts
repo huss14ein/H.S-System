@@ -68,6 +68,7 @@ describe('SAR platform: transfer, buy context, P&L (PlatformCard metrics)', () =
     });
     expect(m.totalInvested).toBeCloseTo(10_000, 5);
     expect(m.totalWithdrawn).toBe(0);
+    expect(m.holdingsValueInSAR).toBeCloseTo(0, 5);
     expect(m.totalValue).toBeCloseTo(10_000, 5);
     expect(m.totalGainLoss).toBeCloseTo(0, 5);
   });

@@ -91,6 +91,9 @@ import {
 import { computePersonalInvestmentKpisSar } from '../services/investmentKpiCore';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 import { aggregateMonthlyBudgetAcrossPortfolios, getEffectivePlanForPortfolio } from '../utils/investmentPlanPerPortfolio';
+import { computeGoalMonthlyAllocation } from '../services/goalAllocation';
+import { computeGoalTimelineStatus } from '../services/goalMetrics';
+import { computeGoalResolvedAmountsSar, averageRollingMonthlyNetSurplus } from '../services/goalResolvedTotals';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -360,33 +363,8 @@ const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGo
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
-    const goalCurrentByIdSar = useMemo(() => {
-        const map = new Map<string, number>();
-        const addToGoal = (goalId: string, valueSar: number) => {
-            if (!goalId) return;
-            map.set(goalId, (map.get(goalId) ?? 0) + (Number.isFinite(valueSar) ? valueSar : 0));
-        };
-
-        const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
-        assets.forEach((a: { goalId?: string; value?: number }) => {
-            if (!a.goalId) return;
-            addToGoal(a.goalId, Number(a.value) || 0);
-        });
-
-        const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
-        investments.forEach((p: { goalId?: string; currency?: string; holdings?: { goalId?: string; currentValue?: number }[] }) => {
-            const pGoalId = p.goalId ?? '';
-            let portfolioResidual = 0;
-            (p.holdings ?? []).forEach((h: { goalId?: string; currentValue?: number }) => {
-                const valueSar = toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd);
-                if (h.goalId) addToGoal(h.goalId, valueSar);
-                else if (pGoalId) portfolioResidual += valueSar;
-            });
-            if (pGoalId && portfolioResidual > 0) addToGoal(pGoalId, portfolioResidual);
-        });
-
-        return map;
-    }, [data?.assets, data?.investments, (data as any)?.personalAssets, (data as any)?.personalInvestments, sarPerUsd]);
+    const goalCurrentByIdSar = useMemo(() => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd), [data, sarPerUsd]);
+    const rollingMonthlySurplus = useMemo(() => averageRollingMonthlyNetSurplus(data ?? null), [data]);
     const sortedGoals = useMemo(() => {
         const normalized = (data?.goals ?? [])
             .map((g: any) => ({
@@ -441,7 +419,7 @@ const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGo
                         <div>
                             <h3 className="text-lg font-bold text-slate-900">Savings & life goals</h3>
                             <p className="text-sm text-slate-600 mt-0.5">
-                                Pulled from your <strong>Goals</strong> page. Amounts are in SAR. Showing up to six goals, ordered by priority then nearest deadline.
+                                Same balances and status logic as <strong>Goals</strong> (linked assets + investments + receivables). Rolling surplus drives allocation %. Showing up to six goals.
                             </p>
                         </div>
                     </div>
@@ -459,11 +437,22 @@ const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGo
             <div className="p-4 sm:p-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {displayGoals.map((g) => {
                     const target = Math.max(0, Number((g as any).targetResolved) || 0);
-                    const current = Math.max(0, Number((g as any).currentResolved) || 0);
-                    const pct = target > 0 ? Math.min(100, (current / target) * 100) : 0;
-                    const remaining = Math.max(0, target - current);
+                    const currentResolved = Math.max(0, Number((g as any).currentResolved) || 0);
+                    const projectedMonthly = computeGoalMonthlyAllocation(rollingMonthlySurplus, (g as Goal).savingsAllocationPercent ?? 0);
+                    const tl = computeGoalTimelineStatus({
+                        goal: g as Goal,
+                        resolvedCurrentAmountSar: currentResolved,
+                        projectedMonthlyContribution: projectedMonthly,
+                    });
+                    const pct = tl.progressPercent;
+                    const remaining = Math.max(0, target - currentResolved);
+                    const statusLabel = pct >= 100 ? 'Funded' : tl.status;
                     const isRetirement = /retirement|تقاعد|pension|معاش|retire/i.test(g.name || '');
-                    const borderAccent = isRetirement ? 'border-l-amber-400' : 'border-l-indigo-400';
+                    const borderAccent =
+                        pct >= 100 ? 'border-l-emerald-500' :
+                        tl.status === 'At Risk' ? 'border-l-rose-500' :
+                        tl.status === 'Needs Attention' ? 'border-l-amber-500' :
+                        isRetirement ? 'border-l-amber-400' : 'border-l-indigo-400';
                     const badgeBg =
                         g.priority === 'High'
                             ? 'bg-rose-50 text-rose-800 border-rose-200'
@@ -479,11 +468,24 @@ const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGo
                         >
                             <div className="flex items-start justify-between gap-2 mb-2">
                                 <h4 className="font-semibold text-slate-900 text-sm leading-snug line-clamp-2">{g.name}</h4>
-                                {g.priority && (
-                                    <span className={`shrink-0 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full border ${badgeBg}`}>
-                                        {g.priority}
+                                <span className="flex flex-col items-end gap-1 shrink-0">
+                                    {g.priority ? (
+                                        <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full border ${badgeBg}`}>
+                                            {g.priority}
+                                        </span>
+                                    ) : null}
+                                    <span
+                                        className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full border ${
+                                            pct >= 100 ? 'bg-emerald-50 text-emerald-900 border-emerald-200' :
+                                            tl.status === 'At Risk' ? 'bg-rose-50 text-rose-900 border-rose-200' :
+                                            tl.status === 'Needs Attention' ? 'bg-amber-50 text-amber-950 border-amber-200' :
+                                            'bg-emerald-50 text-emerald-900 border-emerald-200'
+                                        }`}
+                                        title="Matches Goals page rules (allocation vs required pace)"
+                                    >
+                                        {statusLabel}
                                     </span>
-                                )}
+                                </span>
                             </div>
                             <div className="flex justify-between text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
                                 <span>Progress</span>
@@ -498,7 +500,7 @@ const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGo
                             <dl className="grid grid-cols-2 gap-x-2 gap-y-1 text-xs mt-auto">
                                 <div>
                                     <dt className="text-slate-500">Saved</dt>
-                                    <dd className="font-semibold tabular-nums text-slate-900">{formatCurrencyString(current, { inCurrency: 'SAR', digits: 0 })}</dd>
+                                    <dd className="font-semibold tabular-nums text-slate-900">{formatCurrencyString(currentResolved, { inCurrency: 'SAR', digits: 0 })}</dd>
                                 </div>
                                 <div className="text-right">
                                     <dt className="text-slate-500">Target</dt>
@@ -511,6 +513,15 @@ const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGo
                                 <div className="text-right">
                                     <dt className="text-slate-500">Deadline</dt>
                                     <dd className="font-semibold text-slate-800">{(g as any).deadlineResolved ? new Date((g as any).deadlineResolved).toLocaleDateString() : '—'}</dd>
+                                </div>
+                                <div className="col-span-2 pt-2 mt-1 border-t border-slate-100 space-y-0.5">
+                                    <p className="text-[10px] text-slate-600">
+                                        <span className="font-semibold text-slate-700">{tl.monthsLeft}</span> mo left · Req{' '}
+                                        <span className="font-semibold tabular-nums">{formatCurrencyString(tl.requiredMonthlyContribution, { inCurrency: 'SAR', digits: 0 })}/mo</span>
+                                        {' · '}Alloc{' '}
+                                        <span className="font-semibold tabular-nums">{formatCurrencyString(projectedMonthly, { inCurrency: 'SAR', digits: 0 })}/mo</span>
+                                        <span className="text-slate-500"> ({Number((g as Goal).savingsAllocationPercent ?? 0).toFixed(0)}% of surplus)</span>
+                                    </p>
                                 </div>
                             </dl>
                         </div>
@@ -2224,6 +2235,7 @@ const PlatformCard: React.FC<{
 
     const {
         totalValueInSAR,
+        holdingsValueInSAR,
         totalGainLossSAR,
         dailyPnLSAR,
         totalInvestedSAR,
@@ -2350,7 +2362,19 @@ const PlatformCard: React.FC<{
                     </button>
                 </div>
                 {isExpanded && (
-                <dl className="platform-metrics grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3.5" aria-label="Platform metrics">
+                <dl className="platform-metrics grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5" aria-label="Platform metrics">
+                    <div className="rounded-2xl bg-gradient-to-b from-white to-indigo-50/40 border border-indigo-100/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
+                        <dt
+                            className="metric-label w-full text-[11px] font-semibold text-indigo-600 uppercase tracking-[0.14em] leading-tight"
+                            title="Market value of positions only—excludes idle broker cash (see Available Cash)."
+                        >
+                            Holdings (ex-cash)
+                        </dt>
+                        <dd className="metric-value w-full mt-1.5 flex flex-col items-center justify-center text-base sm:text-lg text-indigo-950 tabular-nums leading-tight">
+                            <CurrencyDualDisplay value={holdingsValueInSAR} inCurrency="SAR" digits={0} size="lg" weight="bold" />
+                            <span className="text-[10px] text-slate-500 mt-1 font-normal">Positions only</span>
+                        </dd>
+                    </div>
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
                         <dt
                             className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight"

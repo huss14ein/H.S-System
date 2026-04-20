@@ -1,4 +1,6 @@
 import type { FinancialData, Goal } from '../types';
+import { computeGoalResolvedAmountsSar } from './goalResolvedTotals';
+import { resolveSarPerUsd } from '../utils/currencyMath';
 
 export interface GoalFundingSuggestion {
   goalId: string;
@@ -16,15 +18,19 @@ export interface GoalFundingPlan {
 
 export function computeGoalFundingPlan(
   data: FinancialData | null | undefined,
-  projectedAnnualSurplus: number
+  projectedAnnualSurplus: number,
+  /** SAR per USD from CurrencyContext — enables resolved goal balances (linked assets/investments). */
+  sarPerUsdUi?: number
 ): GoalFundingPlan {
   const goals = (data?.goals ?? []) as Goal[];
   const monthlySurplus = projectedAnnualSurplus / 12;
+  const sarPerUsd = resolveSarPerUsd(data ?? null, sarPerUsdUi);
+  const resolvedByGoal = computeGoalResolvedAmountsSar(data, sarPerUsd);
 
   const now = new Date();
   const enriched = goals.map(g => {
     const target = Number(g.targetAmount ?? 0);
-    const current = Number(g.currentAmount ?? 0);
+    const current = Math.max(0, resolvedByGoal.get(g.id) ?? Number(g.currentAmount ?? 0));
     const shortfall = Math.max(0, target - current);
     const deadline = new Date(g.deadline);
     const monthsRemaining =

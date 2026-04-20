@@ -20,7 +20,7 @@ interface StatementUploadProps {
 }
 
 const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
-  const { data, loading, addTransaction, recordTrade } = useContext(DataContext)!;
+  const { data, loading, addTransaction, recordTrade, addBudget } = useContext(DataContext)!;
   const { commitParsedStatementFromUpload } = useStatementProcessing();
   const { formatCurrencyString } = useFormatCurrency();
   const [activeTab, setActiveTab] = useState<'bank' | 'sms' | 'trading'>('bank');
@@ -137,8 +137,45 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     const resolved = resolveBudgetCategoryForImportedExpense(tx, budgetCategories);
     if (resolved) return resolved;
 
-    return budgetCategories.length === 1 ? budgetCategories[0] : undefined;
+    if (budgetCategories.length === 1) return budgetCategories[0];
+    // Deterministic fallback so statement import always passes validation when budgets exist.
+    if (budgetCategories.length > 1) return [...budgetCategories].sort((a, b) => a.localeCompare(b))[0];
+    return undefined;
   }, [data?.budgets, data?.transactions]);
+
+  const ensureBudgetRowExists = useCallback(
+    async (category: string) => {
+      const cat = String(category || '').trim();
+      if (!cat || !addBudget || !data) return;
+      const y = new Date().getFullYear();
+      const month = new Date().getMonth() + 1;
+      const exists = (data.budgets ?? []).some((b) => b.category === cat && b.year === y && b.month === month);
+      if (exists) return;
+      try {
+        await addBudget({
+          category: cat,
+          year: y,
+          month,
+          limit: 0,
+          period: 'monthly',
+        });
+      } catch {
+        // Race or offline — import still proceeds with category string
+      }
+    },
+    [addBudget, data],
+  );
+
+  const ensureBudgetsForMappedTransactions = useCallback(
+    async (rows: Transaction[]) => {
+      const cats = new Set<string>();
+      rows.forEach((t) => {
+        if (t.type === 'expense' && t.budgetCategory) cats.add(String(t.budgetCategory).trim());
+      });
+      await Promise.all(Array.from(cats).map((c) => ensureBudgetRowExists(c)));
+    },
+    [ensureBudgetRowExists],
+  );
 
   const enrichTransactionsWithBudgetMapping = useCallback((rows: Transaction[]): Transaction[] => {
     return rows.map((tx) => ({
@@ -223,6 +260,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       } else {
         const result = await parseBankStatement(file, selectedAccount);
         transactions = enrichTransactionsWithBudgetMapping(result.transactions);
+        await ensureBudgetsForMappedTransactions(transactions);
         setExtractedTransactions(transactions);
         if (result.warnings) setValidationWarnings(result.warnings);
         if (result.errors) setValidationErrors(result.errors);
@@ -293,6 +331,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       setProcessingProgress(30);
       const result = await parseSMSTransactions(smsText, selectedAccount);
       const mapped = enrichTransactionsWithBudgetMapping(result.transactions);
+      await ensureBudgetsForMappedTransactions(mapped);
       setExtractedTransactions(mapped);
       if (result.warnings) setValidationWarnings(result.warnings);
       if (result.errors) setValidationErrors(result.errors);

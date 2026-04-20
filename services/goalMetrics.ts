@@ -78,6 +78,66 @@ export function inflationAdjustedGoalCost(args: {
  * Simplified approach: inflate the goal target into nominal deadline value,
  * then compute a flat monthly amount to close the nominal gap.
  */
+/** Months until deadline from `fromDate` (ceil); 0 if past/missing deadline. */
+export function monthsRemainingToDeadline(goal: Goal, fromDate: Date = new Date()): number {
+  const deadline = goal.deadline ? new Date(goal.deadline) : null;
+  if (!deadline || Number.isNaN(deadline.getTime())) return 0;
+  const diffMs = deadline.getTime() - fromDate.getTime();
+  if (diffMs <= 0) return 0;
+  const MONTH_MS = 30.44 * 24 * 60 * 60 * 1000;
+  return Math.ceil(diffMs / MONTH_MS);
+}
+
+/**
+ * Same status logic as Goals → GoalCard: compares allocation-based monthly contribution
+ * to equal-payment requirement from remaining gap ÷ months left.
+ */
+export function computeGoalTimelineStatus(args: {
+  goal: Goal;
+  /** Resolved saved amount (assets + investments + receivables), same as Goals page. */
+  resolvedCurrentAmountSar: number;
+  /** monthlySavings × (savingsAllocationPercent / 100) */
+  projectedMonthlyContribution: number;
+  fromDate?: Date;
+}): {
+  status: 'On Track' | 'Needs Attention' | 'At Risk';
+  monthsLeft: number;
+  progressPercent: number;
+  requiredMonthlyContribution: number;
+  projectedMonthlyContribution: number;
+} {
+  const from = args.fromDate ?? new Date();
+  const targetAmt = Number(args.goal.targetAmount ?? (args.goal as { target_amount?: number }).target_amount ?? 0);
+  const currentAmount = Math.max(0, args.resolvedCurrentAmountSar);
+  const progressPercentRaw = targetAmt > 0 ? (currentAmount / targetAmt) * 100 : 0;
+  const progressPercent = Math.min(100, Math.max(0, progressPercentRaw));
+
+  const monthsLeft = monthsRemainingToDeadline(args.goal, from);
+  const remainingAmount = Math.max(0, targetAmt - currentAmount);
+  const requiredMonthlyContribution =
+    monthsLeft > 0 ? remainingAmount / monthsLeft : remainingAmount;
+  const projectedMonthlyContribution = Math.max(0, args.projectedMonthlyContribution);
+
+  let status: 'On Track' | 'Needs Attention' | 'At Risk' = 'On Track';
+  if (progressPercent >= 100) {
+    status = 'On Track';
+  } else if (monthsLeft <= 0) {
+    status = 'At Risk';
+  } else if (projectedMonthlyContribution > 0 && projectedMonthlyContribution < requiredMonthlyContribution * 0.5) {
+    status = 'At Risk';
+  } else if (projectedMonthlyContribution > 0 && projectedMonthlyContribution < requiredMonthlyContribution * 0.8) {
+    status = 'Needs Attention';
+  }
+
+  return {
+    status,
+    monthsLeft,
+    progressPercent,
+    requiredMonthlyContribution,
+    projectedMonthlyContribution,
+  };
+}
+
 export function requiredMonthlyContributionInflationAdjusted(args: {
   goal: Goal;
   annualInflationRatePct: number;
