@@ -1786,8 +1786,14 @@ Rules:
     }
 };
 
-export const getGoalAIPlan = async (goal: Goal, monthlySavings: number, calculatedCurrentAmount: number): Promise<string> => {
-    const cacheKey = `getGoalAIPlan:${goal.id}:${calculatedCurrentAmount}:${monthlySavings}`;
+export const getGoalAIPlan = async (
+    goal: Goal,
+    monthlySavings: number,
+    calculatedCurrentAmount: number,
+    opts?: { projectedMonthlyOverride?: number },
+): Promise<string> => {
+    const ov = opts?.projectedMonthlyOverride;
+    const cacheKey = `getGoalAIPlan:${goal.id}:${calculatedCurrentAmount}:${monthlySavings}:${ov ?? 'alloc'}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
     try {
@@ -1796,7 +1802,10 @@ export const getGoalAIPlan = async (goal: Goal, monthlySavings: number, calculat
         const monthsLeft = Math.max(0, (deadline.getFullYear() - now.getFullYear()) * 12 + deadline.getMonth() - now.getMonth());
         const remainingAmount = Math.max(0, goal.targetAmount - calculatedCurrentAmount);
         const requiredMonthlyContribution = monthsLeft > 0 ? remainingAmount / monthsLeft : remainingAmount;
-        const projectedMonthlyContribution = computeGoalMonthlyAllocation(monthlySavings, goal.savingsAllocationPercent);
+        const projectedMonthlyContribution =
+            typeof ov === 'number' && Number.isFinite(ov)
+                ? Math.max(0, ov)
+                : computeGoalMonthlyAllocation(monthlySavings, goal.savingsAllocationPercent);
 
         const prompt = `
             You are Finova AI, a very clever expert financial and investment advisor. Analyze this goal and provide a direct, concise plan in Markdown. Speak as a senior advisor with clear, actionable guidance.
@@ -1807,7 +1816,7 @@ export const getGoalAIPlan = async (goal: Goal, monthlySavings: number, calculat
             - **Currently Saved:** ${calculatedCurrentAmount.toLocaleString()} SAR
             - **Time Remaining:** ${monthsLeft} months
             - **Required Monthly Savings:** ${requiredMonthlyContribution.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/month
-            - **Projected Monthly Savings:** ${projectedMonthlyContribution.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/month (based on current allocation)
+            - **Projected Monthly Savings:** ${projectedMonthlyContribution.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/month (${typeof ov === 'number' && Number.isFinite(ov) ? 'assigned budget envelope + savings % of remaining surplus, when configured' : 'based on savings allocation × rolling surplus'})
 
             **Your Task:**
             1.  **Status Assessment:** In one friendly sentence, state if the goal is on track, needs attention, or is at risk based on the data. Be direct.

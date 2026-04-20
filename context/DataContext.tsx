@@ -1001,6 +1001,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     period: b.period ?? 'monthly',
                     tier: b.tier ?? b.budget_tier ?? 'Optional',
                     destinationAccountId: b.destination_account_id ?? undefined,
+                    goalId: b.goal_id ?? b.goalId ?? undefined,
                     limit: roundMoney(Number(b.limit ?? 0)),
                 })),
                 commodityHoldings: filterOwnedRows(commodityHoldings.data as any[]).map(normalizeCommodityHolding),
@@ -1383,6 +1384,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const db = supabase;
       const payload: Record<string, unknown> = { ...withUser(budget) as Record<string, unknown> };
       if (budget.destinationAccountId != null) payload.destination_account_id = budget.destinationAccountId;
+      if (budget.goalId != null && String(budget.goalId).trim() !== '') payload.goal_id = budget.goalId;
+      else payload.goal_id = null;
       let { data: newBudget, error } = await db.from('budgets').insert(payload).select().single();
       // Retry once with same payload. Do not convert yearly limit to monthly or reload will show wrong value (DB would store monthly amount with period=yearly).
       if (error && (payload as any).period) {
@@ -1395,7 +1398,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         throw error;
       }
       if (newBudget) {
-        const withPeriod = { ...newBudget, period: (budget as Budget).period, tier: (budget as Budget).tier, destinationAccountId: (newBudget as any).destination_account_id ?? undefined };
+        const withPeriod = {
+          ...newBudget,
+          period: (budget as Budget).period,
+          tier: (budget as Budget).tier,
+          destinationAccountId: (newBudget as any).destination_account_id ?? undefined,
+          goalId: (newBudget as any).goal_id ?? (budget as Budget).goalId ?? undefined,
+        };
         if ((budget as Budget).period === 'yearly' || (budget as Budget).period === 'weekly' || (budget as Budget).period === 'daily') withPeriod.limit = budget.limit;
         setData(prev => ({ ...prev, budgets: [...prev.budgets, withPeriod] }));
       }
@@ -1405,13 +1414,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const v = validateBudget({ category: budget.category, month: budget.month, year: budget.year, limit: budget.limit, period: budget.period });
       if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
       const db = supabase;
-      const { category, month, year, limit, period, tier, destinationAccountId } = budget;
+      const { category, month, year, limit, period, tier, destinationAccountId, goalId } = budget;
       const payload: Record<string, unknown> = {
         limit,
         period,
         tier,
       };
       if (destinationAccountId !== undefined) payload.destination_account_id = destinationAccountId;
+      if (goalId !== undefined) payload.goal_id = goalId != null && String(goalId).trim() !== '' ? goalId : null;
       const { error } = await db
         .from('budgets')
         .update(payload)
@@ -1424,7 +1434,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         ...prev,
         budgets: prev.budgets.map((b) =>
           b.category === category && b.month === month && b.year === year
-            ? { ...b, limit, period, tier, destinationAccountId }
+            ? { ...b, limit, period, tier, destinationAccountId, goalId }
             : b
         ),
       }));
@@ -1452,7 +1462,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             .filter((b: any) => !existingTargetCategories.has(b.category))
             .map((b: any) => {
                 const { id, user_id, ...rest } = b;
-                return { ...rest, month: targetMonth, year: targetYear, period: b.period ?? 'monthly', destination_account_id: b.destination_account_id ?? undefined };
+                return {
+                    ...rest,
+                    month: targetMonth,
+                    year: targetYear,
+                    period: b.period ?? 'monthly',
+                    destination_account_id: b.destination_account_id ?? undefined,
+                    goal_id: b.goal_id ?? b.goalId ?? null,
+                };
             });
 
         if (budgetsToInsert.length === 0) { toast("All budgets from last month already exist for the selected month.", 'info'); return; }
@@ -1460,7 +1477,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { data: insertedData, error: insertError } = await supabase.from('budgets').insert(budgetsToInsert.map(b => withUser(b))).select();
         if (insertError) { console.error("Error copying budgets:", insertError); toast("Failed to copy budgets.", 'error'); }
         else {
-            const normalized = (insertedData || []).map((b: any) => ({ ...b, period: b.period ?? 'monthly', tier: b.tier ?? b.budget_tier ?? 'Optional', destinationAccountId: b.destination_account_id ?? undefined }));
+            const normalized = (insertedData || []).map((b: any) => ({
+                ...b,
+                period: b.period ?? 'monthly',
+                tier: b.tier ?? b.budget_tier ?? 'Optional',
+                destinationAccountId: b.destination_account_id ?? undefined,
+                goalId: b.goal_id ?? b.goalId ?? undefined,
+            }));
             setData(prev => ({ ...prev, budgets: [...prev.budgets, ...normalized] }));
             toast(`${insertedData.length} budget(s) copied successfully.`, 'success');
         }

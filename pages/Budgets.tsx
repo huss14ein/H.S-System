@@ -2,7 +2,7 @@ import React, { useMemo, useState, useContext, useEffect, useRef } from 'react';
 import ProgressBar from '../components/ProgressBar';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';
-import { Budget, type Page } from '../types';
+import { Budget, Goal, type Page } from '../types';
 import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -75,6 +75,62 @@ import AIAdvisor from '../components/AIAdvisor';
 
 
 
+/** Args for `get_shared_budget_consumed_for_me`: window must match the owner's Budgets cards for the selected view. */
+function sharedBudgetConsumedRpcArgs(
+    budgetView: 'Monthly' | 'Weekly' | 'Daily' | 'Yearly',
+    ref: Date,
+    currentYear: number,
+    currentMonth: number,
+): { p_year: number | null; p_month: number | null; p_range_start: string | null; p_range_end: string | null } {
+    const iso = (d: Date) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    };
+    const startOfDay = (d: Date) => {
+        const x = new Date(d);
+        x.setHours(0, 0, 0, 0);
+        return x;
+    };
+    const endOfDay = (d: Date) => {
+        const x = new Date(d);
+        x.setHours(23, 59, 59, 999);
+        return x;
+    };
+
+    if (budgetView === 'Monthly') {
+        return { p_year: currentYear, p_month: currentMonth, p_range_start: null, p_range_end: null };
+    }
+    if (budgetView === 'Yearly') {
+        const rs = new Date(currentYear, 0, 1);
+        const re = new Date(currentYear, 11, 31);
+        return { p_year: null, p_month: null, p_range_start: iso(startOfDay(rs)), p_range_end: iso(endOfDay(re)) };
+    }
+    if (budgetView === 'Weekly') {
+        const day = ref.getDay();
+        const diffToMonday = (day + 6) % 7;
+        const rangeStart = startOfDay(ref);
+        rangeStart.setDate(rangeStart.getDate() - diffToMonday);
+        const rangeEndDate = new Date(rangeStart);
+        rangeEndDate.setDate(rangeStart.getDate() + 6);
+        const rangeEnd = endOfDay(rangeEndDate);
+        return { p_year: null, p_month: null, p_range_start: iso(rangeStart), p_range_end: iso(rangeEnd) };
+    }
+    // Daily
+    const rs = startOfDay(ref);
+    const re = endOfDay(ref);
+    return { p_year: null, p_month: null, p_range_start: iso(rs), p_range_end: iso(re) };
+}
+
+/** Lifetime rollup (matches old zero-arg RPC after migrations drop that overload). */
+const LEGACY_SHARED_CONSUMED_RPC = {
+    p_year: null as number | null,
+    p_month: null as number | null,
+    p_range_start: null as string | null,
+    p_range_end: null as string | null,
+};
+
 const resolveRecipientUserByEmail = async (email: string) => {
     if (!supabase) return { data: null as { id: string; email: string | null } | null, error: { message: 'Supabase client is unavailable.' } as { message: string } | null };
 
@@ -107,6 +163,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
     const [limit, setLimit] = useState('');
     const [limitPeriod, setLimitPeriod] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
     const [tier, setTier] = useState<'Core' | 'Supporting' | 'Optional'>('Optional');
+    const [goalId, setGoalId] = useState<string>('');
 
     const existingCategories = useMemo(() => new Set((data?.budgets ?? []).filter(b => b.year === currentYear && b.month === currentMonth).map(b => b.category)), [data?.budgets, currentYear, currentMonth]);
     
@@ -123,6 +180,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
             setLimit(String(budgetToEdit.limit));
             setLimitPeriod(budgetToEdit.period === 'yearly' ? 'Yearly' : budgetToEdit.period === 'weekly' ? 'Weekly' : budgetToEdit.period === 'daily' ? 'Daily' : 'Monthly');
             setTier((budgetToEdit as { tier?: 'Core' | 'Supporting' | 'Optional' }).tier ?? 'Optional');
+            setGoalId((budgetToEdit as Budget).goalId ?? '');
         } else {
             const learnedPeriod = getLearnedDefault('budget-add', 'limitPeriod') as string | undefined;
             const learnedTier = getLearnedDefault('budget-add', 'tier') as string | undefined;
@@ -132,6 +190,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
             setLimit('');
             setLimitPeriod(learnedPeriod && validPeriods.includes(learnedPeriod as any) ? (learnedPeriod as any) : 'Monthly');
             setTier(learnedTier && validTiers.includes(learnedTier as any) ? (learnedTier as any) : 'Optional');
+            setGoalId('');
         }
     }, [budgetToEdit, isOpen, getLearnedDefault]);
 
@@ -150,6 +209,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
             year,
             period,
             tier,
+            goalId: goalId.trim() ? goalId.trim() : undefined,
         }, !!budgetToEdit);
         if (!budgetToEdit) {
             trackFormDefault('budget-add', 'limitPeriod', limitPeriod);
@@ -197,6 +257,25 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
                         <option value="Weekly">Weekly</option>
                         <option value="Daily">Daily</option>
                         <option value="Yearly">Yearly (all months)</option>
+                    </select>
+                </div>
+                <div>
+                    <label htmlFor="budget-goal-link" className="block text-sm font-medium text-gray-700 flex items-center">
+                        Fund a goal (optional){' '}
+                        <InfoHint text="Link this envelope to a life goal. Goal projections use linked budget amounts first, then your savings % of remaining surplus." />
+                    </label>
+                    <select
+                        id="budget-goal-link"
+                        value={goalId}
+                        onChange={(e) => setGoalId(e.target.value)}
+                        className="select-base mt-1"
+                    >
+                        <option value="">None</option>
+                        {(data?.goals ?? []).map((g: Goal) => (
+                            <option key={g.id} value={g.id}>
+                                {g.name}
+                            </option>
+                        ))}
                     </select>
                 </div>
                 <button type="submit" className="w-full btn-primary">Save Budget</button>
@@ -718,9 +797,34 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             }
 
 
-            const { data: consumedRows } = await supabase
-                .rpc('get_shared_budget_consumed_for_me')
-                .then((r) => r, () => ({ data: [] as any[] } as any));
+            let consumedRows: any[] | null = null;
+            const rpcWindow = sharedBudgetConsumedRpcArgs(budgetView, currentDate, currentYear, currentMonth);
+            try {
+                let scoped = await supabase.rpc('get_shared_budget_consumed_for_me', rpcWindow as Record<string, unknown>);
+                if (scoped.error && rpcWindow.p_range_start != null && rpcWindow.p_range_end != null) {
+                    const narrowed = await supabase.rpc('get_shared_budget_consumed_for_me', {
+                        p_year: rpcWindow.p_year,
+                        p_month: rpcWindow.p_month,
+                        p_range_start: null,
+                        p_range_end: null,
+                    });
+                    if (!narrowed.error) scoped = narrowed;
+                }
+                if (!scoped.error) {
+                    consumedRows = (scoped.data as any[]) ?? [];
+                } else {
+                    const legacy = await supabase.rpc('get_shared_budget_consumed_for_me', LEGACY_SHARED_CONSUMED_RPC);
+                    consumedRows = !legacy.error ? ((legacy.data as any[]) ?? []) : [];
+                    if (scoped.error && String(scoped.error.message || '').toLowerCase().includes('function')) {
+                        console.warn('Scoped shared consumed RPC unavailable; using legacy rollup.', scoped.error.message);
+                    }
+                }
+            } catch {
+                const legacy = await supabase
+                    .rpc('get_shared_budget_consumed_for_me', LEGACY_SHARED_CONSUMED_RPC)
+                    .then((r) => r, () => ({ data: [] as any[] }));
+                consumedRows = (legacy.data as any[]) ?? [];
+            }
             const consumedMap = new Map<string, number>();
             ((consumedRows || []) as any[]).forEach((row: any) => {
                 const ownerKey = String(row.owner_user_id || 'owner');
@@ -748,7 +852,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         };
 
         loadGovernance();
-    }, [auth?.user?.id, dataResetKey]);
+    }, [auth?.user?.id, dataResetKey, currentYear, currentMonth, budgetView, currentDate]);
 
 
     React.useEffect(() => {

@@ -91,9 +91,9 @@ import {
 import { computePersonalInvestmentKpisSar } from '../services/investmentKpiCore';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 import { aggregateMonthlyBudgetAcrossPortfolios, getEffectivePlanForPortfolio } from '../utils/investmentPlanPerPortfolio';
-import { computeGoalMonthlyAllocation } from '../services/goalAllocation';
+import { computeGoalMonthlyFundingEnvelopeSar } from '../services/goalProjectionFunding';
 import { computeGoalTimelineStatus } from '../services/goalMetrics';
-import { computeGoalResolvedAmountsSar, averageRollingMonthlyNetSurplus } from '../services/goalResolvedTotals';
+import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -364,7 +364,6 @@ const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGo
     const { formatCurrencyString } = useFormatCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const goalCurrentByIdSar = useMemo(() => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd), [data, sarPerUsd]);
-    const rollingMonthlySurplus = useMemo(() => averageRollingMonthlyNetSurplus(data ?? null), [data]);
     const sortedGoals = useMemo(() => {
         const normalized = (data?.goals ?? [])
             .map((g: any) => ({
@@ -438,7 +437,8 @@ const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGo
                 {displayGoals.map((g) => {
                     const target = Math.max(0, Number((g as any).targetResolved) || 0);
                     const currentResolved = Math.max(0, Number((g as any).currentResolved) || 0);
-                    const projectedMonthly = computeGoalMonthlyAllocation(rollingMonthlySurplus, (g as Goal).savingsAllocationPercent ?? 0);
+                    const env = computeGoalMonthlyFundingEnvelopeSar({ goal: g as Goal, data: data ?? null, sarPerUsd });
+                    const projectedMonthly = env.envelopeMonthly;
                     const tl = computeGoalTimelineStatus({
                         goal: g as Goal,
                         resolvedCurrentAmountSar: currentResolved,
