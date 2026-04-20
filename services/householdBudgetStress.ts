@@ -1,4 +1,5 @@
 import type { FinancialData } from '../types';
+import { resolveSarPerUsd } from '../utils/currencyMath';
 import {
   buildHouseholdBudgetPlan,
   buildHouseholdEngineInputFromData,
@@ -116,6 +117,8 @@ export function computeHouseholdStressFromData(
       ? incomeWithData.reduce((a, b) => a + b, 0) / incomeWithData.length
       : 0;
 
+  const sarPerUsd = resolveSarPerUsd(data, undefined);
+
   const input = buildHouseholdEngineInputFromData(
     transactions as Array<{ date: string; type?: string; amount?: number }>,
     accounts as Array<{ type?: string; balance?: number }>,
@@ -132,6 +135,8 @@ export function computeHouseholdStressFromData(
       kids,
       profile,
       monthlyOverrides: overrides,
+      financialData: data,
+      sarPerUsd,
     }
   );
 

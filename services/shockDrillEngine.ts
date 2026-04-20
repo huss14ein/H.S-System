@@ -1,4 +1,5 @@
 import type { FinancialData } from '../types';
+import { resolveSarPerUsd } from '../utils/currencyMath';
 import { buildHouseholdBudgetPlan, buildHouseholdEngineInputFromData } from './householdBudgetEngine';
 import { runWealthUltraEngine } from '../wealth-ultra';
 
@@ -37,12 +38,22 @@ export function runShockDrill(data: FinancialData | null | undefined, templateId
   const tx = d?.personalTransactions ?? data.transactions ?? [];
   const accounts = d?.personalAccounts ?? data.accounts ?? [];
   const goals = data.goals ?? [];
+  const sarPerUsd = resolveSarPerUsd(data, undefined);
 
   const input = buildHouseholdEngineInputFromData(
     tx as any[],
     accounts as any[],
     goals as any[],
-    { year, expectedMonthlySalary: undefined, adults: 2, kids: 0, profile: 'Moderate', monthlyOverrides: [] }
+    {
+      year,
+      expectedMonthlySalary: undefined,
+      adults: 2,
+      kids: 0,
+      profile: 'Moderate',
+      monthlyOverrides: [],
+      financialData: data,
+      sarPerUsd,
+    }
   );
   const baseHousehold = buildHouseholdBudgetPlan(input);
   const shockedHousehold = buildHouseholdBudgetPlan({

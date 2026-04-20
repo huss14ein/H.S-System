@@ -26,6 +26,7 @@ import {
 import { useCurrency } from '../context/CurrencyContext';
 import { useNotifications } from '../context/NotificationsContext';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import AIAdvisor from '../components/AIAdvisor';
 import Modal from '../components/Modal';
@@ -1045,12 +1046,14 @@ const hasData = accountsForEmptyCheck.length > 0;
                                 showToast('No goals to export.', 'info');
                                 return;
                             }
+                            const resolvedMap = computeGoalResolvedAmountsSar(data, sarPerUsd);
                             const csv = exportGoalStatus({
                                 goals: data.goals.map((g) => ({
                                     id: g.id,
                                     name: g.name,
                                     targetAmount: g.targetAmount ?? 0,
                                     currentAmount: g.currentAmount ?? 0,
+                                    savedAmountResolvedSar: resolvedMap.get(g.id) ?? 0,
                                     deadline: String(g.deadline ?? ''),
                                 })),
                             });

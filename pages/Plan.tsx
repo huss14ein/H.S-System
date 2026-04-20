@@ -488,10 +488,12 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 kids: householdKids,
                 profile: engineProfile,
                 monthlyOverrides: householdOverrides,
+                financialData: data ?? null,
+                sarPerUsd,
             }
         );
         return buildHouseholdBudgetPlan(input);
-    }, [processedPlanData, accounts, goals, transactions, year, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
+    }, [processedPlanData, accounts, goals, transactions, year, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary, data, sarPerUsd]);
 
     const { household: householdConstraints } = useFinancialEnginesIntegration();
     const dynamicBaselines = useMemo(() => calculateDynamicBaselines(transactions as any[], 6), [transactions]);

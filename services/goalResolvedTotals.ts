@@ -89,3 +89,27 @@ export function goalsWithResolvedCurrentAmount(data: FinancialData | null | unde
     currentAmount: resolved.get(g.id) ?? 0,
   }));
 }
+
+/** Compact string for AI cache keys when goal funding changes. */
+export function resolvedGoalAmountsFingerprint(data: FinancialData | null | undefined, sarPerUsd: number): string {
+  const m = computeGoalResolvedAmountsSar(data, sarPerUsd);
+  let sumHalalas = 0;
+  m.forEach((v) => {
+    sumHalalas += Math.round(Math.max(0, v) * 100);
+  });
+  return `${m.size}:${sumHalalas}`;
+}
+
+/** One-line progress list for Gemini prompts (same % basis as Goals / dashboards). */
+export function formatGoalsProgressForPrompt(data: FinancialData | null | undefined, sarPerUsd: number): string {
+  const resolved = computeGoalResolvedAmountsSar(data, sarPerUsd);
+  const goals = (data?.goals ?? []) as Goal[];
+  return goals
+    .map((g) => {
+      const current = resolved.get(g.id) ?? 0;
+      const target = Number(g.targetAmount) || 0;
+      const progress = target > 0 ? (current / target) * 100 : 0;
+      return `${g.name ?? ''} (${progress.toFixed(0)}%)`;
+    })
+    .join(', ');
+}

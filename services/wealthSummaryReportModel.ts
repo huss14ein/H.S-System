@@ -266,6 +266,8 @@ export function computeWealthSummaryReportModel(
       kids: 0,
       profile: (data.settings?.riskProfile as string) || 'Moderate',
       monthlyOverrides: [],
+      financialData: data,
+      sarPerUsd,
     }
   );
   const householdPlan = buildHouseholdBudgetPlan(householdInput);
