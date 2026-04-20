@@ -21,6 +21,7 @@ import { stressTestScenario, compareStrategies } from '../services/stressScenari
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import AIAdvisor from '../components/AIAdvisor';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
+import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const toMonthlyRate = (annualPct: number) => {
@@ -160,6 +161,11 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         return { netWorth, investmentValue };
     }, [data, exchangeRate, getAvailableCashForAccount]);
 
+    const goalResolvedSarById = useMemo(
+        () => computeGoalResolvedAmountsSar(data ?? null, resolveSarPerUsd(data, exchangeRate)),
+        [data, exchangeRate],
+    );
+
 
     const applyScenarioPreset = (preset: 'Conservative' | 'Base' | 'Aggressive') => {
         setScenarioPreset(preset);
@@ -222,7 +228,10 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 goalsWithProjections.forEach((goal) => {
                     if (goal.metMonth === null) {
                         const target = Math.max(0, Number(goal.targetAmount) || 0);
-                        const current = Math.max(0, Number(goal.currentAmount) || 0);
+                        const current = Math.max(
+                            0,
+                            goalResolvedSarById.get(goal.id) ?? (Number(goal.currentAmount) || 0),
+                        );
                         const gap = Math.max(0, target - current);
                         const netWorthThreshold = initialValues.netWorth + gap;
                         if (currentNetWorth >= netWorthThreshold) {
@@ -284,6 +293,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         initialValues,
         data,
         data?.goals,
+        goalResolvedSarById,
         scenarioPreset,
         savingsAnalytics.monthlyStdDev,
         savingsAnalytics.averageMonthlyNet,
@@ -292,7 +302,10 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const goalReferenceLines = useMemo(() => {
         return (data?.goals ?? []).map((goal, idx) => {
             const target = Math.max(0, Number(goal.targetAmount) || 0);
-            const current = Math.max(0, Number(goal.currentAmount) || 0);
+            const current = Math.max(
+                0,
+                goalResolvedSarById.get(goal.id) ?? (Number(goal.currentAmount) || 0),
+            );
             const gap = Math.max(0, target - current);
             const yValue = initialValues.netWorth + gap;
             return {
@@ -301,7 +314,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 key: goal.id ?? `goal-ref-${idx}-${goal.name ?? ''}`,
             };
         });
-    }, [data?.goals, initialValues.netWorth]);
+    }, [data?.goals, initialValues.netWorth, goalResolvedSarById]);
 
     const stressInputs = useMemo(() => {
         const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
