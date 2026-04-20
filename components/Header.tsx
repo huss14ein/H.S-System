@@ -1,4 +1,5 @@
 import React, { useState, useContext, useMemo, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Page, TradeCurrency, Account } from '../types';
 import { NAVIGATION_ITEMS, PAGE_DISPLAY_NAMES } from '../constants';
 import { HSLogo } from './icons/HSLogo';
@@ -508,71 +509,93 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
         </div>
       </div>
       
-      {/* Mobile Menu */}
-      {isMobileMenuOpen && (
-        <div className="fixed inset-0 z-[120] bg-white lg:hidden">
+      {/* Mobile menu: portal to document.body so main content (later in DOM) cannot paint above it — fixes stray InfoHint icons bleeding through. */}
+      {typeof document !== 'undefined' &&
+        isMobileMenuOpen &&
+        createPortal(
+          <div className="fixed inset-0 z-[9997] bg-white lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation menu">
             <div className="px-4 pt-4 flex justify-between items-center border-b border-gray-100 pb-4">
-                <div className="flex items-center space-x-2">
-                    <HSLogo className="h-8 w-8 text-primary" />
-                    <h1 className="text-xl font-bold text-dark">Finova</h1>
-                </div>
-                <button onClick={() => setIsMobileMenuOpen(false)} className="p-2 text-gray-500 hover:bg-gray-50 rounded-xl transition-colors">
-                    <XMarkIcon className="h-6 w-6" />
-                </button>
+              <div className="flex items-center space-x-2">
+                <HSLogo className="h-8 w-8 text-primary" />
+                <h1 className="text-xl font-bold text-dark">Finova</h1>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMobileMenuOpen(false)}
+                className="p-2 text-gray-500 hover:bg-gray-50 rounded-xl transition-colors"
+                aria-label="Close menu"
+              >
+                <XMarkIcon className="h-6 w-6" />
+              </button>
             </div>
             <div className="mt-4 px-4 space-y-6 overflow-y-auto h-[calc(100vh-80px)] pb-12">
-                {navGroups.map(group => (
-                  <div key={group.name} className="animate-fadeIn" style={{ animationDelay: '100ms' }}>
-                    <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 px-3">{group.name}</h3>
-                    <div className="grid grid-cols-1 gap-1">
-                      {group.items.map(itemName => {
-                        const navItem = NAVIGATION_ITEMS.find(n => n.name === itemName);
-                        if (!navItem) return null;
-                        const isActive = activePage === itemName;
-                        return (
-                          <button 
-                              key={itemName} 
-                              onClick={() => { setActivePage(itemName as Page); setIsMobileMenuOpen(false); }}
-                              className={`w-full flex items-center px-4 py-3.5 text-sm font-semibold rounded-2xl transition-all ${
-                                  isActive 
-                                  ? 'bg-primary text-white shadow-lg shadow-primary/20' 
-                                  : 'text-gray-600 hover:bg-gray-50'
-                              }`}
-                          >
-                              <navItem.icon className={`mr-4 h-5 w-5 ${isActive ? 'text-white' : 'text-gray-400'}`} />
-                              {PAGE_DISPLAY_NAMES[itemName as Page] ?? itemName}
-                          </button>
-                        );
-                      })}
-                    </div>
+              {navGroups.map((group) => (
+                <div key={group.name} className="animate-fadeIn" style={{ animationDelay: '100ms' }}>
+                  <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 px-3">{group.name}</h3>
+                  <div className="grid grid-cols-1 gap-1">
+                    {group.items.map((itemName) => {
+                      const navItem = NAVIGATION_ITEMS.find((n) => n.name === itemName);
+                      if (!navItem) return null;
+                      const isActive = activePage === itemName;
+                      return (
+                        <button
+                          key={itemName}
+                          type="button"
+                          onClick={() => {
+                            setActivePage(itemName as Page);
+                            setIsMobileMenuOpen(false);
+                          }}
+                          className={`w-full flex items-center px-4 py-3.5 text-sm font-semibold rounded-2xl transition-all ${
+                            isActive ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'text-gray-600 hover:bg-gray-50'
+                          }`}
+                        >
+                          <navItem.icon className={`mr-4 h-5 w-5 ${isActive ? 'text-white' : 'text-gray-400'}`} />
+                          {PAGE_DISPLAY_NAMES[itemName as Page] ?? itemName}
+                        </button>
+                      );
+                    })}
                   </div>
-                ))}
-                
-                <div className="pt-6 border-t border-gray-100">
-                    <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 px-3">Quick Actions</h3>
-                    <div className="grid grid-cols-2 gap-3">
-                        <button 
-                            onClick={() => { refreshPrices(); setIsMobileMenuOpen(false); }}
-                            className="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-2xl hover:bg-gray-100 transition-colors relative"
-                        >
-                            <ArrowPathIcon className={`h-6 w-6 text-gray-500 mb-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-                            <span className="text-xs font-bold text-gray-700">Refresh</span>
-                            <span className={`absolute top-2 right-2 text-[8px] font-bold uppercase px-1 rounded ${isLive ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                                {isLive ? 'Live' : 'Sim'}
-                            </span>
-                        </button>
-                        <button 
-                            onClick={() => { onOpenLiveAdvisor(); setIsMobileMenuOpen(false); }}
-                            className="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-2xl hover:bg-gray-100 transition-colors"
-                        >
-                            <HeadsetIcon className="h-6 w-6 text-gray-500 mb-2" />
-                            <span className="text-xs font-bold text-gray-700">Advisor</span>
-                        </button>
-                    </div>
                 </div>
+              ))}
+
+              <div className="pt-6 border-t border-gray-100">
+                <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 px-3">Quick Actions</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      refreshPrices();
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-2xl hover:bg-gray-100 transition-colors relative"
+                  >
+                    <ArrowPathIcon className={`h-6 w-6 text-gray-500 mb-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+                    <span className="text-xs font-bold text-gray-700">Refresh</span>
+                    <span
+                      className={`absolute top-2 right-2 text-[8px] font-bold uppercase px-1 rounded ${
+                        isLive ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+                      }`}
+                    >
+                      {isLive ? 'Live' : 'Sim'}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onOpenLiveAdvisor();
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-2xl hover:bg-gray-100 transition-colors"
+                  >
+                    <HeadsetIcon className="h-6 w-6 text-gray-500 mb-2" />
+                    <span className="text-xs font-bold text-gray-700">Advisor</span>
+                  </button>
+                </div>
+              </div>
             </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </header>
   );
 };
