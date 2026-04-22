@@ -78,6 +78,70 @@ export function goalMonthlyInvestmentContributionSar(
   return Math.max(0, sum / monthlyTotals.size);
 }
 
+/**
+ * Goal-linked share of configured Investment Plan monthly budget (SAR).
+ *
+ * Mapping strategy:
+ * - Preferred: sum per-portfolio plan slices (`plansByPortfolioId`) for portfolios linked to the goal.
+ * - Legacy fallback: when no per-portfolio slices exist, use root `monthlyBudget` only if
+ *   all investment goal links point to this same goal (prevents cross-goal double counting).
+ */
+export function goalMonthlyInvestmentPlanContributionSar(
+  goalId: string,
+  data: FinancialData | null | undefined,
+  sarPerUsd: number,
+): number {
+  const gid = String(goalId ?? '').trim();
+  if (!gid || !data) return 0;
+
+  const portfolios =
+    (data as { personalInvestments?: typeof data.investments }).personalInvestments ?? data.investments ?? [];
+  if (!portfolios.length) return 0;
+
+  const linkedPortfolioIds = new Set<string>();
+  const linkedGoalIdsInInvestments = new Set<string>();
+  portfolios.forEach((p) => {
+    const pid = String(p.id ?? '').trim();
+    if (!pid) return;
+    const portfolioGoal = String((p as { goalId?: string; goal_id?: string }).goalId ?? (p as { goal_id?: string }).goal_id ?? '').trim();
+    if (portfolioGoal) linkedGoalIdsInInvestments.add(portfolioGoal);
+    if (portfolioGoal === gid) linkedPortfolioIds.add(pid);
+    (p.holdings ?? []).forEach((h: { goalId?: string; goal_id?: string }) => {
+      const holdingGoal = String(h.goalId ?? h.goal_id ?? '').trim();
+      if (!holdingGoal) return;
+      linkedGoalIdsInInvestments.add(holdingGoal);
+      if (holdingGoal === gid) linkedPortfolioIds.add(pid);
+    });
+  });
+  if (linkedPortfolioIds.size === 0) return 0;
+
+  const plan = (data as { investmentPlan?: Record<string, unknown> }).investmentPlan as Record<string, unknown> | undefined;
+  if (!plan) return 0;
+  const planCurrency = ((plan.budgetCurrency ?? plan.budget_currency ?? 'SAR') as 'USD' | 'SAR') ?? 'SAR';
+
+  const rawSlices =
+    (plan.plansByPortfolioId as Record<string, Record<string, unknown>> | undefined) ??
+    (plan.plans_by_portfolio_id as Record<string, Record<string, unknown>> | undefined);
+  const hasSlices = !!rawSlices && Object.keys(rawSlices).length > 0;
+  let slicesMonthly = 0;
+  if (rawSlices) {
+    linkedPortfolioIds.forEach((pid) => {
+      const slice = rawSlices[pid];
+      if (!slice) return;
+      const monthly = Number(slice.monthlyBudget ?? slice.monthly_budget ?? 0);
+      if (Number.isFinite(monthly) && monthly > 0) slicesMonthly += monthly;
+    });
+  }
+  if (slicesMonthly > 0) return Math.max(0, toSAR(slicesMonthly, planCurrency, sarPerUsd));
+  if (hasSlices) return 0;
+
+  // Legacy root-only plan: map only when all investment links resolve to this single goal.
+  if (linkedGoalIdsInInvestments.size !== 1 || !linkedGoalIdsInInvestments.has(gid)) return 0;
+  const rootMonthly = Number(plan.monthlyBudget ?? plan.monthly_budget ?? 0);
+  if (!Number.isFinite(rootMonthly) || rootMonthly <= 0) return 0;
+  return Math.max(0, toSAR(rootMonthly, planCurrency, sarPerUsd));
+}
+
 export function computeGoalMonthlyFundingEnvelopeSar(args: {
   goal: Goal;
   data: FinancialData | null | undefined;
@@ -85,7 +149,10 @@ export function computeGoalMonthlyFundingEnvelopeSar(args: {
   sarPerUsd?: number;
 }): {
   assignedBudgetMonthly: number;
+  assignedInvestmentDepositMonthly: number;
+  assignedInvestmentPlanMonthly: number;
   assignedInvestmentMonthly: number;
+  assignedInvestmentSource: 'plan' | 'deposits' | 'none';
   allocationSliceMonthly: number;
   envelopeMonthly: number;
   rollingSurplusMonthly: number;
@@ -109,7 +176,15 @@ export function computeGoalMonthlyFundingEnvelopeSar(args: {
     else reservedByOtherGoalBudgets += m;
   });
 
-  const assignedInvestmentMonthly = goalMonthlyInvestmentContributionSar(gid, data ?? null, sarPerUsd);
+  const assignedInvestmentDepositMonthly = goalMonthlyInvestmentContributionSar(gid, data ?? null, sarPerUsd);
+  const assignedInvestmentPlanMonthly = goalMonthlyInvestmentPlanContributionSar(gid, data ?? null, sarPerUsd);
+  const assignedInvestmentMonthly = Math.max(assignedInvestmentDepositMonthly, assignedInvestmentPlanMonthly);
+  const assignedInvestmentSource =
+    assignedInvestmentMonthly <= 0
+      ? 'none'
+      : assignedInvestmentPlanMonthly >= assignedInvestmentDepositMonthly
+        ? 'plan'
+        : 'deposits';
   const assignedEnvelopeMonthly = assignedBudgetMonthly + assignedInvestmentMonthly;
 
   const surplusAfterReserved = Math.max(0, rollingSurplusMonthly - reservedByOtherGoalBudgets);
@@ -117,7 +192,10 @@ export function computeGoalMonthlyFundingEnvelopeSar(args: {
 
   return {
     assignedBudgetMonthly,
+    assignedInvestmentDepositMonthly,
+    assignedInvestmentPlanMonthly,
     assignedInvestmentMonthly,
+    assignedInvestmentSource,
     allocationSliceMonthly,
     envelopeMonthly: assignedEnvelopeMonthly + allocationSliceMonthly,
     rollingSurplusMonthly,

@@ -556,14 +556,21 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                     )}
                 </div>
                 <div className="space-y-2">
-                    {(fundingEnvelope.assignedBudgetMonthly > 0 || fundingEnvelope.allocationSliceMonthly > 0) && (
+                    {(fundingEnvelope.assignedBudgetMonthly > 0 || fundingEnvelope.assignedInvestmentMonthly > 0 || fundingEnvelope.allocationSliceMonthly > 0) && (
                         <p className="text-[11px] text-slate-500 leading-snug">
                             {fundingEnvelope.assignedBudgetMonthly > 0 && (
                                 <span>
                                     Linked budget: {formatCurrencyString(fundingEnvelope.assignedBudgetMonthly, { digits: 0 })}/mo
                                 </span>
                             )}
-                            {fundingEnvelope.assignedBudgetMonthly > 0 && fundingEnvelope.allocationSliceMonthly > 0 && ' · '}
+                            {fundingEnvelope.assignedBudgetMonthly > 0 && fundingEnvelope.assignedInvestmentMonthly > 0 && ' · '}
+                            {fundingEnvelope.assignedInvestmentMonthly > 0 && (
+                                <span>
+                                    Linked investment {fundingEnvelope.assignedInvestmentSource === 'plan' ? 'plan budget' : 'deposits'}:{' '}
+                                    {formatCurrencyString(fundingEnvelope.assignedInvestmentMonthly, { digits: 0 })}/mo
+                                </span>
+                            )}
+                            {(fundingEnvelope.assignedBudgetMonthly > 0 || fundingEnvelope.assignedInvestmentMonthly > 0) && fundingEnvelope.allocationSliceMonthly > 0 && ' · '}
                             {fundingEnvelope.allocationSliceMonthly > 0 && (
                                 <span>
                                     + savings % of remaining surplus: {formatCurrencyString(fundingEnvelope.allocationSliceMonthly, { digits: 0 })}/mo
