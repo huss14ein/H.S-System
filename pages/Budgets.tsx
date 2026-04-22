@@ -72,6 +72,7 @@ import { getPersonalTransactions } from '../utils/wealthScope';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import AIAdvisor from '../components/AIAdvisor';
+import { dedupeSharedBudgetRows, makeSharedOwnerCategoryKey, normalizeSharedCategoryKey, normalizeSharedOwnerKey } from '../services/sharedBudgetKeys';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
 
 
@@ -793,8 +794,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     year: Number(b.year) || currentYear,
                     tier: b.tier ?? b.budget_tier ?? 'Optional',
                     ownerEmail: b.owner_email || b.owner_user_id || b.user_id,
+                    owner_user_id: b.owner_user_id || b.user_id,
                 }));
-                setSharedBudgets(filtered);
+                setSharedBudgets(dedupeSharedBudgetRows(filtered));
             }
 
 
@@ -828,10 +830,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             }
             const consumedMap = new Map<string, number>();
             ((consumedRows || []) as any[]).forEach((row: any) => {
-                const ownerKey = String(row.owner_user_id || 'owner');
-                const category = String(row.category || '').trim();
+                const ownerKey = normalizeSharedOwnerKey(row.owner_user_id || 'owner');
+                const category = normalizeSharedCategoryKey(row.category || '');
                 if (!category) return;
-                consumedMap.set(`${ownerKey}::${category}`, Number(row.consumed_amount) || 0);
+                consumedMap.set(makeSharedOwnerCategoryKey(ownerKey, category), Number(row.consumed_amount) || 0);
             });
             setSharedConsumedByOwnerCategory(consumedMap);
             setSharedConsumedSyncedAt(Date.now());
@@ -1276,11 +1278,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             .forEach((tx) => {
                 const d = new Date(tx.transaction_date || tx.date);
                 if (!(d >= rangeStart && d <= rangeEnd)) return;
-                const category = String(tx.budget_category || '').trim();
+                const category = normalizeSharedCategoryKey(tx.budget_category || '');
                 if (!category) return;
                 const amount = txAmountSar(tx);
-                const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || 'owner');
-                spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
+                const ownerKey = normalizeSharedOwnerKey(tx.owner_user_id || tx.owner_id || tx.user_id || 'owner');
+                const key = makeSharedOwnerCategoryKey(ownerKey, category);
+                spendingByOwnerCategory.set(key, (spendingByOwnerCategory.get(key) || 0) + amount);
             });
 
         ownerSharedTransactions
@@ -1288,11 +1291,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             .forEach((tx) => {
                 const d = new Date(tx.transaction_date || tx.date);
                 if (!(d >= rangeStart && d <= rangeEnd)) return;
-                const category = String(tx.budget_category || '').trim();
+                const category = normalizeSharedCategoryKey(tx.budget_category || '');
                 if (!category) return;
                 const amount = txAmountSar(tx);
-                const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || auth?.user?.id || 'owner');
-                spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
+                const ownerKey = normalizeSharedOwnerKey(tx.owner_user_id || tx.owner_id || tx.user_id || auth?.user?.id || 'owner');
+                const key = makeSharedOwnerCategoryKey(ownerKey, category);
+                spendingByOwnerCategory.set(key, (spendingByOwnerCategory.get(key) || 0) + amount);
             });
 
         const rowsForYear = (sharedBudgets ?? [])
@@ -1303,8 +1307,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         if (budgetView === 'Yearly') {
             const yearlyByOwnerCategory = new Map<string, Budget & { ownerEmail?: string; ownerKey: string; yearlyLimit: number }>();
             rowsForYear.forEach((b) => {
-                const ownerKey = String((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
-                const key = `${ownerKey}::${b.category}`;
+                const ownerKey = normalizeSharedOwnerKey((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
+                const key = makeSharedOwnerCategoryKey(ownerKey, b.category);
                 const existing = yearlyByOwnerCategory.get(key);
                 const yearlyLimit = (existing?.yearlyLimit || 0) + toYearly(b);
                 yearlyByOwnerCategory.set(key, {
@@ -1318,7 +1322,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
             return Array.from(yearlyByOwnerCategory.values())
                 .map((entry) => {
-                    const ownerCategoryKey = `${entry.ownerKey}::${entry.category}`;
+                    const ownerCategoryKey = makeSharedOwnerCategoryKey(entry.ownerKey, entry.category);
                     const spent = sharedConsumedByOwnerCategory.get(ownerCategoryKey) || spendingByOwnerCategory.get(ownerCategoryKey) || 0;
                     const percentage = entry.yearlyLimit > 0 ? (spent / entry.yearlyLimit) * 100 : 0;
                     const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
@@ -1354,8 +1358,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             })
             .map((b) => {
                 const monthlyEquivalent = b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
-                const ownerKey = String((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
-                const spent = sharedConsumedByOwnerCategory.get(`${ownerKey}::${b.category}`) || spendingByOwnerCategory.get(`${ownerKey}::${b.category}`) || 0;
+                const ownerKey = normalizeSharedOwnerKey((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
+                const ownerCategoryKey = makeSharedOwnerCategoryKey(ownerKey, b.category);
+                const spent = sharedConsumedByOwnerCategory.get(ownerCategoryKey) || spendingByOwnerCategory.get(ownerCategoryKey) || 0;
                 const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
                 const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
                 let colorClass = 'bg-primary';

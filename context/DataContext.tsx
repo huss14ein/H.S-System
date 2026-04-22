@@ -1437,13 +1437,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         status?: 'Pending' | 'Approved' | 'Rejected';
         description: string;
         budgetCategory?: string;
+        note?: string;
     }) => {
         if (!supabase || !auth?.user) return;
         const currentUser = auth.user;
         const category = (tx.budgetCategory || '').trim();
         const status = (tx.status ?? 'Approved') as 'Pending' | 'Approved' | 'Rejected';
         const isExpense = tx.type === 'expense';
-        if (!category || !isExpense || status === 'Rejected') {
+        const splitLines = (() => {
+            try {
+                return parseSplitsFromNote(tx.note).splitLines ?? [];
+            } catch {
+                return [];
+            }
+        })();
+        if ((!category && splitLines.length === 0) || !isExpense || status === 'Rejected') {
             await removeSharedBudgetTransactionMirror(tx.id);
             return;
         }
@@ -1452,31 +1460,57 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             .from('budget_shares')
             .select('owner_user_id, category')
             .eq('shared_with_user_id', auth.user.id)
-            .or(`category.is.null,category.eq.${category}`)
             .then((r) => r, () => ({ data: [] as any[] } as any));
 
         const rows = (shares || []) as Array<{ owner_user_id?: string; category?: string | null }>;
-        if (rows.length === 0) {
+        const splitAllocations = splitLines.length > 0
+            ? splitLines
+            : [{ category: category || 'Uncategorized', amount: Math.abs(Number(tx.amount) || 0) }];
+        const splitTotal = splitAllocations.reduce((sum, line) => sum + Math.abs(Number(line.amount) || 0), 0);
+        const parentAmountAbs = Math.abs(Number(tx.amount) || 0);
+        const scale = splitTotal > 0 ? parentAmountAbs / splitTotal : 1;
+        const normalizeShareCategory = (v: unknown) => String(v ?? '').trim().toLowerCase();
+        const txCategories = new Set(
+            splitAllocations
+                .map((line) => normalizeShareCategory(line.category))
+                .filter(Boolean),
+        );
+        const matchingShares = rows.filter((row) => {
+            const shareCat = normalizeShareCategory(row.category);
+            return !shareCat || shareCat === 'all' || txCategories.has(shareCat);
+        });
+        if (matchingShares.length === 0) {
             await removeSharedBudgetTransactionMirror(tx.id);
             return;
         }
 
         await removeSharedBudgetTransactionMirror(tx.id);
 
-        const payload = rows
-            .map((r) => r.owner_user_id)
-            .filter((ownerId): ownerId is string => Boolean(ownerId) && ownerId !== currentUser.id)
-            .map((ownerId) => ({
-                owner_user_id: ownerId,
-                contributor_user_id: currentUser.id,
-                contributor_email: currentUser.email ?? null,
-                source_transaction_id: tx.id,
-                budget_category: category,
-                amount: Math.abs(Number(tx.amount) || 0),
-                transaction_date: tx.date,
-                description: tx.description,
-                status,
-            }));
+        const payload = matchingShares
+            .map((r) => ({ ownerId: r.owner_user_id, sharedCategory: String(r.category ?? '').trim() }))
+            .filter((row): row is { ownerId: string; sharedCategory: string } => Boolean(row.ownerId) && row.ownerId !== currentUser.id)
+            .flatMap((row) => {
+                const ownerId = row.ownerId;
+                const explicitShareCategory = normalizeShareCategory(row.sharedCategory);
+                return splitAllocations
+                    .filter((line) => {
+                        const allocCat = normalizeShareCategory(line.category);
+                        if (!allocCat) return false;
+                        if (!explicitShareCategory || explicitShareCategory === 'all') return true;
+                        return explicitShareCategory === allocCat;
+                    })
+                    .map((line) => ({
+                        owner_user_id: ownerId,
+                        contributor_user_id: currentUser.id,
+                        contributor_email: currentUser.email ?? null,
+                        source_transaction_id: tx.id,
+                        budget_category: String(line.category || '').trim(),
+                        amount: Math.abs(Number(line.amount) || 0) * scale,
+                        transaction_date: tx.date,
+                        description: tx.description,
+                        status,
+                    }));
+            });
 
         if (payload.length === 0) return;
         await supabase.from('budget_shared_transactions').upsert(payload).then(() => {}, () => {});
