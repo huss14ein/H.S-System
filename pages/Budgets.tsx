@@ -72,6 +72,7 @@ import { getPersonalTransactions } from '../utils/wealthScope';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import AIAdvisor from '../components/AIAdvisor';
+import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
 
 
 
@@ -935,16 +936,19 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         }
 
         ((data as any)?.personalTransactions ?? data?.transactions ?? [])
-            .filter((t: { type?: string; status?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && (t.status ?? 'Approved') === 'Approved' && !!t.budgetCategory)
-            .forEach((t: { date: string; amount?: number; budgetCategory?: string }) => {
+            .filter((t: { type?: string; status?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && (t.status ?? 'Approved') === 'Approved')
+            .forEach((t: { date: string; amount?: number; budgetCategory?: string; category?: string; splitLines?: { category: string; amount: number }[] }) => {
                 const txDate = new Date(t.date);
-                const amount = txAmountSar(t);
-                if (txDate >= rangeStart && txDate <= rangeEnd) {
-                    spending.set(t.budgetCategory!, (spending.get(t.budgetCategory!) || 0) + amount);
-                }
-                if (txDate >= previousRangeStart && txDate <= previousRangeEnd) {
-                    previousSpending.set(t.budgetCategory!, (previousSpending.get(t.budgetCategory!) || 0) + amount);
-                }
+                const allocations = getTransactionBudgetAllocations(t as any);
+                allocations.forEach((allocation) => {
+                    const amount = txAmountSar({ ...t, amount: allocation.amount });
+                    if (txDate >= rangeStart && txDate <= rangeEnd) {
+                        spending.set(allocation.category, (spending.get(allocation.category) || 0) + amount);
+                    }
+                    if (txDate >= previousRangeStart && txDate <= previousRangeEnd) {
+                        previousSpending.set(allocation.category, (previousSpending.get(allocation.category) || 0) + amount);
+                    }
+                });
             });
 
         // Reflect collaborator spending into owner budget totals for shared categories.
@@ -1051,13 +1055,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const rangeStart = new Date(yr, mo - 1, 1);
         const rangeEnd = new Date(yr, mo, 0, 23, 59, 59, 999);
         const spending = new Map<string, number>();
-        ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach((tx: { date: string; amount?: number; budgetCategory?: string; type?: string; category?: string }) => {
+        ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach((tx: { date: string; amount?: number; budgetCategory?: string; type?: string; category?: string; splitLines?: { category: string; amount: number }[] }) => {
             if (!countsAsExpenseForCashflowKpi(tx)) return;
             const d = new Date(tx.date);
             if (!(d >= rangeStart && d <= rangeEnd)) return;
-            const cat = String((tx as { budget_category?: string }).budget_category || tx.budgetCategory || '').trim();
-            if (!cat) return;
-            spending.set(cat, (spending.get(cat) || 0) + txAmountSar(tx));
+            const allocations = getTransactionBudgetAllocations(tx as any);
+            allocations.forEach((allocation) => {
+                spending.set(allocation.category, (spending.get(allocation.category) || 0) + txAmountSar({ ...tx, amount: allocation.amount }));
+            });
         });
         ownerSharedTransactions
             .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
@@ -1524,7 +1529,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
     const handleSmartFillBudgets = () => {
         if (!isAdmin) return;
-        const allTx = ((data as any)?.personalTransactions ?? data?.transactions ?? []).filter((t: { type?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && !!t.budgetCategory);
+        const allTx = ((data as any)?.personalTransactions ?? data?.transactions ?? []).filter((t: { type?: string; budgetCategory?: string; category?: string; splitLines?: { category: string; amount: number }[] }) => countsAsExpenseForCashflowKpi(t));
         if (allTx.length === 0) {
             alert('No expense history with budget categories found to smart-fill from.');
             return;
@@ -1534,15 +1539,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 
         const byCategory = new Map<string, { total: number; months: Set<string> }>();
-        allTx.forEach((t: { date: string; budgetCategory?: string; amount?: number }) => {
+        allTx.forEach((t: { date: string; budgetCategory?: string; amount?: number; splitLines?: { category: string; amount: number }[] }) => {
             const d = new Date(t.date);
             if (d < threeMonthsAgo || d > now) return;
-            const cat = t.budgetCategory!;
             const key = `${d.getFullYear()}-${d.getMonth()}`;
-            const entry = byCategory.get(cat) || { total: 0, months: new Set<string>() };
-            entry.total += Math.abs(t.amount ?? 0);
-            entry.months.add(key);
-            byCategory.set(cat, entry);
+            const allocations = getTransactionBudgetAllocations(t as any);
+            allocations.forEach((allocation) => {
+                const entry = byCategory.get(allocation.category) || { total: 0, months: new Set<string>() };
+                entry.total += Math.abs(allocation.amount ?? 0);
+                entry.months.add(key);
+                byCategory.set(allocation.category, entry);
+            });
         });
 
         const suggestions: { category: string; monthly: number }[] = [];

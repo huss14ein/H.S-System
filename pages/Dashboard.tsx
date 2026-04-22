@@ -51,6 +51,7 @@ import { debtStressScore } from '../services/debtEngines';
 import { cashflowMomentumFromPnlTrend, personalFinanceHealthScore } from '../services/decisionScoringEngine';
 import { computeDashboardKpiSnapshot, averageSavingsRateSarRolling } from '../services/dashboardKpiSnapshot';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
+import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
 import { computePersonalNetWorthChartBucketsSAR } from '../services/personalNetWorth';
 import { computeMonthlyReportFinancialKpis, computeWealthSummaryReportModel } from '../services/wealthSummaryReportModel';
 import { reconcileDashboardVsSummaryKpis } from '../services/kpiReconciliation';
@@ -511,8 +512,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             const accounts = d?.personalAccounts ?? data?.accounts ?? [];
             const investments = d?.personalInvestments ?? data?.investments ?? [];
             const accountsById = new Map(accounts.map((a: Account) => [a.id, a]));
-            const txBudgetCategory = (t: { budgetCategory?: string; category?: string }) => String(t.budgetCategory ?? t.category ?? '').trim();
-
             const txCashflowSar = (t: { accountId?: string; amount?: number; date: string }) => {
                 const acc = accountsById.get(t.accountId ?? '') as Account | undefined;
                 const c = acc?.currency === 'USD' ? 'USD' : 'SAR';
@@ -552,11 +551,17 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             });
             const monthlySpending = new Map<string, number>();
             monthlyTransactions
-                .filter((t: { type?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && txBudgetCategory(t))
+                .filter((t: { type?: string }) => countsAsExpenseForCashflowKpi(t))
                 .forEach((t: Transaction) => {
-                    const key = txBudgetCategory(t);
-                    const currentSpend = monthlySpending.get(key) || 0;
-                    monthlySpending.set(key, currentSpend + txCashflowSar(t));
+                    const allocations = getTransactionBudgetAllocations(t);
+                    allocations.forEach((allocation) => {
+                        const key = allocation.category;
+                        const currentSpend = monthlySpending.get(key) || 0;
+                        monthlySpending.set(
+                            key,
+                            currentSpend + txCashflowSar({ accountId: t.accountId, amount: allocation.amount, date: t.date }),
+                        );
+                    });
                 });
 
             const monthlyBudgets = currentMonthBudgets
@@ -580,7 +585,11 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             });
             const monthlyCashflowData = Array.from(monthlyCashflowMap.entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([key, value]) => ({ name: new Date(key + '-02').toLocaleString('default', { month: 'short' }), ...value }));
 
-            const uncategorizedTransactions = transactions.filter((t: { type?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && !t.budgetCategory);
+            const uncategorizedTransactions = transactions.filter((t: Transaction) => {
+                if (!countsAsExpenseForCashflowKpi(t)) return false;
+                const allocations = getTransactionBudgetAllocations(t);
+                return allocations.length === 0;
+            });
 
             const recentTransactions = [...transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 

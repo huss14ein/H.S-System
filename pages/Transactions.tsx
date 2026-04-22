@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useContext, useEffect, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
-import { Transaction, Account, Page, UserRole, RecurringTransaction } from '../types';
+import { Transaction, Account, Budget, Page, UserRole, RecurringTransaction } from '../types';
 import Card from '../components/Card';
 import Modal from '../components/Modal';
 import PageLayout from '../components/PageLayout';
@@ -30,8 +30,9 @@ import {
 } from '../services/transactionFilters';
 import { validateSplitTotal } from '../services/transactionIntelligence';
 import { encodeNoteWithSplits } from '../services/transactionSplitNote';
+import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
 import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { resolveSarPerUsd, toSAR, fromSAR } from '../utils/currencyMath';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { exportCashTransactionsToCsv } from '../services/reportingEngine';
 
@@ -81,10 +82,13 @@ const TransactionModal: React.FC<{
     onSaveAndTrade: (transaction: Omit<Transaction, 'id'>) => void;
     transactionToEdit: Transaction | null;
     budgetCategories: string[],
+    budgets: Budget[],
     allCategories: string[],
     accounts: Account[],
     existingTransactions: Transaction[],
-}> = ({ isOpen, onClose, onSave, onSaveAndTrade, transactionToEdit, budgetCategories, allCategories, accounts, existingTransactions }) => {
+    sarPerUsd: number;
+}> = ({ isOpen, onClose, onSave, onSaveAndTrade, transactionToEdit, budgetCategories, budgets, allCategories, accounts, existingTransactions, sarPerUsd }) => {
+    const { formatCurrencyString } = useFormatCurrency();
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
     const incomeCategoryOptions = React.useMemo(
         () => [
@@ -197,6 +201,169 @@ const TransactionModal: React.FC<{
         setAiSuggestionNote(null);
     }, [transactionToEdit, isOpen, budgetCategories, allCategories, accounts, incomeCategoryOptions, getLearnedDefault]);
 
+    const selectedAccountCurrency = useMemo<'SAR' | 'USD'>(() => {
+        const acc = accounts.find((a) => a.id === accountId);
+        return acc?.currency === 'USD' ? 'USD' : 'SAR';
+    }, [accounts, accountId]);
+
+    const currentBudgetRows = useMemo(() => {
+        const parsedDate = new Date(date || new Date().toISOString().slice(0, 10));
+        const month = parsedDate.getMonth() + 1;
+        const year = parsedDate.getFullYear();
+        return budgets.filter((b) => b.month === month && b.year === year);
+    }, [budgets, date]);
+
+    const remainingByCategory = useMemo(() => {
+        const map = new Map<string, number>();
+        currentBudgetRows.forEach((b) => map.set(b.category, Number(b.limit) || 0));
+        existingTransactions
+            .filter((t) => countsAsExpenseForCashflowKpi(t) && (t.status ?? 'Approved') === 'Approved')
+            .forEach((t) => {
+                const acc = accounts.find((a) => a.id === t.accountId);
+                const txCur = acc?.currency === 'USD' ? 'USD' : 'SAR';
+                const allocations = getTransactionBudgetAllocations(t);
+                allocations.forEach((allocation) => {
+                    const usedInSar = toSAR(Math.abs(Number(allocation.amount) || 0), txCur, sarPerUsd);
+                    const current = map.get(allocation.category);
+                    if (current == null) return;
+                    map.set(allocation.category, current - usedInSar);
+                });
+            });
+        return map;
+    }, [accounts, currentBudgetRows, existingTransactions, sarPerUsd]);
+
+    const inputAmountSar = useMemo(() => {
+        const abs = Math.abs(Number(amount) || 0);
+        return toSAR(abs, selectedAccountCurrency, sarPerUsd);
+    }, [amount, selectedAccountCurrency, sarPerUsd]);
+
+    const splitCoverage = useMemo(() => {
+        if (type !== 'expense') return [];
+        const parsedLines = splitRows
+            .map((row) => {
+                const raw = Math.abs(Number(row.amount) || 0);
+                const amountSar = toSAR(raw, selectedAccountCurrency, sarPerUsd);
+                return {
+                    category: String(row.category || '').trim(),
+                    amountSar,
+                };
+            })
+            .filter((row) => row.category && row.amountSar > 0);
+        if (parsedLines.length === 0) {
+            const cat = String(budgetCategory || '').trim();
+            return cat
+                ? [{
+                    category: cat,
+                    amountSar: inputAmountSar,
+                    remainingSar: remainingByCategory.get(cat) ?? 0,
+                    shortfallSar: Math.max(0, inputAmountSar - (remainingByCategory.get(cat) ?? 0)),
+                }]
+                : [];
+        }
+        return parsedLines.map((line) => {
+            const remainingSar = remainingByCategory.get(line.category) ?? 0;
+            return {
+                category: line.category,
+                amountSar: line.amountSar,
+                remainingSar,
+                shortfallSar: Math.max(0, line.amountSar - remainingSar),
+            };
+        });
+    }, [type, splitRows, selectedAccountCurrency, sarPerUsd, budgetCategory, inputAmountSar, remainingByCategory]);
+
+    const splitCoverageRows = useMemo(
+        () =>
+            splitRows.map((row, index) => {
+                const category = String(row.category || '').trim();
+                const entry = currentBudgetRows.find((b) => b.category === category);
+                const remainingSar = remainingByCategory.get(category) ?? 0;
+                const rawAmount = Math.abs(Number(row.amount) || 0);
+                const amountSar = toSAR(rawAmount, selectedAccountCurrency, sarPerUsd);
+                const shortfall = Math.max(0, amountSar - remainingSar);
+                return {
+                    index,
+                    category,
+                    entry,
+                    amountSar,
+                    remainingSar,
+                    shortfall,
+                    remainingLabel: formatCurrencyString(Math.max(0, remainingSar), { inCurrency: 'SAR' }),
+                    shortfallLabel: formatCurrencyString(shortfall, { inCurrency: 'SAR' }),
+                };
+            }),
+        [splitRows, currentBudgetRows, remainingByCategory, selectedAccountCurrency, sarPerUsd, formatCurrencyString],
+    );
+
+    const budgetCoverageSummary = useMemo(() => {
+        if (type !== 'expense') return null;
+        const cat = String(budgetCategory || '').trim();
+        if (!cat) return null;
+        const entry = currentBudgetRows.find((b) => b.category === cat);
+        const limitSar = entry ? Number(entry.limit) || 0 : 0;
+        const remainingSar = remainingByCategory.get(cat) ?? limitSar;
+        const spentSar = Math.max(0, limitSar - remainingSar);
+        const shortfallSar = Math.max(0, inputAmountSar - remainingSar);
+        return {
+            category: cat,
+            limitSar,
+            spentSar,
+            remainingSar,
+            shortfallSar,
+            limitLabel: formatCurrencyString(limitSar, { inCurrency: 'SAR' }),
+            spentLabel: formatCurrencyString(spentSar, { inCurrency: 'SAR' }),
+            remainingLabel: formatCurrencyString(Math.max(0, remainingSar), { inCurrency: 'SAR' }),
+            shortfallLabel: formatCurrencyString(shortfallSar, { inCurrency: 'SAR' }),
+        };
+    }, [type, budgetCategory, currentBudgetRows, remainingByCategory, inputAmountSar, formatCurrencyString]);
+    const selectedBudgetOverview = budgetCoverageSummary
+        ? {
+            category: budgetCoverageSummary.category,
+            remainingSar: budgetCoverageSummary.remainingSar,
+        }
+        : null;
+    const budgetCoverageState = useMemo(() => {
+        if (type !== 'expense') {
+            return { ok: true, summary: 'Income transactions do not consume budget limits.', shortfalls: [] as typeof splitCoverage };
+        }
+        if (!String(amount || '').trim()) {
+            return { ok: true, summary: 'Enter amount to validate budget coverage.', shortfalls: [] as typeof splitCoverage };
+        }
+        if (!budgetCategory) {
+            return { ok: false, summary: 'Select a budget category to validate limits.', shortfalls: [] as typeof splitCoverage };
+        }
+        const shortfalls = splitCoverage.filter((line) => line.shortfallSar > 0);
+        const ok = shortfalls.length === 0;
+        if (useSplitExpense) {
+            return {
+                ok,
+                summary: ok
+                    ? 'Split allocation is fully covered by selected budget limits.'
+                    : 'Some split lines exceed remaining budget. Adjust split amounts or categories.',
+                shortfalls,
+            };
+        }
+        return {
+            ok,
+            summary: ok
+                ? 'Selected budget can cover this transaction.'
+                : 'Selected budget cannot fully cover this transaction. Enable split allocation to continue.',
+            shortfalls,
+        };
+    }, [type, amount, budgetCategory, splitCoverage, useSplitExpense]);
+    const splitCoverageError = useMemo(() => {
+        if (!useSplitExpense) return '';
+        const missing = splitRows.some((row) => String(row.category || '').trim() === '');
+        if (missing) return 'Each split line needs a budget category.';
+        const invalid = splitRows.some((row) => String(row.amount || '').trim() !== '' && !(Number(row.amount) > 0));
+        if (invalid) return 'Each split line amount must be a positive number.';
+        return '';
+    }, [splitRows, useSplitExpense]);
+    const budgetShortfallSar = useMemo(
+        () => splitCoverage.reduce((sum, line) => sum + line.shortfallSar, 0),
+        [splitCoverage],
+    );
+    const canSubmitWithCurrentBudgetCoverage = budgetShortfallSar <= 0.0001;
+
     const buildTransactionData = (): Omit<Transaction, 'id'> | null => {
         const absAmt = Math.abs(parseFloat(amount));
         let noteOut: string | undefined = userNote.trim() || undefined;
@@ -280,6 +447,24 @@ const TransactionModal: React.FC<{
                 `• Same account, similar amount & description within ${dupOpts.dateToleranceDays} days.\n\n` +
                 `Save anyway?`;
             if (!window.confirm(msg)) return;
+        }
+        if (type === 'expense' && !useSplitExpense && budgetCoverageSummary?.shortfallSar && budgetCoverageSummary.shortfallSar > 0.0001) {
+            window.alert(
+                `Selected budget cannot cover this amount.\nShortfall: ${budgetCoverageSummary.shortfallLabel}.\n\nUse split allocation across multiple budgets or reduce the amount.`,
+            );
+            return;
+        }
+        if (type === 'expense' && useSplitExpense) {
+            if (splitCoverageError) {
+                window.alert(splitCoverageError);
+                return;
+            }
+            if (!canSubmitWithCurrentBudgetCoverage) {
+                window.alert(
+                    `Split allocation exceeds remaining budget limits by ${formatCurrencyString(budgetShortfallSar, { inCurrency: 'SAR' })}.`,
+                );
+                return;
+            }
         }
 
         try {
@@ -450,7 +635,7 @@ const TransactionModal: React.FC<{
                                 <input type="text" id="subcategory" value={subcategory} onChange={e => setSubcategory(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" />
                             </div>
                         </div>
-                        <div>
+                        <div className="space-y-2">
                             <label htmlFor="budget-category" className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Map to Budget <InfoHint text="Links this expense to a budget category so spending is tracked against limits." /></label>
                             <select
                                 id="budget-category"
@@ -468,7 +653,52 @@ const TransactionModal: React.FC<{
                                     </option>
                                 ))}
                             </select>
+                            {!useSplitExpense && budgetCoverageSummary && (
+                                <div
+                                    className={`rounded-md border p-2 text-xs ${
+                                        budgetCoverageSummary.shortfallSar > 0
+                                            ? 'border-amber-300 bg-amber-50 text-amber-900'
+                                            : 'border-emerald-300 bg-emerald-50 text-emerald-900'
+                                    }`}
+                                >
+                                    <div className="font-semibold">
+                                        Budget limit {budgetCoverageSummary.shortfallSar > 0 ? 'insufficient' : 'ok'} for this amount
+                                    </div>
+                                    <div>
+                                        Limit {budgetCoverageSummary.limitLabel} • Spent {budgetCoverageSummary.spentLabel} • Remaining {budgetCoverageSummary.remainingLabel}
+                                    </div>
+                                    {budgetCoverageSummary.shortfallSar > 0 && (
+                                        <div className="mt-1">
+                                            Short by {budgetCoverageSummary.shortfallLabel}. Enable split to allocate across multiple budgets.
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
+                        {type === 'expense' && (
+                            <div className={`rounded-lg border p-3 text-sm ${budgetCoverageState.ok ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <p className="font-medium">Budget limit check</p>
+                                    {selectedBudgetOverview && (
+                                        <p className="text-xs">
+                                            {selectedBudgetOverview.category}: {formatCurrencyString(Math.max(0, selectedBudgetOverview.remainingSar), { inCurrency: 'SAR' })} remaining
+                                        </p>
+                                    )}
+                                </div>
+                                <p className="mt-1">
+                                    {budgetCoverageState.summary}
+                                </p>
+                                {budgetCoverageState.shortfalls.length > 0 && (
+                                    <ul className="mt-2 list-disc list-inside text-xs space-y-1">
+                                        {budgetCoverageState.shortfalls.map((row, idx) => (
+                                            <li key={`${row.category}-${idx}`}>
+                                                {row.category}: short by {formatCurrencyString(row.shortfallSar, { inCurrency: 'SAR' })}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+                        )}
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Nature <InfoHint text="Fixed: recurring (rent). Variable: changes each month (groceries)." /></label>
@@ -493,13 +723,18 @@ const TransactionModal: React.FC<{
                                     onChange={(e) => setUseSplitExpense(e.target.checked)}
                                     className="rounded border-slate-300"
                                 />
-                                Split across budget categories (stored in memo)
+                                Split across budget categories
                             </label>
                             {useSplitExpense && (
                                 <>
                                     <p className="text-xs text-slate-500">
-                                        Line amounts must sum to the expense total. Shown in reports via memo; primary category above still applies for this row.
+                                        Line amounts must sum to the expense total and each line validates against remaining budget.
                                     </p>
+                                    {splitCoverageError && (
+                                        <p className="text-xs text-rose-700 font-medium">
+                                            {splitCoverageError}
+                                        </p>
+                                    )}
                                     {splitRows.map((row, i) => (
                                         <div key={i} className="flex gap-2 flex-wrap items-end">
                                             <select
@@ -530,6 +765,19 @@ const TransactionModal: React.FC<{
                                                 }}
                                                 className="w-28 p-2 border rounded-md text-sm"
                                             />
+                                            <div className="min-w-[220px] text-[11px] text-slate-600">
+                                                {(() => {
+                                                    const cover = splitCoverageRows.find((x) => x.index === i);
+                                                    if (!cover || !cover.category) return 'Select budget + amount';
+                                                    if (!cover.entry) return 'Budget category not found for current month';
+                                                    if (!(cover.amountSar > 0)) {
+                                                        return `Remaining ${cover.remainingLabel}`;
+                                                    }
+                                                    return cover.shortfall > 0
+                                                        ? `Remaining ${cover.remainingLabel} • short ${cover.shortfallLabel}`
+                                                        : `Remaining ${cover.remainingLabel} • covers line`;
+                                                })()}
+                                            </div>
                                             {splitRows.length > 2 && (
                                                 <button
                                                     type="button"
@@ -549,6 +797,28 @@ const TransactionModal: React.FC<{
                                         + Add split line
                                     </button>
                                 </>
+                            )}
+                            {!useSplitExpense && budgetCoverageSummary?.shortfallSar && budgetCoverageSummary.shortfallSar > 0.0001 && (
+                                <button
+                                    type="button"
+                                    className="text-sm text-primary font-medium"
+                                    onClick={() => {
+                                        const firstCat = String(budgetCategory || '').trim() || (budgetCategories[0] || '');
+                                        const firstRemainingSar = Math.max(0, remainingByCategory.get(firstCat) ?? 0);
+                                        const firstAmountInAccountCur = selectedAccountCurrency === 'SAR'
+                                            ? firstRemainingSar
+                                            : fromSAR(firstRemainingSar, selectedAccountCurrency, sarPerUsd);
+                                        const secondAmount = Math.max(0, Math.abs(Number(amount) || 0) - firstAmountInAccountCur);
+                                        const fallbackSecond = budgetCategories.find((c) => c !== firstCat) || firstCat;
+                                        setUseSplitExpense(true);
+                                        setSplitRows([
+                                            { category: firstCat, amount: firstAmountInAccountCur > 0 ? firstAmountInAccountCur.toFixed(2) : '' },
+                                            { category: fallbackSecond, amount: secondAmount > 0 ? secondAmount.toFixed(2) : '' },
+                                        ]);
+                                    }}
+                                >
+                                    Auto-split by remaining budget
+                                </button>
                             )}
                         </div>
                     </div>
@@ -1697,9 +1967,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 onSaveAndTrade={handleSaveAndTrade}
                 transactionToEdit={transactionToEdit} 
                 budgetCategories={budgetCategories}
+                budgets={data?.budgets ?? []}
                 allCategories={allCategories}
                 accounts={availableAccounts}
                 existingTransactions={(data as any)?.personalTransactions ?? data?.transactions ?? []}
+                sarPerUsd={resolveSarPerUsd(data, exchangeRate)}
             />
              <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.description || ''} />
             <RecurringModal
