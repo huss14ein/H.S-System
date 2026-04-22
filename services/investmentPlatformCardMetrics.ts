@@ -413,7 +413,7 @@ export function computePersonalPlatformCardRow(
 
 export function computePersonalCommoditiesContributionSAR(
   data: FinancialData,
-  sarPerUsd: number,
+  _sarPerUsd: number,
   simulatedPrices: SimulatedPriceMap,
 ): { valueSAR: number; dailyDeltaSAR: number } {
   const commodities = getPersonalCommodityHoldings(data);
@@ -422,12 +422,16 @@ export function computePersonalCommoditiesContributionSAR(
   for (const ch of commodities) {
     const sym = (ch.symbol || '').trim().toUpperCase();
     const px = simulatedPrices[sym];
-    const raw =
+    /**
+     * Commodity prices/current values are stored in SAR in Finova (save flow + market refresh).
+     * Do not apply USD→SAR conversion again here, otherwise values are overstated by FX.
+     */
+    const rawSar =
       px && Number.isFinite(px.price) ? px.price * (ch.quantity ?? 0) : (ch.currentValue ?? 0);
-    valueSAR += toSAR(raw, 'USD', sarPerUsd);
+    valueSAR += Number.isFinite(rawSar) ? rawSar : 0;
     const chg =
       px && px.change != null && Number.isFinite(px.change) ? px.change * (ch.quantity ?? 0) : 0;
-    dailyDeltaSAR += toSAR(chg, 'USD', sarPerUsd);
+    dailyDeltaSAR += Number.isFinite(chg) ? chg : 0;
   }
   return { valueSAR, dailyDeltaSAR };
 }
