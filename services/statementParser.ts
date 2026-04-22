@@ -567,6 +567,9 @@ function extractSmsAmount(block: string): number {
   const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
   const parseNum = (raw: string | undefined) => Number((raw ?? '0').replace(/,/g, ''));
   const compact = String(block || '').replace(/\s+/g, ' ').trim();
+  const isBalanceOnlyLine = (line: string) =>
+    /(?:\bbalance\b|\bbal\b|رصيد)/i.test(line) &&
+    !/(amount|مبلغ|debited|credited|withdrawn|received|purchase|payment|paid|spent|transfer|شراء|سحب|خصم|دفع|عملية|نقاط البيع|ايداع|إيداع|deposit)/i.test(line);
 
   /**
    * KSA SMS: "SR" (not SAR) and "بـSR" on one line, e.g. `شراء إنترنت بـSR 57.5`.
@@ -608,10 +611,12 @@ function extractSmsAmount(block: string): number {
   }
 
   const nonBalance = lines.filter((line) => {
+    if (isBalanceOnlyLine(line)) return false;
     if (/(?:^|\s)(?:balance|رصيد)\s*:/i.test(line) && !/(amount|مبلغ|شراء|purchase)/i.test(line)) return false;
     return true;
   });
   for (const line of nonBalance) {
+    if (isBalanceOnlyLine(line)) continue;
     if (/(?:^|\s)(?:balance|رصيد)\s*:/i.test(line) && !/(amount|مبلغ|شراء)/i.test(line)) continue;
     // Purchase / operation line: take that amount first (avoids matching a later "رصيد" on the same line).
     let purchaseLine =
@@ -630,9 +635,19 @@ function extractSmsAmount(block: string): number {
     if (m) return parseNum(m[1]);
   }
 
-  const anyMatch = block.match(moneyAfterCurrency)
-    ?? block.match(moneyBeforeCurrency)
-    ?? block.match(kdPattern);
+  const hasTransactionSignal = /(amount|مبلغ|debited|credited|withdrawn|received|purchase|payment|paid|spent|transfer|شراء|سحب|خصم|دفع|عملية|نقاط البيع|ايداع|إيداع|deposit)/i.test(compact);
+  if (!hasTransactionSignal && /(?:\bbalance\b|\bbal\b|رصيد)/i.test(compact)) {
+    return 0;
+  }
+  const nonBalanceText = nonBalance.join('\n');
+  const anyMatch = nonBalanceText.match(moneyAfterCurrency)
+    ?? nonBalanceText.match(moneyBeforeCurrency)
+    ?? nonBalanceText.match(kdPattern)
+    ?? (hasTransactionSignal
+      ? (block.match(moneyAfterCurrency)
+        ?? block.match(moneyBeforeCurrency)
+        ?? block.match(kdPattern))
+      : null);
   return parseNum(anyMatch?.[1]);
 }
 

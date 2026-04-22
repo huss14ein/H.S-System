@@ -85,9 +85,19 @@ SAR 21.50
     const res = await parseSMSTransactions(sms, 'acc-nbsp');
     expect(res.transactions.length).toBeGreaterThan(0);
     const amounts = res.transactions.map((t) => Math.abs(t.amount)).sort((a, b) => b - a);
-    expect(amounts[0]).toBeCloseTo(12340, 2);
-    expect(amounts.some((x) => Math.abs(x - 150.5) < 0.01)).toBe(true);
+    expect(amounts[0]).toBeCloseTo(150.5, 2);
+    expect(amounts.every((x) => Math.abs(x - 12340) > 0.01)).toBe(true);
     expect(res.transactions.some((t) => t.date === '2026-04-08')).toBe(true);
+  });
+
+  it('never imports balance-only lines as separate expense transactions', async () => {
+    const sms =
+      'Debit alert\nBalance SAR 8,410.20\n2026-04-08\nPurchase SAR 89.90\nBalance SAR 8,320.30';
+    const res = await parseSMSTransactions(sms, 'acc-balance-only');
+    const amounts = res.transactions.map((t) => Math.abs(t.amount));
+    expect(amounts.some((a) => Math.abs(a - 89.9) < 0.01)).toBe(true);
+    expect(amounts.every((a) => Math.abs(a - 8410.2) > 0.01)).toBe(true);
+    expect(amounts.every((a) => Math.abs(a - 8320.3) > 0.01)).toBe(true);
   });
 
   it('parses dotted numeric dates (DD.MM.YYYY)', async () => {

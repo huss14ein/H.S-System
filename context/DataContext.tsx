@@ -32,6 +32,7 @@ import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/inve
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
 import { deltaForInvestmentTrade } from '../services/investmentBalanceDelta';
+import { buildTransactionPayloadVariants } from '../services/transactionPayloadVariants';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
@@ -795,78 +796,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return [withCurrency, baseRow];
     };
 
-    const transactionPayloadVariants = (transaction: Omit<Transaction, 'id' | 'user_id'> | Transaction) => {
-        const { splitLines: _sl, ...txRest } = transaction as Transaction & { splitLines?: unknown };
-        const transactionClean = txRest as typeof transaction;
-        const recId = (transactionClean as { recurringId?: string; recurring_id?: string }).recurringId ?? (transactionClean as any).recurring_id;
-        const budgetCat = (transactionClean as { budgetCategory?: string; budget_category?: string }).budgetCategory ?? (transactionClean as any).budget_category;
-        const accountId = (transactionClean as { accountId?: string; account_id?: string }).accountId ?? (transactionClean as any).account_id;
-        const transferGroupId = (transactionClean as { transferGroupId?: string; transfer_group_id?: string }).transferGroupId ?? (transactionClean as any).transfer_group_id;
-        const transferRole = (transactionClean as { transferRole?: string; transfer_role?: string }).transferRole ?? (transactionClean as any).transfer_role;
-
-        const base = {
-            date: transactionClean.date,
-            description: transactionClean.description,
-            amount: transactionClean.amount,
-            category: transactionClean.category,
-            type: transactionClean.type,
-            note: (transactionClean as { note?: string }).note,
-            status: (transactionClean as { status?: string }).status,
-            subcategory: (transactionClean as { subcategory?: string }).subcategory,
-            expenseType: (transactionClean as { expenseType?: string; expense_type?: string }).expenseType ?? (transactionClean as any).expense_type,
-            transactionNature: (transactionClean as { transactionNature?: string; transaction_nature?: string }).transactionNature ?? (transactionClean as any).transaction_nature,
-            statementId: (transactionClean as { statementId?: string; statement_id?: string }).statementId ?? (transactionClean as any).statement_id,
-        } as const;
-
-        const compact = (obj: Record<string, unknown>) => {
-            const out: Record<string, unknown> = {};
-            Object.entries(obj).forEach(([k, v]) => {
-                if (v !== undefined) out[k] = v;
-            });
-            return out;
-        };
-
-        const payloadWithCamelCase = compact({
-            date: base.date,
-            description: base.description,
-            amount: base.amount,
-            category: base.category,
-            type: base.type,
-            note: base.note,
-            status: base.status,
-            subcategory: base.subcategory,
-            expenseType: base.expenseType,
-            transactionNature: base.transactionNature,
-            statementId: base.statementId,
-            recurringId: recId,
-            budgetCategory: budgetCat,
-            accountId: accountId,
-            transferGroupId: transferGroupId,
-            transferRole: transferRole,
-        });
-
-        const payloadWithCamelCaseCore = compact({
-            date: base.date,
-            description: base.description,
-            amount: base.amount,
-            category: base.category,
-            type: base.type,
-            status: base.status,
-            accountId: accountId,
-        });
-
-        const variants: Record<string, unknown>[] = [payloadWithCamelCase];
-        const hasNote =
-            transactionClean.note != null && String(transactionClean.note).trim() !== '';
-        if (hasNote) {
-            const { note: _n1, ...camelNoNote } = { ...payloadWithCamelCase };
-            // Try full payloads without note before falling back to minimal core payloads,
-            // so legacy schemas missing only `note` keep metadata columns intact.
-            variants.push(camelNoNote);
-        }
-        variants.push(payloadWithCamelCaseCore);
-        return variants;
-    };
+    const transactionPayloadVariants = buildTransactionPayloadVariants;
 
     const fetchData = async () => {
         if (!auth?.user || !supabase) {
