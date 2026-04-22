@@ -28,6 +28,43 @@
     @apply bg-light font-sans text-dark antialiased text-[15px] leading-6;
   }
 
+  /* Mobile rhythm and alignment polish: compact spacing, predictable card/header geometry. */
+  @media (max-width: 639px) {
+    .page-container {
+      row-gap: 1rem;
+    }
+    .page-body {
+      row-gap: 1rem;
+    }
+    .section-card,
+    .section-card-hover {
+      padding: 0.875rem;
+      border-radius: 0.875rem;
+    }
+    .section-title {
+      margin-bottom: 0.75rem;
+      font-size: 0.975rem;
+      line-height: 1.35rem;
+    }
+    .cards-grid {
+      --cards-gap: 0.75rem;
+    }
+    .list-row {
+      padding: 0.75rem;
+      gap: 0.625rem;
+    }
+    .btn-primary,
+    .btn-secondary,
+    .btn-outline,
+    .btn-ghost,
+    .btn-danger {
+      min-height: 2.5rem;
+      padding-left: 0.875rem;
+      padding-right: 0.875rem;
+      font-size: 0.8125rem;
+    }
+  }
+
   /* Mobile drawer is a full-screen foreground surface; hide all inline InfoHint "!" triggers underneath it. */
   body.mobile-menu-open .infohint-trigger {
     visibility: hidden !important;

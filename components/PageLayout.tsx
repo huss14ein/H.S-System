@@ -16,7 +16,7 @@ const PageLayout: React.FC<PageLayoutProps> = ({ title, children, action, descri
           {description && <p className="mt-1 text-sm text-slate-500 break-words">{description}</p>}
         </div>
         {action && (
-          <div className="w-full lg:w-auto lg:max-w-[65%] flex flex-wrap gap-2 items-start justify-end lg:justify-start">
+          <div className="w-full lg:w-auto lg:max-w-[65%] flex flex-wrap gap-2 items-start justify-start sm:justify-end lg:justify-start">
             {action}
           </div>
         )}

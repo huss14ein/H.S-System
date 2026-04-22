@@ -42,17 +42,17 @@ const QuickActionsSidebar: React.FC<QuickActionsSidebarProps> = ({ onAction }) =
     };
 
     return (
-        <div className="fixed bottom-6 right-6 z-20">
+        <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-20">
             <div className={`flex flex-col items-center space-y-3 transition-all duration-300 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                 {actions.map((action, index) => (
                     <button
                         key={action.name}
                         onClick={() => handleActionClick(action.page, action.action, action.actionId)}
-                        className="group relative flex items-center justify-center w-14 h-14 bg-white rounded-full shadow-lg hover:bg-primary transition-colors"
+                        className="group relative flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 bg-white rounded-full shadow-lg hover:bg-primary transition-colors"
                         style={{ transitionDelay: `${index * 30}ms` }}
                     >
-                        <action.icon className="h-7 w-7 text-primary group-hover:text-white" />
-                        <span className="absolute right-full mr-3 px-2 py-1 bg-gray-800 text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                        <action.icon className="h-6 w-6 sm:h-7 sm:w-7 text-primary group-hover:text-white" />
+                        <span className="absolute right-full mr-3 hidden sm:inline-block px-2 py-1 bg-gray-800 text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
                             {action.name}
                         </span>
                     </button>
@@ -60,10 +60,10 @@ const QuickActionsSidebar: React.FC<QuickActionsSidebarProps> = ({ onAction }) =
             </div>
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className="w-16 h-16 bg-primary text-white rounded-full shadow-lg flex items-center justify-center mt-4 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 hover:bg-secondary transition-transform duration-300 ease-in-out"
+                className="w-14 h-14 sm:w-16 sm:h-16 bg-primary text-white rounded-full shadow-lg flex items-center justify-center mt-3 sm:mt-4 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 hover:bg-secondary transition-transform duration-300 ease-in-out"
                 style={{ transform: isOpen ? 'rotate(45deg)' : 'rotate(0)' }}
             >
-                <PlusIcon className="h-8 w-8" />
+                <PlusIcon className="h-7 w-7 sm:h-8 sm:w-8" />
             </button>
         </div>
     );
