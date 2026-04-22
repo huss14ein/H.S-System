@@ -115,7 +115,17 @@ export function goalMonthlyInvestmentPlanContributionSar(
   });
   if (linkedPortfolioIds.size === 0) return 0;
 
-  const plan = (data as { investmentPlan?: Record<string, unknown> }).investmentPlan as Record<string, unknown> | undefined;
+  type GoalPlanSlice = {
+    monthlyBudget?: number;
+    monthly_budget?: number;
+    budgetCurrency?: 'USD' | 'SAR';
+    budget_currency?: 'USD' | 'SAR';
+  };
+  type GoalPlanLike = GoalPlanSlice & {
+    plansByPortfolioId?: Record<string, GoalPlanSlice>;
+    plans_by_portfolio_id?: Record<string, GoalPlanSlice>;
+  };
+  const plan = (data.investmentPlan as unknown as GoalPlanLike | undefined) ?? undefined;
   if (!plan) return 0;
   const planCurrency = ((plan.budgetCurrency ?? plan.budget_currency ?? 'SAR') as 'USD' | 'SAR') ?? 'SAR';
 
