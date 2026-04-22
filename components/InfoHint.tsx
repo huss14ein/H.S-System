@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { INFOHINT_CLOSE_OTHERS } from './infoHintEvents';
 import { InformationCircleIcon } from './icons/InformationCircleIcon';
+import { computeInfoHintPanelStyle } from '../utils/infoHintLayout';
 
 interface InfoHintProps {
   text: string;
@@ -15,9 +16,6 @@ interface InfoHintProps {
   hintPage?: string;
 }
 
-/** Wide enough for full sentences; avoid clipping long registry hints. */
-const PANEL_W = 320;
-const GAP = 8;
 /** Delay so the pointer can move from the trigger to the portaled panel without closing. */
 const HOVER_CLOSE_MS = 400;
 /** Avoid opening on accidental pointer sweep (scroll / fast moves across many (!) buttons). */
@@ -101,30 +99,14 @@ const InfoHint: React.FC<InfoHintProps> = ({ text, placement = 'auto', popoverAl
   const positionPanel = useCallback(() => {
     const el = triggerRef.current;
     if (!el) return;
-    const r = el.getBoundingClientRect();
-    const panelW = Math.min(PANEL_W, window.innerWidth - 16);
-    let left = popoverAlign === 'right' ? r.right - panelW : r.left;
-    left = Math.max(GAP, Math.min(left, window.innerWidth - panelW - GAP));
-
-    const showBelow = placement !== 'top';
-    if (showBelow) {
-      setPanelStyle({
-        position: 'fixed',
-        top: r.bottom + GAP,
-        left,
-        width: panelW,
-        maxHeight: 'min(36rem, 82vh)',
-      });
-    } else {
-      setPanelStyle({
-        position: 'fixed',
-        left,
-        width: panelW,
-        maxHeight: 'min(36rem, 82vh)',
-        top: r.top - GAP,
-        transform: 'translateY(-100%)',
-      });
-    }
+    const next = computeInfoHintPanelStyle({
+      triggerRect: el.getBoundingClientRect(),
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      placement,
+      popoverAlign,
+    });
+    setPanelStyle(next);
   }, [placement, popoverAlign]);
 
   useLayoutEffect(() => {
