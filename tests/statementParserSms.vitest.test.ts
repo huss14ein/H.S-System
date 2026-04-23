@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../services/geminiService', () => ({
   invokeAI: vi.fn(async () => ({ text: '[]' })),
@@ -6,6 +6,12 @@ vi.mock('../services/geminiService', () => ({
 
 import { parseSMSTransactions } from '../services/statementParser';
 import { invokeAI } from '../services/geminiService';
+
+beforeEach(() => {
+  // Ensure every test starts from the same AI mock behavior.
+  vi.mocked(invokeAI).mockReset();
+  vi.mocked(invokeAI).mockResolvedValue({ text: '[]' } as any);
+});
 
 afterEach(() => {
   vi.useRealTimers();
@@ -109,6 +115,7 @@ SAR 21.50
   });
 
   it('still extracts SMS when AI extraction fails (pattern/heuristic only)', async () => {
+    vi.mocked(invokeAI).mockReset();
     vi.mocked(invokeAI).mockRejectedValueOnce(new Error('network'));
     const sms = `Debit alert\nSAR 75.25 debited\n2026-01-15`;
     const res = await parseSMSTransactions(sms, 'acc-ai-fail');
