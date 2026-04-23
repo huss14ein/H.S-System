@@ -72,6 +72,8 @@ import { getPersonalTransactions } from '../utils/wealthScope';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import AIAdvisor from '../components/AIAdvisor';
+import { dedupeSharedBudgetRows, makeSharedOwnerCategoryKey, normalizeSharedCategoryKey, normalizeSharedOwnerKey } from '../services/sharedBudgetKeys';
+import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
 
 
 
@@ -792,8 +794,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     year: Number(b.year) || currentYear,
                     tier: b.tier ?? b.budget_tier ?? 'Optional',
                     ownerEmail: b.owner_email || b.owner_user_id || b.user_id,
+                    owner_user_id: b.owner_user_id || b.user_id,
                 }));
-                setSharedBudgets(filtered);
+                setSharedBudgets(dedupeSharedBudgetRows(filtered));
             }
 
 
@@ -827,10 +830,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             }
             const consumedMap = new Map<string, number>();
             ((consumedRows || []) as any[]).forEach((row: any) => {
-                const ownerKey = String(row.owner_user_id || 'owner');
-                const category = String(row.category || '').trim();
+                const ownerKey = normalizeSharedOwnerKey(row.owner_user_id || 'owner');
+                const category = normalizeSharedCategoryKey(row.category || '');
                 if (!category) return;
-                consumedMap.set(`${ownerKey}::${category}`, Number(row.consumed_amount) || 0);
+                consumedMap.set(makeSharedOwnerCategoryKey(ownerKey, category), Number(row.consumed_amount) || 0);
             });
             setSharedConsumedByOwnerCategory(consumedMap);
             setSharedConsumedSyncedAt(Date.now());
@@ -935,16 +938,19 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         }
 
         ((data as any)?.personalTransactions ?? data?.transactions ?? [])
-            .filter((t: { type?: string; status?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && (t.status ?? 'Approved') === 'Approved' && !!t.budgetCategory)
-            .forEach((t: { date: string; amount?: number; budgetCategory?: string }) => {
+            .filter((t: { type?: string; status?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && (t.status ?? 'Approved') === 'Approved')
+            .forEach((t: { date: string; amount?: number; budgetCategory?: string; category?: string; splitLines?: { category: string; amount: number }[] }) => {
                 const txDate = new Date(t.date);
-                const amount = txAmountSar(t);
-                if (txDate >= rangeStart && txDate <= rangeEnd) {
-                    spending.set(t.budgetCategory!, (spending.get(t.budgetCategory!) || 0) + amount);
-                }
-                if (txDate >= previousRangeStart && txDate <= previousRangeEnd) {
-                    previousSpending.set(t.budgetCategory!, (previousSpending.get(t.budgetCategory!) || 0) + amount);
-                }
+                const allocations = getTransactionBudgetAllocations(t as any);
+                allocations.forEach((allocation) => {
+                    const amount = txAmountSar({ ...t, amount: allocation.amount });
+                    if (txDate >= rangeStart && txDate <= rangeEnd) {
+                        spending.set(allocation.category, (spending.get(allocation.category) || 0) + amount);
+                    }
+                    if (txDate >= previousRangeStart && txDate <= previousRangeEnd) {
+                        previousSpending.set(allocation.category, (previousSpending.get(allocation.category) || 0) + amount);
+                    }
+                });
             });
 
         // Reflect collaborator spending into owner budget totals for shared categories.
@@ -1051,13 +1057,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const rangeStart = new Date(yr, mo - 1, 1);
         const rangeEnd = new Date(yr, mo, 0, 23, 59, 59, 999);
         const spending = new Map<string, number>();
-        ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach((tx: { date: string; amount?: number; budgetCategory?: string; type?: string; category?: string }) => {
+        ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach((tx: { date: string; amount?: number; budgetCategory?: string; type?: string; category?: string; splitLines?: { category: string; amount: number }[] }) => {
             if (!countsAsExpenseForCashflowKpi(tx)) return;
             const d = new Date(tx.date);
             if (!(d >= rangeStart && d <= rangeEnd)) return;
-            const cat = String((tx as { budget_category?: string }).budget_category || tx.budgetCategory || '').trim();
-            if (!cat) return;
-            spending.set(cat, (spending.get(cat) || 0) + txAmountSar(tx));
+            const allocations = getTransactionBudgetAllocations(tx as any);
+            allocations.forEach((allocation) => {
+                spending.set(allocation.category, (spending.get(allocation.category) || 0) + txAmountSar({ ...tx, amount: allocation.amount }));
+            });
         });
         ownerSharedTransactions
             .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
@@ -1271,11 +1278,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             .forEach((tx) => {
                 const d = new Date(tx.transaction_date || tx.date);
                 if (!(d >= rangeStart && d <= rangeEnd)) return;
-                const category = String(tx.budget_category || '').trim();
+                const category = normalizeSharedCategoryKey(tx.budget_category || '');
                 if (!category) return;
                 const amount = txAmountSar(tx);
-                const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || 'owner');
-                spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
+                const ownerKey = normalizeSharedOwnerKey(tx.owner_user_id || tx.owner_id || tx.user_id || 'owner');
+                const key = makeSharedOwnerCategoryKey(ownerKey, category);
+                spendingByOwnerCategory.set(key, (spendingByOwnerCategory.get(key) || 0) + amount);
             });
 
         ownerSharedTransactions
@@ -1283,11 +1291,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             .forEach((tx) => {
                 const d = new Date(tx.transaction_date || tx.date);
                 if (!(d >= rangeStart && d <= rangeEnd)) return;
-                const category = String(tx.budget_category || '').trim();
+                const category = normalizeSharedCategoryKey(tx.budget_category || '');
                 if (!category) return;
                 const amount = txAmountSar(tx);
-                const ownerKey = String(tx.owner_user_id || tx.owner_id || tx.user_id || auth?.user?.id || 'owner');
-                spendingByOwnerCategory.set(`${ownerKey}::${category}`, (spendingByOwnerCategory.get(`${ownerKey}::${category}`) || 0) + amount);
+                const ownerKey = normalizeSharedOwnerKey(tx.owner_user_id || tx.owner_id || tx.user_id || auth?.user?.id || 'owner');
+                const key = makeSharedOwnerCategoryKey(ownerKey, category);
+                spendingByOwnerCategory.set(key, (spendingByOwnerCategory.get(key) || 0) + amount);
             });
 
         const rowsForYear = (sharedBudgets ?? [])
@@ -1298,8 +1307,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         if (budgetView === 'Yearly') {
             const yearlyByOwnerCategory = new Map<string, Budget & { ownerEmail?: string; ownerKey: string; yearlyLimit: number }>();
             rowsForYear.forEach((b) => {
-                const ownerKey = String((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
-                const key = `${ownerKey}::${b.category}`;
+                const ownerKey = normalizeSharedOwnerKey((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
+                const key = makeSharedOwnerCategoryKey(ownerKey, b.category);
                 const existing = yearlyByOwnerCategory.get(key);
                 const yearlyLimit = (existing?.yearlyLimit || 0) + toYearly(b);
                 yearlyByOwnerCategory.set(key, {
@@ -1313,7 +1322,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
             return Array.from(yearlyByOwnerCategory.values())
                 .map((entry) => {
-                    const ownerCategoryKey = `${entry.ownerKey}::${entry.category}`;
+                    const ownerCategoryKey = makeSharedOwnerCategoryKey(entry.ownerKey, entry.category);
                     const spent = sharedConsumedByOwnerCategory.get(ownerCategoryKey) || spendingByOwnerCategory.get(ownerCategoryKey) || 0;
                     const percentage = entry.yearlyLimit > 0 ? (spent / entry.yearlyLimit) * 100 : 0;
                     const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
@@ -1349,8 +1358,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             })
             .map((b) => {
                 const monthlyEquivalent = b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
-                const ownerKey = String((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
-                const spent = sharedConsumedByOwnerCategory.get(`${ownerKey}::${b.category}`) || spendingByOwnerCategory.get(`${ownerKey}::${b.category}`) || 0;
+                const ownerKey = normalizeSharedOwnerKey((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
+                const ownerCategoryKey = makeSharedOwnerCategoryKey(ownerKey, b.category);
+                const spent = sharedConsumedByOwnerCategory.get(ownerCategoryKey) || spendingByOwnerCategory.get(ownerCategoryKey) || 0;
                 const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
                 const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
                 let colorClass = 'bg-primary';
@@ -1524,7 +1534,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
     const handleSmartFillBudgets = () => {
         if (!isAdmin) return;
-        const allTx = ((data as any)?.personalTransactions ?? data?.transactions ?? []).filter((t: { type?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && !!t.budgetCategory);
+        const allTx = ((data as any)?.personalTransactions ?? data?.transactions ?? []).filter((t: { type?: string; budgetCategory?: string; category?: string; splitLines?: { category: string; amount: number }[] }) => countsAsExpenseForCashflowKpi(t));
         if (allTx.length === 0) {
             alert('No expense history with budget categories found to smart-fill from.');
             return;
@@ -1534,15 +1544,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 
         const byCategory = new Map<string, { total: number; months: Set<string> }>();
-        allTx.forEach((t: { date: string; budgetCategory?: string; amount?: number }) => {
+        allTx.forEach((t: { date: string; budgetCategory?: string; amount?: number; splitLines?: { category: string; amount: number }[] }) => {
             const d = new Date(t.date);
             if (d < threeMonthsAgo || d > now) return;
-            const cat = t.budgetCategory!;
             const key = `${d.getFullYear()}-${d.getMonth()}`;
-            const entry = byCategory.get(cat) || { total: 0, months: new Set<string>() };
-            entry.total += Math.abs(t.amount ?? 0);
-            entry.months.add(key);
-            byCategory.set(cat, entry);
+            const allocations = getTransactionBudgetAllocations(t as any);
+            allocations.forEach((allocation) => {
+                const entry = byCategory.get(allocation.category) || { total: 0, months: new Set<string>() };
+                entry.total += Math.abs(allocation.amount ?? 0);
+                entry.months.add(key);
+                byCategory.set(allocation.category, entry);
+            });
         });
 
         const suggestions: { category: string; monthly: number }[] = [];

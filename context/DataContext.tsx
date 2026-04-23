@@ -32,6 +32,7 @@ import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/inve
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
 import { deltaForInvestmentTrade } from '../services/investmentBalanceDelta';
+import { buildTransactionPayloadVariants } from '../services/transactionPayloadVariants';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
@@ -795,78 +796,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return [withCurrency, baseRow];
     };
 
-    const transactionPayloadVariants = (transaction: Omit<Transaction, 'id' | 'user_id'> | Transaction) => {
-        const { splitLines: _sl, ...txRest } = transaction as Transaction & { splitLines?: unknown };
-        const transactionClean = txRest as typeof transaction;
-        const recId = (transactionClean as { recurringId?: string; recurring_id?: string }).recurringId ?? (transactionClean as any).recurring_id;
-        const budgetCat = (transactionClean as { budgetCategory?: string; budget_category?: string }).budgetCategory ?? (transactionClean as any).budget_category;
-        const accountId = (transactionClean as { accountId?: string; account_id?: string }).accountId ?? (transactionClean as any).account_id;
-        const transferGroupId = (transactionClean as { transferGroupId?: string; transfer_group_id?: string }).transferGroupId ?? (transactionClean as any).transfer_group_id;
-        const transferRole = (transactionClean as { transferRole?: string; transfer_role?: string }).transferRole ?? (transactionClean as any).transfer_role;
-
-        const base = {
-            date: transactionClean.date,
-            description: transactionClean.description,
-            amount: transactionClean.amount,
-            category: transactionClean.category,
-            type: transactionClean.type,
-            note: (transactionClean as { note?: string }).note,
-            status: (transactionClean as { status?: string }).status,
-            subcategory: (transactionClean as { subcategory?: string }).subcategory,
-            expenseType: (transactionClean as { expenseType?: string; expense_type?: string }).expenseType ?? (transactionClean as any).expense_type,
-            transactionNature: (transactionClean as { transactionNature?: string; transaction_nature?: string }).transactionNature ?? (transactionClean as any).transaction_nature,
-            statementId: (transactionClean as { statementId?: string; statement_id?: string }).statementId ?? (transactionClean as any).statement_id,
-        } as const;
-
-        const compact = (obj: Record<string, unknown>) => {
-            const out: Record<string, unknown> = {};
-            Object.entries(obj).forEach(([k, v]) => {
-                if (v !== undefined) out[k] = v;
-            });
-            return out;
-        };
-
-        const payloadWithCamelCase = compact({
-            date: base.date,
-            description: base.description,
-            amount: base.amount,
-            category: base.category,
-            type: base.type,
-            note: base.note,
-            status: base.status,
-            subcategory: base.subcategory,
-            expenseType: base.expenseType,
-            transactionNature: base.transactionNature,
-            statementId: base.statementId,
-            recurringId: recId,
-            budgetCategory: budgetCat,
-            accountId: accountId,
-            transferGroupId: transferGroupId,
-            transferRole: transferRole,
-        });
-
-        const payloadWithCamelCaseCore = compact({
-            date: base.date,
-            description: base.description,
-            amount: base.amount,
-            category: base.category,
-            type: base.type,
-            status: base.status,
-            accountId: accountId,
-        });
-
-        const variants: Record<string, unknown>[] = [payloadWithCamelCase];
-        const hasNote =
-            transactionClean.note != null && String(transactionClean.note).trim() !== '';
-        if (hasNote) {
-            const { note: _n1, ...camelNoNote } = { ...payloadWithCamelCase };
-            // Try full payloads without note before falling back to minimal core payloads,
-            // so legacy schemas missing only `note` keep metadata columns intact.
-            variants.push(camelNoNote);
-        }
-        variants.push(payloadWithCamelCaseCore);
-        return variants;
-    };
+    const transactionPayloadVariants = buildTransactionPayloadVariants;
 
     const fetchData = async () => {
         if (!auth?.user || !supabase) {
@@ -1507,13 +1437,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         status?: 'Pending' | 'Approved' | 'Rejected';
         description: string;
         budgetCategory?: string;
+        note?: string;
     }) => {
         if (!supabase || !auth?.user) return;
         const currentUser = auth.user;
         const category = (tx.budgetCategory || '').trim();
         const status = (tx.status ?? 'Approved') as 'Pending' | 'Approved' | 'Rejected';
         const isExpense = tx.type === 'expense';
-        if (!category || !isExpense || status === 'Rejected') {
+        const splitLines = (() => {
+            try {
+                return parseSplitsFromNote(tx.note).splitLines ?? [];
+            } catch {
+                return [];
+            }
+        })();
+        if ((!category && splitLines.length === 0) || !isExpense || status === 'Rejected') {
             await removeSharedBudgetTransactionMirror(tx.id);
             return;
         }
@@ -1522,31 +1460,57 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             .from('budget_shares')
             .select('owner_user_id, category')
             .eq('shared_with_user_id', auth.user.id)
-            .or(`category.is.null,category.eq.${category}`)
             .then((r) => r, () => ({ data: [] as any[] } as any));
 
         const rows = (shares || []) as Array<{ owner_user_id?: string; category?: string | null }>;
-        if (rows.length === 0) {
+        const splitAllocations = splitLines.length > 0
+            ? splitLines
+            : [{ category: category || 'Uncategorized', amount: Math.abs(Number(tx.amount) || 0) }];
+        const splitTotal = splitAllocations.reduce((sum, line) => sum + Math.abs(Number(line.amount) || 0), 0);
+        const parentAmountAbs = Math.abs(Number(tx.amount) || 0);
+        const scale = splitTotal > 0 ? parentAmountAbs / splitTotal : 1;
+        const normalizeShareCategory = (v: unknown) => String(v ?? '').trim().toLowerCase();
+        const txCategories = new Set(
+            splitAllocations
+                .map((line) => normalizeShareCategory(line.category))
+                .filter(Boolean),
+        );
+        const matchingShares = rows.filter((row) => {
+            const shareCat = normalizeShareCategory(row.category);
+            return !shareCat || shareCat === 'all' || txCategories.has(shareCat);
+        });
+        if (matchingShares.length === 0) {
             await removeSharedBudgetTransactionMirror(tx.id);
             return;
         }
 
         await removeSharedBudgetTransactionMirror(tx.id);
 
-        const payload = rows
-            .map((r) => r.owner_user_id)
-            .filter((ownerId): ownerId is string => Boolean(ownerId) && ownerId !== currentUser.id)
-            .map((ownerId) => ({
-                owner_user_id: ownerId,
-                contributor_user_id: currentUser.id,
-                contributor_email: currentUser.email ?? null,
-                source_transaction_id: tx.id,
-                budget_category: category,
-                amount: Math.abs(Number(tx.amount) || 0),
-                transaction_date: tx.date,
-                description: tx.description,
-                status,
-            }));
+        const payload = matchingShares
+            .map((r) => ({ ownerId: r.owner_user_id, sharedCategory: String(r.category ?? '').trim() }))
+            .filter((row): row is { ownerId: string; sharedCategory: string } => Boolean(row.ownerId) && row.ownerId !== currentUser.id)
+            .flatMap((row) => {
+                const ownerId = row.ownerId;
+                const explicitShareCategory = normalizeShareCategory(row.sharedCategory);
+                return splitAllocations
+                    .filter((line) => {
+                        const allocCat = normalizeShareCategory(line.category);
+                        if (!allocCat) return false;
+                        if (!explicitShareCategory || explicitShareCategory === 'all') return true;
+                        return explicitShareCategory === allocCat;
+                    })
+                    .map((line) => ({
+                        owner_user_id: ownerId,
+                        contributor_user_id: currentUser.id,
+                        contributor_email: currentUser.email ?? null,
+                        source_transaction_id: tx.id,
+                        budget_category: String(line.category || '').trim(),
+                        amount: Math.abs(Number(line.amount) || 0) * scale,
+                        transaction_date: tx.date,
+                        description: tx.description,
+                        status,
+                    }));
+            });
 
         if (payload.length === 0) return;
         await supabase.from('budget_shared_transactions').upsert(payload).then(() => {}, () => {});

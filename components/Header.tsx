@@ -226,11 +226,11 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
     <header className="bg-white border-b border-gray-100 sticky top-0 z-30 shadow-sm">
       <div className="max-w-screen-2xl mx-auto">
         {/* Top Bar */}
-        <div className="flex items-center justify-between h-16 px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center space-x-8">
-            <div className="flex items-center space-x-2 cursor-pointer" onClick={() => setActivePage('Dashboard')}>
+        <div className="flex items-center justify-between h-16 px-3 sm:px-6 lg:px-8">
+          <div className="flex items-center space-x-3 lg:space-x-8 min-w-0 flex-1">
+            <div className="flex items-center space-x-2 cursor-pointer min-w-0" onClick={() => setActivePage('Dashboard')}>
               <HSLogo className="h-8 w-8 text-primary" />
-              <h1 className="text-lg sm:text-xl font-bold text-dark tracking-tight">Finova</h1>
+              <h1 className="text-base sm:text-xl font-bold text-dark tracking-tight truncate">Finova</h1>
             </div>
 
             {/* Desktop Navigation */}
@@ -275,7 +275,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
             </nav>
           </div>
 
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-1.5 sm:space-x-3 shrink-0">
             {/* Investment Plan Quick Status */}
             <div 
               className="hidden xl:flex flex-col items-end mr-4 cursor-pointer hover:opacity-80 transition-opacity"
@@ -296,7 +296,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
               </div>
             </div>
 
-            <div className="flex items-center space-x-1 sm:space-x-2">
+            <div className="flex items-center space-x-0.5 sm:space-x-2">
               <div className="hidden sm:flex flex-col items-end mr-2 min-w-[126px]">
                 <button 
                   onClick={refreshPrices} 
@@ -337,7 +337,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                 )}
               </div>
               
-              <div className="relative" ref={tasksPreviewRef}>
+              <div className="relative hidden sm:block" ref={tasksPreviewRef}>
                 <button
                   type="button"
                   onClick={() => {
@@ -393,7 +393,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                 )}
               </div>
 
-              <div className="relative" ref={notificationsPreviewRef}>
+              <div className="relative hidden sm:block" ref={notificationsPreviewRef}>
                 <button
                   onClick={() => {
                     if (soundEnabled && notificationCount > 0) playBeepRef.current();
@@ -470,14 +470,14 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
               )}
               <button
                 onClick={onOpenLiveAdvisor}
-                className="p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 disabled:text-gray-200 transition-all"
+                className="hidden sm:flex p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 disabled:text-gray-200 transition-all"
               >
                  <HeadsetIcon className="h-6 w-6" />
              </button>
               
               <div className="h-8 w-px bg-gray-100 mx-1 hidden sm:block"></div>
 
-              <div className="relative" ref={profileRef}>
+              <div className="relative hidden sm:block" ref={profileRef}>
                   <button onClick={() => setIsProfileOpen(!isProfileOpen)} className="flex items-center space-x-2 p-1 rounded-xl text-gray-500 hover:bg-gray-50 transition-all">
                       <UserCircleIcon className="h-8 w-8 text-gray-400" />
                       <ChevronDownIcon className={`h-4 w-4 opacity-50 transition-transform duration-200 ${isProfileOpen ? 'rotate-180' : ''}`} />
@@ -511,7 +511,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
       {/* Mobile Menu */}
       {isMobileMenuOpen && (
         <div className="fixed inset-0 z-[120] bg-white lg:hidden">
-            <div className="px-4 pt-4 flex justify-between items-center border-b border-gray-100 pb-4">
+            <div className="px-4 pt-3 flex justify-between items-center border-b border-gray-100 pb-3">
                 <div className="flex items-center space-x-2">
                     <HSLogo className="h-8 w-8 text-primary" />
                     <h1 className="text-xl font-bold text-dark">Finova</h1>
@@ -520,7 +520,43 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                     <XMarkIcon className="h-6 w-6" />
                 </button>
             </div>
-            <div className="mt-4 px-4 space-y-6 overflow-y-auto h-[calc(100vh-80px)] pb-12">
+            <div className="mt-3 px-4 space-y-5 overflow-y-auto h-[calc(100vh-74px)] pb-10">
+                <div className="grid grid-cols-3 gap-2">
+                    <button
+                        type="button"
+                        onClick={() => { openAlertsPage(); setIsMobileMenuOpen(false); }}
+                        className="relative flex items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-2 py-2.5 text-xs font-semibold text-slate-700"
+                    >
+                        <BellIcon className="h-4 w-4 text-slate-500" />
+                        Alerts
+                        {notificationCount > 0 && (
+                            <span className="absolute -top-1.5 -right-1.5 inline-flex min-w-[16px] h-4 px-1 items-center justify-center rounded-full bg-danger text-white text-[10px] font-bold">
+                                {notificationCount > 99 ? '99+' : notificationCount}
+                            </span>
+                        )}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => { openTasksPage(); setIsMobileMenuOpen(false); }}
+                        className="relative flex items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-2 py-2.5 text-xs font-semibold text-slate-700"
+                    >
+                        <ClipboardDocumentListIcon className="h-4 w-4 text-slate-500" />
+                        Tasks
+                        {todoActive > 0 && (
+                            <span className={`absolute -top-1.5 -right-1.5 inline-flex min-w-[16px] h-4 px-1 items-center justify-center rounded-full text-white text-[10px] font-bold ${todoOverdue > 0 ? 'bg-rose-500' : 'bg-primary'}`}>
+                                {todoActive > 99 ? '99+' : todoActive}
+                            </span>
+                        )}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => { onOpenLiveAdvisor(); setIsMobileMenuOpen(false); }}
+                        className="flex items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-2 py-2.5 text-xs font-semibold text-slate-700"
+                    >
+                        <HeadsetIcon className="h-4 w-4 text-slate-500" />
+                        Advisor
+                    </button>
+                </div>
                 {navGroups.map(group => (
                   <div key={group.name} className="animate-fadeIn" style={{ animationDelay: '100ms' }}>
                     <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 px-3">{group.name}</h3>
@@ -548,7 +584,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                   </div>
                 ))}
                 
-                <div className="pt-6 border-t border-gray-100">
+                <div className="pt-5 border-t border-gray-100">
                     <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 px-3">Quick Actions</h3>
                     <div className="grid grid-cols-2 gap-3">
                         <button 
@@ -562,11 +598,14 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                             </span>
                         </button>
                         <button 
-                            onClick={() => { onOpenLiveAdvisor(); setIsMobileMenuOpen(false); }}
+                            onClick={() => {
+                              setActivePage('Settings');
+                              setIsMobileMenuOpen(false);
+                            }}
                             className="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-2xl hover:bg-gray-100 transition-colors"
                         >
-                            <HeadsetIcon className="h-6 w-6 text-gray-500 mb-2" />
-                            <span className="text-xs font-bold text-gray-700">Advisor</span>
+                            <UserCircleIcon className="h-6 w-6 text-gray-500 mb-2" />
+                            <span className="text-xs font-bold text-gray-700">Settings</span>
                         </button>
                     </div>
                 </div>

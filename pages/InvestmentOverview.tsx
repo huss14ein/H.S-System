@@ -14,8 +14,10 @@ import { useCurrency } from '../context/CurrencyContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { quoteNotionalInBookCurrency, resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { holdingUsesLiveQuote } from '../utils/holdingValuation';
-import { getPersonalCommodityHoldings, getPersonalInvestments, getPersonalWealthData } from '../utils/wealthScope';
+import { getPersonalInvestments, getPersonalWealthData } from '../utils/wealthScope';
 import type { Account } from '../types';
+import { computePersonalCommoditiesContributionSAR } from '../services/investmentPlatformCardMetrics';
+import { normalizeInvestmentAssetClassBucket } from '../services/investmentAssetClassBuckets';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import {
     ResolvedSymbolLabel,
@@ -59,15 +61,11 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
             .filter((a) => a.type === 'Investment')
             .reduce((s, a) => s + tradableCashBucketToSAR(getAvailableCashForAccount(a.id), sarPerUsd), 0);
 
-        const allCommodities = getPersonalCommodityHoldings(data);
-        let commoditiesSAR = 0;
-        for (const ch of allCommodities) {
-            const sym = (ch.symbol || '').trim().toUpperCase();
-            const px = simulatedPrices[sym];
-            const raw =
-                px && Number.isFinite(px.price) ? px.price * (ch.quantity ?? 0) : (ch.currentValue ?? 0);
-            commoditiesSAR += toSAR(raw, 'USD', sarPerUsd);
-        }
+        const { valueSAR: commoditiesSAR } = computePersonalCommoditiesContributionSAR(
+            data,
+            sarPerUsd,
+            simulatedPrices,
+        );
 
         const allHoldings: (Holding & { portfolioCurrency?: 'USD' | 'SAR' })[] = investments.flatMap(
             (p: { holdings?: Holding[]; currency?: 'USD' | 'SAR' }) =>
@@ -99,7 +97,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
 
         const assetAllocationMap = new Map<string, number>();
         allHoldingsWithGains.forEach((h) => {
-            const assetClass = h.assetClass || 'Other';
+            const assetClass = normalizeInvestmentAssetClassBucket(h.assetClass);
             assetAllocationMap.set(assetClass, (assetAllocationMap.get(assetClass) || 0) + h.currentValue);
         });
         if (tradableCashSAR > 0) {

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../services/geminiService', () => ({
   invokeAI: vi.fn(async () => ({ text: '[]' })),
@@ -6,6 +6,12 @@ vi.mock('../services/geminiService', () => ({
 
 import { parseSMSTransactions } from '../services/statementParser';
 import { invokeAI } from '../services/geminiService';
+
+beforeEach(() => {
+  // Ensure every test starts from the same AI mock behavior.
+  vi.mocked(invokeAI).mockReset();
+  vi.mocked(invokeAI).mockResolvedValue({ text: '[]' } as any);
+});
 
 afterEach(() => {
   vi.useRealTimers();
@@ -85,9 +91,19 @@ SAR 21.50
     const res = await parseSMSTransactions(sms, 'acc-nbsp');
     expect(res.transactions.length).toBeGreaterThan(0);
     const amounts = res.transactions.map((t) => Math.abs(t.amount)).sort((a, b) => b - a);
-    expect(amounts[0]).toBeCloseTo(12340, 2);
-    expect(amounts.some((x) => Math.abs(x - 150.5) < 0.01)).toBe(true);
+    expect(amounts[0]).toBeCloseTo(150.5, 2);
+    expect(amounts.every((x) => Math.abs(x - 12340) > 0.01)).toBe(true);
     expect(res.transactions.some((t) => t.date === '2026-04-08')).toBe(true);
+  });
+
+  it('never imports balance-only lines as separate expense transactions', async () => {
+    const sms =
+      'Debit alert\nBalance SAR 8,410.20\n2026-04-08\nPurchase SAR 89.90\nBalance SAR 8,320.30';
+    const res = await parseSMSTransactions(sms, 'acc-balance-only');
+    const amounts = res.transactions.map((t) => Math.abs(t.amount));
+    expect(amounts.some((a) => Math.abs(a - 89.9) < 0.01)).toBe(true);
+    expect(amounts.every((a) => Math.abs(a - 8410.2) > 0.01)).toBe(true);
+    expect(amounts.every((a) => Math.abs(a - 8320.3) > 0.01)).toBe(true);
   });
 
   it('parses dotted numeric dates (DD.MM.YYYY)', async () => {
@@ -99,6 +115,7 @@ SAR 21.50
   });
 
   it('still extracts SMS when AI extraction fails (pattern/heuristic only)', async () => {
+    vi.mocked(invokeAI).mockReset();
     vi.mocked(invokeAI).mockRejectedValueOnce(new Error('network'));
     const sms = `Debit alert\nSAR 75.25 debited\n2026-01-15`;
     const res = await parseSMSTransactions(sms, 'acc-ai-fail');
@@ -145,5 +162,30 @@ SAR 21.50
     const res = await parseSMSTransactions(sms, 'acc-inline-bal');
     expect(res.transactions.some((t) => Math.abs(t.amount + 57.5) < 0.01)).toBe(true);
     expect(res.transactions.every((t) => Math.abs(t.amount) < 500)).toBe(true);
+  });
+
+  it('parses long income amounts without truncating digits', async () => {
+    const sms = `Income transfer received
+Amount: SAR 20222
+Balance SAR 54500
+2026-04-22`;
+    const res = await parseSMSTransactions(sms, 'acc-income-long');
+    expect(res.transactions.length).toBeGreaterThan(0);
+    const income = res.transactions.find((t) => t.amount > 0);
+    expect(income).toBeDefined();
+    expect(income!.amount).toBeCloseTo(20222, 2);
+    expect(res.transactions.every((t) => Math.abs(t.amount - 202) > 0.01)).toBe(true);
+  });
+
+  it('parses long Arabic SR amounts without truncating digits', async () => {
+    const sms = `ايداع راتب
+بـSR 20222
+رصيد: 54500 SR
+22/4/26`;
+    const res = await parseSMSTransactions(sms, 'acc-income-long-ar');
+    expect(res.transactions.length).toBeGreaterThan(0);
+    const income = res.transactions.find((t) => t.amount > 0);
+    expect(income).toBeDefined();
+    expect(income!.amount).toBeCloseTo(20222, 2);
   });
 });
