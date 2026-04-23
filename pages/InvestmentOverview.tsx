@@ -17,6 +17,7 @@ import { holdingUsesLiveQuote } from '../utils/holdingValuation';
 import { getPersonalInvestments, getPersonalWealthData } from '../utils/wealthScope';
 import type { Account } from '../types';
 import { computePersonalCommoditiesContributionSAR } from '../services/investmentPlatformCardMetrics';
+import { normalizeInvestmentAssetClassBucket } from '../services/investmentAssetClassBuckets';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import {
     ResolvedSymbolLabel,
@@ -96,7 +97,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
 
         const assetAllocationMap = new Map<string, number>();
         allHoldingsWithGains.forEach((h) => {
-            const assetClass = h.assetClass || 'Other';
+            const assetClass = normalizeInvestmentAssetClassBucket(h.assetClass);
             assetAllocationMap.set(assetClass, (assetAllocationMap.get(assetClass) || 0) + h.currentValue);
         });
         if (tradableCashSAR > 0) {
