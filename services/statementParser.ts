@@ -567,6 +567,7 @@ function extractSmsAmount(block: string): number {
   const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
   const parseNum = (raw: string | undefined) => Number((raw ?? '0').replace(/,/g, ''));
   const compact = String(block || '').replace(/\s+/g, ' ').trim();
+  const amountToken = String.raw`((?:[\d]{1,3}(?:,[\d]{3})+|[\d]+)(?:\.\d+)?)`;
   const isBalanceOnlyLine = (line: string) =>
     /(?:\bbalance\b|\bbal\b|رصيد)/i.test(line) &&
     !/(amount|مبلغ|debited|credited|withdrawn|received|purchase|payment|paid|spent|transfer|شراء|سحب|خصم|دفع|عملية|نقاط البيع|ايداع|إيداع|deposit)/i.test(line);
@@ -577,26 +578,26 @@ function extractSmsAmount(block: string): number {
    */
   for (const line of lines) {
     const oneLine =
-      line.match(/شراء[^\n]*?بـ\s*SR\s*([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)/i) ??
-      line.match(/شراء[^\n]*?\bSR\s*([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)\b/i);
+      line.match(new RegExp(String.raw`شراء[^\n]*?بـ\s*SR\s*${amountToken}`, 'i')) ??
+      line.match(new RegExp(String.raw`شراء[^\n]*?\bSR\s*${amountToken}\b`, 'i'));
     if (oneLine) {
       const n = parseNum(oneLine[1]);
       if (Number.isFinite(n) && n > 0) return n;
     }
   }
   const arabPurchaseSr =
-    compact.match(/شراء[\s\S]{0,500}?(?:^|\s)بـ\s*SR\s*([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)(?=\s|$)/i) ??
-    compact.match(/شراء[\s\S]{0,300}?(?:^|\s)SR\s*([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)(?=\s|$)/i);
+    compact.match(new RegExp(String.raw`شراء[\s\S]{0,500}?(?:^|\s)بـ\s*SR\s*${amountToken}(?=\s|$)`, 'i')) ??
+    compact.match(new RegExp(String.raw`شراء[\s\S]{0,300}?(?:^|\s)SR\s*${amountToken}(?=\s|$)`, 'i'));
   if (arabPurchaseSr) {
     const n = parseNum(arabPurchaseSr[1]);
     if (Number.isFinite(n) && n > 0) return n;
   }
 
   const moneyAfterCurrency =
-    /(?:SAR|SR|USD|EUR|\$|ر\.?س|ريال)[^\d]{0,20}([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)/i;
+    new RegExp(String.raw`(?:SAR|SR|USD|EUR|\$|ر\.?س|ريال)[^\d]{0,20}${amountToken}`, 'i');
   const moneyBeforeCurrency =
-    /([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)\s*(?:SAR|SR|USD|EUR|\$|ر\.?س|ريال)\b/i;
-  const kdPattern = /([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)\s*(?:KD|KWD|د\.ك)\b/i;
+    new RegExp(String.raw`${amountToken}\s*(?:SAR|SR|USD|EUR|\$|ر\.?س|ريال)\b`, 'i');
+  const kdPattern = new RegExp(String.raw`${amountToken}\s*(?:KD|KWD|د\.ك)\b`, 'i');
 
   const withAmountLabel = lines.find((line) => /(amount|مبلغ)/i.test(line));
   const labelMatch = withAmountLabel?.match(moneyAfterCurrency)
@@ -604,7 +605,7 @@ function extractSmsAmount(block: string): number {
     ?? withAmountLabel?.match(kdPattern);
   if (labelMatch) return parseNum(labelMatch[1]);
 
-  const explicitAmt = block.match(/\b(?:amount|مبلغ)\s*[:\-]?\s*([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)\b/i);
+  const explicitAmt = block.match(new RegExp(String.raw`\b(?:amount|مبلغ)\s*[:\-]?\s*${amountToken}\b`, 'i'));
   if (explicitAmt) {
     const n = parseNum(explicitAmt[1]);
     if (Number.isFinite(n) && n > 0) return n;
@@ -620,8 +621,8 @@ function extractSmsAmount(block: string): number {
     if (/(?:^|\s)(?:balance|رصيد)\s*:/i.test(line) && !/(amount|مبلغ|شراء)/i.test(line)) continue;
     // Purchase / operation line: take that amount first (avoids matching a later "رصيد" on the same line).
     let purchaseLine =
-      line.match(/شراء[^\n]*?بـ\s*SR\s*([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)/i) ??
-      line.match(/شراء[^\n]*?\bSR\s*([\d]{1,3}(?:,\d{3})*(?:\.\d+)?|[\d]+(?:\.\d+)?)\b/i);
+      line.match(new RegExp(String.raw`شراء[^\n]*?بـ\s*SR\s*${amountToken}`, 'i')) ??
+      line.match(new RegExp(String.raw`شراء[^\n]*?\bSR\s*${amountToken}\b`, 'i'));
     if (!purchaseLine && (/(?:^|\s)مبلغ(?:\s*العملية)?\s*[:\-]?\s*[\d]/i.test(line) || /operation\s*amount/i.test(line))) {
       purchaseLine = line.match(moneyAfterCurrency) ?? line.match(moneyBeforeCurrency);
     }
@@ -710,7 +711,7 @@ function extractTransactionsFromSmsCurrencyAnchors(smsText: string, accountId: s
   const seen = new Set<string>();
   /** Currency before amount, amount before currency, or USD with $ */
   const pairRe =
-    /\b(?:SAR|SR|USD|EUR|ريال|ر\.س)\s*[:\u00A0]?\s*([\d]{1,3}(?:,\d{3})*(?:\.\d{1,4})?|[\d]+(?:\.\d{1,4})?)|\b([\d]{1,3}(?:,\d{3})*(?:\.\d{1,4})?|[\d]+(?:\.\d{1,4})?)\s*(?:SAR|SR|USD|EUR|ريال|ر\.س)\b|\$\s*([\d]{1,3}(?:,\d{3})*(?:\.\d{1,4})?|[\d]+(?:\.\d{1,4})?)/gi;
+    /\b(?:SAR|SR|USD|EUR|ريال|ر\.س)\s*[:\u00A0]?\s*((?:[\d]{1,3}(?:,[\d]{3})+|[\d]+)(?:\.\d{1,4})?)|\b((?:[\d]{1,3}(?:,[\d]{3})+|[\d]+)(?:\.\d{1,4})?)\s*(?:SAR|SR|USD|EUR|ريال|ر\.س)\b|\$\s*((?:[\d]{1,3}(?:,[\d]{3})+|[\d]+)(?:\.\d{1,4})?)/gi;
 
   let m: RegExpExecArray | null;
   let idx = 0;

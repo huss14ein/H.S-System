@@ -156,4 +156,29 @@ SAR 21.50
     expect(res.transactions.some((t) => Math.abs(t.amount + 57.5) < 0.01)).toBe(true);
     expect(res.transactions.every((t) => Math.abs(t.amount) < 500)).toBe(true);
   });
+
+  it('parses long income amounts without truncating digits', async () => {
+    const sms = `Income transfer received
+Amount: SAR 20222
+Balance SAR 54500
+2026-04-22`;
+    const res = await parseSMSTransactions(sms, 'acc-income-long');
+    expect(res.transactions.length).toBeGreaterThan(0);
+    const income = res.transactions.find((t) => t.amount > 0);
+    expect(income).toBeDefined();
+    expect(income!.amount).toBeCloseTo(20222, 2);
+    expect(res.transactions.every((t) => Math.abs(t.amount - 202) > 0.01)).toBe(true);
+  });
+
+  it('parses long Arabic SR amounts without truncating digits', async () => {
+    const sms = `ايداع راتب
+بـSR 20222
+رصيد: 54500 SR
+22/4/26`;
+    const res = await parseSMSTransactions(sms, 'acc-income-long-ar');
+    expect(res.transactions.length).toBeGreaterThan(0);
+    const income = res.transactions.find((t) => t.amount > 0);
+    expect(income).toBeDefined();
+    expect(income!.amount).toBeCloseTo(20222, 2);
+  });
 });
