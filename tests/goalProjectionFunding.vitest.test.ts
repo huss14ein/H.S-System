@@ -154,7 +154,7 @@ describe('goalProjectionFunding', () => {
     expect(env.assignedInvestmentSource).toBe('plan');
   });
 
-  it('falls back to root investment plan budget only for single-goal investment mapping', () => {
+  it('splits root investment plan budget across linked goals when slices are missing', () => {
     vi.spyOn(goalResolvedTotals, 'averageRollingMonthlyNetSurplus').mockReturnValue(2500);
     const g1: Goal = {
       id: 'g1',
@@ -192,9 +192,81 @@ describe('goalProjectionFunding', () => {
       },
     } as unknown as FinancialData;
 
-    // Multi-goal links + root-only budget => no safe split, must avoid over-counting.
-    expect(goalMonthlyInvestmentPlanContributionSar('g1', data, 3.75)).toBeCloseTo(0, 5);
-    expect(goalMonthlyInvestmentPlanContributionSar('g2', data, 3.75)).toBeCloseTo(0, 5);
+    // Root-only budget with two equally-weighted linked portfolios should split 50/50.
+    expect(goalMonthlyInvestmentPlanContributionSar('g1', data, 3.75)).toBeCloseTo(1600, 5);
+    expect(goalMonthlyInvestmentPlanContributionSar('g2', data, 3.75)).toBeCloseTo(1600, 5);
+  });
+
+  it('respects holding-level goal links when splitting plan/deposit contributions', () => {
+    vi.spyOn(goalResolvedTotals, 'averageRollingMonthlyNetSurplus').mockReturnValue(3000);
+    const g1: Goal = {
+      id: 'g1',
+      name: 'Home',
+      targetAmount: 250000,
+      currentAmount: 0,
+      deadline: '2035-01-01',
+      priority: 'High',
+      savingsAllocationPercent: 50,
+    };
+    const g2: Goal = {
+      id: 'g2',
+      name: 'Travel',
+      targetAmount: 60000,
+      currentAmount: 0,
+      deadline: '2030-01-01',
+      priority: 'Medium',
+      savingsAllocationPercent: 20,
+    };
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = String(today.getMonth() + 1).padStart(2, '0');
+    const d = String(today.getDate()).padStart(2, '0');
+
+    const data = {
+      goals: [g1, g2],
+      budgets: [],
+      transactions: [],
+      accounts: [],
+      liabilities: [],
+      assets: [],
+      investments: [
+        {
+          id: 'pf1',
+          name: 'Mixed',
+          accountId: 'acc1',
+          currency: 'SAR',
+          goalId: 'g1',
+          holdings: [
+            { id: 'h1', symbol: 'AAA', quantity: 1, avgCost: 10, currentValue: 3000, goalId: 'g1' },
+            { id: 'h2', symbol: 'BBB', quantity: 1, avgCost: 10, currentValue: 1000, goalId: 'g2' },
+          ],
+        },
+      ],
+      investmentTransactions: [
+        {
+          id: 'tx1',
+          accountId: 'acc1',
+          portfolioId: 'pf1',
+          date: `${y}-${m}-${d}`,
+          type: 'deposit',
+          symbol: 'CASH',
+          quantity: 0,
+          price: 0,
+          total: 4000,
+          currency: 'SAR',
+        },
+      ],
+      investmentPlan: {
+        monthlyBudget: 4000,
+        budgetCurrency: 'SAR',
+      },
+    } as unknown as FinancialData;
+
+    // holdings imply 75% g1, 25% g2
+    expect(goalMonthlyInvestmentContributionSar('g1', data, 3.75)).toBeCloseTo(3000, 5);
+    expect(goalMonthlyInvestmentContributionSar('g2', data, 3.75)).toBeCloseTo(1000, 5);
+    expect(goalMonthlyInvestmentPlanContributionSar('g1', data, 3.75)).toBeCloseTo(3000, 5);
+    expect(goalMonthlyInvestmentPlanContributionSar('g2', data, 3.75)).toBeCloseTo(1000, 5);
   });
 
   it('reservedByOtherGoalBudgets excludes this goal but includes other goals', () => {
