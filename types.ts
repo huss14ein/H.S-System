@@ -4,7 +4,7 @@
 
 
 
-export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'Settings' | 'Investments' | 'Plan' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan' | 'Investment Plan' | 'Dividend Tracker' | 'AI Rebalancer' | 'Watchlist' | 'Assets' | 'System & APIs Health' | 'Statement Upload' | 'Statement History' | 'Commodities' | 'Engines & Tools';
+export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'Settings' | 'Investments' | 'Plan' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan' | 'Investment Plan' | 'Dividend Tracker' | 'AI Rebalancer' | 'Watchlist' | 'Assets' | 'System & APIs Health' | 'Statement Upload' | 'Statement History' | 'Commodities' | 'Engines & Tools' | 'Installments';
 
 /** User tasks on the Notifications page (persisted per account). */
 export type TodoPriority = 'low' | 'medium' | 'high';
@@ -299,6 +299,44 @@ export interface InvestmentTransaction {
   linkedCashAccountId?: string;
 }
 
+export type SukukPayoutCadence = 'monthly' | 'quarterly' | 'maturity_only' | 'custom';
+export type SukukPayoutKind = 'coupon' | 'principal';
+
+export interface SukukPayoutSchedule {
+  id: string;
+  user_id?: string;
+  assetId: string;
+  investmentAccountId: string;
+  currency: TradeCurrency;
+  cadence: SukukPayoutCadence;
+  dayOfMonth?: number | null;
+  couponAmount?: number | null;
+  principalAmount?: number | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  enabled: boolean;
+  metadata?: Record<string, unknown>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SukukPayoutEvent {
+  id: string;
+  user_id?: string;
+  scheduleId: string;
+  assetId: string;
+  investmentAccountId: string;
+  kind: SukukPayoutKind;
+  payoutDate: string; // YYYY-MM-DD
+  amount: number;
+  currency: TradeCurrency;
+  posted: boolean;
+  postedAt?: string | null;
+  postedInvestmentTransactionId?: string | null;
+  metadata?: Record<string, unknown>;
+  createdAt?: string;
+}
+
 /** Budget tier: Core (essential), Supporting (important), Optional (discretionary). */
 export type BudgetTier = 'Core' | 'Supporting' | 'Optional';
 
@@ -460,6 +498,8 @@ export interface FinancialData {
   recurringTransactions: RecurringTransaction[];
   investments: InvestmentPortfolio[];
   investmentTransactions: InvestmentTransaction[];
+  sukukPayoutSchedules?: SukukPayoutSchedule[];
+  sukukPayoutEvents?: SukukPayoutEvent[];
   budgets: Budget[];
   commodityHoldings: CommodityHolding[];
   watchlist: WatchlistItem[];

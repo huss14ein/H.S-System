@@ -4,10 +4,10 @@
  * Matches Goals page / GoalCard `calculatedCurrentAmount` logic.
  */
 
-import type { FinancialData, Goal, Liability, Transaction } from '../types';
-import { toSAR } from '../utils/currencyMath';
+import type { FinancialData, Goal, Liability } from '../types';
+import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { personalMonthlyNetByMonthKeySar } from './financeMetrics';
 import { receivableContributionForGoal } from './goalReceivableContribution';
-import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 
 export function computeGoalResolvedAmountsSar(
   data: FinancialData | null | undefined,
@@ -53,32 +53,24 @@ export function computeGoalResolvedAmountsSar(
 }
 
 /** Merge resolved SAR totals onto goal rows for engines that read `currentAmount`. */
-/** Same rolling average monthly net as Goals page — basis for allocation % × savings. */
-export function averageRollingMonthlyNetSurplus(data: FinancialData | null | undefined, monthsBack = 6): number {
-  const txs = ((data as { personalTransactions?: Transaction[] } | null | undefined)?.personalTransactions ?? data?.transactions ?? []) as Array<{
-    date: string;
-    amount?: number;
-    type?: string;
-    category?: string;
-  }>;
-  if (!txs.length) return 0;
-
-  const cutoff = new Date();
-  cutoff.setMonth(cutoff.getMonth() - monthsBack);
-  const monthlyNet = new Map<string, number>();
-
-  txs.forEach((t) => {
-    if (new Date(t.date) <= cutoff) return;
-    if (!countsAsIncomeForCashflowKpi(t) && !countsAsExpenseForCashflowKpi(t)) return;
-    const monthKey = String(t.date).slice(0, 7);
-    const absAmt = Math.abs(Number(t.amount) || 0);
-    const delta = countsAsIncomeForCashflowKpi(t) ? absAmt : countsAsExpenseForCashflowKpi(t) ? -absAmt : 0;
-    monthlyNet.set(monthKey, (monthlyNet.get(monthKey) ?? 0) + delta);
-  });
-
-  if (monthlyNet.size === 0) return 0;
-  const totalNet = Array.from(monthlyNet.values()).reduce((sum, net) => sum + net, 0);
-  return Math.max(0, totalNet / monthlyNet.size);
+/**
+ * Rolling average monthly external net cash flow (income − expenses) in **SAR**, same basis as Forecast / Summary.
+ * Uses dated FX when available (`personalMonthlyNetByMonthKeySar`).
+ */
+export function averageRollingMonthlyNetSurplus(
+  data: FinancialData | null | undefined,
+  monthsBack = 6,
+  uiExchangeRate?: number,
+): number {
+  if (!data) return 0;
+  const rate =
+    uiExchangeRate !== undefined && Number.isFinite(uiExchangeRate) && uiExchangeRate > 0
+      ? uiExchangeRate
+      : resolveSarPerUsd(data, undefined);
+  const { values } = personalMonthlyNetByMonthKeySar(data, rate, monthsBack);
+  if (values.length === 0) return 0;
+  const totalNet = values.reduce((sum, net) => sum + net, 0);
+  return Math.max(0, totalNet / values.length);
 }
 
 export function goalsWithResolvedCurrentAmount(data: FinancialData | null | undefined, sarPerUsd: number): (Goal & { currentAmount: number })[] {

@@ -18,6 +18,11 @@ import { DataContext } from '../context/DataContext';
 import TodoListPanel from '../components/TodoListPanel';
 import { useToast } from '../context/ToastContext';
 import { isSupportedPageAction } from '../utils/pageActions';
+import {
+  notificationRowSurface,
+  notificationSeverityLabel,
+  notificationSeverityPillClass,
+} from '../utils/semanticAlertStyles';
 
 const NOTIFICATIONS_TAB_KEY = 'finova_notifications_tab_v1';
 
@@ -43,12 +48,6 @@ const CategoryIcon: React.FC<{ category: NotificationCategory }> = ({ category }
     case 'Transaction': return <CreditCardIcon className={`${c} text-slate-500`} />;
     default: return <BellAlertIcon className={`${c} text-slate-500`} />;
   }
-};
-
-const severityStyles: Record<string, string> = {
-  urgent: 'border-l-4 border-red-500 bg-red-50/50',
-  warning: 'border-l-4 border-amber-500 bg-amber-50/30',
-  info: 'border-l-4 border-blue-500 bg-blue-50/30',
 };
 
 type MainTab = 'tasks' | 'alerts';
@@ -156,7 +155,7 @@ const Notifications: React.FC<{
       showToast('Saved to your task list', 'success');
       setMainTab('tasks');
     } else {
-      showToast('This alert is already on your task list', 'error');
+      showToast('This alert is already on your task list', 'info');
     }
   };
 
@@ -273,7 +272,7 @@ const Notifications: React.FC<{
             <div className="section-card">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Urgent</p>
-                <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center text-amber-700 font-bold text-sm">⚠</div>
+                <div className="w-10 h-10 bg-rose-100 rounded-xl flex items-center justify-center text-rose-700 font-bold text-sm">!</div>
               </div>
               <p className="text-2xl font-bold text-dark tabular-nums">{feedSummary.urgent}</p>
               <p className="text-sm text-slate-600 mt-1">Full feed</p>
@@ -345,9 +344,12 @@ const Notifications: React.FC<{
                         key={`top-${n.id}`}
                         type="button"
                         onClick={() => handleNotificationClick(n)}
-                        className="w-full text-left text-sm rounded border border-slate-200 bg-white px-2 py-1.5 hover:bg-slate-50"
+                        className={`w-full text-left text-sm rounded-lg px-2.5 py-2 hover:brightness-[0.99] transition-all ${notificationRowSurface(n.severity, n.isRead)}`}
                       >
-                        {n.message}
+                        <span className={`inline-flex mb-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${notificationSeverityPillClass(n.severity)}`}>
+                          {notificationSeverityLabel(n.severity)}
+                        </span>
+                        <span className="block text-slate-800 line-clamp-2 leading-snug">{n.message}</span>
                       </button>
                     ))}
                   </div>
@@ -405,13 +407,20 @@ const Notifications: React.FC<{
                         {items.map((n) => (
                           <li
                             key={n.id}
-                            className={`p-4 transition-colors hover:bg-slate-50/50 ${!n.isRead ? 'bg-white' : 'bg-slate-50/50'} ${severityStyles[n.severity ?? 'info']}`}
+                            className={`p-4 rounded-r-lg transition-colors hover:brightness-[0.995] ${notificationRowSurface(n.severity, n.isRead)}`}
                           >
                             <div className="flex items-start gap-4">
                               <div className="flex-shrink-0 mt-0.5">
                                 <CategoryIcon category={n.category} />
                               </div>
                               <div className="flex-1 min-w-0">
+                                <div className="flex flex-wrap items-center gap-2 mb-0.5">
+                                  <span
+                                    className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${notificationSeverityPillClass(n.severity)}`}
+                                  >
+                                    {notificationSeverityLabel(n.severity)}
+                                  </span>
+                                </div>
                                 <p className={`text-sm ${n.isRead ? 'text-slate-600' : 'font-medium text-dark'}`}>{n.message}</p>
                                 {n.actionHint && <p className="text-xs text-slate-500 mt-1">Action: {n.actionHint}</p>}
                                 <p className="text-xs text-slate-400 mt-0.5">{formatRelativeTime(n.date)}</p>

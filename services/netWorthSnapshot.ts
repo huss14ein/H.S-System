@@ -2,20 +2,40 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { recordSarPerUsdForCalendarDay } from './fxDailySeries';
 
 const KEY = 'finova_nw_snapshots_v1';
+/** One-time localStorage backfill: stamp legacy rows that predate explicit bucket schema versioning. */
+const SCHEMA_BACKFILL_KEY = 'finova_nw_buckets_schema_backfill_v1';
 /** ~6 years of monthly points at one snapshot per month (cap prevents unbounded localStorage growth). */
 const MAX = 72;
+
+/** Legacy stored buckets: Sukuk under Assets was included in `physicalAndCommodities`. */
+export const NW_BUCKETS_SCHEMA_LEGACY = 1;
+/** Current: Sukuk under Assets is included in `investments`; optional `sukukSar` on buckets for audit. */
+export const NW_BUCKETS_SCHEMA_V2 = 2;
 
 export interface NetWorthSnapshot {
   at: string;
   netWorth: number;
   /** SAR per 1 USD at capture — feeds historical FX series for charts/KPIs. */
   sarPerUsd?: number;
+  /**
+   * How `buckets` were classified. Absent on old rows → treated as {@link NW_BUCKETS_SCHEMA_LEGACY} when `buckets` exists.
+   */
+  bucketsSchemaVersion?: number;
   buckets?: {
     cash: number;
     investments: number;
     physicalAndCommodities: number;
     receivables: number;
     liabilities: number;
+    /** SAR — optional audit trail (schema v2+). */
+    sukukSar?: number;
+  };
+}
+
+function normalizeSnapshotRead(s: NetWorthSnapshot): NetWorthSnapshot {
+  return {
+    ...s,
+    bucketsSchemaVersion: s.bucketsSchemaVersion ?? (s.buckets ? NW_BUCKETS_SCHEMA_LEGACY : undefined),
   };
 }
 
@@ -56,12 +76,26 @@ function serverRowToSnapshot(row: {
   buckets?: unknown;
   sar_per_usd?: number | null;
 }): NetWorthSnapshot {
-  return {
+  const raw = row.buckets as (NetWorthSnapshot['buckets'] & { _schema?: number }) | null | undefined;
+  const schemaFromJson = raw && typeof (raw as { _schema?: unknown })._schema === 'number' ? (raw as { _schema: number })._schema : undefined;
+  const buckets =
+    raw == null
+      ? undefined
+      : {
+          cash: Number(raw.cash) || 0,
+          investments: Number(raw.investments) || 0,
+          physicalAndCommodities: Number(raw.physicalAndCommodities) || 0,
+          receivables: Number(raw.receivables) || 0,
+          liabilities: Number(raw.liabilities) || 0,
+          sukukSar: raw.sukukSar != null && Number.isFinite(Number(raw.sukukSar)) ? Number(raw.sukukSar) : undefined,
+        };
+  return normalizeSnapshotRead({
     at: row.captured_at || `${row.snapshot_day}T12:00:00.000Z`,
     netWorth: Number(row.net_worth),
     sarPerUsd: row.sar_per_usd != null && Number.isFinite(Number(row.sar_per_usd)) ? Number(row.sar_per_usd) : undefined,
-    buckets: row.buckets as NetWorthSnapshot['buckets'],
-  };
+    buckets,
+    bucketsSchemaVersion: schemaFromJson,
+  });
 }
 
 function mergeSnapshotsByDay(snapshots: NetWorthSnapshot[]): NetWorthSnapshot[] {
@@ -113,12 +147,13 @@ export function pushNetWorthSnapshot(
     const at = new Date().toISOString();
     const fx = typeof sarPerUsd === 'number' && Number.isFinite(sarPerUsd) && sarPerUsd > 0 ? sarPerUsd : undefined;
     if (fx != null) recordSarPerUsdForCalendarDay(today, fx);
+    const schemaForRow = buckets ? NW_BUCKETS_SCHEMA_V2 : last?.bucketsSchemaVersion;
     let final: NetWorthSnapshot;
     if (last && last.at.slice(0, 10) === today) {
-      final = { at, netWorth, sarPerUsd: fx ?? last.sarPerUsd, buckets: buckets ?? last.buckets };
+      final = { at, netWorth, sarPerUsd: fx ?? last.sarPerUsd, buckets: buckets ?? last.buckets, bucketsSchemaVersion: buckets ? NW_BUCKETS_SCHEMA_V2 : schemaForRow };
       arr[0] = final;
     } else {
-      final = { at, netWorth, sarPerUsd: fx, buckets };
+      final = { at, netWorth, sarPerUsd: fx, buckets, bucketsSchemaVersion: buckets ? NW_BUCKETS_SCHEMA_V2 : undefined };
       arr.unshift(final);
     }
     localStorage.setItem(KEY, JSON.stringify(arr.slice(0, MAX)));
@@ -131,7 +166,24 @@ export function pushNetWorthSnapshot(
 export function listNetWorthSnapshots(): NetWorthSnapshot[] {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? JSON.parse(raw) : [];
+    let arr: NetWorthSnapshot[] = raw ? JSON.parse(raw) : [];
+
+    const needsPersistedBackfill =
+      typeof localStorage !== 'undefined' &&
+      localStorage.getItem(SCHEMA_BACKFILL_KEY) !== 'done' &&
+      arr.some((s) => s.buckets != null && s.bucketsSchemaVersion === undefined);
+
+    if (needsPersistedBackfill) {
+      arr = arr.map((s) =>
+        s.buckets && s.bucketsSchemaVersion === undefined
+          ? { ...s, bucketsSchemaVersion: NW_BUCKETS_SCHEMA_LEGACY }
+          : normalizeSnapshotRead(s),
+      );
+      localStorage.setItem(KEY, JSON.stringify(arr.slice(0, MAX)));
+      localStorage.setItem(SCHEMA_BACKFILL_KEY, 'done');
+    }
+
+    return arr.map(normalizeSnapshotRead);
   } catch {
     return [];
   }

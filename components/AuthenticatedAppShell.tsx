@@ -42,6 +42,7 @@ const SystemHealth = lazy(() => import('../pages/SystemHealth'));
 const StatementUpload = lazy(() => import('../pages/StatementUpload'));
 const StatementHistoryView = lazy(() => import('../pages/StatementHistoryView'));
 const EnginesAndToolsHub = lazy(() => import('../pages/EnginesAndToolsHub'));
+const Installments = lazy(() => import('../pages/Installments'));
 
 const VALID_PAGES: Page[] = [
   'Dashboard', 'Summary', 'Accounts', 'Goals', 'Liabilities', 'Transactions',
@@ -49,7 +50,7 @@ const VALID_PAGES: Page[] = [
   'Investments', 'Plan', 'Wealth Ultra', 'Market Events', 'Recovery Plan',
   'Investment Plan', 'Dividend Tracker', 'AI Rebalancer', 'Watchlist',
   'Assets', 'System & APIs Health', 'Statement Upload', 'Statement History', 'Commodities',
-  'Engines & Tools',
+  'Engines & Tools', 'Installments',
 ];
 
 function decodeHashPage(): string {
@@ -164,6 +165,7 @@ const AuthenticatedAppShell: React.FC = () => {
       case 'System & APIs Health': return <SystemHealth setActivePage={setActivePage} />;
       case 'Wealth Ultra': return <WealthUltraDashboard setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Engines & Tools': return <EnginesAndToolsHub setActivePage={setActivePage} triggerPageAction={triggerPageAction} pageAction={pageAction} clearPageAction={clearPageAction} />;
+      case 'Installments': return <Installments setActivePage={setActivePage} />;
       default: return <Dashboard setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
     }
   };

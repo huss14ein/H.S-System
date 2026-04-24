@@ -6,7 +6,7 @@
 import type { FinancialData, TradeCurrency } from '../types';
 import { computeEmergencyFundMetrics, type EmergencyFundMetrics } from '../hooks/useEmergencyFund';
 import { getAllInvestmentsValueInSAR, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
-import { getPersonalWealthData } from '../utils/wealthScope';
+import { getPersonalAssets, getPersonalWealthData } from '../utils/wealthScope';
 import { buildHouseholdBudgetPlan, buildHouseholdEngineInputFromData } from './householdBudgetEngine';
 import { deriveCashflowStressSummary } from './householdBudgetStress';
 import { computeDisciplineScore, type DisciplineScoreSummary } from './disciplineScoreEngine';
@@ -48,6 +48,7 @@ export interface InvestmentTreemapRow {
   name?: string;
   symbol?: string;
   portfolioCurrency?: string;
+  assetClass?: string;
   gainLoss: number;
   gainLossPercent: number;
   [k: string]: unknown;
@@ -145,16 +146,44 @@ export function computeWealthSummaryReportModel(
   const allHoldings = investments.flatMap((p) =>
     (p.holdings || []).map((h) => ({ ...h, portfolioCurrency: p.currency }))
   );
-  const investmentTreemapData: InvestmentTreemapRow[] = allHoldings.map((h) => {
+  const holdingRows: InvestmentTreemapRow[] = allHoldings.map((h) => {
     const totalCost = (h.avgCost ?? 0) * (h.quantity ?? 0);
     const gainLoss = (h.currentValue ?? 0) - totalCost;
     const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
     const currentValueSar = toSAR(Number(h.currentValue ?? 0), cur(h.portfolioCurrency), sarPerUsd);
     return { ...h, gainLoss, gainLossPercent, currentValueSar };
   });
+  const sukukRows: InvestmentTreemapRow[] = getPersonalAssets(data).flatMap((a) => {
+    if (a.type !== 'Sukuk') return [];
+    const v = Math.max(0, Number(a.value) || 0);
+    if (!(v > 0)) return [];
+    const pp = Number(a.purchasePrice);
+    const costBasis = Number.isFinite(pp) && pp > 0 ? pp : v;
+    const gainLoss = v - costBasis;
+    const gainLossPercent = costBasis > 0 ? (gainLoss / costBasis) * 100 : 0;
+    return [
+      {
+        symbol: 'SUKUK',
+        name: a.name ? `${a.name} (Sukuk)` : 'Sukuk',
+        assetClass: 'Sukuk',
+        portfolioCurrency: 'SAR',
+        quantity: 1,
+        avgCost: costBasis,
+        currentValue: v,
+        currentValueSar: v,
+        gainLoss,
+        gainLossPercent,
+      },
+    ];
+  });
+  const investmentTreemapData: InvestmentTreemapRow[] = [...holdingRows, ...sukukRows];
   const totalInvestments = investmentTreemapData.reduce((sum, h) => sum + toSAR(h.currentValue ?? 0, cur(h.portfolioCurrency), sarPerUsd), 0);
   const individualStocksValue = investmentTreemapData
-    .filter((h) => !['ETF', 'Index Fund', 'Bond'].some((type) => String(h.name ?? '').includes(type)))
+    .filter(
+      (h) =>
+        String(h.assetClass ?? '') !== 'Sukuk' &&
+        !['ETF', 'Index Fund', 'Bond'].some((type) => String(h.name ?? '').includes(type)),
+    )
     .reduce((sum, h) => sum + toSAR(h.currentValue ?? 0, cur(h.portfolioCurrency), sarPerUsd), 0);
   const investmentConcentration = totalInvestments > 0 ? individualStocksValue / totalInvestments : 0;
   let investmentStyle = 'Balanced';
@@ -268,6 +297,7 @@ export function computeWealthSummaryReportModel(
       monthlyOverrides: [],
       financialData: data,
       sarPerUsd,
+      uiExchangeRate: sarPerUsd,
     }
   );
   const householdPlan = buildHouseholdBudgetPlan(householdInput);
@@ -293,6 +323,18 @@ export function computeWealthSummaryReportModel(
     emergencyFundTargetAmount: Number(financialMetricsWithEf.emergencyTargetAmount) || 0,
     emergencyFundShortfall: Number(financialMetricsWithEf.emergencyShortfall) || 0,
     liquidNetWorth: Number(liquidNw.liquidNetWorth) || 0,
+    liquidBreakdown: {
+      liquidCash: Number(liquidNw.liquidCash) || 0,
+      portfolioHoldingsSar: Number(liquidNw.portfolioHoldingsSar) || 0,
+      sukukSar: Number(liquidNw.sukukSar) || 0,
+      investmentsSar: Number(liquidNw.investmentsSAR) || 0,
+      commodities: Number(liquidNw.commodities) || 0,
+      receivables: Number(liquidNw.receivables) || 0,
+      creditCardDebtSar: Number(liquidNw.creditCardDebtSar) || 0,
+      loanAndMortgageDebtSar: Number(liquidNw.loanAndMortgageDebtSar) || 0,
+      shortTermDebt: Number(liquidNw.shortTermDebt) || 0,
+      illiquidPhysicalAssetsSar: Number(liquidNw.illiquidPhysicalAssetsSar) || 0,
+    },
     managedWealthTotal: Number(managedWealthTotal) || 0,
     riskLane: String(riskLane.lane ?? 'Unknown'),
     liquidityRunwayMonths: Number(liquidityRunway?.monthsOfRunway ?? 0),

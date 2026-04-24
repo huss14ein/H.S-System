@@ -19,11 +19,14 @@ function toPortfolioBookAmount(
   from: 'USD' | 'SAR',
   book: 'USD' | 'SAR',
   sarPerUsd: number,
+  sarPerUsdForDay?: (dayKey: string) => number,
+  dayKey?: string,
 ): number {
   if (!Number.isFinite(amount) || amount <= 0) return 0;
   if (from === book) return roundMoney(amount);
-  if (from === 'USD' && book === 'SAR') return roundMoney(toSAR(amount, 'USD', sarPerUsd));
-  return roundMoney(fromSAR(amount, 'USD', sarPerUsd));
+  const r = typeof sarPerUsdForDay === 'function' && dayKey ? sarPerUsdForDay(dayKey) : sarPerUsd;
+  if (from === 'USD' && book === 'SAR') return roundMoney(toSAR(amount, 'USD', r));
+  return roundMoney(fromSAR(amount, 'USD', r));
 }
 
 export function dividendAlreadyRecorded(args: {
@@ -93,6 +96,8 @@ export interface SyncFinnhubDividendsParams {
   /** Finnhub `to` date YYYY-MM-DD */
   toIso: string;
   sarPerUsd: number;
+  /** Optional: use a dated SAR/USD rate per pay date when converting USD payments into SAR-book portfolios. */
+  sarPerUsdForDay?: (dayKey: string) => number;
   recordDividend: (args: {
     portfolioId: string;
     accountId: string;
@@ -141,7 +146,8 @@ export async function syncFinnhubDividendsForHoldings(
       for (const pay of payments) {
         const payCur = paymentCurrencyForSymbol(symbol, pay);
         const gross = pay.amountPerShare * pos.quantity;
-        const totalBook = toPortfolioBookAmount(gross, payCur, book, params.sarPerUsd);
+        const dayKey = payDateKey(pay.payDate);
+        const totalBook = toPortfolioBookAmount(gross, payCur, book, params.sarPerUsd, params.sarPerUsdForDay, dayKey);
         if (!(totalBook > 0)) continue;
 
         const canonAcc = resolveCanonicalAccountId(pos.accountId, params.accounts);

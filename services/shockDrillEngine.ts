@@ -53,6 +53,7 @@ export function runShockDrill(data: FinancialData | null | undefined, templateId
       monthlyOverrides: [],
       financialData: data,
       sarPerUsd,
+      uiExchangeRate: sarPerUsd,
     }
   );
   const baseHousehold = buildHouseholdBudgetPlan(input);

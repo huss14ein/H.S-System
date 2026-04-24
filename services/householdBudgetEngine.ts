@@ -4,6 +4,8 @@
  */
 
 import type { FinancialData } from '../types';
+import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from './fxDailySeries';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { computeGoalResolvedAmountsSar } from './goalResolvedTotals';
 
@@ -175,11 +177,66 @@ export function mergeGoalRowsWithResolvedCurrentSar<T extends { id?: string; cur
   });
 }
 
-export function sumLiquidCash(accounts: Array<{ type?: string; balance?: number }>): number {
+/**
+ * Sum liquid account balances in **SAR**. Pass `sarPerUsd` so USD checking/savings convert correctly.
+ */
+export function sumLiquidCash(
+  accounts: Array<{ type?: string; balance?: number; currency?: string }>,
+  sarPerUsd?: number,
+): number {
   if (!Array.isArray(accounts)) return 0;
+  const rate = Number(sarPerUsd);
+  const useFx = Number.isFinite(rate) && rate > 0;
   return accounts
     .filter((a) => ['Checking', 'Savings', 'Investment'].includes(String(a.type ?? '')))
-    .reduce((sum, a) => sum + Number(a.balance ?? 0), 0);
+    .reduce((sum, a) => {
+      const bal = Math.max(0, Number(a.balance ?? 0));
+      if (!useFx) return sum + bal;
+      const ccy = a.currency === 'USD' ? 'USD' : 'SAR';
+      return sum + toSAR(bal, ccy, rate);
+    }, 0);
+}
+
+/**
+ * Calendar-year monthly income/expense totals from cashflow KPI transactions, each converted to SAR
+ * (mixed USD/SAR accounts, dated FX when `financialData` has history).
+ */
+export function accumulateHouseholdYearCashflowSar(
+  financialData: FinancialData | null | undefined,
+  transactions: Array<{ date: string; type?: string; category?: string; amount?: number; accountId?: string }>,
+  accounts: Array<{ id?: string; currency?: string }>,
+  year: number,
+  uiExchangeRate: number,
+): { monthlyIncome: number[]; monthlyExpense: number[] } {
+  const monthlyIncome: number[] = Array(12).fill(0);
+  const monthlyExpense: number[] = Array(12).fill(0);
+  if (!financialData || !Array.isArray(transactions)) {
+    return { monthlyIncome, monthlyExpense };
+  }
+  const spot = resolveSarPerUsd(financialData, uiExchangeRate);
+  if (!Number.isFinite(spot) || spot <= 0) {
+    return { monthlyIncome, monthlyExpense };
+  }
+  hydrateSarPerUsdDailySeries(financialData, uiExchangeRate);
+  const accList =
+    Array.isArray(accounts) && accounts.length > 0
+      ? accounts
+      : ((((financialData as { personalAccounts?: Array<{ id?: string; currency?: string }> }).personalAccounts ??
+          financialData.accounts) ?? []) as Array<{ id?: string; currency?: string }>);
+  const accById = new Map(accList.map((a) => [String(a.id ?? ''), a]));
+  transactions.forEach((t) => {
+    if (!t.date) return;
+    const d = new Date(t.date);
+    if (d.getFullYear() !== year) return;
+    const m = d.getMonth();
+    const cur = accById.get(String(t.accountId ?? ''))?.currency === 'USD' ? 'USD' : 'SAR';
+    const day = String(t.date).slice(0, 10);
+    const r = day.length === 10 ? getSarPerUsdForCalendarDay(day, financialData, uiExchangeRate) : spot;
+    const amt = toSAR(Math.abs(Number(t.amount) || 0), cur, r);
+    if (countsAsIncomeForCashflowKpi(t)) monthlyIncome[m] += amt;
+    else if (countsAsExpenseForCashflowKpi(t)) monthlyExpense[m] += amt;
+  });
+  return { monthlyIncome, monthlyExpense };
 }
 
 /** Suggested budget entry from the household engine (unified bulk-add categories). */
@@ -708,7 +765,8 @@ export function buildHouseholdEngineInputFromPlanData(
   const monthlyActualExpense = Array.isArray(monthlyExpenseActual) && monthlyExpenseActual.length >= 12
     ? monthlyExpenseActual.slice(0, 12)
     : Array(12).fill(0);
-  const liquidBalance = sumLiquidCash(accounts);
+  const ratePlan = Number(options?.sarPerUsd);
+  const liquidBalance = sumLiquidCash(accounts, Number.isFinite(ratePlan) && ratePlan > 0 ? ratePlan : undefined);
   const rate = Number(options?.sarPerUsd);
   const goalsForEngine =
     options?.financialData != null && Number.isFinite(rate) && rate > 0
@@ -731,7 +789,7 @@ export function buildHouseholdEngineInputFromPlanData(
 
 export function buildHouseholdEngineInputFromData(
   transactions: Array<{ date: string; type?: string; amount?: number }>,
-  accounts: Array<{ type?: string; balance?: number }>,
+  accounts: Array<{ type?: string; balance?: number; id?: string; currency?: string }>,
   goals: Array<{ id?: string; name?: string; targetAmount?: number; currentAmount?: number; deadline?: string }>,
   options: {
     year?: number;
@@ -744,14 +802,22 @@ export function buildHouseholdEngineInputFromData(
     /** When set with `sarPerUsd`, goal `currentAmount` uses resolved linked-wealth totals (Goals page parity). */
     financialData?: FinancialData | null;
     sarPerUsd?: number;
+    /** CurrencyContext rate — required with `financialData` for dated SAR conversion (same as Plan/Budgets). */
+    uiExchangeRate?: number;
   }
 ): HouseholdBudgetPlanInput {
   const year = options?.year ?? new Date().getFullYear();
   const salary = options?.expectedMonthlySalary ?? 0;
   const monthlySalaryPlan = Array(12).fill(salary);
-  const monthlyActualIncome = Array(12).fill(0);
-  const monthlyActualExpense = Array(12).fill(0);
-  if (Array.isArray(transactions)) {
+  let monthlyActualIncome = Array(12).fill(0);
+  let monthlyActualExpense = Array(12).fill(0);
+  const rate = Number(options?.sarPerUsd);
+  const uiEx = Number(options?.uiExchangeRate ?? options?.sarPerUsd);
+  if (options?.financialData && Number.isFinite(rate) && rate > 0 && Number.isFinite(uiEx) && uiEx > 0) {
+    const acc = accumulateHouseholdYearCashflowSar(options.financialData, transactions, accounts, year, uiEx);
+    monthlyActualIncome = acc.monthlyIncome;
+    monthlyActualExpense = acc.monthlyExpense;
+  } else if (Array.isArray(transactions)) {
     transactions.forEach((t) => {
       const d = new Date(t.date);
       if (d.getFullYear() !== year) return;
@@ -764,8 +830,7 @@ export function buildHouseholdEngineInputFromData(
   for (let i = 0; i < 12; i++) {
     if (monthlyActualIncome[i] === 0) monthlyActualIncome[i] = salary;
   }
-  const liquidBalance = sumLiquidCash(accounts);
-  const rate = Number(options?.sarPerUsd);
+  const liquidBalance = sumLiquidCash(accounts, Number.isFinite(rate) && rate > 0 ? rate : undefined);
   const goalsForEngine =
     options?.financialData != null && Number.isFinite(rate) && rate > 0
       ? mergeGoalRowsWithResolvedCurrentSar(goals, options.financialData, rate)

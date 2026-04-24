@@ -73,4 +73,22 @@ describe('personalNetWorth', () => {
     );
     expect(buckets.netWorth).toBe(breakdown.netWorth);
   });
+
+  it('puts Sukuk (Assets) into the investments bucket, not physical assets', () => {
+    const data: any = {
+      accounts: [{ type: 'Checking', balance: 0 }],
+      assets: [
+        { type: 'Sukuk', value: 1200 },
+        { type: 'Property', value: 4800 },
+      ],
+      liabilities: [],
+      commodityHoldings: [],
+      investments: [],
+    };
+    const buckets = computePersonalNetWorthChartBucketsSAR(data, 3.75);
+    expect(buckets.investments).toBe(1200);
+    expect(buckets.physicalAndCommodities).toBe(4800);
+    const breakdown = computePersonalNetWorthBreakdownSAR(data, 3.75);
+    expect(buckets.netWorth).toBe(breakdown.netWorth);
+  });
 });

@@ -2385,6 +2385,11 @@ const PlatformCard: React.FC<{
                             <div className="flex justify-center">
                                 <CurrencyDualDisplay value={availableCashSAR} inCurrency="SAR" digits={0} size="lg" weight="bold" />
                             </div>
+                            {availableCashSAR >= 1000 && (
+                                <span className="mt-1 inline-flex items-center justify-center rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 text-[11px] font-semibold">
+                                    Ready to reinvest (≥ 1,000 SAR)
+                                </span>
+                            )}
                             <span className="relative mt-1 inline-flex items-center justify-center gap-1 text-[11px] font-medium text-slate-500 group/cash-buckets">
                                 <span>By bucket</span>
                                 <span
@@ -4635,7 +4640,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
   const [currentAccountId, setCurrentAccountId] = useState<string|null>(null);
 
   const { exchangeRate, currency: appDisplayCurrency } = useCurrency();
-  const { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage, platformsRollupSAR, commoditiesValueSAR } = useMemo(() => {
+  const { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage, platformsRollupSAR, commoditiesValueSAR, sukukAssetsValueSAR } = useMemo(() => {
     if (!data) {
       return {
         totalValue: 0,
@@ -4645,6 +4650,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         trendPercentage: 0,
         platformsRollupSAR: 0,
         commoditiesValueSAR: 0,
+        sukukAssetsValueSAR: 0,
       };
     }
     const allCommodities = getPersonalCommodityHoldings(data);
@@ -4661,10 +4667,21 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
       rate,
       simulatedPrices,
     );
-    const totalValue = platformsRollupSAR + commoditiesValueSAR;
+
+    const { personalAssets } = getPersonalWealthData(data);
+    const sukukAssets = (personalAssets ?? []).filter((a) => a?.type === 'Sukuk');
+    const sukukAssetsValueSAR = sukukAssets.reduce((sum, a) => sum + Math.max(0, Number(a?.value) || 0), 0);
+    const sukukAssetsCostSAR = sukukAssets.reduce((sum, a) => {
+      const v = Math.max(0, Number(a?.value) || 0);
+      const pp = Number(a?.purchasePrice);
+      const cost = Number.isFinite(pp) && pp > 0 ? pp : v;
+      return sum + cost;
+    }, 0);
+
+    const totalValue = platformsRollupSAR + commoditiesValueSAR + sukukAssetsValueSAR;
     const totalDailyPnL = platformsDailyPnL + commoditiesDailySAR;
     const commodityCost = allCommodities.reduce((sum: number, ch: { purchaseValue?: number }) => sum + toSAR(ch.purchaseValue ?? 0, 'USD', rate), 0);
-    const netCapital = Math.max(0, platformNetCapitalSar + commodityCost);
+    const netCapital = Math.max(0, platformNetCapitalSar + commodityCost + sukukAssetsCostSAR);
     const totalGainLoss = totalValue - netCapital;
     const roiRaw = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
     const roi = Number.isFinite(roiRaw) ? roiRaw : 0;
@@ -4680,6 +4697,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
       trendPercentage,
       platformsRollupSAR,
       commoditiesValueSAR,
+      sukukAssetsValueSAR,
     };
   }, [data, simulatedPrices, exchangeRate, getAvailableCashForAccount]);
 
@@ -4700,10 +4718,11 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
       roiPct: roi,
       dailyPnLSAR: totalDailyPnL,
       commoditiesValueSAR,
+      sukukAssetsValueSAR,
       appDisplayCurrency,
       executionLogCount,
     };
-  }, [data, activeTab, totalValue, totalGainLoss, roi, totalDailyPnL, commoditiesValueSAR, appDisplayCurrency]);
+  }, [data, activeTab, totalValue, totalGainLoss, roi, totalDailyPnL, commoditiesValueSAR, sukukAssetsValueSAR, appDisplayCurrency]);
 
   const getTrendString = (trend: number) => {
     return `${trend >= 0 ? '+' : ''}${trend.toFixed(2)}%`;
@@ -4966,7 +4985,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 indicatorColor="green"
                 valueColor="text-emerald-700"
                 icon={<ChartPieIcon className="h-5 w-5 text-emerald-600" aria-hidden />}
-                tooltip="Everything you have invested right now: stocks and funds at today's prices, idle cash sitting on your broker accounts, and commodities. US-listed prices are converted into riyals using your FX rate so the number matches your net worth view. Hover the amount to see the USD equivalent."
+                tooltip="Everything you have invested right now: stocks and funds at today's prices, idle cash sitting on your broker accounts, commodities, and Sukuk tracked in Assets. US-listed prices are converted into riyals using your FX rate so the number matches your net worth view. Hover the amount to see the USD equivalent."
             />
             <Card
                 title="Unrealized P/L"
@@ -4975,7 +4994,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 indicatorColor={totalGainLoss >= 0 ? 'green' : 'red'}
                 valueColor={totalGainLoss >= 0 ? 'text-emerald-700' : 'text-rose-700'}
                 icon={<ArrowsRightLeftIcon className={`h-5 w-5 ${totalGainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
-                tooltip="Paper profit or loss: current value minus money you moved in (deposits) and out (withdrawals) of investment platforms, including commodities cost. It updates when prices refresh; it is not tax or realized gain until you sell. Hover the amount to see USD equivalent."
+                tooltip="Paper profit or loss: current value minus money you moved in (deposits) and out (withdrawals) of investment platforms, plus Sukuk purchase cost (from Assets), plus commodity purchase cost. It updates when prices refresh; it is not tax or realized gain until you sell. Hover the amount to see USD equivalent."
             />
             <Card
                 title="Portfolio ROI"
@@ -4997,12 +5016,13 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 icon={<ArrowsRightLeftIcon className={`h-5 w-5 ${totalDailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
             />
         </section>
-        {(platformsRollupSAR > 0 || commoditiesValueSAR > 0) && (
+        {(platformsRollupSAR > 0 || commoditiesValueSAR > 0 || sukukAssetsValueSAR > 0) && (
             <p className="text-xs text-slate-500 -mt-2 px-0.5 leading-relaxed" role="note">
                 KPIs aggregate personal portfolios in <strong>each portfolio&apos;s base currency</strong> (USD or SAR), convert to SAR using your FX settings, then show amounts in your app currency ({appDisplayCurrency}). Commodities are valued in USD and converted consistently.
                 <span className="tabular-nums block mt-1">
                     SAR breakdown: {formatCurrencyString(platformsRollupSAR, { inCurrency: 'SAR', digits: 0 })} platforms + tradable cash;{' '}
-                    {formatCurrencyString(commoditiesValueSAR, { inCurrency: 'SAR', digits: 0 })} commodities.
+                    {formatCurrencyString(commoditiesValueSAR, { inCurrency: 'SAR', digits: 0 })} commodities;{' '}
+                    {formatCurrencyString(sukukAssetsValueSAR, { inCurrency: 'SAR', digits: 0 })} sukuk.
                 </span>
             </p>
         )}

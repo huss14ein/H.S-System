@@ -11,7 +11,6 @@ import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import Card from '../components/Card';
 import CollapsibleSection from '../components/CollapsibleSection';
-import SectionCard from '../components/SectionCard';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import NetWorthCompositionChart from '../components/charts/NetWorthCompositionChart';
@@ -41,6 +40,41 @@ import {
 } from '../services/reportingEngine';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import Modal from '../components/Modal';
+
+function householdStressStyles(level: string) {
+    const L = (level || '').toLowerCase();
+    if (L === 'high') {
+        return {
+            card: 'border-l-rose-500 bg-rose-50/50',
+            pill: 'bg-rose-100 text-rose-900 ring-1 ring-rose-200',
+            hint: 'High stress — pause optional spending and shore up cash.',
+        };
+    }
+    if (L === 'medium') {
+        return {
+            card: 'border-l-amber-500 bg-amber-50/50',
+            pill: 'bg-amber-100 text-amber-950 ring-1 ring-amber-200',
+            hint: 'Some pressure — keep flexibility and watch large purchases.',
+        };
+    }
+    return {
+        card: 'border-l-emerald-500 bg-emerald-50/40',
+        pill: 'bg-emerald-100 text-emerald-900 ring-1 ring-emerald-200',
+        hint: 'Comfortable room in the household plan.',
+    };
+}
+
+function runwayStyles(status: 'comfortable' | 'watch' | 'critical' | undefined) {
+    if (status === 'critical') return { card: 'border-l-rose-500 bg-rose-50/50', pill: 'bg-rose-100 text-rose-900' };
+    if (status === 'watch') return { card: 'border-l-amber-500 bg-amber-50/50', pill: 'bg-amber-100 text-amber-950' };
+    return { card: 'border-l-sky-500 bg-sky-50/40', pill: 'bg-sky-100 text-sky-900' };
+}
+
+function disciplineStyles(score: number) {
+    if (score >= 75) return { card: 'border-l-emerald-500 bg-emerald-50/40', pill: 'bg-emerald-100 text-emerald-900' };
+    if (score >= 45) return { card: 'border-l-amber-500 bg-amber-50/40', pill: 'bg-amber-100 text-amber-950' };
+    return { card: 'border-l-rose-500 bg-rose-50/50', pill: 'bg-rose-100 text-rose-900' };
+}
 
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
@@ -83,9 +117,18 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const auth = useContext(AuthContext);
-    const { exchangeRate } = useCurrency();
+    const { exchangeRate, currency: displayCurrency } = useCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
-    const { formatCurrencyString } = useFormatCurrency();
+
+    const fxBanner = useMemo(() => {
+        const w = Number(data?.wealthUltraConfig?.fxRate);
+        const hasWu = Number.isFinite(w) && w > 0;
+        return {
+            rate: sarPerUsd,
+            sourceLabel: hasWu ? 'Wealth Ultra / saved FX' : 'Live header rate (or SAR peg default)',
+        };
+    }, [data?.wealthUltraConfig?.fxRate, sarPerUsd]);
+    const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const [analysis, setAnalysis] = useState<PersonaAnalysis | null>(null);
     const [analysisEn, setAnalysisEn] = useState<PersonaAnalysis | null>(null);
     const [analysisLanguage, setAnalysisLanguage] = useState<'en' | 'ar'>('en');
@@ -139,7 +182,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                 externalCashflow: flow,
             }),
         };
-    }, [data?.transactions, data?.personalTransactions]);
+    }, [data, data?.transactions, data?.personalTransactions]);
 
     const handleGenerateAnalysis = useCallback(async () => {
         const fm = reportModel?.financialMetricsWithEf;
@@ -264,15 +307,22 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         if (!Number.isFinite(summaryMonthlyKpis.roi)) out.push('ROI could not be computed.');
         if (liquid) {
             const rebuilt = liquid.liquidCash + liquid.investmentsSAR + liquid.commodities + liquid.receivables - liquid.shortTermDebt;
-            if (Math.abs(rebuilt - liquid.liquidNetWorth) > 0.5) {
-                out.push('Liquid net worth components do not reconcile. Please refresh or review input data.');
+            if (Math.abs(rebuilt - liquid.liquidNetWorth) > 1) {
+                out.push('Liquid net worth components do not reconcile. Please refresh or review account balances and liabilities.');
             }
+            const debtSplit = liquid.creditCardDebtSar + liquid.loanAndMortgageDebtSar;
+            if (Math.abs(debtSplit - liquid.shortTermDebt) > 1) {
+                out.push('Debt breakdown (cards vs loans) does not match total debt — review liability rows and credit accounts.');
+            }
+        }
+        if (fxLooksValid && Math.abs(exchangeRate - sarPerUsd) > 0.06) {
+            out.push('Display FX and calculation FX differ; totals use the resolved SAR-per-USD rate (see banner below).');
         }
         if (runway && !Number.isFinite(runway.monthsOfRunway)) {
             out.push('Liquidity runway could not be calculated from current data.');
         }
         return out;
-    }, [reportModel, summaryMonthlyKpis, data, sarPerUsd]);
+    }, [reportModel, summaryMonthlyKpis, data, sarPerUsd, exchangeRate]);
 
     if (loading || !data) {
         return (
@@ -306,7 +356,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     return (
         <PageLayout 
             title="Financial Summary" 
-            description="Key metrics and AI-generated financial persona with report card and suggestions."
+            description="Your money at a glance: net worth, cash & investments, stress checks, and optional AI guidance — written for everyday use, not accountant jargon."
             action={
                 setActivePage && (
                     <PageActionsDropdown
@@ -365,48 +415,63 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                     </div>
                 </div>
             </Modal>
+
+            <div className="mb-4 rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50/90 to-white px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm text-slate-700 shadow-sm">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className="inline-flex items-center rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-sky-900">One currency view</span>
+                    <span>
+                        Numbers are calculated in <strong>SAR</strong> (Saudi Riyal) so everything adds up the same way.
+                        {displayCurrency === 'USD' && (
+                            <span className="text-slate-600"> Your display preference is USD — amounts convert using the rate below.</span>
+                        )}
+                    </span>
+                </div>
+                <div className="text-xs sm:text-sm tabular-nums text-slate-600 text-right">
+                    <span className="font-semibold text-slate-800">1 USD = {fxBanner.rate.toFixed(2)} SAR</span>
+                    <span className="text-slate-500"> · {fxBanner.sourceLabel}</span>
+                    {displayCurrency === 'USD' && (
+                        <span className="block text-[11px] text-slate-500 mt-0.5">
+                            Example: SAR 10,000 ≈ {formatSecondaryEquivalent(10000)}
+                        </span>
+                    )}
+                </div>
+            </div>
+
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {isAdmin ? (
                     <div
                         role="button"
                         tabIndex={0}
                         onClick={() => setActivePage?.('Assets')}
                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActivePage?.('Assets'); } }}
-                        className="lg:col-span-1 section-card-hover flex flex-col justify-center items-center text-center border-l-4 border-l-primary cursor-pointer"
+                        className="lg:col-span-1 section-card-hover flex flex-col justify-center items-center text-center border-l-4 border-l-emerald-500 cursor-pointer bg-gradient-to-br from-white to-emerald-50/30"
                         aria-label="View and manage assets"
                     >
                         <div className="w-full flex items-start justify-between gap-2 mb-1">
-                            <h2 className="text-lg font-medium text-gray-500 text-left min-w-0 flex-1">My Net Worth</h2>
-                            <InfoHint text="Personal wealth only. Items with Owner set (e.g. Father) are excluded from this total." placement="bottom" hintId="summary-personal-wealth" hintPage="Summary" />
+                            <h2 className="text-lg font-medium text-gray-500 text-left min-w-0 flex-1">Your net worth</h2>
+                            <InfoHint text="Everything you own minus what you owe, for accounts and items marked as yours. Family members’ items with a different Owner are left out — same rule as the Dashboard." placement="bottom" hintId="summary-personal-wealth" hintPage="Summary" />
                         </div>
                         <p className="text-5xl font-extrabold text-dark my-2">{maskBalance(formatCurrencyString(financialMetricsWithEf.netWorth, { digits: 0 }))}</p>
                         <p className={`${financialMetricsWithEf.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold flex flex-wrap items-center justify-center gap-2`}>
-                            <span>{financialMetricsWithEf.netWorthTrend >= 0 ? '+' : ''}{financialMetricsWithEf.netWorthTrend.toFixed(1)}% vs implied prior net worth</span>
+                            <span>{financialMetricsWithEf.netWorthTrend >= 0 ? '+' : ''}{financialMetricsWithEf.netWorthTrend.toFixed(1)}% rough trend</span>
                             <span className="inline-flex flex-shrink-0">
                                 <InfoHint
-                                    text="Uses this month’s personal transactions (income vs expenses) vs current net worth—not a stored last-month snapshot. Same personal scope as Dashboard."
+                                    text="Approximate: compares today’s net worth with an implied figure from this month’s income and spending. It is not investment performance — use the chart and investments section for that."
                                     placement="bottom"
                                     hintId="summary-nw-trend"
                                     hintPage="Summary"
                                 />
                             </span>
                         </p>
-                        <p className="text-xs text-slate-500 mt-2">Personal wealth only · Click to manage assets</p>
-                        {managedWealthTotal > 0 && (
-                            <p className="text-xs text-amber-700 mt-2 font-medium">Wealth under management: {maskBalance(formatCurrencyString(managedWealthTotal, { digits: 0 }))}</p>
+                        <p className="text-xs text-slate-500 mt-2">Tap to review property &amp; Sukuk on Assets</p>
+                        {isAdmin && managedWealthTotal > 0 && (
+                            <p className="text-xs text-amber-800 mt-2 font-medium rounded-lg bg-amber-50 px-2 py-1 border border-amber-100">Household / managed wealth on top of yours: {maskBalance(formatCurrencyString(managedWealthTotal, { digits: 0 }))}</p>
                         )}
                     </div>
-                ) : (
-                    <div className="lg:col-span-1 section-card border-l-4 border-l-amber-400">
-                        <h2 className="text-lg font-medium text-gray-700">Net Worth</h2>
-                        <p className="text-sm text-slate-600 mt-2">Net worth visibility is restricted to Admin only.</p>
-                    </div>
-                )}
 
                 <div className="lg:col-span-2 cards-grid grid grid-cols-1 sm:grid-cols-2">
-                    <Card title="This Month's Income" value={formatCurrencyString(financialMetricsWithEf.monthlyIncome)} valueColor="text-success" />
-                    <Card title="This Month's Expenses" value={formatCurrencyString(financialMetricsWithEf.monthlyExpenses)} valueColor="text-danger" />
-                    <Card title="Savings Rate" value={`${(financialMetricsWithEf.savingsRate * 100).toFixed(1)}%`} valueColor="text-success" tooltip="The percentage of your income you are saving." />
+                    <Card title="Money in (this month)" value={formatCurrencyString(financialMetricsWithEf.monthlyIncome)} valueColor="text-success" tooltip="Sum of income-style transactions since the first day of this month (personal accounts only)." />
+                    <Card title="Money out (this month)" value={formatCurrencyString(financialMetricsWithEf.monthlyExpenses)} valueColor="text-danger" tooltip="Sum of spending-style transactions this month. Does not double-count internal transfers when labeled correctly." />
+                    <Card title="Savings rate" value={`${(financialMetricsWithEf.savingsRate * 100).toFixed(1)}%`} valueColor="text-success" tooltip="Share of this month’s income left after expenses. If income is zero, this reads 0%." />
                     <Card 
                         title="Emergency Fund" 
                         value={`${financialMetricsWithEf.emergencyFundMonths.toFixed(1)} months`}
@@ -418,84 +483,113 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
             </div>
 
             {summaryValidationWarnings.length > 0 && (
-                <SectionCard title="Summary validation checks" collapsible collapsibleSummary="Data quality and wiring checks" defaultExpanded className="mb-4">
-                    <ul className="text-xs text-amber-800 space-y-1">
-                        {summaryValidationWarnings.slice(0, 8).map((w, i) => <li key={`sv-${i}`}>- {w}</li>)}
+                <div className="mb-4 rounded-2xl border-l-4 border-l-amber-500 bg-amber-50/90 border border-amber-100 px-4 py-3 shadow-sm" role="status">
+                    <p className="text-sm font-semibold text-amber-950">Before you rely on these numbers</p>
+                    <p className="text-xs text-amber-900/90 mt-1 mb-2">One or more checks failed. Fix the underlying data (accounts, FX, transactions) so this page stays trustworthy.</p>
+                    <ul className="text-xs text-amber-950 space-y-1 list-disc pl-4">
+                        {summaryValidationWarnings.slice(0, 10).map((w, i) => <li key={`sv-${i}`}>{w}</li>)}
                     </ul>
-                </SectionCard>
+                </div>
             )}
 
-            <CollapsibleSection title="Liquid net worth (simplified)" summary={maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))} className="border border-slate-200 bg-slate-50/50">
-                <p className="text-2xl font-extrabold text-primary mb-4">{maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))}</p>
-                <p className="text-xs text-slate-500 mb-3">Simple formula: cash + investments + commodities + receivables − debt.</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-xs text-slate-600">
-                    <span className="flex items-center justify-between gap-2 rounded bg-white/80 px-2 py-1">
-                        <span>Cash (checking/savings)</span>
-                        <span className="tabular-nums text-slate-700">{maskBalance(formatCurrencyString(liquidNw.liquidCash, { digits: 0 }))}</span>
-                    </span>
-                    <span className="flex items-center justify-between gap-2 rounded bg-white/80 px-2 py-1">
-                        <span>Investments (SAR eq.)</span>
-                        <span className="tabular-nums text-slate-700">{maskBalance(formatCurrencyString(liquidNw.investmentsSAR, { digits: 0 }))}</span>
-                    </span>
-                    <span className="flex items-center justify-between gap-2 rounded bg-white/80 px-2 py-1">
-                        <span>Commodities</span>
-                        <span className="tabular-nums text-slate-700">{maskBalance(formatCurrencyString(liquidNw.commodities, { digits: 0 }))}</span>
-                    </span>
-                    <span className="flex items-center justify-between gap-2 rounded bg-white/80 px-2 py-1">
-                        <span>Receivables</span>
-                        <span className="tabular-nums text-slate-700">{maskBalance(formatCurrencyString(liquidNw.receivables, { digits: 0 }))}</span>
-                    </span>
-                    <span className="flex items-center justify-between gap-2 rounded bg-white/80 px-2 py-1">
-                        <span>Debt</span>
-                        <span className="tabular-nums text-slate-700">−{maskBalance(formatCurrencyString(liquidNw.shortTermDebt, { digits: 0 }))}</span>
-                    </span>
-                    <span className="flex items-center justify-between gap-2 rounded bg-white/80 px-2 py-1 text-slate-500">
-                        <span>~30d cashflow est.</span>
-                        <span className="tabular-nums">{maskBalance(formatCurrencyString(liquidNw.contributionEstimate30d, { digits: 0 }))}</span>
-                    </span>
+            <CollapsibleSection title="Spendable-style wealth (liquid)" summary={maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))} className="border border-emerald-100 bg-gradient-to-br from-emerald-50/40 to-white">
+                <p className="text-sm text-slate-600 mb-2 max-w-prose">
+                    A simpler slice than full net worth: cash you can reach quickly, brokerage &amp; Sukuk, commodities, money owed to you, minus cards and loans.
+                    Homes and cars stay in <strong>full net worth</strong> above — they are slower to sell, so they are listed separately below for context.
+                </p>
+                <p className="text-2xl font-extrabold text-emerald-800 mb-4">{maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))}</p>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="rounded-xl border border-white/80 bg-white/90 p-3 shadow-sm">
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-2">Adds</p>
+                        <ul className="space-y-2 text-xs text-slate-700">
+                            <li className="flex justify-between gap-2 border-b border-slate-100 pb-1">
+                                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-sky-500" aria-hidden />Cash &amp; brokerage cash</span>
+                                <span className="tabular-nums font-medium">{maskBalance(formatCurrencyString(liquidNw.liquidCash, { digits: 0 }))}</span>
+                            </li>
+                            <li className="flex justify-between gap-2 border-b border-slate-100 pb-1">
+                                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-violet-500" aria-hidden />Stocks &amp; funds (portfolios)</span>
+                                <span className="tabular-nums font-medium">{maskBalance(formatCurrencyString(liquidNw.portfolioHoldingsSar, { digits: 0 }))}</span>
+                            </li>
+                            <li className="flex justify-between gap-2 border-b border-slate-100 pb-1">
+                                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-indigo-500" aria-hidden />Sukuk (from Assets)</span>
+                                <span className="tabular-nums font-medium">{maskBalance(formatCurrencyString(liquidNw.sukukSar, { digits: 0 }))}</span>
+                            </li>
+                            <li className="flex justify-between gap-2 border-b border-slate-100 pb-1">
+                                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-amber-500" aria-hidden />Commodities</span>
+                                <span className="tabular-nums font-medium">{maskBalance(formatCurrencyString(liquidNw.commodities, { digits: 0 }))}</span>
+                            </li>
+                            <li className="flex justify-between gap-2">
+                                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-teal-500" aria-hidden />Receivables (owed to you)</span>
+                                <span className="tabular-nums font-medium">{maskBalance(formatCurrencyString(liquidNw.receivables, { digits: 0 }))}</span>
+                            </li>
+                        </ul>
+                    </div>
+                    <div className="rounded-xl border border-white/80 bg-white/90 p-3 shadow-sm">
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-2">Subtracts</p>
+                        <ul className="space-y-2 text-xs text-slate-700">
+                            <li className="flex justify-between gap-2 border-b border-slate-100 pb-1">
+                                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-rose-500" aria-hidden />Credit cards</span>
+                                <span className="tabular-nums font-medium text-rose-800">−{maskBalance(formatCurrencyString(liquidNw.creditCardDebtSar, { digits: 0 }))}</span>
+                            </li>
+                            <li className="flex justify-between gap-2 border-b border-slate-100 pb-1">
+                                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-red-700" aria-hidden />Mortgages &amp; loans</span>
+                                <span className="tabular-nums font-medium text-rose-900">−{maskBalance(formatCurrencyString(liquidNw.loanAndMortgageDebtSar, { digits: 0 }))}</span>
+                            </li>
+                            <li className="flex justify-between gap-2 pt-1 text-slate-800 font-semibold">
+                                <span>Total debt in this view</span>
+                                <span className="tabular-nums">−{maskBalance(formatCurrencyString(liquidNw.shortTermDebt, { digits: 0 }))}</span>
+                            </li>
+                        </ul>
+                        <p className="text-[11px] text-slate-500 mt-3 pt-2 border-t border-slate-100">
+                            Illiquid property &amp; similar on the Assets page (excl. Sukuk):{' '}
+                            <span className="font-semibold text-slate-700">{maskBalance(formatCurrencyString(liquidNw.illiquidPhysicalAssetsSar, { digits: 0 }))}</span>
+                        </p>
+                    </div>
                 </div>
-                <p className="text-[11px] text-slate-400 mt-2">Excludes illiquid physical assets. Displayed in SAR equivalent for a single-currency snapshot.</p>
+                <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-600">
+                    <span className="rounded-lg bg-slate-100 px-2 py-1">Last ~30 days net in/out (income − spending): {maskBalance(formatCurrencyString(liquidNw.contributionEstimate30d, { digits: 0 }))}</span>
+                    <InfoHint text="Rough cashflow hint from dated transactions; not a bank statement." hintId="summary-liquid-flow" hintPage="Summary" />
+                </div>
+                <p className="text-[11px] text-slate-500 mt-2">USD accounts and US-listed holdings are converted with the same SAR-per-USD rate as the rest of the app.</p>
             </CollapsibleSection>
 
-            {isAdmin && (
-                <CollapsibleSection title="Net worth change vs flows (local snapshots)" summary="Contribution vs market-style residual" className="border border-violet-100 bg-violet-50/40">
+            <CollapsibleSection title="Net worth change vs flows (saved snapshots)" summary="See savings vs market moves" className="border border-violet-100 bg-violet-50/40">
                     {nwSnapshotInsight.attr ? (
                         <>
+                            <p className="text-sm text-slate-700 mb-2">Uses your last two net worth snapshots from visiting the Dashboard — helpful to see how much of the change came from money in/out vs investments.</p>
                             <ul className="text-sm text-slate-700 space-y-1 list-disc list-inside">
                                 {nwSnapshotInsight.attr.bullets.map((line, i) => (
                                     <li key={i}>{line}</li>
                                 ))}
                             </ul>
                             <p className="text-xs text-slate-500 mt-2">
-                                From last two Dashboard visits (admin). Full detail: <button type="button" className="text-primary font-medium" onClick={() => triggerPageAction ? triggerPageAction('Engines & Tools', 'openRiskTradingHub') : setActivePage?.('Engines & Tools')}>Safety &amp; rules →</button>
+                                More tools: <button type="button" className="text-primary font-medium" onClick={() => triggerPageAction ? triggerPageAction('Engines & Tools', 'openRiskTradingHub') : setActivePage?.('Engines & Tools')}>Safety &amp; rules →</button>
                             </p>
                         </>
                     ) : (
                         <p className="text-sm text-slate-600">
-                            Open <strong>Dashboard</strong> twice on different days as admin to record net worth snapshots; then this section shows contribution vs market-style residual.{' '}
+                            Open <strong>Dashboard</strong> on two different days to store snapshots; then this section splits <strong>your own activity</strong> from market-style swings.{' '}
                             {nwSnapshotInsight.snaps.length === 1 && (
-                                <span className="block mt-1 text-slate-500">One snapshot stored—visit Dashboard again tomorrow.</span>
+                                <span className="block mt-1 text-slate-500">One snapshot saved — visit Dashboard again another day.</span>
                             )}
                             {nwSnapshotInsight.snaps.length === 0 && (
-                                <span className="block mt-1 text-slate-500">No snapshots yet—load Dashboard once to start.</span>
+                                <span className="block mt-1 text-slate-500">No snapshots yet — open Dashboard once to create the first one.</span>
                             )}
                         </p>
                     )}
-                </CollapsibleSection>
-            )}
+            </CollapsibleSection>
             
             <div className="cards-grid grid grid-cols-1 gap-4">
-                {isAdmin ? (
-                    <div className="section-card flex flex-col min-h-[420px] h-[min(56vh,520px)]">
-                        <NetWorthCompositionChart title="Historical Net Worth" />
+                    <div className="section-card flex flex-col min-h-[420px] h-[min(56vh,520px)] border-l-4 border-l-sky-500">
+                        <NetWorthCompositionChart title="Historical net worth (your personal scope)" />
                     </div>
-                ) : (
-                    <div className="section-card flex flex-col min-h-[200px] justify-center">
-                        <p className="text-sm text-slate-600 text-center px-6">Historical net worth chart is available for Admin only.</p>
-                    </div>
-                )}
                 <div className="section-card flex flex-col min-h-[420px] h-[min(56vh,520px)]">
-                    <h3 className="section-title mb-2 sm:mb-4">Investment Allocation &amp; Performance</h3>
+                    <div className="mb-2 sm:mb-4 space-y-1">
+                        <h3 className="section-title !mb-0">Investment Allocation &amp; Performance</h3>
+                        <p className="text-xs text-slate-500 max-w-prose">
+                            Tile area reflects position size; color reflects unrealized performance vs cost basis. Sukuk recorded under <strong>Assets</strong> is included here and in the Investments band on the net worth chart.
+                        </p>
+                    </div>
                     <div className="flex-1 min-h-[320px] rounded-lg overflow-hidden border border-slate-100">
                         {investmentTreemapData.length > 0 ? (
                             <PerformanceTreemap data={investmentTreemapData} />
@@ -506,61 +600,75 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                 </div>
             </div>
             
-            {householdStress && (
-                <div className="section-card">
-                    <h3 className="section-title mb-2">Household Cashflow Stress</h3>
-                    <p className="text-sm text-slate-700 mb-1">
-                        Current stress level: <span className="font-semibold uppercase">{householdStress.level}</span>
-                    </p>
-                    <p className="text-xs text-slate-600 mb-2">
-                        {householdStress.summary}
-                    </p>
+            {householdStress && (() => {
+                const hs = householdStressStyles(householdStress.level);
+                return (
+                <div className={`section-card border-l-4 ${hs.card}`}>
+                    <div className="flex flex-wrap items-center gap-2 mb-2">
+                        <h3 className="section-title !mb-0">Household cashflow stress</h3>
+                        <span className={`text-[11px] font-bold uppercase tracking-wide rounded-full px-2 py-0.5 ${hs.pill}`}>{householdStress.level}</span>
+                    </div>
+                    <p className="text-xs text-slate-600 mb-2">{hs.hint}</p>
+                    <p className="text-sm text-slate-800 mb-2">{householdStress.summary}</p>
                     {householdStress.flags.length > 0 && (
-                        <ul className="text-xs text-slate-500 list-disc pl-5 space-y-0.5">
-                            {householdStress.flags.slice(0, 3).map(flag => (
+                        <ul className="text-xs text-slate-600 list-disc pl-5 space-y-0.5">
+                            {householdStress.flags.slice(0, 4).map(flag => (
                                 <li key={flag}>{flag}</li>
                             ))}
                         </ul>
                     )}
                 </div>
-            )}
+                );
+            })()}
 
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <div className="section-card">
-                    <h3 className="section-title mb-2">Risk Lane</h3>
-                    <p className="text-sm text-slate-700">
-                        Current lane: <span className="font-semibold">{riskLane.lane}</span>
+                <div className="section-card border-l-4 border-l-violet-500 bg-violet-50/30">
+                    <h3 className="section-title mb-1">Investment risk lane</h3>
+                    <p className="text-xs text-slate-600 mb-2">How aggressive your current setup looks versus a calmer default — not a product recommendation.</p>
+                    <p className="text-sm text-slate-800">
+                        Where you are: <span className="font-semibold">{riskLane.lane}</span>
                     </p>
-                    <p className="text-xs text-slate-500 mt-1">
-                        Suggested profile: <span className="font-semibold">{riskLane.suggestedProfile}</span>
+                    <p className="text-xs text-slate-600 mt-1">
+                        Gentler alternative to consider: <span className="font-semibold">{riskLane.suggestedProfile}</span>
                     </p>
-                    <ul className="text-xs text-slate-500 list-disc pl-5 mt-2 space-y-0.5">
-                        {(riskLane.reasons ?? []).slice(0, 3).map((r, i) => <li key={r ?? i}>{r}</li>)}
+                    <ul className="text-xs text-slate-600 list-disc pl-5 mt-2 space-y-0.5">
+                        {(riskLane.reasons ?? []).slice(0, 4).map((r, i) => <li key={r ?? i}>{r}</li>)}
                     </ul>
                 </div>
-                <div className="section-card">
-                    <h3 className="section-title mb-2">Liquidity Runway</h3>
+                <div className={`section-card border-l-4 ${liquidityRunway ? runwayStyles(liquidityRunway.status).card : 'border-l-slate-300'}`}>
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                        <h3 className="section-title !mb-0">Cash runway</h3>
+                        {liquidityRunway && (
+                            <span className={`text-[10px] font-bold uppercase rounded-full px-2 py-0.5 ${runwayStyles(liquidityRunway.status).pill}`}>
+                                {liquidityRunway.status}
+                            </span>
+                        )}
+                    </div>
+                    <p className="text-xs text-slate-600 mb-2">How many months of typical spending your accessible cash might cover.</p>
                     {liquidityRunway ? (
                         <>
-                            <p className="text-sm text-slate-700">
-                                Runway: <span className="font-semibold">{(liquidityRunway.monthsOfRunway ?? 0).toFixed(1)} months</span>
+                            <p className="text-lg font-bold text-slate-900 tabular-nums">
+                                {(liquidityRunway.monthsOfRunway ?? 0).toFixed(1)} <span className="text-sm font-semibold text-slate-600">months</span>
                             </p>
                             <p className="text-xs text-slate-500 mt-1">
-                                Portfolio drawdown: <span className="font-semibold">{(liquidityRunway.drawdownPct ?? 0).toFixed(1)}%</span>
+                                Portfolio drawdown (Wealth Ultra snapshots): <span className="font-semibold">{(liquidityRunway.drawdownPct ?? 0).toFixed(1)}%</span>
                             </p>
-                            <p className="text-xs text-slate-600 mt-2">{liquidityRunway.reasons?.[0] ?? '—'}</p>
+                            <ul className="text-xs text-slate-600 mt-2 space-y-0.5 list-disc pl-4">
+                                {(liquidityRunway.reasons ?? []).slice(0, 3).map((r, i) => <li key={`lr-${i}`}>{r}</li>)}
+                            </ul>
                         </>
                     ) : (
-                        <p className="text-sm text-slate-500">Not enough data.</p>
+                        <p className="text-sm text-slate-500">Add accounts and a few months of expenses to estimate runway.</p>
                     )}
                 </div>
-                <div className="section-card">
-                    <h3 className="section-title mb-2">Discipline Score</h3>
-                    <p className="text-sm text-slate-700">
-                        Score: <span className="font-semibold">{discipline?.score ?? 0}/100</span> ({discipline?.label ?? '—'})
+                <div className={`section-card border-l-4 ${disciplineStyles(discipline?.score ?? 0).card}`}>
+                    <h3 className="section-title mb-1">Budget discipline</h3>
+                    <p className="text-xs text-slate-600 mb-2">How closely recent spending stayed inside the lines you set.</p>
+                    <p className="text-lg font-bold text-slate-900">
+                        {discipline?.score ?? 0}/100 <span className="text-sm font-semibold text-slate-600">({discipline?.label ?? '—'})</span>
                     </p>
-                    <ul className="text-xs text-slate-500 list-disc pl-5 mt-2 space-y-0.5">
-                        {(discipline.reasons ?? []).slice(0, 3).map((r, i) => <li key={r ?? i}>{r}</li>)}
+                    <ul className="text-xs text-slate-600 list-disc pl-5 mt-2 space-y-0.5">
+                        {(discipline.reasons ?? []).slice(0, 4).map((r, i) => <li key={r ?? i}>{r}</li>)}
                     </ul>
                 </div>
             </div>

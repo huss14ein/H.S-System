@@ -169,6 +169,19 @@ export interface WealthSummaryReportInput {
   emergencyFundTargetAmount: number;
   emergencyFundShortfall: number;
   liquidNetWorth: number;
+  /** Matches Summary “liquid wealth” breakdown (all SAR-normalized). */
+  liquidBreakdown?: {
+    liquidCash: number;
+    portfolioHoldingsSar: number;
+    sukukSar: number;
+    investmentsSar: number;
+    commodities: number;
+    receivables: number;
+    creditCardDebtSar: number;
+    loanAndMortgageDebtSar: number;
+    shortTermDebt: number;
+    illiquidPhysicalAssetsSar: number;
+  };
   managedWealthTotal: number;
   riskLane: string;
   liquidityRunwayMonths: number;
@@ -241,6 +254,20 @@ export function generateWealthSummaryReportJson(input: WealthSummaryReportInput)
       emergencyFundTargetAmount: safe(input.emergencyFundTargetAmount),
       emergencyFundShortfall: safe(input.emergencyFundShortfall),
       liquidNetWorth: safe(input.liquidNetWorth),
+      liquidBreakdown: input.liquidBreakdown
+        ? {
+            liquidCash: safe(input.liquidBreakdown.liquidCash),
+            portfolioHoldingsSar: safe(input.liquidBreakdown.portfolioHoldingsSar),
+            sukukSar: safe(input.liquidBreakdown.sukukSar),
+            investmentsSar: safe(input.liquidBreakdown.investmentsSar),
+            commodities: safe(input.liquidBreakdown.commodities),
+            receivables: safe(input.liquidBreakdown.receivables),
+            creditCardDebtSar: safe(input.liquidBreakdown.creditCardDebtSar),
+            loanAndMortgageDebtSar: safe(input.liquidBreakdown.loanAndMortgageDebtSar),
+            shortTermDebt: safe(input.liquidBreakdown.shortTermDebt),
+            illiquidPhysicalAssetsSar: safe(input.liquidBreakdown.illiquidPhysicalAssetsSar),
+          }
+        : undefined,
       managedWealthTotal: safe(input.managedWealthTotal),
       riskLane: input.riskLane,
       liquidityRunwayMonths: safe(input.liquidityRunwayMonths),

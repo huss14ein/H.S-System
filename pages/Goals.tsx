@@ -7,6 +7,7 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { XCircleIcon } from '../components/icons/XCircleIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import PageActionsDropdown from '../components/PageActionsDropdown';
 import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import Modal from '../components/Modal';
@@ -23,20 +24,25 @@ import CollapsibleSection from '../components/CollapsibleSection';
 import { useCurrency } from '../context/CurrencyContext';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
+import { personalMonthlyNetByMonthKeySar } from '../services/financeMetrics';
 import { computeGoalFundingPlan } from '../services/goalFundingRouter';
 import { monteCarloGoalSuccess } from '../services/portfolioConstruction';
 import { projectedGoalCompletionDate, goalFundingGap as goalGapShared } from '../services/goalMetrics';
 import { detectGoalConflict, goalFeasibilityCheck, type GoalConflict } from '../services/goalConflictEngine';
 import { useSelfLearning } from '../context/SelfLearningContext';
-import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import { formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
 import { receivableContributionForGoal } from '../services/goalReceivableContribution';
-import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
+import {
+    averageRollingMonthlyNetSurplus,
+    computeGoalResolvedAmountsSar,
+} from '../services/goalResolvedTotals';
 import {
     computeGoalMonthlyFundingEnvelopeSar,
     rollingSurplusAfterAllGoalBudgetReservations,
 } from '../services/goalProjectionFunding';
+import { toast } from '../context/ToastContext';
 
 // A more visual progress bar specific for goals
 const GoalProgressBar: React.FC<{ progress: number; colorClass: string }> = ({ progress, colorClass }) => {
@@ -97,15 +103,15 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, onSave, goalToEd
         const parsedTarget = parseFloat(targetAmount) || 0;
         const deadlineDate = new Date(deadline);
         if (!name.trim()) {
-            alert('Goal name is required.');
+            toast('Goal name is required.', 'error');
             return;
         }
         if (!Number.isFinite(parsedTarget) || parsedTarget <= 0) {
-            alert('Target amount must be a positive number.');
+            toast('Target amount must be a positive number.', 'error');
             return;
         }
         if (!deadline || Number.isNaN(deadlineDate.getTime())) {
-            alert('Please provide a valid deadline date.');
+            toast('Please provide a valid deadline date.', 'error');
             return;
         }
         const goalData = {
@@ -432,13 +438,13 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
 
     const handleGetAIPlan = useCallback(async () => {
         setIsLoading(true);
-        const rollingAfter = rollingSurplusAfterAllGoalBudgetReservations(data ?? null);
+        const rollingAfter = rollingSurplusAfterAllGoalBudgetReservations(data ?? null, exchangeRate);
         const plan = await getGoalAIPlan(goal, rollingAfter, calculatedCurrentAmount, {
             projectedMonthlyOverride: fundingEnvelope.envelopeMonthly,
         });
         setAiPlan(plan);
         setIsLoading(false);
-    }, [goal, calculatedCurrentAmount, data, fundingEnvelope.envelopeMonthly]);
+    }, [goal, calculatedCurrentAmount, data, fundingEnvelope.envelopeMonthly, exchangeRate]);
     
 
     const { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution, borderColor } = useMemo(() => {
@@ -666,9 +672,9 @@ const Goals: React.FC<{
 }> = ({ setActivePage, pageAction, clearPageAction, triggerPageAction }) => {
     const { data, loading, addGoal, updateGoal, deleteGoal, updateGoalAllocations } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
-    const { exchangeRate } = useCurrency();
+    const { exchangeRate, currency: displayCurrency } = useCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
-    const { formatCurrencyString } = useFormatCurrency();
+    const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [goalToEdit, setGoalToEdit] = useState<Goal | null>(null);
@@ -713,28 +719,27 @@ const Goals: React.FC<{
         }
     }, [pageAction, clearPageAction]);
 
-    const averageMonthlySavings = useMemo(() => {
-        const monthlyNet = new Map<string, number>();
-        const sixMonthsAgo = new Date();
-        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    useEffect(() => {
+        if (data) hydrateSarPerUsdDailySeries(data, exchangeRate);
+    }, [data, exchangeRate]);
 
-        ((data as any)?.personalTransactions ?? data?.transactions ?? [])
-            .filter((t: { date: string; type?: string; category?: string }) => new Date(t.date) > sixMonthsAgo && (countsAsIncomeForCashflowKpi(t) || countsAsExpenseForCashflowKpi(t)))
-            .forEach((t: { date: string; type?: string; category?: string; amount?: number }) => {
-                const monthKey = String(t.date).slice(0, 7); // YYYY-MM
-                const currentNet = monthlyNet.get(monthKey) || 0;
-                const absAmt = Math.abs(Number(t.amount) || 0);
-                const delta = countsAsIncomeForCashflowKpi(t) ? absAmt : countsAsExpenseForCashflowKpi(t) ? -absAmt : 0;
-                monthlyNet.set(monthKey, currentNet + delta);
-            });
-        
-        if (monthlyNet.size === 0) return 0;
-        
-        const totalNet = Array.from(monthlyNet.values()).reduce((sum, net) => sum + net, 0);
-        return Math.max(0, totalNet / monthlyNet.size);
-    }, [data?.transactions, (data as any)?.personalTransactions]);
+    /** 6‑month rolling average net cash flow in SAR (mixed USD/SAR accounts). */
+    const averageMonthlySavings = useMemo(
+        () => averageRollingMonthlyNetSurplus(data ?? null, 6, exchangeRate),
+        [data, exchangeRate],
+    );
 
-    const surplusForConflictEngine = useMemo(() => rollingSurplusAfterAllGoalBudgetReservations(data ?? null), [data?.budgets, data]);
+    /** Sum of last 12 calendar months of net flow in SAR — feeds annual funding suggestions. */
+    const rollingAnnualNetSar = useMemo(() => {
+        if (!data) return 0;
+        const { values } = personalMonthlyNetByMonthKeySar(data, exchangeRate, 12);
+        return values.reduce((sum, v) => sum + v, 0);
+    }, [data, exchangeRate]);
+
+    const surplusForConflictEngine = useMemo(
+        () => rollingSurplusAfterAllGoalBudgetReservations(data ?? null, exchangeRate),
+        [data, exchangeRate],
+    );
 
     const resolvedGoalTotalsMap = useMemo(() => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd), [data, sarPerUsd]);
 
@@ -756,26 +761,9 @@ const Goals: React.FC<{
     
     const overallProgress = totalTargetAmount > 0 ? (totalCurrentAmount / totalTargetAmount) * 100 : 0;
 
-    const projectedAnnualSurplus = useMemo(() => {
-        const monthlyNet = new Map<string, number>();
-        const year = new Date().getFullYear();
-        ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach((t: { date: string; amount?: number; type?: string; category?: string }) => {
-            if (!(countsAsIncomeForCashflowKpi(t) || countsAsExpenseForCashflowKpi(t))) return;
-            const d = new Date(t.date);
-            if (d.getFullYear() !== year) return;
-            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-            const absAmt = Math.abs(Number(t.amount) || 0);
-            const delta = countsAsIncomeForCashflowKpi(t) ? absAmt : countsAsExpenseForCashflowKpi(t) ? -absAmt : 0;
-            monthlyNet.set(key, (monthlyNet.get(key) ?? 0) + delta);
-        });
-        if (monthlyNet.size === 0) return averageMonthlySavings * 12;
-        const totalNet = Array.from(monthlyNet.values()).reduce((sum, v) => sum + v, 0);
-        return totalNet;
-    }, [data?.transactions, averageMonthlySavings]);
-
     const fundingPlan = useMemo(
-        () => computeGoalFundingPlan(data, projectedAnnualSurplus, exchangeRate),
-        [data, projectedAnnualSurplus, exchangeRate]
+        () => computeGoalFundingPlan(data, rollingAnnualNetSar, exchangeRate),
+        [data, rollingAnnualNetSar, exchangeRate],
     );
 
     const goalsByPriority = useMemo(() => {
@@ -835,7 +823,7 @@ const Goals: React.FC<{
         trackAction('save-allocation', 'Goals');
         const allocationArray = Object.entries(allocations).map(([id, savingsAllocationPercent]) => ({ id, savingsAllocationPercent }));
         updateGoalAllocations(allocationArray);
-        alert("Savings allocation strategy saved!");
+        toast('Savings allocation strategy saved.', 'success');
     };
 
     const efGoals = useEmergencyFund(data ?? null);
@@ -878,8 +866,13 @@ const Goals: React.FC<{
         const unallocatedGoals = goals.filter((g) => (allocations[g.id] ?? 0) <= 0).length;
         if (goals.length > 0 && unallocatedGoals === goals.length) warnings.push('No goal currently receives a savings allocation.');
         if (!Number.isFinite(averageMonthlySavings)) warnings.push('Average monthly savings calculation is invalid.');
+        if (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0) warnings.push('Exchange rate is invalid — USD-linked balances may mis-state goal progress.');
+        const hasUsd = ((data as any)?.personalAccounts ?? data?.accounts ?? []).some((a: { currency?: string }) => a.currency === 'USD');
+        if (hasUsd && (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0)) {
+            warnings.push('USD accounts detected — set SAR per USD in the header or Wealth Ultra for accurate goal totals.');
+        }
         return warnings;
-    }, [data?.goals, goalCurrentAmountByGoalId, totalAllocation, allocations, averageMonthlySavings]);
+    }, [data?.goals, data?.accounts, (data as any)?.personalAccounts, goalCurrentAmountByGoalId, totalAllocation, allocations, averageMonthlySavings, sarPerUsd]);
 
     if (loading || !data) {
         return (
@@ -892,9 +885,22 @@ const Goals: React.FC<{
   return (
     <PageLayout
       title="Goal Command Center"
-      description="Set goals (house, car, emergency fund) and track progress. We suggest how to split your savings across goals."
+      description="Targets and “saved so far” use the same SAR math as Summary and Plan — linked assets, portfolios, and receivables roll into one progress view."
       action={
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 justify-end">
+          {setActivePage && (
+            <PageActionsDropdown
+              ariaLabel="Goals quick links"
+              actions={[
+                { value: 'plan', label: 'Annual Plan', onClick: () => setActivePage('Plan') },
+                { value: 'budgets', label: 'Budgets', onClick: () => setActivePage('Budgets') },
+                { value: 'transactions', label: 'Transactions', onClick: () => setActivePage('Transactions') },
+                { value: 'forecast', label: 'Forecast', onClick: () => setActivePage('Forecast') },
+                { value: 'summary', label: 'Financial Summary', onClick: () => setActivePage('Summary') },
+                { value: 'investments', label: 'Investments', onClick: () => setActivePage('Investments') },
+              ]}
+            />
+          )}
           {setActivePage && (
             <button type="button" onClick={() => setActivePage('Plan')} className="btn-outline flex items-center gap-1.5">
               <LinkIcon className="h-4 w-4" /> See impact in Plan
@@ -904,6 +910,32 @@ const Goals: React.FC<{
         </div>
       }
     >
+      <div className="rounded-2xl border border-teal-100 bg-gradient-to-r from-teal-50/90 to-white px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm text-slate-700 shadow-sm mb-6">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="inline-flex items-center rounded-full bg-teal-100 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-teal-900">SAR basis</span>
+          <span>
+            Progress and funding suggestions use <strong>SAR</strong> (mixed USD/SAR accounts converted with daily FX when available).
+            {displayCurrency === 'USD' && (
+              <span className="text-slate-600"> Display currency is USD — numbers convert for viewing only.</span>
+            )}
+          </span>
+        </div>
+        <div className="text-xs sm:text-sm tabular-nums text-slate-600 text-right">
+          <span className="font-semibold text-slate-800">1 USD = {sarPerUsd.toFixed(2)} SAR</span>
+          {displayCurrency === 'USD' && (
+            <span className="block text-[11px] text-slate-500 mt-0.5">Example: SAR 10,000 ≈ {formatSecondaryEquivalent(10000)}</span>
+          )}
+        </div>
+      </div>
+
+      <CollapsibleSection title="How to read this page (simple)" summary="One-minute guide" defaultExpanded={false} className="border border-sky-100 bg-gradient-to-br from-sky-50/80 via-white to-slate-50/50 shadow-sm mb-6">
+        <ul className="text-sm text-slate-700 space-y-2 list-disc pl-5 leading-relaxed">
+          <li><strong className="text-slate-900">Saved toward goal</strong> adds up linked cash assets, investment holdings tagged to this goal, and money owed to you (receivables) — all in SAR.</li>
+          <li><strong className="text-slate-900">Rolling surplus</strong> is your recent net income minus expenses after converting each transaction properly.</li>
+          <li><strong className="text-slate-900">Allocation %</strong> is your share of what&apos;s left after goal-linked budget envelopes are reserved.</li>
+        </ul>
+      </CollapsibleSection>
+
       {efGoals.monthsCovered < 2 && (
         <SectionCard title="Weak cashflow — pause low-priority funding?" className="border-amber-200 bg-amber-50/60" collapsible collapsibleSummary="Runway alert">
           <p className="text-sm text-amber-900">
@@ -927,18 +959,19 @@ const Goals: React.FC<{
       </SectionCard>
 
       {goalValidationWarnings.length > 0 && (
-        <SectionCard title="Goal validation checks" collapsible collapsibleSummary="Data quality checks" defaultExpanded>
-          <ul className="space-y-1 text-sm text-amber-800">
-            {goalValidationWarnings.slice(0, 6).map((w, i) => (
-              <li key={`gw-${i}`}>- {w}</li>
+        <div className="rounded-2xl border-l-4 border-l-amber-500 bg-amber-50/90 border border-amber-100 px-4 py-3 shadow-sm mb-6" role="status">
+          <p className="text-sm font-semibold text-amber-950">Checks before you trust the numbers</p>
+          <ul className="text-xs text-amber-950 mt-2 space-y-1 list-disc pl-4">
+            {goalValidationWarnings.slice(0, 8).map((w, i) => (
+              <li key={`gw-${i}`}>{w}</li>
             ))}
           </ul>
-        </SectionCard>
+        </div>
       )}
 
       <SectionCard id="goals-savings-allocation" title="Savings Allocation Strategy" className="bg-gradient-to-br from-white via-slate-50 to-primary/5 border-slate-100" collapsible collapsibleSummary="Allocate %" defaultExpanded>
         <p className="text-sm text-gray-500 mb-4">
-            Rolling surplus (6 mo avg): <span className="font-bold text-dark">{formatCurrencyString(averageMonthlySavings)}</span>
+            Rolling surplus (6‑month average, <strong>SAR</strong>): <span className="font-bold text-dark">{formatCurrencyString(averageMonthlySavings)}</span>
             {' · '}
             After reserved goal-linked budgets: <span className="font-bold text-dark">{formatCurrencyString(surplusForConflictEngine)}</span> — allocate % across goals below (budget envelopes linked on the Budgets page count first).
         </p>
@@ -959,7 +992,8 @@ const Goals: React.FC<{
 
       <CollapsibleSection title="System Funding Suggestions" summary="Suggested monthly funding per goal" className="bg-white border border-slate-200">
         <p className="text-xs text-slate-600 mb-3">
-            Based on your projected annual surplus of <span className="font-semibold">{formatCurrencyString(fundingPlan?.totalMonthlySurplus ?? 0, { digits: 0 })}</span> per month.
+            Uses your <strong>last 12 months</strong> of net cash flow in SAR (≈ <span className="font-semibold">{formatCurrencyString(rollingAnnualNetSar, { digits: 0 })}</span> total) ÷ 12 →{' '}
+            <span className="font-semibold">{formatCurrencyString(fundingPlan?.totalMonthlySurplus ?? 0, { digits: 0 })}</span>/month baseline for splitting across goals.
         </p>
         {(fundingPlan.suggestions.length === 0) && (
             <p className="text-sm text-slate-500">Add goals with future deadlines to see suggested monthly funding per goal.</p>
@@ -1034,7 +1068,15 @@ const Goals: React.FC<{
         </ul>
       </CollapsibleSection>
 
-      <AIAdvisor pageContext="goals" contextData={{ goals: data?.goals ?? [], monthlySavings: averageMonthlySavings }}/>
+      <AIAdvisor
+        pageContext="goals"
+        contextData={{
+          goals: data?.goals ?? [],
+          monthlySavings: averageMonthlySavings,
+          rollingAnnualNetSar,
+          surplusAfterReservedBudgets: surplusForConflictEngine,
+        }}
+      />
       
        <div id="goals-cards-grid" className="cards-grid grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
         {goalsByPriority.map(goal => (

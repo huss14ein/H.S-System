@@ -1008,7 +1008,7 @@ const hasData = accountsForEmptyCheck.length > 0;
                         type="button"
                         onClick={() => {
                             if (!data || !wealthSummaryPayload) {
-                                showToast('Add accounts and data to generate a monthly report.', 'error');
+                                showToast('Add accounts and data to generate a monthly report.', 'warning');
                                 return;
                             }
                             const sarPerUsd = resolveSarPerUsd(data, exchangeRate);

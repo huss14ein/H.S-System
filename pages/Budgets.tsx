@@ -18,8 +18,10 @@ import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import SectionCard from '../components/SectionCard';
+import CollapsibleSection from '../components/CollapsibleSection';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import {
+    accumulateHouseholdYearCashflowSar,
     buildHouseholdBudgetPlan,
     buildHouseholdEngineInputFromData,
     computeBulkAddLimitsForSelection,
@@ -297,8 +299,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const { data, loading, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { trackSuggestionFeedback } = useSelfLearning();
-    const { formatCurrencyString } = useFormatCurrency();
-    const { exchangeRate } = useCurrency();
+    const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
+    const { exchangeRate, currency: displayCurrency } = useCurrency();
     const [isAdmin, setIsAdmin] = useState(false);
     const [permittedCategories, setPermittedCategories] = useState<string[]>([]);
     const [newCategoryName, setNewCategoryName] = useState('');
@@ -340,6 +342,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const [sharedTxCategoryFilter, setSharedTxCategoryFilter] = useState<string>('All');
     const [showKsaExpenseRef, setShowKsaExpenseRef] = useState(false);
     const [suggestedAdjustments, setSuggestedAdjustments] = useState<Array<{ orig: Budget; proposed: Budget }> | null>(null);
+    const [installmentBudgetRows, setInstallmentBudgetRows] = useState<Array<{ dueDate: string; amountMinor: string; currency: 'SAR' | 'USD'; budgetCategory: string }>>([]);
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const accountCurrencyById = useMemo(() => {
         const map = new Map<string, 'SAR' | 'USD'>();
@@ -355,6 +358,53 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const fallbackCur = accountCurrencyById.get(accId) ?? 'SAR';
         return toSAR(raw, txCur ?? fallbackCur, sarPerUsd);
     };
+
+    React.useEffect(() => {
+        const loadInstallmentRowsForBudgetWindow = async () => {
+            if (!supabase || !auth?.user) return;
+            // Pull installments due around the current view window; budget calculation will filter into exact range.
+            const start = new Date(currentYear, currentMonth - 2, 1);
+            const end = new Date(currentYear, currentMonth + 2, 0, 23, 59, 59, 999);
+            const startDay = start.toISOString().slice(0, 10);
+            const endDay = end.toISOString().slice(0, 10);
+
+            const { data: rows, error } = await supabase
+                .from('installments')
+                .select('due_date,amount_minor,status,installment_plans!inner(currency,metadata,user_id)')
+                .gte('due_date', startDay)
+                .lte('due_date', endDay)
+                .eq('installment_plans.user_id', auth.user.id);
+
+            if (error) {
+                console.warn('Installment projection unavailable:', error.message);
+                setInstallmentBudgetRows([]);
+                return;
+            }
+
+            const mapped = (rows ?? [])
+                .filter((r: any) => {
+                    const st = String(r.status ?? '').toUpperCase();
+                    // Only project unpaid installments into budgets (prevents double count once a payment is recorded).
+                    return st !== 'PAID' && st !== 'REFUNDED' && st !== 'CANCELLED' && st !== 'WAIVED';
+                })
+                .map((r: any) => {
+                    const plan = r.installment_plans as any;
+                    const meta = (plan?.metadata && typeof plan.metadata === 'object') ? plan.metadata : {};
+                    const budgetCategory = String(meta?.budgetCategory ?? meta?.budget_category ?? 'Installments').trim() || 'Installments';
+                    const currency: 'SAR' | 'USD' = plan?.currency === 'USD' ? 'USD' : 'SAR';
+                    return {
+                        dueDate: String(r.due_date ?? ''),
+                        amountMinor: String(r.amount_minor ?? '0'),
+                        currency,
+                        budgetCategory,
+                    };
+                })
+                .filter((x: any) => x.dueDate && Number(x.amountMinor) > 0);
+
+            setInstallmentBudgetRows(mapped);
+        };
+        loadInstallmentRowsForBudgetWindow();
+    }, [auth?.user?.id, currentYear, currentMonth, budgetView, dataResetKey, (data?.transactions ?? []).length]);
 
     // Update shared transaction month filter when current month changes
     useEffect(() => {
@@ -613,18 +663,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const householdBudgetEngine = useMemo(() => {
         const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
         const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-        const incomeByMonth = Array(12).fill(0);
-        transactions.forEach((t: { date: string; type?: string; amount?: number }) => {
-            const d = new Date(t.date);
-            if (d.getFullYear() !== currentYear || t.type !== 'income') return;
-            incomeByMonth[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
-        });
-        const incomeWithData = incomeByMonth.filter((v) => v > 0);
-        const suggested = incomeWithData.length > 0 ? Math.round(incomeWithData.reduce((a, b) => a + b, 0) / incomeWithData.length) : 0;
+        const { monthlyIncome } = accumulateHouseholdYearCashflowSar(data ?? null, transactions, accounts, currentYear, exchangeRate);
+        const incomeWithData = monthlyIncome.filter((v: number) => v > 0);
+        const suggested =
+            incomeWithData.length > 0 ? Math.round(incomeWithData.reduce((a: number, b: number) => a + b, 0) / incomeWithData.length) : 0;
 
         const input = buildHouseholdEngineInputFromData(
-            transactions as Array<{ date: string; type?: string; amount?: number }>,
-            accounts as Array<{ type?: string; balance?: number }>,
+            transactions as Array<{ date: string; type?: string; amount?: number; accountId?: string; category?: string }>,
+            accounts as Array<{ type?: string; balance?: number; id?: string; currency?: string }>,
             (data?.goals ?? []) as any[],
             {
                 year: currentYear,
@@ -635,6 +681,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 monthlyOverrides: householdOverrides,
                 financialData: data ?? null,
                 sarPerUsd,
+                uiExchangeRate: exchangeRate,
             }
         );
         const result = buildHouseholdBudgetPlan(input);
@@ -668,19 +715,44 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                }
         
         return result;
-    }, [data?.transactions, data?.accounts, (data as any)?.personalTransactions, (data as any)?.personalAccounts, data?.goals, data, sarPerUsd, currentYear, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary]);
+    }, [
+        data?.transactions,
+        data?.accounts,
+        (data as any)?.personalTransactions,
+        (data as any)?.personalAccounts,
+        data?.goals,
+        data,
+        sarPerUsd,
+        exchangeRate,
+        currentYear,
+        householdAdults,
+        householdKids,
+        householdOverrides,
+        engineProfile,
+        expectedMonthlySalary,
+    ]);
 
     const suggestedMonthlySalary = useMemo(() => {
+        if (!data) return 0;
         const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
-        const incomeByMonth = Array(12).fill(0);
-        transactions.forEach((t: { date: string; type?: string; amount?: number }) => {
-            const d = new Date(t.date);
-            if (d.getFullYear() !== currentYear || t.type !== 'income') return;
-            incomeByMonth[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
-        });
-        const withData = incomeByMonth.filter((v) => v > 0);
-        return withData.length > 0 ? Math.round(withData.reduce((a, b) => a + b, 0) / withData.length) : 0;
-    }, [data?.transactions, (data as any)?.personalTransactions, currentYear]);
+        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const { monthlyIncome } = accumulateHouseholdYearCashflowSar(data, transactions, accounts, currentYear, exchangeRate);
+        const withData = monthlyIncome.filter((v: number) => v > 0);
+        return withData.length > 0 ? Math.round(withData.reduce((a: number, b: number) => a + b, 0) / withData.length) : 0;
+    }, [data, currentYear, exchangeRate]);
+
+    const householdEngineValidationWarnings = useMemo(() => {
+        const w: string[] = [];
+        if (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0) w.push('Exchange rate is invalid — USD account balances and income may be mis-stated.');
+        const hasUsd = ((data as any)?.personalAccounts ?? data?.accounts ?? []).some((a: { currency?: string }) => a.currency === 'USD');
+        if (hasUsd && (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0)) {
+            w.push('USD accounts detected — set SAR per USD in the header or Wealth Ultra.');
+        }
+        if (!data?.transactions?.length && !(data as any)?.personalTransactions?.length) {
+            w.push('No transactions yet — engine uses salary override and modeled spending until you add history.');
+        }
+        return w;
+    }, [data, sarPerUsd]);
 
     const recurringBillsWithBenchmarks = useMemo(() => {
         const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Array<{ date: string; type?: string; amount?: number; description?: string }>;
@@ -964,6 +1036,15 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             spending.set(cat, (spending.get(cat) || 0) + amount);
         });
 
+        // Installment projection: counts *due* installments into budgets for their due month (does not hit today's budget).
+        // This is intentionally separate from `transactions` so future installments don't change account balances today.
+        installmentBudgetRows.forEach((r) => {
+            const d = new Date(String(r.dueDate));
+            if (!(d >= rangeStart && d <= rangeEnd)) return;
+            const amount = toSAR(Math.abs(Number(r.amountMinor) || 0) / 100, r.currency, sarPerUsd);
+            spending.set(r.budgetCategory, (spending.get(r.budgetCategory) || 0) + amount);
+        });
+
         const ownScopedBudgets = (data?.budgets ?? [])
             .filter(b => b.year === currentYear)
             .filter(b => budgetView === 'Yearly' || b.month === currentMonth || (b.period === 'yearly' && b.year === currentYear))
@@ -1048,7 +1129,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 else if (percentage > 90) colorClass = 'bg-warning';
                 return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
             }).sort((a,b) => b.spent - a.spent);
-    }, [data?.transactions, (data as any)?.personalTransactions, data?.budgets, data?.budgetRequests, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id, sarPerUsd, accountCurrencyById]);
+    }, [data?.transactions, (data as any)?.personalTransactions, data?.budgets, data?.budgetRequests, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id, sarPerUsd, accountCurrencyById, installmentBudgetRows]);
 
     // Admin Approved Budgets Overview: data for the selected month/year (for filters and period display)
     const adminApprovedOverviewRaw = useMemo<BudgetRow[]>(() => {
@@ -1089,7 +1170,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
         });
         return rows.sort((a, b) => b.spent - a.spent);
-    }, [data?.budgets, data?.transactions, (data as any)?.personalTransactions, approvedOverviewMonth, approvedOverviewYear, ownerSharedTransactions, sarPerUsd, accountCurrencyById]);
+    }, [data?.budgets, data?.transactions, (data as any)?.personalTransactions, approvedOverviewMonth, approvedOverviewYear, ownerSharedTransactions, sarPerUsd, accountCurrencyById, installmentBudgetRows]);
 
     const adminApprovedOverviewFiltered = useMemo(() => {
         let list = adminApprovedOverviewRaw;
@@ -2365,10 +2446,62 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             </div>
 
             <div className={budgetSubPage === 'household' ? '' : 'hidden'}>
+            <div className="rounded-2xl border border-cyan-100 bg-gradient-to-r from-cyan-50/90 to-white px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm text-slate-700 shadow-sm mb-6">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className="inline-flex items-center rounded-full bg-cyan-100 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-cyan-950">Household engine · SAR</span>
+                    <span>
+                        Income, expenses, and liquid cash in this engine are computed in <strong>SAR</strong> (USD accounts and mixed history use your FX settings).
+                        {displayCurrency === 'USD' && (
+                            <span className="text-slate-600"> Display currency is USD — numbers convert for viewing only.</span>
+                        )}
+                    </span>
+                </div>
+                <div className="text-xs sm:text-sm tabular-nums text-slate-600 text-right">
+                    <span className="font-semibold text-slate-800">1 USD = {sarPerUsd.toFixed(2)} SAR</span>
+                    {displayCurrency === 'USD' && (
+                        <span className="block text-[11px] text-slate-500 mt-0.5">Example: SAR 10,000 ≈ {formatSecondaryEquivalent(10000)}</span>
+                    )}
+                </div>
+            </div>
+
+            {householdEngineValidationWarnings.length > 0 && (
+                <div className="rounded-2xl border-l-4 border-l-amber-500 bg-amber-50/90 border border-amber-100 px-4 py-3 shadow-sm mb-6" role="status">
+                    <p className="text-sm font-semibold text-amber-950">Before you rely on these projections</p>
+                    <ul className="text-xs text-amber-950 mt-2 space-y-1 list-disc pl-4">
+                        {householdEngineValidationWarnings.map((line, i) => (
+                            <li key={`hh-val-${i}`}>{line}</li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+
+            <CollapsibleSection
+                title="How the household engine works (plain language)"
+                summary="What feeds the numbers"
+                defaultExpanded={false}
+                className="border border-sky-100 bg-gradient-to-br from-sky-50/80 via-white to-slate-50/50 shadow-sm mb-6"
+            >
+                <ul className="text-sm text-slate-700 space-y-2 list-disc pl-5 leading-relaxed">
+                    <li>
+                        <strong className="text-slate-900">Actual income &amp; spending</strong> come from your transactions, converted to SAR the same way as Summary and Plan (per account currency).
+                    </li>
+                    <li>
+                        <strong className="text-slate-900">Liquid starting point</strong> uses checking, savings, and investment cash buckets — USD balances are converted at your SAR/USD rate.
+                    </li>
+                    <li>
+                        <strong className="text-slate-900">Goals</strong> use resolved “saved so far” amounts when possible (same as the Goals page).
+                    </li>
+                    <li>
+                        <strong className="text-slate-900">Profile &amp; family size</strong> tilt how much of your income the model assigns to groceries, housing-style buckets, and savings — adjust if your situation changes.
+                    </li>
+                </ul>
+                <p className="text-xs text-slate-500 mt-3 border-t border-slate-200/80 pt-3">Educational planning only — not tax or investment advice.</p>
+            </CollapsibleSection>
+
             <SectionCard title="Household Budget Engine" collapsible collapsibleSummary="Household engine" defaultExpanded>
                 <div className="flex items-center justify-between mb-2">
                     <p className="text-sm text-slate-700 font-medium">
-                        Fully auto-builds from your transactions, accounts, goals, and risk profile to project monthly cash flow and goal routing. Manual inputs are optional overrides only.
+                        Projects your year in SAR from transactions, liquid balances, goals, and the profile below. Optional fields override the automatic story — same engine as Plan and Summary stress signals.
                     </p>
                     {triggerPageAction && (
                         <button
@@ -2422,17 +2555,41 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     </div>
                 </div>
                 <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
-                        <p className="text-xs text-slate-500">Planned annual net</p>
-                        <p className="font-bold text-slate-900">{formatCurrencyString(householdBudgetEngine.plannedVsActual.plannedNet, { digits: 0 })}</p>
+                    <div
+                        className={`rounded-lg border p-3 ${
+                            householdBudgetEngine.plannedVsActual.plannedNet >= 0
+                                ? 'border-emerald-200 bg-emerald-50/80'
+                                : 'border-rose-200 bg-rose-50/80'
+                        }`}
+                    >
+                        <p className="text-xs text-slate-600">Planned annual net</p>
+                        <p
+                            className={`font-bold tabular-nums ${
+                                householdBudgetEngine.plannedVsActual.plannedNet >= 0 ? 'text-emerald-800' : 'text-rose-800'
+                            }`}
+                        >
+                            {formatCurrencyString(householdBudgetEngine.plannedVsActual.plannedNet, { digits: 0 })}
+                        </p>
                     </div>
-                    <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
-                        <p className="text-xs text-slate-500">Actual annual net</p>
-                        <p className="font-bold text-slate-900">{formatCurrencyString(householdBudgetEngine.plannedVsActual.actualNet, { digits: 0 })}</p>
+                    <div
+                        className={`rounded-lg border p-3 ${
+                            householdBudgetEngine.plannedVsActual.actualNet >= 0
+                                ? 'border-sky-200 bg-sky-50/80'
+                                : 'border-rose-200 bg-rose-50/80'
+                        }`}
+                    >
+                        <p className="text-xs text-slate-600">Actual annual net</p>
+                        <p
+                            className={`font-bold tabular-nums ${
+                                householdBudgetEngine.plannedVsActual.actualNet >= 0 ? 'text-sky-900' : 'text-rose-800'
+                            }`}
+                        >
+                            {formatCurrencyString(householdBudgetEngine.plannedVsActual.actualNet, { digits: 0 })}
+                        </p>
                     </div>
                     <div className="rounded-lg border border-emerald-200 p-3 bg-emerald-50">
                         <p className="text-xs text-slate-600">Projected year-end liquid</p>
-                        <p className="font-bold text-emerald-700">{formatCurrencyString(householdBudgetEngine.balanceProjection.projectedYearEndLiquid, { digits: 0 })}</p>
+                        <p className="font-bold text-emerald-700 tabular-nums">{formatCurrencyString(householdBudgetEngine.balanceProjection.projectedYearEndLiquid, { digits: 0 })}</p>
                     </div>
                     <div className="rounded-lg border border-indigo-200 p-3 bg-indigo-50">
                         <p className="text-xs text-slate-600">Auto-routed goal</p>

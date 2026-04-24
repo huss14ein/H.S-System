@@ -29,6 +29,7 @@ describe('householdBudgetEngine resolved goals', () => {
       year: new Date().getFullYear(),
       financialData: data,
       sarPerUsd: 3.75,
+      uiExchangeRate: 3.75,
     });
     expect(input.goals.find((g) => g.id === 'g1')?.currentAmount).toBeCloseTo(2000, 5);
   });

@@ -16,6 +16,7 @@ import { SparklesIcon } from '../components/icons/SparklesIcon';
 import InfoHint from '../components/InfoHint';
 import { StatementIcons } from '../constants/statementIcons';
 import { supabase } from '../services/supabaseClient';
+import { encodeInstallmentPaymentNote } from '../services/installments/installmentLinkNote';
 import { AuthContext } from '../context/AuthContext';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { inferIsAdmin } from '../utils/role';
@@ -113,6 +114,8 @@ const TransactionModal: React.FC<{
     const [transactionNature, setTransactionNature] = useState<'Fixed' | 'Variable'>('Variable');
     const [expenseType, setExpenseType] = useState<'Core' | 'Discretionary'>('Core');
     const [userNote, setUserNote] = useState('');
+    const [linkInstallmentId, setLinkInstallmentId] = useState<string>('');
+    const [linkInstallmentOptions, setLinkInstallmentOptions] = useState<Array<{ id: string; label: string }>>([]);
     const [useSplitExpense, setUseSplitExpense] = useState(false);
     const [splitRows, setSplitRows] = useState<{ category: string; amount: string }[]>([
         { category: '', amount: '' },
@@ -160,6 +163,7 @@ const TransactionModal: React.FC<{
             setTransactionNature(transactionToEdit.transactionNature || 'Variable');
             setExpenseType(transactionToEdit.expenseType || 'Core');
             setUserNote((transactionToEdit.note || '').trim());
+            setLinkInstallmentId('');
             const sl = transactionToEdit.splitLines;
             if (sl && sl.length > 0) {
                 setUseSplitExpense(true);
@@ -192,6 +196,7 @@ const TransactionModal: React.FC<{
             setTransactionNature('Variable');
             setExpenseType('Core');
             setUserNote('');
+            setLinkInstallmentId('');
             setUseSplitExpense(false);
             setSplitRows([
                 { category: budgetCategories[0] || 'Food and Groceries', amount: '' },
@@ -200,6 +205,41 @@ const TransactionModal: React.FC<{
         }
         setAiSuggestionNote(null);
     }, [transactionToEdit, isOpen, budgetCategories, allCategories, accounts, incomeCategoryOptions, getLearnedDefault]);
+
+    React.useEffect(() => {
+        const loadInstallmentOptions = async () => {
+            if (!supabase || !isOpen || transactionToEdit || type !== 'expense') {
+                setLinkInstallmentOptions([]);
+                return;
+            }
+            const now = new Date();
+            const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            const end = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59, 999);
+            const startDay = start.toISOString().slice(0, 10);
+            const endDay = end.toISOString().slice(0, 10);
+            const { data: rows, error } = await supabase
+                .from('installments')
+                .select('id,sequence,due_date,amount_minor,status,installment_plans!inner(currency,metadata)')
+                .gte('due_date', startDay)
+                .lte('due_date', endDay);
+            if (error) {
+                setLinkInstallmentOptions([]);
+                return;
+            }
+            const opts = (rows ?? [])
+                .filter((r: any) => !['PAID', 'REFUNDED', 'CANCELLED', 'WAIVED'].includes(String(r.status ?? '').toUpperCase()))
+                .map((r: any) => {
+                    const plan = r.installment_plans as any;
+                    const meta = plan?.metadata && typeof plan.metadata === 'object' ? plan.metadata : {};
+                    const bc = String(meta?.budgetCategory ?? meta?.budget_category ?? 'Installments').trim() || 'Installments';
+                    const amt = (Number(r.amount_minor) || 0) / 100;
+                    const cur = plan?.currency === 'USD' ? 'USD' : 'SAR';
+                    return { id: String(r.id), label: `#${Number(r.sequence)} · ${String(r.due_date)} · ${bc} · ${amt.toFixed(2)} ${cur}` };
+                });
+            setLinkInstallmentOptions(opts);
+        };
+        loadInstallmentOptions();
+    }, [isOpen, transactionToEdit, type]);
 
     const selectedAccountCurrency = useMemo<'SAR' | 'USD'>(() => {
         const acc = accounts.find((a) => a.id === accountId);
@@ -322,34 +362,76 @@ const TransactionModal: React.FC<{
         }
         : null;
     const budgetCoverageState = useMemo(() => {
+        type BudgetCoverageTone = 'green' | 'yellow' | 'red' | 'neutral';
+        const toneRank: Record<Exclude<BudgetCoverageTone, 'neutral'>, number> = { green: 0, yellow: 1, red: 2 };
+        const worstTone = (tones: BudgetCoverageTone[]): BudgetCoverageTone => {
+            const nonNeutral = tones.filter((t) => t !== 'neutral') as Exclude<BudgetCoverageTone, 'neutral'>[];
+            if (nonNeutral.length === 0) return 'neutral';
+            return nonNeutral.reduce((worst, t) => (toneRank[t] > toneRank[worst] ? t : worst), nonNeutral[0]);
+        };
+        const evalTone = (args: { limitSar: number; remainingSar: number; amountSar: number }): BudgetCoverageTone => {
+            const limitSar = Number(args.limitSar) || 0;
+            const remainingSar = Number(args.remainingSar) || 0;
+            const amountSar = Math.max(0, Number(args.amountSar) || 0);
+            if (!(amountSar > 0)) return 'neutral';
+            if (!(limitSar > 0)) return 'red';
+            const projectedRemaining = remainingSar - amountSar;
+            if (projectedRemaining <= 0) return 'red';
+            const consumedPctAfter = (limitSar - projectedRemaining) / limitSar;
+            if (Number.isFinite(consumedPctAfter) && consumedPctAfter >= 0.9) return 'yellow';
+            return 'green';
+        };
+
         if (type !== 'expense') {
-            return { ok: true, summary: 'Income transactions do not consume budget limits.', shortfalls: [] as typeof splitCoverage };
+            return { ok: true, tone: 'neutral' as BudgetCoverageTone, summary: 'Income transactions do not consume budget limits.', shortfalls: [] as typeof splitCoverage };
         }
         if (!String(amount || '').trim()) {
-            return { ok: true, summary: 'Enter amount to validate budget coverage.', shortfalls: [] as typeof splitCoverage };
+            return { ok: true, tone: 'neutral' as BudgetCoverageTone, summary: 'Enter amount to validate budget coverage.', shortfalls: [] as typeof splitCoverage };
         }
         if (!budgetCategory) {
-            return { ok: false, summary: 'Select a budget category to validate limits.', shortfalls: [] as typeof splitCoverage };
+            return { ok: false, tone: 'neutral' as BudgetCoverageTone, summary: 'Select a budget category to validate limits.', shortfalls: [] as typeof splitCoverage };
         }
+
         const shortfalls = splitCoverage.filter((line) => line.shortfallSar > 0);
         const ok = shortfalls.length === 0;
+
         if (useSplitExpense) {
+            // If any line is over remaining, that's effectively red.
+            if (!ok) {
+                return {
+                    ok,
+                    tone: 'red' as BudgetCoverageTone,
+                    summary: 'Some split lines exceed remaining budget. Adjust split amounts or categories.',
+                    shortfalls,
+                };
+            }
+            // Otherwise, compute the worst (most severe) tone across involved budget categories.
+            const tones = splitCoverageRows
+                .filter((r) => String(r.category || '').trim() !== '' && (Number(r.amountSar) || 0) > 0)
+                .map((r) => evalTone({ limitSar: Number(r.entry?.limit) || 0, remainingSar: r.remainingSar, amountSar: r.amountSar }));
+            const tone = worstTone(tones);
             return {
                 ok,
+                tone,
                 summary: ok
                     ? 'Split allocation is fully covered by selected budget limits.'
                     : 'Some split lines exceed remaining budget. Adjust split amounts or categories.',
                 shortfalls,
             };
         }
+
+        const tone = budgetCoverageSummary
+            ? evalTone({ limitSar: budgetCoverageSummary.limitSar, remainingSar: budgetCoverageSummary.remainingSar, amountSar: inputAmountSar })
+            : ('neutral' as BudgetCoverageTone);
         return {
             ok,
+            tone,
             summary: ok
                 ? 'Selected budget can cover this transaction.'
                 : 'Selected budget cannot fully cover this transaction. Enable split allocation to continue.',
             shortfalls,
         };
-    }, [type, amount, budgetCategory, splitCoverage, useSplitExpense]);
+    }, [type, amount, budgetCategory, splitCoverage, useSplitExpense, splitCoverageRows, budgetCoverageSummary, inputAmountSar]);
     const splitCoverageError = useMemo(() => {
         if (!useSplitExpense) return '';
         const missing = splitRows.some((row) => String(row.category || '').trim() === '');
@@ -388,6 +470,9 @@ const TransactionModal: React.FC<{
             noteOut = encodeNoteWithSplits(userNote, lines);
         } else if (type === 'expense') {
             noteOut = userNote.trim() || undefined;
+        }
+        if (type === 'expense' && linkInstallmentId) {
+            noteOut = encodeInstallmentPaymentNote(noteOut, linkInstallmentId);
         }
         return {
             date,
@@ -656,9 +741,12 @@ const TransactionModal: React.FC<{
                             {!useSplitExpense && budgetCoverageSummary && (
                                 <div
                                     className={`rounded-md border p-2 text-xs ${
-                                        budgetCoverageSummary.shortfallSar > 0
-                                            ? 'border-amber-300 bg-amber-50 text-amber-900'
-                                            : 'border-emerald-300 bg-emerald-50 text-emerald-900'
+                                        budgetCoverageSummary.remainingSar - inputAmountSar <= 0
+                                            ? 'border-rose-300 bg-rose-50 text-rose-900'
+                                            : (budgetCoverageSummary.limitSar > 0 &&
+                                                  (budgetCoverageSummary.limitSar - (budgetCoverageSummary.remainingSar - inputAmountSar)) / budgetCoverageSummary.limitSar >= 0.9)
+                                              ? 'border-amber-300 bg-amber-50 text-amber-900'
+                                              : 'border-emerald-300 bg-emerald-50 text-emerald-900'
                                     }`}
                                 >
                                     <div className="font-semibold">
@@ -676,7 +764,17 @@ const TransactionModal: React.FC<{
                             )}
                         </div>
                         {type === 'expense' && (
-                            <div className={`rounded-lg border p-3 text-sm ${budgetCoverageState.ok ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+                            <div
+                                className={`rounded-lg border p-3 text-sm ${
+                                    budgetCoverageState.tone === 'red'
+                                        ? 'bg-rose-50 border-rose-200 text-rose-900'
+                                        : budgetCoverageState.tone === 'yellow'
+                                          ? 'bg-amber-50 border-amber-200 text-amber-900'
+                                          : budgetCoverageState.tone === 'green'
+                                            ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                                            : 'bg-slate-50 border-slate-200 text-slate-700'
+                                }`}
+                            >
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                     <p className="font-medium">Budget limit check</p>
                                     {selectedBudgetOverview && (
@@ -833,6 +931,26 @@ const TransactionModal: React.FC<{
                             className="w-full p-2 border border-gray-300 rounded-md text-sm mt-1"
                             placeholder="Private notes"
                         />
+                    </div>
+                )}
+                {type === 'expense' && !useSplitExpense && linkInstallmentOptions.length > 0 && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Link to installment (prevents double counting)</label>
+                        <select
+                            value={linkInstallmentId}
+                            onChange={(e) => setLinkInstallmentId(e.target.value)}
+                            className="w-full p-2 border border-gray-300 rounded-md text-sm mt-1"
+                        >
+                            <option value="">Not an installment payment</option>
+                            {linkInstallmentOptions.map((o) => (
+                                <option key={o.id} value={o.id}>
+                                    {o.label}
+                                </option>
+                            ))}
+                        </select>
+                        <p className="mt-1 text-xs text-slate-500">
+                            When linked, this payment will mark the installment as paid so Budgets won’t count it twice.
+                        </p>
                     </div>
                 )}
                 {type === 'expense' && useSplitExpense && (

@@ -42,6 +42,33 @@ describe('goalResolvedTotals', () => {
     expect(averageRollingMonthlyNetSurplus(null)).toBe(0);
   });
 
+  it('averageRollingMonthlyNetSurplus converts USD account flows to SAR before averaging', () => {
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = String(today.getMonth() + 1).padStart(2, '0');
+    const day = `${y}-${m}-15`;
+    const data = {
+      goals: [],
+      assets: [],
+      investments: [],
+      liabilities: [],
+      budgets: [],
+      accounts: [{ id: 'usd-check', type: 'Checking', currency: 'USD', balance: 0 }],
+      transactions: [
+        {
+          id: 't1',
+          date: day,
+          accountId: 'usd-check',
+          amount: 100,
+          type: 'Income',
+          category: 'Salary',
+        },
+      ],
+    } as unknown as FinancialData;
+    const avg = averageRollingMonthlyNetSurplus(data, 1, 3.75);
+    expect(avg).toBeCloseTo(375, 5);
+  });
+
   it('formatGoalsProgressForPrompt uses resolved amounts not stored currentAmount', () => {
     const goal: Goal = {
       id: 'g1',

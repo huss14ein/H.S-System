@@ -53,10 +53,10 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
     const { exchangeRate } = useCurrency();
     const { simulatedPrices } = useMarketData();
 
-    const { allHoldingsWithGains, assetClassAllocation, portfolioAllocation, tradableCashSAR, commoditiesSAR } = useMemo(() => {
+    const { allHoldingsWithGains, assetClassAllocation, portfolioAllocation, tradableCashSAR, commoditiesSAR, sukukAssetsSAR } = useMemo(() => {
         const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
         const investments = getPersonalInvestments(data);
-        const { personalAccounts } = getPersonalWealthData(data);
+        const { personalAccounts, personalAssets } = getPersonalWealthData(data);
         const tradableCashSAR = (personalAccounts as Account[])
             .filter((a) => a.type === 'Investment')
             .reduce((s, a) => s + tradableCashBucketToSAR(getAvailableCashForAccount(a.id), sarPerUsd), 0);
@@ -66,6 +66,10 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
             sarPerUsd,
             simulatedPrices,
         );
+
+        const sukukAssetsSAR = (personalAssets ?? [])
+            .filter((a) => a?.type === 'Sukuk')
+            .reduce((sum, a) => sum + Math.max(0, Number(a?.value) || 0), 0);
 
         const allHoldings: (Holding & { portfolioCurrency?: 'USD' | 'SAR' })[] = investments.flatMap(
             (p: { holdings?: Holding[]; currency?: 'USD' | 'SAR' }) =>
@@ -106,6 +110,9 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
         if (commoditiesSAR > 0) {
             assetAllocationMap.set('Commodities', (assetAllocationMap.get('Commodities') || 0) + commoditiesSAR);
         }
+        if (sukukAssetsSAR > 0) {
+            assetAllocationMap.set('Sukuk', (assetAllocationMap.get('Sukuk') || 0) + sukukAssetsSAR);
+        }
         const assetClassAllocation = Array.from(assetAllocationMap, ([name, value]: [string, number]) => ({ name, value }))
             .filter((x: { name: string; value: number }) => Number.isFinite(x.value) && x.value > 0)
             .sort((a: { value: number }, b: { value: number }) => b.value - a.value);
@@ -123,11 +130,12 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
         const cashRow =
             tradableCashSAR > 0 ? [{ name: 'Uninvested cash (platforms)', value: tradableCashSAR }] : [];
         const commodityRow = commoditiesSAR > 0 ? [{ name: 'Commodities', value: commoditiesSAR }] : [];
-        const portfolioAllocation = [...portfolioRows, ...cashRow, ...commodityRow].sort(
+        const sukukRow = sukukAssetsSAR > 0 ? [{ name: 'Sukuk (assets)', value: sukukAssetsSAR }] : [];
+        const portfolioAllocation = [...portfolioRows, ...cashRow, ...commodityRow, ...sukukRow].sort(
             (a: { value: number }, b: { value: number }) => b.value - a.value,
         );
 
-        return { allHoldingsWithGains, assetClassAllocation, portfolioAllocation, tradableCashSAR, commoditiesSAR };
+        return { allHoldingsWithGains, assetClassAllocation, portfolioAllocation, tradableCashSAR, commoditiesSAR, sukukAssetsSAR };
     }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
 
     const holdingSymbolsForNames = useMemo(() => symbolsFromHoldings(allHoldingsWithGains), [allHoldingsWithGains]);
@@ -169,7 +177,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
 
     const diversification = useMemo(() => {
         const totalValue =
-            allHoldingsWithGains.reduce((s, h) => s + h.currentValue, 0) + tradableCashSAR + commoditiesSAR;
+            allHoldingsWithGains.reduce((s, h) => s + h.currentValue, 0) + tradableCashSAR + commoditiesSAR + sukukAssetsSAR;
         const topHolding = [...allHoldingsWithGains].sort((a, b) => b.currentValue - a.currentValue)[0];
         const topHoldingPct = totalValue > 0 && topHolding ? (topHolding.currentValue / totalValue) * 100 : 0;
         const topAssetClass = assetClassAllocation[0];
@@ -200,7 +208,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
             warnings,
             status,
         };
-    }, [allHoldingsWithGains, assetClassAllocation, tradableCashSAR, commoditiesSAR]);
+    }, [allHoldingsWithGains, assetClassAllocation, tradableCashSAR, commoditiesSAR, sukukAssetsSAR]);
 
     const handleGenerateAnalysis = useCallback(async () => {
         setIsAiLoading(true);
@@ -235,7 +243,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
         );
     }
 
-    const hasNoPortfolios = portfolioAllocation.length === 0 && tradableCashSAR <= 0;
+    const hasNoPortfolios = portfolioAllocation.length === 0 && tradableCashSAR <= 0 && sukukAssetsSAR <= 0;
 
     return (
         <div className="space-y-6 mt-4">

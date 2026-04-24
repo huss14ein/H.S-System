@@ -177,7 +177,7 @@ export function findRefundPairs(transactions: Transaction[], windowDays = 14): R
 
 /** BNPL: suggest marking liability when description matches. */
 export function detectBnplMentions(transactions: Transaction[]): { description: string; date: string; amount: number }[] {
-  const re = /tabby|tamara|klarna|afterpay|affirm|spotii|postpay/i;
+  const re = /bnpl|installment|instalment|pay[-\s]?later|split\s+payment/i;
   return transactions
     .filter((t) => countsAsExpenseForCashflowKpi(t) && re.test(t.description || ''))
     .slice(0, 20)
@@ -186,6 +186,135 @@ export function detectBnplMentions(transactions: Transaction[]): { description: 
       date: t.date,
       amount: Math.abs(Number(t.amount) || 0),
     }));
+}
+
+/** Like {@link spendByMerchant} but totals are **SAR** using each expense account currency. */
+/** Categorized expense totals in SAR (full ledger, cashflow KPI rules). */
+export function expenseTotalsByBudgetCategorySar(
+  transactions: Transaction[],
+  accounts: Account[],
+  sarPerUsd: number
+): { name: string; value: number }[] {
+  const accById = new Map(accounts.map((a) => [a.id, a]));
+  const spending = new Map<string, number>();
+  transactions
+    .filter((t) => countsAsExpenseForCashflowKpi(t))
+    .forEach((t) => {
+      const rawCategory = (t.budgetCategory || t.category || 'Uncategorized').trim();
+      const category = rawCategory.length > 0 ? rawCategory : 'Uncategorized';
+      const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
+      const sar = toSAR(Math.abs(Number(t.amount) || 0), cur, sarPerUsd);
+      spending.set(category, (spending.get(category) || 0) + sar);
+    });
+  return Array.from(spending, ([name, value]) => ({ name, value }))
+    .filter((x) => Number.isFinite(x.value) && x.value > 0)
+    .sort((a, b) => b.value - a.value);
+}
+
+export function spendByMerchantSar(
+  transactions: Transaction[],
+  accounts: Account[],
+  sarPerUsd: number,
+  opts?: { months?: number }
+): { merchant: string; total: number }[] {
+  const months = opts?.months ?? 6;
+  const start = new Date();
+  start.setMonth(start.getMonth() - months);
+  const accById = new Map(accounts.map((a) => [a.id, a]));
+  const map = new Map<string, number>();
+  transactions.forEach((t) => {
+    if (!countsAsExpenseForCashflowKpi(t)) return;
+    if (new Date(t.date) < start) return;
+    const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
+    const sar = toSAR(Math.abs(Number(t.amount) || 0), cur, sarPerUsd);
+    const m = normalizeMerchant(t.description);
+    map.set(m, (map.get(m) || 0) + sar);
+  });
+  return [...map.entries()]
+    .map(([merchant, total]) => ({ merchant, total }))
+    .sort((a, b) => b.total - a.total);
+}
+
+/** Subscription-like keyword spend, average monthly over `months`, amounts in SAR. */
+export function subscriptionSpendMonthlySar(
+  transactions: Transaction[],
+  accounts: Account[],
+  sarPerUsd: number,
+  months = 3
+): { monthlyEstimate: number; count: number } {
+  const subs = tagSubscriptionLikeExpenses(transactions);
+  const start = new Date();
+  start.setMonth(start.getMonth() - months);
+  const accById = new Map(accounts.map((a) => [a.id, a]));
+  const recent = subs.filter((t) => new Date(t.date) >= start);
+  let total = 0;
+  recent.forEach((t) => {
+    const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
+    total += toSAR(Math.abs(Number(t.amount) || 0), cur, sarPerUsd);
+  });
+  return { monthlyEstimate: months > 0 ? total / months : 0, count: recent.length };
+}
+
+/** BNPL mentions with amounts converted to SAR for display and ranking. */
+export function detectBnplMentionsSar(
+  transactions: Transaction[],
+  accounts: Account[],
+  sarPerUsd: number
+): { description: string; date: string; amount: number }[] {
+  const accById = new Map(accounts.map((a) => [a.id, a]));
+  const re = /bnpl|installment|instalment|pay[-\s]?later|split\s+payment/i;
+  return transactions
+    .filter((t) => countsAsExpenseForCashflowKpi(t) && re.test(t.description || ''))
+    .slice(0, 20)
+    .map((t) => {
+      const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
+      return {
+        description: t.description,
+        date: t.date,
+        amount: toSAR(Math.abs(Number(t.amount) || 0), cur, sarPerUsd),
+      };
+    });
+}
+
+/**
+ * Refund pairs matched on **SAR-equivalent** amounts (mixed-currency safe).
+ */
+export function findRefundPairsSar(
+  transactions: Transaction[],
+  accounts: Account[],
+  sarPerUsd: number,
+  windowDays = 14,
+  toleranceSar = 5
+): RefundPair[] {
+  const accById = new Map(accounts.map((a) => [a.id, a]));
+  const expenses = transactions.filter((t) => countsAsExpenseForCashflowKpi(t));
+  const incomes = transactions.filter((t) => countsAsIncomeForCashflowKpi(t));
+  const pairs: RefundPair[] = [];
+  const used = new Set<string>();
+  for (const e of expenses) {
+    if (used.has(e.id)) continue;
+    const curE = accById.get(e.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
+    const ea = toSAR(Math.abs(Number(e.amount) || 0), curE, sarPerUsd);
+    if (ea < 1) continue;
+    for (const i of incomes) {
+      if (used.has(i.id)) continue;
+      const curI = accById.get(i.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
+      const ia = toSAR(Math.abs(Number(i.amount) || 0), curI, sarPerUsd);
+      if (Math.abs(ea - ia) > toleranceSar) continue;
+      const de = new Date(e.date).getTime();
+      const di = new Date(i.date).getTime();
+      const days = Math.abs(di - de) / 86400000;
+      if (days > windowDays) continue;
+      const ed = (e.description || '').slice(0, 20).toLowerCase();
+      const id = (i.description || '').slice(0, 20).toLowerCase();
+      if (ed && id && !ed.includes('refund') && !id.includes('refund') && ed !== id) continue;
+      pairs.push({ expenseId: e.id, incomeId: i.id, amount: ea, daysApart: days });
+      used.add(i.id);
+      used.add(e.id);
+      break;
+    }
+  }
+  return pairs.slice(0, 50);
 }
 
 export interface SplitLine {
