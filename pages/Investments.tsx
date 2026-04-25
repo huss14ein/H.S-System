@@ -4391,20 +4391,20 @@ Save anyway?`)) return;
                         onAddNewTicker={() => { void handleAddNewTicker(); }}
                         isUniverseTicker={isUniverseTicker}
                         isActionableUniverseStatus={isActionableUniverseStatus}
-                        onStatusUpdate={(t, s) => { void handleStatusUpdate(t, s); }}
-                        onMonthlyWeightInput={(t, raw) => {
+                        onStatusUpdate={(t: UniverseTicker & { source?: string }, s: TickerStatus) => { void handleStatusUpdate(t, s); }}
+                        onMonthlyWeightInput={(t: UniverseTicker, raw: string) => {
                             const w = parsePercentInputToWeight(raw);
                             if (w === undefined) return;
                             void updateUniverseTickerStatus(t.id, t.status, { monthly_weight: w });
                         }}
-                        onMaxPosWeightInput={(t, raw) => {
+                        onMaxPosWeightInput={(t: UniverseTicker, raw: string) => {
                             const w = parsePercentInputToWeight(raw);
                             if (w === undefined) return;
                             void updateUniverseTickerStatus(t.id, t.status, { max_position_weight: w });
                         }}
                         onMonthlyWeightBlur={() => { void autoConfigureUniverseWeights(); }}
                         onMaxPosBlur={() => { void autoConfigureUniverseWeights(); }}
-                        onDeleteUniverse={(t) => { void deleteUniverseTicker(t.id); }}
+                        onDeleteUniverse={(t: UniverseTicker) => { void deleteUniverseTicker(t.id); }}
                         simulatedPrices={simulatedPrices}
                         onNavigateToWatchlist={onNavigateToTab ? () => onNavigateToTab('Watchlist') : undefined}
                     />
