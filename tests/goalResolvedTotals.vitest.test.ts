@@ -38,6 +38,37 @@ describe('goalResolvedTotals', () => {
     expect(m.get('g1')).toBeCloseTo(8000, 5);
   });
 
+  it('splits a portfolio-level default goal across lots when holdings override goalId (matches Goals card)', () => {
+    const goals: Goal[] = [
+      { id: 'gA', name: 'A', targetAmount: 100000, currentAmount: 0, deadline: '2030-01-01', priority: 'High' },
+      { id: 'gB', name: 'B', targetAmount: 100000, currentAmount: 0, deadline: '2030-01-01', priority: 'High' },
+    ];
+    const data = {
+      goals,
+      assets: [],
+      investments: [
+        {
+          id: 'p1',
+          name: 'Mixed',
+          goalId: 'gA',
+          currency: 'SAR' as const,
+          holdings: [
+            { id: 'h1', symbol: 'X', quantity: 1, avgCost: 1, currentValue: 1000, realizedPnL: 0 },
+            { id: 'h2', symbol: 'Y', quantity: 1, avgCost: 1, currentValue: 4000, goalId: 'gB', realizedPnL: 0 },
+          ],
+        },
+      ],
+      liabilities: [],
+      transactions: [],
+      accounts: [],
+      budgets: [],
+    } as unknown as FinancialData;
+
+    const m = computeGoalResolvedAmountsSar(data, 3.75);
+    expect(m.get('gA')).toBeCloseTo(1000, 5);
+    expect(m.get('gB')).toBeCloseTo(4000, 5);
+  });
+
   it('averageRollingMonthlyNetSurplus returns 0 when no transactions', () => {
     expect(averageRollingMonthlyNetSurplus(null)).toBe(0);
   });

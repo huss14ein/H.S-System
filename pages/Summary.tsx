@@ -13,7 +13,7 @@ import Card from '../components/Card';
 import CollapsibleSection from '../components/CollapsibleSection';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
-import NetWorthCompositionChart from '../components/charts/NetWorthCompositionChart';
+import NetWorthCockpit from '../components/charts/NetWorthCockpit';
 import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 import { PersonaAnalysis, ReportCardItem } from '../types';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
@@ -580,8 +580,13 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
             </CollapsibleSection>
             
             <div className="cards-grid grid grid-cols-1 gap-4">
-                    <div className="section-card flex flex-col min-h-[420px] h-[min(56vh,520px)] border-l-4 border-l-sky-500">
-                        <NetWorthCompositionChart title="Historical net worth (your personal scope)" />
+                    <div className="section-card flex flex-col border-l-4 border-l-sky-500">
+                        <NetWorthCockpit
+                            title="Net worth (history + today)"
+                            onOpenInvestments={setActivePage ? () => setActivePage('Investments') : undefined}
+                            onOpenAccounts={setActivePage ? () => setActivePage('Accounts') : undefined}
+                            onOpenAssets={setActivePage ? () => setActivePage('Assets') : undefined}
+                        />
                     </div>
                 <div className="section-card flex flex-col min-h-[420px] h-[min(56vh,520px)]">
                     <div className="mb-2 sm:mb-4 space-y-1">

@@ -78,6 +78,33 @@ export function formatAiError(error: any): string {
     const messageParts = extractErrorMessageParts(error);
     let message = messageParts[0] || String(error ?? '');
     const mergedMessage = messageParts.join(' | ') || message;
+    // Anthropic / Claude "no credits" (show friendly copy; hide request_id / raw JSON)
+    if (/credit balance is too low|insufficient credits|Please go to Plans & Billing/i.test(mergedMessage)) {
+        return [
+            "AI is temporarily unavailable (provider credits are empty).",
+            "Add credits/billing for the current provider, or configure another provider key (Gemini/OpenAI/Anthropic) on the backend.",
+        ].join(' ');
+    }
+    // Claude proxy sometimes returns "Claude API error 400: { ...json... }" – extract the inner message if possible.
+    if (/Claude API error/i.test(mergedMessage) && mergedMessage.includes('{') && mergedMessage.includes('"message"')) {
+        try {
+            const idx = mergedMessage.indexOf('{');
+            const raw = mergedMessage.slice(idx);
+            const parsedClaude = JSON.parse(raw) as any;
+            const innerMsg = parsedClaude?.error?.message || parsedClaude?.error?.error?.message || parsedClaude?.message;
+            if (typeof innerMsg === 'string' && innerMsg.trim()) {
+                if (/credit balance is too low|insufficient credits/i.test(innerMsg)) {
+                    return [
+                        "AI is temporarily unavailable (provider credits are empty).",
+                        "Add credits/billing for the current provider, or configure another provider key (Gemini/OpenAI/Anthropic) on the backend.",
+                    ].join(' ');
+                }
+                return `AI Service Error: ${innerMsg.trim()}`;
+            }
+        } catch {
+            // fall through to existing formatter
+        }
+    }
     // Proxy may return stringified JSON in error; parse to detect quota/429
     let parsed: { error?: { code?: number; status?: string; message?: string } | string } | null = null;
     try {

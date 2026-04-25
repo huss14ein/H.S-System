@@ -34,6 +34,8 @@ import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
 import { deltaForInvestmentTrade } from '../services/investmentBalanceDelta';
 import { buildTransactionPayloadVariants } from '../services/transactionPayloadVariants';
 import { decodeInstallmentPaymentNote } from '../services/installments/installmentLinkNote';
+import type { PlanDraft } from '../services/investmentEngine/suggestions';
+import { applySuggestedPlansLocally } from '../services/investmentEngine/planWriter';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
@@ -146,9 +148,11 @@ interface DataContextType {
   addPriceAlert: (alert: Omit<PriceAlert, 'id' | 'user_id' | 'status' | 'createdAt'>) => Promise<void>;
   updatePriceAlert: (alert: PriceAlert) => Promise<void>;
   deletePriceAlert: (alertId: string) => Promise<void>;
-  addPlannedTrade: (plan: Omit<PlannedTrade, 'id' | 'user_id'>) => Promise<void>;
-  updatePlannedTrade: (plan: PlannedTrade) => Promise<void>;
+  addPlannedTrade: (plan: Omit<PlannedTrade, 'id' | 'user_id'>) => Promise<boolean>;
+  updatePlannedTrade: (plan: PlannedTrade) => Promise<boolean>;
   deletePlannedTrade: (planId: string) => Promise<void>;
+  /** Auto-create/update plans from engine suggestions (equities only in v1). */
+  applySuggestedPlans: (drafts: PlanDraft[], opts?: { planCurrency?: TradeCurrency }) => Promise<{ created: number; updated: number; skipped: number; errors: string[] }>;
   saveInvestmentPlan: (plan: InvestmentPlanSettings, portfolioId?: string) => Promise<void>;
   addUniverseTicker: (ticker: Omit<UniverseTicker, 'id' | 'user_id'>) => Promise<void>;
   updateUniverseTickerStatus: (tickerId: string, status: TickerStatus, updates?: Partial<UniverseTicker>) => Promise<void>;
@@ -2994,21 +2998,51 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Planned Trades ---
-    const addPlannedTrade = async (plan: Omit<PlannedTrade, 'id' | 'user_id'>) => {
-        if(!supabase) return;
+    const addPlannedTrade = async (plan: Omit<PlannedTrade, 'id' | 'user_id'>): Promise<boolean> => {
+        if(!supabase) return false;
         const v = validatePlannedTrade({ symbol: plan.symbol, name: plan.name, tradeType: plan.tradeType, conditionType: plan.conditionType, targetValue: plan.targetValue, quantity: plan.quantity, amount: plan.amount, priority: plan.priority });
-        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return false; }
         const { data: newPlan, error } = await supabase.from('planned_trades').insert(withUser(plan)).select().single();
-        if (error) { console.error(error); }
-        else if (newPlan) { setData(prev => ({ ...prev, plannedTrades: [...prev.plannedTrades, newPlan] })); }
+        if (error) { console.error(error); return false; }
+        if (newPlan) { setData(prev => ({ ...prev, plannedTrades: [...prev.plannedTrades, newPlan] })); return true; }
+        return false;
     };
-    const updatePlannedTrade = async (plan: PlannedTrade) => {
-        if(!supabase || !auth?.user) return;
+    const updatePlannedTrade = async (plan: PlannedTrade): Promise<boolean> => {
+        if(!supabase || !auth?.user) return false;
         const v = validatePlannedTrade({ symbol: plan.symbol, name: plan.name, tradeType: plan.tradeType, conditionType: plan.conditionType, targetValue: plan.targetValue, quantity: plan.quantity, amount: plan.amount, priority: plan.priority });
-        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return false; }
         const { error } = await supabase.from('planned_trades').update(plan).match({ id: plan.id, user_id: auth.user.id });
-        if (error) { console.error(error); }
-        else { setData(prev => ({ ...prev, plannedTrades: prev.plannedTrades.map(p => p.id === plan.id ? plan : p) })); }
+        if (error) { console.error(error); return false; }
+        setData(prev => ({ ...prev, plannedTrades: prev.plannedTrades.map(p => p.id === plan.id ? plan : p) }));
+        return true;
+    };
+    const applySuggestedPlans = async (
+        drafts: PlanDraft[],
+        opts?: { planCurrency?: TradeCurrency },
+    ): Promise<{ created: number; updated: number; skipped: number; errors: string[] }> => {
+        const planCurrency = (opts?.planCurrency as TradeCurrency) || ((data?.investmentPlan?.budgetCurrency as TradeCurrency) || 'SAR');
+        try {
+            const { toCreate, toUpdate, skipped } = applySuggestedPlansLocally({
+                drafts,
+                existingPlans: data?.plannedTrades ?? [],
+                planCurrency,
+                cooldownHours: 12,
+            });
+            let created = 0;
+            let updated = 0;
+            const errors: string[] = [];
+            for (const c of toCreate) {
+                const ok = await addPlannedTrade(c);
+                if (ok) created += 1;
+            }
+            for (const u of toUpdate) {
+                const ok = await updatePlannedTrade(u);
+                if (ok) updated += 1;
+            }
+            return { created, updated, skipped, errors };
+        } catch (e) {
+            return { created: 0, updated: 0, skipped: drafts.length, errors: [e instanceof Error ? e.message : String(e)] };
+        }
     };
     const deletePlannedTrade = async (planId: string) => {
         if(!supabase || !auth?.user) return;
@@ -3422,7 +3456,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         })();
     }, [loading, auth?.user?.id, data.investments]);
 
-    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, applySuggestedPlans, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

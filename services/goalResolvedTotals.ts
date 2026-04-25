@@ -31,14 +31,12 @@ export function computeGoalResolvedAmountsSar(
   investments.forEach((p: { goalId?: string; currency?: string; holdings?: { goalId?: string; currentValue?: number }[] }) => {
     const holdings = p.holdings ?? [];
     const cur = (p.currency ?? 'USD') as 'USD' | 'SAR';
-    if (p.goalId) {
-      const portfolioValue = holdings.reduce((sum: number, h: { currentValue?: number }) => sum + toSAR(h.currentValue ?? 0, cur, sarPerUsd), 0);
-      add(p.goalId, portfolioValue);
-    } else {
-      holdings.forEach((h: { goalId?: string; currentValue?: number }) => {
-        if (h.goalId) add(h.goalId, toSAR(h.currentValue ?? 0, cur, sarPerUsd));
-      });
-    }
+    // Match Goals card: each lot resolves to `holding.goalId ?? portfolio.goalId` (never assign the whole book to the portfolio goal while ignoring per-lot links).
+    holdings.forEach((h: { goalId?: string; currentValue?: number }) => {
+      const gid = h.goalId ?? p.goalId;
+      if (!gid) return;
+      add(gid, toSAR(h.currentValue ?? 0, cur, sarPerUsd));
+    });
   });
 
   const liabilities = ((data as { personalLiabilities?: Liability[] }).personalLiabilities ?? data.liabilities ?? []) as Liability[];

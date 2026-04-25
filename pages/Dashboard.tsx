@@ -6,7 +6,7 @@ import ProgressBar from '../components/ProgressBar';
 import CashflowChart from '../components/charts/CashflowChart';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
-import NetWorthCompositionChart from '../components/charts/NetWorthCompositionChart';
+import NetWorthCockpit from '../components/charts/NetWorthCockpit';
 import AIFeed from '../components/AIFeed';
 import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
 import { CalendarDaysIcon } from '../components/icons/CalendarDaysIcon';
@@ -1067,8 +1067,14 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             {isAdmin ? (
                 <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
                     <div className="lg:col-span-3 section-card flex flex-col min-h-[420px] h-[min(52vh,440px)]">
-                        <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
-                            <NetWorthCompositionChart title="Net Worth Composition" onOpenSummary={() => setActivePage('Summary')} />
+                        <div className="flex-1 min-h-0">
+                            <NetWorthCockpit
+                                title="Net worth"
+                                onOpenSummary={() => setActivePage('Summary')}
+                                onOpenInvestments={() => setActivePage('Investments')}
+                                onOpenAccounts={() => setActivePage('Accounts')}
+                                onOpenAssets={() => setActivePage('Assets')}
+                            />
                         </div>
                     </div>
                 </div>

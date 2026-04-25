@@ -30,7 +30,7 @@ import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
 import InvestmentOverview from './InvestmentOverview';
-import InvestmentPlanView from './InvestmentPlanView';
+import InvestmentPlanAutopilot from './InvestmentPlanAutopilot';
 import { useMarketData } from '../context/MarketDataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useAI } from '../context/AiContext';
@@ -39,9 +39,9 @@ import InfoHint from '../components/InfoHint';
 import { LinkIcon } from '../components/icons/LinkIcon';
 import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
 import Card from '../components/Card';
-import { getUniverseRowPlanRole } from '../services/universePlanRole';
 import CurrencyDualDisplay from '../components/CurrencyDualDisplay';
 import SectionCard from '../components/SectionCard';
+import PortfolioUniversePanel from '../components/PortfolioUniversePanel';
 import AIAdvisor from '../components/AIAdvisor';
 import LoadingSpinner from '../components/LoadingSpinner';
 import LivePricesStatus from '../components/LivePricesStatus';
@@ -2934,7 +2934,12 @@ const ANALYST_DEFAULTS = {
     target_provider: 'TipRanks',
 };
 
-const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => void; onOpenWealthUltra?: () => void; onOpenRecordTrade?: (trade: { ticker: string; amount: number; reason?: string; price?: number; quantity?: number; tradeCurrency?: TradeCurrency }) => void }> = ({ onNavigateToTab, onOpenWealthUltra, onOpenRecordTrade }) => {
+const InvestmentPlan: React.FC<{
+  onNavigateToTab?: (tab: InvestmentSubPage) => void;
+  onOpenWealthUltra?: () => void;
+  onOpenRecordTrade?: (trade: { ticker: string; amount: number; reason?: string; price?: number; quantity?: number; tradeCurrency?: TradeCurrency }) => void;
+  onCreatePlanFromAddOn?: (p: { symbol: string; name?: string; targetPrice?: number; amount?: number; quantity?: number; tradeType?: 'buy' | 'sell'; notes?: string }) => void;
+}> = ({ onNavigateToTab, onOpenWealthUltra, onOpenRecordTrade, onCreatePlanFromAddOn }) => {
     const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { isAiAvailable, aiHealthChecked } = useAI();
@@ -2997,6 +3002,7 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
     const analystAutoFilledRef = React.useRef(false);
     const [universeFilter, setUniverseFilter] = useState<'all' | 'Core' | 'High-Upside' | 'Watchlist' | 'Needs mapping'>('all');
     const [universeSort, setUniverseSort] = useState<'ticker' | 'status' | 'weight'>('ticker');
+    const [universeSearch, setUniverseSearch] = useState('');
 
     useEffect(() => {
         if (!planFromData || !universePortfolioId) return;
@@ -3005,17 +3011,23 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
 
     const unifiedUniverse = useMemo(() => {
         const universeMap = new Map<string, UniverseTicker & { source?: string }>();
-        const portfolioUniverse = (data?.portfolioUniverse ?? []).filter(
-            (t) => !t.portfolioId || t.portfolioId === universePortfolioId,
-        );
+        const portfolioUniverse = (data?.portfolioUniverse ?? [])
+            .filter((t) => !t.portfolioId || t.portfolioId === universePortfolioId);
+        const portfolioUniverseDeduped = (() => {
+            const m = new Map<string, UniverseTicker>();
+            for (const t of portfolioUniverse) {
+                m.set((t.ticker || '').toUpperCase(), t);
+            }
+            return Array.from(m.values());
+        })();
         const investments = universePortfolioId
             ? getPersonalInvestments(data ?? null).filter((p) => p.id === universePortfolioId)
             : [];
         const watchlist = data?.watchlist ?? [];
         const plannedTrades = data?.plannedTrades ?? [];
 
-        // 1. Start with explicit universe
-        portfolioUniverse.forEach(t => universeMap.set(t.ticker, { ...t, source: 'Universe' }));
+        // 1. Start with explicit universe (de-dupe by ticker; last row wins for duplicate DB keys)
+        portfolioUniverseDeduped.forEach(t => universeMap.set(t.ticker, { ...t, source: 'Universe' }));
 
         // 2. Add holdings
         investments.flatMap(p => p.holdings || []).forEach(h => {
@@ -3106,6 +3118,16 @@ const InvestmentPlan: React.FC<{ onNavigateToTab?: (tab: InvestmentSubPage) => v
         else if (universeSort === 'weight') list = [...list].sort((a, b) => (b.monthly_weight ?? 0) - (a.monthly_weight ?? 0));
         return list;
     }, [unifiedUniverse, universeFilter, universeSort]);
+
+    const displayUniverseForPanel = useMemo(() => {
+        const q = universeSearch.trim().toLowerCase();
+        if (!q) return filteredAndSortedUniverse;
+        return filteredAndSortedUniverse.filter((t) => {
+            const sym = (t.ticker || '').toLowerCase();
+            const n = (t.name || '').toLowerCase();
+            return sym.includes(q) || n.includes(q);
+        });
+    }, [filteredAndSortedUniverse, universeSearch]);
 
     // Auto-derive suggested monthly budget from selected portfolio cash first, then history.
     const { suggestedMonthlyBudget, suggestedBudgetSource } = useMemo(() => {
@@ -3498,7 +3520,8 @@ Save anyway?`)) return;
         }
     };
 
-    const isUniverseTicker = (ticker: UniverseTicker & { source?: string }) => ticker.source === 'Universe' || ticker.source?.includes('Universe');
+    const isUniverseTicker = (ticker: UniverseTicker & { source?: string }): boolean =>
+        Boolean(ticker.source === 'Universe' || (ticker.source && ticker.source.includes('Universe')));
     const isActionableUniverseStatus = (status: TickerStatus) => status === 'Core' || status === 'High-Upside';
 
     const parsePercentInputToWeight = (raw: string): number | undefined => {
@@ -4341,163 +4364,50 @@ Save anyway?`)) return;
                     </div>
                 </div>
 
-                {/* Portfolio Universe — full width row */}
+                {/* Portfolio Universe — enhanced hub */}
                 <div className="xl:col-span-12">
-                    <div className="bg-white p-6 rounded-lg shadow">
-                        <div className="mb-4">
-                            <h2 className="text-xl font-semibold text-dark flex items-center gap-2 min-w-0">
-                                <span>Portfolio Universe & Weights</span>
-                                <span className="inline-flex items-center flex-shrink-0">
-                                    <InfoHint text="Scoped to the portfolio selected above. Tickers and their status (Core, High-Upside, Speculative, etc.) with optional monthly weights. Core and High-Upside drive allocation; weights define how this portfolio’s monthly budget is split. Sync from Watchlist or add manually." hintId="plan-universe-tickers" hintPage="Investments" />
-                                </span>
-                            </h2>
-                            <p className="text-sm text-gray-500 mt-1">Define your assets and weights. Status drives automation: Core and High-Upside receive the monthly budget split; other statuses are handled as shown in Plan role.</p>
-                        </div>
-                        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-4 text-xs">
-                            <div className="p-2 rounded border bg-slate-50"><p className="text-gray-500">Tickers</p><p className="font-semibold text-dark">{universeHealth.totalCount}</p></div>
-                            <div className="p-2 rounded border bg-slate-50"><p className="text-gray-500">Actionable</p><p className="font-semibold text-dark">{universeHealth.actionableCount}</p></div>
-                            <div className="p-2 rounded border bg-slate-50"><p className="text-gray-500">Weight total</p><p className={`font-semibold ${Math.abs(universeHealth.monthlyWeightTotal - 1) <= 0.01 ? 'text-green-700' : 'text-amber-700'}`}>{(universeHealth.monthlyWeightTotal * 100).toFixed(1)}%</p></div>
-                            <div className="p-2 rounded border bg-slate-50"><p className="text-gray-500">Over max</p><p className={`font-semibold ${universeHealth.overMaxCount === 0 ? 'text-green-700' : 'text-rose-700'}`}>{universeHealth.overMaxCount}</p></div>
-                            <div className="p-2 rounded border bg-slate-50"><p className="text-gray-500">Needs mapping</p><p className={`font-semibold ${universeHealth.unmappedCount === 0 ? 'text-green-700' : 'text-amber-700'}`}>{universeHealth.unmappedCount}</p></div>
-                        </div>
-                        {Math.abs(universeHealth.monthlyWeightTotal - 1) > 0.01 && (
-                            <p className="text-xs mb-4 text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">Actionable monthly weights should usually sum close to 100% for predictable allocation behavior.</p>
-                        )}
-                        <div className="flex flex-wrap items-center gap-2 mb-3">
-                            <label className="text-xs font-medium text-slate-600">Filter:</label>
-                            <select value={universeFilter} onChange={e => setUniverseFilter(e.target.value as any)} className="p-2 border border-slate-200 rounded-lg text-sm bg-white">
-                                <option value="all">All ({universeHealth.totalCount})</option>
-                                <option value="Core">Core</option>
-                                <option value="High-Upside">High-Upside</option>
-                                <option value="Watchlist">Watchlist</option>
-                                <option value="Needs mapping">Needs mapping</option>
-                            </select>
-                            <label className="text-xs font-medium text-slate-600 ml-2">Sort:</label>
-                            <select value={universeSort} onChange={e => setUniverseSort(e.target.value as any)} className="p-2 border border-slate-200 rounded-lg text-sm bg-white">
-                                <option value="ticker">Ticker A–Z</option>
-                                <option value="status">Status</option>
-                                <option value="weight">Weight (high first)</option>
-                            </select>
-                        </div>
-                        <div className="flex flex-wrap gap-2 mb-4">
-                            {canAddWatchlistHoldings && (
-                                <button type="button" onClick={addWatchlistAndHoldingsToUniverse} className="px-3 py-2 text-sm border border-primary/40 text-primary rounded-lg hover:bg-primary/5 font-medium">Add Watchlist & Holdings to Universe</button>
-                            )}
-                            <button type="button" onClick={syncPlanFromUniverse} className="px-3 py-2 text-sm border border-slate-300 rounded-lg hover:bg-slate-50 text-slate-700">Sync Core/Upside from Universe</button>
-                            <button type="button" onClick={autoConfigureUniverseWeights} className="px-3 py-2 text-sm border border-emerald-300 text-emerald-700 rounded-lg hover:bg-emerald-50 font-medium">Auto-configure weights</button>
-                            <input type="text" placeholder="Ticker (e.g., AAPL)" value={newTicker.ticker} onChange={e => setNewTicker(p => ({...p, ticker: e.target.value.toUpperCase()}))} className="p-2 border border-slate-200 rounded-lg min-w-[100px]" />
-                            <input type="text" placeholder="Company Name" value={newTicker.name} onChange={e => setNewTicker(p => ({...p, name: e.target.value}))} className="flex-grow min-w-[120px] p-2 border border-slate-200 rounded-lg" />
-                            <button onClick={handleAddNewTicker} className="p-2 bg-primary text-white rounded-lg hover:bg-secondary"><PlusIcon className="h-5 w-5" /></button>
-                        </div>
-                        <div className="max-h-[28rem] overflow-auto rounded-lg border border-slate-100">
-                            <table className="min-w-[1100px] w-full divide-y divide-gray-200 text-sm">
-                                <thead className="bg-gray-50 sticky top-0"><tr>
-                                    <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle">Ticker</th>
-                                    <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle">Name</th>
-                                    <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle">
-                                        <span className="inline-flex items-center gap-1 whitespace-nowrap">Status <InfoHint text="Core and High-Upside get allocation; Speculative gets a small share; Quarantine/Excluded get none." hintId="plan-universe-status" hintPage="Investments" /></span>
-                                    </th>
-                                    <th className="px-3 py-2 text-left font-medium text-gray-500 align-middle min-w-[12rem] max-w-[16rem]">
-                                        <span className="inline-flex items-center gap-1">Plan role <InfoHint text="Derived from status: shows how the system treats this ticker in monthly execution (no manual entry)." hintId="plan-universe-role" hintPage="Investments" /></span>
-                                    </th>
-                                    <th className="px-3 py-2 text-center font-medium text-gray-500 align-middle">
-                                        <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap">Monthly Wt <InfoHint text="Share of this sleeve's budget (e.g. 50% = half of Core budget goes here). Weights should sum to ~100% per sleeve." hintId="plan-monthly-wt" hintPage="Investments" /></span>
-                                    </th>
-                                    <th className="px-3 py-2 text-center font-medium text-gray-500 align-middle">
-                                        <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap">Max Pos Wt <InfoHint text="Cap on a single ticker's share of the sleeve (e.g. 0.25 = max 25%)." hintId="plan-max-pos-wt" hintPage="Investments" /></span>
-                                    </th>
-                                    <th className="px-3 py-2 text-right font-medium text-gray-500 align-middle">Actions</th>
-                                </tr></thead>
-                                <tbody className="bg-white divide-y divide-gray-200">
-                                    {filteredAndSortedUniverse.length === 0 ? (
-                                        <tr>
-                                            <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
-                                                {unifiedUniverse.length === 0 ? (
-                                                    <>
-                                                        <p className="font-medium text-slate-700">No tickers in universe yet</p>
-                                                        <p className="text-sm mt-1 max-w-md mx-auto">Add tickers using the fields above, or use &quot;Add Watchlist &amp; Holdings to Universe&quot; to pull from your watchlist and current holdings. Set status to Core or High-Upside for allocation.</p>
-                                                        {onNavigateToTab && (
-                                                            <button type="button" onClick={() => onNavigateToTab('Watchlist')} className="mt-3 text-sm font-medium text-primary hover:underline">Go to Watchlist</button>
-                                                        )}
-                                                    </>
-                                                ) : (
-                                                    <p className="font-medium text-slate-700">No tickers match the current filter. Try &quot;All&quot; or another filter.</p>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ) : filteredAndSortedUniverse.map(ticker => (
-                                        <tr key={ticker.id} className="hover:bg-gray-50">
-                                            <td className="px-4 py-2 font-bold text-dark">
-                                                {ticker.ticker}
-                                                <div className="text-[10px] text-gray-400 font-normal">{ticker.source}</div>
-                                            </td>
-                                            <td className="px-4 py-2 text-gray-600">{ticker.name}</td>
-                                            <td className="px-4 py-2">
-                                                <select value={ticker.status} onChange={e => handleStatusUpdate(ticker, e.target.value as TickerStatus)} className="p-1 border rounded-md text-xs">
-                                                    <option>Core</option>
-                                                    <option>High-Upside</option>
-                                                    <option>Watchlist</option>
-                                                    <option>Quarantine</option>
-                                                    <option>Speculative</option>
-                                                    <option>Excluded</option>
-                                                </select>
-                                            </td>
-                                            <td className="px-4 py-2 text-xs text-slate-700 align-top">
-                                                {getUniverseRowPlanRole(ticker)}
-                                            </td>
-                                            <td className="px-4 py-2 text-center">
-                                                {isUniverseTicker(ticker) ? (
-                                                    isActionableUniverseStatus(ticker.status) ? (
-                                                        <>
-                                                            <input 
-                                                                type="number" 
-                                                                value={ticker.monthly_weight != null ? ticker.monthly_weight * 100 : ''} 
-                                                                onChange={e => { const nextWeight = parsePercentInputToWeight(e.target.value); if (nextWeight == null) return; updateUniverseTickerStatus(ticker.id, ticker.status, { monthly_weight: nextWeight }); }}
-                                                                onBlur={autoConfigureUniverseWeights}
-                                                                className="w-16 p-1 border rounded text-right text-xs"
-                                                                placeholder="auto"
-                                                            />
-                                                            <span className="text-[10px] ml-1 text-gray-400">%</span>
-                                                        </>
-                                                    ) : (
-                                                        <span className="text-[10px] text-gray-400" title="Auto-managed: non-actionable statuses do not receive allocation">Auto</span>
-                                                    )
-                                                ) : (
-                                                    <span className="text-[10px] text-gray-400" title="Add to universe above to set weights">—</span>
-                                                )}
-                                            </td>
-                                            <td className="px-4 py-2 text-center">
-                                                {isUniverseTicker(ticker) ? (
-                                                    isActionableUniverseStatus(ticker.status) ? (
-                                                        <>
-                                                            <input 
-                                                                type="number" 
-                                                                value={ticker.max_position_weight != null ? ticker.max_position_weight * 100 : ''} 
-                                                                onChange={e => { const nextWeight = parsePercentInputToWeight(e.target.value); if (nextWeight == null) return; updateUniverseTickerStatus(ticker.id, ticker.status, { max_position_weight: nextWeight }); }}
-                                                                onBlur={autoConfigureUniverseWeights}
-                                                                className="w-16 p-1 border rounded text-right text-xs"
-                                                                placeholder="auto"
-                                                            />
-                                                            <span className="text-[10px] ml-1 text-gray-400">%</span>
-                                                        </>
-                                                    ) : (
-                                                        <span className="text-[10px] text-gray-400" title="Auto-managed: non-actionable statuses use defaults">Auto</span>
-                                                    )
-                                                ) : (
-                                                    <span className="text-[10px] text-gray-400" title="Add to universe above to set weights">—</span>
-                                                )}
-                                            </td>
-                                            <td className="px-4 py-2 text-right">
-                                                {isUniverseTicker(ticker) && (
-                                                    <button onClick={() => deleteUniverseTicker(ticker.id)} className="p-1 text-gray-400 hover:text-danger"><TrashIcon className="h-4 w-4" /></button>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
+                    <PortfolioUniversePanel
+                        planCurrency={(plan.budgetCurrency as TradeCurrency) || 'SAR'}
+                        coreSleevePct={planHealth.corePct}
+                        upsideSleevePct={planHealth.upsidePct}
+                        personalPortfolios={personalPortfolios}
+                        selectedPortfolioId={selectedPortfolioId}
+                        onSelectPortfolio={(id) => setSelectedPortfolioId(id)}
+                        health={universeHealth}
+                        unifiedUniverse={unifiedUniverse}
+                        displayRows={displayUniverseForPanel}
+                        universeFilter={universeFilter}
+                        onUniverseFilter={setUniverseFilter}
+                        universeSort={universeSort}
+                        onUniverseSort={setUniverseSort}
+                        searchQuery={universeSearch}
+                        onSearchQuery={setUniverseSearch}
+                        canAddWatchlistHoldings={canAddWatchlistHoldings}
+                        onAddWatchlistAndHoldings={addWatchlistAndHoldingsToUniverse}
+                        onSyncPlanFromUniverse={syncPlanFromUniverse}
+                        onAutoConfigureWeights={() => { void autoConfigureUniverseWeights(); }}
+                        newTicker={newTicker}
+                        onNewTicker={setNewTicker}
+                        onAddNewTicker={() => { void handleAddNewTicker(); }}
+                        isUniverseTicker={isUniverseTicker}
+                        isActionableUniverseStatus={isActionableUniverseStatus}
+                        onStatusUpdate={(t, s) => { void handleStatusUpdate(t, s); }}
+                        onMonthlyWeightInput={(t, raw) => {
+                            const w = parsePercentInputToWeight(raw);
+                            if (w === undefined) return;
+                            void updateUniverseTickerStatus(t.id, t.status, { monthly_weight: w });
+                        }}
+                        onMaxPosWeightInput={(t, raw) => {
+                            const w = parsePercentInputToWeight(raw);
+                            if (w === undefined) return;
+                            void updateUniverseTickerStatus(t.id, t.status, { max_position_weight: w });
+                        }}
+                        onMonthlyWeightBlur={() => { void autoConfigureUniverseWeights(); }}
+                        onMaxPosBlur={() => { void autoConfigureUniverseWeights(); }}
+                        onDeleteUniverse={(t) => { void deleteUniverseTicker(t.id); }}
+                        simulatedPrices={simulatedPrices}
+                        onNavigateToWatchlist={onNavigateToTab ? () => onNavigateToTab('Watchlist') : undefined}
+                    />
                 </div>
 
                 <div className="xl:col-span-12 w-full min-w-0">
@@ -4526,7 +4436,7 @@ Save anyway?`)) return;
                                             <th className="w-[16%] px-3 py-2 font-semibold">Signal</th>
                                             <th className="w-[24%] px-3 py-2 font-semibold">Buy zone</th>
                                             <th className="w-[24%] px-3 py-2 font-semibold text-right">Suggested size</th>
-                                            {onOpenRecordTrade && <th className="w-[132px] px-3 py-2" />}
+                                            {(onCreatePlanFromAddOn || onOpenRecordTrade) && <th className="w-[132px] px-3 py-2" />}
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -4566,21 +4476,35 @@ Save anyway?`)) return;
                                                         <CurrencyDualDisplay value={o.pullbackPrice} inCurrency={o.tradeCurrency} digits={HOLDING_PER_UNIT_DECIMALS} size="base" className="inline-flex justify-end" />
                                                     </div>
                                                 </td>
-                                                {onOpenRecordTrade && (
+                                                {(onCreatePlanFromAddOn || onOpenRecordTrade) && (
                                                     <td className="px-3 py-2 text-right">
                                                         <button
                                                             type="button"
-                                                            onClick={() => onOpenRecordTrade({
-                                                                ticker: o.symbol,
-                                                                amount: o.amountInTradeCurrency,
-                                                                reason: `Smart add-on: ${o.reason}`,
-                                                                price: o.pullbackPrice,
-                                                                quantity: o.suggestedQuantity,
-                                                                tradeCurrency: o.tradeCurrency,
-                                                            })}
+                                                            onClick={() => {
+                                                                if (onCreatePlanFromAddOn) {
+                                                                    onCreatePlanFromAddOn({
+                                                                        symbol: o.symbol,
+                                                                        name: o.name,
+                                                                        targetPrice: o.pullbackPrice,
+                                                                        amount: o.suggestedPlanAmount,
+                                                                        quantity: o.suggestedQuantity,
+                                                                        tradeType: 'buy',
+                                                                        notes: `Smart add: ${o.reason}`,
+                                                                    });
+                                                                } else {
+                                                                    onOpenRecordTrade?.({
+                                                                        ticker: o.symbol,
+                                                                        amount: o.amountInTradeCurrency,
+                                                                        reason: `Smart add-on: ${o.reason}`,
+                                                                        price: o.pullbackPrice,
+                                                                        quantity: o.suggestedQuantity,
+                                                                        tradeCurrency: o.tradeCurrency,
+                                                                    });
+                                                                }
+                                                            }}
                                                             className="text-xs px-2.5 py-1.5 rounded-md border border-primary text-primary hover:bg-primary hover:text-white transition-colors whitespace-nowrap"
                                                         >
-                                                            Record add-on
+                                                            {onCreatePlanFromAddOn ? 'Record plan' : 'Record add-on'}
                                                         </button>
                                                     </td>
                                                 )}
@@ -4634,6 +4558,16 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
   
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
   const [tradeInitialData, setTradeInitialData] = useState<any>(null);
+  const [stagedAddOnToPlan, setStagedAddOnToPlan] = useState<{
+    key: number;
+    symbol: string;
+    name?: string;
+    targetPrice?: number;
+    amount?: number;
+    quantity?: number;
+    tradeType?: 'buy' | 'sell';
+    notes?: string;
+  } | null>(null);
 
   const [isPortfolioModalOpen, setIsPortfolioModalOpen] = useState(false);
   const [portfolioToEdit, setPortfolioToEdit] = useState<InvestmentPortfolio|null>(null);
@@ -4893,11 +4827,13 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         />;
       case 'Investment Plan': return (
                 <div className="flex flex-col gap-16 sm:gap-20">
-                    <InvestmentPlanView
+                    <InvestmentPlanAutopilot
                         embedded
                         onExecutePlan={() => {}}
                         setActivePage={setActivePage}
                         triggerPageAction={triggerPageAction}
+                        stagedAddOnPlanned={stagedAddOnToPlan}
+                        onStagedAddOnPlannedHandled={() => setStagedAddOnToPlan(null)}
                     />
                     <section className="rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50/80 to-white p-4 sm:p-6 shadow-sm scroll-mt-6" aria-labelledby="monthly-allocation-heading">
                         <div className="mb-4 border-b border-slate-200 pb-3">
@@ -4907,6 +4843,12 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                         <InvestmentPlan
                             onNavigateToTab={(tab) => setActiveTab(tab)}
                             onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined}
+                            onCreatePlanFromAddOn={(p) => {
+                                setStagedAddOnToPlan((prev) => ({
+                                    key: (prev?.key ?? 0) + 1,
+                                    ...p,
+                                }));
+                            }}
                             onOpenRecordTrade={(trade) => {
                                 trackAction('record-trade-from-plan', 'Investments');
                                 const normalizedSymbol = trade.ticker.trim().toUpperCase();
@@ -4988,13 +4930,13 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 tooltip="Everything you have invested right now: stocks and funds at today's prices, idle cash sitting on your broker accounts, commodities, and Sukuk tracked in Assets. US-listed prices are converted into riyals using your FX rate so the number matches your net worth view. Hover the amount to see the USD equivalent."
             />
             <Card
-                title="Unrealized P/L"
+                title="Net Gain/Loss"
                 value={<CurrencyDualDisplay value={totalGainLoss} inCurrency="SAR" digits={2} colorize size="2xl" />}
                 density="compact"
                 indicatorColor={totalGainLoss >= 0 ? 'green' : 'red'}
                 valueColor={totalGainLoss >= 0 ? 'text-emerald-700' : 'text-rose-700'}
                 icon={<ArrowsRightLeftIcon className={`h-5 w-5 ${totalGainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
-                tooltip="Paper profit or loss: current value minus money you moved in (deposits) and out (withdrawals) of investment platforms, plus Sukuk purchase cost (from Assets), plus commodity purchase cost. It updates when prices refresh; it is not tax or realized gain until you sell. Hover the amount to see USD equivalent."
+                tooltip="Net gain/loss vs your net contributions: current value minus (deposits − withdrawals) minus commodity purchase cost minus Sukuk purchase cost (from Assets). It updates when prices refresh; it can be negative if the market moved down, if fees were paid, or if entries are missing."
             />
             <Card
                 title="Portfolio ROI"
@@ -5026,6 +4968,39 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 </span>
             </p>
         )}
+
+        <details className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <summary className="cursor-pointer select-none text-sm font-semibold text-slate-800">
+                How is “Net Gain/Loss” calculated?
+            </summary>
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="font-semibold text-slate-700">Total value (SAR)</p>
+                    <p className="tabular-nums text-slate-900 mt-1">{formatCurrencyString(totalValue, { inCurrency: 'SAR', digits: 2 })}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="font-semibold text-slate-700">Net capital (SAR)</p>
+                    <p className="tabular-nums text-slate-900 mt-1">
+                        {formatCurrencyString(Math.max(0, totalValue - totalGainLoss), { inCurrency: 'SAR', digits: 2 })}
+                    </p>
+                    <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
+                        Deposits − withdrawals (platforms) + commodity purchase cost + Sukuk purchase cost.
+                    </p>
+                </div>
+                <div className={`rounded-xl border px-3 py-2 ${
+                    totalGainLoss >= 0 ? 'border-emerald-200 bg-emerald-50/60' : 'border-rose-200 bg-rose-50/60'
+                }`}>
+                    <p className="font-semibold text-slate-700">Net gain/loss (SAR)</p>
+                    <p className={`tabular-nums mt-1 font-semibold ${totalGainLoss >= 0 ? 'text-emerald-800' : 'text-rose-800'}`}>
+                        {formatCurrencyString(totalGainLoss, { inCurrency: 'SAR', digits: 2 })}
+                    </p>
+                    <p className="text-[11px] text-slate-600 mt-1">Total value − net capital</p>
+                </div>
+            </div>
+            <p className="mt-3 text-xs text-slate-600 leading-relaxed">
+                If this number looks wrong, open <span className="font-semibold text-slate-800">System &amp; APIs Health</span> → <span className="font-semibold text-slate-800">Investment KPI reconciliation</span> to see the drift check (broker cash vs ledger flows) and what entry is missing.
+            </p>
+        </details>
 
         <PlanSummary onEditPlan={() => setActiveTab('Investment Plan')} />
         <InvestmentGoalsStrip onOpenGoals={setActivePage ? () => setActivePage('Goals') : undefined} />

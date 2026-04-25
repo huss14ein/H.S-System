@@ -1,4 +1,4 @@
-import React, { useState, useContext, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useContext, useEffect, useMemo, useCallback, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
 import { PlannedTrade, type Page, type TradeCurrency } from '../types';
 import Modal from '../components/Modal';
@@ -49,15 +49,18 @@ function formatRiskPointsOn100(n: number): string {
 const PlanTradeModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
-    onSave: (plan: Omit<PlannedTrade, 'id'|'user_id'> | PlannedTrade) => void;
+    onSave: (plan: Omit<PlannedTrade, 'id'|'user_id'> | PlannedTrade) => void | boolean | Promise<void | boolean>;
     planToEdit: PlannedTrade | null;
-    universe?: { ticker?: string; name?: string; status?: string }[];
+    universe?: { ticker?: string; name?: string; status?: string; id?: string }[];
     simulatedPrices?: Record<string, { price?: number }>;
     monthlyBudget?: number;
     /** Core sleeve fraction (0–1) from investment plan — improves default trade amount. */
     coreAllocation?: number;
     budgetCurrency?: TradeCurrency;
-}> = ({ isOpen, onClose, onSave, planToEdit, universe = [], simulatedPrices = {}, monthlyBudget, coreAllocation, budgetCurrency }) => {
+    /** When set, merge into a new-plan form (e.g. Smart add → Record plan). */
+    newPlanFieldInjection?: { key: number; symbol: string; name?: string; targetPrice?: number; amount?: number; quantity?: number; tradeType?: 'buy' | 'sell'; notes?: string } | null;
+    onNewPlanFieldInjectionConsumed?: () => void;
+}> = ({ isOpen, onClose, onSave, planToEdit, universe = [], simulatedPrices = {}, monthlyBudget, coreAllocation, budgetCurrency, newPlanFieldInjection, onNewPlanFieldInjectionConsumed }) => {
     const [symbol, setSymbol] = useState('');
     const [name, setName] = useState('');
     const [tradeType, setTradeType] = useState<'buy' | 'sell'>('buy');
@@ -67,6 +70,8 @@ const PlanTradeModal: React.FC<{
     const [amount, setAmount] = useState('');
     const [priority, setPriority] = useState<'High' | 'Medium' | 'Low'>('Medium');
     const [notes, setNotes] = useState('');
+    const lastSymbolAtFocusRef = useRef('');
+    const skipUniverseAutofillRef = useRef(false);
 
     const { data } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
@@ -75,6 +80,9 @@ const PlanTradeModal: React.FC<{
     const instrumentCurrency = useMemo(() => inferInstrumentCurrencyFromSymbol(symbol), [symbol]);
 
     useEffect(() => {
+        if (!isOpen) {
+            skipUniverseAutofillRef.current = false;
+        }
         if (planToEdit) {
             setSymbol(planToEdit.symbol);
             setName(planToEdit.name);
@@ -93,12 +101,34 @@ const PlanTradeModal: React.FC<{
             // Reset form
             setSymbol(''); setName(''); setTradeType('buy'); setConditionType('price');
             setTargetValue(''); setQuantity(''); setAmount(''); setPriority('Medium'); setNotes('');
+            lastSymbolAtFocusRef.current = '';
         }
     }, [planToEdit, isOpen]);
 
-    // Auto-pick first actionable universe ticker when creating a new plan.
+    // Apply one-shot prefill (Smart add, etc.): after base reset effects for new plans.
     useEffect(() => {
-        if (!isOpen || planToEdit) return;
+        if (!isOpen || planToEdit || !newPlanFieldInjection) return;
+        const p = newPlanFieldInjection;
+        setSymbol(p.symbol.toUpperCase().trim());
+        if (p.name) setName(p.name);
+        setTradeType(p.tradeType ?? 'buy');
+        setConditionType('price');
+        if (p.targetPrice != null && Number.isFinite(p.targetPrice) && p.targetPrice > 0) {
+            setTargetValue(String(p.targetPrice));
+        }
+        if (p.amount != null && p.amount > 0) setAmount(String(p.amount));
+        else setAmount('');
+        if (p.quantity != null && p.quantity > 0) setQuantity(String(p.quantity));
+        else setQuantity('');
+        if (p.notes) setNotes(p.notes);
+        lastSymbolAtFocusRef.current = p.symbol.toUpperCase().trim();
+        skipUniverseAutofillRef.current = true;
+        onNewPlanFieldInjectionConsumed?.();
+    }, [isOpen, planToEdit, newPlanFieldInjection, onNewPlanFieldInjectionConsumed]);
+
+    // Auto-pick first actionable universe ticker when creating a new plan (if nothing chosen yet and no injection this frame).
+    useEffect(() => {
+        if (!isOpen || planToEdit || newPlanFieldInjection || skipUniverseAutofillRef.current) return;
         const first = universe.find((t) => {
             const s = String(t.status ?? '');
             return s === 'Core' || s === 'High-Upside';
@@ -107,7 +137,7 @@ const PlanTradeModal: React.FC<{
             setSymbol(String(first.ticker).toUpperCase().trim());
             if (first.name) setName(String(first.name));
         }
-    }, [isOpen, planToEdit, universe]);
+    }, [isOpen, planToEdit, newPlanFieldInjection, universe]);
 
     // Default date trigger to ~30 days ahead when in date mode on a new plan (or after switching from price).
     useEffect(() => {
@@ -118,17 +148,26 @@ const PlanTradeModal: React.FC<{
         setTargetValue(d.toISOString().split('T')[0]);
     }, [isOpen, planToEdit, conditionType, targetValue]);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSymbolInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const next = e.target.value;
+        if (!planToEdit) {
+            const n = next.trim().toUpperCase();
+            const prev = (symbol || '').trim().toUpperCase();
+            if (n.length >= 1 && n !== prev) {
+                setTargetValue('');
+                setAmount('');
+                setQuantity('');
+            }
+        }
+        setSymbol(next);
+    };
+
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         
         // Validations
         if (!symbol || symbol.trim() === '') {
             toast('Symbol is required.', 'error');
-            return;
-        }
-        
-        if (!quantity && !amount) {
-            toast('Specify either number of shares or total amount for the trade.', 'error');
             return;
         }
         
@@ -209,11 +248,10 @@ const PlanTradeModal: React.FC<{
             status: 'Planned' as const
         };
         
-        if (planToEdit) {
-            onSave({ ...planToEdit, ...planData });
-        } else {
-            onSave(planData);
-        }
+        const saveResult = planToEdit
+            ? await onSave({ ...planToEdit, ...planData })
+            : await onSave(planData);
+        if (saveResult === false) return;
         toast(planToEdit ? 'Plan updated.' : 'Plan created.', 'success');
         onClose();
     };
@@ -334,8 +372,12 @@ const PlanTradeModal: React.FC<{
             <form onSubmit={handleSubmit} className="space-y-6">
                 {universe.length > 0 && (
                     <datalist id="plan-trade-universe-symbols">
-                        {universe.map((t: any) => (
-                            <option key={String(t.ticker)} value={String(t.ticker ?? '').toUpperCase()} label={t.name ? `${t.name} (${t.status ?? ''})` : undefined} />
+                        {universe.map((t: { ticker?: string; name?: string; status?: string; id?: string }, i: number) => (
+                            <option
+                                key={`${t.id ?? t.ticker ?? 't'}-${i}`}
+                                value={String(t.ticker ?? '').toUpperCase()}
+                                label={t.name ? `${t.name} (${t.status ?? ''})` : undefined}
+                            />
                         ))}
                     </datalist>
                 )}
@@ -347,7 +389,7 @@ const PlanTradeModal: React.FC<{
                             id="symbol"
                             list={universe.length > 0 ? 'plan-trade-universe-symbols' : undefined}
                             value={symbol} 
-                            onChange={e => setSymbol(e.target.value)} 
+                            onChange={handleSymbolInputChange} 
                             required 
                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent" 
                             placeholder="e.g., AAPL" 
@@ -653,7 +695,10 @@ const InvestmentPlanView: React.FC<{
     triggerPageAction?: (page: Page, action: string) => void;
     /** When true, skip PageLayout (e.g. inside Investments hub). */
     embedded?: boolean;
-}> = ({ onExecutePlan, setActivePage: _setActivePage, triggerPageAction, embedded = false }) => {
+    /** Open create-plan with prefilled fields (e.g. Smart add → Record plan). Bump `key` for each new intent. */
+    stagedAddOnPlanned?: { key: number; symbol: string; name?: string; targetPrice?: number; amount?: number; quantity?: number; tradeType?: 'buy' | 'sell'; notes?: string } | null;
+    onStagedAddOnPlannedHandled?: () => void;
+}> = ({ onExecutePlan, setActivePage: _setActivePage, triggerPageAction, embedded = false, stagedAddOnPlanned, onStagedAddOnPlannedHandled }) => {
     const { data, loading, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker } = useContext(DataContext)!;
     const { trackAction, trackSuggestionFeedback } = useSelfLearning();
     const { simulatedPrices } = useMarketData();
@@ -668,6 +713,12 @@ const InvestmentPlanView: React.FC<{
     const [alignmentSummaryAr, setAlignmentSummaryAr] = useState<string>('');
     const [alignmentSummaryArError, setAlignmentSummaryArError] = useState<string | null>(null);
     const [isTranslatingAlignment, setIsTranslatingAlignment] = useState(false);
+
+    useEffect(() => {
+        if (!stagedAddOnPlanned) return;
+        setPlanToEdit(null);
+        setIsModalOpen(true);
+    }, [stagedAddOnPlanned?.key, stagedAddOnPlanned]);
 
     const householdStress = React.useMemo(
         () => computeHouseholdStressFromData(data),
@@ -692,12 +743,11 @@ const InvestmentPlanView: React.FC<{
         );
     }
 
-    const handleSave = (planData: Omit<PlannedTrade, 'id' | 'user_id'> | PlannedTrade) => {
+    const handleSave = async (planData: Omit<PlannedTrade, 'id' | 'user_id'> | PlannedTrade) => {
         if ('id' in planData) {
-            updatePlannedTrade(planData);
-        } else {
-            addPlannedTrade(planData);
+            return (await updatePlannedTrade(planData as PlannedTrade)) === true;
         }
+        return (await addPlannedTrade(planData as Omit<PlannedTrade, 'id' | 'user_id'>)) === true;
     };
 
     const handleOpenPlanModal = (plan: PlannedTrade | null) => {
@@ -790,11 +840,20 @@ const InvestmentPlanView: React.FC<{
         const universe = data?.portfolioUniverse ?? [];
         const plannedTrades = data?.plannedTrades ?? [];
         const statusBySymbol = new Map(universe.map((t: any) => [String(t.ticker || '').toUpperCase(), t.status]));
-        const rows = plannedTrades.map(plan => {
-            const universeStatus = statusBySymbol.get((plan.symbol ?? '').toUpperCase()) || 'Untracked';
+        const rowsBySymbol = new Map<string, {
+            plan: PlannedTrade; universeStatus: string; recommendation: string; aligned: boolean | null; reason: string; suggestedTradeType: 'buy' | 'sell'; aiNudge: string;
+        }>();
+        for (const plan of plannedTrades) {
+            const symbolKey = (plan.symbol ?? '').toUpperCase();
+            // Important: show every distinct plan (do NOT collapse rows).
+            // Use plan.id as the stable unique key; fall back to a composite if needed.
+            const rowKey =
+                (plan as any)?.id ??
+                `${symbolKey}|${plan.tradeType}|${plan.conditionType}|${Number((plan as any)?.targetValue) || 0}`;
+            const universeStatus = statusBySymbol.get(symbolKey) || 'Untracked';
             const isBuy = plan.tradeType === 'buy';
             const recommendation = universeStatus === 'Core' || universeStatus === 'High-Upside'
-                ? 'Accumulate'
+                ? (universeStatus === 'Core' ? 'Core: steady accumulation' : 'High-upside: opportunistic adds within caps')
                 : universeStatus === 'Speculative'
                 ? 'Small sizing only'
                 : universeStatus === 'Quarantine'
@@ -813,10 +872,27 @@ const InvestmentPlanView: React.FC<{
                     ? 'Sell may reduce non-quarantine exposure.'
                     : 'Direction differs from AI universe posture.')
                 : aligned === true
-                ? 'Direction supports current universe posture.'
+                ? (universeStatus === 'Core'
+                    ? 'Core sleeve: your plan and universe both favor holding or adding in stages.'
+                    : universeStatus === 'High-Upside'
+                    ? 'High-upside sleeve: tilt matches a growth / momentum posture.'
+                    : universeStatus === 'Quarantine'
+                    ? 'Quarantine: de-risking direction matches a trim or hold-without-adds view.'
+                    : 'Direction supports current universe posture.')
                 : 'Symbol is not mapped in portfolio universe yet.';
-            return { plan, universeStatus, recommendation, aligned, reason, suggestedTradeType };
-        });
+            const aiNudge = suggestedTradeType === 'sell'
+                ? (universeStatus === 'Quarantine'
+                    ? 'Prefer trimming or not adding new exposure while quarantine is active.'
+                    : 'Favor a sell/trim posture for this name until the universe status changes.')
+                : universeStatus === 'Core'
+                ? 'Favor staged buys that respect your core sleeve and monthly weight in the universe table.'
+                : universeStatus === 'High-Upside'
+                ? 'Favor add-ons that stay within sleeve weight and the max position for this ticker.'
+                : 'Map the symbol in the universe, then set trigger and size in the plan editor.';
+            const row = { plan, universeStatus, recommendation, aligned, reason, suggestedTradeType, aiNudge };
+            rowsBySymbol.set(rowKey, row);
+        }
+        const rows = Array.from(rowsBySymbol.values());
 
         const filteredRows = rows.filter(r => alignmentFilter === 'All'
             ? true
@@ -1001,11 +1077,17 @@ const InvestmentPlanView: React.FC<{
         const plannedTrades = data?.plannedTrades ?? [];
         const universe = data?.portfolioUniverse ?? [];
         const plannedSymbols = new Set(plannedTrades.map(p => (p.symbol ?? '').toUpperCase()));
+        const seenU = new Set<string>();
         return universe
-            .filter((ticker: any) => ['Core', 'High-Upside', 'Quarantine'].includes(ticker.status))
-            .filter((ticker: any) => !plannedSymbols.has(String(ticker.ticker || '').toUpperCase()))
+            .filter((ticker: { ticker?: string; status?: string }) => {
+                const k = String(ticker.ticker || '').toUpperCase();
+                if (seenU.has(k)) return false;
+                seenU.add(k);
+                return ['Core', 'High-Upside', 'Quarantine'].includes(String(ticker.status));
+            })
+            .filter((ticker: { ticker?: string }) => !plannedSymbols.has(String(ticker.ticker || '').toUpperCase()))
             .slice(0, 8)
-            .map((ticker: any) => ({
+            .map((ticker: { ticker?: string; name?: string; status?: string; monthly_weight?: number }) => ({
                 symbol: String(ticker.ticker || '').toUpperCase(),
                 name: ticker.name || ticker.ticker,
                 status: ticker.status,
@@ -1014,7 +1096,7 @@ const InvestmentPlanView: React.FC<{
             }));
     }, [data?.portfolioUniverse, data?.plannedTrades]);
 
-    const handleCreatePlanFromAi = async (candidate: { symbol: string; name: string; status: string; monthlyWeight: number; suggestion: 'buy' | 'sell' }) => {
+    const handleCreatePlanFromAi = async (candidate: { symbol: string; name?: string; status?: string; monthlyWeight: number; suggestion: 'buy' | 'sell' }) => {
         trackAction('create-plan-from-ai', 'Investment Plan');
         trackSuggestionFeedback(`ai-candidate-${candidate.symbol}`, 'Investment Plan', true);
         try {
@@ -1022,27 +1104,39 @@ const InvestmentPlanView: React.FC<{
             const existing = plannedTrades.some(plan => (plan.symbol ?? '').toUpperCase() === candidate.symbol.toUpperCase());
             if (existing) {
                 setSymbolFocus(candidate.symbol);
+                toast(`A plan for ${candidate.symbol} already exists.`, 'info');
                 return;
             }
 
-            const priceAnchor = simulatedPrices[candidate.symbol]?.price || 1;
-            if (priceAnchor <= 0) {
-                toast(`No price data for ${candidate.symbol}. Add it to your universe first.`, 'error');
+            const priceAnchor = simulatedPrices[candidate.symbol]?.price;
+            if (priceAnchor == null || !Number.isFinite(priceAnchor) || priceAnchor <= 0) {
+                toast(`No live price for ${candidate.symbol}. Wait for a quote or set the plan manually.`, 'error');
                 return;
             }
-
-            await addPlannedTrade({
+            const invPlan: any = (data as any)?.investmentPlan;
+            const monthlyBudget = Math.max(0, Number(invPlan?.monthlyBudget) || 0);
+            const coreAlloc = typeof invPlan?.coreAllocation === 'number' && Number.isFinite(invPlan.coreAllocation) && invPlan.coreAllocation > 0
+                ? invPlan.coreAllocation
+                : 0.7;
+            let amountPlan: number | undefined;
+            if (monthlyBudget > 0) {
+                const fromTen = monthlyBudget * 0.1;
+                const fromSleeve = monthlyBudget * coreAlloc * 0.2;
+                amountPlan = Math.round(Math.max(fromTen, fromSleeve, 100));
+            }
+            const ok = await addPlannedTrade({
                 symbol: candidate.symbol,
                 name: candidate.name || candidate.symbol,
                 tradeType: candidate.suggestion,
                 conditionType: 'price',
                 targetValue: priceAnchor,
                 quantity: undefined,
-                amount: undefined,
+                amount: amountPlan,
                 priority: candidate.status === 'Quarantine' ? 'High' : 'Medium',
-                notes: `Created from AI rebalance posture (${candidate.status}).`,
+                notes: `Created from AI rebalance posture (${candidate.status ?? 'unknown'}).`,
                 status: 'Planned',
             });
+            if (!ok) return;
             setSymbolFocus(candidate.symbol);
             toast(`Plan created for ${candidate.symbol}.`, 'success');
         } catch (error) {
@@ -1372,8 +1466,8 @@ const InvestmentPlanView: React.FC<{
                                             <span className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800">
                                                 Suggested: {candidate.suggestion === 'buy' ? 'Buy' : 'Sell'}
                                             </span>
-                                            <span className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-600">
-                                                Sleeve wt {(candidate.monthlyWeight * 100).toFixed(1)}%
+                                            <span className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-600" title="This row’s monthly_weight from Portfolio Universe (can match other names after an equal auto-split)">
+                                                Universe row wt {(candidate.monthlyWeight * 100).toFixed(2)}%
                                             </span>
                                         </div>
                                     </div>
@@ -1475,7 +1569,7 @@ const InvestmentPlanView: React.FC<{
                     </div>
 
                     <div className="space-y-3 max-h-[28rem] overflow-y-auto pr-1">
-                        {planAlignment.filteredRows.map(({ plan, universeStatus, recommendation, aligned, reason, suggestedTradeType }) => (
+                        {planAlignment.filteredRows.map(({ plan, universeStatus, recommendation, aligned, reason, suggestedTradeType, aiNudge }) => (
                             <div
                                 key={`align-${plan.id}`}
                                 className={`rounded-xl border p-4 ${
@@ -1505,9 +1599,7 @@ const InvestmentPlanView: React.FC<{
                                             <span className="font-medium">Universe:</span> {universeStatus} · {recommendation}
                                         </p>
                                         <p className="text-sm text-slate-600 mt-1">{reason}</p>
-                                        <p className="text-xs text-indigo-700 mt-2">
-                                            AI suggests: {suggestedTradeType === 'buy' ? 'Accumulation direction preferred' : 'De-risking direction preferred'}
-                                        </p>
+                                        <p className="text-xs text-indigo-700 mt-2">AI nudge: {aiNudge}</p>
                                     </div>
                                     <div className="flex flex-wrap gap-2 lg:justify-end">
                                         <button
@@ -1700,6 +1792,19 @@ const InvestmentPlanView: React.FC<{
                 monthlyBudget={data?.investmentPlan?.monthlyBudget}
                 coreAllocation={data?.investmentPlan?.coreAllocation}
                 budgetCurrency={(data?.investmentPlan?.budgetCurrency as TradeCurrency) || 'SAR'}
+                newPlanFieldInjection={stagedAddOnPlanned
+                    ? {
+                          key: stagedAddOnPlanned.key,
+                          symbol: stagedAddOnPlanned.symbol,
+                          name: stagedAddOnPlanned.name,
+                          targetPrice: stagedAddOnPlanned.targetPrice,
+                          amount: stagedAddOnPlanned.amount,
+                          quantity: stagedAddOnPlanned.quantity,
+                          tradeType: stagedAddOnPlanned.tradeType,
+                          notes: stagedAddOnPlanned.notes,
+                      }
+                    : null}
+                onNewPlanFieldInjectionConsumed={onStagedAddOnPlannedHandled}
             />
             <DeleteConfirmationModal 
                 isOpen={!!planToDelete} 

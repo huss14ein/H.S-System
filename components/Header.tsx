@@ -234,7 +234,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   }, [isMobileMenuOpen]);
 
   return (
-    <header className="bg-white border-b border-gray-100 sticky top-0 z-30 shadow-sm">
+    <header className="bg-white border-b border-gray-100 sticky top-0 z-50 shadow-sm">
       <div className="max-w-screen-2xl mx-auto">
         {/* Top Bar */}
         <div className="flex items-center justify-between h-16 px-3 sm:px-6 lg:px-8">
@@ -261,7 +261,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                     </button>
                     
                     {activeGroup === group.name && (
-                      <div className="absolute top-full left-0 mt-1 w-56 bg-white rounded-2xl shadow-2xl py-2 ring-1 ring-black ring-opacity-5 border border-gray-100 animate-fadeIn">
+                      <div className="absolute top-full left-0 mt-1 w-56 bg-white rounded-2xl shadow-2xl py-2 ring-1 ring-black ring-opacity-5 border border-gray-100 animate-fadeIn z-[70] max-h-[70vh] overflow-auto">
                         {group.items.map(itemName => {
                           const navItem = NAVIGATION_ITEMS.find(n => n.name === itemName);
                           if (!navItem) return null;

@@ -270,6 +270,9 @@ const SalaryPlanningExperts: React.FC = () => {
 
     const suggestedCurrentPortfolioSource = 'Live (same as Summary / Dashboard)';
 
+    const lastSuggestedDebtListRef = React.useRef<string>('');
+    const lastSuggestedReceivableListRef = React.useRef<string>('');
+
     // Investment amount or %: from Investment Plan monthly budget and salary
     const { suggestedInvestmentAmountOrPct, suggestedInvestmentAmountOrPctSource } = React.useMemo(() => {
         const plan = data?.investmentPlan as { monthlyBudget?: number; budgetCurrency?: 'SAR' | 'USD' | string } | undefined;
@@ -317,6 +320,33 @@ const SalaryPlanningExperts: React.FC = () => {
             return next;
         });
     }, [suggestedFormValues]);
+
+    // Keep Debt / Receivables auto-synced when the user has not customized them.
+    // If they edited the field away from the last suggested value, we stop auto-overwriting.
+    React.useEffect(() => {
+        const suggestedDebt = (suggestedDebtList ?? '').trim();
+        const suggestedRecv = (suggestedReceivableList ?? '').trim();
+        const lastDebt = (lastSuggestedDebtListRef.current || '').trim();
+        const lastRecv = (lastSuggestedReceivableListRef.current || '').trim();
+
+        setFormValues((prev) => {
+            const next = { ...prev };
+            const currentDebt = (prev.debtList ?? '').trim();
+            const currentRecv = (prev.receivableList ?? '').trim();
+
+            const debtAuto = !currentDebt || currentDebt === lastDebt;
+            const recvAuto = !currentRecv || currentRecv === lastRecv;
+
+            if (debtAuto && suggestedDebt && currentDebt !== suggestedDebt) next.debtList = suggestedDebt;
+            if (recvAuto && suggestedRecv && currentRecv !== suggestedRecv) next.receivableList = suggestedRecv;
+
+            return next;
+        });
+
+        // Update refs after we compute and queue state updates (refs don't affect render).
+        lastSuggestedDebtListRef.current = suggestedDebt;
+        lastSuggestedReceivableListRef.current = suggestedRecv;
+    }, [suggestedDebtList, suggestedReceivableList]);
 
     const updateForm = (updates: Record<string, string>): void => setFormValues((prev: Record<string, string>) => ({ ...prev, ...updates }));
 

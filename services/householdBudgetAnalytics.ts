@@ -4,6 +4,8 @@
  */
 
 import type { HouseholdMonthPlan, HouseholdEngineResult } from './householdBudgetEngine';
+import { countsAsExpenseForCashflowKpi } from './transactionFilters';
+import { toSAR } from '../utils/currencyMath';
 
 /** Bucket keys that are savings / investments — not consumption outflows. */
 const SAVINGS_BUCKET_KEYS = new Set([
@@ -271,7 +273,10 @@ export function analyzeScenario(
 }
 
 /**
- * Detect anomalies in spending patterns
+ * Legacy: detects “anomalies” from **household engine model buckets** (synthetic split of
+ * monthly total expense). That split is a fixed template of the same `baseExpense`, so
+ * every category can move in lockstep — do **not** use for per-category real alerts.
+ * @deprecated Use {@link detectSpendingAnomaliesFromTransactions} for Budgets-style alerts.
  */
 export function detectAnomalies(
   months: HouseholdMonthPlan[]
@@ -330,6 +335,113 @@ export function detectAnomalies(
   });
   
   return anomalies;
+}
+
+type TxForAnomaly = {
+  date: string;
+  amount?: number;
+  accountId?: string;
+  status?: string;
+  budgetCategory?: string;
+  category?: string;
+};
+
+type AccountForFx = { id?: string; currency?: string };
+
+function stdevPop(values: number[]): number {
+  if (values.length < 2) return 0;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const v = values.reduce((s, x) => s + (x - mean) ** 2, 0) / values.length;
+  return Math.sqrt(v);
+}
+
+/**
+ * Anomaly detection from **real cash transactions** (approved expenses), grouped by
+ * `budgetCategory` (fallback: `category`, then `Uncategorized`), converted to SAR using
+ * each account’s book currency. Compares each month to leave-one-out mean / stdev of the
+ * other months in the same calendar year for that category.
+ */
+export function detectSpendingAnomaliesFromTransactions(args: {
+  year: number;
+  transactions: TxForAnomaly[];
+  accounts: AccountForFx[] | null | undefined;
+  sarPerUsd: number;
+}): BudgetAnomaly[] {
+  const { year, transactions, accounts, sarPerUsd } = args;
+  const rate = Number(sarPerUsd);
+  const fx = Number.isFinite(rate) && rate > 0 ? rate : 3.75;
+  const accById = new Map<string, AccountForFx>(((accounts ?? []) as AccountForFx[]).map((a) => [String(a.id ?? ''), a]));
+
+  const monthSpendByCategory: Record<string, number[]> = {};
+
+  for (const t of transactions ?? []) {
+    if ((t.status ?? 'Approved') !== 'Approved') continue;
+    if (!countsAsExpenseForCashflowKpi(t as any)) continue;
+    const d = new Date(t.date);
+    if (Number.isNaN(d.getTime()) || d.getFullYear() !== year) continue;
+
+    const acc = accById.get(String(t.accountId ?? ''));
+    const cur = acc?.currency === 'USD' ? 'USD' : 'SAR';
+    const sar = Math.abs(toSAR(Number(t.amount) || 0, cur, fx));
+    if (sar <= 0) continue;
+
+    const cat = String(t.budgetCategory ?? t.category ?? '').trim() || 'Uncategorized';
+    const mIdx = d.getMonth();
+    if (!monthSpendByCategory[cat]) {
+      monthSpendByCategory[cat] = Array(12).fill(0);
+    }
+    monthSpendByCategory[cat][mIdx] += sar;
+  }
+
+  const out: BudgetAnomaly[] = [];
+
+  for (const [category, series] of Object.entries(monthSpendByCategory)) {
+    const monthsWithSpend = series.map((v, i) => (v > 0.5 ? i : -1)).filter((i) => i >= 0);
+    if (monthsWithSpend.length < 3) continue;
+
+    for (let m = 0; m < 12; m++) {
+      const actual = series[m] ?? 0;
+      if (actual < 1) continue;
+
+      // Baseline: other months *where this category had spend* (ignore empty months; zeros are not
+      // a real "baseline" for an inactive category in that month).
+      const peerAmounts = series
+        .map((v, idx) => (idx === m || v < 0.5 ? null : v))
+        .filter((v): v is number => v != null);
+      if (peerAmounts.length < 2) continue;
+
+      const expected = peerAmounts.reduce((a, b) => a + b, 0) / peerAmounts.length;
+      const std = stdevPop(peerAmounts);
+      const stdUsed = std > 1e-6 ? std : Math.max(25, Math.abs(expected) * 0.12, actual * 0.08);
+      const z = (actual - expected) / stdUsed;
+      if (!(actual > expected && z > 2)) continue;
+
+      const deviation = actual - expected;
+      const deviationPct = expected > 0 ? (deviation / expected) * 100 : 100;
+      let severity: 'low' | 'medium' | 'high' = 'low';
+      if (z > 3) severity = 'high';
+      else if (z > 2.5) severity = 'medium';
+
+      out.push({
+        month: m + 1,
+        category,
+        expectedAmount: expected,
+        actualAmount: actual,
+        deviation,
+        deviationPct,
+        severity,
+        explanation: `Spending was higher than your usual months in this category (about ${z.toFixed(1)}× typical variation vs other months with spend). ${
+          expected > 0 ? `~${deviationPct.toFixed(1)}% above that baseline.` : 'Above a nearly blank baseline in other active months.'
+        }`,
+      });
+    }
+  }
+
+  out.sort((a, b) => {
+    const z = (x: BudgetAnomaly) => x.actualAmount - x.expectedAmount;
+    return z(b) - z(a);
+  });
+  return out;
 }
 
 /**

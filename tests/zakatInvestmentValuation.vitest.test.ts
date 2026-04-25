@@ -18,6 +18,7 @@ describe('zakatInvestmentValuation', () => {
           currentValue: 350,
           zakahClass: 'Zakatable',
           realizedPnL: 0,
+          acquisitionDate: '2020-01-01',
         } as Holding,
       ],
     };
@@ -43,6 +44,7 @@ describe('zakatInvestmentValuation', () => {
           currentValue: 0,
           zakahClass: 'Zakatable',
           realizedPnL: 0,
+          acquisitionDate: '2020-01-01',
         } as Holding,
       ],
     };
@@ -65,6 +67,7 @@ describe('zakatInvestmentValuation', () => {
           avgCost: 100,
           currentValue: 100,
           realizedPnL: 0,
+          acquisitionDate: '2020-01-01',
         } as Holding,
       ],
     };
@@ -101,7 +104,7 @@ describe('zakatInvestmentValuation', () => {
       currency: 'SAR',
       holdings: [
         { id: 'a', symbol: 'A', quantity: 1, avgCost: 10, currentValue: 10, realizedPnL: 0, zakah_class: 'Non-Zakatable' } as any,
-        { id: 'b', symbol: 'B', quantity: 1, avgCost: 20, currentValue: 20, realizedPnL: 0, zakahClass: 'Zakatable' } as Holding,
+        { id: 'b', symbol: 'B', quantity: 1, avgCost: 20, currentValue: 20, realizedPnL: 0, zakahClass: 'Zakatable', acquisitionDate: '2020-01-01' } as Holding,
       ],
     };
     const { totalSar, lines } = summarizeZakatableInvestmentsForZakat([p], 3.75);
@@ -145,6 +148,31 @@ describe('zakatInvestmentValuation', () => {
     ];
     const { totalSar, lines } = summarizeZakatableInvestmentsForZakat([p], 3.75, txs, asOf);
     expect(lines[0]?.hawlSource).toBe('buy');
+    expect(lines[0]?.zakatableValueSar).toBe(0);
+    expect(totalSar).toBe(0);
+  });
+
+  it('does not count holdings when hawl start cannot be inferred (strict hawl)', () => {
+    const asOf = new Date('2030-06-15T12:00:00.000Z');
+    const p: InvestmentPortfolio = {
+      id: 'p1',
+      name: 'Strict',
+      accountId: 'a1',
+      currency: 'SAR',
+      holdings: [
+        {
+          id: 'h1',
+          symbol: 'CCC',
+          quantity: 1,
+          avgCost: 100,
+          currentValue: 100,
+          zakahClass: 'Zakatable',
+          realizedPnL: 0,
+        } as Holding,
+      ],
+    };
+    const { totalSar, lines } = summarizeZakatableInvestmentsForZakat([p], 3.75, [], asOf);
+    expect(lines[0]?.hawlSource).toBe('none');
     expect(lines[0]?.zakatableValueSar).toBe(0);
     expect(totalSar).toBe(0);
   });

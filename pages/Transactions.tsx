@@ -36,6 +36,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd, toSAR, fromSAR } from '../utils/currencyMath';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { exportCashTransactionsToCsv } from '../services/reportingEngine';
+import { computeMonthlyCashflowKpisSar } from '../services/financeTruth';
 
 /** Local calendar month YYYY-MM for `<input type="month">` defaults. */
 function calendarMonthIso(date = new Date()) {
@@ -1459,36 +1460,19 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [exportDateFrom, exportDateTo, filteredTransactionsForExport, accountsById, exportAccountId]);
 
     const { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown } = useMemo(() => {
-        const fx = resolveSarPerUsd(data, exchangeRate);
-        const accountsMap = new Map<string, Account>(availableAccounts.map((a: Account) => [a.id, a]));
-        const txAmountSar = (t: Transaction) => {
-            const acc = accountsMap.get(t.accountId ?? '');
-            const cur = acc?.currency === 'USD' ? 'USD' : 'SAR';
-            return Math.abs(toSAR(Number(t.amount) || 0, cur, fx));
+        const kpis = computeMonthlyCashflowKpisSar({
+            data,
+            uiSarPerUsd: exchangeRate,
+            accounts: availableAccounts,
+            transactions: filteredTransactions as Transaction[],
+        });
+        return {
+            monthlyIncome: kpis.incomeSar,
+            monthlyExpenses: kpis.expenseSar,
+            netCashflow: kpis.netSar,
+            expenseBreakdown: kpis.expenseBreakdown,
         };
-        const txBudgetCategory = (t: Transaction) => String(t.budgetCategory ?? t.category ?? '').trim();
-        const approvedTransactions = filteredTransactions.filter((t: Transaction) => (t.status ?? 'Approved') === 'Approved');
-        const monthlyIncome = approvedTransactions
-            .filter((t: Transaction) => countsAsIncomeForCashflowKpi(t))
-            .reduce((sum: number, t: Transaction) => sum + txAmountSar(t), 0);
-        const monthlyExpenses = approvedTransactions
-            .filter((t: Transaction) => countsAsExpenseForCashflowKpi(t))
-            .reduce((sum: number, t: Transaction) => sum + txAmountSar(t), 0);
-        const netCashflow = monthlyIncome - monthlyExpenses;
-        
-        const spending = new Map<string, number>();
-        approvedTransactions
-            .filter((t: Transaction) => countsAsExpenseForCashflowKpi(t) && txBudgetCategory(t))
-            .forEach((t: Transaction) => {
-                const key = txBudgetCategory(t);
-                const currentSpend = spending.get(key) || 0;
-                spending.set(key, currentSpend + txAmountSar(t));
-            });
-        
-        const expenseBreakdown = Array.from(spending, ([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
-
-        return { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown };
-    }, [filteredTransactions, data, exchangeRate]);
+    }, [filteredTransactions, data, exchangeRate, availableAccounts]);
     
     const allCategories = useMemo((): string[] => Array.from(new Set(((data as any)?.personalTransactions ?? data?.transactions ?? []).map((t: { category: string }) => t.category))), [data?.transactions, (data as any)?.personalTransactions]);
     const budgetCategories = useMemo(() => {

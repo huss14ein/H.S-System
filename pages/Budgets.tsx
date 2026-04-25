@@ -59,7 +59,7 @@ function getCategoryHint(category: string): string {
 import {
     predictFutureMonths,
     generateCommonScenarios,
-    detectAnomalies,
+    detectSpendingAnomaliesFromTransactions,
     detectSeasonality,
     effectiveMonthExpense,
     type PredictiveForecast,
@@ -694,18 +694,24 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 
                 const commonScenarios = generateCommonScenarios(result, input.goals.map((g) => ({ name: g.name, remaining: Math.max(0, (g.targetAmount ?? 0) - Number(g.currentAmount ?? 0)) })));
                 setScenarios(commonScenarios);
-                
-                       const detectedAnomalies = detectAnomalies(result.months);
-                       setAnomalies(detectedAnomalies);
-
                        const seasonality = detectSeasonality(result.months);
                        setSeasonalityPatterns(seasonality);
                    } else {
                        setPredictiveForecasts([]);
                        setScenarios([]);
-                       setAnomalies([]);
                        setSeasonalityPatterns([]);
                    }
+
+            const txRows = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+            const accRows = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+            setAnomalies(
+                detectSpendingAnomaliesFromTransactions({
+                    year: currentYear,
+                    transactions: txRows,
+                    accounts: accRows,
+                    sarPerUsd,
+                }),
+            );
                } catch (error) {
                    console.warn('Failed to calculate household budget analytics:', error);
                    setPredictiveForecasts([]);

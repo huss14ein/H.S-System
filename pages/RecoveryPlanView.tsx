@@ -444,8 +444,8 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           toast(v.errors.join('\n'), 'error');
           return;
         }
-        await addPlannedTrade(payload);
-        toast(`${payload.symbol} added to Trade plans (Investment Plan tab).`, 'success');
+        const ok = await addPlannedTrade(payload);
+        if (ok) toast(`${payload.symbol} added to Trade plans (Investment Plan tab).`, 'success');
         trackAction('recovery-draft-to-investment-plan', 'Recovery Plan');
       } catch (e) {
         toast(e instanceof Error ? e.message : 'Could not add to Investment Plan.', 'error');
@@ -486,9 +486,11 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           toast(`${payload.symbol}: ${v.errors[0] ?? 'Invalid plan'}`, 'error');
           continue;
         }
-        await addPlannedTrade(payload);
-        existing.push({ id: `local-${i}`, user_id: '', ...payload } as PlannedTrade);
-        added += 1;
+        const inserted = await addPlannedTrade(payload);
+        if (inserted) {
+          existing.push({ id: `local-${i}`, user_id: '', ...payload } as PlannedTrade);
+          added += 1;
+        }
       }
       if (added > 0) {
         toast(`Added ${added} trade plan${added === 1 ? '' : 's'}.${skipped ? ` ${skipped} already existed.` : ''}`, 'success');

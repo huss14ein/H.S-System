@@ -315,6 +315,11 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         const ytdActualNet = ytdActualIncome - ytdActualExpenses;
         const ytdVariancePct = ytdProjectedNet !== 0 ? ((ytdActualNet - ytdProjectedNet) / Math.abs(ytdProjectedNet)) * 100 : 0;
 
+        // When planned net is very close to 0, % variance becomes misleading (division by a tiny baseline).
+        // Expose a delta so the UI can show a stable comparison.
+        const varianceSarFullYear = actualNetFullYear - projectedNet;
+        const ytdVarianceSar = ytdActualNet - ytdProjectedNet;
+
         return {
             totalPlannedIncome,
             totalPlannedExpenses,
@@ -330,6 +335,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             ytdProjectedNet,
             ytdActualNet,
             ytdVariancePct,
+            varianceSar: varianceSarFullYear,
+            ytdVarianceSar,
             planProgressEndIdx: endIdx,
         };
     }, [processedPlanData, year]);
@@ -810,8 +817,12 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 const summaryActualNet = isFutureYear ? null : isPastYear ? totals.actualNet : totals.ytdActualNet;
                 const summaryVariancePct =
                     isFutureYear ? null : isPastYear ? totals.variancePct : totals.ytdVariancePct;
+                const summaryVarianceSar =
+                    isFutureYear ? null : isPastYear ? totals.varianceSar : totals.ytdVarianceSar;
                 const summaryCompareLabel =
                     isFutureYear ? 'Future year — no actuals yet' : isPastYear ? 'Full-year actual vs full-year plan' : 'YTD actual vs YTD plan';
+                const baselineNet = isFutureYear ? null : isPastYear ? totals.projectedNet : totals.ytdProjectedNet;
+                const baselineTooSmall = baselineNet != null && Math.abs(baselineNet) < 5000;
                 return (
                 <div className="mt-4 cards-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div className={`p-4 rounded-xl border-2 min-w-0 overflow-hidden flex flex-col ${totals.projectedNet >= 0 ? 'bg-emerald-50/80 border-emerald-200' : 'bg-rose-50/80 border-rose-200'}`}>
@@ -833,9 +844,18 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     <div className="p-4 rounded-xl border-2 border-blue-200 bg-blue-50/30 min-w-0 overflow-hidden flex flex-col">
                         <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">Vs plan</p>
                         <p className={`metric-value text-xl font-bold tabular-nums w-full ${(summaryVariancePct ?? 0) >= 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
-                            {summaryVariancePct != null && (isPastYear ? totals.projectedNet !== 0 : totals.ytdProjectedNet !== 0)
-                                ? `${summaryVariancePct >= 0 ? '+' : ''}${summaryVariancePct.toFixed(0)}%`
-                                : '—'}
+                            {summaryVarianceSar != null && baselineNet != null ? (
+                                baselineTooSmall ? (
+                                    <span title="Planned net is close to zero; showing SAR delta for a stable comparison.">
+                                        {summaryVarianceSar >= 0 ? '+' : ''}
+                                        {formatCurrencyString(summaryVarianceSar, { inCurrency: 'SAR', digits: 0 })}
+                                    </span>
+                                ) : (
+                                    `${summaryVariancePct != null ? `${summaryVariancePct >= 0 ? '+' : ''}${summaryVariancePct.toFixed(0)}%` : '—'}`
+                                )
+                            ) : (
+                                '—'
+                            )}
                         </p>
                         <p className="text-xs text-gray-600 mt-0.5">{summaryCompareLabel}</p>
                     </div>
