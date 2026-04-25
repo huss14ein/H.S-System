@@ -40,7 +40,7 @@ export type BuildAnnualPlanRowsInput = {
   year: number;
   budgets: Budget[];
   /** Personal-scope transactions (same as Plan page). */
-  transactions: Array<{ date: string; type?: string; amount?: number; category?: string; budgetCategory?: string }>;
+  transactions: Array<{ date: string; type?: string; amount?: number; category?: string; budgetCategory?: string; accountId?: string }>;
   recurringTransactions: RecurringTransaction[];
   investmentPlan: InvestmentPlanSettings | null | undefined;
   investmentTransactions: InvestmentTransaction[];
@@ -126,13 +126,20 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
     householdOverrides,
   } = input;
 
+  const accountsById = new Map<string, Account>((accounts ?? []).map((a) => [String(a.id ?? ''), a]));
+  const txAmountSar = (t: { amount?: number; accountId?: string }) => {
+    const acc = accountsById.get(String(t.accountId ?? ''));
+    const cur = acc?.currency === 'USD' ? 'USD' : 'SAR';
+    return toSAR(Number(t.amount) || 0, cur, sarPerUsd);
+  };
+
   const yearTx = transactions.filter((t) => new Date(t.date).getFullYear() === year);
 
   const planYearIncomeByMonth = Array(12).fill(0);
   yearTx.forEach((t) => {
     if (!countsAsIncomeForCashflowKpi(t)) return;
     const d = new Date((t as { date: string }).date);
-    planYearIncomeByMonth[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
+    planYearIncomeByMonth[d.getMonth()] += Math.max(0, txAmountSar(t));
   });
   const planYearWithData = planYearIncomeByMonth.filter((v) => v > 0);
   let suggestedMonthlySalary =
@@ -142,7 +149,7 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
     transactions.forEach((t) => {
       if (!countsAsIncomeForCashflowKpi(t)) return;
       const d = new Date(t.date);
-      anyYearIncome[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
+      anyYearIncome[d.getMonth()] += Math.max(0, txAmountSar(t));
     });
     const anyWithData = anyYearIncome.filter((v) => v > 0);
     suggestedMonthlySalary =
@@ -153,7 +160,7 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
   yearTx.forEach((t) => {
     if (countsAsIncomeForCashflowKpi(t)) {
       const monthIndex = new Date(t.date).getMonth();
-      incomeActuals[monthIndex] += Number(t.amount) || 0;
+      incomeActuals[monthIndex] += Math.max(0, txAmountSar(t));
     }
   });
   const incomeTotal = incomeActuals.reduce((a, b) => a + b, 0);
@@ -246,7 +253,7 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
     if (!byCategory.has(category)) {
       byCategory.set(category, { planned: Array(12).fill(0), actual: Array(12).fill(0) });
     }
-    byCategory.get(category)!.actual[monthIndex] += Math.abs(Number(t.amount)) || 0;
+    byCategory.get(category)!.actual[monthIndex] += Math.abs(txAmountSar(t));
   });
 
   recurringTransactions

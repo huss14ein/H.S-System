@@ -315,12 +315,18 @@ export function validatePlannedTrade(input: { symbol?: string; name?: string; tr
     if (Number.isNaN(d.getTime())) errors.push('Target date must be a valid date.');
   }
 
+  // Sizing (quantity and/or plan amount) is optional: plans may store only a trigger
+  // (price or date) and be filled in later, or be created from one-tap suggestions.
+  // When both are present, they must be positive; empty means “not set yet”.
   const qty = safeNumber(input.quantity, NaN);
   const amt = safeNumber(input.amount, NaN);
-  const hasValidQty = Number.isFinite(qty) && qty > 0;
-  const hasValidAmt = Number.isFinite(amt) && amt > 0;
-  if (!hasValidQty && !hasValidAmt) {
-    errors.push('Specify either quantity or amount (both must be positive).');
+  const hasQty = input.quantity != null && String(input.quantity).trim() !== '';
+  const hasAmt = input.amount != null && String(input.amount).trim() !== '';
+  if (hasQty && (!Number.isFinite(qty) || qty <= 0)) {
+    errors.push('Quantity must be a positive number when provided.');
+  }
+  if (hasAmt && (!Number.isFinite(amt) || amt <= 0)) {
+    errors.push('Amount must be a positive number when provided.');
   }
 
   if (!input.priority || !VALID_PRIORITIES.includes(input.priority as any)) {

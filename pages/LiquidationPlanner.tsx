@@ -6,6 +6,7 @@ import SectionCard from '../components/SectionCard';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { sellScore } from '../services/decisionEngine';
 import { thesisValidityCheck, type ThesisRecord } from '../services/thesisJournalEngine';
 import type { Holding, InvestmentPortfolio, Page } from '../types';
@@ -61,7 +62,7 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
     const rows: { symbol: string; name: string; valueSAR: number; score: number; reasons: string; hasThesis: boolean }[] = [];
     let totalSAR = 0;
     portfolios.forEach((p: InvestmentPortfolio) => {
-      const cur = p.currency || 'USD';
+      const cur = resolveInvestmentPortfolioCurrency(p);
       (p.holdings || []).forEach((h: Holding) => {
         const rawVal = getHoldingValue(h);
         const v = toSAR(rawVal, cur as 'USD' | 'SAR', sarPerUsd);
@@ -69,7 +70,7 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
       });
     });
     portfolios.forEach((p: InvestmentPortfolio) => {
-      const cur = p.currency || 'USD';
+      const cur = resolveInvestmentPortfolioCurrency(p);
       (p.holdings || []).forEach((h: Holding) => {
         const rawVal = getHoldingValue(h);
         const v = toSAR(rawVal, cur as 'USD' | 'SAR', sarPerUsd);

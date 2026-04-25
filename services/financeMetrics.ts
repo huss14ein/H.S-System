@@ -1,7 +1,7 @@
 import type { Account, FinancialData, Transaction } from '../types';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
-import { getSarPerUsdForCalendarDay } from './fxDailySeries';
+import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from './fxDailySeries';
 
 export type TxLike = {
   date: string;
@@ -197,4 +197,45 @@ export function savingsRateSar(
 /** Investable surplus: max(0, net cash flow) for the month (simplified). */
 export function investableSurplus(transactions: TxLike[], ref: Date = new Date()): number {
   return Math.max(0, netCashFlowForMonth(transactions, ref).net);
+}
+
+/**
+ * Last `monthsBack` calendar months of personal-scope external net cash flow (income − expenses) in SAR.
+ * Uses dated FX when available. Keys are `YYYY-MM`.
+ */
+export function personalMonthlyNetByMonthKeySar(
+  data: FinancialData,
+  uiExchangeRate: number,
+  monthsBack = 12
+): { monthKeys: string[]; values: number[]; byKey: Map<string, number> } {
+  hydrateSarPerUsdDailySeries(data, uiExchangeRate);
+  const spot = resolveSarPerUsd(data, uiExchangeRate);
+  const d = data as FinancialData & { personalTransactions?: Transaction[]; personalAccounts?: Account[] };
+  const transactions = (d.personalTransactions ?? data.transactions ?? []) as Transaction[];
+  const accounts = (d.personalAccounts ?? data.accounts ?? []) as Account[];
+  const accById = new Map(accounts.map((a) => [a.id, a]));
+  const now = new Date();
+  const byKey = new Map<string, number>();
+  for (let i = monthsBack - 1; i >= 0; i--) {
+    const dt = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const k = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+    byKey.set(k, 0);
+  }
+  for (const t of transactions) {
+    if (!t.date) continue;
+    const dk = t.date.slice(0, 7);
+    if (!byKey.has(dk)) continue;
+    const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
+    const day = t.date.slice(0, 10);
+    const r = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, uiExchangeRate) : spot;
+    const amt = toSAR(Math.abs(Number(t.amount) || 0), cur, r);
+    let delta = 0;
+    if (countsAsIncomeForCashflowKpi(t)) delta += amt;
+    else if (countsAsExpenseForCashflowKpi(t)) delta -= amt;
+    else continue;
+    byKey.set(dk, (byKey.get(dk) || 0) + delta);
+  }
+  const monthKeys = Array.from(byKey.keys());
+  const values = monthKeys.map((k) => byKey.get(k) || 0);
+  return { monthKeys, values, byKey };
 }

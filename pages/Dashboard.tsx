@@ -6,7 +6,7 @@ import ProgressBar from '../components/ProgressBar';
 import CashflowChart from '../components/charts/CashflowChart';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
-import NetWorthCompositionChart from '../components/charts/NetWorthCompositionChart';
+import NetWorthCockpit from '../components/charts/NetWorthCockpit';
 import AIFeed from '../components/AIFeed';
 import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
 import { CalendarDaysIcon } from '../components/icons/CalendarDaysIcon';
@@ -52,7 +52,7 @@ import { cashflowMomentumFromPnlTrend, personalFinanceHealthScore } from '../ser
 import { computeDashboardKpiSnapshot, averageSavingsRateSarRolling } from '../services/dashboardKpiSnapshot';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
-import { computePersonalNetWorthChartBucketsSAR } from '../services/personalNetWorth';
+import { computePersonalNetWorthChartBucketsSAR, sumPersonalSukukAssetsSar } from '../services/personalNetWorth';
 import { computeMonthlyReportFinancialKpis, computeWealthSummaryReportModel } from '../services/wealthSummaryReportModel';
 import { reconcileDashboardVsSummaryKpis } from '../services/kpiReconciliation';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
@@ -646,6 +646,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         const b = computePersonalNetWorthChartBucketsSAR(data, sarPerUsd, { getAvailableCashForAccount });
         const nw = typeof b.netWorth === 'number' && Number.isFinite(b.netWorth) ? b.netWorth : (kpiSummary as { netWorth?: number }).netWorth;
         if (typeof nw === 'number' && Number.isFinite(nw)) {
+            const sukukAudit = sumPersonalSukukAssetsSar(data);
             pushNetWorthSnapshot(
                 nw,
                 {
@@ -654,6 +655,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                     physicalAndCommodities: b.physicalAndCommodities,
                     receivables: b.receivables,
                     liabilities: b.liabilities,
+                    ...(sukukAudit > 0 ? { sukukSar: sukukAudit } : {}),
                 },
                 sarPerUsd,
                 supabase && auth.user?.id ? { supabase, userId: auth.user.id } : null,
@@ -1064,15 +1066,15 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             
             {isAdmin ? (
                 <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
-                    <div
-                        className="lg:col-span-3 section-card-hover section-card flex flex-col h-[400px] cursor-pointer"
-                        onClick={() => setActivePage('Summary')}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => e.key === 'Enter' && setActivePage('Summary')}
-                    >
-                        <div className="flex-1 min-h-0 rounded-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
-                            <NetWorthCompositionChart title="Net Worth Composition" />
+                    <div className="lg:col-span-3 section-card flex flex-col min-h-[420px] h-[min(52vh,440px)]">
+                        <div className="flex-1 min-h-0">
+                            <NetWorthCockpit
+                                title="Net worth"
+                                onOpenSummary={() => setActivePage('Summary')}
+                                onOpenInvestments={() => setActivePage('Investments')}
+                                onOpenAccounts={() => setActivePage('Accounts')}
+                                onOpenAssets={() => setActivePage('Assets')}
+                            />
                         </div>
                     </div>
                 </div>
@@ -1086,11 +1088,13 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             <div className="cards-grid grid grid-cols-1 gap-4">
                  <div className="section-card-hover flex flex-col min-h-[300px]" onClick={() => setActivePage('Transactions')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Transactions')}>
                     <h3 className="section-title">Monthly Cash Flow</h3>
-                    <div className="flex-1 min-h-[280px] rounded-lg overflow-hidden"><CashflowChart data={monthlyCashflowData} /></div>
+                    <div className="flex-1 min-h-[280px] rounded-lg overflow-hidden" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} role="presentation">
+                        <CashflowChart data={monthlyCashflowData} />
+                    </div>
                  </div>
                  <div className="section-card-hover flex flex-col min-h-[320px]" onClick={() => setActivePage('Investments')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Investments')}>
                     <h3 className="section-title">Investment Allocation & Performance</h3>
-                    <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden w-full">
+                    <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden w-full" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} role="presentation">
                         {investmentTreemapData.length > 0 ? (
                             <PerformanceTreemap data={investmentTreemapData} />
                         ) : (

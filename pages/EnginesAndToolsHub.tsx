@@ -9,7 +9,8 @@ import { DataContext } from '../context/DataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
-import { netCashFlowForMonthSar, savingsRateSar } from '../services/financeMetrics';
+import { netCashFlowForMonthSarDated } from '../services/financeMetrics';
+import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
@@ -21,6 +22,7 @@ import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { BoltIcon } from '../components/icons/BoltIcon';
 import LoadingSpinner from '../components/LoadingSpinner';
 import CollapsibleSection from '../components/CollapsibleSection';
+import PageActionsDropdown from '../components/PageActionsDropdown';
 
 const LogicEnginesHub = lazy(() => import('./LogicEnginesHub'));
 const LiquidationPlanner = lazy(() => import('./LiquidationPlanner'));
@@ -109,20 +111,42 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
   const engines = useFinancialEnginesIntegration();
   const { trackAction } = useSelfLearning();
   const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-  const { exchangeRate } = useCurrency();
-  const { formatCurrencyString } = useFormatCurrency();
+  const { exchangeRate, currency: displayCurrency } = useCurrency();
+  const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
 
   const moneyToolsKpis = useMemo(() => {
     if (!data) return null;
+    hydrateSarPerUsdDailySeries(data, exchangeRate);
     const sar = resolveSarPerUsd(data, exchangeRate);
     const nw = computePersonalNetWorthSAR(data, sar, { getAvailableCashForAccount });
     const accounts = getPersonalAccounts(data);
     const txs = getPersonalTransactions(data);
     const ref = new Date();
-    const { income, expenses, net } = netCashFlowForMonthSar(txs, accounts, ref, sar);
-    const sr = savingsRateSar(txs, accounts, ref, sar);
+    const { income, expenses, net } = netCashFlowForMonthSarDated(txs, accounts, ref, data, exchangeRate);
+    const sr = income <= 0 ? 0 : Math.max(0, Math.min(100, ((income - expenses) / income) * 100));
     return { nw, income, expenses, net, sr };
   }, [data, exchangeRate, getAvailableCashForAccount, dataTick]);
+
+  const moneyToolsValidation = useMemo(() => {
+    const msgs: { level: 'warn' | 'info'; text: string }[] = [];
+    if (!data) return msgs;
+    const accounts = getPersonalAccounts(data);
+    const hasUsdCash = accounts.some(
+      (a) =>
+        (a.type === 'Checking' || a.type === 'Savings') && a.currency === 'USD' && Math.abs(Number(a.balance) || 0) > 0.01
+    );
+    if (hasUsdCash && !data.wealthUltraConfig?.fxRate) {
+      msgs.push({
+        level: 'warn',
+        text: 'USD cash detected — set SAR per USD under Settings → Wealth Ultra for best alignment with deployable cash.',
+      });
+    }
+    const uiR = Number(exchangeRate);
+    if (!Number.isFinite(uiR) || uiR <= 0) {
+      msgs.push({ level: 'info', text: 'Display FX in Settings is unset — the app uses a safe SAR/USD fallback for conversions.' });
+    }
+    return msgs;
+  }, [data, exchangeRate, dataTick]);
 
   const statusStrip = useMemo(() => {
     const alerts = engines.analysis?.alerts ?? [];
@@ -131,6 +155,24 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
     const actions = engines.actionQueue?.length ?? 0;
     return { critical, warnings, actions, ready: engines.ready };
   }, [engines.analysis?.alerts, engines.actionQueue?.length, engines.ready]);
+
+  const hubNavActions = useMemo(() => {
+    if (!setActivePage) return [];
+    return [
+      { value: 'summary', label: 'Summary', onClick: () => { trackAction('mt-nav-summary', 'Engines & Tools'); setActivePage('Summary'); } },
+      { value: 'budgets', label: 'Budgets', onClick: () => { trackAction('mt-nav-budgets', 'Engines & Tools'); setActivePage('Budgets'); } },
+      { value: 'plan', label: 'Plan', onClick: () => { trackAction('mt-nav-plan', 'Engines & Tools'); setActivePage('Plan'); } },
+      { value: 'goals', label: 'Goals', onClick: () => { trackAction('mt-nav-goals', 'Engines & Tools'); setActivePage('Goals'); } },
+      { value: 'forecast', label: 'Forecast', onClick: () => { trackAction('mt-nav-forecast', 'Engines & Tools'); setActivePage('Forecast'); } },
+      { value: 'transactions', label: 'Transactions', onClick: () => { trackAction('mt-nav-tx', 'Engines & Tools'); setActivePage('Transactions'); } },
+      { value: 'settings', label: 'Settings', onClick: () => { trackAction('mt-nav-settings', 'Engines & Tools'); setActivePage('Settings'); } },
+    ];
+  }, [setActivePage, trackAction]);
+
+  const sarPerUsdDisplay = useMemo(
+    () => (data ? resolveSarPerUsd(data, exchangeRate) : null),
+    [data, exchangeRate, dataTick]
+  );
 
   const setTab = useCallback((tab: EnginesSubTab) => {
     trackAction(`tab-${tab.replace(/\s+/g, '-').replace('&', '')}`, 'Engines & Tools');
@@ -223,9 +265,19 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
                 </span>
               </div>
               <p className="mt-3 text-base leading-relaxed text-slate-600">
-                Production utilities—not demos. Each tool uses your portfolio, accounts, and rules so you can see mechanics,
-                stay within guardrails, plan sales, and keep notes in one place.
+                Built for everyday use — no finance degree needed. Everything rolls up to <strong className="text-slate-800">SAR</strong> so riyals
+                and dollars are never mixed by mistake. Jump to Budgets, Goals, or Forecast anytime.
               </p>
+              {hubNavActions.length > 0 ? (
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <PageActionsDropdown
+                    label="Go to"
+                    placeholder="Open another page…"
+                    ariaLabel="Navigate from Money Tools"
+                    actions={hubNavActions}
+                  />
+                </div>
+              ) : null}
             </div>
 
             {/* Status indicators */}
@@ -278,25 +330,86 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
         </div>
       </div>
 
-      {moneyToolsKpis && (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {[
-            { label: 'Net worth (SAR eq.)', value: formatCurrencyString(moneyToolsKpis.nw, { inCurrency: 'SAR' }) },
-            { label: 'Month income', value: formatCurrencyString(moneyToolsKpis.income, { inCurrency: 'SAR' }) },
-            { label: 'Month expenses', value: formatCurrencyString(moneyToolsKpis.expenses, { inCurrency: 'SAR' }) },
-            {
-              label: 'Month net · savings %',
-              value: `${formatCurrencyString(moneyToolsKpis.net, { inCurrency: 'SAR' })} · ${moneyToolsKpis.sr.toFixed(1)}%`,
-            },
-          ].map((k) => (
+      {moneyToolsValidation.length > 0 && (
+        <div className="space-y-2">
+          {moneyToolsValidation.map((m, i) => (
             <div
-              key={k.label}
-              className="rounded-xl border border-slate-200/90 bg-white px-4 py-3 shadow-sm"
+              key={i}
+              role="status"
+              className={`rounded-xl border px-4 py-3 text-sm leading-snug ${
+                m.level === 'warn'
+                  ? 'border-amber-200 bg-amber-50 text-amber-950'
+                  : 'border-slate-200 bg-slate-50 text-slate-700'
+              }`}
             >
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{k.label}</p>
-              <p className="mt-1 text-base font-semibold tabular-nums text-slate-900">{k.value}</p>
+              {m.text}
             </div>
           ))}
+        </div>
+      )}
+
+      {sarPerUsdDisplay != null && (
+        <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-indigo-50/80 to-white px-4 py-3 text-sm text-slate-700 shadow-sm">
+          <p>
+            <strong className="text-slate-900">Reference rate:</strong>{' '}
+            <span className="tabular-nums font-medium">1 USD = {sarPerUsdDisplay.toFixed(4)} SAR</span>
+            {data?.wealthUltraConfig?.fxRate ? (
+              <span className="text-emerald-700"> — Wealth Ultra FX</span>
+            ) : (
+              <span className="text-slate-500"> — Settings / peg when unset</span>
+            )}
+            <span className="text-slate-500"> · Display: {displayCurrency}</span>
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            This month&apos;s cash flow uses per-transaction dated FX when available. Example:{' '}
+            {formatCurrencyString(1000, { inCurrency: 'SAR' })}
+            {formatSecondaryEquivalent(1000, { inCurrency: 'SAR' }) ? (
+              <span className="tabular-nums"> ≈ {formatSecondaryEquivalent(1000, { inCurrency: 'SAR' })}</span>
+            ) : null}
+          </p>
+        </div>
+      )}
+
+      {moneyToolsKpis && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="rounded-xl border border-slate-200/90 bg-white px-4 py-3 shadow-sm">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Net worth (SAR eq.)</p>
+            <p className="mt-1 text-base font-semibold tabular-nums text-slate-900">
+              {formatCurrencyString(moneyToolsKpis.nw, { inCurrency: 'SAR' })}
+            </p>
+          </div>
+          <div className="rounded-xl border border-emerald-200/90 bg-emerald-50/50 px-4 py-3 shadow-sm ring-1 ring-emerald-100/80">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-900/80">Month income</p>
+            <p className="mt-1 text-base font-semibold tabular-nums text-emerald-900">
+              {formatCurrencyString(moneyToolsKpis.income, { inCurrency: 'SAR' })}
+            </p>
+          </div>
+          <div className="rounded-xl border border-rose-200/80 bg-rose-50/40 px-4 py-3 shadow-sm ring-1 ring-rose-100/70">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-900/80">Month expenses</p>
+            <p className="mt-1 text-base font-semibold tabular-nums text-rose-900">
+              {formatCurrencyString(moneyToolsKpis.expenses, { inCurrency: 'SAR' })}
+            </p>
+          </div>
+          <div className="rounded-xl border border-slate-200/90 bg-white px-4 py-3 shadow-sm">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Month net · savings rate</p>
+            <p className="mt-1 text-base font-semibold tabular-nums">
+              <span className={moneyToolsKpis.net >= 0 ? 'text-emerald-800' : 'text-rose-800'}>
+                {formatCurrencyString(moneyToolsKpis.net, { inCurrency: 'SAR' })}
+              </span>
+              <span className="text-slate-400"> · </span>
+              <span
+                className={
+                  moneyToolsKpis.sr >= 15
+                    ? 'text-emerald-700'
+                    : moneyToolsKpis.sr >= 5
+                      ? 'text-amber-700'
+                      : 'text-rose-700'
+                }
+              >
+                {moneyToolsKpis.sr.toFixed(1)}%
+              </span>
+            </p>
+          </div>
         </div>
       )}
 

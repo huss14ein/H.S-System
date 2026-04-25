@@ -18,7 +18,7 @@ import { getAIMarketEventInsight, formatAiError, translateFinancialInsightToArab
 import { useAI } from '../context/AiContext';
 
 type Impact = 'High' | 'Medium' | 'Low';
-type EventCategory = 'Macro' | 'Earnings' | 'Dividend' | 'Portfolio' | 'Holiday';
+type EventCategory = 'Macro' | 'Earnings' | 'Portfolio' | 'Holiday';
 
 interface MarketEventItem {
   id: string;
@@ -48,7 +48,6 @@ const IMPACT_STYLES: Record<Impact, string> = {
 const CATEGORY_STYLES: Record<EventCategory, string> = {
   Macro: 'bg-indigo-50 text-indigo-700 border-indigo-200',
   Earnings: 'bg-violet-50 text-violet-700 border-violet-200',
-  Dividend: 'bg-cyan-50 text-cyan-700 border-cyan-200',
   Portfolio: 'bg-slate-100 text-slate-700 border-slate-300',
   Holiday: 'bg-rose-50 text-rose-700 border-rose-200',
 };
@@ -150,15 +149,6 @@ function nextEstimatedEarningsDate(base: Date, symbol: string): Date {
     }
   }
   return new Date(nowYear + 1, 0, day);
-}
-
-function nextEstimatedDividendDate(base: Date, symbol: string): Date {
-  const offset = (Array.from(symbol).reduce((s, c) => s + c.charCodeAt(0), 0) % 12) + 1;
-  const month = base.getMonth();
-  const year = base.getFullYear();
-  const candidate = new Date(year, month, Math.min(28, offset + 10));
-  if (candidate >= base) return candidate;
-  return new Date(year, month + 1, Math.min(28, offset + 10));
 }
 
 function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] {
@@ -324,7 +314,7 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
   return events;
 }
 
-const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
+const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
   const { data, loading } = useContext(DataContext)!;
   const { exchangeRate } = useCurrency();
   const { aiActionsEnabled } = useAI();
@@ -618,7 +608,6 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
 
     const modeledSymbolEvents: MarketEventItem[] = trackedSymbols.flatMap((symbol) => {
       const earningsDate = nextEstimatedEarningsDate(now, symbol);
-      const divDate = nextEstimatedDividendDate(now, symbol);
       const agmDate = new Date(earningsDate.getFullYear(), earningsDate.getMonth(), Math.max(1, earningsDate.getDate() - 10));
       return [
         {
@@ -640,17 +629,6 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
           source: 'Symbol model (estimated)',
           category: 'Earnings' as const,
           impact: 'Medium' as const,
-          symbol,
-          estimated: true,
-        },
-        {
-          id: `dividend-${symbol}`,
-          date: divDate,
-          title: `${symbol} dividend / ex-date window`,
-          description: 'Estimated distribution / ex-date window; verify exact corporate action dates.',
-          source: 'Symbol model (estimated)',
-          category: 'Dividend' as const,
-          impact: 'Low' as const,
           symbol,
           estimated: true,
         },
@@ -943,7 +921,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   return (
     <PageLayout
       title="Market Events"
-      description="Important upcoming dates for markets, your watchlist, and your investment holdings."
+      description="A practical radar for upcoming market catalysts and your portfolio’s key dates. (Dividend cash is tracked in Dividend Tracker and your investment ledger — not duplicated here.)"
     >
       <div className="space-y-6">
         {/* Filters bar */}
@@ -991,7 +969,6 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
                 <option value="Macro">Macro</option>
                 <option value="Holiday">Holiday</option>
                 <option value="Earnings">Earnings</option>
-                <option value="Dividend">Dividend</option>
                 <option value="Portfolio">Portfolio</option>
               </select>
             </div>
@@ -1034,7 +1011,10 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
         {/* Stats summary */}
         <div className="section-card">
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Summary</p>
-          <p className="text-sm text-slate-600 mb-4">Macro (NFP, CPI, FOMC), US market holidays, earnings and dividend events for your holdings. Use filters above to narrow by category or impact.</p>
+          <p className="text-sm text-slate-600 mb-4">
+            Macro (CPI/NFP/FOMC), US market holidays, earnings, and portfolio checkpoints for your holdings/watchlist.
+            Dividend cash stays in <strong>Dividend Tracker</strong> + <strong>investment ledger</strong> only (no double counting here).
+          </p>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <StatCard label="High impact" value={highImpactLabel(stats.highImpact)} />
             <StatCard label="Next 7 days" value={String(stats.next7)} />
@@ -1044,6 +1024,85 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
             <StatCard label="Reminders" value={String(stats.reminderCount)} />
           </div>
         </div>
+
+        {/* Your radar */}
+        {topFocusEvents.length > 0 && (
+          <div className="section-card">
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Your radar</p>
+                <h3 className="mt-1 text-base font-semibold text-slate-900">Most important upcoming items</h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  Ranked by impact, urgency, and whether it matches your symbols. Turn on reminders for anything you don’t want to miss.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  className="btn-outline text-xs"
+                  onClick={() => setViewMode('list')}
+                  title="Switch to the full timeline list"
+                >
+                  Open full timeline
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {topFocusEvents.map(({ event, daysUntil }) => (
+                <div key={`focus-${event.id}`} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-xs text-slate-500">
+                        {daysUntil === 0 ? 'Today' : daysUntil === 1 ? 'Tomorrow' : `In ${daysUntil} days`} • {event.date.toLocaleDateString()}
+                      </p>
+                      <h4 className="mt-1 font-semibold text-slate-900 break-words">{event.title}</h4>
+                      <p className="mt-1 text-sm text-slate-600">{event.description}</p>
+                    </div>
+                    <div className="flex flex-col items-end gap-2 shrink-0">
+                      <span className={`px-2 py-0.5 rounded-full border text-xs font-semibold ${IMPACT_STYLES[event.impact]}`}>{event.impact}</span>
+                      <span className={`px-2 py-0.5 rounded-full border text-[11px] font-medium ${CATEGORY_STYLES[event.category]}`}>{event.category}</span>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {event.symbol && (
+                      <span className="inline-flex items-center rounded-full bg-slate-100 border border-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">
+                        {event.symbol}
+                      </span>
+                    )}
+                    {event.estimated && (
+                      <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                        Estimated
+                      </span>
+                    )}
+                    <span className="text-xs text-slate-500">Source: {event.source}</span>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => toggleReminder(event.id)}
+                      className={`text-xs px-3 py-1.5 rounded-lg border ${reminders[event.id] ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}
+                    >
+                      {reminders[event.id] ? 'Reminder on' : 'Set reminder'}
+                    </button>
+                    {event.symbol && setActivePage && (
+                      <button
+                        type="button"
+                        onClick={() => setActivePage('Investments')}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-primary/30 text-primary hover:bg-primary/5"
+                        title="Open Investments to review positions"
+                      >
+                        Review in Investments
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {diagnostics.length > 0 && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
             <p className="font-semibold mb-1">Validation diagnostics</p>

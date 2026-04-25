@@ -1,6 +1,7 @@
 import type { FinancialData } from '../types';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 import {
+  accumulateHouseholdYearCashflowSar,
   buildHouseholdBudgetPlan,
   buildHouseholdEngineInputFromData,
   type HouseholdEngineResult,
@@ -105,19 +106,12 @@ export function computeHouseholdStressFromData(
 
   const transactions = (data as any).personalTransactions ?? data.transactions ?? [];
   const accounts = (data as any).personalAccounts ?? data.accounts ?? [];
-  const incomeByMonth = Array(12).fill(0);
-  transactions.forEach((t: { date: string; type?: string; amount?: number }) => {
-    const d = new Date(t.date);
-    if (d.getFullYear() !== year || t.type !== 'income') return;
-    incomeByMonth[d.getMonth()] += Math.max(0, Number((t as any).amount) || 0);
-  });
-  const incomeWithData = incomeByMonth.filter((v) => v > 0);
-  const inferredAvg =
-    incomeWithData.length > 0
-      ? incomeWithData.reduce((a, b) => a + b, 0) / incomeWithData.length
-      : 0;
 
   const sarPerUsd = resolveSarPerUsd(data, undefined);
+  const { monthlyIncome } = accumulateHouseholdYearCashflowSar(data, transactions, accounts, year, sarPerUsd);
+  const incomeWithData = monthlyIncome.filter((v: number) => v > 0);
+  const inferredAvg =
+    incomeWithData.length > 0 ? incomeWithData.reduce((a: number, b: number) => a + b, 0) / incomeWithData.length : 0;
 
   const input = buildHouseholdEngineInputFromData(
     transactions as Array<{ date: string; type?: string; amount?: number }>,
@@ -137,6 +131,7 @@ export function computeHouseholdStressFromData(
       monthlyOverrides: overrides,
       financialData: data,
       sarPerUsd,
+      uiExchangeRate: sarPerUsd,
     }
   );
 

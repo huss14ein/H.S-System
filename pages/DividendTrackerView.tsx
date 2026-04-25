@@ -29,7 +29,7 @@ import {
 import { unrealizedPnL } from '../services/portfolioMetrics';
 import type { Holding, InvestmentTransaction, Page } from '../types';
 import { approximatePortfolioMWRR, flowsFromInvestmentTransactionsInSARWithDatedFx } from '../services/portfolioXirr';
-import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
+import { getSarPerUsdForCalendarDay, hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 import { useAI } from '../context/AiContext';
@@ -38,6 +38,7 @@ import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScop
 import { resolveCanonicalAccountId, inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
+import { investmentTransactionCashAmountSarDated } from '../utils/investmentTransactionSar';
 import InfoHint from '../components/InfoHint';
 import {
     syncFinnhubDividendsForHoldings,
@@ -127,8 +128,16 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
         const dividendIncomeYTD = dividendTransactions
             .filter((t) => new Date(t.date).getFullYear() === now.getFullYear())
             .reduce((sum, t) => {
-                const cur = inferInvestmentTransactionCurrency(t, accountsFull, portfoliosAll);
-                return sum + toSAR(getInvestmentTransactionCashAmount(t as any), cur, sarPerUsd);
+                return (
+                    sum +
+                    investmentTransactionCashAmountSarDated({
+                        tx: t,
+                        accounts: accountsFull,
+                        portfolios: portfoliosAll,
+                        data: data ?? null,
+                        uiExchangeRate: exchangeRate,
+                    })
+                );
             }, 0);
 
         const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
@@ -148,8 +157,13 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
             const txDate = new Date(t.date);
             if (isNaN(txDate.getTime()) || txDate < twelveMonthsAgo) continue;
             const monthKey = t.date.slice(0, 7);
-            const cur = inferInvestmentTransactionCurrency(t, accountsFull, portfoliosAll);
-            const sar = toSAR(getInvestmentTransactionCashAmount(t as any), cur, sarPerUsd);
+            const sar = investmentTransactionCashAmountSarDated({
+                tx: t,
+                accounts: accountsFull,
+                portfolios: portfoliosAll,
+                data: data ?? null,
+                uiExchangeRate: exchangeRate,
+            });
             trailing12mDividendActual += sar;
 
             const aid = resolveCanonicalAccountId(t.accountId, accountsFull);
@@ -423,7 +437,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
             if (!data || syncBusy) return;
             if (!import.meta.env.VITE_FINNHUB_API_KEY?.trim()) {
                 if (isManual) {
-                    showToast('Finnhub is not configured (VITE_FINNHUB_API_KEY). Add it to enable automatic dividend history.', 'error');
+                    showToast('Finnhub is not configured (VITE_FINNHUB_API_KEY). Add it to enable automatic dividend history.', 'warning');
                 }
                 return;
             }
@@ -437,6 +451,14 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     fromIso,
                     toIso,
                     sarPerUsd,
+                    sarPerUsdForDay: (dayKey: string) => {
+                        try {
+                            hydrateSarPerUsdDailySeries(data, exchangeRate);
+                            return getSarPerUsdForCalendarDay(dayKey, data, exchangeRate);
+                        } catch {
+                            return sarPerUsd;
+                        }
+                    },
                     recordDividend: async ({ portfolioId, accountId, symbol, date, total, currency }) => {
                         await recordTrade({
                             type: 'dividend',
@@ -507,10 +529,17 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
     const formatTxAmountSar = useCallback(
         (t: InvestmentTransaction) => {
-            const cur = inferInvestmentTransactionCurrency(t, accountsFull, portfoliosAll);
-            return formatCurrencyString(toSAR(getInvestmentTransactionCashAmount(t as any), cur, sarPerUsd));
+            return formatCurrencyString(
+                investmentTransactionCashAmountSarDated({
+                    tx: t,
+                    accounts: accountsFull,
+                    portfolios: portfoliosAll,
+                    data: data ?? null,
+                    uiExchangeRate: exchangeRate,
+                }),
+            );
         },
-        [accountsFull, portfoliosAll, sarPerUsd, formatCurrencyString],
+        [accountsFull, portfoliosAll, data, exchangeRate, formatCurrencyString],
     );
 
     if (loading || !data) {

@@ -8,6 +8,12 @@ import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } 
 import AIAdvisor from '../components/AIAdvisor';
 import { getMarketStatus, getMarketHolidays, finnhubFetch, resolveQuotePrice, type MarketStatusItem, type MarketHoliday } from '../services/finnhubService';
 import { DataContext } from '../context/DataContext';
+import { computePersonalInvestmentKpisSar } from '../services/investmentKpiCore';
+import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
+import { resolveInvestmentTransactionAccountId, inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
+import { investmentTransactionCashAmountSarDated } from '../utils/investmentTransactionSar';
+import { toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
+import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
@@ -71,6 +77,24 @@ const statusWeight: Record<ServiceStatus, number> = {
   Outage: 25,
   'Checking...': 50,
   Simulated: 85,
+};
+
+type InvestmentKpiReconciliation = {
+  totalValueSar: number;
+  holdingsValueSar: number;
+  brokerageCashSar: number;
+  netCapitalSar: number;
+  totalGainLossSar: number;
+  depositsSar: number;
+  withdrawalsSar: number;
+  buysSar: number;
+  sellsSar: number;
+  dividendsSar: number;
+  feesSar: number;
+  vatSar: number;
+  expectedCashFromLedgerSar: number;
+  cashLedgerDriftSar: number;
+  notes: string[];
 };
 
 const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
@@ -293,6 +317,9 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     const accounts = getPersonalAccounts(financialData) as Account[];
     const transactions = getPersonalTransactions(financialData) as Transaction[];
     const goals = (financialData.goals ?? []) as Goal[];
+    const rate = resolveSarPerUsd(financialData, exchangeRate);
+    const personalAccountIds = new Set(accounts.map((a) => a.id));
+    const portfolios = getPersonalInvestments(financialData);
 
     const integrity = validateSystemIntegrity({
       accounts: accounts.map((a) => ({ id: a.id, balance: a.balance })),
@@ -343,6 +370,83 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     const investmentTxs: InvestmentTransaction[] = (financialData.investmentTransactions ?? []).filter((t) =>
       invAccountIds.has((t as InvestmentTransaction).accountId ?? '')
     ) as InvestmentTransaction[];
+
+    const investmentKpiReconciliation: InvestmentKpiReconciliation | null = (() => {
+      const getAvailableCash = appDataCtx?.getAvailableCashForAccount;
+      if (!getAvailableCash) return null;
+
+      const kpis = computePersonalInvestmentKpisSar(financialData, rate, getAvailableCash);
+      const invTx = (financialData.investmentTransactions ?? []).filter((t) => {
+        const accountId = resolveInvestmentTransactionAccountId(
+          t as InvestmentTransaction & { account_id?: string; portfolio_id?: string },
+          accounts,
+          portfolios,
+        );
+        return !!accountId && personalAccountIds.has(accountId);
+      }) as InvestmentTransaction[];
+
+      const invTxSar = (t: InvestmentTransaction) =>
+        investmentTransactionCashAmountSarDated({
+          tx: t,
+          accounts,
+          portfolios,
+          data: financialData,
+          uiExchangeRate: rate,
+        }) ||
+        toSAR(getInvestmentTransactionCashAmount(t as any), inferInvestmentTransactionCurrency(t as any, accounts, portfolios), rate);
+
+      const depositsSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'deposit')).reduce((s, t) => s + invTxSar(t), 0);
+      const withdrawalsSar = invTx
+        .filter((t) => isInvestmentTransactionType(t.type, 'withdrawal'))
+        .reduce((s, t) => s + invTxSar(t), 0);
+      const buysSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'buy')).reduce((s, t) => s + invTxSar(t), 0);
+      const sellsSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'sell')).reduce((s, t) => s + invTxSar(t), 0);
+      const dividendsSar = invTx
+        .filter((t) => isInvestmentTransactionType(t.type, 'dividend'))
+        .reduce((s, t) => s + invTxSar(t), 0);
+      const feesSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'fee')).reduce((s, t) => s + invTxSar(t), 0);
+      const vatSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'vat')).reduce((s, t) => s + invTxSar(t), 0);
+
+      let brokerageCashSar = 0;
+      for (const account of accounts) {
+        if (account.type !== 'Investment') continue;
+        const cash = getAvailableCash(account.id);
+        brokerageCashSar += tradableCashBucketToSAR({ SAR: cash?.SAR ?? 0, USD: cash?.USD ?? 0 }, rate);
+      }
+
+      // Ledger identity (best-effort): cash ~= deposits - buys + sells + dividends - withdrawals - fees - vat
+      const expectedCashFromLedgerSar = depositsSar - buysSar + sellsSar + dividendsSar - withdrawalsSar - feesSar - vatSar;
+      const cashLedgerDriftSar = brokerageCashSar - expectedCashFromLedgerSar;
+
+      const notes: string[] = [];
+      if (!(depositsSar > 0) && (buysSar > 0 || sellsSar > 0)) {
+        notes.push('No deposits recorded → “net capital” is inferred from trading ledger. Record deposits/withdrawals for best accuracy.');
+      }
+      if (Math.abs(cashLedgerDriftSar) > 50) {
+        notes.push('Cash drift detected: deposits/buys/sells/dividends/fees don’t reconcile to broker cash. This usually means missing entries or wrong currency/date FX.');
+      }
+      if (feesSar > 0 || vatSar > 0) {
+        notes.push('Fees/VAT are included in the ledger drift check and can make performance lower (this is expected).');
+      }
+
+      return {
+        totalValueSar: kpis.totalInvestmentsValueSar,
+        holdingsValueSar: kpis.holdingsValueSar,
+        brokerageCashSar,
+        netCapitalSar: kpis.netCapitalSar,
+        totalGainLossSar: kpis.totalGainLossSar,
+        depositsSar,
+        withdrawalsSar,
+        buysSar,
+        sellsSar,
+        dividendsSar,
+        feesSar,
+        vatSar,
+        expectedCashFromLedgerSar,
+        cashLedgerDriftSar,
+        notes,
+      };
+    })();
 
     const storedBySymbol = new Map<string, number>();
     holdings.forEach((h) => {
@@ -399,6 +503,26 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
         severity: r.severity,
       })),
     ];
+    if (investmentKpiReconciliation) {
+      if (Math.abs(investmentKpiReconciliation.cashLedgerDriftSar) > 50) {
+        combined.push({
+          code: 'RECONCILE_INVESTMENT_CASH_LEDGER',
+          message: `Investment cash drift: ${investmentKpiReconciliation.cashLedgerDriftSar.toFixed(2)} SAR (broker cash vs ledger flows)`,
+          entity: 'investment',
+          entityId: 'cash-ledger',
+          severity: Math.abs(investmentKpiReconciliation.cashLedgerDriftSar) > 500 ? 'error' : 'warning',
+        } as any);
+      }
+      if (investmentKpiReconciliation.totalGainLossSar < 0) {
+        combined.push({
+          code: 'KPI_INVESTMENT_UNREALIZED_NEGATIVE',
+          message: `Investments show negative net gain/loss (${investmentKpiReconciliation.totalGainLossSar.toFixed(2)} SAR). This can be real performance, but verify reconciliation below.`,
+          entity: 'investment',
+          entityId: 'pnl',
+          severity: 'warning',
+        } as any);
+      }
+    }
     if (missingCategory) {
       combined.push({
         code: 'RECONCILE_BUDGET_MAPPING',
@@ -411,8 +535,19 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     combined.forEach((ex: any) => pushException(ex));
     const queue = getExceptionQueue();
 
-    return { integrityOk: integrity.ok, integrityExceptions: integrity.exceptions, brokenRefs, cashExceptions, creditExceptions, holdingExceptions, reconciliation, repairSuggestions, queue };
-  }, [appDataCtx]);
+    return {
+      integrityOk: integrity.ok,
+      integrityExceptions: integrity.exceptions,
+      brokenRefs,
+      cashExceptions,
+      creditExceptions,
+      holdingExceptions,
+      reconciliation,
+      investmentKpiReconciliation,
+      repairSuggestions,
+      queue,
+    };
+  }, [appDataCtx, exchangeRate]);
 
   const sarPerUsdHealth = useMemo(
     () => resolveSarPerUsd(appDataCtx?.data ?? null, exchangeRate),
@@ -561,6 +696,92 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {integritySummary.investmentKpiReconciliation && (
+            <div className="mt-4 pt-4 border-t border-slate-200">
+              <h4 className="text-sm font-semibold text-slate-800">Investment KPI reconciliation</h4>
+              <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                This explains the exact inputs behind the Investments headline KPIs (value, net capital, net gain/loss) and checks whether broker cash reconciles with ledger flows.
+              </p>
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-sm">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total value (SAR)</p>
+                  <p className="font-semibold tabular-nums text-slate-900">{integritySummary.investmentKpiReconciliation.totalValueSar.toFixed(2)}</p>
+                  <p className="text-xs text-slate-600 mt-1">
+                    Holdings {integritySummary.investmentKpiReconciliation.holdingsValueSar.toFixed(2)} + cash {integritySummary.investmentKpiReconciliation.brokerageCashSar.toFixed(2)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Net capital (SAR)</p>
+                  <p className="font-semibold tabular-nums text-slate-900">{integritySummary.investmentKpiReconciliation.netCapitalSar.toFixed(2)}</p>
+                  <p className="text-xs text-slate-600 mt-1">
+                    Deposits {integritySummary.investmentKpiReconciliation.depositsSar.toFixed(2)} − withdrawals {integritySummary.investmentKpiReconciliation.withdrawalsSar.toFixed(2)}
+                  </p>
+                </div>
+                <div className={`rounded-lg border p-3 ${
+                  integritySummary.investmentKpiReconciliation.totalGainLossSar >= 0
+                    ? 'border-emerald-200 bg-emerald-50/60'
+                    : 'border-rose-200 bg-rose-50/60'
+                }`}>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Net gain/loss (SAR)</p>
+                  <p className={`font-semibold tabular-nums ${
+                    integritySummary.investmentKpiReconciliation.totalGainLossSar >= 0 ? 'text-emerald-800' : 'text-rose-800'
+                  }`}>
+                    {integritySummary.investmentKpiReconciliation.totalGainLossSar.toFixed(2)}
+                  </p>
+                  <p className="text-xs text-slate-600 mt-1">Total value − net capital</p>
+                </div>
+              </div>
+
+              <details className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                <summary className="cursor-pointer text-sm font-semibold text-slate-800 select-none">
+                  Show ledger flow breakdown & cash drift check
+                </summary>
+                <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-xs">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+                    <p className="font-semibold text-slate-700">Ledger totals (SAR)</p>
+                    <p className="tabular-nums text-slate-700 mt-1">Buys: {integritySummary.investmentKpiReconciliation.buysSar.toFixed(2)}</p>
+                    <p className="tabular-nums text-slate-700">Sells: {integritySummary.investmentKpiReconciliation.sellsSar.toFixed(2)}</p>
+                    <p className="tabular-nums text-slate-700">Dividends: {integritySummary.investmentKpiReconciliation.dividendsSar.toFixed(2)}</p>
+                    <p className="tabular-nums text-slate-700">Fees: {integritySummary.investmentKpiReconciliation.feesSar.toFixed(2)}</p>
+                    <p className="tabular-nums text-slate-700">VAT: {integritySummary.investmentKpiReconciliation.vatSar.toFixed(2)}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+                    <p className="font-semibold text-slate-700">Expected cash (from ledger)</p>
+                    <p className="tabular-nums text-slate-900 mt-1">{integritySummary.investmentKpiReconciliation.expectedCashFromLedgerSar.toFixed(2)} SAR</p>
+                    <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
+                      deposits − buys + sells + dividends − withdrawals − fees − VAT
+                    </p>
+                  </div>
+                  <div className={`rounded-lg border p-2 ${
+                    Math.abs(integritySummary.investmentKpiReconciliation.cashLedgerDriftSar) <= 50
+                      ? 'border-emerald-200 bg-emerald-50/60'
+                      : 'border-amber-200 bg-amber-50/60'
+                  }`}>
+                    <p className="font-semibold text-slate-700">Cash drift (broker − expected)</p>
+                    <p className="tabular-nums mt-1 font-semibold ${
+                      Math.abs(integritySummary.investmentKpiReconciliation.cashLedgerDriftSar) <= 50 ? 'text-emerald-800' : 'text-amber-900'
+                    }">
+                      {integritySummary.investmentKpiReconciliation.cashLedgerDriftSar.toFixed(2)} SAR
+                    </p>
+                    <p className="text-[11px] text-slate-600 mt-1">
+                      {Math.abs(integritySummary.investmentKpiReconciliation.cashLedgerDriftSar) <= 50
+                        ? 'Looks consistent.'
+                        : 'Likely missing or mis-tagged entries (or wrong currency/FX date).'}
+                    </p>
+                  </div>
+                </div>
+
+                {(integritySummary.investmentKpiReconciliation.notes?.length ?? 0) > 0 && (
+                  <ul className="mt-3 text-xs text-slate-700 space-y-1 list-disc pl-5">
+                    {integritySummary.investmentKpiReconciliation.notes.map((n: string, i: number) => (
+                      <li key={`inv-note-${i}`}>{n}</li>
+                    ))}
+                  </ul>
+                )}
+              </details>
             </div>
           )}
         </div>

@@ -3,6 +3,7 @@ import { getAllInvestmentsValueInSAR, toSAR, tradableCashBucketToSAR } from '../
 import { inferInvestmentTransactionCurrency, resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
+import { investmentTransactionCashAmountSarDated } from '../utils/investmentTransactionSar';
 
 type GetAvailableCashFn = (accountId: string) => { SAR?: number; USD?: number } | null | undefined;
 
@@ -52,20 +53,14 @@ export function computePersonalInvestmentKpisSar(
     return !!accountId && personalAccountIds.has(accountId);
   };
   const invTx = (data.investmentTransactions ?? []).filter((t) => txHitsPersonalInvestment(t as InvestmentTransaction)) as InvestmentTransaction[];
-  const invTxSar = (t: InvestmentTransaction) => {
-    const currency = inferInvestmentTransactionCurrency(
-      {
-        accountId: t.accountId,
-        account_id: (t as { account_id?: string }).account_id,
-        portfolioId: t.portfolioId,
-        portfolio_id: (t as { portfolio_id?: string }).portfolio_id,
-        currency: t.currency as 'SAR' | 'USD' | undefined,
-      },
+  const invTxSar = (t: InvestmentTransaction) =>
+    investmentTransactionCashAmountSarDated({
+      tx: t,
       accounts,
-      investments,
-    );
-    return toSAR(getInvestmentTransactionCashAmount(t as any), currency, sarPerUsd);
-  };
+      portfolios: investments,
+      data,
+      uiExchangeRate: sarPerUsd,
+    }) || toSAR(getInvestmentTransactionCashAmount(t as any), inferInvestmentTransactionCurrency(t as any, accounts, investments), sarPerUsd);
 
   const totalInvestedSarRaw = invTx
     .filter((t) => isInvestmentTransactionType(t.type, 'deposit'))

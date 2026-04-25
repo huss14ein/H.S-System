@@ -23,6 +23,12 @@ import { resolveSarPerUsd } from '../utils/currencyMath';
 import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import { isSupportedPageAction } from '../utils/pageActions';
+import type { AppNotification } from '../context/NotificationsContext';
+import {
+  notificationRowSurface,
+  notificationSeverityLabel,
+  notificationSeverityPillClass,
+} from '../utils/semanticAlertStyles';
 import { INFOHINT_CLOSE_OTHERS } from './infoHintEvents';
 interface HeaderProps {
   activePage: Page;
@@ -131,11 +137,16 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
     else setActivePage('Notifications');
   };
 
+  const severityRank = (s: AppNotification['severity']) =>
+    s === 'urgent' ? 3 : s === 'warning' ? 2 : 1;
+
   const topNotificationPreview = useMemo(() => {
     const list = notificationsContext?.notifications ?? [];
     return [...list]
       .sort((a, b) => {
         if (a.isRead !== b.isRead) return a.isRead ? 1 : -1;
+        const ds = severityRank(b.severity) - severityRank(a.severity);
+        if (ds !== 0) return ds;
         return new Date(b.date).getTime() - new Date(a.date).getTime();
       })
       .slice(0, 4);
@@ -223,7 +234,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   }, [isMobileMenuOpen]);
 
   return (
-    <header className="bg-white border-b border-gray-100 sticky top-0 z-30 shadow-sm">
+    <header className="bg-white border-b border-gray-100 sticky top-0 z-50 shadow-sm">
       <div className="max-w-screen-2xl mx-auto">
         {/* Top Bar */}
         <div className="flex items-center justify-between h-16 px-3 sm:px-6 lg:px-8">
@@ -250,7 +261,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                     </button>
                     
                     {activeGroup === group.name && (
-                      <div className="absolute top-full left-0 mt-1 w-56 bg-white rounded-2xl shadow-2xl py-2 ring-1 ring-black ring-opacity-5 border border-gray-100 animate-fadeIn">
+                      <div className="absolute top-full left-0 mt-1 w-56 bg-white rounded-2xl shadow-2xl py-2 ring-1 ring-black ring-opacity-5 border border-gray-100 animate-fadeIn z-[70] max-h-[70vh] overflow-auto">
                         {group.items.map(itemName => {
                           const navItem = NAVIGATION_ITEMS.find(n => n.name === itemName);
                           if (!navItem) return null;
@@ -427,11 +438,26 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                     ) : (
                       <ul className="space-y-2">
                         {topNotificationPreview.map((n) => (
-                          <li key={n.id} className={`rounded-lg border px-2.5 py-2 ${n.isRead ? 'border-slate-100 bg-slate-50/40' : 'border-primary/20 bg-primary/5'}`}>
+                          <li
+                            key={n.id}
+                            className={`rounded-lg px-2.5 py-2 shadow-sm ${notificationRowSurface(n.severity, n.isRead)}`}
+                          >
                             <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <p className="text-sm text-slate-700 line-clamp-2">{n.message}</p>
-                                {n.actionHint && <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-2">{n.actionHint}</p>}
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-1.5 mb-0.5">
+                                  <span
+                                    className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${notificationSeverityPillClass(n.severity)}`}
+                                  >
+                                    {notificationSeverityLabel(n.severity)}
+                                  </span>
+                                  {!n.isRead && (
+                                    <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-wide">New</span>
+                                  )}
+                                </div>
+                                <p className="text-sm text-slate-800 line-clamp-2 leading-snug">{n.message}</p>
+                                {n.actionHint && (
+                                  <p className="text-[11px] text-slate-600 mt-0.5 line-clamp-2">{n.actionHint}</p>
+                                )}
                               </div>
                               <button
                                 type="button"

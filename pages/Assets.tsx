@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
-import { Asset, Goal, AssetType, CommodityHolding, Page } from '../types';
+import { Asset, Goal, AssetType, CommodityHolding, Page, SukukPayoutCadence, SukukPayoutSchedule, SukukPayoutEvent, Account } from '../types';
 import Card from '../components/Card';
 import Modal from '../components/Modal';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
@@ -30,6 +30,9 @@ import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
 import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 import AIAdvisor from '../components/AIAdvisor';
+import { supabase } from '../services/supabaseClient';
+import { AuthContext } from '../context/AuthContext';
+import { materializeSukukPayoutEvents } from '../services/sukuk/sukukPayoutEngine';
 
 // --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; preferredType?: AssetType; }> = ({ isOpen, onClose, onSave, assetToEdit, preferredType = 'Property' }) => {
@@ -181,7 +184,250 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
         </Modal>
     );
 };
-const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => void; onDelete: (asset: Asset | CommodityHolding) => void; onLinkGoal: (assetId: string, goalId: string) => void; goals: Goal[] }> = ({ asset, onEdit, onDelete, onLinkGoal, goals }) => {
+
+const SukukPayoutScheduleModal: React.FC<{
+    isOpen: boolean;
+    onClose: () => void;
+    asset: Asset;
+    accounts: Account[];
+    existingSchedule: SukukPayoutSchedule | null;
+    existingEvents: SukukPayoutEvent[];
+    onSaved: () => Promise<void>;
+}> = ({ isOpen, onClose, asset, accounts, existingSchedule, existingEvents, onSaved }) => {
+    const auth = useContext(AuthContext);
+    const [investmentAccountId, setInvestmentAccountId] = useState(existingSchedule?.investmentAccountId ?? '');
+    const [cadence, setCadence] = useState<SukukPayoutCadence>(existingSchedule?.cadence ?? 'monthly');
+    const [dayOfMonth, setDayOfMonth] = useState(String(existingSchedule?.dayOfMonth ?? 25));
+    const [couponAmount, setCouponAmount] = useState(existingSchedule?.couponAmount != null ? String(existingSchedule.couponAmount) : '');
+    const [principalAmount, setPrincipalAmount] = useState(existingSchedule?.principalAmount != null ? String(existingSchedule.principalAmount) : '');
+    const [startDate, setStartDate] = useState(existingSchedule?.startDate ?? asset.issueDate ?? '');
+    const [endDate, setEndDate] = useState(existingSchedule?.endDate ?? asset.maturityDate ?? '');
+    const [currency, setCurrency] = useState<'SAR' | 'USD'>((existingSchedule?.currency as any) ?? 'SAR');
+    const [enabled, setEnabled] = useState(existingSchedule?.enabled ?? true);
+    const [error, setError] = useState<string | null>(null);
+    const [isSaving, setIsSaving] = useState(false);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        setInvestmentAccountId(existingSchedule?.investmentAccountId ?? '');
+        setCadence(existingSchedule?.cadence ?? 'monthly');
+        setDayOfMonth(String(existingSchedule?.dayOfMonth ?? 25));
+        setCouponAmount(existingSchedule?.couponAmount != null ? String(existingSchedule.couponAmount) : '');
+        setPrincipalAmount(existingSchedule?.principalAmount != null ? String(existingSchedule.principalAmount) : '');
+        setStartDate(existingSchedule?.startDate ?? asset.issueDate ?? '');
+        setEndDate(existingSchedule?.endDate ?? asset.maturityDate ?? '');
+        setCurrency((existingSchedule?.currency as any) ?? 'SAR');
+        setEnabled(existingSchedule?.enabled ?? true);
+        setError(null);
+    }, [isOpen, existingSchedule, asset.issueDate, asset.maturityDate]);
+
+    const investmentAccounts = accounts.filter((a) => (a.type ?? '').toLowerCase().includes('investment') || (a.name ?? '').toLowerCase().includes('platform'));
+
+    const nextEvent = useMemo(() => {
+        const today = new Date().toISOString().slice(0, 10);
+        const upcoming = existingEvents
+            .filter((e) => !e.posted && e.payoutDate >= today)
+            .sort((a, b) => a.payoutDate.localeCompare(b.payoutDate))[0];
+        return upcoming ?? null;
+    }, [existingEvents]);
+
+    const handleSave = async () => {
+        setError(null);
+        const uid = auth?.user?.id ?? null;
+        if (!uid) {
+            setError('You must be logged in.');
+            return;
+        }
+        if (!supabase) {
+            setError('Database client not ready.');
+            return;
+        }
+        if (!investmentAccountId) {
+            setError('Choose the Sukuk platform account (investment account).');
+            return;
+        }
+        if (asset.type !== 'Sukuk') {
+            setError('This payout schedule can only be attached to Sukuk assets.');
+            return;
+        }
+        const dom = Math.max(1, Math.min(28, Math.trunc(Number(dayOfMonth || '1'))));
+        const coupon = couponAmount.trim() === '' ? null : parseMoneyInput(couponAmount);
+        const principal = principalAmount.trim() === '' ? null : parseMoneyInput(principalAmount);
+        if (coupon != null && (!Number.isFinite(coupon) || coupon < 0)) {
+            setError('Coupon amount must be a non-negative number.');
+            return;
+        }
+        if (principal != null && (!Number.isFinite(principal) || principal < 0)) {
+            setError('Principal amount must be a non-negative number.');
+            return;
+        }
+        if ((cadence === 'monthly' || cadence === 'quarterly') && (!startDate || !endDate)) {
+            setError('Start and end dates are required for monthly/quarterly schedules.');
+            return;
+        }
+        if (cadence === 'maturity_only' && !asset.maturityDate && !endDate) {
+            setError('Maturity-only requires a maturity date on the asset.');
+            return;
+        }
+
+        const scheduleId = existingSchedule?.id ?? (() => {
+            try {
+                return crypto.randomUUID();
+            } catch {
+                return `sukuk_${Date.now()}`;
+            }
+        })();
+
+        setIsSaving(true);
+        try {
+            const scheduleRow = {
+                id: scheduleId,
+                user_id: uid,
+                asset_id: asset.id,
+                investment_account_id: investmentAccountId,
+                currency,
+                cadence,
+                day_of_month: cadence === 'monthly' || cadence === 'quarterly' ? dom : null,
+                coupon_amount: coupon,
+                principal_amount: principal,
+                start_date: startDate || null,
+                end_date: endDate || null,
+                enabled,
+                metadata: {},
+            };
+            const upsertRes = await supabase.from('sukuk_payout_schedules').upsert(scheduleRow, { onConflict: 'id' }).select('*').maybeSingle();
+            if (upsertRes.error) throw upsertRes.error;
+
+            // Rebuild unposted events for this schedule (keep posted history).
+            await supabase.from('sukuk_payout_events').delete().eq('schedule_id', scheduleId).eq('posted', false);
+
+            const drafts = materializeSukukPayoutEvents({
+                schedule: {
+                    id: scheduleId,
+                    assetId: asset.id,
+                    investmentAccountId,
+                    currency,
+                    cadence,
+                    dayOfMonth: cadence === 'monthly' || cadence === 'quarterly' ? dom : null,
+                    couponAmount: coupon,
+                    principalAmount: principal,
+                    startDate: startDate || null,
+                    endDate: endDate || null,
+                    enabled,
+                },
+                assetDates: { issueDate: asset.issueDate, maturityDate: asset.maturityDate },
+            });
+            if (drafts.length) {
+                const eventRows = drafts.map((d) => ({
+                    user_id: uid,
+                    schedule_id: d.scheduleId,
+                    asset_id: d.assetId,
+                    investment_account_id: d.investmentAccountId,
+                    kind: d.kind,
+                    payout_date: d.payoutDate,
+                    amount: d.amount,
+                    currency: d.currency,
+                    metadata: d.metadata ?? {},
+                }));
+                const ins = await supabase.from('sukuk_payout_events').upsert(eventRows, { onConflict: 'schedule_id,kind,payout_date' });
+                if (ins.error) throw ins.error;
+            }
+
+            await onSaved();
+            onClose();
+        } catch (e: any) {
+            setError(e?.message ?? 'Failed to save Sukuk schedule.');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    return (
+        <Modal isOpen={isOpen} onClose={onClose} title="Sukuk payout schedule (cash in platform)">
+            <div className="space-y-4">
+                <div className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                    <p className="font-semibold text-slate-900">What this does</p>
+                    <p className="mt-1">When a payout date arrives, Finova auto-posts it into your <strong>investment platform cash</strong> (not your personal bank). That cash can then be reinvested.</p>
+                    {nextEvent && <p className="mt-2 text-slate-700">Next payout: <strong>{nextEvent.payoutDate}</strong> ({nextEvent.kind}, {nextEvent.amount} {nextEvent.currency})</p>}
+                </div>
+
+                <label className="block text-sm font-medium text-gray-700">Sukuk platform account</label>
+                <select className="select-base" value={investmentAccountId} onChange={(e) => setInvestmentAccountId(e.target.value)}>
+                    <option value="">Choose an investment account…</option>
+                    {investmentAccounts.map((a) => (
+                        <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                </select>
+
+                <div className="grid grid-cols-2 gap-3">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Currency</label>
+                        <select className="select-base" value={currency} onChange={(e) => setCurrency(e.target.value as any)}>
+                            <option value="SAR">SAR</option>
+                            <option value="USD">USD</option>
+                        </select>
+                    </div>
+                    <div className="flex items-center gap-2 pt-7">
+                        <input id="sukuk-enabled" type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="h-4 w-4 rounded text-primary" />
+                        <label htmlFor="sukuk-enabled" className="text-sm text-slate-700">Enabled</label>
+                    </div>
+                </div>
+
+                <label className="block text-sm font-medium text-gray-700">Payout pattern</label>
+                <select className="select-base" value={cadence} onChange={(e) => setCadence(e.target.value as SukukPayoutCadence)}>
+                    <option value="monthly">Monthly</option>
+                    <option value="quarterly">Every 3 months (quarterly)</option>
+                    <option value="maturity_only">End of contract (maturity only)</option>
+                    <option value="custom">Custom (manual events)</option>
+                </select>
+
+                {(cadence === 'monthly' || cadence === 'quarterly') && (
+                    <div className="grid grid-cols-3 gap-3">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">Day of month (1–28)</label>
+                            <input className="input-base" type="number" min={1} max={28} value={dayOfMonth} onChange={(e) => setDayOfMonth(e.target.value)} />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">Start date</label>
+                            <input className="input-base" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">End date</label>
+                            <input className="input-base" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                        </div>
+                    </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Coupon amount per payout</label>
+                        <input className="input-base" type="number" min={0} step="any" value={couponAmount} onChange={(e) => setCouponAmount(e.target.value)} placeholder="e.g. 250" />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Principal at maturity (optional)</label>
+                        <input className="input-base" type="number" min={0} step="any" value={principalAmount} onChange={(e) => setPrincipalAmount(e.target.value)} placeholder="e.g. 10000" />
+                    </div>
+                </div>
+
+                {error && <div className="text-sm text-danger bg-red-50 border border-red-200 rounded-lg p-2">{error}</div>}
+
+                <button disabled={isSaving} onClick={handleSave} className="w-full btn-primary">
+                    {isSaving ? 'Saving…' : 'Save schedule'}
+                </button>
+            </div>
+        </Modal>
+    );
+};
+const AssetCardComponent: React.FC<{
+    asset: Asset;
+    onEdit: (asset: Asset) => void;
+    onDelete: (asset: Asset | CommodityHolding) => void;
+    onLinkGoal: (assetId: string, goalId: string) => void;
+    goals: Goal[];
+    sukukSchedule?: SukukPayoutSchedule | null;
+    sukukEvents?: SukukPayoutEvent[];
+    onConfigureSukuk?: (asset: Asset) => void;
+}> = ({ asset, onEdit, onDelete, onLinkGoal, goals, sukukSchedule = null, sukukEvents = [], onConfigureSukuk }) => {
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const getAssetIcon = (type: Asset['type']) => {
         switch (type) {
@@ -197,6 +443,14 @@ const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => voi
     const unrealizedGainPct = pp != null && pp > 0 && unrealizedGain !== null ? (unrealizedGain / pp) * 100 : null;
     const borderTone = unrealizedGain === null ? 'border-t-slate-200' : unrealizedGain >= 0 ? 'border-t-emerald-500' : 'border-t-rose-500';
     const linkedGoal = asset.goalId ? goals.find(g => g.id === asset.goalId) : null;
+    const sukukNext = useMemo(() => {
+        if (asset.type !== 'Sukuk') return null;
+        const today = new Date().toISOString().slice(0, 10);
+        const next = (sukukEvents || [])
+            .filter((e) => !e.posted && e.payoutDate >= today)
+            .sort((a, b) => a.payoutDate.localeCompare(b.payoutDate))[0];
+        return next ?? null;
+    }, [asset.type, sukukEvents]);
     return (
         <div className={`section-card flex flex-col h-full border-t-4 ${borderTone} hover:shadow-lg transition-shadow min-h-[290px]`}>
             <div className="flex items-start justify-between gap-2 min-h-[32px]">
@@ -219,7 +473,45 @@ const AssetCardComponent: React.FC<{ asset: Asset; onEdit: (asset: Asset) => voi
                     <div className="min-w-0 overflow-hidden"><dt className="metric-label text-slate-500">Purchase Price</dt><dd className="metric-value font-medium text-slate-700">{asset.purchasePrice ? formatCurrencyString(asset.purchasePrice) : '—'}</dd></div>
                     <div className="min-w-0 overflow-hidden"><dt className="metric-label text-slate-500">Unrealized G/L</dt><dd className="metric-value font-semibold whitespace-nowrap">{unrealizedGain !== null ? <span>{formatCurrency(unrealizedGain, { colorize: true })}{unrealizedGainPct != null && <span className={unrealizedGain >= 0 ? 'text-emerald-600' : 'text-rose-600'}> ({unrealizedGainPct >= 0 ? '+' : ''}{unrealizedGainPct.toFixed(1)}%)</span>}</span> : '—'}</dd></div>
                 </div>
-                {asset.type === 'Sukuk' && <div className="text-xs text-sky-700 bg-sky-50 border border-sky-100 rounded-lg px-2 py-1">Tracked as Shariah-compliant fixed income in your asset allocation.</div>}
+                {asset.type === 'Sukuk' && (
+                    <div className="space-y-2">
+                        <div className="text-xs text-sky-700 bg-sky-50 border border-sky-100 rounded-lg px-2 py-1">
+                            Tracked as Shariah-compliant fixed income in your asset allocation.
+                        </div>
+                        <div className="text-xs bg-white border border-slate-200 rounded-lg px-2 py-2">
+                            <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                    <p className="font-semibold text-slate-800">Payouts → platform cash</p>
+                                    {sukukSchedule ? (
+                                        <p className="text-slate-600 mt-0.5">
+                                            {sukukSchedule.cadence === 'monthly' ? `Monthly (day ${sukukSchedule.dayOfMonth ?? '—'})` :
+                                                sukukSchedule.cadence === 'quarterly' ? `Every 3 months (day ${sukukSchedule.dayOfMonth ?? '—'})` :
+                                                    sukukSchedule.cadence === 'maturity_only' ? 'Maturity only' : 'Custom'}
+                                            {sukukSchedule.couponAmount != null ? ` • Coupon ${roundMoney(Number(sukukSchedule.couponAmount))} ${sukukSchedule.currency}` : ''}
+                                        </p>
+                                    ) : (
+                                        <p className="text-slate-600 mt-0.5">Not set yet (no payouts will be recorded).</p>
+                                    )}
+                                    {sukukNext && (
+                                        <p className="text-slate-700 mt-1">
+                                            Next: <span className="font-semibold">{sukukNext.payoutDate}</span> ({sukukNext.kind}, {roundMoney(sukukNext.amount)} {sukukNext.currency})
+                                        </p>
+                                    )}
+                                </div>
+                                {onConfigureSukuk && (
+                                    <button
+                                        type="button"
+                                        onClick={() => onConfigureSukuk(asset)}
+                                        className="btn-secondary text-xs px-2 py-1"
+                                        title="Set or edit Sukuk payout schedule"
+                                    >
+                                        {sukukSchedule ? 'Edit' : 'Set'}
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
                 {asset.isRental && asset.monthlyRent != null && <div className="min-w-0 overflow-hidden"><dt className="metric-label text-slate-500">Monthly Rent</dt><dd className="metric-value font-semibold text-dark">{formatCurrencyString(asset.monthlyRent)}</dd></div>}
                 {asset.notes && asset.notes.trim() !== '' && (
                     <div className="mt-3 pt-3 border-t border-slate-100 min-w-0">
@@ -468,7 +760,7 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
                         </div>
                     ) : (
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Current Value <InfoHint text="Computed when you save: live unit price (Finnhub for gold/silver, Binance for Bitcoin) × quantity, with gold karat applied." /></label>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Current Value <InfoHint text="Computed when you save: unit price × quantity, with gold karat applied. Sources depend on your configured price providers." /></label>
                             <div className="w-full p-2 border border-dashed border-slate-300 rounded-md bg-slate-50 text-sm text-slate-700">
                                 Live from market on save — priced in SAR using your app USD→SAR rate (header/settings).
                                 {holdingToEdit && (
@@ -577,7 +869,7 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
 interface AssetsProps { pageAction?: string | null; clearPageAction?: () => void; setActivePage?: (page: Page) => void; }
 
 const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
-    const { data, loading, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
+    const { data, loading, refreshData, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
     const { isAiAvailable, aiHealthChecked } = useAI();
     const { formatCurrencyString } = useFormatCurrency();
     const { exchangeRate } = useCurrency();
@@ -595,6 +887,8 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const [physicalAssetFilter, setPhysicalAssetFilter] = useState<'All' | 'Property' | 'Sukuk' | 'Vehicle' | 'Other'>('All');
     const [sukukStatusFilter, setSukukStatusFilter] = useState<'Active' | 'Completed' | 'All'>('Active');
     const [lastCommodityRefreshAt, setLastCommodityRefreshAt] = useState<string | null>(null);
+    const [isSukukScheduleModalOpen, setIsSukukScheduleModalOpen] = useState(false);
+    const [sukukAssetForSchedule, setSukukAssetForSchedule] = useState<Asset | null>(null);
 
     useEffect(() => {
         if (pageAction === 'open-asset-modal') {
@@ -651,6 +945,11 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             setItemToDelete(null);
         }
     };
+
+    const handleOpenSukukSchedule = (asset: Asset) => {
+        setSukukAssetForSchedule(asset);
+        setIsSukukScheduleModalOpen(true);
+    };
     
     const handleUpdatePrices = async () => {
         const commodityHoldings = commodityList;
@@ -674,7 +973,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 }
             }
         } catch (error) {
-            alert(`Failed to update commodity prices (Finnhub for metals, Binance for Bitcoin).\n\n${formatAiError(error)}`);
+            alert(`Failed to update commodity prices.\n\n${formatAiError(error)}`);
         } 
         finally { setIsUpdatingPrices(false); }
     };
@@ -855,7 +1154,17 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             >
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">
                     {filteredPhysicalAssets.map((asset) => (
-                        <AssetCardComponent key={asset.id} asset={asset} onEdit={handleOpenAssetModal} onDelete={handleOpenDeleteModal} onLinkGoal={handleLinkGoal} goals={data?.goals ?? []} />
+                        <AssetCardComponent
+                            key={asset.id}
+                            asset={asset}
+                            onEdit={handleOpenAssetModal}
+                            onDelete={handleOpenDeleteModal}
+                            onLinkGoal={handleLinkGoal}
+                            goals={data?.goals ?? []}
+                            sukukSchedule={(data.sukukPayoutSchedules ?? []).find((s) => s.assetId === asset.id) ?? null}
+                            sukukEvents={(data.sukukPayoutEvents ?? []).filter((e) => e.assetId === asset.id)}
+                            onConfigureSukuk={asset.type === 'Sukuk' ? handleOpenSukukSchedule : undefined}
+                        />
                     ))}
                     {assetsList.length === 0 && <p className="empty-state md:col-span-2 xl:col-span-3">No physical assets added yet.</p>}
                     {assetsList.length > 0 && filteredPhysicalAssets.length === 0 && (
@@ -893,14 +1202,14 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 <div className="mb-4 rounded-lg bg-slate-50/80 border border-slate-200 p-3 sm:p-4 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                         <p className="text-sm text-slate-700 leading-relaxed">
-                            Track gold, silver, bitcoin and other commodities. <strong>Save</strong> on a commodity fetches live unit prices (Finnhub for metals, Binance for Bitcoin). Use <strong>Update Prices</strong> to refresh all holdings without re-entering each one.
+                            Track gold, silver, bitcoin and other commodities. <strong>Save</strong> on a commodity fetches unit prices. Use <strong>Update Prices</strong> to refresh all holdings without re-entering each one.
                         </p>
-                        <span className="mt-0.5 shrink-0"><InfoHint text="Pricing uses AI when available; otherwise Finnhub or Stooq. If one provider fails, the system retries with alternatives." /></span>
+                        <span className="mt-0.5 shrink-0"><InfoHint text="Pricing uses AI when available; otherwise configured fallback providers. If one provider fails, the system retries with alternatives." /></span>
                     </div>
                 </div>
                 {aiHealthChecked && !isAiAvailable && commodityList.length > 0 && (
                     <div className="alert-warning mb-4 rounded-lg">
-                        <p>AI is disabled. Prices will be updated from Finnhub (crypto & metals) when available.</p>
+                        <p>AI is disabled. Prices will be updated from configured providers when available.</p>
                     </div>
                 )}
                 {groundingChunks.length > 0 && (
@@ -930,6 +1239,17 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             />
             
             <AssetModal isOpen={isAssetModalOpen} onClose={() => setIsAssetModalOpen(false)} onSave={handleSaveAsset} assetToEdit={assetToEdit} preferredType={preferredAssetType} />
+            {sukukAssetForSchedule && (
+                <SukukPayoutScheduleModal
+                    isOpen={isSukukScheduleModalOpen}
+                    onClose={() => { setIsSukukScheduleModalOpen(false); setSukukAssetForSchedule(null); }}
+                    asset={sukukAssetForSchedule}
+                    accounts={data?.accounts ?? []}
+                    existingSchedule={(data.sukukPayoutSchedules ?? []).find((s) => s.assetId === sukukAssetForSchedule.id) ?? null}
+                    existingEvents={(data.sukukPayoutEvents ?? []).filter((e) => e.assetId === sukukAssetForSchedule.id)}
+                    onSaved={refreshData}
+                />
+            )}
             <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} goals={data?.goals ?? []} sarPerUsd={sarPerUsd} />
             <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
         </PageLayout>

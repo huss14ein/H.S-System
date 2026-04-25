@@ -6,7 +6,6 @@ import { ArrowTrendingUpIcon } from './components/icons/ArrowTrendingUpIcon';
 import { CreditCardIcon } from './components/icons/CreditCardIcon';
 import { TrophyIcon } from './components/icons/TrophyIcon';
 import { BuildingLibraryIcon } from './components/icons/BuildingLibraryIcon';
-import { ReceiptPercentIcon } from './components/icons/ReceiptPercentIcon';
 import { ClipboardDocumentListIcon } from './components/icons/ClipboardDocumentListIcon';
 import { ChartBarIcon } from './components/icons/ChartBarIcon';
 import { ShieldCheckIcon } from './components/icons/ShieldCheckIcon';
@@ -24,6 +23,7 @@ import { FlagIcon } from './components/icons/FlagIcon';
 import { BanknotesIcon } from './components/icons/BanknotesIcon';
 import { SparklesIcon } from './components/icons/SparklesIcon';
 import { EyeIcon } from './components/icons/EyeIcon';
+import { ReceiptPercentIcon } from './components/icons/ReceiptPercentIcon';
 
 /** User-friendly display names for pages (nav, command palette, document title) */
 export const PAGE_DISPLAY_NAMES: Partial<Record<Page, string>> = {
@@ -46,6 +46,7 @@ export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSV
   { name: 'Dashboard', icon: HomeIcon },
   { name: 'Wealth Ultra', icon: PresentationChartLineIcon },
   { name: 'Transactions', icon: CreditCardIcon },
+  { name: 'Installments', icon: ReceiptPercentIcon },
   { name: 'Statement Upload', icon: DocumentArrowUpIcon },
   { name: 'Statement History', icon: DocumentTextIcon },
   { name: 'Accounts', icon: BuildingLibraryIcon },

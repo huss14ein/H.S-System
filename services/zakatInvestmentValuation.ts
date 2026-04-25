@@ -67,8 +67,8 @@ export function summarizeZakatableInvestmentsForZakat(
       if (bookValue <= 0) continue;
       const grossValueSar = toSAR(bookValue, bookCurrency, sarPerUsd);
       const hawl = resolveInvestmentHawlStart(h, p.id, investmentTransactions);
-      const legacy = hawl.source === 'none';
-      const elig = evaluateHawlEligibility(hawl.startDate, asOf, legacy);
+      // Strict hawl: if we cannot infer a start date, do not count the position yet.
+      const elig = evaluateHawlEligibility(hawl.startDate, asOf, false);
       const zakatableValueSar = elig.eligible ? grossValueSar : 0;
       totalSar += zakatableValueSar;
       lines.push({
@@ -117,8 +117,8 @@ export function summarizeZakatableCommoditiesForZakat(
     const gross = Number(c.currentValue);
     if (!Number.isFinite(gross) || gross <= 0) continue;
     const hawl = resolveCommodityHawlStart(c);
-    const legacy = hawl.source === 'none';
-    const elig = evaluateHawlEligibility(hawl.startDate, asOf, legacy);
+    // Strict hawl: if we cannot infer a start date, do not count the lot yet.
+    const elig = evaluateHawlEligibility(hawl.startDate, asOf, false);
     const zakatableValueSar = elig.eligible ? gross : 0;
     totalSar += zakatableValueSar;
     lines.push({

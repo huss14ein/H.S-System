@@ -222,7 +222,7 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
             <SectionCard title="Hawl (holding period) & cash treatment" collapsible collapsibleSummary="≈354-day lunar rule for investments & commodities" defaultExpanded className="max-w-3xl mb-6">
                 <div className="space-y-3 text-sm text-slate-700">
                     <p>
-                        For <strong>investments</strong> and <strong>commodities</strong>, the app applies an approximate lunar <em>hawl</em> of <strong>354 days</strong> from a start date: your optional <strong>acquisition date</strong> on the holding, else the <strong>earliest recorded buy</strong> (investments) or <strong>created date</strong> (commodities). Amounts that have not yet completed a full hawl are shown but <strong>not</strong> added to the zakatable total. If no start date can be inferred, the position is still counted (legacy behavior) — set dates or record trades for stricter tracking.
+                        For <strong>investments</strong> and <strong>commodities</strong>, the app applies an approximate lunar <em>hawl</em> of <strong>354 days</strong> from a start date: your optional <strong>acquisition date</strong> on the holding, else the <strong>earliest recorded buy</strong> (investments) or <strong>created date</strong> (commodities). Amounts that have not yet completed a full hawl are shown but <strong>not</strong> added to the zakatable total. If no start date can be inferred, the position is shown but <strong>not counted</strong> until you add dates or record buy history.
                     </p>
                     <ul className="list-disc pl-5 space-y-1 text-xs sm:text-sm">
                         <li>

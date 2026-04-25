@@ -35,6 +35,26 @@ type BalanceSheetSlices = {
   investments: ReturnType<typeof getPersonalInvestments>;
 };
 
+/** Total SAR value of personal Sukuk rows under Assets (for snapshot audit / UI). */
+export function sumPersonalSukukAssetsSar(data: FinancialData | null | undefined): number {
+  if (!data) return 0;
+  return partitionPhysicalAssetsVsSukukSar(getPersonalAssets(data)).sukukSar;
+}
+
+/** Sukuk tracked under Assets is fixed-income / capital-markets exposure — bucket with Investments for charts (aligned with Investments workspace). */
+function partitionPhysicalAssetsVsSukukSar(
+  assets: Array<{ type?: string; value?: number }>,
+): { physicalSar: number; sukukSar: number } {
+  let physicalSar = 0;
+  let sukukSar = 0;
+  for (const asset of assets) {
+    const v = Math.max(0, Number(asset?.value) || 0);
+    if (asset?.type === 'Sukuk') sukukSar += v;
+    else physicalSar += v;
+  }
+  return { physicalSar, sukukSar };
+}
+
 function accumulateBalanceSheetSlices(
   slices: BalanceSheetSlices,
   exchangeRate: number,
@@ -75,7 +95,7 @@ function accumulateBalanceSheetSlices(
     (sum: number, ch: { currentValue?: number }) => sum + (ch.currentValue ?? 0),
     0
   );
-  const assetsSum = assets.reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0);
+  const { physicalSar: physicalAssetsSar, sukukSar: sukukAssetsSar } = partitionPhysicalAssetsVsSukukSar(assets);
   const totalInvestmentsValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
   let brokerageCashSAR = 0;
   if (options?.getAvailableCashForAccount) {
@@ -92,7 +112,8 @@ function accumulateBalanceSheetSlices(
     totalDebt,
     totalReceivable,
     totalCommodities,
-    assetsSum,
+    physicalAssetsSar,
+    sukukAssetsSar,
     totalInvestmentsValue,
     brokerageCashSAR,
   };
@@ -139,8 +160,8 @@ export function computeAllNetWorthChartBucketsSAR(
     options
   );
   const cash = b.cashAndSavingsPositive;
-  const investments = b.totalInvestmentsValue + b.brokerageCashSAR;
-  const physicalAndCommodities = b.assetsSum + b.totalCommodities;
+  const investments = b.totalInvestmentsValue + b.brokerageCashSAR + b.sukukAssetsSar;
+  const physicalAndCommodities = b.physicalAssetsSar + b.totalCommodities;
   const receivables = b.totalReceivable;
   const liabilities = -b.totalDebt;
   const netWorth = cash + investments + physicalAndCommodities + receivables + liabilities;
@@ -160,11 +181,12 @@ export function computePersonalNetWorthBreakdownSAR(
   }
   const b = accumulatePersonalBalanceSheet(data, exchangeRate, options);
   const totalAssets =
-    b.assetsSum +
+    b.physicalAssetsSar +
     b.cashAndSavingsPositive +
     b.totalCommodities +
     b.totalInvestmentsValue +
-    b.brokerageCashSAR;
+    b.brokerageCashSAR +
+    b.sukukAssetsSar;
 
   const netWorth = totalAssets - b.totalDebt + b.totalReceivable;
   return { totalAssets, totalDebt: b.totalDebt, totalReceivable: b.totalReceivable, netWorth };
@@ -184,8 +206,8 @@ export function computePersonalNetWorthChartBucketsSAR(
   }
   const b = accumulatePersonalBalanceSheet(data, exchangeRate, options);
   const cash = b.cashAndSavingsPositive;
-  const investments = b.totalInvestmentsValue + b.brokerageCashSAR;
-  const physicalAndCommodities = b.assetsSum + b.totalCommodities;
+  const investments = b.totalInvestmentsValue + b.brokerageCashSAR + b.sukukAssetsSar;
+  const physicalAndCommodities = b.physicalAssetsSar + b.totalCommodities;
   const receivables = b.totalReceivable;
   const liabilities = -b.totalDebt;
   const netWorth = cash + investments + physicalAndCommodities + receivables + liabilities;

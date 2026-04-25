@@ -19,8 +19,12 @@ export function budgetMonthlyEquivalentSar(b: Budget): number {
  * - Plus allocation slice of **remaining** rolling surplus after subtracting other goals' linked budget envelopes.
  */
 /** Rolling surplus minus all envelopes explicitly tagged with any goal (shared “what’s left” for %-allocation math). */
-export function rollingSurplusAfterAllGoalBudgetReservations(data: FinancialData | null | undefined): number {
-  const rolling = averageRollingMonthlyNetSurplus(data ?? null);
+export function rollingSurplusAfterAllGoalBudgetReservations(
+  data: FinancialData | null | undefined,
+  /** CurrencyContext SAR/USD rate — keeps rolling net aligned with mixed-currency accounts. */
+  uiExchangeRate?: number,
+): number {
+  const rolling = averageRollingMonthlyNetSurplus(data ?? null, 6, uiExchangeRate);
   let reserved = 0;
   (data?.budgets ?? []).forEach((b) => {
     const gid = String((b as Budget).goalId ?? '').trim();
@@ -302,7 +306,7 @@ export function computeGoalMonthlyFundingEnvelopeSar(args: {
   const rate = Number(args.sarPerUsd);
   const sarPerUsd = Number.isFinite(rate) && rate > 0 ? rate : 3.75;
   const gid = String(goal.id || '').trim();
-  const rollingSurplusMonthly = averageRollingMonthlyNetSurplus(data ?? null);
+  const rollingSurplusMonthly = averageRollingMonthlyNetSurplus(data ?? null, 6, sarPerUsd);
 
   const budgets = (data?.budgets ?? []) as Budget[];
   let assignedBudgetMonthly = 0;

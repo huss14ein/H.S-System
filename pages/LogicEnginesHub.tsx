@@ -2,6 +2,7 @@ import React, { useContext, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import PageLayout from '../components/PageLayout';
+import PageActionsDropdown from '../components/PageActionsDropdown';
 import SectionCard from '../components/SectionCard';
 import AIAdvisor from '../components/AIAdvisor';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
@@ -15,13 +16,7 @@ import {
   totalReturnAttribution,
 } from '../services/returnMeasurementEngine';
 import { compareStrategies, compareAllocationModels } from '../services/strategyComparisonEngine';
-import {
-  allocateCashAcrossBuckets,
-  detectIdleCash,
-  rankLiquiditySources,
-  suggestCashSweep,
-  type CashBucket,
-} from '../services/cashAllocationEngine';
+import { allocateCashAcrossBuckets, suggestCashSweep, type CashBucket } from '../services/cashAllocationEngine';
 import { portfolioFXAllocation } from '../services/fxEngine';
 import {
   seasonalityAdjustedExpense,
@@ -53,7 +48,7 @@ import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngin
 import { lifestyleGuardrailCheck, discretionarySpendApproval } from '../services/lifestyleGuardrailEngine';
 import { monthlyProvisionNeeded } from '../services/provisionEngine';
 import { computeLiquidityRunwayFromData } from '../services/liquidityRunwayEngine';
-import { savingsRateSar, netCashFlowForMonthSarDated } from '../services/financeMetrics';
+import { netCashFlowForMonthSarDated } from '../services/financeMetrics';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { debtStressScore } from '../services/debtEngines';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
@@ -130,11 +125,12 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
   const { trackAction } = useSelfLearning();
   const engines = useFinancialEnginesIntegration();
   const ef = useEmergencyFund(data ?? null);
-  const { formatCurrencyString } = useFormatCurrency();
-  const { exchangeRate } = useCurrency();
+  const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
+  const { exchangeRate, currency: displayCurrency } = useCurrency();
   const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
 
   const scoped = useMemo(() => getScopedData(data ?? null), [data]);
+  const goalResolvedMap = useMemo(() => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd), [data, sarPerUsd]);
   const netWorth = useMemo(
     () => computePersonalNetWorthSAR(data ?? null, sarPerUsd, { getAvailableCashForAccount }),
     [data, sarPerUsd, getAvailableCashForAccount]
@@ -212,8 +208,26 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
       ]),
     [bucketAllocInput, ef.targetAmount]
   );
-  const idleCash = useMemo(() => detectIdleCash(scoped.accounts, { minBalance: 1000 }), [scoped.accounts]);
-  const liqRanked = useMemo(() => rankLiquiditySources(scoped.accounts), [scoped.accounts]);
+  /** Accounts with ≥ 1,000 SAR equivalent liquid balance (fair across USD/SAR books). */
+  const idleCashSarQualifyingCount = useMemo(
+    () =>
+      scoped.accounts.filter((a) => {
+        const bal = Math.max(0, Number(a.balance) || 0);
+        const sarEq = toSAR(bal, a.currency === 'USD' ? 'USD' : 'SAR', sarPerUsd);
+        return sarEq >= 1000;
+      }).length,
+    [scoped.accounts, sarPerUsd]
+  );
+  const topLiquidAccountName = useMemo(() => {
+    const liqTypes = new Set(['Checking', 'Savings', 'Investment']);
+    let best = { name: '—' as string, sar: 0 };
+    for (const a of scoped.accounts) {
+      if (!a.type || !liqTypes.has(String(a.type))) continue;
+      const sarEq = toSAR(Math.max(0, Number(a.balance) || 0), a.currency === 'USD' ? 'USD' : 'SAR', sarPerUsd);
+      if (sarEq > best.sar) best = { name: (a.name || '—').trim() || '—', sar: sarEq };
+    }
+    return best.name;
+  }, [scoped.accounts, sarPerUsd]);
   const sweeps = useMemo(() => suggestCashSweep(cashBuckets, Math.max(0, netWorth * 0.01)), [cashBuckets, netWorth]);
 
   const fxBreakdown = useMemo(() => {
@@ -321,19 +335,21 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
   const renewalAlerts = useMemo(() => insuranceRenewalAlert({ existing: [] }), []);
 
   const firstGoal = scoped.goals[0];
+  const firstGoalSavedSar = firstGoal ? goalResolvedMap.get(firstGoal.id) ?? Number(firstGoal.currentAmount ?? 0) : 0;
+  const firstGoalTarget = firstGoal ? Number(firstGoal.targetAmount ?? 0) : 0;
   const goalSim = useMemo(() => {
     if (!firstGoal) return null;
     return simulateGoalCompletionProbability({
-      startingValue: firstGoal.currentAmount,
+      startingValue: Math.max(0, firstGoalSavedSar),
       monthlyContribution: (plan?.monthlyBudget ?? 0) * ((firstGoal.savingsAllocationPercent ?? 10) / 100),
-      goalAmount: firstGoal.targetAmount,
+      goalAmount: Math.max(0, firstGoalTarget),
       years: 5,
       expectedAnnualReturnPct: 6,
       annualVolatilityPct: 15,
       simulations: 800,
       seed: 42,
     });
-  }, [firstGoal, plan?.monthlyBudget]);
+  }, [firstGoal, firstGoalSavedSar, firstGoalTarget, plan?.monthlyBudget]);
 
   const portRange = useMemo(
     () =>
@@ -386,11 +402,11 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
       firstGoal
         ? explainGoalDelay({
             goalName: firstGoal.name,
-            gapPct: firstGoal.targetAmount > 0 ? (1 - firstGoal.currentAmount / firstGoal.targetAmount) * 100 : 0,
+            gapPct: firstGoalTarget > 0 ? (1 - firstGoalSavedSar / firstGoalTarget) * 100 : 0,
             allocPct: firstGoal.savingsAllocationPercent ?? 0,
           })
         : 'Add a goal in Goals to see delay explanations.',
-    [firstGoal]
+    [firstGoal, firstGoalSavedSar, firstGoalTarget]
   );
 
   const buyTranches = useMemo(
@@ -415,7 +431,12 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
 
   const income = monthlyCashflowSar.income;
   const expenses = monthlyCashflowSar.expenses;
-  const srPct = useMemo(() => savingsRateSar(scoped.txs, scoped.accounts, new Date(), sarPerUsd), [scoped.txs, scoped.accounts, sarPerUsd]);
+  const srPct = useMemo(() => {
+    const inc = monthlyCashflowSar.income;
+    const exp = monthlyCashflowSar.expenses;
+    if (inc <= 0) return 0;
+    return Math.max(0, Math.min(100, ((inc - exp) / inc) * 100));
+  }, [monthlyCashflowSar.income, monthlyCashflowSar.expenses]);
   const monthlyDebt = useMemo(
     () => estimateMonthlyDebtServiceSar(scoped.liabilities as Liability[]),
     [scoped.liabilities]
@@ -428,8 +449,6 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
     [scoped.accounts, sarPerUsd]
   );
   const debtStress = useMemo(() => debtStressScore(monthlyDebt, Math.max(1, income), liquid), [monthlyDebt, income, liquid]);
-
-  const goalResolvedMap = useMemo(() => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd), [data, sarPerUsd]);
 
   const goalAlerts = useMemo(
     () =>
@@ -516,8 +535,32 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
     if (fxBreakdown.positions.length === 0) {
       w.push('No checking/savings or investment holdings found for FX exposure.');
     }
+    const hasUsdCash = scoped.accounts.some(
+      (a) =>
+        (a.type === 'Checking' || a.type === 'Savings') && a.currency === 'USD' && Math.abs(Number(a.balance) || 0) > 0.01
+    );
+    if (hasUsdCash && !data?.wealthUltraConfig?.fxRate) {
+      w.push(
+        'You hold USD in cash accounts — set SAR per USD under Settings → Wealth Ultra so USD matches your preferred rate (otherwise the standard peg applies).'
+      );
+    }
+    const uiR = Number(exchangeRate);
+    if (!Number.isFinite(uiR) || uiR <= 0) {
+      w.push('Settings display FX is missing — conversions use the built-in SAR/USD fallback.');
+    }
     return w;
-  }, [snaps.length, ef.hasEssentialExpenseEstimate, monthlyCashflowSar.income, scoped.txs, scoped.liabilities, fxBreakdown.positions.length]);
+  }, [
+    snaps.length,
+    ef.hasEssentialExpenseEstimate,
+    monthlyCashflowSar.income,
+    monthlyCashflowSar.expenses,
+    scoped.txs,
+    scoped.accounts,
+    scoped.liabilities,
+    fxBreakdown.positions.length,
+    data?.wealthUltraConfig?.fxRate,
+    exchangeRate,
+  ]);
 
   const lifestyle = useMemo(
     () =>
@@ -525,9 +568,9 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
         emergencyFundMonths: ef.monthsCovered,
         runwayMonths: liquidityRunway?.monthsOfRunway ?? ef.monthsCovered,
         savingsRatePct: srPct,
-        goalSlippagePct: firstGoal && firstGoal.targetAmount > 0 ? (1 - firstGoal.currentAmount / firstGoal.targetAmount) * 100 : 0,
+        goalSlippagePct: firstGoal && firstGoalTarget > 0 ? (1 - firstGoalSavedSar / firstGoalTarget) * 100 : 0,
       }),
-    [ef.monthsCovered, liquidityRunway, srPct, firstGoal]
+    [ef.monthsCovered, liquidityRunway, srPct, firstGoal, firstGoalSavedSar, firstGoalTarget]
   );
   const discretionaryProbeAmount = useMemo(
     () =>
@@ -547,9 +590,9 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
         runwayMonths: liquidityRunway?.monthsOfRunway ?? ef.monthsCovered,
         savingsRatePct: srPct,
         discretionaryProposedAmount: discretionaryProbeAmount,
-        goalSlippagePct: firstGoal && firstGoal.targetAmount > 0 ? (1 - firstGoal.currentAmount / firstGoal.targetAmount) * 100 : 0,
+        goalSlippagePct: firstGoal && firstGoalTarget > 0 ? (1 - firstGoalSavedSar / firstGoalTarget) * 100 : 0,
       }),
-    [ef.monthsCovered, liquidityRunway, srPct, firstGoal, discretionaryProbeAmount]
+    [ef.monthsCovered, liquidityRunway, srPct, firstGoal, firstGoalSavedSar, firstGoalTarget, discretionaryProbeAmount]
   );
 
   const provisionDemo = useMemo(() => {
@@ -563,9 +606,26 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
     };
   }, [scoped.budgets]);
 
+  const pageNavActions =
+    setActivePage != null
+      ? [
+          { value: 'summary', label: 'Summary', onClick: () => { trackAction('logic-nav-summary', 'Engines & Tools'); setActivePage('Summary'); } },
+          { value: 'budgets', label: 'Budgets', onClick: () => { trackAction('logic-nav-budgets', 'Engines & Tools'); setActivePage('Budgets'); } },
+          { value: 'plan', label: 'Plan', onClick: () => { trackAction('logic-nav-plan', 'Engines & Tools'); setActivePage('Plan'); } },
+          { value: 'goals', label: 'Goals', onClick: () => { trackAction('logic-nav-goals', 'Engines & Tools'); setActivePage('Goals'); } },
+          { value: 'forecast', label: 'Forecast', onClick: () => { trackAction('logic-nav-forecast', 'Engines & Tools'); setActivePage('Forecast'); } },
+          { value: 'transactions', label: 'Transactions', onClick: () => { trackAction('logic-nav-tx', 'Engines & Tools'); setActivePage('Transactions'); } },
+          { value: 'settings', label: 'Settings', onClick: () => { trackAction('logic-nav-settings', 'Engines & Tools'); setActivePage('Settings'); } },
+        ]
+      : [];
+
   if (loading && !data) {
     return (
-      <PageLayout title="Behind the numbers" description="How your portfolio returns, cash flow, and retirement projections are calculated.">
+      <PageLayout
+        title="Behind the numbers"
+        description="Plain-language view of how your numbers are calculated."
+        action={pageNavActions.length > 0 ? <PageActionsDropdown label="Go to" placeholder="Open related page…" ariaLabel="Navigate from Logic & Engines" actions={pageNavActions} /> : undefined}
+      >
         <p className="text-gray-500">Loading…</p>
       </PageLayout>
     );
@@ -574,13 +634,46 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
   return (
     <PageLayout
       title="Behind the numbers"
-      description="How your portfolio returns, cash flow, and retirement projections are calculated—all using your real data."
+      description="Plain-language breakdown of returns, cash flow, FX, and guardrails — amounts are in SAR (Saudi riyal) so everything adds up the same way."
+      action={
+        pageNavActions.length > 0 ? (
+          <PageActionsDropdown label="Go to" placeholder="Open related page…" ariaLabel="Navigate from Logic & Engines" actions={pageNavActions} />
+        ) : undefined
+      }
     >
       <div className="space-y-6">
         <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
           <p className="text-sm text-slate-700">
-            <strong className="text-slate-900">What is this?</strong> A behind-the-scenes view of how Finova calculates things like returns, runway, and retirement projections. Cash flows, liquid balances, and FX examples are normalized to <strong>SAR</strong> using your accounts’ currencies and the app USD→SAR rate (Settings / Wealth Ultra FX when set).
+            <strong className="text-slate-900">What is this?</strong> A plain-language “how we calculated that” page — no accounting exam required. We convert every cash and investment line to{' '}
+            <strong>SAR</strong> (Saudi riyal) using each account’s currency and your USD→SAR rate (Settings and Wealth Ultra when you set them), so you never mix riyals and dollars by mistake.
           </p>
+        </div>
+
+        <div className="rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50/90 via-white to-slate-50/80 p-4 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wide text-indigo-900">Single yardstick (SAR)</p>
+              <p className="mt-1 text-sm text-slate-700">
+                Reference for conversions on this page: <strong className="tabular-nums">1 USD = {sarPerUsd.toFixed(4)} SAR</strong>
+                {data?.wealthUltraConfig?.fxRate ? (
+                  <span className="text-emerald-700"> — using your Wealth Ultra FX.</span>
+                ) : (
+                  <span> — using Settings or the standard peg when nothing is set.</span>
+                )}
+              </p>
+            </div>
+            <div className="shrink-0 rounded-lg border border-slate-200 bg-white/90 px-3 py-2 text-xs text-slate-600">
+              <p>
+                Display preference: <strong className="text-slate-900">{displayCurrency}</strong>
+              </p>
+              <p className="mt-1 tabular-nums">
+                Example: <span className="font-medium text-slate-800">{formatCurrencyString(1000, { inCurrency: 'SAR' })}</span>
+                {formatSecondaryEquivalent(1000, { inCurrency: 'SAR' }) ? (
+                  <span className="text-slate-500"> ≈ {formatSecondaryEquivalent(1000, { inCurrency: 'SAR' })}</span>
+                ) : null}
+              </p>
+            </div>
+          </div>
         </div>
 
         {logicValidationWarnings.length > 0 && (
@@ -613,11 +706,33 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
               <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => setActivePage?.('Settings')}>
                 Settings
               </button>
+              <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => setActivePage?.('Summary')}>
+                Summary
+              </button>
+              <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => setActivePage?.('Budgets')}>
+                Budgets
+              </button>
+              <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => setActivePage?.('Goals')}>
+                Goals
+              </button>
+              <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => setActivePage?.('Plan')}>
+                Plan
+              </button>
+              <button type="button" className="text-sm text-primary-600 hover:text-primary-700 underline" onClick={() => setActivePage?.('Transactions')}>
+                Transactions
+              </button>
             </div>
           )}
         </SectionCard>
 
-        <SectionCard title="Returns & benchmarks" infoHint="How your portfolio performed compared to a simple benchmark. Uses your saved net worth snapshots." collapsible collapsibleSummary="TWR, attribution, benchmark" defaultExpanded>
+        <SectionCard
+          title="Returns & benchmarks"
+          infoHint="How your portfolio performed compared to a simple benchmark. Uses your saved net worth snapshots."
+          collapsible
+          collapsibleSummary="TWR, attribution, benchmark"
+          defaultExpanded
+          headerAction={<span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-900">Mixed</span>}
+        >
           <ul className="text-sm space-y-1 text-gray-700">
             <li>Simple return (last two device net worth snapshots): {portfolioReturnPct.toFixed(2)}%</li>
             <li>Illustrative annualized return (engine example: 10% over 2y): {annualizedReturn(10, 2).toFixed(2)}%</li>
@@ -630,7 +745,12 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
           </ul>
         </SectionCard>
 
-        <SectionCard title="Strategy comparison" collapsible collapsibleSummary="Scenarios and allocation models">
+        <SectionCard
+          title="Strategy comparison"
+          collapsible
+          collapsibleSummary="Scenarios and allocation models"
+          headerAction={<span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950">Illustrative</span>}
+        >
           <p className="text-xs text-gray-500 mb-2">compareStrategies / compareAllocationModels</p>
           <p className="text-sm mb-2">Scenarios (projected NW): {strategyRank.map((s) => `${s.label}: ${formatCurrencyString(s.projectedNetWorth)}`).join(' · ')}</p>
           <ul className="text-sm text-gray-700">
@@ -642,8 +762,13 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
           </ul>
         </SectionCard>
 
-        <SectionCard title="Cash & liquidity" collapsible collapsibleSummary="Runway, buckets, idle cash">
-          <p className="text-xs text-gray-500 mb-2">cashAllocationEngine + liquidityRunwayEngine · amounts in SAR equivalent</p>
+        <SectionCard
+          title="Cash & liquidity"
+          collapsible
+          collapsibleSummary="Runway, buckets, idle cash"
+          headerAction={<span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900">Live</span>}
+        >
+          <p className="text-xs text-gray-500 mb-2">Uses your accounts and this month’s transactions · SAR equivalent (dated FX when available)</p>
           <ul className="text-sm space-y-1 text-gray-700">
             <li>
               This month cashflow (SAR): income {formatCurrencyString(income)} · expenses {formatCurrencyString(expenses)} · net{' '}
@@ -654,13 +779,18 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
               Bucket allocation example ({formatCurrencyString(bucketAllocInput)}):{' '}
               {bucketAlloc.map((b) => `${b.bucketId}: ${formatCurrencyString(b.amount, { digits: 0 })}`).join(', ')}
             </li>
-            <li>Idle cash accounts (≥1000 book): {idleCash.length}</li>
-            <li>Top liquid account: {liqRanked[0]?.name ?? '—'}</li>
+            <li>Accounts with ≥ 1,000 SAR equivalent idle balance: {idleCashSarQualifyingCount}</li>
+            <li>Highest SAR-equivalent liquid account: {topLiquidAccountName}</li>
             <li>Sweep ideas: {sweeps.length ? sweeps.map((s) => s.reason).join('; ') : 'None'}</li>
           </ul>
         </SectionCard>
 
-        <SectionCard title="FX" collapsible collapsibleSummary="Portfolio FX allocation">
+        <SectionCard
+          title="FX"
+          collapsible
+          collapsibleSummary="Portfolio FX allocation"
+          headerAction={<span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900">Live</span>}
+        >
           <ul className="text-sm text-gray-700 space-y-1">
             <li>
               Cash — SAR-denominated (SAR eq.): {formatCurrencyString(fxBreakdown.sarNative)} · USD accounts (SAR eq.):{' '}
@@ -677,7 +807,12 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
           </ul>
         </SectionCard>
 
-        <SectionCard title="Seasonality" collapsible collapsibleSummary="Adjusted expense, provision">
+        <SectionCard
+          title="Seasonality"
+          collapsible
+          collapsibleSummary="Adjusted expense, provision"
+          headerAction={<span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900">Live</span>}
+        >
           <ul className="text-sm text-gray-700 space-y-1">
             <li>This month adjusted expense: {formatCurrencyString(seasonAdj)}</li>
             <li>
@@ -689,6 +824,7 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
 
         <SectionCard
           title="Retirement & sensitivity"
+          headerAction={<span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-950">Model</span>}
         >
           <ul className="text-sm text-gray-700 space-y-1">
             <li className="text-xs text-gray-500">
@@ -705,7 +841,12 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
           </ul>
         </SectionCard>
 
-        <SectionCard title="Insurance (baseline)" collapsible collapsibleSummary="Gaps and renewal alerts">
+        <SectionCard
+          title="Insurance (baseline)"
+          collapsible
+          collapsibleSummary="Gaps and renewal alerts"
+          headerAction={<span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950">Baseline</span>}
+        >
           <ul className="text-sm text-gray-700 space-y-1">
             {insuranceGaps.gaps.map((g) => (
               <li key={g.type}>
@@ -716,9 +857,7 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
           </ul>
         </SectionCard>
 
-        <SectionCard
-          title="Probabilistic planning"
-        >
+        <SectionCard title="Probabilistic planning" headerAction={<span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-950">Model</span>}>
           {goalSim && firstGoal ? (
             <ul className="text-sm text-gray-700 space-y-1">
               <li>
@@ -737,7 +876,12 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
           )}
         </SectionCard>
 
-        <SectionCard title="Planning assumptions" collapsible collapsibleSummary="Assumption validation">
+        <SectionCard
+          title="Planning assumptions"
+          collapsible
+          collapsibleSummary="Assumption validation"
+          headerAction={<span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950">Demo check</span>}
+        >
           <p className="text-sm">{assumptionValidation.ok ? 'All demo assumptions in range.' : 'Validation issues:'}</p>
           {!assumptionValidation.ok && (
             <ul className="text-sm text-amber-800">
@@ -750,7 +894,12 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
           )}
         </SectionCard>
 
-        <SectionCard title="Behavioral & explainability" collapsible collapsibleSummary="Buy policy, cooldown">
+        <SectionCard
+          title="Behavioral & explainability"
+          collapsible
+          collapsibleSummary="Buy policy, cooldown"
+          headerAction={<span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950">Illustrative</span>}
+        >
           <ul className="text-sm text-gray-700 space-y-2">
             <li>Buy policy: {behaviorBuy.allowed ? 'Allowed' : `Blocked (${behaviorBuy.flags.join(', ')})`}</li>
             <li>{explainBuy}</li>
@@ -760,7 +909,12 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
           </ul>
         </SectionCard>
 
-        <SectionCard title="Order planning (demo ladder)" collapsible collapsibleSummary="Buy tranches">
+        <SectionCard
+          title="Order planning (demo ladder)"
+          collapsible
+          collapsibleSummary="Buy tranches"
+          headerAction={<span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950">Demo</span>}
+        >
           <ul className="text-sm text-gray-700">
             {buyTranches.map((t, i) => (
               <li key={i}>
@@ -770,7 +924,12 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
           </ul>
         </SectionCard>
 
-        <SectionCard title="UX guardrails" collapsible collapsibleSummary="Badge, hints, guards">
+        <SectionCard
+          title="UX guardrails"
+          collapsible
+          collapsibleSummary="Badge, hints, guards"
+          headerAction={<span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950">Demo</span>}
+        >
           <ul className="text-sm text-gray-700 space-y-1">
             <li>Badge: {badgeDemo.text} ({badgeDemo.severity})</li>
             <li>Field hint (amount): {hintDemo ?? '—'}</li>
@@ -778,13 +937,23 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
           </ul>
         </SectionCard>
 
-        <SectionCard title="Corporate actions (demo)" collapsible collapsibleSummary="Split demo">
+        <SectionCard
+          title="Corporate actions (demo)"
+          collapsible
+          collapsibleSummary="Split demo"
+          headerAction={<span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950">Demo</span>}
+        >
           <p className="text-sm text-gray-700">
             2:1 split: 100 sh @ 40 → {splitDemo.quantity.toFixed(2)} sh @ {splitDemo.avgCost.toFixed(4)} cost/sh
           </p>
         </SectionCard>
 
-        <SectionCard title="Risk lane" collapsible collapsibleSummary="Suggested profile">
+        <SectionCard
+          title="Risk lane"
+          collapsible
+          collapsibleSummary="Suggested profile"
+          headerAction={<span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900">Live</span>}
+        >
           <p className="text-sm text-gray-700">
             Lane: <strong>{riskLane.lane}</strong> → suggested profile {riskLane.suggestedProfile}
           </p>
@@ -795,7 +964,12 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
           </ul>
         </SectionCard>
 
-        <SectionCard title="Next best actions" collapsible collapsibleSummary="Prioritized actions">
+        <SectionCard
+          title="Next best actions"
+          collapsible
+          collapsibleSummary="Prioritized actions"
+          headerAction={<span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900">Live</span>}
+        >
           <ul className="text-sm space-y-2">
             {nextActions.slice(0, 6).map((a) => (
               <li key={a.id} className="border-b border-gray-100 pb-2">
@@ -821,7 +995,12 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
           </ul>
         </SectionCard>
 
-        <SectionCard title="Shock drill & scenario timeline" collapsible collapsibleSummary="Stress scenarios">
+        <SectionCard
+          title="Shock drill & scenario timeline"
+          collapsible
+          collapsibleSummary="Stress scenarios"
+          headerAction={<span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-950">Scenario</span>}
+        >
           {shock ? (
             <ul className="text-sm text-gray-700 space-y-1">
               <li>
@@ -843,7 +1022,12 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
           </ul>
         </SectionCard>
 
-        <SectionCard title="Engine integration (cross-engine)" collapsible collapsibleSummary="Alerts and recs">
+        <SectionCard
+          title="Engine integration (cross-engine)"
+          collapsible
+          collapsibleSummary="Alerts and recs"
+          headerAction={<span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900">Live</span>}
+        >
           {engines.analysis ? (
             <>
               <p className="text-sm text-gray-700 mb-3">
@@ -866,7 +1050,12 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
           )}
         </SectionCard>
 
-        <SectionCard title="Lifestyle guardrails & provisioning" collapsible collapsibleSummary="Guardrails, provision">
+        <SectionCard
+          title="Lifestyle guardrails & provisioning"
+          collapsible
+          collapsibleSummary="Guardrails, provision"
+          headerAction={<span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900">Live</span>}
+        >
           <ul className="text-sm text-gray-700 space-y-1">
             <li>Guardrail: {lifestyle.ok ? 'OK' : 'Flags: ' + lifestyle.flags.join(', ')}</li>
             <li>

@@ -28,6 +28,7 @@ import { CreditCardIcon } from '../components/icons/CreditCardIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import {
+    accumulateHouseholdYearCashflowSar,
     buildHouseholdBudgetPlan,
     buildHouseholdEngineInputFromPlanData,
     type HouseholdEngineProfile,
@@ -35,7 +36,6 @@ import {
 } from '../services/householdBudgetEngine';
 import { calculateDynamicBaselines, generatePredictiveSpend } from '../services/enhancedBudgetEngine';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
-import { countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { getPersonalTransactions, getPersonalAccounts } from '../utils/wealthScope';
 import { resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { buildAnnualPlanRows, formatAnnualPlanIncomeHint, type AnnualPlanRow } from '../services/annualPlanFromData';
@@ -57,8 +57,8 @@ const SCENARIO_PRESETS = [
 const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { data, loading } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
-    const { formatCurrencyString } = useFormatCurrency();
-    const { exchangeRate } = useCurrency();
+    const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
+    const { exchangeRate, currency: displayCurrency } = useCurrency();
     const sarPerUsd = useMemo(() => {
         if (data) hydrateSarPerUsdDailySeries(data, exchangeRate);
         return resolveSarPerUsd(data, exchangeRate);
@@ -315,6 +315,11 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         const ytdActualNet = ytdActualIncome - ytdActualExpenses;
         const ytdVariancePct = ytdProjectedNet !== 0 ? ((ytdActualNet - ytdProjectedNet) / Math.abs(ytdProjectedNet)) * 100 : 0;
 
+        // When planned net is very close to 0, % variance becomes misleading (division by a tiny baseline).
+        // Expose a delta so the UI can show a stable comparison.
+        const varianceSarFullYear = actualNetFullYear - projectedNet;
+        const ytdVarianceSar = ytdActualNet - ytdProjectedNet;
+
         return {
             totalPlannedIncome,
             totalPlannedExpenses,
@@ -330,6 +335,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             ytdProjectedNet,
             ytdActualNet,
             ytdVariancePct,
+            varianceSar: varianceSarFullYear,
+            ytdVarianceSar,
             planProgressEndIdx: endIdx,
         };
     }, [processedPlanData, year]);
@@ -473,14 +480,12 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             .filter((r: PlanRow) => r.type === 'expense')
             .reduce((sum: number, row: PlanRow) => sum + Number(row.monthly_actual?.[i] || 0), 0));
 
-        const incomeByMonth = Array(12).fill(0);
-        (transactions as Array<{ date: string; type?: string; amount?: number; category?: string }>).forEach((t) => {
-            const d = new Date(t.date);
-            if (d.getFullYear() !== year || !countsAsIncomeForCashflowKpi(t)) return;
-            incomeByMonth[d.getMonth()] += Math.max(0, Number(t.amount) || 0);
-        });
-        const withData = incomeByMonth.filter((v) => v > 0);
-        const suggested = withData.length > 0 ? Math.round(withData.reduce((a, b) => a + b, 0) / withData.length) : 0;
+        const txs = getPersonalTransactions(data ?? null);
+        const acc = getPersonalAccounts(data ?? null);
+        const { monthlyIncome: incomeByMonthSar } = accumulateHouseholdYearCashflowSar(data ?? null, txs, acc, year, exchangeRate);
+        const withData = incomeByMonthSar.filter((v: number) => v > 0);
+        const suggested =
+            withData.length > 0 ? Math.round(withData.reduce((a: number, b: number) => a + b, 0) / withData.length) : 0;
 
         const input = buildHouseholdEngineInputFromPlanData(
             monthlyIncomePlanned,
@@ -499,7 +504,20 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             }
         );
         return buildHouseholdBudgetPlan(input);
-    }, [processedPlanData, accounts, goals, transactions, year, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary, data, sarPerUsd]);
+    }, [
+        processedPlanData,
+        accounts,
+        goals,
+        year,
+        householdAdults,
+        householdKids,
+        householdOverrides,
+        engineProfile,
+        expectedMonthlySalary,
+        data,
+        sarPerUsd,
+        exchangeRate,
+    ]);
 
     const { household: householdConstraints } = useFinancialEnginesIntegration();
     const dynamicBaselines = useMemo(() => calculateDynamicBaselines(transactions as any[], 6), [transactions]);
@@ -557,8 +575,12 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         if (year === curY && totals && totals.ytdActualIncome < 1 && totals.ytdPlannedIncome > 100) {
             warnings.push('No income transactions YTD in this year—actual income is SAR 0 while planned uses salary/baseline. Add income on Transactions or set expected salary.');
         }
+        const hasUsdAccounts = accounts.some((a: Account) => a.currency === 'USD');
+        if (hasUsdAccounts && (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0)) {
+            warnings.push('USD accounts detected — confirm SAR per USD in the header so cash and plan actuals stay consistent.');
+        }
         return warnings;
-    }, [sarPerUsd, processedPlanData.length, year, totals]);
+    }, [sarPerUsd, processedPlanData.length, year, totals, accounts]);
     
     const renderCell = (value: number, limit: number) => {
         const percentage = limit > 0 ? (value / limit) * 100 : 0;
@@ -620,6 +642,23 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 </div>
             ) : (
             <div className="space-y-6 sm:space-y-8">
+            <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50/90 to-white px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm text-slate-700 shadow-sm">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className="inline-flex items-center rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-indigo-900">SAR plan math</span>
+                    <span>
+                        The grid and totals are built in <strong>SAR</strong> so they align with Goals, Budgets, and Transactions.
+                        {displayCurrency === 'USD' && (
+                            <span className="text-slate-600"> Display currency is USD — amounts convert for viewing only.</span>
+                        )}
+                    </span>
+                </div>
+                <div className="text-xs sm:text-sm tabular-nums text-slate-600 text-right">
+                    <span className="font-semibold text-slate-800">1 USD = {sarPerUsd.toFixed(2)} SAR</span>
+                    {displayCurrency === 'USD' && (
+                        <span className="block text-[11px] text-slate-500 mt-0.5">Example: SAR 10,000 ≈ {formatSecondaryEquivalent(10000)}</span>
+                    )}
+                </div>
+            </div>
             <div className="space-y-4 sm:space-y-5">
             {/* Data sources: Plan is fed from all these pages via DataContext */}
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-700">
@@ -778,8 +817,12 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 const summaryActualNet = isFutureYear ? null : isPastYear ? totals.actualNet : totals.ytdActualNet;
                 const summaryVariancePct =
                     isFutureYear ? null : isPastYear ? totals.variancePct : totals.ytdVariancePct;
+                const summaryVarianceSar =
+                    isFutureYear ? null : isPastYear ? totals.varianceSar : totals.ytdVarianceSar;
                 const summaryCompareLabel =
                     isFutureYear ? 'Future year — no actuals yet' : isPastYear ? 'Full-year actual vs full-year plan' : 'YTD actual vs YTD plan';
+                const baselineNet = isFutureYear ? null : isPastYear ? totals.projectedNet : totals.ytdProjectedNet;
+                const baselineTooSmall = baselineNet != null && Math.abs(baselineNet) < 5000;
                 return (
                 <div className="mt-4 cards-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div className={`p-4 rounded-xl border-2 min-w-0 overflow-hidden flex flex-col ${totals.projectedNet >= 0 ? 'bg-emerald-50/80 border-emerald-200' : 'bg-rose-50/80 border-rose-200'}`}>
@@ -801,9 +844,18 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     <div className="p-4 rounded-xl border-2 border-blue-200 bg-blue-50/30 min-w-0 overflow-hidden flex flex-col">
                         <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">Vs plan</p>
                         <p className={`metric-value text-xl font-bold tabular-nums w-full ${(summaryVariancePct ?? 0) >= 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
-                            {summaryVariancePct != null && (isPastYear ? totals.projectedNet !== 0 : totals.ytdProjectedNet !== 0)
-                                ? `${summaryVariancePct >= 0 ? '+' : ''}${summaryVariancePct.toFixed(0)}%`
-                                : '—'}
+                            {summaryVarianceSar != null && baselineNet != null ? (
+                                baselineTooSmall ? (
+                                    <span title="Planned net is close to zero; showing SAR delta for a stable comparison.">
+                                        {summaryVarianceSar >= 0 ? '+' : ''}
+                                        {formatCurrencyString(summaryVarianceSar, { inCurrency: 'SAR', digits: 0 })}
+                                    </span>
+                                ) : (
+                                    `${summaryVariancePct != null ? `${summaryVariancePct >= 0 ? '+' : ''}${summaryVariancePct.toFixed(0)}%` : '—'}`
+                                )
+                            ) : (
+                                '—'
+                            )}
                         </p>
                         <p className="text-xs text-gray-600 mt-0.5">{summaryCompareLabel}</p>
                     </div>

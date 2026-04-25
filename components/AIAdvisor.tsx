@@ -42,6 +42,7 @@ type AIContext =
     | 'cashflow'
     | 'goals'
     | 'analysis'
+    | 'forecast'
     | 'engines'
     | 'notifications'
     | 'settings'
@@ -179,6 +180,23 @@ const getAnalysisForPage = (
                 return getAIAnalysisPageInsights(contextData.spendingData, contextData.trendData, contextData.compositionData);
             }
             return Promise.resolve("Not enough data for a full analysis.");
+        case 'forecast':
+            if (
+                contextData?.baselineNetWorth != null &&
+                contextData?.projectedNetWorth != null &&
+                Array.isArray(contextData?.forecastTrendSample)
+            ) {
+                return getAIAnalysisPageInsights(
+                    [{ name: 'Monthly savings (model)', value: Number(contextData.monthlySavings) || 0 }],
+                    contextData.forecastTrendSample,
+                    [
+                        { name: 'Net worth (today)', value: Number(contextData.baselineNetWorth) || 0 },
+                        { name: 'Investments (today)', value: Number(contextData.baselineInvestments) || 0 },
+                        { name: 'Net worth (projected end)', value: Number(contextData.projectedNetWorth) || 0 },
+                    ],
+                );
+            }
+            return Promise.resolve('Projections are still loading. Adjust sliders or check your data.');
         case 'engines': {
             const ctx = contextData as LogicEnginesAiContext | undefined;
             if (!ctx || typeof ctx.netWorthSar !== 'number') {

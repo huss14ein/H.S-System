@@ -1,7 +1,7 @@
 import React, { createContext, useState, ReactNode, useEffect, useContext, useRef, useMemo, useCallback } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
-import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, WealthUltraSystemConfig, HOLDING_ASSET_CLASS_OPTIONS, type HoldingAssetClass, type TradeCurrency } from '../types';
+import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, WealthUltraSystemConfig, HOLDING_ASSET_CLASS_OPTIONS, type HoldingAssetClass, type TradeCurrency, type SukukPayoutSchedule, type SukukPayoutEvent } from '../types';
 import { getDefaultWealthUltraSystemConfig } from '../wealth-ultra/config';
 import {
   getPersonalAccounts,
@@ -33,11 +33,15 @@ import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
 import { deltaForInvestmentTrade } from '../services/investmentBalanceDelta';
 import { buildTransactionPayloadVariants } from '../services/transactionPayloadVariants';
+import { decodeInstallmentPaymentNote } from '../services/installments/installmentLinkNote';
+import type { PlanDraft } from '../services/investmentEngine/suggestions';
+import { applySuggestedPlansLocally } from '../services/investmentEngine/planWriter';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
     accounts: [], assets: [], liabilities: [], goals: [], transactions: [], recurringTransactions: [],
     investments: [], investmentTransactions: [], budgets: [], commodityHoldings: [], watchlist: [],
+    sukukPayoutSchedules: [], sukukPayoutEvents: [],
     settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275 },
     zakatPayments: [], priceAlerts: [], plannedTrades: [], notifications: [],
     investmentPlan: {
@@ -94,6 +98,8 @@ const HOLDING_QUANTITY_EPSILON = 0.00001;
 interface DataContextType {
   data: FinancialData;
   loading: boolean;
+  /** Force a reload from the backend (non-destructive). */
+  refreshData: () => Promise<void>;
   addAsset: (asset: Asset) => Promise<void>;
   updateAsset: (asset: Asset) => Promise<void>;
   deleteAsset: (assetId: string) => Promise<void>;
@@ -142,9 +148,11 @@ interface DataContextType {
   addPriceAlert: (alert: Omit<PriceAlert, 'id' | 'user_id' | 'status' | 'createdAt'>) => Promise<void>;
   updatePriceAlert: (alert: PriceAlert) => Promise<void>;
   deletePriceAlert: (alertId: string) => Promise<void>;
-  addPlannedTrade: (plan: Omit<PlannedTrade, 'id' | 'user_id'>) => Promise<void>;
-  updatePlannedTrade: (plan: PlannedTrade) => Promise<void>;
+  addPlannedTrade: (plan: Omit<PlannedTrade, 'id' | 'user_id'>) => Promise<boolean>;
+  updatePlannedTrade: (plan: PlannedTrade) => Promise<boolean>;
   deletePlannedTrade: (planId: string) => Promise<void>;
+  /** Auto-create/update plans from engine suggestions (equities only in v1). */
+  applySuggestedPlans: (drafts: PlanDraft[], opts?: { planCurrency?: TradeCurrency }) => Promise<{ created: number; updated: number; skipped: number; errors: string[] }>;
   saveInvestmentPlan: (plan: InvestmentPlanSettings, portfolioId?: string) => Promise<void>;
   addUniverseTicker: (ticker: Omit<UniverseTicker, 'id' | 'user_id'>) => Promise<void>;
   updateUniverseTickerStatus: (tickerId: string, status: TickerStatus, updates?: Partial<UniverseTicker>) => Promise<void>;
@@ -798,6 +806,44 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const transactionPayloadVariants = buildTransactionPayloadVariants;
 
+    const normalizeSukukPayoutScheduleRow = (r: any): SukukPayoutSchedule => ({
+        id: r.id,
+        user_id: r.user_id ?? r.userId,
+        assetId: r.asset_id ?? r.assetId,
+        investmentAccountId: r.investment_account_id ?? r.investmentAccountId,
+        currency: (r.currency ?? 'SAR') as TradeCurrency,
+        cadence: r.cadence,
+        dayOfMonth: r.day_of_month ?? r.dayOfMonth ?? null,
+        couponAmount: r.coupon_amount ?? r.couponAmount ?? null,
+        principalAmount: r.principal_amount ?? r.principalAmount ?? null,
+        startDate: r.start_date ?? r.startDate ?? null,
+        endDate: r.end_date ?? r.endDate ?? null,
+        enabled: r.enabled ?? true,
+        metadata: (r.metadata ?? {}) as Record<string, unknown>,
+        createdAt: r.created_at ?? r.createdAt,
+        updatedAt: r.updated_at ?? r.updatedAt,
+    });
+
+    const normalizeSukukPayoutEventRow = (r: any): SukukPayoutEvent => ({
+        id: r.id,
+        user_id: r.user_id ?? r.userId,
+        scheduleId: r.schedule_id ?? r.scheduleId,
+        assetId: r.asset_id ?? r.assetId,
+        investmentAccountId: r.investment_account_id ?? r.investmentAccountId,
+        kind: r.kind,
+        payoutDate: r.payout_date ?? r.payoutDate,
+        amount: roundMoney(Number(r.amount ?? 0)),
+        currency: (r.currency ?? 'SAR') as TradeCurrency,
+        posted: Boolean(r.posted),
+        postedAt: r.posted_at ?? r.postedAt ?? null,
+        postedInvestmentTransactionId: r.posted_investment_transaction_id ?? r.postedInvestmentTransactionId ?? null,
+        metadata: (r.metadata ?? {}) as Record<string, unknown>,
+        createdAt: r.created_at ?? r.createdAt,
+    });
+
+    const trySelectOptionalTable = <T,>(q: PromiseLike<any>) =>
+        q.then((r: any) => r, () => ({ data: [] as T[], error: { code: 'PGRST205', message: 'Table not found' } }));
+
     const fetchData = async () => {
         if (!auth?.user || !supabase) {
             setLoading(false);
@@ -806,9 +852,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const db = supabase;
         setLoading(true);
         try {
-            // recurring_transactions may not exist if migration not run; fetch so it never rejects
-            const recurringPromise = db.from('recurring_transactions').select('*').eq('user_id', auth.user.id)
-                .then((r: any) => r, () => ({ data: [] as any[], error: { code: 'PGRST205', message: 'Table not found' } }));
+            // Optional tables: fetch so they never reject (migrations may not be run yet)
+            const recurringPromise = trySelectOptionalTable<any>(db.from('recurring_transactions').select('*').eq('user_id', auth.user.id));
+            const sukukSchedulesPromise = trySelectOptionalTable<any>(db.from('sukuk_payout_schedules').select('*').eq('user_id', auth.user.id));
+            const sukukEventsPromise = trySelectOptionalTable<any>(db.from('sukuk_payout_events').select('*').eq('user_id', auth.user.id));
 
             const fetchPromises = [
                 db.from('accounts').select('*').eq('user_id', auth.user.id),
@@ -831,9 +878,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('status_change_log').select('*').eq('user_id', auth.user.id),
                 db.from('execution_logs').select('*').eq('user_id', auth.user.id).order('created_at', { ascending: false }),
                 recurringPromise,
-                db.from('budget_requests').select('*').eq('user_id', auth.user.id)
+                db.from('budget_requests').select('*').eq('user_id', auth.user.id),
+                sukukSchedulesPromise,
+                sukukEventsPromise,
             ];
-            const keys = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'investments', 'investmentTransactions', 'budgets', 'watchlist', 'settings', 'zakatPayments', 'priceAlerts', 'commodityHoldings', 'plannedTrades', 'investmentPlan', 'portfolioUniverse', 'statusChangeLog', 'executionLogs', 'recurringTransactions', 'budgetRequests'] as const;
+            const keys = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'investments', 'investmentTransactions', 'budgets', 'watchlist', 'settings', 'zakatPayments', 'priceAlerts', 'commodityHoldings', 'plannedTrades', 'investmentPlan', 'portfolioUniverse', 'statusChangeLog', 'executionLogs', 'recurringTransactions', 'budgetRequests', 'sukukPayoutSchedules', 'sukukPayoutEvents'] as const;
             const settled = await Promise.allSettled(fetchPromises);
             const emptyResult = (err?: any) => ({ data: null, error: err || { code: 'FETCH_FAILED' } });
             const results = settled.map((s, i) => {
@@ -841,8 +890,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 console.error(`Error fetching ${keys[i]}:`, s.reason);
                 return emptyResult(s.reason);
             });
-            const [accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, recurringTransactions, budgetRequests] = results;
-            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, recurringTransactions, budgetRequests };
+            const [accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, recurringTransactions, budgetRequests, sukukPayoutSchedules, sukukPayoutEvents] = results;
+            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, recurringTransactions, budgetRequests, sukukPayoutSchedules, sukukPayoutEvents };
             Object.entries(allFetches).forEach(([key, value]) => {
               if (value?.error && value.error.code !== 'PGRST116') console.error(`Error fetching ${key}:`, value.error);
             });
@@ -857,6 +906,68 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 return resolved ? { ...norm, accountId: resolved } : norm;
             });
             const ownedAccounts = filterOwnedRows(normalizedAccounts);
+
+            const normalizedSukukSchedules = filterOwnedRows((sukukPayoutSchedules.data as any[]) || []).map(normalizeSukukPayoutScheduleRow);
+            const normalizedSukukEvents = filterOwnedRows((sukukPayoutEvents.data as any[]) || []).map(normalizeSukukPayoutEventRow);
+
+            // Auto-post due Sukuk payouts into investment_transactions so the platform cash becomes reinvestable.
+            // Idempotent: events are marked posted and store the created investment transaction id.
+            const todayYmd = new Date().toISOString().slice(0, 10);
+            const dueEvents = normalizedSukukEvents
+                .filter((e) => !e.posted && e.amount > 0 && String(e.payoutDate) <= todayYmd);
+            let appendedInvestmentTx: InvestmentTransaction[] = [];
+            const postedEventIds = new Set<string>();
+            if (dueEvents.length) {
+                try {
+                    for (const ev of dueEvents.slice(0, 50)) {
+                        const symbol = `SUKUK:${String(ev.assetId).slice(0, 8)}:${ev.kind.toUpperCase()}`;
+                        const txType: InvestmentTransaction['type'] = ev.kind === 'principal' ? 'deposit' : 'dividend';
+                        const payload: Omit<InvestmentTransaction, 'id' | 'user_id'> = {
+                            accountId: ev.investmentAccountId,
+                            date: ev.payoutDate,
+                            type: txType,
+                            symbol,
+                            quantity: 0,
+                            price: 0,
+                            total: ev.amount,
+                            currency: ev.currency,
+                        };
+                        // Insert (with best-effort payload variants for schema drift) then mark event as posted.
+                        let inserted: any | null = null;
+                        for (const variant of tradePayloadVariants(payload)) {
+                            const res = await db.from('investment_transactions').insert(withUser(variant)).select('*').maybeSingle();
+                            if (!res.error && res.data) {
+                                inserted = res.data;
+                                break;
+                            }
+                        }
+                        if (inserted?.id) {
+                            const postUpdate = await db
+                                .from('sukuk_payout_events')
+                                .update({ posted: true, posted_at: new Date().toISOString(), posted_investment_transaction_id: inserted.id })
+                                .eq('id', ev.id)
+                                .eq('user_id', auth.user.id)
+                                // Verify at least one row was actually updated (defense-in-depth).
+                                .select('id')
+                                .maybeSingle();
+                            if (postUpdate.error || !postUpdate.data?.id) {
+                                // If we can't mark the payout as posted, try to rollback the inserted investment transaction
+                                // to avoid duplicate posting on next refresh.
+                                try {
+                                    await db.from('investment_transactions').delete().eq('id', inserted.id);
+                                } catch {
+                                    // ignore rollback failures; DB remains source of truth.
+                                }
+                            } else {
+                                appendedInvestmentTx.push(normalizeInvestmentTransaction(inserted));
+                                postedEventIds.add(ev.id);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Sukuk auto-post skipped:', e);
+                }
+            }
             // Check if user is admin (has special email or role)
             const isAdmin = auth.user.email?.toLowerCase().includes('admin') || 
                            auth.user.email?.toLowerCase().includes('hussein') ||
@@ -925,7 +1036,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         holdings,
                     };
                 }),
-                investmentTransactions: normalizedInvestmentTransactions,
+                investmentTransactions: appendedInvestmentTx.length ? [...normalizedInvestmentTransactions, ...appendedInvestmentTx] : normalizedInvestmentTransactions,
+                sukukPayoutSchedules: normalizedSukukSchedules,
+                sukukPayoutEvents: postedEventIds.size
+                    ? normalizedSukukEvents.map((e) => (postedEventIds.has(e.id) ? { ...e, posted: true } : e))
+                    : normalizedSukukEvents,
                 budgets: filterOwnedRows(budgets.data as any[]).map((b: any) => ({
                     ...b,
                     period: b.period ?? 'monthly',
@@ -968,6 +1083,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } finally {
             setLoading(false);
         }
+    };
+
+    const refreshData = async () => {
+        await fetchData();
     };
 
 
@@ -1383,8 +1502,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const sourceMonth = sourceDate.getMonth() + 1;
 
         const { data: sourceBudgets, error } = await supabase.from('budgets').select('*').match({ user_id: auth.user.id, year: sourceYear, month: sourceMonth });
-        if (error) { console.error("Error fetching source budgets:", error); toast("Could not fetch last month's budgets.", 'error'); return; }
-        if (!sourceBudgets || sourceBudgets.length === 0) { toast("No budgets found for the previous month to copy.", 'error'); return; }
+        if (error) { console.error("Error fetching source budgets:", error); toast("Could not fetch last month's budgets.", 'warning'); return; }
+        if (!sourceBudgets || sourceBudgets.length === 0) { toast("No budgets found for the previous month to copy.", 'info'); return; }
 
         const existingTargetCategories = new Set((data?.budgets ?? []).filter(b => b.year === targetYear && b.month === targetMonth).map(b => b.category));
         
@@ -1636,6 +1755,34 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 userId: auth.user.id,
             });
             await applyLedgerAccountDeltaForTransaction(normalized.accountId, Number(normalized.amount) || 0);
+
+            // Installment linkage: if this transaction is marked as an installment payment, mark that installment as PAID.
+            // This prevents double-counting between (a) budget projection and (b) real expense transaction.
+            try {
+                const link = decodeInstallmentPaymentNote((normalized as any).note);
+                if (link?.installmentId) {
+                    // `installments` has no `user_id` column; ownership is via `installment_plans.user_id`.
+                    // Verify ownership explicitly before updating (defense-in-depth; RLS remains the main gate).
+                    const { data: owned } = await supabase
+                        .from('installments')
+                        .select('id, plan_id, installment_plans!inner(user_id)')
+                        .eq('id', link.installmentId)
+                        .eq('installment_plans.user_id', auth.user.id)
+                        .maybeSingle();
+                    if (!owned?.id) throw new Error('Installment not owned by current user.');
+                    await supabase
+                        .from('installments')
+                        .update({
+                            status: 'PAID',
+                            paid_at: new Date(normalized.date).toISOString(),
+                            failure_code: null,
+                            failure_message: null,
+                        })
+                        .match({ id: link.installmentId });
+                }
+            } catch (e) {
+                console.warn('Failed to mark installment as paid:', e);
+            }
         }
     };
     const addTransfer = async (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string, feeAmount?: number) => {
@@ -1932,6 +2079,40 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 summary: `${normalized.type}: ${String(normalized.description ?? '').slice(0, 120)}`,
                 userId: auth.user.id,
             });
+
+            // If installment link changed, keep installment status consistent.
+            try {
+                const prevLink = decodeInstallmentPaymentNote((prev as any)?.note);
+                const nextLink = decodeInstallmentPaymentNote((normalized as any)?.note);
+                const prevId = prevLink?.installmentId ?? null;
+                const nextId = nextLink?.installmentId ?? null;
+                if (prevId && prevId !== nextId) {
+                    const { data: ownedPrev } = await supabase
+                        .from('installments')
+                        .select('id, plan_id, installment_plans!inner(user_id)')
+                        .eq('id', prevId)
+                        .eq('installment_plans.user_id', auth.user.id)
+                        .maybeSingle();
+                    if (ownedPrev?.id) {
+                        await supabase.from('installments').update({ status: 'SCHEDULED', paid_at: null }).match({ id: prevId });
+                    }
+                }
+                if (nextId) {
+                    const { data: ownedNext } = await supabase
+                        .from('installments')
+                        .select('id, plan_id, installment_plans!inner(user_id)')
+                        .eq('id', nextId)
+                        .eq('installment_plans.user_id', auth.user.id)
+                        .maybeSingle();
+                    if (!ownedNext?.id) throw new Error('Installment not owned by current user.');
+                    await supabase
+                        .from('installments')
+                        .update({ status: 'PAID', paid_at: new Date(normalized.date).toISOString() })
+                        .match({ id: nextId });
+                }
+            } catch (e) {
+                console.warn('Failed to sync installment link on update:', e);
+            }
         }
     };
     const deleteTransaction = async (transactionId: string) => {
@@ -1951,6 +2132,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 summary: prevTx ? `Removed: ${String(prevTx.description ?? '').slice(0, 120)}` : 'Transaction removed',
                 userId: auth.user.id,
             });
+
+            // If deleted transaction was an installment payment, unmark it so budgets project it again.
+            try {
+                const link = decodeInstallmentPaymentNote((prevTx as any)?.note);
+                if (link?.installmentId) {
+                    const { data: owned } = await supabase
+                        .from('installments')
+                        .select('id, plan_id, installment_plans!inner(user_id)')
+                        .eq('id', link.installmentId)
+                        .eq('installment_plans.user_id', auth.user.id)
+                        .maybeSingle();
+                    if (owned?.id) {
+                        await supabase.from('installments').update({ status: 'SCHEDULED', paid_at: null }).match({ id: link.installmentId });
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to unmark installment on delete:', e);
+            }
         }
     };
 
@@ -2666,35 +2865,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             insertedCashLedgerRows = 1;
         }
         
-        // 3. For deposits/withdrawals with linked accounts, create corresponding cash account transactions
-        if ((trade.type === 'deposit' || trade.type === 'withdrawal') && linkedCashAccountId && investmentAccount) {
-            try {
-                const cashAccount = (data?.accounts ?? []).find((a: Account) => a.id === linkedCashAccountId);
-                if (cashAccount) {
-                    const description = trade.type === 'deposit' 
-                        ? `Transfer to ${investmentAccount.name}`
-                        : `Transfer from ${investmentAccount.name}`;
-                    const amount = trade.type === 'deposit' 
-                        ? -Math.abs(tradeTotal) // Negative (expense from cash account)
-                        : Math.abs(tradeTotal); // Positive (income to cash account)
-                    
-                    // Create the transaction in the cash account
-                    await addTransaction({
-                        date: trade.date,
-                        description,
-                        amount,
-                        category: 'Transfer',
-                        type: trade.type === 'deposit' ? 'expense' : 'income',
-                        accountId: linkedCashAccountId,
-                        transferGroupId: (trade as any).transferGroupId,
-                        transferRole: trade.type === 'deposit' ? 'principal_out' : 'principal_in',
-                    });
-                }
-            } catch (cashTxError) {
-                console.warn("Failed to create corresponding cash account transaction:", cashTxError);
-                // Don't fail the investment transaction if cash transaction fails
-            }
-        }
+        // IMPORTANT: do not auto-create cash `transactions` here.
+        // - Deposits/withdrawals are already handled by the atomic RPC path when available (it inserts the cash legs).
+        // - When RPC is missing, we still record the investment transaction and update balances, but we avoid creating
+        //   additional cash transactions because it can double-count with user-entered transfers.
 
         // 3. Process trade logic (skip for deposit/withdrawal / dividend — dividend only updates ledger cash)
         if (isCashFlow) {
@@ -2824,21 +2998,51 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Planned Trades ---
-    const addPlannedTrade = async (plan: Omit<PlannedTrade, 'id' | 'user_id'>) => {
-        if(!supabase) return;
+    const addPlannedTrade = async (plan: Omit<PlannedTrade, 'id' | 'user_id'>): Promise<boolean> => {
+        if(!supabase) return false;
         const v = validatePlannedTrade({ symbol: plan.symbol, name: plan.name, tradeType: plan.tradeType, conditionType: plan.conditionType, targetValue: plan.targetValue, quantity: plan.quantity, amount: plan.amount, priority: plan.priority });
-        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return false; }
         const { data: newPlan, error } = await supabase.from('planned_trades').insert(withUser(plan)).select().single();
-        if (error) { console.error(error); }
-        else if (newPlan) { setData(prev => ({ ...prev, plannedTrades: [...prev.plannedTrades, newPlan] })); }
+        if (error) { console.error(error); return false; }
+        if (newPlan) { setData(prev => ({ ...prev, plannedTrades: [...prev.plannedTrades, newPlan] })); return true; }
+        return false;
     };
-    const updatePlannedTrade = async (plan: PlannedTrade) => {
-        if(!supabase || !auth?.user) return;
+    const updatePlannedTrade = async (plan: PlannedTrade): Promise<boolean> => {
+        if(!supabase || !auth?.user) return false;
         const v = validatePlannedTrade({ symbol: plan.symbol, name: plan.name, tradeType: plan.tradeType, conditionType: plan.conditionType, targetValue: plan.targetValue, quantity: plan.quantity, amount: plan.amount, priority: plan.priority });
-        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return false; }
         const { error } = await supabase.from('planned_trades').update(plan).match({ id: plan.id, user_id: auth.user.id });
-        if (error) { console.error(error); }
-        else { setData(prev => ({ ...prev, plannedTrades: prev.plannedTrades.map(p => p.id === plan.id ? plan : p) })); }
+        if (error) { console.error(error); return false; }
+        setData(prev => ({ ...prev, plannedTrades: prev.plannedTrades.map(p => p.id === plan.id ? plan : p) }));
+        return true;
+    };
+    const applySuggestedPlans = async (
+        drafts: PlanDraft[],
+        opts?: { planCurrency?: TradeCurrency },
+    ): Promise<{ created: number; updated: number; skipped: number; errors: string[] }> => {
+        const planCurrency = (opts?.planCurrency as TradeCurrency) || ((data?.investmentPlan?.budgetCurrency as TradeCurrency) || 'SAR');
+        try {
+            const { toCreate, toUpdate, skipped } = applySuggestedPlansLocally({
+                drafts,
+                existingPlans: data?.plannedTrades ?? [],
+                planCurrency,
+                cooldownHours: 12,
+            });
+            let created = 0;
+            let updated = 0;
+            const errors: string[] = [];
+            for (const c of toCreate) {
+                const ok = await addPlannedTrade(c);
+                if (ok) created += 1;
+            }
+            for (const u of toUpdate) {
+                const ok = await updatePlannedTrade(u);
+                if (ok) updated += 1;
+            }
+            return { created, updated, skipped, errors };
+        } catch (e) {
+            return { created: 0, updated: 0, skipped: drafts.length, errors: [e instanceof Error ? e.message : String(e)] };
+        }
     };
     const deletePlannedTrade = async (planId: string) => {
         if(!supabase || !auth?.user) return;
@@ -3252,7 +3456,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         })();
     }, [loading, auth?.user?.id, data.investments]);
 
-    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, applySuggestedPlans, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };
