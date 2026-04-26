@@ -52,7 +52,10 @@ export interface SpendingTrend {
 }
 
 export interface PredictiveForecast {
+  /** Month-of-year (1–12) for display. */
   month: number;
+  /** Relative offset from the latest observed month (1 = next month). */
+  offset: number;
   predictedIncome: number;
   predictedExpense: number;
   predictedNet: number;
@@ -134,55 +137,61 @@ export function predictFutureMonths(
   if (!months || months.length < 3) return forecasts;
   
   try {
-    // Calculate averages and trends from last 3 months (use actual if available, otherwise planned)
-    const recentMonths = months.slice(-3);
-    const avgIncome = recentMonths.reduce((sum, m) => {
-      const income = m.incomeActual > 0 ? m.incomeActual : m.incomePlanned;
-      return sum + Math.max(0, income);
-    }, 0) / recentMonths.length;
+    // Use a wider sample for stability: last 6 months (or fewer if not available).
+    const recentMonths = months.slice(-Math.min(6, months.length));
+    const incomeValues = recentMonths.map((m) => Math.max(0, Number(m.incomeActual) > 0 ? Number(m.incomeActual) : Number(m.incomePlanned) || 0));
+    const expenseValues = recentMonths.map((m) => Math.max(0, effectiveMonthExpense(m)));
 
-    const avgExpense =
-      recentMonths.reduce((sum, m) => sum + effectiveMonthExpense(m), 0) / recentMonths.length;
+    const avgIncome = incomeValues.reduce((s, v) => s + v, 0) / Math.max(1, incomeValues.length);
+    const avgExpense = expenseValues.reduce((s, v) => s + v, 0) / Math.max(1, expenseValues.length);
 
-    // Calculate trend (use actual if available)
-    const incomeValues = recentMonths.map((m) => (m.incomeActual > 0 ? m.incomeActual : m.incomePlanned));
-    const expenseValues = recentMonths.map((m) => effectiveMonthExpense(m));
+    // Trend based on endpoints (simple + robust): (last - first) / (n - 1)
+    const denom = Math.max(1, incomeValues.length - 1);
+    const incomeTrend = (incomeValues[incomeValues.length - 1] - incomeValues[0]) / denom;
+    const expenseTrend = (expenseValues[expenseValues.length - 1] - expenseValues[0]) / denom;
+
+    // Confidence: combine income + expense variability (coefficient of variation).
+    const variance = (xs: number[], mean: number) =>
+      xs.reduce((sum, val) => {
+        const diff = val - mean;
+        return sum + diff * diff;
+      }, 0) / Math.max(1, xs.length);
+    const incomeCv = avgIncome > 0 ? Math.sqrt(Math.max(0, variance(incomeValues, avgIncome))) / avgIncome : 0;
+    const expenseCv = avgExpense > 0 ? Math.sqrt(Math.max(0, variance(expenseValues, avgExpense))) / avgExpense : 0;
+    const combinedCv = Math.max(incomeCv, expenseCv);
+
+    const confidence: 'high' | 'medium' | 'low' = combinedCv < 0.12 ? 'high' : combinedCv < 0.28 ? 'medium' : 'low';
     
-    const incomeTrend = incomeValues.length >= 2
-      ? (incomeValues[incomeValues.length - 1] - incomeValues[0]) / incomeValues.length
-      : 0;
-    const expenseTrend = expenseValues.length >= 2
-      ? (expenseValues[expenseValues.length - 1] - expenseValues[0]) / expenseValues.length
-      : 0;
-    
-    // Calculate variance for confidence
-    const incomeVariance = incomeValues.reduce((sum, val) => {
-      const diff = val - avgIncome;
-      return sum + (diff * diff);
-    }, 0) / incomeValues.length;
-    const incomeStdDev = Math.sqrt(Math.max(0, incomeVariance));
-    const incomeCv = avgIncome > 0 ? incomeStdDev / avgIncome : 0;
-    
-    const confidence: 'high' | 'medium' | 'low' = incomeCv < 0.1 ? 'high' : incomeCv < 0.25 ? 'medium' : 'low';
-    
+    const lastObservedMonth = recentMonths[recentMonths.length - 1];
+    const lastMonthNum = lastObservedMonth?.month ?? (lastObservedMonth?.monthIndex ?? (months.length - 1)) + 1;
+
     for (let i = 1; i <= forecastMonths; i++) {
-      const predictedIncome = Math.max(0, avgIncome + (incomeTrend * i));
-      const predictedExpense = Math.max(0, avgExpense + (expenseTrend * i));
+      // Clamp trends so a single outlier month doesn't explode projections.
+      const maxIncomeStep = avgIncome * 0.12;
+      const maxExpenseStep = avgExpense * 0.12;
+      const incomeStep = Math.max(-maxIncomeStep, Math.min(maxIncomeStep, incomeTrend)) * i;
+      const expenseStep = Math.max(-maxExpenseStep, Math.min(maxExpenseStep, expenseTrend)) * i;
+
+      const predictedIncome = Math.max(0, avgIncome + incomeStep);
+      const predictedExpense = Math.max(0, avgExpense + expenseStep);
       const predictedNet = predictedIncome - predictedExpense;
       
       const factors: string[] = [];
-      if (avgIncome > 0 && Math.abs(incomeTrend) > avgIncome * 0.05) {
-        factors.push(incomeTrend > 0 ? 'Increasing income trend' : 'Decreasing income trend');
+      if (avgIncome > 0 && Math.abs(incomeTrend) > avgIncome * 0.04) {
+        factors.push(incomeTrend > 0 ? 'Income trend up (recent months)' : 'Income trend down (recent months)');
       }
-      if (avgExpense > 0 && Math.abs(expenseTrend) > avgExpense * 0.05) {
-        factors.push(expenseTrend > 0 ? 'Increasing expense trend' : 'Decreasing expense trend');
+      if (avgExpense > 0 && Math.abs(expenseTrend) > avgExpense * 0.04) {
+        factors.push(expenseTrend > 0 ? 'Expense trend up (recent months)' : 'Expense trend down (recent months)');
       }
-      if (incomeCv > 0.25) {
-        factors.push('High income variability');
+      if (combinedCv > 0.28) {
+        factors.push('High variability (forecast less certain)');
+      } else if (combinedCv < 0.12) {
+        factors.push('Stable recent pattern (forecast more reliable)');
       }
       
       forecasts.push({
-        month: months.length + i,
+        month: (((lastMonthNum - 1 + i) % 12) + 1),
+        offset: i,
         predictedIncome: Number.isFinite(predictedIncome) ? predictedIncome : 0,
         predictedExpense: Number.isFinite(predictedExpense) ? predictedExpense : 0,
         predictedNet: Number.isFinite(predictedNet) ? predictedNet : 0,
@@ -499,8 +508,9 @@ export function detectSeasonality(
     const expense = effectiveMonthExpense(month);
     byMonth[monthNum].push(expense);
     
-    // Track by category
+    // Track by category (exclude savings/investing buckets so output reflects real spending).
     Object.keys(month.buckets || {}).forEach(category => {
+      if (SAVINGS_BUCKET_KEYS.has(category)) return;
       if (!categoryTotals[category]) {
         categoryTotals[category] = {};
       }
@@ -557,6 +567,9 @@ export function detectSeasonality(
     const categoryData = categoryTotals[category];
     const flat = Object.values(categoryData).flat();
     const categoryOverallAvg = flat.length > 0 ? flat.reduce((a, b) => a + b, 0) / flat.length : 0;
+
+    // Drop tiny/noise categories to avoid useless cards (e.g. a few SAR).
+    if (!(categoryOverallAvg > 50)) return;
     
     Object.keys(categoryData).forEach(monthStr => {
       const monthNum = Number(monthStr);

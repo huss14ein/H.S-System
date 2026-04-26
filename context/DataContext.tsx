@@ -36,6 +36,7 @@ import { buildTransactionPayloadVariants } from '../services/transactionPayloadV
 import { decodeInstallmentPaymentNote } from '../services/installments/installmentLinkNote';
 import type { PlanDraft } from '../services/investmentEngine/suggestions';
 import { applySuggestedPlansLocally } from '../services/investmentEngine/planWriter';
+import { computeAvailableCashByAccountMap } from '../services/investmentCashLedger';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
@@ -3370,15 +3371,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
+    const availableCashByAccountId = useMemo(() => {
+        if (!data) return {} as Record<string, { SAR: number; USD: number }>;
+        return computeAvailableCashByAccountMap({
+            accounts: data.accounts ?? [],
+            investments: data.investments ?? [],
+            investmentTransactions: data.investmentTransactions ?? [],
+            sarPerUsd: resolveSarPerUsd(data ?? null),
+        });
+    }, [data?.accounts, data?.investments, data?.investmentTransactions, data?.wealthUltraConfig?.fxRate]);
+
     const getAvailableCashForAccount = useCallback((accountId: string): { SAR: number; USD: number } => {
         const canonical = resolveCanonicalAccountId(accountId, data?.accounts ?? []) ?? accountId;
         const acc = (data?.accounts ?? []).find((a) => a.id === canonical);
         if (!acc || acc.type !== 'Investment') return { SAR: 0, USD: 0 };
-        const cur = acc.currency === 'USD' ? 'USD' : 'SAR';
-        const bal = Number(acc.balance ?? 0);
-        if (!Number.isFinite(bal)) return { SAR: 0, USD: 0 };
-        return cur === 'USD' ? { SAR: 0, USD: bal } : { SAR: bal, USD: 0 };
-    }, [data?.accounts]);
+        return availableCashByAccountId[canonical] ?? { SAR: 0, USD: 0 };
+    }, [data?.accounts, availableCashByAccountId]);
 
     /**
      * Personal wealth slices must use the getters — not a raw merge from getPersonalWealthData.

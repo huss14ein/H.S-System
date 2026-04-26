@@ -121,10 +121,10 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
           </div>
         )}
       </div>
-      {/* Value + trend: allow full visibility without clipping. */}
-      <div className="mt-2 flex-1 min-h-0 flex flex-col justify-center min-w-0 overflow-visible">
+      {/* Value + trend: bottom-align for consistent KPI rows across varying formats. */}
+      <div className="mt-2 flex-1 min-h-0 flex flex-col justify-end min-w-0 overflow-visible">
         <div
-          className={`metric-value whitespace-normal sm:whitespace-nowrap break-words max-w-full ${compact ? 'text-xl sm:text-2xl' : 'text-2xl sm:text-3xl'} font-extrabold tabular-nums ${valueToneClass}`}
+          className={`metric-value whitespace-normal sm:whitespace-nowrap break-words max-w-full leading-none ${compact ? 'text-xl sm:text-2xl' : 'text-2xl sm:text-3xl'} font-extrabold tabular-nums ${valueToneClass}`}
         >
           {displayValue}
         </div>

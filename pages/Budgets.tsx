@@ -10,6 +10,10 @@ import { useCurrency } from '../context/CurrencyContext';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { CreditCardIcon } from '../components/icons/CreditCardIcon';
+import { SparklesIcon } from '../components/icons/SparklesIcon';
+import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
+import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
+import { LinkIcon } from '../components/icons/LinkIcon';
 import Combobox from '../components/Combobox';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
@@ -439,9 +443,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const [engineProfile, setEngineProfile] = useState<HouseholdEngineProfile>('Moderate');
     const [expectedMonthlySalary, setExpectedMonthlySalary] = useState<number | ''>('');
     const [selectedScenario, setSelectedScenario] = useState('custom');
-    const [showPredictiveAnalytics, setShowPredictiveAnalytics] = useState(false);
-    const [showScenarioPlanning, setShowScenarioPlanning] = useState(false);
-    const [showSeasonality, setShowSeasonality] = useState(false);
+    const [cashflowFocusTab, setCashflowFocusTab] = useState<'trends' | 'forecast' | 'scenarios' | 'seasonality'>('trends');
+    const [selectedTrendMonthIdx, setSelectedTrendMonthIdx] = useState<number | null>(null);
     const [predictiveForecasts, setPredictiveForecasts] = useState<PredictiveForecast[]>([]);
     const [scenarios, setScenarios] = useState<ScenarioAnalysis[]>([]);
     const [anomalies, setAnomalies] = useState<BudgetAnomaly[]>([]);
@@ -2481,6 +2484,178 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 </div>
             )}
 
+            <SectionCard
+                title="Household autopilot"
+                className="border-slate-200 bg-gradient-to-br from-white via-slate-50 to-cyan-50/40 shadow-sm mb-6"
+                collapsible
+                collapsibleSummary="Simple year projection + next actions"
+                defaultExpanded
+            >
+                {(() => {
+                    const engineIssues = criticalValidationCount;
+                    const hasFxIssue = !Number.isFinite(sarPerUsd) || sarPerUsd <= 0;
+                    const hasNoIncome = suggestedMonthlySalary <= 0 && !(typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0);
+                    const ready = !hasFxIssue && !hasNoIncome && engineIssues === 0;
+                    const statusTone = ready ? 'good' : engineIssues > 0 || hasFxIssue ? 'bad' : 'warn';
+                    const statusBg =
+                        statusTone === 'good'
+                            ? 'border-emerald-200 bg-emerald-50/60'
+                            : statusTone === 'bad'
+                                ? 'border-rose-200 bg-rose-50/60'
+                                : 'border-amber-200 bg-amber-50/60';
+
+                    return (
+                        <div className="space-y-4">
+                            <div className={`rounded-2xl border p-4 ${statusBg}`}>
+                                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            {ready ? (
+                                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-800">
+                                                    <CheckCircleIcon className="h-4 w-4" />
+                                                    Ready
+                                                </span>
+                                            ) : (
+                                                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-900">
+                                                    <ExclamationTriangleIcon className="h-4 w-4" />
+                                                    Needs attention
+                                                </span>
+                                            )}
+                                            <span className="text-sm font-semibold text-slate-900">
+                                                Simple view of your year (income → spending → goals) in SAR
+                                            </span>
+                                            <InfoHint text="This panel is fully automated from Transactions, Accounts, Budgets, Goals, and your FX rate. You only adjust family size if it changed, and optionally override salary if your income is irregular." />
+                                        </div>
+                                        <p className="text-xs text-slate-700 mt-2 leading-relaxed">
+                                            Profile is auto-suggested from your risk settings; salary defaults to what your income history shows. Fixing the items below makes all projections and suggested budgets more accurate.
+                                        </p>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const suggestedProfile = (householdBudgetEngine as unknown as { suggestedProfile?: string }).suggestedProfile;
+                                                if (suggestedProfile && suggestedProfile !== engineProfile) setEngineProfile(suggestedProfile as HouseholdEngineProfile);
+                                                if (!(typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0) && suggestedMonthlySalary > 0) {
+                                                    setExpectedMonthlySalary(suggestedMonthlySalary);
+                                                }
+                                                setHouseholdAdults((prev) => Math.max(1, Number(prev) || 1));
+                                                setHouseholdKids((prev) => Math.max(0, Number(prev) || 0));
+                                            }}
+                                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-extrabold text-white hover:bg-slate-800"
+                                        >
+                                            <SparklesIcon className="h-4 w-4" />
+                                            Auto-setup
+                                        </button>
+                                        {setActivePage && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setActivePage('Transactions')}
+                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800 hover:bg-slate-50"
+                                            >
+                                                <LinkIcon className="h-4 w-4" />
+                                                Open Transactions
+                                            </button>
+                                        )}
+                                        {setActivePage && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setActivePage('System & APIs Health')}
+                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800 hover:bg-slate-50"
+                                            >
+                                                <LinkIcon className="h-4 w-4" />
+                                                System Health
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                                    <div className="rounded-xl border border-white/60 bg-white/70 p-3">
+                                        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Estimated monthly salary</p>
+                                        <p className="mt-1 text-lg font-extrabold tabular-nums text-slate-900">
+                                            {formatCurrencyString(
+                                                (typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0) ? expectedMonthlySalary : suggestedMonthlySalary,
+                                                { digits: 0 },
+                                            )}
+                                        </p>
+                                        <p className="text-[11px] text-slate-500 mt-1">
+                                            {typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0 ? 'Manual override' : 'Auto (from income history)'}
+                                        </p>
+                                    </div>
+                                    <div className="rounded-xl border border-white/60 bg-white/70 p-3">
+                                        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Projected year-end liquid</p>
+                                        <p className={`mt-1 text-lg font-extrabold tabular-nums ${householdBudgetEngine.balanceProjection.projectedYearEndLiquid >= 0 ? 'text-emerald-800' : 'text-rose-800'}`}>
+                                            {formatCurrencyString(householdBudgetEngine.balanceProjection.projectedYearEndLiquid, { digits: 0 })}
+                                        </p>
+                                        <p className="text-[11px] text-slate-500 mt-1">Checking + savings + investment cash</p>
+                                    </div>
+                                    <div className="rounded-xl border border-white/60 bg-white/70 p-3">
+                                        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Actual annual net</p>
+                                        <p className={`mt-1 text-lg font-extrabold tabular-nums ${householdBudgetEngine.plannedVsActual.actualNet >= 0 ? 'text-sky-900' : 'text-rose-800'}`}>
+                                            {formatCurrencyString(householdBudgetEngine.plannedVsActual.actualNet, { digits: 0 })}
+                                        </p>
+                                        <p className="text-[11px] text-slate-500 mt-1">Income − expense (actual)</p>
+                                    </div>
+                                    <div className="rounded-xl border border-white/60 bg-white/70 p-3">
+                                        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Issues</p>
+                                        <p className={`mt-1 text-lg font-extrabold tabular-nums ${engineIssues === 0 && !hasFxIssue ? 'text-emerald-800' : 'text-amber-900'}`}>
+                                            {engineIssues}{hasFxIssue ? ' + FX' : ''}
+                                        </p>
+                                        <p className="text-[11px] text-slate-500 mt-1">Months with invalid cashflow / settings</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <details className="rounded-xl border border-slate-200 bg-white/70 p-3">
+                                <summary className="cursor-pointer select-none text-sm font-semibold text-slate-800">
+                                    Adjust details (optional)
+                                </summary>
+                                <div className="mt-3 flex flex-wrap gap-4 items-end">
+                                    <div>
+                                        <label className="block text-xs font-medium text-slate-500 mb-1">Profile</label>
+                                        <select
+                                            value={engineProfile}
+                                            onChange={(e) => setEngineProfile(e.target.value as HouseholdEngineProfile)}
+                                            className="p-2 border border-slate-200 rounded-lg bg-white text-sm min-w-[160px]"
+                                        >
+                                            {(Object.keys(HOUSEHOLD_ENGINE_PROFILES) as HouseholdEngineProfile[]).map((key) => (
+                                                <option key={key} value={key}>{HOUSEHOLD_ENGINE_PROFILES[key].label}</option>
+                                            ))}
+                                        </select>
+                                        <p className="text-xs text-slate-500 mt-1 max-w-[260px]">{HOUSEHOLD_ENGINE_PROFILES[engineProfile]?.description ?? ''}</p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-slate-500 mb-1">Monthly salary override (optional)</label>
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            step={100}
+                                            value={expectedMonthlySalary}
+                                            onChange={(e) => setExpectedMonthlySalary(e.target.value === '' ? '' : Number(e.target.value))}
+                                            placeholder={suggestedMonthlySalary ? `Auto: ${formatCurrencyString(suggestedMonthlySalary, { digits: 0 })}` : 'From transactions'}
+                                            className="p-2 border border-slate-200 rounded-lg w-44 text-sm"
+                                        />
+                                        <p className="text-xs text-slate-500 mt-1">Leave empty to use income history</p>
+                                    </div>
+                                    <div className="flex gap-3">
+                                        <div>
+                                            <label className="block text-xs font-medium text-slate-500 mb-1">Adults</label>
+                                            <input type="number" min={1} value={householdAdults} onChange={(e) => setHouseholdAdults(Math.max(1, Number(e.target.value) || 1))} className="p-2 border border-slate-200 rounded-lg w-20 text-sm" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-medium text-slate-500 mb-1">Kids</label>
+                                            <input type="number" min={0} value={householdKids} onChange={(e) => setHouseholdKids(Math.max(0, Number(e.target.value) || 0))} className="p-2 border border-slate-200 rounded-lg w-20 text-sm" />
+                                        </div>
+                                    </div>
+                                </div>
+                            </details>
+                        </div>
+                    );
+                })()}
+            </SectionCard>
+
             <CollapsibleSection
                 title="How the household engine works (plain language)"
                 summary="What feeds the numbers"
@@ -2504,10 +2679,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 <p className="text-xs text-slate-500 mt-3 border-t border-slate-200/80 pt-3">Educational planning only — not tax or investment advice.</p>
             </CollapsibleSection>
 
-            <SectionCard title="Household Budget Engine" collapsible collapsibleSummary="Household engine" defaultExpanded>
+            <SectionCard title="Advanced household engine tools" collapsible collapsibleSummary="Overrides, bulk add, and diagnostics" defaultExpanded={false}>
                 <div className="flex items-center justify-between mb-2">
                     <p className="text-sm text-slate-700 font-medium">
-                        Projects your year in SAR from transactions, liquid balances, goals, and the profile below. Optional fields override the automatic story — same engine as Plan and Summary stress signals.
+                        Advanced controls for power users. Most people should use <strong>Household autopilot</strong> above (it is fully automated and safer).
                     </p>
                     {triggerPageAction && (
                         <button
@@ -2815,117 +2990,95 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     </div>
                 </div>
 
-                {/* Action Buttons — results appear below when toggled */}
-                <div className="mt-6 pt-6 border-t border-slate-200 flex flex-wrap gap-2">
-                    {!showPredictiveAnalytics && predictiveForecasts.length > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setShowPredictiveAnalytics(true)}
-                            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
-                        >
-                            Show Predictive Analytics
-                        </button>
-                    )}
-                    {!showScenarioPlanning && scenarios.length > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setShowScenarioPlanning(true)}
-                            className="px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 text-sm font-medium"
-                        >
-                            Show Scenario Planning
-                        </button>
-                    )}
-                    {!showSeasonality && seasonalityPatterns.length > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setShowSeasonality(true)}
-                            className="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 text-sm font-medium"
-                        >
-                            Show Seasonality Patterns
-                        </button>
-                    )}
-                </div>
-
-                {/* Predictive Analytics Section — shown below the buttons */}
-                {showPredictiveAnalytics && predictiveForecasts.length > 0 && (
-                    <div className="mt-6 pt-6 border-t border-slate-200">
-                        <div className="flex items-center justify-between mb-4">
-                            <h4 className="text-sm font-bold text-slate-900">Predictive Analytics (Next 3 Months)</h4>
-                            <button
-                                type="button"
-                                onClick={() => setShowPredictiveAnalytics(false)}
-                                className="text-xs text-slate-500 hover:text-slate-700"
-                            >
-                                Hide
-                            </button>
+                {/* Smart cashflow cockpit (replaces the old “show/hide” blocks) */}
+                <div className="mt-6 pt-6 border-t border-slate-200">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                        <div className="min-w-0">
+                            <h4 className="text-sm font-bold text-slate-900">Smart cashflow cockpit</h4>
+                            <p className="text-xs text-slate-600 mt-0.5">
+                                Clear indicators + drill-down. Uses the same household engine months (actual-first) for accuracy.
+                            </p>
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            {predictiveForecasts.map((forecast) => (
-                                <div key={forecast.month} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">
-                                        Month {forecast.month} ({MONTHS[(forecast.month - 1) % 12]})
-                                    </p>
-                                    <div className="space-y-2 text-sm">
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-600">Predicted Income:</span>
-                                            <span className="font-semibold text-slate-900">{formatCurrencyString(forecast.predictedIncome)}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-600">Predicted Expense:</span>
-                                            <span className="font-semibold text-slate-900">{formatCurrencyString(forecast.predictedExpense)}</span>
-                                        </div>
-                                        <div className="flex justify-between pt-2 border-t border-slate-200">
-                                            <span className="text-slate-700 font-medium">Net:</span>
-                                            <span className={`font-bold ${forecast.predictedNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                                                {forecast.predictedNet >= 0 ? '+' : ''}{formatCurrencyString(forecast.predictedNet)}
-                                            </span>
-                                        </div>
-                                        <div className="pt-2 border-t border-slate-200">
-                                            <span className={`text-xs px-2 py-1 rounded ${
-                                                forecast.confidence === 'high' ? 'bg-emerald-100 text-emerald-700' :
-                                                forecast.confidence === 'medium' ? 'bg-amber-100 text-amber-700' :
-                                                'bg-rose-100 text-rose-700'
-                                            }`}>
-                                                {forecast.confidence.charAt(0).toUpperCase() + forecast.confidence.slice(1)} confidence
-                                            </span>
-                                            {forecast.factors.length > 0 && (
-                                                <ul className="mt-2 text-xs text-slate-600 list-disc list-inside space-y-0.5">
-                                                    {forecast.factors.map((factor, idx) => (
-                                                        <li key={idx}>{factor}</li>
-                                                    ))}
-                                                </ul>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
+                        <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-lg shrink-0">
+                            {([
+                                { id: 'trends', label: 'Trends' },
+                                { id: 'forecast', label: 'Forecast' },
+                                { id: 'scenarios', label: 'Scenarios' },
+                                { id: 'seasonality', label: 'Seasonality' },
+                            ] as const).map((t) => (
+                                <button
+                                    key={t.id}
+                                    type="button"
+                                    onClick={() => setCashflowFocusTab(t.id)}
+                                    className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                                        cashflowFocusTab === t.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-800'
+                                    }`}
+                                >
+                                    {t.label}
+                                </button>
                             ))}
                         </div>
                     </div>
-                )}
 
-                {/* Scenario Planning Section */}
-                {showScenarioPlanning && scenarios.length > 0 && (
-                    <div className="mt-6 pt-6 border-t border-slate-200">
-                        <div className="flex items-center justify-between mb-4">
-                            <h4 className="text-sm font-bold text-slate-900">Scenario Planning</h4>
-                            <button
-                                type="button"
-                                onClick={() => setShowScenarioPlanning(false)}
-                                className="text-xs text-slate-500 hover:text-slate-700"
-                            >
-                                Hide
-                            </button>
+                    {cashflowFocusTab === 'forecast' && predictiveForecasts.length > 0 && (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            {predictiveForecasts.map((forecast) => (
+                                <div key={`fc-${forecast.offset}-${forecast.month}`} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                                    <div className="flex items-start justify-between gap-2">
+                                        <p className="text-xs font-bold text-slate-800 uppercase tracking-wide">
+                                            Next {forecast.offset}: {MONTHS[(forecast.month - 1) % 12]}
+                                        </p>
+                                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                                            forecast.confidence === 'high' ? 'bg-emerald-100 text-emerald-700' :
+                                            forecast.confidence === 'medium' ? 'bg-amber-100 text-amber-700' :
+                                            'bg-rose-100 text-rose-700'
+                                        }`}>
+                                            {forecast.confidence} confidence
+                                        </span>
+                                    </div>
+                                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs tabular-nums">
+                                        <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 px-3 py-2">
+                                            <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-900/80">Income</p>
+                                            <p className="text-sm font-bold text-emerald-950">{formatCurrencyString(forecast.predictedIncome, { digits: 0 })}</p>
+                                        </div>
+                                        <div className="rounded-xl border border-rose-200 bg-rose-50/40 px-3 py-2">
+                                            <p className="text-[10px] font-semibold uppercase tracking-wide text-rose-900/80">Expense</p>
+                                            <p className="text-sm font-bold text-rose-950">{formatCurrencyString(forecast.predictedExpense, { digits: 0 })}</p>
+                                        </div>
+                                        <div className={`col-span-2 rounded-xl border px-3 py-2 ${
+                                            forecast.predictedNet >= 0 ? 'border-sky-200 bg-sky-50/40' : 'border-amber-200 bg-amber-50/40'
+                                        }`}>
+                                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-700">Net</p>
+                                            <p className={`text-base font-extrabold tabular-nums ${
+                                                forecast.predictedNet >= 0 ? 'text-sky-900' : 'text-amber-900'
+                                            }`}>
+                                                {forecast.predictedNet >= 0 ? '+' : ''}{formatCurrencyString(forecast.predictedNet, { digits: 0 })}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    {forecast.factors.length > 0 && (
+                                        <ul className="mt-3 text-xs text-slate-600 list-disc list-inside space-y-0.5">
+                                            {forecast.factors.slice(0, 3).map((factor, idx) => (
+                                                <li key={`fc-factor-${idx}`}>{factor}</li>
+                                            ))}
+                                        </ul>
+                                    )}
+                                </div>
+                            ))}
                         </div>
+                    )}
+
+                    {cashflowFocusTab === 'scenarios' && scenarios.length > 0 && (
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                             {scenarios.map((scenario, idx) => (
-                                <div key={idx} className={`rounded-lg border-2 p-4 ${
-                                    scenario.riskLevel === 'high' ? 'border-rose-200 bg-rose-50' :
-                                    scenario.riskLevel === 'medium' ? 'border-amber-200 bg-amber-50' :
-                                    'border-emerald-200 bg-emerald-50'
+                                <div key={`sc-${idx}`} className={`rounded-2xl border-2 p-4 shadow-sm ${
+                                    scenario.riskLevel === 'high' ? 'border-rose-200 bg-rose-50/50' :
+                                    scenario.riskLevel === 'medium' ? 'border-amber-200 bg-amber-50/50' :
+                                    'border-emerald-200 bg-emerald-50/50'
                                 }`}>
-                                    <div className="flex items-center justify-between mb-2">
-                                        <p className="text-sm font-bold text-slate-900">{scenario.name}</p>
-                                        <span className={`text-xs px-2 py-1 rounded ${
+                                    <div className="flex items-center justify-between mb-2 gap-2">
+                                        <p className="text-sm font-extrabold text-slate-900">{scenario.name}</p>
+                                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
                                             scenario.riskLevel === 'high' ? 'bg-rose-100 text-rose-700' :
                                             scenario.riskLevel === 'medium' ? 'bg-amber-100 text-amber-700' :
                                             'bg-emerald-100 text-emerald-700'
@@ -2933,38 +3086,41 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                             {scenario.riskLevel.toUpperCase()} RISK
                                         </span>
                                     </div>
-                                    <p className="text-xs text-slate-600 mb-3">{scenario.description}</p>
-                                    <div className="space-y-2 text-sm">
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-600">Projected Year-End Balance:</span>
-                                            <span className="font-semibold text-slate-900">{formatCurrencyString(scenario.projectedYearEndBalance)}</span>
+                                    <p className="text-xs text-slate-700/80 mb-3">{scenario.description}</p>
+                                    <div className="grid grid-cols-2 gap-2 text-xs tabular-nums">
+                                        <div className="rounded-xl border border-slate-200 bg-white/70 px-3 py-2">
+                                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Year-end</p>
+                                            <p className="text-sm font-bold text-slate-900">{formatCurrencyString(scenario.projectedYearEndBalance, { digits: 0 })}</p>
                                         </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-slate-600">Change from Baseline:</span>
-                                            <span className={`font-bold ${scenario.projectedYearEndBalanceChange >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                                                {scenario.projectedYearEndBalanceChange >= 0 ? '+' : ''}{formatCurrencyString(scenario.projectedYearEndBalanceChange)}
-                                            </span>
+                                        <div className="rounded-xl border border-slate-200 bg-white/70 px-3 py-2">
+                                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Δ baseline</p>
+                                            <p className={`text-sm font-extrabold ${
+                                                scenario.projectedYearEndBalanceChange >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                                            }`}>
+                                                {scenario.projectedYearEndBalanceChange >= 0 ? '+' : ''}{formatCurrencyString(scenario.projectedYearEndBalanceChange, { digits: 0 })}
+                                            </p>
                                         </div>
-                                        {scenario.goalAchievementImpact.length > 0 && (
-                                            <div className="pt-2 border-t border-slate-200">
-                                                <p className="text-xs font-semibold text-slate-700 mb-1">Goal Impact:</p>
-                                                {scenario.goalAchievementImpact.map((impact, i) => (
-                                                    <div key={i} className="flex justify-between gap-3 text-xs text-slate-600">
-                                                        <span className="truncate">{impact.goalName}</span>
-                                                        <span className="shrink-0 font-medium tabular-nums text-slate-800">
-                                                            {impact.achievementDelayMonths >= 0 ? '+' : ''}
-                                                            {impact.achievementDelayMonths.toFixed(1)} mo
-                                                        </span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
                                     </div>
+                                    {scenario.goalAchievementImpact.length > 0 && (
+                                        <div className="mt-3 rounded-xl border border-slate-200 bg-white/70 px-3 py-2">
+                                            <p className="text-xs font-semibold text-slate-800 mb-1">Goal impact (delay)</p>
+                                            {scenario.goalAchievementImpact.slice(0, 3).map((impact, i) => (
+                                                <div key={`impact-${i}`} className="flex justify-between gap-3 text-xs text-slate-600">
+                                                    <span className="truncate">{impact.goalName}</span>
+                                                    <span className="shrink-0 font-semibold tabular-nums text-slate-900">
+                                                        {impact.achievementDelayMonths >= 0 ? '+' : ''}
+                                                        {impact.achievementDelayMonths.toFixed(1)} mo
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             ))}
                         </div>
-                    </div>
-                )}
+                    )}
+
+                </div>
 
                 {/* Anomaly Detection */}
                 {anomalies.length > 0 && (
@@ -2995,101 +3151,175 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     </div>
                 )}
 
-                {/* Spending Trends Visualization */}
-                {householdBudgetEngine.months.length >= 3 && (
-                    <div className="mt-6 pt-6 border-t border-slate-200">
-                        <h4 className="text-sm font-bold text-slate-900 mb-4">Spending Trends (Last 6 Months)</h4>
-                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                            <div className="h-48 flex items-end justify-between gap-1">
-                                {householdBudgetEngine.months.slice(-6).map((month, idx) => {
-                                    const outflows = householdBudgetEngine.months.slice(-6).map((m) => effectiveMonthExpense(m));
-                                    const maxExpense = outflows.length > 0 ? Math.max(...outflows) : 0;
-                                    const expense = effectiveMonthExpense(month);
-                                    const height = maxExpense > 0 ? (expense / maxExpense) * 100 : 0;
-                                    const income = (month.incomeActual ?? 0) > 0 ? (month.incomeActual ?? 0) : (month.incomePlanned ?? 0);
-                                    const net = income - expense;
-                                    const monthNum = month.month ?? (month.monthIndex ?? idx) + 1;
-                                    return (
-                                        <div key={idx} className="flex-1 flex flex-col items-center gap-1">
-                                            <div className="w-full flex flex-col items-center gap-0.5" style={{ height: '180px' }}>
-                                                {/* Income bar */}
-                                                <div
-                                                    className="w-full rounded-t bg-emerald-500 transition-all"
-                                                    style={{ height: `${maxExpense > 0 ? (income / maxExpense) * 100 : 0}%`, minHeight: income > 0 ? '2px' : '0' }}
-                                                    title={`${MONTHS[(monthNum - 1) % 12]}: Income ${formatCurrencyString(income)}`}
-                                                />
-                                                {/* Expense bar */}
-                                                <div
-                                                    className={`w-full rounded-b transition-all ${
-                                                        net >= 0 ? 'bg-rose-400' : 'bg-rose-600'
-                                                    }`}
-                                                    style={{ height: `${height}%`, minHeight: expense > 0 ? '2px' : '0' }}
-                                                    title={`${MONTHS[(monthNum - 1) % 12]}: Expense ${formatCurrencyString(expense)}`}
-                                                />
-                                            </div>
-                                            <p className="text-[10px] text-slate-600 font-medium mt-1">
-                                                {MONTHS[(monthNum - 1) % 12].substring(0, 3)}
+                {/* Trends (improved + clickable) */}
+                {cashflowFocusTab === 'trends' && householdBudgetEngine.months.length >= 3 && (
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                        <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+                            <div>
+                                <p className="text-sm font-bold text-slate-900">Trends (last 6 months)</p>
+                                <p className="text-xs text-slate-600 mt-0.5">Click a month to see the breakdown.</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setSelectedTrendMonthIdx(null)}
+                                className="text-xs font-semibold text-slate-600 hover:underline"
+                            >
+                                Clear selection
+                            </button>
+                        </div>
+
+                        {(() => {
+                            const last6 = householdBudgetEngine.months.slice(-6);
+                            const incomes = last6.map((m) => Math.max(0, Number(m.incomeActual) > 0 ? Number(m.incomeActual) : Number(m.incomePlanned) || 0));
+                            const expenses = last6.map((m) => Math.max(0, effectiveMonthExpense(m)));
+                            const maxV = Math.max(1, ...incomes, ...expenses);
+                            return (
+                                <div className="grid grid-cols-6 gap-2 items-end">
+                                    {last6.map((month, idx) => {
+                                        const income = incomes[idx] ?? 0;
+                                        const expense = expenses[idx] ?? 0;
+                                        const net = income - expense;
+                                        const monthNum = month.month ?? (month.monthIndex ?? idx) + 1;
+                                        const selected = selectedTrendMonthIdx === idx;
+                                        return (
+                                            <button
+                                                key={`trend-${idx}`}
+                                                type="button"
+                                                onClick={() => setSelectedTrendMonthIdx(idx)}
+                                                className={`rounded-xl border px-2 py-2 text-left transition-colors ${
+                                                    selected ? 'border-indigo-300 bg-indigo-50/40' : 'border-slate-200 bg-slate-50/40 hover:bg-slate-50'
+                                                }`}
+                                                title="Click for details"
+                                            >
+                                                <p className="text-[10px] font-bold text-slate-700">{MONTHS[(monthNum - 1) % 12]}</p>
+                                                <div className="mt-2 h-24 flex flex-col justify-end gap-1">
+                                                    <div className="h-2.5 rounded bg-emerald-200 overflow-hidden">
+                                                        <div className="h-full bg-emerald-500" style={{ width: `${Math.max(0, Math.min(100, (income / maxV) * 100))}%` }} />
+                                                    </div>
+                                                    <div className="h-2.5 rounded bg-rose-200 overflow-hidden">
+                                                        <div className="h-full bg-rose-500" style={{ width: `${Math.max(0, Math.min(100, (expense / maxV) * 100))}%` }} />
+                                                    </div>
+                                                </div>
+                                                <p className={`mt-2 text-xs font-extrabold tabular-nums ${net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                                    {net >= 0 ? '+' : ''}{formatCurrencyString(net, { digits: 0 })}
+                                                </p>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            );
+                        })()}
+
+                        {selectedTrendMonthIdx != null && (() => {
+                            const month = householdBudgetEngine.months.slice(-6)[selectedTrendMonthIdx];
+                            if (!month) return null;
+                            const monthNum = month.month ?? (month.monthIndex ?? 0) + 1;
+                            const income = Math.max(0, Number(month.incomeActual) > 0 ? Number(month.incomeActual) : Number(month.incomePlanned) || 0);
+                            const expense = Math.max(0, effectiveMonthExpense(month));
+                            const net = income - expense;
+                            const monthYear: number = Number((month as any).year) || currentYear;
+                            const rangeStart = new Date(monthYear, (monthNum - 1) % 12, 1, 0, 0, 0, 0);
+                            const rangeEnd = new Date(monthYear, (monthNum - 1) % 12 + 1, 0, 23, 59, 59, 999);
+                            const categorySpending = new Map<string, number>();
+                            const sourceTxs: any[] = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as any[];
+                            sourceTxs
+                                .filter((t: any) => countsAsExpenseForCashflowKpi(t) && (t.status ?? 'Approved') === 'Approved')
+                                .forEach((t: any) => {
+                                    const d = new Date(t.date);
+                                    if (!(d >= rangeStart && d <= rangeEnd)) return;
+                                    const allocations = getTransactionBudgetAllocations(t as any);
+                                    allocations.forEach((allocation) => {
+                                        const amountSar = txAmountSar({ ...t, amount: allocation.amount });
+                                        if (!(amountSar > 0)) return;
+                                        categorySpending.set(allocation.category, (categorySpending.get(allocation.category) || 0) + amountSar);
+                                    });
+                                });
+                            const categoryEntries = Array.from(categorySpending.entries())
+                                .map(([category, amountSar]) => ({ category, amountSar }))
+                                .filter((x) => x.amountSar > 0)
+                                .sort((a, b) => b.amountSar - a.amountSar)
+                                .slice(0, 8);
+
+                            return (
+                                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                                    <div className="flex flex-wrap items-start justify-between gap-2">
+                                        <div>
+                                            <p className="text-sm font-bold text-slate-900">{MONTHS[(monthNum - 1) % 12]} snapshot</p>
+                                            <p className="text-xs text-slate-600 mt-0.5">Actual-first; planned used only when actual is missing.</p>
+                                        </div>
+                                        <span className={`text-xs font-extrabold tabular-nums ${net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                            Net {net >= 0 ? '+' : ''}{formatCurrencyString(net, { digits: 0 })}
+                                        </span>
+                                    </div>
+                                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs tabular-nums">
+                                        <div className="rounded-xl border border-emerald-200 bg-white/80 px-3 py-2">
+                                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Income</p>
+                                            <p className="text-sm font-extrabold text-slate-900">{formatCurrencyString(income, { digits: 0 })}</p>
+                                        </div>
+                                        <div className="rounded-xl border border-rose-200 bg-white/80 px-3 py-2">
+                                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Expense</p>
+                                            <p className="text-sm font-extrabold text-slate-900">{formatCurrencyString(expense, { digits: 0 })}</p>
+                                        </div>
+                                        <div className="rounded-xl border border-slate-200 bg-white/80 px-3 py-2">
+                                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Coverage</p>
+                                            <p className="text-[11px] text-slate-600">How much of expense was covered by income.</p>
+                                            <p className="text-sm font-extrabold text-slate-900">
+                                                {expense > 0 ? `${Math.min(999, (income / expense) * 100).toFixed(0)}%` : '—'}
                                             </p>
                                         </div>
-                                    );
-                                })}
-                            </div>
-                            <div className="mt-4 flex items-center justify-center gap-4 text-xs">
-                                <div className="flex items-center gap-2">
-                                    <div className="w-4 h-4 bg-emerald-500 rounded"></div>
-                                    <span className="text-slate-600">Income</span>
+                                    </div>
+
+                                    {categoryEntries.length > 0 && (
+                                        <div className="mt-3">
+                                            <p className="text-xs font-semibold text-slate-800 mb-2">Top spend categories (from transactions)</p>
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                                {categoryEntries.map((c) => (
+                                                    <div key={`cat-${c.category}`} className="rounded-xl border border-slate-200 bg-white/80 px-3 py-2 flex items-center justify-between gap-3">
+                                                        <span className="text-xs font-semibold text-slate-700 truncate">{c.category}</span>
+                                                        <span className="text-xs font-extrabold tabular-nums text-slate-900">{formatCurrencyString(c.amountSar, { digits: 0 })}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-4 h-4 bg-rose-400 rounded"></div>
-                                    <span className="text-slate-600">Expense</span>
-                                </div>
-                            </div>
-                        </div>
+                            );
+                        })()}
                     </div>
                 )}
 
-                {/* Seasonality Detection */}
-                {showSeasonality && seasonalityPatterns.length > 0 && (
-                    <div className="mt-6 pt-6 border-t border-slate-200">
-                        <div className="flex items-center justify-between mb-4">
-                            <h4 className="text-sm font-bold text-slate-900">Seasonal Spending Patterns</h4>
-                            <button
-                                type="button"
-                                onClick={() => setShowSeasonality(false)}
-                                className="text-xs px-2 py-1 text-slate-500 hover:text-slate-700"
-                            >
-                                Hide
-                            </button>
+                {/* Seasonality (filtered to real spending buckets, not savings) */}
+                {cashflowFocusTab === 'seasonality' && seasonalityPatterns.length > 0 && (
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                        <div className="flex items-start justify-between gap-2 mb-3">
+                            <div>
+                                <p className="text-sm font-bold text-slate-900">Seasonality patterns</p>
+                                <p className="text-xs text-slate-600 mt-0.5">Only meaningful non-savings buckets are shown.</p>
+                            </div>
                         </div>
                         <div className="space-y-3">
                             {seasonalityPatterns.slice(0, 10).map((pattern, idx) => (
                                 <div
-                                    key={idx}
-                                    className={`rounded-lg border p-3 ${
-                                        pattern.pattern === 'peak' ? 'border-rose-200 bg-rose-50' :
-                                        pattern.pattern === 'trough' ? 'border-emerald-200 bg-emerald-50' :
-                                        'border-slate-200 bg-slate-50'
+                                    key={`season-${idx}`}
+                                    className={`rounded-xl border p-3 ${
+                                        pattern.pattern === 'peak' ? 'border-rose-200 bg-rose-50/40' :
+                                        pattern.pattern === 'trough' ? 'border-emerald-200 bg-emerald-50/40' :
+                                        'border-slate-200 bg-slate-50/40'
                                     }`}
                                 >
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="text-sm font-semibold text-slate-900">
-                                                {pattern.monthName} - {pattern.category}
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <p className="text-sm font-semibold text-slate-900 truncate">
+                                                {pattern.monthName} · {pattern.category}
                                             </p>
-                                            <p className="text-xs text-slate-600 mt-1">
-                                                {pattern.pattern === 'peak' ? 'Peak spending month' :
-                                                 pattern.pattern === 'trough' ? 'Low spending month' :
-                                                 'Normal spending'}
-                                                {' '}
-                                                ({pattern.confidence} confidence)
+                                            <p className="text-xs text-slate-600 mt-0.5">
+                                                {pattern.pattern === 'peak' ? 'Peak month' : pattern.pattern === 'trough' ? 'Low month' : 'Normal'} · {pattern.confidence} confidence
                                             </p>
                                         </div>
-                                        <div className="text-right">
-                                            <p className="text-sm font-bold text-slate-900">
-                                                {formatCurrencyString(pattern.averageAmount)}
-                                            </p>
-                                            <p className={`text-xs ${pattern.deviationPct >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                                                {pattern.deviationPct >= 0 ? '+' : ''}{pattern.deviationPct.toFixed(1)}% from average
+                                        <div className="text-right tabular-nums">
+                                            <p className="text-sm font-extrabold text-slate-900">{formatCurrencyString(pattern.averageAmount, { digits: 0 })}</p>
+                                            <p className={`text-xs font-semibold ${pattern.deviationPct >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                                {pattern.deviationPct >= 0 ? '+' : ''}{pattern.deviationPct.toFixed(1)}%
                                             </p>
                                         </div>
                                     </div>

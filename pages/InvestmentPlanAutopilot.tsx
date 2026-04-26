@@ -42,6 +42,7 @@ export default function InvestmentPlanAutopilot(props: {
   const [busy, setBusy] = React.useState(false);
   const [lastRefreshAt, setLastRefreshAt] = React.useState<number | null>(null);
   const [ackReview, setAckReview] = React.useState(false);
+  const [marketFilter, setMarketFilter] = React.useState<'usa' | 'ksa' | 'all'>('usa');
 
   const planCurrency = ((data?.investmentPlan?.budgetCurrency as TradeCurrency) || 'SAR') as TradeCurrency;
   const monthlyBudget = Number(data?.investmentPlan?.monthlyBudget ?? 0) || 0;
@@ -77,22 +78,38 @@ export default function InvestmentPlanAutopilot(props: {
     setNotes(out.notes);
     const nextSelected: Record<string, boolean> = {};
     for (const d of out.drafts) {
-      if (d.canAutoPlan && d.kind === 'equity' && d.severity !== 'blocked') nextSelected[d.draftId] = true;
+      const isUsa = (d.instrumentCurrency ?? '') === 'USD';
+      const isKsa = (d.instrumentCurrency ?? '') === 'SAR';
+      const inFilter = marketFilter === 'all' ? true : marketFilter === 'usa' ? isUsa : isKsa;
+      if (inFilter && d.canAutoPlan && d.kind === 'equity' && d.severity !== 'blocked') nextSelected[d.draftId] = true;
     }
     setSelected(nextSelected);
     setLastRefreshAt(Date.now());
-  }, [data, exchangeRate, simulatedPrices, planCurrency, monthlyBudget, coreAllocation, upsideAllocation, existingPlanKeys]);
+  }, [data, exchangeRate, simulatedPrices, planCurrency, monthlyBudget, coreAllocation, upsideAllocation, existingPlanKeys, marketFilter]);
 
   React.useEffect(() => {
     if (loading || !data) return;
     computeSuggestions();
   }, [loading, data, computeSuggestions]);
 
-  const chosenDrafts = drafts.filter((d) => selected[d.draftId]);
+  // When the filter changes, refresh default selection to match it.
+  React.useEffect(() => {
+    if (loading || !data) return;
+    computeSuggestions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [marketFilter]);
+
+  const visibleDrafts = React.useMemo(() => {
+    if (marketFilter === 'all') return drafts;
+    if (marketFilter === 'usa') return drafts.filter((d) => (d.instrumentCurrency ?? '') === 'USD');
+    return drafts.filter((d) => (d.instrumentCurrency ?? '') === 'SAR');
+  }, [drafts, marketFilter]);
+
+  const chosenDrafts = visibleDrafts.filter((d) => selected[d.draftId]);
   const chosenAutoDrafts = chosenDrafts.filter((d) => d.canAutoPlan && d.kind === 'equity' && d.severity !== 'blocked');
   const chosenReviewDrafts = chosenAutoDrafts.filter((d) => d.severity === 'review');
-  const safeDrafts = drafts.filter((d) => d.canAutoPlan && d.kind === 'equity' && d.severity === 'safe');
-  const reviewDrafts = drafts.filter((d) => d.canAutoPlan && d.kind === 'equity' && d.severity === 'review');
+  const safeDrafts = visibleDrafts.filter((d) => d.canAutoPlan && d.kind === 'equity' && d.severity === 'safe');
+  const reviewDrafts = visibleDrafts.filter((d) => d.canAutoPlan && d.kind === 'equity' && d.severity === 'review');
 
   const apply = async () => {
     if (chosenAutoDrafts.length === 0) {
@@ -139,8 +156,8 @@ export default function InvestmentPlanAutopilot(props: {
     return { tone: 'green' as const, label: 'Healthy' };
   })();
 
-  const topBuys = drafts.filter((d) => d.kind === 'equity' && d.tradeType === 'buy').slice(0, 6);
-  const topSells = drafts.filter((d) => d.kind === 'equity' && d.tradeType === 'sell').slice(0, 6);
+  const topBuys = visibleDrafts.filter((d) => d.kind === 'equity' && d.tradeType === 'buy').slice(0, 6);
+  const topSells = visibleDrafts.filter((d) => d.kind === 'equity' && d.tradeType === 'sell').slice(0, 6);
 
   return (
     <div className="max-w-7xl mx-auto space-y-8">
@@ -249,14 +266,37 @@ export default function InvestmentPlanAutopilot(props: {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <p className="text-sm font-semibold text-slate-900">Suggested plans queue</p>
-            <p className="text-sm text-slate-600 mt-1">Select items, then apply to write/update your Trade Plans safely (deduped).</p>
+            <p className="text-sm text-slate-600 mt-1">Defaults to USA (USD) holdings. Use the filter to include KSA (SAR) or all.</p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
               <Chip tone="green">{safeDrafts.length} safe</Chip>
               <Chip tone="amber">{reviewDrafts.length} review</Chip>
-              <Chip tone="red">{drafts.filter((d) => d.canAutoPlan && d.severity === 'blocked').length} blocked</Chip>
+              <Chip tone="red">{visibleDrafts.filter((d) => d.canAutoPlan && d.severity === 'blocked').length} blocked</Chip>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setMarketFilter('usa')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${marketFilter === 'usa' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}
+              >
+                USA (USD)
+              </button>
+              <button
+                type="button"
+                onClick={() => setMarketFilter('ksa')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${marketFilter === 'ksa' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}
+              >
+                KSA (SAR)
+              </button>
+              <button
+                type="button"
+                onClick={() => setMarketFilter('all')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${marketFilter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}
+              >
+                All
+              </button>
+            </div>
             <button
               type="button"
               onClick={() => applyAllSafe()}
@@ -303,7 +343,7 @@ export default function InvestmentPlanAutopilot(props: {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {drafts.slice(0, 40).map((d) => (
+              {visibleDrafts.slice(0, 40).map((d) => (
                 <tr key={d.draftId} className="hover:bg-slate-50">
                   <td className="px-3 py-3">
                     <input
@@ -346,7 +386,7 @@ export default function InvestmentPlanAutopilot(props: {
                   </td>
                 </tr>
               ))}
-              {drafts.length === 0 && (
+              {visibleDrafts.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-3 py-8 text-center text-sm text-slate-500">No suggestions yet.</td>
                 </tr>

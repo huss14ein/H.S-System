@@ -63,9 +63,6 @@ const FILTER_OPTIONS: { id: UniverseFilter; short: string; help: string }[] = [
 
 const PortfolioUniversePanel: React.FC<{
   planCurrency: TradeCurrency;
-  /** Core sleeve as 0–100 for copy only */
-  coreSleevePct: number;
-  upsideSleevePct: number;
   personalPortfolios: InvestmentPortfolio[];
   selectedPortfolioId: string | null;
   onSelectPortfolio: (id: string) => void;
@@ -99,8 +96,6 @@ const PortfolioUniversePanel: React.FC<{
   priceDigits?: number;
 }> = ({
   planCurrency: _planCurrency,
-  coreSleevePct,
-  upsideSleevePct,
   personalPortfolios,
   selectedPortfolioId,
   onSelectPortfolio,
@@ -132,7 +127,7 @@ const PortfolioUniversePanel: React.FC<{
   onNavigateToWatchlist,
   priceDigits = 2,
 }) => {
-  const [guideOpen, setGuideOpen] = useState(true);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const liveQuotesAny = useMemo(
     () => Object.keys(simulatedPrices ?? {}).some((k) => simulatedPrices[k]?.price != null),
@@ -149,11 +144,6 @@ const PortfolioUniversePanel: React.FC<{
     };
     return Object.fromEntries(FILTER_OPTIONS.map((o) => [o.id, c(o.id)])) as Record<UniverseFilter, number>;
   }, [unifiedUniverse]);
-
-  const weightBarPct = useMemo(() => {
-    if (health.actionableCount === 0) return 0;
-    return Math.max(0, Math.min(100, health.monthlyWeightTotal * 100));
-  }, [health.actionableCount, health.monthlyWeightTotal]);
 
   const { score, label: scoreLabel, hint: scoreHint } = useMemo(
     () => scoreAutomation(health, health.actionableCount > 0),
@@ -206,9 +196,8 @@ const PortfolioUniversePanel: React.FC<{
                 />
               </div>
               <p className="mt-2 text-sm sm:text-base text-slate-600 max-w-3xl leading-relaxed">
-                Think of it as a <strong>simple control panel</strong>: add tickers, mark which ones get this month’s money, and
-                keep the <strong>weight total near 100%</strong> so the app splits your budget predictably. No finance jargon
-                required—use the green steps and the “balance bar” as your guide.
+                Simple: import your holdings/watchlist, choose a role, then click <strong>Auto‑balance</strong>.
+                The engine keeps weights near <strong>100%</strong> and enforces caps so monthly automation stays safe.
               </p>
             </div>
             {personalPortfolios.length > 0 && (
@@ -230,111 +219,56 @@ const PortfolioUniversePanel: React.FC<{
             )}
           </div>
 
-          {/* Readiness + steps */}
-          <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-12">
-            <div className="lg:col-span-4 rounded-2xl border border-slate-200/90 bg-white/90 p-4 shadow-sm">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Automation readiness</p>
-              <div className="mt-2 flex items-center gap-3">
-                <div className="relative h-16 w-16 shrink-0">
-                  <svg className="h-16 w-16 -rotate-90" viewBox="0 0 36 36" aria-hidden>
-                    <path
-                      d="M18 2.084a15.916 15.916 0 010 31.832 15.916 15.916 0 010-31.832"
-                      fill="none"
-                      className="text-slate-200"
-                      stroke="currentColor"
-                      strokeWidth="2.4"
-                    />
-                    <path
-                      d="M18 2.084a15.916 15.916 0 010 31.832 15.916 15.916 0 010-31.832"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.4"
-                      strokeLinecap="round"
-                      className={score >= 80 ? 'text-emerald-500' : score >= 55 ? 'text-amber-500' : 'text-rose-500'}
-                      strokeDasharray={`${score}, 100`}
-                    />
-                  </svg>
-                  <span className="absolute inset-0 flex items-center justify-center text-lg font-bold text-slate-800 tabular-nums">{score}</span>
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-slate-900">{scoreLabel}</p>
-                  <p className="text-xs text-slate-600 leading-snug mt-0.5">{scoreHint}</p>
-                </div>
+          {/* 3-step wizard (simplified) */}
+          <div className="mt-6 rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Universe setup (3 steps)</p>
+                <p className="text-sm font-semibold text-slate-900 mt-1">
+                  {step1 && step2 && step3 && step4 ? 'Ready' : 'Almost ready'} ·{' '}
+                  <span className={`${score >= 80 ? 'text-emerald-700' : score >= 55 ? 'text-amber-700' : 'text-rose-700'}`}>{scoreLabel}</span>
+                  <span className="text-slate-500 font-medium"> · weight {(health.monthlyWeightTotal * 100).toFixed(0)}%</span>
+                </p>
+                <p className="text-xs text-slate-600 mt-1 leading-snug">{scoreHint}</p>
               </div>
-              <div className="mt-4 h-2.5 w-full overflow-hidden rounded-full bg-slate-100" title="100% = weights fully allocated">
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ${weightBarPct >= 99 && weightBarPct <= 101 ? 'bg-gradient-to-r from-emerald-500 to-teal-500' : 'bg-gradient-to-r from-indigo-500 to-violet-500'}`}
-                  style={{ width: `${weightBarPct}%` }}
-                />
-              </div>
-              <p className="mt-1.5 text-[11px] text-slate-500 tabular-nums">Weight total: {(health.monthlyWeightTotal * 100).toFixed(1)}% · aim for 100%</p>
-            </div>
-
-            <div className="lg:col-span-8 grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
-              {[
-                { done: step1, title: '1 · Names on list', sub: 'At least one ticker', k: 'totalCount', v: String(health.totalCount), warn: false },
-                { done: step2, title: '2 · Ready to fund', sub: 'Core or High-upside', k: 'actionable', v: String(health.actionableCount), warn: false },
-                { done: step3, title: '3 · Weights balance', sub: 'Near 100%', k: 'wt', v: `${(health.monthlyWeightTotal * 100).toFixed(0)}%`, warn: !step3 && health.actionableCount > 0 },
-                { done: step4, title: '4 · All linked', sub: 'Nothing “needs link”', k: 'map', v: String(health.unmappedCount), warn: !step4 },
-              ].map((c) => (
-                <div
-                  key={c.k}
-                  className={`rounded-2xl border p-3 flex flex-col gap-1 min-h-[92px] transition-shadow ${
-                    c.done && !c.warn ? 'border-emerald-200/80 bg-emerald-50/50' : c.warn && !c.done ? 'border-amber-200/90 bg-amber-50/40' : 'border-slate-200/90 bg-white/80'
-                  }`}
+              <div className="flex flex-wrap items-center gap-2">
+                {canAddWatchlistHoldings && (
+                  <button
+                    type="button"
+                    onClick={onAddWatchlistAndHoldings}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-900 hover:bg-slate-50"
+                  >
+                    <PlusIcon className="h-4 w-4" />
+                    Step 1: Import
+                  </button>
+                )}
+                <div className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">
+                  <span className={`inline-flex items-center gap-1 ${step2 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                    {step2 ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />}
+                    Step 2: Role
+                  </span>
+                  <span className="text-slate-300">|</span>
+                  <span className="text-slate-600">Core / High‑upside</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={onAutoConfigureWeights}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-extrabold text-white hover:bg-slate-800"
                 >
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    {c.done ? <CheckCircleIcon className="h-4 w-4 text-emerald-600 shrink-0" /> : <ExclamationTriangleIcon className="h-4 w-4 text-amber-500 shrink-0" />}
-                    <p className="text-[11px] font-bold leading-tight text-slate-800">{c.title}</p>
-                  </div>
-                  <p className="text-[10px] text-slate-500 leading-tight">{c.sub}</p>
-                  <p className="text-lg font-bold tabular-nums text-slate-900 mt-auto">{c.v}</p>
-                </div>
-              ))}
+                  <SparklesIcon className="h-4 w-4" />
+                  Step 3: Auto-balance
+                </button>
+              </div>
             </div>
+            {Math.abs(health.monthlyWeightTotal - 1) > 0.01 && health.actionableCount > 0 && (
+              <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-950" role="status">
+                <ExclamationTriangleIcon className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
+                <p>
+                  Your active sleeve weights should add up to about <strong>100%</strong>. Tap <strong>Auto-balance</strong> (recommended) or adjust a couple of numbers below.
+                </p>
+              </div>
+            )}
           </div>
-
-          <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="rounded-2xl border border-white/50 bg-white/60 p-4 shadow-sm">
-              <p className="text-[11px] font-medium text-slate-500">Sleeve mix (this plan)</p>
-              <p className="text-base font-bold text-slate-900 tabular-nums mt-0.5">
-                Steady {coreSleevePct.toFixed(0)}% / Growth {upsideSleevePct.toFixed(0)}%
-              </p>
-              <p className="text-[11px] text-slate-500 mt-1">Steady = Core bucket. Growth = High-upside bucket.</p>
-            </div>
-            <div className="rounded-2xl border border-white/50 bg-white/60 p-4 shadow-sm">
-              <p className="text-[11px] font-medium text-slate-500">At risk of overfill</p>
-              <p className={`text-base font-bold tabular-nums mt-0.5 ${health.overMaxCount === 0 ? 'text-emerald-700' : 'text-rose-600'}`}>{health.overMaxCount}</p>
-              <p className="text-[11px] text-slate-500 mt-1">A position is above your max cap for that stock.</p>
-            </div>
-            <div className="rounded-2xl border border-white/50 bg-white/60 p-4 shadow-sm">
-              <p className="text-[11px] font-medium text-slate-500">Waiting to be connected</p>
-              <p className={`text-base font-bold tabular-nums mt-0.5 ${health.unmappedCount === 0 ? 'text-emerald-700' : 'text-amber-700'}`}>{health.unmappedCount}</p>
-              <p className="text-[11px] text-slate-500 mt-1">Use “Add from watchlist &amp; holdings” to import.</p>
-            </div>
-            <div className="rounded-2xl border border-slate-200/80 bg-slate-900 p-4 text-slate-50 shadow-md">
-              <p className="text-[11px] font-medium text-slate-300">One-tap fix</p>
-              <p className="text-sm font-semibold text-white mt-0.5">Auto-balance weights</p>
-              <button
-                type="button"
-                onClick={onAutoConfigureWeights}
-                className="mt-2 w-full inline-flex items-center justify-center gap-2 rounded-xl bg-white px-3 py-2 text-xs font-bold text-slate-900 hover:bg-slate-100"
-              >
-                <SparklesIcon className="h-4 w-4" />
-                Run auto-configure
-              </button>
-            </div>
-          </div>
-
-          {Math.abs(health.monthlyWeightTotal - 1) > 0.01 && health.actionableCount > 0 && (
-            <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-950" role="status">
-              <ExclamationTriangleIcon className="h-5 w-5 shrink-0 text-amber-600" />
-              <p>
-                <strong className="font-semibold">Heads up:</strong> the slice percentages should add to about <strong>100%</strong> for each active sleeve, so
-                the app doesn’t over- or under-spend. Tap <em>Run auto-configure</em> or adjust a few numbers.
-              </p>
-            </div>
-          )}
 
           <button
             type="button"
