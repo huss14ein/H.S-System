@@ -990,49 +990,189 @@ const Goals: React.FC<{
         </div>
       </SectionCard>
 
-      <CollapsibleSection title="System Funding Suggestions" summary="Suggested monthly funding per goal" className="bg-white border border-slate-200">
+      <SectionCard
+        title="Goal funding cockpit"
+        className="border-slate-200 bg-gradient-to-br from-white via-slate-50 to-violet-50/30"
+        collapsible
+        collapsibleSummary="Suggested funding + waterfall"
+        defaultExpanded
+      >
         <p className="text-xs text-slate-600 mb-3">
-            Uses your <strong>last 12 months</strong> of net cash flow in SAR (≈ <span className="font-semibold">{formatCurrencyString(rollingAnnualNetSar, { digits: 0 })}</span> total) ÷ 12 →{' '}
-            <span className="font-semibold">{formatCurrencyString(fundingPlan?.totalMonthlySurplus ?? 0, { digits: 0 })}</span>/month baseline for splitting across goals.
+          Baseline uses your <strong>last 12 months</strong> net cashflow in SAR (≈{' '}
+          <span className="font-semibold">{formatCurrencyString(rollingAnnualNetSar, { digits: 0 })}</span> total) ÷ 12 →{' '}
+          <span className="font-semibold">{formatCurrencyString(fundingPlan?.totalMonthlySurplus ?? 0, { digits: 0 })}</span>/month to split across goals.
         </p>
-        {(fundingPlan.suggestions.length === 0) && (
-            <p className="text-sm text-slate-500">Add goals with future deadlines to see suggested monthly funding per goal.</p>
-        )}
-        <div className="space-y-2">
-            {(fundingPlan?.suggestions ?? []).map(s => (
-                <div key={s.goalId} className="flex justify-between items-center text-xs border rounded-md px-3 py-2 bg-slate-50">
-                    <div>
-                        <p className="font-semibold text-slate-900">{(data?.goals ?? []).find(g => g.id === s.goalId)?.name ?? s.name}</p>
-                        <p className="text-slate-500 mt-0.5">
-                            Required: {formatCurrencyString(s.requiredPerMonth, { digits: 0 })} / mo · Suggested: {formatCurrencyString(s.suggestedPerMonth, { digits: 0 })} / mo
-                        </p>
-                    </div>
-                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                        s.status === 'on_track' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                    }`}>
-                        {s.status === 'on_track' ? 'On track' : 'Need more'}
-                    </span>
-                </div>
-            ))}
-        </div>
-      </CollapsibleSection>
 
-      <CollapsibleSection title="Funding waterfall (suggested order)" summary="Priority order for funding goals" className="border border-violet-100 bg-violet-50/30">
-        <p className="text-xs text-slate-600 mb-3">
-          After you fully fund a goal, shift focus to the next: <strong>priority</strong> (High → Low) then <strong>earliest deadline</strong>.
-        </p>
-        <ol className="list-decimal list-inside space-y-1 text-sm text-slate-800">
-          {fundingWaterfallOrder.length === 0 ? (
-            <li className="text-slate-500">Add goals to see order.</li>
-          ) : (
-            fundingWaterfallOrder.map((g) => (
-              <li key={g.id}>
-                {g.name} <span className="text-slate-500">({g.priority || 'Medium'})</span>
-              </li>
-            ))
-          )}
-        </ol>
-      </CollapsibleSection>
+        <div className="flex flex-col lg:flex-row gap-3">
+          <div className="lg:flex-1 rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900">Suggested monthly funding (per goal)</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Green = on track. Amber = shortfall. Values are computed in SAR for correctness.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <span className="inline-flex items-center rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">
+                  On track
+                </span>
+                <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                  Need more
+                </span>
+              </div>
+            </div>
+
+            {(fundingPlan?.suggestions ?? []).length === 0 ? (
+              <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-6 text-center text-sm text-slate-500">
+                Add goals with future deadlines to see suggested monthly funding.
+              </div>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {(fundingPlan?.suggestions ?? [])
+                  .slice()
+                  .sort((a, b) => {
+                    const sa = a.status === 'on_track' ? 0 : 1;
+                    const sb = b.status === 'on_track' ? 0 : 1;
+                    if (sa !== sb) return sb - sa; // show "Need more" first
+                    return (b.requiredPerMonth - b.suggestedPerMonth) - (a.requiredPerMonth - a.suggestedPerMonth);
+                  })
+                  .map((s) => {
+                    const goal = (data?.goals ?? []).find((g) => g.id === s.goalId);
+                    const name = goal?.name ?? s.name;
+                    const required = Number(s.requiredPerMonth) || 0;
+                    const suggested = Number(s.suggestedPerMonth) || 0;
+                    const short = Math.max(0, required - suggested);
+                    const ok = s.status === 'on_track' || short <= 0.01;
+                    const pct = required > 0 ? Math.min(100, (suggested / required) * 100) : 0;
+                    const priority = goal?.priority || 'Medium';
+                    const deadline = goal?.deadline ? String(goal.deadline).slice(0, 10) : '';
+
+                    return (
+                      <div
+                        key={`fund-${s.goalId}`}
+                        className={`rounded-xl border px-3 py-2.5 shadow-sm ${
+                          ok ? 'border-emerald-200 bg-emerald-50/40' : 'border-amber-200 bg-amber-50/40'
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const el = document.getElementById(`goal-card-${s.goalId}`);
+                                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                              }}
+                              className="text-left font-semibold text-slate-900 hover:underline underline-offset-2"
+                              title="Jump to goal"
+                            >
+                              {name}
+                            </button>
+                            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-600">
+                              <span className="inline-flex items-center rounded-full bg-white/70 border border-slate-200 px-2 py-0.5 font-semibold">
+                                {priority}
+                              </span>
+                              {deadline && <span>Deadline: {deadline}</span>}
+                            </div>
+                          </div>
+
+                          <span
+                            className={`shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                              ok ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {ok ? 'On track' : 'Need more'}
+                          </span>
+                        </div>
+
+                        <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs tabular-nums">
+                          <div className="rounded-lg border border-slate-200 bg-white/80 px-2.5 py-1.5">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Required</p>
+                            <p className="font-bold text-slate-900">{formatCurrencyString(required, { digits: 0 })}/mo</p>
+                          </div>
+                          <div className="rounded-lg border border-slate-200 bg-white/80 px-2.5 py-1.5">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Suggested</p>
+                            <p className="font-bold text-slate-900">{formatCurrencyString(suggested, { digits: 0 })}/mo</p>
+                          </div>
+                          <div className="rounded-lg border border-slate-200 bg-white/80 px-2.5 py-1.5">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Shortfall</p>
+                            <p className={`font-bold ${short > 0 ? 'text-amber-800' : 'text-emerald-800'}`}>
+                              {short > 0 ? formatCurrencyString(short, { digits: 0 }) : '0'}
+                              {short > 0 ? '/mo' : ''}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-2">
+                          <div className="h-2.5 w-full rounded-full bg-slate-200 overflow-hidden" aria-hidden>
+                            <div
+                              className={`h-full rounded-full ${ok ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                              style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
+                            />
+                          </div>
+                          <p className="mt-1 text-[11px] text-slate-600">
+                            Coverage: <span className="font-semibold">{pct.toFixed(0)}%</span> of required
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+
+          <div className="lg:w-[360px] rounded-2xl border border-violet-200 bg-violet-50/40 p-3 shadow-sm">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Funding waterfall (suggested order)</p>
+                <p className="text-[11px] text-slate-600 mt-0.5">
+                  Order = <strong>priority</strong> (High → Low) then <strong>earliest deadline</strong>.
+                </p>
+              </div>
+            </div>
+
+            {fundingWaterfallOrder.length === 0 ? (
+              <div className="mt-3 rounded-xl border border-dashed border-violet-200 bg-white/60 px-3 py-6 text-center text-sm text-slate-500">
+                Add goals to see suggested order.
+              </div>
+            ) : (
+              <ol className="mt-3 space-y-2">
+                {fundingWaterfallOrder.map((g, idx) => {
+                  const p = g.priority || 'Medium';
+                  const pClass =
+                    p === 'High'
+                      ? 'bg-rose-100 text-rose-800 border-rose-200'
+                      : p === 'Low'
+                      ? 'bg-slate-100 text-slate-700 border-slate-200'
+                      : 'bg-amber-100 text-amber-800 border-amber-200';
+                  return (
+                    <li key={g.id} className="rounded-xl border border-violet-200 bg-white/80 px-3 py-2 shadow-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const el = document.getElementById(`goal-card-${g.id}`);
+                              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }}
+                            className="text-left font-semibold text-slate-900 hover:underline underline-offset-2"
+                            title="Jump to goal"
+                          >
+                            {idx + 1}. {g.name}
+                          </button>
+                          <p className="text-[11px] text-slate-600 mt-0.5">Deadline: {String(g.deadline).slice(0, 10)}</p>
+                        </div>
+                        <span className={`shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${pClass}`}>
+                          {p}
+                        </span>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </div>
+        </div>
+      </SectionCard>
 
       <GoalConflictAndFeasibilitySection
         goals={(data?.goals ?? []).map(g => ({ ...g, currentAmount: goalCurrentAmountByGoalId[g.id] ?? 0 }))}

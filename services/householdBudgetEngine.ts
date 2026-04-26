@@ -788,7 +788,7 @@ export function buildHouseholdEngineInputFromPlanData(
 }
 
 export function buildHouseholdEngineInputFromData(
-  transactions: Array<{ date: string; type?: string; amount?: number }>,
+  transactions: Array<{ date: string; type?: string; amount?: number; accountId?: string }>,
   accounts: Array<{ type?: string; balance?: number; id?: string; currency?: string }>,
   goals: Array<{ id?: string; name?: string; targetAmount?: number; currentAmount?: number; deadline?: string }>,
   options: {
@@ -818,13 +818,18 @@ export function buildHouseholdEngineInputFromData(
     monthlyActualIncome = acc.monthlyIncome;
     monthlyActualExpense = acc.monthlyExpense;
   } else if (Array.isArray(transactions)) {
+    const useFx = Number.isFinite(rate) && rate > 0;
+    const spot = useFx ? rate : 1;
+    const accById = new Map((accounts ?? []).map((a) => [String(a.id ?? ''), a]));
     transactions.forEach((t) => {
       const d = new Date(t.date);
       if (d.getFullYear() !== year) return;
       const m = d.getMonth();
-      const amount = Math.max(0, Number(t.amount) ?? 0);
-      if (countsAsIncomeForCashflowKpi(t)) monthlyActualIncome[m] += amount;
-      else if (countsAsExpenseForCashflowKpi(t)) monthlyActualExpense[m] += amount;
+      const raw = Math.max(0, Number(t.amount) ?? 0);
+      const cur = useFx && accById.get(String(t.accountId ?? ''))?.currency === 'USD' ? 'USD' : 'SAR';
+      const amountSar = useFx ? toSAR(raw, cur, spot) : raw;
+      if (countsAsIncomeForCashflowKpi(t)) monthlyActualIncome[m] += amountSar;
+      else if (countsAsExpenseForCashflowKpi(t)) monthlyActualExpense[m] += amountSar;
     });
   }
   for (let i = 0; i < 12; i++) {

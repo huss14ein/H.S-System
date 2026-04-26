@@ -1065,8 +1065,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             
             
             {isAdmin ? (
-                <div className="cards-grid grid grid-cols-1 lg:grid-cols-3">
-                    <div className="lg:col-span-3 section-card flex flex-col min-h-[420px] h-[min(52vh,440px)]">
+                <div className="cards-grid grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    <div className="lg:col-span-3 section-card flex flex-col min-h-[420px] overflow-hidden">
                         <div className="flex-1 min-h-0">
                             <NetWorthCockpit
                                 title="Net worth"

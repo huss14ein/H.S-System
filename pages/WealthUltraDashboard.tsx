@@ -1334,7 +1334,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
   return (
     <PageLayout
       title="Wealth Ultra Engine"
-      description="Allocation intelligence wired to your Investment Plan and universe. Portfolio math uses USD for engine consistency; your saved budget stays in SAR."
+      description="Simple, automated portfolio cockpit. Wealth Ultra reads your plan + universe + holdings and proposes the next safe moves."
       action={
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <label className="flex items-center gap-1">
@@ -1396,6 +1396,124 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
           </div>
         )}
 
+        <SectionCard
+          title="Wealth Ultra autopilot"
+          className="border-slate-200 bg-gradient-to-br from-white via-slate-50 to-violet-50/30 shadow-sm"
+          collapsible
+          collapsibleSummary="Simple status + next safe moves"
+          defaultExpanded
+          infoHint="Designed for non-financial users: check status, review the suggested orders, export, then record trades at your broker."
+        >
+          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                    hasBlockingValidationIssue
+                      ? 'bg-rose-100 text-rose-800'
+                      : portfolioHealth.score >= 85
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-amber-100 text-amber-900'
+                  }`}
+                >
+                  {hasBlockingValidationIssue ? (
+                    <ExclamationTriangleIcon className="h-4 w-4" />
+                  ) : portfolioHealth.score >= 85 ? (
+                    <CheckCircleIcon className="h-4 w-4" />
+                  ) : (
+                    <ExclamationTriangleIcon className="h-4 w-4" />
+                  )}
+                  {hasBlockingValidationIssue ? 'Blocked' : portfolioHealth.score >= 85 ? 'Ready' : 'Review'}
+                </span>
+                <p className="text-sm font-semibold text-slate-900">
+                  {hasBlockingValidationIssue ? 'Fix blockers first, then export orders.' : 'Next safe moves are ready.'}
+                </p>
+              </div>
+              <p className="text-xs text-slate-600 mt-2 leading-relaxed max-w-3xl">
+                Engine math uses <strong>USD</strong> internally (prices + order notional). SAR equivalents use your app FX resolver:{' '}
+                <strong className="font-mono">{sarPerUsd.toFixed(4)}</strong> SAR/USD.
+              </p>
+              {planValidation.issues.length > 0 && (
+                <ul className="mt-3 text-xs text-amber-900 space-y-1 list-disc pl-5">
+                  {planValidation.issues.slice(0, 4).map((x, i) => (
+                    <li key={`wu-plan-issue-${i}`}>{x}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {triggerPageAction && (
+                <button
+                  type="button"
+                  onClick={() => triggerPageAction('Investments', 'focus-investment-plan')}
+                  className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-extrabold text-white hover:bg-slate-800"
+                >
+                  Open Investment Plan
+                </button>
+              )}
+              {setActivePage && (
+                <button
+                  type="button"
+                  onClick={() => setActivePage('Investments')}
+                  className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-800 hover:bg-slate-50"
+                >
+                  Investments hub
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={hasBlockingValidationIssue}
+                onClick={handleExportOrders}
+                className={`inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-xs font-extrabold ${
+                  hasBlockingValidationIssue ? 'bg-slate-200 text-slate-500' : 'bg-primary text-white hover:bg-primary/90'
+                }`}
+              >
+                {exportActionLabel}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            <Card
+              title="Total portfolio value"
+              value={<CurrencyDualDisplay value={totalPortfolioValue} inCurrency="USD" digits={0} size="2xl" />}
+              trend={`Confidence: ${metricConfidence.totalPortfolio}`}
+              density="compact"
+              indicatorColor="green"
+              valueColor="text-slate-900"
+              tooltip="Total market value as the engine sees it (USD)."
+            />
+            <Card
+              title="Deployable cash"
+              value={<CurrencyDualDisplay value={deployableCash} inCurrency="USD" digits={0} size="2xl" />}
+              trend={`Confidence: ${metricConfidence.deployableCash}`}
+              density="compact"
+              indicatorColor={deployableCash > 0 ? 'green' : 'yellow'}
+              valueColor="text-slate-900"
+              tooltip="Engine deployable cash after reserve logic."
+            />
+            <Card
+              title="Planned buys"
+              value={<CurrencyDualDisplay value={totalPlannedBuyCost} inCurrency="USD" digits={0} size="2xl" />}
+              trend={`Confidence: ${metricConfidence.orderbook}`}
+              density="compact"
+              indicatorColor={totalPlannedBuyCost > 0 ? 'green' : 'yellow'}
+              valueColor="text-slate-900"
+              tooltip="Total BUY notional from suggested orders."
+            />
+            <Card
+              title="Orders status"
+              value={cashPlannerStatus === 'WITHIN_LIMIT' ? 'Within cash' : 'Over cash'}
+              trend={`Engine IQ: ${engineIntelligence.iqScore}/100`}
+              density="compact"
+              indicatorColor={cashPlannerStatus === 'WITHIN_LIMIT' ? 'green' : 'red'}
+              valueColor={cashPlannerStatus === 'WITHIN_LIMIT' ? 'text-emerald-700' : 'text-rose-700'}
+              tooltip="Within cash means suggested BUY orders fit inside deployable cash."
+            />
+          </div>
+        </SectionCard>
+
         <CollapsibleSection
           title="Engine rules & data flow"
           summary="What feeds this page"
@@ -1426,7 +1544,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
           className="border border-indigo-100 bg-indigo-50/30 shadow-sm"
           collapsible
           collapsibleSummary="Budget & sleeve split (read-only here)"
-          defaultExpanded
+          defaultExpanded={false}
           infoHint="This mirrors your saved plan. Edit budgets, universe, and execution in Investments — not on this page."
         >
           {planSnapshot ? (
