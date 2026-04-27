@@ -1,6 +1,7 @@
 import type { FinancialData } from '../types';
-import { getAllInvestmentsValueInSAR, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { getPersonalAccounts, getPersonalAssets, getPersonalLiabilities, getPersonalCommodityHoldings, getPersonalInvestments } from '../utils/wealthScope';
+import { hydrateSarPerUsdDailySeries } from './fxDailySeries';
 
 export type PersonalNetWorthOptions = {
   /** When set, cash sitting in investment accounts (ledger) is included in assets — matches Dashboard ROI / deployable cash. */
@@ -224,4 +225,39 @@ export function computePersonalNetWorthSAR(
   options?: PersonalNetWorthOptions
 ): number {
   return computePersonalNetWorthBreakdownSAR(data, exchangeRate, options).netWorth;
+}
+
+export type PersonalHeadlineNetWorthResult = {
+  /** Same figure as KPI “My net worth”, Net worth cockpit headline, and wealth summary snapshot. */
+  netWorth: number;
+  buckets: PersonalNetWorthChartBucketsSAR;
+  /** Resolved SAR/USD after hydrate — reuse for any follow-on SAR conversions in the same render. */
+  sarPerUsd: number;
+};
+
+/**
+ * **Single source of truth** for personal-scope headline net worth (SAR) and stacked buckets.
+ * Always pass the **same** `data` (DataContext) and **CurrencyContext `exchangeRate`** everywhere
+ * so Dashboard, Summary, Net worth cockpit, and exports match.
+ *
+ * Uses one consistent FX path (`hydrateSarPerUsdDailySeries` + `resolveSarPerUsd`) — do **not**
+ * substitute a calendar-day spot for headline NW (that caused cockpit vs KPI drift).
+ */
+export function computePersonalHeadlineNetWorthSar(
+  data: FinancialData | null | undefined,
+  uiExchangeRate: number,
+  options?: PersonalNetWorthOptions,
+): PersonalHeadlineNetWorthResult {
+  if (!data) {
+    const fallback = Number.isFinite(uiExchangeRate) && uiExchangeRate > 0 ? uiExchangeRate : 3.75;
+    return {
+      netWorth: 0,
+      buckets: { cash: 0, investments: 0, physicalAndCommodities: 0, receivables: 0, liabilities: 0, netWorth: 0 },
+      sarPerUsd: fallback,
+    };
+  }
+  hydrateSarPerUsdDailySeries(data, uiExchangeRate);
+  const sarPerUsd = resolveSarPerUsd(data, uiExchangeRate);
+  const buckets = computePersonalNetWorthChartBucketsSAR(data, sarPerUsd, options);
+  return { netWorth: buckets.netWorth, buckets, sarPerUsd };
 }

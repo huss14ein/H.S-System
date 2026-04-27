@@ -1,23 +1,26 @@
 /**
  * Single source of truth for wealth summary exports (Settings, Summary) and related KPIs.
- * Mirrors Summary page calculations so JSON/CSV/HTML match on-screen metrics.
+ * Pass **CurrencyContext `exchangeRate`** (not a pre-resolved SAR/USD) so FX hydration matches
+ * `computePersonalHeadlineNetWorthSar` / Dashboard / Net worth cockpit.
  */
 
 import type { FinancialData, TradeCurrency } from '../types';
 import { computeEmergencyFundMetrics, type EmergencyFundMetrics } from '../hooks/useEmergencyFund';
-import { getAllInvestmentsValueInSAR, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
+import { getAllInvestmentsValueInSAR, resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { getPersonalAssets, getPersonalWealthData } from '../utils/wealthScope';
 import { buildHouseholdBudgetPlan, buildHouseholdEngineInputFromData } from './householdBudgetEngine';
 import { deriveCashflowStressSummary } from './householdBudgetStress';
 import { computeDisciplineScore, type DisciplineScoreSummary } from './disciplineScoreEngine';
 import { computeLiquidityRunwayFromData, type LiquidityRunwaySummary } from './liquidityRunwayEngine';
-import { computePersonalNetWorthBreakdownSAR } from './personalNetWorth';
+import { computePersonalHeadlineNetWorthSar, computePersonalNetWorthBreakdownSAR } from './personalNetWorth';
+import { hydrateSarPerUsdDailySeries } from './fxDailySeries';
 import type { WealthSummaryReportInput } from './reportingEngine';
 import { computeRiskLaneFromData, type RiskLaneContext } from './riskLaneEngine';
 import { runShockDrill, type ShockDrillResult } from './shockDrillEngine';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { computeLiquidNetWorth } from './liquidNetWorth';
 import { computePersonalInvestmentKpisSar } from './investmentKpiCore';
+import { financialMonthRange } from '../utils/financialMonth';
 
 export type GetAvailableCashFn = (accountId: string) => { SAR: number; USD: number };
 
@@ -92,13 +95,17 @@ export function computeMonthlyReportFinancialKpis(
   getAvailableCashForAccount: GetAvailableCashFn
 ): { budgetVariance: number; roi: number } {
   const now = new Date();
-  const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const currentMonth = now.getMonth() + 1;
-  const currentYear = now.getFullYear();
+  const monthStartDay = (data as any)?.settings?.monthStartDay ?? 1;
+  const { start: firstDayOfMonth, end: endOfMonth, key } = financialMonthRange(now, monthStartDay);
+  const currentMonth = key.month;
+  const currentYear = key.year;
   const d = data as { personalTransactions?: typeof data.transactions };
   const transactions = d?.personalTransactions ?? data.transactions ?? [];
 
-  const monthlyTransactions = transactions.filter((t: { date: string }) => new Date(t.date) >= firstDayOfMonth);
+  const monthlyTransactions = transactions.filter((t: { date: string }) => {
+    const d = new Date(t.date);
+    return d >= firstDayOfMonth && d <= endOfMonth;
+  });
   const monthlyExpenses = monthlyTransactions
     .filter((t: { type?: string; category?: string }) => countsAsExpenseForCashflowKpi(t))
     .reduce((sum: number, t: { amount?: number }) => sum + Math.abs(Number(t.amount) ?? 0), 0);
@@ -115,13 +122,21 @@ export function computeMonthlyReportFinancialKpis(
 
 export function computeWealthSummaryReportModel(
   data: FinancialData,
-  sarPerUsd: number,
+  uiExchangeRate: number,
   getAvailableCashForAccount: GetAvailableCashFn
 ): WealthSummaryReportModel {
   const now = new Date();
-  const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  hydrateSarPerUsdDailySeries(data, uiExchangeRate);
+  const sarPerUsd = resolveSarPerUsd(data, uiExchangeRate);
+  const nwOpts = { getAvailableCashForAccount };
+  const headlineNw = computePersonalHeadlineNetWorthSar(data, uiExchangeRate, nwOpts);
   const transactions = (data as { personalTransactions?: typeof data.transactions }).personalTransactions ?? data.transactions ?? [];
-  const recentTransactions = transactions.filter((t) => new Date(t.date) >= firstDayOfMonth);
+  const monthStartDay = (data as any)?.settings?.monthStartDay ?? 1;
+  const { start: firstDayOfMonth, end: endOfMonth } = financialMonthRange(now, monthStartDay);
+  const recentTransactions = transactions.filter((t) => {
+    const d = new Date(t.date);
+    return d >= firstDayOfMonth && d <= endOfMonth;
+  });
 
   const monthlyIncome = recentTransactions
     .filter((t) => countsAsIncomeForCashflowKpi(t))
@@ -133,8 +148,8 @@ export function computeWealthSummaryReportModel(
   const monthlyPnL = monthlyIncome - monthlyExpenses;
 
   const investments = (data as { personalInvestments?: typeof data.investments }).personalInvestments ?? data.investments ?? [];
-  const nwOpts = { getAvailableCashForAccount };
-  const { netWorth, totalAssets, totalDebt, totalReceivable } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd, nwOpts);
+  const netWorth = headlineNw.netWorth;
+  const { totalAssets, totalDebt, totalReceivable } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd, nwOpts);
   const grossAssets = totalAssets + totalReceivable;
   const debtToAssetRatio = grossAssets > 0 ? totalDebt / grossAssets : 0;
 

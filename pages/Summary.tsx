@@ -161,8 +161,8 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     }, [auth?.user?.id]);
 
     const reportModel = useMemo(
-        () => (data ? computeWealthSummaryReportModel(data, sarPerUsd, getAvailableCashForAccount) : null),
-        [data, sarPerUsd, getAvailableCashForAccount]
+        () => (data ? computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount) : null),
+        [data, exchangeRate, getAvailableCashForAccount]
     );
 
     const { maskBalance } = usePrivacyMask();

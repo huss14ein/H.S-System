@@ -1,5 +1,11 @@
+/**
+ * Run `supabase functions deploy send-weekly-digest` from the **repo root** so relative imports into
+ * `/services` bundle with the app’s shared net-worth math (`digestFinancialData` / `weeklyDigestNetWorthSar`).
+ */
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.91.1";
+import { buildFinancialDataForWeeklyDigest } from "../../../services/digestFinancialData.ts";
+import { computeWeeklyDigestPersonalNetWorthSar } from "../../../services/weeklyDigestNetWorthSar.ts";
 
 declare const Deno: {
   env: {
@@ -170,71 +176,55 @@ function sarPerUsd(): number {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_SAR_PER_USD;
 }
 
-/** Holding `current_value` is in portfolio currency (USD default); commodities use SAR in-app. */
-function holdingValueToSAR(currentValue: number, portfolioCurrency: string | null | undefined, rate: number): number {
-  const v = Number(currentValue) || 0;
-  const c = String(portfolioCurrency ?? 'USD').toUpperCase();
-  if (c === 'SAR') return v;
-  return v * rate;
-}
-
-// Calculate net worth (align with dashboard: accounts + assets + investment holdings + commodities − debt + receivables)
+/**
+ * Personal net worth (SAR) — uses the same pipeline as the app:
+ * `buildFinancialDataForWeeklyDigest` → `computeWeeklyDigestPersonalNetWorthSar`
+ * (`computePersonalNetWorthBreakdownSAR` + FX from `wealth_ultra_config` / env + investment ledger cash).
+ */
 async function calculateNetWorth(supabase: any, userId: string): Promise<number> {
-  const rate = sarPerUsd();
+  const fallbackFx = sarPerUsd();
 
   const [
-    { data: accounts, error: eAcc },
-    { data: assets, error: eAst },
-    { data: liabilities, error: eLiab },
-    { data: portfolios, error: ePort },
-    { data: holdingsRows, error: eHold },
-    { data: commodities, error: eComm },
+    { data: accountsRaw, error: eAcc },
+    { data: assetsRaw, error: eAst },
+    { data: liabilitiesRaw, error: eLiab },
+    { data: portfoliosRaw, error: ePort },
+    { data: commodityHoldingsRaw, error: eComm },
+    { data: investmentTransactionsRaw, error: eTx },
+    { data: wealthUltraUser, error: eWuUser },
+    { data: wealthUltraGlobal, error: eWuGlobal },
   ] = await Promise.all([
-    supabase.from('accounts').select('balance').eq('user_id', userId),
-    supabase.from('assets').select('value').eq('user_id', userId),
-    supabase.from('liabilities').select('amount').eq('user_id', userId),
-    supabase.from('investment_portfolios').select('id, currency').eq('user_id', userId),
-    supabase.from('holdings').select('current_value, portfolio_id').eq('user_id', userId),
-    supabase.from('commodity_holdings').select('current_value').eq('user_id', userId),
+    supabase.from('accounts').select('*').eq('user_id', userId),
+    supabase.from('assets').select('*').eq('user_id', userId),
+    supabase.from('liabilities').select('*').eq('user_id', userId),
+    supabase.from('investment_portfolios').select('*, holdings(*)').eq('user_id', userId),
+    supabase.from('commodity_holdings').select('*').eq('user_id', userId),
+    supabase.from('investment_transactions').select('*').eq('user_id', userId),
+    supabase.from('wealth_ultra_config').select('*').eq('user_id', userId).maybeSingle(),
+    supabase.from('wealth_ultra_config').select('*').is('user_id', null).limit(1).maybeSingle(),
   ]);
 
   if (eAcc) console.error('weekly-digest accounts:', eAcc.message);
   if (eAst) console.error('weekly-digest assets:', eAst.message);
   if (eLiab) console.error('weekly-digest liabilities:', eLiab.message);
   if (ePort) console.error('weekly-digest investment_portfolios:', ePort.message);
-  if (eHold) console.error('weekly-digest holdings:', eHold.message);
   if (eComm) console.error('weekly-digest commodity_holdings:', eComm.message);
+  if (eTx) console.error('weekly-digest investment_transactions:', eTx.message);
+  if (eWuUser) console.warn('weekly-digest wealth_ultra_config (user):', eWuUser.message);
+  if (eWuGlobal) console.warn('weekly-digest wealth_ultra_config (global):', eWuGlobal.message);
 
-  const accountTotal = (accounts || []).reduce((sum: number, a: any) => sum + (a.balance || 0), 0);
-  const assetTotal = (assets || []).reduce((sum: number, a: any) => sum + (a.value || 0), 0);
-  const liabilityDebt = (liabilities || []).reduce(
-    (sum: number, l: any) => sum + ((l.amount ?? 0) < 0 ? Math.abs(l.amount ?? 0) : 0),
-    0
-  );
-  const liabilityReceivable = (liabilities || []).reduce(
-    (sum: number, l: any) => sum + ((l.amount ?? 0) > 0 ? (l.amount ?? 0) : 0),
-    0
-  );
+  const data = buildFinancialDataForWeeklyDigest({
+    accountsRaw: (accountsRaw ?? []) as Record<string, unknown>[],
+    assetsRaw: (assetsRaw ?? []) as Record<string, unknown>[],
+    liabilitiesRaw: (liabilitiesRaw ?? []) as Record<string, unknown>[],
+    portfoliosRaw: (portfoliosRaw ?? []) as Record<string, unknown>[],
+    commodityHoldingsRaw: (commodityHoldingsRaw ?? []) as Record<string, unknown>[],
+    investmentTransactionsRaw: (investmentTransactionsRaw ?? []) as Record<string, unknown>[],
+    wealthUltraUserRow: wealthUltraUser ? (wealthUltraUser as Record<string, unknown>) : null,
+    wealthUltraGlobalRow: wealthUltraGlobal ? (wealthUltraGlobal as Record<string, unknown>) : null,
+  });
 
-  const pidToCurrency = new Map<string, string | null>();
-  for (const p of portfolios || []) {
-    if (p?.id) pidToCurrency.set(String(p.id), p.currency ?? 'USD');
-  }
-
-  let holdingsSar = 0;
-  for (const h of holdingsRows || []) {
-    const cv = Number(h.current_value ?? h.currentValue) || 0;
-    const pid = h.portfolio_id ?? h.portfolioId;
-    const cur = pid ? pidToCurrency.get(String(pid)) : null;
-    holdingsSar += holdingValueToSAR(cv, cur, rate);
-  }
-
-  const commodityTotal = (commodities || []).reduce(
-    (sum: number, c: any) => sum + Math.abs(Number(c.current_value ?? c.currentValue ?? 0)),
-    0
-  );
-
-  return accountTotal + assetTotal + holdingsSar + commodityTotal - liabilityDebt + liabilityReceivable;
+  return computeWeeklyDigestPersonalNetWorthSar(data, fallbackFx);
 }
 
 type BudgetSummaryRow = {

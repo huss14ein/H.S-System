@@ -1,6 +1,7 @@
 import type { Holding, TradeCurrency } from '../types';
 import { quoteNotionalInBookCurrency } from './currencyMath';
 import { AVG_COST_DECIMALS } from './money';
+import { lookupLiveQuoteForSymbol } from '../services/finnhubService';
 
 /** Decimal places for per-share / per-unit amounts (avg. cost, price per share, pullback prices). */
 export const HOLDING_PER_UNIT_DECIMALS = AVG_COST_DECIMALS;
@@ -26,8 +27,9 @@ export function effectiveHoldingValueInBookCurrency(
 ): number {
     const qty = Number(h.quantity || 0);
     const avgCost = Number(h.avgCost || 0);
-    const sym = (h.symbol || '').trim().toUpperCase();
-    const priceInfo = holdingUsesLiveQuote(h) ? simulatedPrices[sym] : undefined;
+    const symRaw = (h.symbol || '').trim();
+    const sym = symRaw.toUpperCase();
+    const priceInfo = holdingUsesLiveQuote(h) ? lookupLiveQuoteForSymbol(simulatedPrices, symRaw || sym) : undefined;
     if (priceInfo && Number.isFinite(priceInfo.price) && qty > 0) {
         return quoteNotionalInBookCurrency(priceInfo.price as number, qty, sym, bookCurrency, sarPerUsd);
     }

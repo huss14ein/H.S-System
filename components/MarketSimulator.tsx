@@ -3,7 +3,11 @@ import { DataContext } from '../context/DataContext';
 import { PriceAlert } from '../types';
 import { MarketDataContext } from '../context/MarketDataContext';
 import { getLivePrices, getAICommodityPrices } from '../services/geminiService';
-import { canonicalQuoteLookupKey } from '../services/finnhubService';
+import {
+    canonicalQuoteLookupKey,
+    expandLiveQuotesForRequestedSymbols,
+    type LiveQuoteRow,
+} from '../services/finnhubService';
 import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 import { holdingUsesLiveQuote } from '../utils/holdingValuation';
@@ -73,7 +77,10 @@ const MarketSimulator: React.FC = () => {
                         allCommodities.length > 0 ? getAICommodityPrices(allCommodities, { sarPerUsd }) : Promise.resolve({ prices: [], groundingChunks: [] })
                     ]);
 
-                    newPrices = { ...investmentPrices };
+                    newPrices =
+                        uniqueSymbols.length > 0
+                            ? expandLiveQuotesForRequestedSymbols(uniqueSymbols, investmentPrices as Record<string, LiveQuoteRow>)
+                            : {};
                     
                     // Map commodity prices to the same format
                     commodityData.prices.forEach(cp => {

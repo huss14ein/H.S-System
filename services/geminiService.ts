@@ -7,6 +7,7 @@ import { capitalizeCategoryName } from '../utils/categoryFormat';
 import { DEFAULT_SAR_PER_USD, resolveSarPerUsd } from '../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { fetchStooq } from './stooqClient';
+import { extractTadawulCodeForSahmk, getSahmkLivePrices } from './sahmkQuote';
 import { fetchGeminiProxyHealthStatus, getGeminiProxyEndpoints } from './aiProxyEndpoints';
 import { computeGoalMonthlyAllocation, normalizeGoalAllocationPercent } from './goalAllocation';
 import { computeGoalResolvedAmountsSar, resolvedGoalAmountsFingerprint, formatGoalsProgressForPrompt } from './goalResolvedTotals';
@@ -2576,20 +2577,60 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
         });
         if (missing.length === 0 && Object.keys(finnhub).length > 0) return finnhub;
         const stooq = await tryStooq(missing.length > 0 ? missing : symbols);
-        return { ...stooq, ...finnhub };
+        let combined: { [symbol: string]: { price: number; change: number; changePercent: number } } = { ...stooq, ...finnhub };
+        const stillMissing = symbols.filter((s) => {
+            const u = (s || '').trim().toUpperCase();
+            const canon = canonicalQuoteLookupKey(s);
+            const has =
+                combined[s] ||
+                combined[u] ||
+                combined[canon] ||
+                Object.keys(combined).some((k) => canonicalQuoteLookupKey(k) === canon);
+            return !has;
+        });
+        const tadStill = stillMissing.filter((s) => extractTadawulCodeForSahmk(s));
+        if (tadStill.length > 0) {
+            try {
+                const sahmk = await getSahmkLivePrices(tadStill);
+                combined = { ...combined, ...sahmk };
+            } catch (e) {
+                console.warn('SAHMK live prices skipped:', e);
+            }
+        }
+        return combined;
     };
 
     try {
         if (provider === 'stooq') {
             const stooq = await tryStooq(symbols);
-            if (Object.keys(stooq).length > 0) return stooq;
+            let combined: { [symbol: string]: { price: number; change: number; changePercent: number } } = { ...stooq };
+            const stillMissing = symbols.filter((s) => {
+                const u = (s || '').trim().toUpperCase();
+                const canon = canonicalQuoteLookupKey(s);
+                const has =
+                    combined[s] ||
+                    combined[u] ||
+                    combined[canon] ||
+                    Object.keys(combined).some((k) => canonicalQuoteLookupKey(k) === canon);
+                return !has;
+            });
+            const tadStill = stillMissing.filter((s) => extractTadawulCodeForSahmk(s));
+            if (tadStill.length > 0) {
+                try {
+                    const sahmk = await getSahmkLivePrices(tadStill);
+                    combined = { ...combined, ...sahmk };
+                } catch (e) {
+                    console.warn('SAHMK live prices skipped:', e);
+                }
+            }
+            if (Object.keys(combined).length > 0) return combined;
             throw new Error('Stooq returned no symbols');
         }
         if (provider === 'ai') return await aiFetch();
-        // finnhub | auto | unset: Finnhub first, Stooq fills gaps (same mapping as finnhubService)
+        // finnhub | auto | unset: Finnhub first, Stooq fills gaps, SAHMK fills remaining Tadawul (see sahmkQuote.ts)
         const merged = await mergeFinnhubAndStooq();
         if (Object.keys(merged).length > 0) return merged;
-        throw new Error('No live prices from Finnhub or Stooq');
+        throw new Error('No live prices from Finnhub, Stooq, or SAHMK');
     } catch (error) {
         console.error("Error fetching live prices:", error);
         throw error;

@@ -248,6 +248,8 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 const live = sym ? fundMap[sym] : undefined;
                 const yieldVal = Number(h.dividendYield ?? live?.dividendYieldPct ?? 0) || 0;
                 const perShareAnnual = live?.dividendPerShareAnnual;
+                /** Per-share dividends from Finnhub are in listing currency (usually USD for US names), not portfolio book currency. */
+                const divCashCur = (live?.dividendCashCurrency ?? 'USD') as 'USD' | 'SAR';
                 const holding = h as unknown as Holding;
                 const uPnL = unrealizedPnL(holding);
                 const costBasis = Math.max(0, Number(holding.avgCost) || 0) * Math.max(0, Number(holding.quantity) || 0);
@@ -255,27 +257,38 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 const book = (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR';
                 const qty = Math.max(0, Number(h.quantity) || 0);
 
-                let annualCashBook = 0;
+                let projectedSAR = 0;
                 if (perShareAnnual && perShareAnnual > 0 && qty > 0) {
-                    annualCashBook = perShareAnnual * qty;
+                    projectedSAR = toSAR(perShareAnnual * qty, divCashCur, sarPerUsd);
                 } else if (yieldVal > 0 && yieldVal <= 100 && cv > 0) {
-                    annualCashBook = cv * (yieldVal / 100);
+                    projectedSAR = toSAR(cv * (yieldVal / 100), book, sarPerUsd);
                 }
 
-                const projected = toSAR(annualCashBook, book, sarPerUsd);
+                const marketValueSAR = toSAR(cv, book, sarPerUsd);
+                const costBasisSAR = toSAR(costBasis, book, sarPerUsd);
                 const unrealizedSAR = toSAR(uPnL, book, sarPerUsd);
-                const dy = yieldVal;
+
+                let forwardYieldPct = yieldVal;
+                if (marketValueSAR > 0.01 && projectedSAR > 0) {
+                    forwardYieldPct = (projectedSAR / marketValueSAR) * 100;
+                }
+
                 const yieldOnCostPct =
-                    costBasis > 0.01 && annualCashBook > 0 ? (annualCashBook / costBasis) * 100 : null;
+                    costBasisSAR > 0.01 && projectedSAR > 0 ? (projectedSAR / costBasisSAR) * 100 : null;
+
+                const include =
+                    projectedSAR > 0.01 &&
+                    ((perShareAnnual != null && perShareAnnual > 0 && qty > 0) ||
+                        (yieldVal > 0 && yieldVal <= 100 && cv > 0));
 
                 return {
                     symbol: sym,
                     name: h.name ?? h.symbol ?? '—',
-                    projected,
+                    projected: projectedSAR,
                     unrealizedSAR,
-                    forwardYieldPct: dy,
+                    forwardYieldPct,
                     yieldOnCostPct,
-                    include: annualCashBook > 0 && (dy > 0 || (perShareAnnual ?? 0) > 0),
+                    include,
                 };
             })
             .filter((x) => x.include);

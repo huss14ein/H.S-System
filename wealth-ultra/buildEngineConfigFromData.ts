@@ -1,5 +1,6 @@
 import { getDefaultWealthUltraConfig } from './config';
-import type { WealthUltraConfig } from '../types';
+import type { Holding, HoldingAssetClass, WealthUltraConfig } from '../types';
+import { inferEngineSleeveKeyFromHolding } from '../services/inferHoldingUniverseClassification';
 
 /**
  * Input shape for building the same Wealth Ultra engine config used on the dashboard.
@@ -84,13 +85,33 @@ export function buildFinancialWealthUltraConfig(
   const universeByTicker = new Map(
     universe.map((t: { ticker: string; status?: string }) => [(t.ticker || '').toUpperCase(), (t.status || '').toLowerCase()])
   );
+
+  const holdingMetaByTicker = new Map<string, Pick<Holding, 'assetClass' | 'name' | 'symbol'>>();
+  (investments as { holdings?: Holding[] }[]).forEach((p) => {
+    for (const h of p.holdings || []) {
+      const sym = (h.symbol || '').toUpperCase();
+      if (!sym || holdingMetaByTicker.has(sym)) continue;
+      holdingMetaByTicker.set(sym, {
+        symbol: sym,
+        assetClass: h.assetClass as HoldingAssetClass | undefined,
+        name: h.name,
+      });
+    }
+  });
+
   allHoldingTickers.forEach((sym: string) => {
     if (coreSet.has(sym) || upsideSet.has(sym) || specSet.has(sym)) return;
     const status = universeByTicker.get(sym);
     if (status === 'core') coreSet.add(sym);
     else if (status === 'high-upside' || status === 'highupside') upsideSet.add(sym);
     else if (status === 'speculative' || status === 'spec') specSet.add(sym);
-    else coreSet.add(sym);
+    else {
+      const meta = holdingMetaByTicker.get(sym);
+      const inferred = inferEngineSleeveKeyFromHolding(meta ?? { symbol: sym });
+      if (inferred === 'core') coreSet.add(sym);
+      else if (inferred === 'speculative') specSet.add(sym);
+      else upsideSet.add(sym);
+    }
   });
   coreTickers = Array.from(coreSet);
   upsideTickers = Array.from(upsideSet);

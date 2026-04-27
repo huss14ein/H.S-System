@@ -95,6 +95,7 @@ import { aggregateMonthlyBudgetAcrossPortfolios, getEffectivePlanForPortfolio } 
 import { computeGoalMonthlyFundingEnvelopeSar } from '../services/goalProjectionFunding';
 import { computeGoalTimelineStatus } from '../services/goalMetrics';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
+import { engineSleeveKeyToTickerStatus, inferEngineSleeveKeyFromHolding } from '../services/inferHoldingUniverseClassification';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -3030,19 +3031,19 @@ const InvestmentPlan: React.FC<{
         // 1. Start with explicit universe (de-dupe by ticker; last row wins for duplicate DB keys)
         portfolioUniverseDeduped.forEach(t => universeMap.set(t.ticker, { ...t, source: 'Universe' }));
 
-        // 2. Add holdings
+        // 2. Add holdings (sleeve / status is inferred from asset class + name — no manual mapping)
         investments.flatMap(p => p.holdings || []).forEach(h => {
             if (!universeMap.has(h.symbol)) {
                 universeMap.set(h.symbol, {
                     id: `holding-${h.id}`,
                     ticker: h.symbol,
                     name: h.name || h.symbol,
-                    status: 'Core',
-                    source: 'Holding'
+                    status: engineSleeveKeyToTickerStatus(inferEngineSleeveKeyFromHolding(h)),
+                    source: 'Holding (auto)',
                 });
             } else {
                 const existing = universeMap.get(h.symbol)!;
-                universeMap.set(h.symbol, { ...existing, source: existing.source === 'Universe' ? 'Universe + Holding' : 'Holding' });
+                universeMap.set(h.symbol, { ...existing, source: existing.source === 'Universe' ? 'Universe + Holding' : existing.source });
             }
         });
 
@@ -4638,7 +4639,8 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
 
     const totalValue = platformsRollupSAR + commoditiesValueSAR + sukukAssetsValueSAR;
     const totalDailyPnL = platformsDailyPnL + commoditiesDailySAR;
-    const commodityCost = allCommodities.reduce((sum: number, ch: { purchaseValue?: number }) => sum + toSAR(ch.purchaseValue ?? 0, 'USD', rate), 0);
+    /** Purchase values are SAR (same as stored currentValue / Commodities UI)—do not USD-convert. */
+    const commodityCost = allCommodities.reduce((sum: number, ch: { purchaseValue?: number }) => sum + toSAR(ch.purchaseValue ?? 0, 'SAR', rate), 0);
     const netCapital = Math.max(0, platformNetCapitalSar + commodityCost + sukukAssetsCostSAR);
     const totalGainLoss = totalValue - netCapital;
     const roiRaw = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;

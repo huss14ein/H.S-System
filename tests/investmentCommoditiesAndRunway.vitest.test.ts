@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { FinancialData } from '../types';
 import { computePersonalCommoditiesContributionSAR } from '../services/investmentPlatformCardMetrics';
+import { getPersonalCommodityHoldings } from '../utils/wealthScope';
+import { toSAR } from '../utils/currencyMath';
 import { evaluateBuyAgainstPolicy, type TradingPolicy } from '../services/tradingPolicy';
 import { totalLiquidCashSARFromAccounts } from '../utils/currencyMath';
 
@@ -39,6 +41,31 @@ describe('investment commodities + runway policy regressions', () => {
     const fromStored = computePersonalCommoditiesContributionSAR(data, 3.75, {});
     expect(fromStored.valueSAR).toBeCloseTo(750, 8);
     expect(fromStored.dailyDeltaSAR).toBeCloseTo(0, 8);
+  });
+
+  it('sums commodity purchase cost in SAR without USD→SAR scaling (ROI net capital)', () => {
+    const purchaseSar = 9400;
+    const data = {
+      commodityHoldings: [
+        {
+          id: 'c1',
+          name: 'Gold',
+          quantity: 20,
+          unit: 'gram',
+          purchaseValue: purchaseSar,
+          currentValue: 9500,
+          symbol: 'XAU_GRAM_24K',
+          zakahClass: 'Zakatable',
+        },
+      ],
+    } as unknown as FinancialData;
+
+    const rate = 3.75;
+    const allCommodities = getPersonalCommodityHoldings(data);
+    const buggyUsdAsCurrency = allCommodities.reduce((sum, ch) => sum + toSAR(ch.purchaseValue ?? 0, 'USD', rate), 0);
+    const fixedSarAsCurrency = allCommodities.reduce((sum, ch) => sum + toSAR(ch.purchaseValue ?? 0, 'SAR', rate), 0);
+    expect(buggyUsdAsCurrency).toBeCloseTo(purchaseSar * rate, 8);
+    expect(fixedSarAsCurrency).toBeCloseTo(purchaseSar, 8);
   });
 
   it('buy policy runway uses total liquid cash (cash + tradable platform cash)', () => {

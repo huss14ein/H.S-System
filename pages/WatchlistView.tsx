@@ -3,7 +3,14 @@ import { DataContext } from '../context/DataContext';
 import { PriceAlert, PriceAlertCurrency, WatchlistItem, type Page } from '../types';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { TrashIcon } from '../components/icons/TrashIcon';
-import { getExchangeAndCurrencyForSymbol, getStockCandles1M, type CandlePoint, getHoldingFundamentals, type HoldingFundamentals } from '../services/finnhubService';
+import {
+    getExchangeAndCurrencyForSymbol,
+    getStockCandles1M,
+    type CandlePoint,
+    getHoldingFundamentals,
+    type HoldingFundamentals,
+    lookupLiveQuoteForSymbol,
+} from '../services/finnhubService';
 import { getAITradeAnalysis, getAIWatchlistAdvice, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
 import { fetchCompanyNameForSymbol, useCompanyNames } from '../hooks/useSymbolCompanyName';
 import { ResolvedSymbolLabel, formatSymbolWithCompany, type SymbolNamesMap } from '../components/SymbolWithCompanyName';
@@ -760,7 +767,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
     const watchlistInsights = useMemo(() => {
         const rows = (data?.watchlist ?? []).map((item) => {
             const sym = (item.symbol ?? '').trim().toUpperCase();
-            const resolved = resolveWatchlistPriceInfo(sym, simulatedPrices[sym], historicalBySymbol[sym]);
+            const resolved = resolveWatchlistPriceInfo(sym, lookupLiveQuoteForSymbol(simulatedPrices, sym), historicalBySymbol[sym]);
             return {
                 ...item,
                 priceInfo: { price: resolved.price, change: resolved.change, changePercent: resolved.changePercent, source: resolved.source },
@@ -776,7 +783,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
     const ideaRanks = useMemo(() => {
         const items = (data?.watchlist ?? []).map((w) => {
             const sym = (w.symbol ?? '').toUpperCase();
-            const resolved = resolveWatchlistPriceInfo(sym, simulatedPrices[sym], historicalBySymbol[sym]);
+            const resolved = resolveWatchlistPriceInfo(sym, lookupLiveQuoteForSymbol(simulatedPrices, sym), historicalBySymbol[sym]);
             const ch = resolved.source === 'none' ? 0 : resolved.changePercent;
             const signalScore = Math.max(0, Math.min(100, 50 + ch * 3));
             return { symbol: sym, userScore: 50, signalScore };
@@ -811,8 +818,9 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
 
     const handleOpenAlertModal = (item: WatchlistItem) => {
         const sym = (item.symbol ?? '').trim().toUpperCase();
-        const r = resolveWatchlistPriceInfo(sym, simulatedPrices[sym], historicalBySymbol[sym]);
-        const price = r.price > 0 ? r.price : simulatedPrices[sym]?.price ?? 0;
+        const r = resolveWatchlistPriceInfo(sym, lookupLiveQuoteForSymbol(simulatedPrices, sym), historicalBySymbol[sym]);
+        const quoteRow = lookupLiveQuoteForSymbol(simulatedPrices, sym);
+        const price = r.price > 0 ? r.price : quoteRow?.price ?? 0;
         setStockForAlert({ ...item, symbol: sym, price });
         setIsAlertModalOpen(true);
     };
@@ -986,7 +994,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
             ['Symbol', 'Name', 'Price', 'Change', 'Change %', 'Target Price', 'Status'].join(','),
             ...filteredWatchlist.map(item => {
                 const symK = (item.symbol ?? '').trim().toUpperCase();
-                const r = resolveWatchlistPriceInfo(symK, simulatedPrices[symK], historicalBySymbol[symK]);
+                const r = resolveWatchlistPriceInfo(symK, lookupLiveQuoteForSymbol(simulatedPrices, symK), historicalBySymbol[symK]);
                 const priceInfo = { price: r.price, change: r.change, changePercent: r.changePercent };
                 const activeAlerts = (data?.priceAlerts ?? []).filter(a => (a.symbol || '').toUpperCase() === (item.symbol || '').toUpperCase() && a.status === 'active');
                 const targetPrice = activeAlerts.length > 0 ? (activeAlerts[0].targetPrice ?? 0) : 0;
@@ -1132,7 +1140,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
                     <tbody className="bg-white divide-y divide-gray-200">
                         {filteredWatchlist.map((item) => {
                             const symKey = item.symbol.trim().toUpperCase();
-                            const r = resolveWatchlistPriceInfo(symKey, simulatedPrices[symKey], historicalBySymbol[symKey]);
+                            const r = resolveWatchlistPriceInfo(symKey, lookupLiveQuoteForSymbol(simulatedPrices, symKey), historicalBySymbol[symKey]);
                             const priceInfo = { price: r.price, change: r.change, changePercent: r.changePercent, source: r.source };
                             const activeAlerts = (data?.priceAlerts ?? []).filter(a => (a.symbol || '').toUpperCase() === (item.symbol || '').toUpperCase() && a.status === 'active');
                             return (

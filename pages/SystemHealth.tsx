@@ -421,7 +421,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       const { subtotalSAR: platformsRollupSar } = computePersonalPlatformsRollupSAR(financialData, rate, emptyPrices, getCashStrict);
       const { valueSAR: commoditiesValueSar } = computePersonalCommoditiesContributionSAR(financialData, rate, emptyPrices);
       const allCommodities = getPersonalCommodityHoldings(financialData);
-      const commodityCostSar = allCommodities.reduce((sum, ch) => sum + toSAR(ch.purchaseValue ?? 0, 'USD', rate), 0);
+      const commodityCostSar = allCommodities.reduce((sum, ch) => sum + toSAR(ch.purchaseValue ?? 0, 'SAR', rate), 0);
       const { personalAssets } = getPersonalWealthData(financialData);
       const sukukAssets = (personalAssets ?? []).filter((a) => a?.type === 'Sukuk');
       const sukukAssetsValueSAR = sukukAssets.reduce((sum, a) => sum + Math.max(0, Number(a?.value) || 0), 0);

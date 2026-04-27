@@ -422,6 +422,11 @@ export interface Settings {
     driftThreshold: number; // e.g., 5%
     enableEmails: boolean;
     goldPrice: number;
+    /**
+     * Defines the "financial month" boundary across KPIs and Budgets.
+     * 1 = calendar month. 2–28 shifts the month window start to that day.
+     */
+    monthStartDay?: number;
     /** Optional: nisab amount override (e.g. in SAR). When set, Zakat uses this instead of goldPrice * 85. */
     nisabAmount?: number;
 }

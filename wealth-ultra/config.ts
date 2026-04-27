@@ -41,6 +41,30 @@ export function getDefaultWealthUltraSystemConfig(): WealthUltraSystemConfig {
   };
 }
 
+/** Merge a `wealth_ultra_config` row over defaults (same rules as DataContext Supabase load). */
+export function mergeWealthUltraSystemConfigFromRow(
+  row: Record<string, unknown> | null | undefined,
+  base: WealthUltraSystemConfig,
+): WealthUltraSystemConfig {
+  if (!row) return base;
+  const n = (v: unknown, fallback: number) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? x : fallback;
+  };
+  return {
+    fxRate: n(row.fx_rate ?? row.fxRate, base.fxRate),
+    cashReservePct: n(row.cash_reserve_pct ?? row.cashReservePct, base.cashReservePct),
+    maxPerTickerPct: n(row.max_per_ticker_pct ?? row.maxPerTickerPct, base.maxPerTickerPct),
+    riskWeightLow: n(row.risk_weight_low ?? row.riskWeightLow, base.riskWeightLow),
+    riskWeightMed: n(row.risk_weight_med ?? row.riskWeightMed, base.riskWeightMed),
+    riskWeightHigh: n(row.risk_weight_high ?? row.riskWeightHigh, base.riskWeightHigh),
+    riskWeightSpec: n(row.risk_weight_spec ?? row.riskWeightSpec, base.riskWeightSpec),
+    defaultTarget1Pct: n(row.default_target_1_pct ?? row.defaultTarget1Pct, base.defaultTarget1Pct),
+    defaultTarget2Pct: n(row.default_target_2_pct ?? row.defaultTarget2Pct, base.defaultTarget2Pct),
+    defaultTrailingPct: n(row.default_trailing_pct ?? row.defaultTrailingPct, base.defaultTrailingPct),
+  };
+}
+
 export function validateWealthUltraConfig(c: WealthUltraConfig): { valid: boolean; error?: string } {
   const sum = c.targetCorePct + c.targetUpsidePct + c.targetSpecPct;
   if (Math.abs(sum - 100) > 0.01) {

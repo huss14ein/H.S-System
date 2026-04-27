@@ -164,6 +164,65 @@ export function canonicalQuoteLookupKey(symbol: string): string {
   return fromFinnhubSymbol(toFinnhubSymbol(symbol));
 }
 
+export type LiveQuoteRow = { price: number; change: number; changePercent: number };
+
+/**
+ * Find a live quote row when the map was keyed by provider aliases (e.g. `1120.SA` vs user `1120.SR` / `1120`).
+ * Used for watchlist, holdings, and any `simulatedPrices[exactUserSymbol]` lookup.
+ */
+export function lookupLiveQuoteForSymbol(
+  quotedMap: Record<string, LiveQuoteRow | { price?: number; change?: number; changePercent?: number } | undefined>,
+  symbol: string | null | undefined,
+): LiveQuoteRow | undefined {
+  if (symbol == null) return undefined;
+  const raw = String(symbol).trim();
+  if (!raw) return undefined;
+  const u = raw.toUpperCase();
+  const canon = canonicalQuoteLookupKey(raw);
+
+  const take = (row: { price?: number; change?: number; changePercent?: number } | undefined): LiveQuoteRow | undefined => {
+    if (!row || !Number.isFinite(Number(row.price)) || Number(row.price) <= 0) return undefined;
+    return {
+      price: Number(row.price),
+      change: Number.isFinite(Number(row.change)) ? Number(row.change) : 0,
+      changePercent: Number.isFinite(Number(row.changePercent)) ? Number(row.changePercent) : 0,
+    };
+  };
+
+  for (const k of [raw, u, canon]) {
+    const row = take(quotedMap[k]);
+    if (row) return row;
+  }
+
+  const targetCanon = canon;
+  for (const mapKey of Object.keys(quotedMap)) {
+    if (canonicalQuoteLookupKey(mapKey) === targetCanon) {
+      const row = take(quotedMap[mapKey]);
+      if (row) return row;
+    }
+  }
+
+  return undefined;
+}
+
+/** Duplicate quote rows onto every requested symbol variant so UI paths using exact user strings always resolve (watchlist vs SAHMK/Finnhub keys). */
+export function expandLiveQuotesForRequestedSymbols(
+  requestedSymbols: string[],
+  quotes: Record<string, LiveQuoteRow>,
+): Record<string, LiveQuoteRow> {
+  const out: Record<string, LiveQuoteRow> = { ...quotes };
+  for (const sym of requestedSymbols) {
+    const row = lookupLiveQuoteForSymbol(quotes, sym);
+    if (!row) continue;
+    const trimmed = sym.trim();
+    const u = trimmed.toUpperCase();
+    out[trimmed] = row;
+    out[u] = row;
+    out[canonicalQuoteLookupKey(sym)] = row;
+  }
+  return out;
+}
+
 /** Finnhub quote fallback: some symbols (notably Tadawul on some plans) return `c=0` while `pc` is populated. */
 export function resolveQuotePrice(row: { c?: unknown; p?: unknown; pc?: unknown; o?: unknown }): number {
   const candidates = [row?.c, row?.p, row?.pc, row?.o];
@@ -402,6 +461,28 @@ export interface QuoteWith52W {
   low52?: number;
 }
 
+/** Last resort for Tadawul when Finnhub + Stooq fail — SAHMK via Netlify proxy (`SAHMK_API_KEY`). */
+async function getSahmkQuoteFallback(symbol: string): Promise<QuoteWith52W | null> {
+  try {
+    const { getSahmkQuoteForSymbol } = await import('./sahmkQuote');
+    const tick = await getSahmkQuoteForSymbol(symbol);
+    if (!tick) return null;
+    const pc = tick.price - tick.change;
+    const safePc = Number.isFinite(pc) && pc > 0 ? pc : tick.price;
+    return {
+      c: tick.price,
+      d: tick.change,
+      dp: tick.changePercent,
+      h: tick.price,
+      l: tick.price,
+      o: tick.price,
+      pc: safePc,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Lightweight quote fallback from Stooq CSV endpoint (`q/l`). */
 async function getStooqQuote(symbol: string): Promise<QuoteWith52W | null> {
   const stooqSym = toStooqSymbol(symbol);
@@ -489,7 +570,9 @@ export async function getQuote(symbol: string): Promise<QuoteWith52W | null> {
       // Try next candidate symbol form.
     }
   }
-  return getStooqQuote(symbol);
+  const stooq = await getStooqQuote(symbol);
+  if (stooq) return stooq;
+  return getSahmkQuoteFallback(symbol);
 }
 
 /** Quote plus 52-week from metrics endpoint. */
@@ -611,6 +694,8 @@ export interface HoldingFundamentals {
   dividend?: {
     dividendYieldPct?: number | null;
     dividendPerShareAnnual?: number | null;
+    /** Currency of `dividendPerShareAnnual` (matches listing / profile currency from Finnhub). */
+    dividendCashCurrency?: 'USD' | 'SAR';
   };
 }
 
@@ -697,7 +782,9 @@ export async function getHoldingFundamentals(symbol: string): Promise<HoldingFun
     const dividendYieldPct = normalizedYield && normalizedYield < 100 ? normalizedYield : null;
 
     if (dividendYieldPct != null || dividendPerShareAnnual != null) {
-      dividend = { dividendYieldPct, dividendPerShareAnnual };
+      const listingCashCurrency: 'USD' | 'SAR' =
+        String(profile?.currency || '').toUpperCase() === 'SAR' ? 'SAR' : 'USD';
+      dividend = { dividendYieldPct, dividendPerShareAnnual, dividendCashCurrency: listingCashCurrency };
     }
   }
 

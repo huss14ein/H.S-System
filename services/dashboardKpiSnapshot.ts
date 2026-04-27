@@ -3,8 +3,14 @@ import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './t
 import { savingsRateSar } from './financeMetrics';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from './fxDailySeries';
-import { computePersonalNetWorthSAR } from './personalNetWorth';
+import { computePersonalHeadlineNetWorthSar } from './personalNetWorth';
 import { computePersonalInvestmentKpiBreakdown, type InvestmentCapitalSource } from './investmentKpiCore';
+import {
+  addMonthsToKey,
+  financialMonthRange,
+  financialMonthRangeFromKey,
+  type FinancialMonthKey,
+} from '../utils/financialMonth';
 
 /** KPI figures shared by Dashboard and System Health diagnostics (keep in sync with dashboard aggregation). */
 export type DashboardKpiSnapshot = {
@@ -30,11 +36,17 @@ export function computeDashboardKpiSnapshot(
   try {
     if (!data) return null;
     hydrateSarPerUsdDailySeries(data, exchangeRate);
-    const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+    const headline = computePersonalHeadlineNetWorthSar(data, exchangeRate, {
+      getAvailableCashForAccount: getAvailableCashForAccount as (id: string) => { SAR: number; USD: number },
+    });
+    const sarPerUsd = headline.sarPerUsd;
 
     const now = new Date();
-    const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const firstDayOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const monthStartDay = (data as any)?.settings?.monthStartDay ?? 1;
+    const currentRange = financialMonthRange(now, monthStartDay);
+    const prevKey: FinancialMonthKey = addMonthsToKey(currentRange.key, -1);
+    /** Use `financialMonthRangeFromKey` — do not derive the period via `financialMonthRange(midCalendarDay)`; when `monthStartDay > 15`, a mid-month reference falls before the period start and maps to the wrong financial month. */
+    const prevRange = financialMonthRangeFromKey(prevKey, monthStartDay);
 
     const d = data as FinancialData & { personalTransactions?: Transaction[]; personalAccounts?: Account[] };
     const transactions = (d.personalTransactions ?? data.transactions ?? []) as Transaction[];
@@ -51,7 +63,10 @@ export function computeDashboardKpiSnapshot(
       return toSAR(raw, 'USD', r);
     };
 
-    const monthlyTransactions = transactions.filter((t) => new Date(t.date) >= firstDayOfMonth);
+    const monthlyTransactions = transactions.filter((t) => {
+      const d = new Date(t.date);
+      return d >= currentRange.start && d <= currentRange.end;
+    });
     const monthlyIncome = monthlyTransactions
       .filter((t) => countsAsIncomeForCashflowKpi(t))
       .reduce((sum, t) => sum + txCashflowSar(t), 0);
@@ -62,13 +77,13 @@ export function computeDashboardKpiSnapshot(
 
     const budgetToMonthly = (b: { limit: number; period?: string }) =>
       b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
-    const currentMonthBudgets = (data.budgets ?? []).filter((b) => b.month === now.getMonth() + 1 && b.year === now.getFullYear());
+    const currentMonthBudgets = (data.budgets ?? []).filter((b) => b.month === currentRange.key.month && b.year === currentRange.key.year);
     const totalBudget = currentMonthBudgets.reduce((sum, b) => sum + budgetToMonthly(b), 0);
     const budgetVariance = totalBudget - monthlyExpenses;
 
     const lastMonthTransactions = transactions.filter((t) => {
-      const date = new Date(t.date);
-      return date >= firstDayOfLastMonth && date < firstDayOfMonth;
+      const d = new Date(t.date);
+      return d >= prevRange.start && d <= prevRange.end;
     });
     const lastMonthIncome = lastMonthTransactions
       .filter((t) => countsAsIncomeForCashflowKpi(t))
@@ -78,9 +93,7 @@ export function computeDashboardKpiSnapshot(
       .reduce((sum, t) => sum + txCashflowSar(t), 0);
     const lastMonthPnL = lastMonthIncome - lastMonthExpenses;
 
-    const netWorth = computePersonalNetWorthSAR(data, sarPerUsd, {
-        getAvailableCashForAccount: getAvailableCashForAccount as (id: string) => { SAR: number; USD: number },
-    });
+    const netWorth = headline.netWorth;
     const netWorthPrevMonth = netWorth - monthlyPnL;
     const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
 
@@ -90,21 +103,20 @@ export function computeDashboardKpiSnapshot(
     const pnlTrend =
       lastMonthPnL !== 0 ? ((monthlyPnL - lastMonthPnL) / Math.abs(lastMonthPnL)) * 100 : monthlyPnL > 0 ? 100 : 0;
 
-    const sixMoStart = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+    const startKey = addMonthsToKey(currentRange.key, -6);
+    const sixMoStart = new Date(startKey.year, startKey.month - 1, Number(monthStartDay) || 1);
     const incomeLast6Mo = transactions.filter(
       (t) => countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= sixMoStart,
     );
     const incomeSumSar6Mo = incomeLast6Mo.reduce((s, t) => s + txCashflowSar(t), 0);
     const avgMonthlyIncomeSar6Mo = incomeLast6Mo.length > 0 ? incomeSumSar6Mo / 6 : 0;
 
-    const todayKey = now.toISOString().slice(0, 10);
-    const fxToday = getSarPerUsdForCalendarDay(todayKey, data, exchangeRate);
     let liquidCashSar = 0;
     for (const a of accounts) {
       if (!['Checking', 'Savings'].includes(a.type ?? '')) continue;
       const bal = Math.max(0, Number(a.balance) || 0);
       if (a.currency === 'USD') {
-        liquidCashSar += toSAR(bal, 'USD', fxToday);
+        liquidCashSar += toSAR(bal, 'USD', sarPerUsd);
       } else {
         liquidCashSar += bal;
       }
@@ -160,8 +172,11 @@ export function computeDashboardValidationWarnings(
   const txs = (d.personalTransactions ?? data.transactions ?? []) as Transaction[];
   const budgets = data.budgets ?? [];
   const accounts = (d.personalAccounts ?? data.accounts ?? []) as Account[];
-  const month = new Date().getMonth() + 1;
-  const year = new Date().getFullYear();
+  const now = new Date();
+  const monthStartDay = (data as any)?.settings?.monthStartDay ?? 1;
+  const { key } = financialMonthRange(now, monthStartDay);
+  const month = key.month;
+  const year = key.year;
 
   if (!kpi || !Number.isFinite(kpi.netWorth)) warnings.push('Net worth calculation returned an invalid number.');
   if (!kpi || !Number.isFinite(kpi.monthlyPnL)) warnings.push("This month's P&L is invalid.");

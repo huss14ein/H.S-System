@@ -39,7 +39,7 @@ const DashboardKpiQualityPanel: React.FC = () => {
 
     const summaryModelForReconciliation = useMemo(() => {
         if (!data) return null;
-        return computeWealthSummaryReportModel(data, resolveSarPerUsd(data, exchangeRate), getAvailableCashForAccount);
+        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount);
     }, [data, exchangeRate, getAvailableCashForAccount]);
 
     const summaryMonthlyKpisForReconciliation = useMemo(() => {

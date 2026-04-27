@@ -53,7 +53,8 @@ import { computeDashboardKpiSnapshot, averageSavingsRateSarRolling } from '../se
 import type { InvestmentCapitalSource } from '../services/investmentKpiCore';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
-import { computePersonalNetWorthChartBucketsSAR, sumPersonalSukukAssetsSar } from '../services/personalNetWorth';
+import { computePersonalHeadlineNetWorthSar, sumPersonalSukukAssetsSar } from '../services/personalNetWorth';
+import { financialMonthRange } from '../utils/financialMonth';
 import { computeMonthlyReportFinancialKpis, computeWealthSummaryReportModel } from '../services/wealthSummaryReportModel';
 import { reconcileDashboardVsSummaryKpis } from '../services/kpiReconciliation';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
@@ -504,7 +505,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
 
             const now = new Date();
-            const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+            const monthStartDay = (data as any)?.settings?.monthStartDay ?? 1;
+            const currentFinMonth = financialMonthRange(now, monthStartDay);
             const d = data as any;
             const rawTransactions = d?.personalTransactions ?? data?.transactions ?? [];
             const transactions = (rawTransactions as Array<Transaction & { account_id?: string; budget_category?: string }>).map((t) => ({
@@ -525,10 +527,15 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 return toSAR(raw, 'USD', r);
             };
 
-            // Current month txs + KPI snapshot (single source: `services/dashboardKpiSnapshot.ts`)
-            const monthlyTransactions = transactions.filter((t: { date: string }) => new Date(t.date) >= firstDayOfMonth);
+            // Current financial month (same window as `computeDashboardKpiSnapshot` P&L) + KPI snapshot
+            const monthlyTransactions = transactions.filter((t: { date: string }) => {
+                const d0 = new Date(t.date);
+                return d0 >= currentFinMonth.start && d0 <= currentFinMonth.end;
+            });
             const budgetToMonthly = (b: { limit: number; period?: string }) => b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
-            const currentMonthBudgets = (data?.budgets ?? []).filter((b) => b.month === (now.getMonth() + 1) && b.year === now.getFullYear());
+            const currentMonthBudgets = (data?.budgets ?? []).filter(
+                (b) => b.month === currentFinMonth.key.month && b.year === currentFinMonth.key.year,
+            );
             const snap = computeDashboardKpiSnapshot(data, exchangeRate, getAvailableCashForAccount);
             if (!snap) {
                 return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
@@ -647,9 +654,9 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
 
     useEffect(() => {
         if (!auth?.user || !data) return;
-        const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
-        const b = computePersonalNetWorthChartBucketsSAR(data, sarPerUsd, { getAvailableCashForAccount });
-        const nw = typeof b.netWorth === 'number' && Number.isFinite(b.netWorth) ? b.netWorth : (kpiSummary as { netWorth?: number }).netWorth;
+        const headline = computePersonalHeadlineNetWorthSar(data, exchangeRate, { getAvailableCashForAccount });
+        const b = headline.buckets;
+        const nw = typeof headline.netWorth === 'number' && Number.isFinite(headline.netWorth) ? headline.netWorth : (kpiSummary as { netWorth?: number }).netWorth;
         if (typeof nw === 'number' && Number.isFinite(nw)) {
             const sukukAudit = sumPersonalSukukAssetsSar(data);
             pushNetWorthSnapshot(
@@ -662,7 +669,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                     liabilities: b.liabilities,
                     ...(sukukAudit > 0 ? { sukukSar: sukukAudit } : {}),
                 },
-                sarPerUsd,
+                headline.sarPerUsd,
                 supabase && auth.user?.id ? { supabase, userId: auth.user.id } : null,
             );
         }
@@ -745,7 +752,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
 
     const summaryModelForReconciliation = useMemo(() => {
         if (!data) return null;
-        return computeWealthSummaryReportModel(data, resolveSarPerUsd(data, exchangeRate), getAvailableCashForAccount);
+        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount);
     }, [data, exchangeRate, getAvailableCashForAccount]);
 
     const summaryMonthlyKpisForReconciliation = useMemo(() => {

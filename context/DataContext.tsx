@@ -1,8 +1,8 @@
 import React, { createContext, useState, ReactNode, useEffect, useContext, useRef, useMemo, useCallback } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
-import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, WealthUltraSystemConfig, HOLDING_ASSET_CLASS_OPTIONS, type HoldingAssetClass, type TradeCurrency, type SukukPayoutSchedule, type SukukPayoutEvent } from '../types';
-import { getDefaultWealthUltraSystemConfig } from '../wealth-ultra/config';
+import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, HOLDING_ASSET_CLASS_OPTIONS, type HoldingAssetClass, type TradeCurrency, type SukukPayoutSchedule, type SukukPayoutEvent } from '../types';
+import { getDefaultWealthUltraSystemConfig, mergeWealthUltraSystemConfigFromRow } from '../wealth-ultra/config';
 import {
   getPersonalAccounts,
   getPersonalAssets,
@@ -43,7 +43,7 @@ const initialData: FinancialData = {
     accounts: [], assets: [], liabilities: [], goals: [], transactions: [], recurringTransactions: [],
     investments: [], investmentTransactions: [], budgets: [], commodityHoldings: [], watchlist: [],
     sukukPayoutSchedules: [], sukukPayoutEvents: [],
-    settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275 },
+    settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275, monthStartDay: 1 },
     zakatPayments: [], priceAlerts: [], plannedTrades: [], notifications: [],
     investmentPlan: {
         monthlyBudget: 0, budgetCurrency: 'SAR', executionCurrency: 'USD', fxRateSource: 'GoogleFinance:CURRENCY:SARUSD',
@@ -68,29 +68,6 @@ function normalizeMinCoverageThreshold(raw: unknown, fallback = initialData.inve
     // Legacy rows sometimes stored decimal coverage values (e.g. 0.8). Convert to valid integer.
     const normalized = n > 0 && n < 1 ? Math.ceil(n) : Math.round(n);
     return Math.max(0, Math.min(50, normalized));
-}
-
-function mergeWealthUltraSystemConfigFromRow(
-    row: Record<string, unknown> | null | undefined,
-    base: WealthUltraSystemConfig,
-): WealthUltraSystemConfig {
-    if (!row) return base;
-    const n = (v: unknown, fallback: number) => {
-        const x = Number(v);
-        return Number.isFinite(x) ? x : fallback;
-    };
-    return {
-        fxRate: n(row.fx_rate ?? row.fxRate, base.fxRate),
-        cashReservePct: n(row.cash_reserve_pct ?? row.cashReservePct, base.cashReservePct),
-        maxPerTickerPct: n(row.max_per_ticker_pct ?? row.maxPerTickerPct, base.maxPerTickerPct),
-        riskWeightLow: n(row.risk_weight_low ?? row.riskWeightLow, base.riskWeightLow),
-        riskWeightMed: n(row.risk_weight_med ?? row.riskWeightMed, base.riskWeightMed),
-        riskWeightHigh: n(row.risk_weight_high ?? row.riskWeightHigh, base.riskWeightHigh),
-        riskWeightSpec: n(row.risk_weight_spec ?? row.riskWeightSpec, base.riskWeightSpec),
-        defaultTarget1Pct: n(row.default_target_1_pct ?? row.defaultTarget1Pct, base.defaultTarget1Pct),
-        defaultTarget2Pct: n(row.default_target_2_pct ?? row.defaultTarget2Pct, base.defaultTarget2Pct),
-        defaultTrailingPct: n(row.default_trailing_pct ?? row.defaultTrailingPct, base.defaultTrailingPct),
-    };
 }
 
 /** Stable fallback for deployable accounts so memo deps don’t churn each render when lists are missing. */
@@ -190,6 +167,7 @@ function normalizeSettings(raw: any): Settings {
         driftThreshold: Number(raw.drift_threshold ?? raw.driftThreshold ?? initialData.settings.driftThreshold),
         enableEmails: Boolean(raw.enable_emails ?? raw.enableEmails ?? initialData.settings.enableEmails),
         goldPrice: Number(raw.gold_price ?? raw.goldPrice ?? initialData.settings.goldPrice),
+        monthStartDay: raw.month_start_day != null || raw.monthStartDay != null ? Number(raw.month_start_day ?? raw.monthStartDay) : (initialData.settings as any).monthStartDay,
         nisabAmount: raw.nisab_amount != null || raw.nisabAmount != null ? Number(raw.nisab_amount ?? raw.nisabAmount) : undefined,
     };
 }
@@ -201,6 +179,7 @@ function settingsToRow(settings: Partial<Settings>): Record<string, unknown> {
     if (settings.driftThreshold != null) row.drift_threshold = settings.driftThreshold;
     if (settings.enableEmails != null) row.enable_emails = settings.enableEmails;
     if (settings.goldPrice != null) row.gold_price = settings.goldPrice;
+    if (settings.monthStartDay != null) row.month_start_day = settings.monthStartDay;
     if (settings.nisabAmount != null) row.nisab_amount = settings.nisabAmount;
     return row;
 }
@@ -3209,6 +3188,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if ('budgetThreshold' in settingsUpdate) toValidate.budgetThreshold = merged.budgetThreshold;
         if ('driftThreshold' in settingsUpdate) toValidate.driftThreshold = merged.driftThreshold;
         if ('riskProfile' in settingsUpdate) toValidate.riskProfile = merged.riskProfile;
+        if ('monthStartDay' in settingsUpdate) toValidate.monthStartDay = (merged as any).monthStartDay ?? (merged as any).month_start_day;
         const v = validateSettings(toValidate);
         if (!v.valid) {
             toast(v.errors.join('\n'), 'error');

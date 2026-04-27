@@ -465,7 +465,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 </div>
             }
         >
-            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+            <div className="cards-grid grid w-full grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 items-stretch [&>*]:min-w-0">
                 <Card title="Total debt" value={formatCurrencyString(totalDebt, { inCurrency: 'SAR', digits: 2 })} indicatorColor="red" valueColor="text-red-700" icon={<CreditCardIcon className="h-5 w-5 text-red-600" />} tooltip="Unpaid debt in SAR equivalent. Matches Summary / net worth personal scope." />
                 <Card title="Receivables" value={formatCurrencyString(totalReceivable, { inCurrency: 'SAR', digits: 2 })} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Money others owe you (active receivables), same basis as manual entries." />
                 <Card
