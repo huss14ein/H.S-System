@@ -610,7 +610,7 @@ const RecordTradeModal: React.FC<{
     const tradingPolicy = useMemo(() => loadTradingPolicy(), [isOpen]);
     const availableGoals = useMemo(() => data?.goals ?? [], [data?.goals]);
     const availableCashByCurrency = useMemo(() => (accountId ? getAvailableCashForAccount(accountId) : { SAR: 0, USD: 0 }), [accountId, getAvailableCashForAccount]);
-    /** Same per-bucket floor as `availableTradableCashInLedgerCurrency` / `recordTrade` — raw ledger can be negative after overspending. */
+    /** Per-bucket floor for pooled display (same as `recordTrade` guard). */
     const tradableCashByCurrency = useMemo(
         () => ({
             SAR: Math.max(0, Number.isFinite(availableCashByCurrency.SAR) ? availableCashByCurrency.SAR : 0),
@@ -618,11 +618,6 @@ const RecordTradeModal: React.FC<{
         }),
         [availableCashByCurrency],
     );
-    const cashLedgerShortfall = useMemo(() => {
-        const sar = Number.isFinite(availableCashByCurrency.SAR) ? availableCashByCurrency.SAR : 0;
-        const usd = Number.isFinite(availableCashByCurrency.USD) ? availableCashByCurrency.USD : 0;
-        return sar < 0 || usd < 0 ? { sar, usd } : null;
-    }, [availableCashByCurrency]);
     const selectedPortfolio = useMemo(
         () => (portfolioId ? portfolios.find(p => p.id === portfolioId) : null),
         [portfolioId, portfolios]
@@ -1167,28 +1162,12 @@ const RecordTradeModal: React.FC<{
             <form onSubmit={handleSubmit} className="space-y-4">
                  {accountId && (
                     <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 space-y-1">
-                        <p>Tradable cash by currency (per bucket ≥ 0 — same rule as save and the total below):</p>
+                        <p>Platform cash by currency (from Accounts → this investment platform’s balance):</p>
                         <p className="font-medium">
                             <span className="font-semibold">{formatCurrencyString(tradableCashByCurrency.SAR, { inCurrency: 'SAR', digits: 0 })}</span>
                             <span className="text-slate-500"> · </span>
                             <span className="font-semibold">{formatCurrencyString(tradableCashByCurrency.USD, { inCurrency: 'USD', digits: 0 })}</span>
                         </p>
-                        {cashLedgerShortfall && (
-                            <p className="text-xs text-amber-800 mt-1 leading-snug">
-                                Raw ledger buckets (can go negative if recorded buys exceeded cash in that bucket):{' '}
-                                {cashLedgerShortfall.sar < 0 && (
-                                    <span className="font-medium tabular-nums">
-                                        {formatCurrencyString(cashLedgerShortfall.sar, { inCurrency: 'SAR', digits: 0 })}
-                                    </span>
-                                )}
-                                {cashLedgerShortfall.sar < 0 && cashLedgerShortfall.usd < 0 ? ' · ' : ''}
-                                {cashLedgerShortfall.usd < 0 && (
-                                    <span className="font-medium tabular-nums">
-                                        {formatCurrencyString(cashLedgerShortfall.usd, { inCurrency: 'USD', digits: 0 })}
-                                    </span>
-                                )}
-                            </p>
-                        )}
                         <p className="text-xs text-slate-700 mt-1">
                             Tradable total in <strong>{tradeCurrency}</strong> (pooled):{' '}
                             <span className="font-semibold tabular-nums">{formatCurrencyString(availableCashInLedgerCurrency, { inCurrency: tradeCurrency, digits: 2 })}</span>
@@ -5126,7 +5105,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                         <div className="min-w-0">
                             <p className="text-sm font-bold text-amber-950">Investment KPI reconciliation: action needed</p>
                             <p className="text-xs text-amber-900/90 mt-1 leading-relaxed">
-                                Tradable cash is now computed from ledger flows. If a platform is missing flows (or cash drifts vs the ledger), KPIs and plan execution will look wrong until that platform is reconciled.
+                                Deployable platform cash follows each Investment account’s balance in Accounts. If that balance doesn’t match your recorded deposits/buys/sells (ledger drift), fix missing entries or adjust the balance until System Health is clean.
                             </p>
                         </div>
                         <button

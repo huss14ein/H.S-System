@@ -2,11 +2,11 @@ import { describe, it, expect } from 'vitest';
 import type { FinancialData } from '../types';
 import { computePersonalNetWorthBreakdownSAR } from '../services/personalNetWorth';
 import { computeWeeklyDigestPersonalNetWorthSar } from '../services/weeklyDigestNetWorthSar';
-import { computeAvailableCashByAccountMap } from '../services/investmentCashLedger';
+import { computeBrokerCashByAccountMap } from '../services/investmentCashLedger';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 
 describe('computeWeeklyDigestPersonalNetWorthSar', () => {
-  it('matches computePersonalNetWorthBreakdownSAR with the same ledger cash closure', () => {
+  it('matches computePersonalNetWorthBreakdownSAR with the same platform-cash closure (Accounts balance)', () => {
     const data = {
       accounts: [
         { id: 'a-check', name: 'C', type: 'Checking' as const, balance: 1000 },
@@ -14,7 +14,7 @@ describe('computeWeeklyDigestPersonalNetWorthSar', () => {
           id: 'a-inv',
           name: 'Inv',
           type: 'Investment' as const,
-          balance: 0,
+          balance: 400,
           currency: 'USD' as const,
         },
       ],
@@ -48,12 +48,7 @@ describe('computeWeeklyDigestPersonalNetWorthSar', () => {
     } as unknown as FinancialData;
 
     const fx = resolveSarPerUsd(data, 3.75);
-    const cashMap = computeAvailableCashByAccountMap({
-      accounts: data.accounts ?? [],
-      investments: data.investments ?? [],
-      investmentTransactions: data.investmentTransactions ?? [],
-      sarPerUsd: fx,
-    });
+    const cashMap = computeBrokerCashByAccountMap(data.accounts ?? []);
     const getAvailableCashForAccount = (id: string) => cashMap[id] ?? { SAR: 0, USD: 0 };
     const expected = computePersonalNetWorthBreakdownSAR(data, fx, { getAvailableCashForAccount }).netWorth;
     const got = computeWeeklyDigestPersonalNetWorthSar(data, 3.75);

@@ -438,7 +438,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         return { items, overdue: counts.overdue, dueToday: counts.dueToday, open: counts.active };
     }, [todosOpt?.todos]);
 
-    /** Investment rows: tradable cash (ledger), not DB balance or holdings. */
+    /** Investment rows: tradable platform cash (Accounts balance → SAR), not holdings value. */
     const accountsForOverview = useMemo(() => {
         const list = (data as any)?.personalAccounts ?? data?.accounts ?? [];
         const sarPerUsd = resolveSarPerUsd(data, exchangeRate);

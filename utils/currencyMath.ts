@@ -116,7 +116,7 @@ export const tradableCashBucketToSARSigned = (
 
 /**
  * Liquid cash in SAR: Checking + Savings balances, plus **tradable** cash on investment platforms
- * (ledger from `investment_transactions`), not account `balance` and not holdings market value.
+ * (from each Investment account’s cash balance via `getAvailableCashForAccount`), not holdings market value.
  */
 export const totalLiquidCashSARFromAccounts = (
   accounts: { id: string; type?: string; balance?: number; currency?: TradeCurrency }[],

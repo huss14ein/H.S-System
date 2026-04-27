@@ -8,7 +8,7 @@ alwaysApply: true
 - **Headline personal net worth (SAR)** and stacked buckets: use `computePersonalHeadlineNetWorthSar(data, uiExchangeRate, { getAvailableCashForAccount })` from `services/personalNetWorth.ts`. Pass **CurrencyContext `exchangeRate`** and **DataContext `data`** — never invent a separate FX path for the same headline (e.g. do not use a calendar-day spot for NW while KPI uses `resolveSarPerUsd`).
 - **Dashboard KPI row** (`netWorth`, `monthlyPnL`, trends, liquid cash SAR, ROI): use `computeDashboardKpiSnapshot` from `services/dashboardKpiSnapshot.ts` only; it already uses the headline helper internally.
 - **Wealth Summary / exports / reconciliation**: `computeWealthSummaryReportModel(data, uiExchangeRate, getAvailableCashForAccount)` — second argument is **UI exchange rate**, not a pre-resolved SAR/USD number.
-- **Weekly email digest (Edge)**: build rows with `buildFinancialDataForWeeklyDigest` then `computeWeeklyDigestPersonalNetWorthSar` from `services/weeklyDigestNetWorthSar.ts` — same balance sheet + ledger cash path as personal NW (not ad-hoc SQL sums).
+- **Weekly email digest (Edge)**: build rows with `buildFinancialDataForWeeklyDigest` then `computeWeeklyDigestPersonalNetWorthSar` from `services/weeklyDigestNetWorthSar.ts` — same balance sheet + **Investment account cash balances** as personal NW (not ad-hoc SQL sums).
 - **Transaction-dated FX** (historical TX conversion): `getSarPerUsdForCalendarDay` remains valid **inside** cashflow and ledger paths — not for replacing headline balance-sheet NW.
 
 When adding a new surface that shows “My net worth” or the same number as the Dashboard card, **import the headline helper** (or `computeDashboardKpiSnapshot`) instead of re-rolling `accounts + investments − debt`.

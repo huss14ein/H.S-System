@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import type { Account, InvestmentPortfolio, InvestmentTransaction } from '../types';
-import { computeAvailableCashByAccountMap } from '../services/investmentCashLedger';
+import {
+  brokerCashBucketsFromInvestmentAccount,
+  computeAvailableCashByAccountMap,
+  computeBrokerCashByAccountMap,
+} from '../services/investmentCashLedger';
 
 function invAccount(overrides: Partial<Account> = {}): Account {
   return { id: 'inv-1', name: 'Broker', type: 'Investment', balance: 0, ...overrides } as Account;
@@ -24,6 +28,29 @@ function tx(partial: Partial<InvestmentTransaction> & Pick<InvestmentTransaction
     ...(partial.created_at ? { created_at: partial.created_at } : {}),
   } as unknown as InvestmentTransaction;
 }
+
+describe('brokerCashBucketsFromInvestmentAccount', () => {
+  it('maps SAR investment balance into SAR bucket only', () => {
+    expect(brokerCashBucketsFromInvestmentAccount(invAccount({ balance: 1825, currency: 'SAR' as any }))).toEqual({
+      SAR: 1825,
+      USD: 0,
+    });
+  });
+
+  it('maps USD investment balance into USD bucket only', () => {
+    expect(brokerCashBucketsFromInvestmentAccount(invAccount({ balance: 500, currency: 'USD' as const }))).toEqual({
+      SAR: 0,
+      USD: 500,
+    });
+  });
+
+  it('computeBrokerCashByAccountMap keys by canonical investment id', () => {
+    const map = computeBrokerCashByAccountMap([
+      invAccount({ id: 'inv-1', balance: 100, currency: 'SAR' as any }),
+    ]);
+    expect(map['inv-1']).toEqual({ SAR: 100, USD: 0 });
+  });
+});
 
 describe('computeAvailableCashByAccountMap', () => {
   it('USD buy can consume SAR bucket by FX conversion when USD bucket is empty', () => {
