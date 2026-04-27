@@ -50,6 +50,7 @@ import { savingsRateSar } from '../services/financeMetrics';
 import { debtStressScore } from '../services/debtEngines';
 import { cashflowMomentumFromPnlTrend, personalFinanceHealthScore } from '../services/decisionScoringEngine';
 import { computeDashboardKpiSnapshot, averageSavingsRateSarRolling } from '../services/dashboardKpiSnapshot';
+import type { InvestmentCapitalSource } from '../services/investmentKpiCore';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
 import { computePersonalNetWorthChartBucketsSAR, sumPersonalSukukAssetsSar } from '../services/personalNetWorth';
@@ -409,6 +410,8 @@ const RECON_KEY_TO_CARD: Record<string, KpiCardKey> = {
 };
 const AI_SUMMARY_LANG_KEY = 'finova_dashboard_ai_summary_lang_v1';
 
+const SYSTEM_HEALTH_PAGE = 'System & APIs Health' as Page;
+
 const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
     const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
@@ -539,6 +542,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 pnlTrend,
                 liquidCashSar,
                 avgMonthlyIncomeSar6Mo,
+                investmentCapitalSource,
             } = snap;
 
             // Investment data (personal portfolios only)
@@ -625,6 +629,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                     pnlTrend,
                     liquidCashSar,
                     avgMonthlyIncomeSar6Mo,
+                    investmentCapitalSource,
                 },
                 projectedCash30d,
                 currentCash,
@@ -797,8 +802,16 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         });
     }, [strictReconciliationMode, hardBlockOnMismatch, kpiReconciliation, auth?.user?.id]);
 
+    const goToInvestmentKpiReconciliation = useCallback(() => {
+        setActivePage(SYSTEM_HEALTH_PAGE);
+        window.setTimeout(() => {
+            document.getElementById('investment-kpi-reconciliation')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 480);
+    }, [setActivePage]);
+
     const kpiCards = useMemo(() => {
         const cardProps = { density: kpiDensity as 'compact' | 'comfortable' };
+        const invCapitalSrc = (kpiSummary as { investmentCapitalSource?: InvestmentCapitalSource }).investmentCapitalSource;
         const efTrend = !emergencyFund.hasEssentialExpenseEstimate
             ? 'Add expense data'
             : emergencyFund.status === 'healthy'
@@ -814,12 +827,16 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             monthlyPnL: <Card {...cardProps} title="This Month's P&L" value={formatCurrency(kpiSummary.monthlyPnL || 0, { colorize: true })} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'Surplus' : 'Deficit'} indicatorColor={(kpiSummary.monthlyPnL || 0) >= 0 ? 'green' : 'red'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-slate-400" />} />,
             emergencyFund: <Card {...cardProps} title="Emergency Fund" value={emergencyFund.hasEssentialExpenseEstimate ? `${emergencyFund.monthsCovered.toFixed(1)} mo` : '—'} trend={efTrend} indicatorColor={efColor} tooltip={emergencyFund.hasEssentialExpenseEstimate ? `Liquid cash (Checking + Savings) covers ${emergencyFund.monthsCovered.toFixed(1)} months of essential expenses. Target: ${EMERGENCY_FUND_TARGET_MONTHS} months.${emergencyFund.shortfall > 0 ? ` Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : ''}` : 'Categorize essential spending or add budgets so we can estimate months of coverage.'} onClick={() => setActivePage('Summary')} icon={<ShieldCheckIcon className="h-5 w-5 text-slate-400" />} />,
             budgetVariance: <Card {...cardProps} title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, { colorize: true })} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'Under budget' : 'Over budget'} indicatorColor={(kpiSummary.budgetVariance || 0) >= 0 ? 'green' : 'red'} tooltip="Money saved from budget this month (positive = under budget). Over budget is shown in red." onClick={() => setActivePage('Budgets')} icon={<PiggyBankIcon className="h-5 w-5 text-slate-400" />} />,
-            investmentRoi: <Card {...cardProps} title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="(Holdings + cash at broker) vs net deposits/withdrawals. Cash waiting to be invested counts as portfolio value." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" />} />,
+            investmentRoi: <Card {...cardProps} title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="(Holdings + cash at broker) vs net deposits/withdrawals. Cash waiting to be invested counts as portfolio value." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" />} footer={invCapitalSrc === 'ledger_inferred' ? (
+                <button type="button" className="text-left w-full font-medium text-primary hover:underline" onClick={(e) => { e.stopPropagation(); goToInvestmentKpiReconciliation(); }}>
+                    Ledger-inferred capital — open Investment KPI reconciliation →
+                </button>
+            ) : undefined} />,
             investmentPlan: <Card {...cardProps} title="Investment Plan" value={`${investmentProgress.percent.toFixed(0)}%`} trend={investmentProgress.percent >= 100 ? 'Target met' : `${investmentProgress.percent.toFixed(0)}% of target`} indicatorColor={investmentProgress.percent >= 100 ? 'green' : 'yellow'} tooltip={`Progress: ${formatCurrencyString(investmentProgress.amount, { digits: 0, inCurrency: investmentProgress.planCurrency })} / ${formatCurrencyString(investmentProgress.target, { digits: 0, inCurrency: investmentProgress.planCurrency })} monthly.`} onClick={() => setActivePage('Investment Plan')} icon={<ArrowPathIcon className="h-5 w-5 text-primary" />} />,
             wealthUltra: <Card {...cardProps} title="Wealth Ultra" value="Engine" trend="Active" indicatorColor="green" tooltip="Automated portfolio allocation and order generation with performance tracking." onClick={() => setActivePage('Wealth Ultra')} icon={<ScaleIcon className="h-5 w-5 text-primary" />} />,
             marketEvents: <Card {...cardProps} title="Market Events" value="Calendar" trend="Upcoming" indicatorColor="yellow" tooltip="View upcoming FOMC meetings, earnings, and market-impacting events with AI insights." onClick={() => setActivePage('Market Events')} icon={<CalendarDaysIcon className="h-5 w-5 text-indigo-500" />} />,
         };
-    }, [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, emergencyFund, setActivePage, kpiDensity, maskBalance]);
+    }, [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, emergencyFund, setActivePage, kpiDensity, maskBalance, goToInvestmentKpiReconciliation]);
     
     if (loading || !data) {
         return (

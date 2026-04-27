@@ -134,12 +134,12 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
 
     if (scored[0]?.score >= 1.2) return scored[0].budgetCat;
 
+    if (scored[0]?.score >= 0.55 && scored[0]?.budgetCat) return scored[0].budgetCat;
+
     const resolved = resolveBudgetCategoryForImportedExpense(tx, budgetCategories);
     if (resolved) return resolved;
 
     if (budgetCategories.length === 1) return budgetCategories[0];
-    // Deterministic fallback so statement import always passes validation when budgets exist.
-    if (budgetCategories.length > 1) return [...budgetCategories].sort((a, b) => a.localeCompare(b))[0];
     return undefined;
   }, [data?.budgets, data?.transactions]);
 
@@ -324,6 +324,8 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
 
     setProcessingError(null);
     setImportResultMessage(null);
+    setValidationWarnings([]);
+    setValidationErrors([]);
     setIsProcessingFile(true);
     setProcessingProgress(10);
 
@@ -333,8 +335,8 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       const mapped = enrichTransactionsWithBudgetMapping(result.transactions);
       await ensureBudgetsForMappedTransactions(mapped);
       setExtractedTransactions(mapped);
-      if (result.warnings) setValidationWarnings(result.warnings);
-      if (result.errors) setValidationErrors(result.errors);
+      setValidationWarnings(result.warnings ?? []);
+      setValidationErrors(result.errors ?? []);
       setParseStats(result.validation?.statistics ?? null);
       setProcessingProgress(70);
       

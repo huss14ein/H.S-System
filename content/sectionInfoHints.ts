@@ -234,7 +234,8 @@ const HINTS_BY_TITLE: Record<string, string> = {
   'savings allocation strategy': 'Suggested split across goals from engine heuristics—adjust to your priorities.',
   'system funding suggestions': 'Where extra cash might go first—suggestions only.',
   'funding waterfall (suggested order)': 'Priority order for applying surplus—customize on Goals.',
-  'bonus / windfall allocation ideas': 'Ideas for one-off inflows—not automatic transfers.',
+  'bonus / windfall allocation ideas':
+    'One-off ideas only (not auto-transfers). Percentages use your emergency runway, weighted goal gaps, and the same 12-month net cashflow total as the funding cockpit.',
   'goal conflict & feasibility': 'Flags competing goals or impossible timelines—resolve tradeoffs on Goals.',
 
   // Investment Plan

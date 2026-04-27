@@ -78,7 +78,7 @@ export function runWealthUltraEngine(input: WealthUltraEngineInput): WealthUltra
   const totalPortfolioValue = getTotalPortfolioValue(positions);
   const allocations = computeSleeveAllocations(positions, config, totalPortfolioValue);
   const { deployableCash, totalPlannedBuyCost, status: cashPlannerStatus } = runCashPlanner(config, positions);
-  const orders = generateOrders(positions);
+  const orders = generateOrders(positions, config);
   const monthlyDeployment = runMonthlyCoreDeployment(config, positions, allocations);
   const specAlloc = allocations.find(a => a.sleeve === 'Spec');
   const specBreach = isSpecBreach(config, specAlloc);

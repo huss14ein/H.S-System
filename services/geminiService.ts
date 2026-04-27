@@ -612,6 +612,37 @@ export async function invokeAI(payload: { model: string, contents: any, config?:
     return invokeGeminiProxy(mergedPayload);
 }
 
+/** Readable model text from proxy JSON (`text` or nested candidates). */
+export function extractProxyResponseText(response: unknown): string {
+    if (!response || typeof response !== 'object') return '';
+    const r = response as Record<string, unknown>;
+    const direct = r.text;
+    if (typeof direct === 'string' && direct.trim()) return direct.trim();
+    const cand = r.candidates as Array<{ content?: { parts?: Array<{ text?: string }> } }> | undefined;
+    const part = cand?.[0]?.content?.parts?.[0];
+    if (part && typeof part.text === 'string') return part.text.trim();
+    return '';
+}
+
+function buildDeterministicStatementImportInsight(transactions: Transaction[], budgets: Budget[]): string {
+    const expenseRows = transactions.filter((t) => countsAsExpenseForCashflowKpi(t));
+    const preview = expenseRows.slice(0, 18).map((t) => {
+        const cat = String(t.budgetCategory || t.category || 'Uncategorized').trim();
+        const amt = Math.abs(Number(t.amount) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+        const desc = String(t.description || '').replace(/\s+/g, ' ').trim().slice(0, 56);
+        return `- ${t.date} · ${desc} · ${amt} SAR · **${cat}**`;
+    });
+    const budgetLines = budgets.slice(0, 14).map((b) => `- **${b.category}**: limit ${Number(b.limit).toLocaleString()} SAR`).join('\n');
+    if (transactions.length === 0) {
+        return '### Import preview\nPaste SMS or upload a statement, then run insights.\n';
+    }
+    const head =
+        expenseRows.length === 0
+            ? '### Import preview\nThese rows look like income/transfers — budget mapping applies to expenses.\n'
+            : `### Import preview (${expenseRows.length} expense row${expenseRows.length === 1 ? '' : 's'})\n`;
+    return `${head}${preview.join('\n')}\n\n### Budget rows\n${budgetLines || '- None'}\n`;
+}
+
 // --- Salary & Planning Experts (7 modes: allocation, cash flow, 5Y wealth, debt, automation, FI timeline, lifestyle) ---
 const SALARY_EXPERT_SYSTEM = `${EXPERT_ADVISOR_PERSONA}
 
@@ -1051,25 +1082,30 @@ Last line exactly: Not personalized financial advice.`;
 };
 
 export const getAITransactionAnalysis = async (transactions: Transaction[], budgets: Budget[]): Promise<string> => {
-    const cacheKey = `getAITransactionAnalysis:${transactions.length}:${budgets.length}`;
-    const cached = getFromCache(cacheKey);
-    if (cached) return cached;
+    const offline = () => buildDeterministicStatementImportInsight(transactions, budgets);
 
     try {
         const spending = new Map<string, number>();
-        transactions.filter(t => countsAsExpenseForCashflowKpi(t) && t.budgetCategory).forEach(t => {
-            const currentSpend = spending.get(t.budgetCategory!) || 0;
-            spending.set(t.budgetCategory!, currentSpend + Math.abs(t.amount));
+        transactions.filter((t) => countsAsExpenseForCashflowKpi(t)).forEach((t) => {
+            const bucket = String(t.budgetCategory || t.category || '').trim();
+            if (!bucket) return;
+            spending.set(bucket, (spending.get(bucket) || 0) + Math.abs(Number(t.amount) || 0));
         });
 
-        const budgetPerformance = budgets.map(b => {
-            const spent = spending.get(b.category) || 0;
-            const percentage = b.limit > 0 ? (spent / b.limit) * 100 : 0;
-            return `- **${b.category}**: Spent ${spent.toLocaleString()} of ${b.limit.toLocaleString()} SAR (${percentage.toFixed(0)}% used)`;
-        }).join('\n');
+        const budgetPerformance = budgets
+            .map((b) => {
+                const spent = spending.get(b.category) || 0;
+                const percentage = b.limit > 0 ? (spent / b.limit) * 100 : 0;
+                return `- **${b.category}**: Spent ${spent.toLocaleString()} of ${b.limit.toLocaleString()} SAR (${percentage.toFixed(0)}% used)`;
+            })
+            .join('\n');
 
-        const prompt = `You are Finova AI, expert advisor. Monthly spending:
-${budgetPerformance}
+        if (transactions.length === 0) {
+            return offline();
+        }
+
+        const prompt = `You are Finova AI, expert advisor. Imported transactions (e.g. SMS/statement), SAR. Spending by budget category:
+${budgetPerformance || '- No totals matched a budget category name yet — infer risks from the import mix.'}
 Brief Markdown. One sentence or 2 bullets per section. Numbers. No filler.
 
 ### Key Spending Insight
@@ -1083,11 +1119,13 @@ Brief Markdown. One sentence or 2 bullets per section. Numbers. No filler.
 Markdown only.`;
 
         const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
-        const result = response.text || "Could not retrieve transaction analysis.";
-        setToCache(cacheKey, result);
+        const result = extractProxyResponseText(response);
+        if (!result.trim()) {
+            return offline();
+        }
         return result;
     } catch (error) {
-        return formatAiError(error);
+        return `${offline()}\n\n---\n\n### AI unavailable\n${formatAiError(error)}`;
     }
 };
 

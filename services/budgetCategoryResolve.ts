@@ -82,7 +82,7 @@ export function resolveBudgetCategoryForImportedExpense(
     if (!best || score > best.score) best = { name: b, score };
   }
 
-  if (best && best.score >= 0.85) return best.name;
+  if (best && best.score >= 0.68) return best.name;
 
   const fuzzy = names
     .map((b) => ({
@@ -90,9 +90,9 @@ export function resolveBudgetCategoryForImportedExpense(
       score: jaccard(combinedTokens, tokenSet(b)) * 10 + (normalizeText(b).length > 0 ? 0.01 : 0),
     }))
     .sort((a, b) => b.score - a.score)[0];
-  if (fuzzy && fuzzy.score >= 0.35) return fuzzy.name;
+  if (fuzzy && fuzzy.score >= 0.26) return fuzzy.name;
 
-  if (best && best.score > 0) return best.name;
+  if (best && best.score >= 0.35) return best.name;
 
   return names.length === 1 ? names[0] : undefined;
 }

@@ -1,4 +1,19 @@
-import type { WealthUltraPosition, WealthUltraOrder } from '../types';
+import type { WealthUltraConfig, WealthUltraOrder, WealthUltraPosition } from '../types';
+
+/** For `Trim` mode (big winner): suggest selling this share of the lot, not the entire position. */
+const TRIM_SELL_POSITION_FRACTION = 0.33;
+
+function sellQtyForStrategy(pos: WealthUltraPosition): number {
+  const q = Math.max(0, Math.floor(Number(pos.currentShares) || 0));
+  if (q <= 0) return 0;
+  const mode = pos.strategyMode;
+  if (mode === 'Exit') return q;
+  if (mode === 'Trim') {
+    const trimmed = Math.max(1, Math.floor(q * TRIM_SELL_POSITION_FRACTION));
+    return Math.min(trimmed, q);
+  }
+  return 0;
+}
 
 function scoreBuyOrder(pos: WealthUltraPosition): { score: number; rationale: string } {
   const hasPlan = (pos.plannedAddedShares ?? 0) > 0;
@@ -24,6 +39,9 @@ function scoreSellOrder(pos: WealthUltraPosition): { score: number; rationale: s
   if (pos.currentShares <= 0 || (!pos.applyTarget1 && !pos.applyTarget2 && !pos.applyTrailing)) {
     return { score: 0, rationale: '' };
   }
+  if (pos.strategyMode !== 'Trim' && pos.strategyMode !== 'Exit') {
+    return { score: 0, rationale: '' };
+  }
   const profitFactor = pos.plPct > 0 ? Math.min(1, pos.plPct / 40) : 0;
   const riskFactor =
     pos.riskTier === 'Spec' ? 1 :
@@ -33,13 +51,21 @@ function scoreSellOrder(pos: WealthUltraPosition): { score: number; rationale: s
   const score = 100 * (0.4 * profitFactor + 0.4 * riskFactor + 0.2 * trailingProtection);
   const rationaleParts: string[] = [];
   if (pos.plPct >= 0) rationaleParts.push('locks in gains');
+  else rationaleParts.push('drawdown vs cost — review thesis');
   if (pos.riskTier === 'High' || pos.riskTier === 'Spec') rationaleParts.push('reduces high-risk exposure');
   if (pos.applyTrailing) rationaleParts.push('protects downside with trailing stop');
+  if (pos.strategyMode === 'Trim') {
+    rationaleParts.push(`~${Math.round(TRIM_SELL_POSITION_FRACTION * 100)}% trim of position (not full exit)`);
+  }
+  if (pos.strategyMode === 'Exit') {
+    rationaleParts.push('full exit — large drawdown vs cost');
+  }
   const rationale = rationaleParts.length ? rationaleParts.join('; ') : 'manages risk and crystallizes P&L';
   return { score, rationale };
 }
 
-export function generateOrders(positions: WealthUltraPosition[]): WealthUltraOrder[] {
+export function generateOrders(positions: WealthUltraPosition[], _config: WealthUltraConfig): WealthUltraOrder[] {
+  void _config;
   const buyOrders: WealthUltraOrder[] = [];
   const sellOrders: WealthUltraOrder[] = [];
 
@@ -59,12 +85,17 @@ export function generateOrders(positions: WealthUltraPosition[]): WealthUltraOrd
       });
     }
 
-    if (pos.currentShares > 0 && (pos.applyTarget1 || pos.applyTarget2 || pos.applyTrailing)) {
+    const sellQty = sellQtyForStrategy(pos);
+    if (
+      sellQty > 0 &&
+      pos.currentShares > 0 &&
+      (pos.applyTarget1 || pos.applyTarget2 || pos.applyTrailing)
+    ) {
       const { score, rationale } = scoreSellOrder(pos);
       sellOrders.push({
         type: 'SELL',
         ticker: pos.ticker,
-        qty: pos.currentShares,
+        qty: sellQty,
         orderType: 'LIMIT',
         tif: 'GTC',
         target1Price: pos.applyTarget1 ? pos.target1Price : undefined,

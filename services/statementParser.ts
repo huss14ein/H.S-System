@@ -103,26 +103,30 @@ export async function parseSMSTransactions(
     // First try pattern-based extraction for common SMS formats
     const patternTransactions = extractTransactionsFromSMS(normalizedSmsText, accountId);
     const heuristicTransactions = extractTransactionsFromSMSHeuristic(normalizedSmsText, accountId);
+    const deterministicCombined = patternTransactions.length + heuristicTransactions.length;
     let aiTimedOut = false;
 
-    // Then use AI to extract any additional transactions, but cap wait time to keep SMS import responsive.
-    const aiController = new AbortController();
-    const aiTimeoutId = setTimeout(() => {
-      aiTimedOut = true;
-      aiController.abort();
-    }, 4000);
+    // Only call AI when deterministic parsers found nothing. Running both duplicates rows and mixes
+    // weaker AI categories with merchant-accurate heuristic rows; it also triggers avoidable proxy errors.
     let aiTransactions: Transaction[] = [];
-    try {
-      aiTransactions = await extractTransactionsFromText(normalizedSmsText, accountId, 'sms', aiController.signal);
-    } catch (error) {
-      const abortErr = error as { name?: string };
-      if (abortErr && abortErr.name === 'AbortError') {
-        // timed out — pattern/heuristic results still apply
-      } else {
-        console.warn('SMS AI extraction failed; using pattern/heuristic SMS parsing only:', error);
+    if (deterministicCombined === 0) {
+      const aiController = new AbortController();
+      const aiTimeoutId = setTimeout(() => {
+        aiTimedOut = true;
+        aiController.abort();
+      }, 12000);
+      try {
+        aiTransactions = await extractTransactionsFromText(normalizedSmsText, accountId, 'sms', aiController.signal);
+      } catch (error) {
+        const abortErr = error as { name?: string };
+        if (abortErr && abortErr.name === 'AbortError') {
+          // timed out
+        } else {
+          console.warn('SMS AI extraction failed; using pattern/heuristic SMS parsing only:', error);
+        }
+      } finally {
+        clearTimeout(aiTimeoutId);
       }
-    } finally {
-      clearTimeout(aiTimeoutId);
     }
     
     // Merge and dedupe: deterministic parsers first; AI may duplicate the same SMS with weaker labels.
@@ -144,7 +148,7 @@ export async function parseSMSTransactions(
       confidence: validation.isValid ? 0.90 : Math.max(0, 0.90 - (validation.errors.length * 0.1)),
       errors: validation.errors,
       warnings: aiTimedOut
-        ? [...(validation.warnings ?? []), 'AI extraction timed out after 4s; parsed pattern/heuristic SMS results only.']
+        ? [...(validation.warnings ?? []), 'AI extraction timed out; pattern/heuristic SMS results only.']
         : validation.warnings,
       validation
     };
@@ -913,7 +917,10 @@ Only return valid JSON, no other text.`;
     });
     });
   } catch (error) {
-    console.error('Error extracting transactions with AI:', error);
+    const abortErr = error as { name?: string };
+    if (abortErr?.name !== 'AbortError') {
+      console.error('Error extracting transactions with AI:', error);
+    }
     return [];
   }
 }
@@ -1667,6 +1674,20 @@ function inferCategory(description: string): string {
     .replace(/\s+/g, ' ')
     .trim();
   if (!desc) return 'Uncategorized';
+
+  // Saudi bank SMS — POS / e-commerce (before generic keyword scoring)
+  if (
+    /(شراء عبر نقاط البيع|نقاط البيع|لدى:|payment at|pos purchase|pos debit|purchase at)/i.test(description) &&
+    !/(atm|سحب نقدي|cash withdrawal)/i.test(description)
+  ) {
+    return 'Shopping';
+  }
+  if (/(شراء إنترنت|شراء من الانترنت|online purchase|e-?commerce|موقع|نون|امازون)/i.test(description)) {
+    return 'Shopping';
+  }
+  if (/(atm|سحب نقدي|cash withdrawal|withdrawal at atm)/i.test(description)) {
+    return 'Uncategorized';
+  }
 
   const merchantOverrides: Record<string, string> = {
     'starbucks': 'Food',

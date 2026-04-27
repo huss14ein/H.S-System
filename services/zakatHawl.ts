@@ -1,7 +1,8 @@
 /**
- * Lunar hawl (~354 days) for Zakat eligibility on investments and commodities.
+ * Lunar hawl (~354 days) for Zakat eligibility on investments, commodities, and cash deposits.
+ * Cash layers use FIFO from checking/savings transactions ({@link summarizeZakatableCashForZakat}).
  * When no acquisition/buy/created date is known, callers may treat the lot as
- * zakatable for backward compatibility (see hawl helpers).
+ * zakatable for backward compatibility (see evaluateHawlEligibility legacy flag).
  */
 
 import type { CommodityHolding, Holding, InvestmentTransaction } from '../types';

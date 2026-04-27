@@ -26,6 +26,7 @@ describe('computeDashboardKpiSnapshot', () => {
     const snap = computeDashboardKpiSnapshot(data, 3.75, () => ({ SAR: 0, USD: 0 }));
     expect(snap).not.toBeNull();
     expect(snap!.liquidCashSar).toBeCloseTo(3750, 0);
+    expect(snap!.investmentCapitalSource).toBeDefined();
   });
 
   it('averages 6-month income in SAR via txCashflowSar', () => {

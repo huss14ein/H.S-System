@@ -1,5 +1,17 @@
 import { useContext, useMemo, useState } from 'react';
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { DataContext } from '../../context/DataContext';
 import { useCurrency } from '../../context/CurrencyContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
@@ -98,6 +110,62 @@ function CashTooltip(props: {
   );
 }
 
+function DailyNetTooltip(props: {
+  active?: boolean;
+  payload?: Array<{ payload?: { name: string; dayKey: string; net: number } }>;
+  formatValue: (n: number) => string;
+}) {
+  const { active, payload, formatValue } = props;
+  if (!active || !payload?.length) return null;
+  const row = payload[0]?.payload;
+  if (!row) return null;
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-lg text-xs">
+      <p className="font-semibold text-slate-800">{shortLabel(row.dayKey) || row.dayKey}</p>
+      <p className={`mt-1 tabular-nums ${row.net >= 0 ? 'text-emerald-800' : 'text-rose-800'}`}>
+        Net cashflow: <span className="font-semibold">{formatValue(row.net)}</span>
+      </p>
+      <p className="mt-0.5 text-[10px] text-slate-500 leading-snug">Income − spending (excl. internal transfers).</p>
+    </div>
+  );
+}
+
+/** Calendar-day net cashflow (SAR), same KPI rules as the 30-day cockpit tile. */
+function dailyNetCashflowSeriesSar(args: {
+  transactions: Transaction[];
+  accounts: Account[];
+  data: unknown;
+  uiExchangeRate: number;
+  trailingDays: number;
+}): Array<{ name: string; dayKey: string; net: number }> {
+  const { transactions, accounts, data, uiExchangeRate } = args;
+  const trailingDays = Math.min(31, Math.max(1, args.trailingDays));
+  const accById = new Map(accounts.map((a) => [a.id, a]));
+  const curOf = (accountId: string): 'SAR' | 'USD' => (accById.get(accountId)?.currency === 'USD' ? 'USD' : 'SAR');
+  const spot = resolveSarPerUsd(data as any, uiExchangeRate);
+
+  const rows: Array<{ name: string; dayKey: string; net: number }> = [];
+  const today = startOfLocalDay(new Date());
+
+  for (let i = trailingDays - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const dayKey = toDayKeyLocal(d);
+    let income = 0;
+    let expenses = 0;
+    for (const t of transactions) {
+      const dk = String(t.date ?? '').slice(0, 10);
+      if (dk !== dayKey) continue;
+      const r = dk.length === 10 ? getSarPerUsdForCalendarDay(dk, data as any, uiExchangeRate) : spot;
+      const amtSar = toSAR(Math.abs(Number(t.amount) || 0), curOf(t.accountId), r);
+      if (countsAsIncomeForCashflowKpi(t)) income += amtSar;
+      if (countsAsExpenseForCashflowKpi(t)) expenses += amtSar;
+    }
+    rows.push({ name: shortLabel(dayKey), dayKey, net: income - expenses });
+  }
+  return rows;
+}
+
 function netCashflowBetweenSarDated(args: {
   transactions: Transaction[];
   accounts: Account[];
@@ -146,9 +214,13 @@ export default function NetWorthCockpit(props: {
         sarPerUsd: 3.75,
         live: null as null | ReturnType<typeof computePersonalNetWorthChartBucketsSAR>,
         series: [] as Array<{ dayKey: string; name: string; netWorth: number }>,
+        nwYAxisDomain: undefined as [number, number] | undefined,
         accounts: [] as Account[],
         investCashBars: [] as Array<{ label: string; sar: number }>,
         net30d: { income: 0, expenses: 0, net: 0 },
+        dailyNet14: [] as Array<{ name: string; dayKey: string; net: number }>,
+        compositionStrip: [] as Array<{ key: string; label: string; sar: number; color: string }>,
+        compositionTotal: 0,
         lastSnapshotAttribution: null as null | ReturnType<typeof attributeNetWorthWithFlows>,
         movers: [] as Array<{ symbol: string; name: string; valueSar: number; gainLossSar: number; gainLossPct: number }>,
       };
@@ -181,6 +253,16 @@ export default function NetWorthCockpit(props: {
       .reverse()
       .map((r) => ({ ...r, name: shortLabel(r.dayKey) }));
 
+    const nwVals = series.map((s) => s.netWorth).filter((n) => Number.isFinite(n));
+    let nwYAxisDomain: [number, number] | undefined;
+    if (nwVals.length >= 1) {
+      const mn = Math.min(...nwVals);
+      const mx = Math.max(...nwVals);
+      const span = Math.max(mx - mn, Math.abs(mx) * 0.0025, 1);
+      const pad = span * 0.15;
+      nwYAxisDomain = [mn - pad, mx + pad];
+    }
+
     const accounts = getPersonalAccounts(data) as Account[];
     const transactions = getPersonalTransactions(data) as Transaction[];
     const portfolios = getPersonalInvestments(data);
@@ -206,6 +288,22 @@ export default function NetWorthCockpit(props: {
       startIso: start30d.toISOString(),
       endIso: now.toISOString(),
     });
+
+    const dailyNet14 = dailyNetCashflowSeriesSar({
+      transactions,
+      accounts,
+      data,
+      uiExchangeRate: sarPerUsd,
+      trailingDays: 14,
+    });
+
+    const compositionStrip = [
+      { key: 'cash', label: 'Cash', sar: Math.max(0, live.cash), color: '#6366f1' },
+      { key: 'inv', label: 'Investments', sar: Math.max(0, live.investments), color: '#10b981' },
+      { key: 'phys', label: 'Physical', sar: Math.max(0, live.physicalAndCommodities), color: '#f59e0b' },
+      { key: 'rec', label: 'Receivables', sar: Math.max(0, live.receivables), color: '#a855f7' },
+    ].filter((x) => x.sar > 0.5);
+    const compositionTotal = compositionStrip.reduce((s, x) => s + x.sar, 0);
 
     const snapsFull = listNetWorthSnapshots();
     const lastSnapshotAttribution =
@@ -250,7 +348,20 @@ export default function NetWorthCockpit(props: {
       .sort((a, b) => Math.abs(b.gainLossSar) - Math.abs(a.gainLossSar))
       .slice(0, 6);
 
-    return { sarPerUsd, live, series, accounts, investCashBars, net30d, lastSnapshotAttribution, movers };
+    return {
+      sarPerUsd,
+      live,
+      series,
+      nwYAxisDomain,
+      accounts,
+      investCashBars,
+      net30d,
+      dailyNet14,
+      compositionStrip,
+      compositionTotal,
+      lastSnapshotAttribution,
+      movers,
+    };
   }, [data, exchangeRate, getAvailableCashForAccount, period]);
 
   const live = computed.live;
@@ -376,17 +487,17 @@ export default function NetWorthCockpit(props: {
           </p>
         </aside>
 
-        {/* Main chart */}
-        <section className="lg:col-span-6 rounded-2xl border border-slate-200 bg-white p-3 min-h-[320px]">
-          <div className="flex items-start justify-between gap-2 mb-2">
+        {/* Main chart + insight strip */}
+        <section className="lg:col-span-6 rounded-2xl border border-slate-200 bg-white p-3 min-h-[320px] flex flex-col">
+          <div className="flex items-start justify-between gap-2 mb-2 shrink-0">
             <div className="min-w-0">
               <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Net worth trend</p>
               <p className="text-xs text-slate-600 mt-0.5">
-                Uses daily snapshots (when you open the app) + today’s live books.
+                Uses daily snapshots (when you open the app) + today’s live books. Axis scales to your range so flat weeks still read clearly.
               </p>
             </div>
           </div>
-          <div className="h-[300px]">
+          <div className="h-[240px] shrink-0">
             {isEmpty ? (
               <div className="h-full rounded-xl border border-dashed border-slate-200 bg-slate-50 flex items-center justify-center text-sm text-slate-500">
                 No history yet. Open Dashboard on different days to build the trend.
@@ -402,14 +513,91 @@ export default function NetWorthCockpit(props: {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                  <XAxis dataKey="name" tickLine={false} axisLine={{ stroke: '#CBD5E1' }} fontSize={11} />
-                  <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} tickLine={false} axisLine={{ stroke: '#CBD5E1' }} fontSize={11} width={54} />
+                  <XAxis dataKey="name" tickLine={false} axisLine={{ stroke: '#CBD5E1' }} fontSize={11} interval="preserveStartEnd" minTickGap={24} />
+                  <YAxis
+                    domain={computed.nwYAxisDomain}
+                    allowDataOverflow
+                    tickFormatter={(v) => formatAxisNumber(Number(v))}
+                    tickLine={false}
+                    axisLine={{ stroke: '#CBD5E1' }}
+                    fontSize={11}
+                    width={54}
+                  />
                   <Tooltip content={<AreaTooltip formatValue={(n) => formatCurrencyString(n, { digits: 0 })} />} />
                   <Area type="monotone" dataKey="netWorth" stroke="#4F46E5" strokeWidth={2} fill="url(#nwFill)" />
                 </AreaChart>
               </ResponsiveContainer>
             )}
           </div>
+
+          {(computed.compositionTotal > 0 || computed.dailyNet14.length > 0) && (
+            <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-4 flex-1 min-h-0">
+              {computed.compositionTotal > 0 && (
+                <div className="min-w-0">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Asset mix (today)</p>
+                  <p className="text-xs text-slate-600 mt-0.5 mb-2">Share of gross asset buckets (excludes liabilities).</p>
+                  <div className="rounded-full bg-slate-100 h-3 overflow-hidden flex ring-1 ring-slate-200/80" title="Asset composition">
+                    {computed.compositionStrip.map((seg) => (
+                      <div
+                        key={seg.key}
+                        className="h-full min-w-[3px]"
+                        style={{
+                          width: `${computed.compositionTotal > 0 ? (seg.sar / computed.compositionTotal) * 100 : 0}%`,
+                          backgroundColor: seg.color,
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <ul className="mt-2 space-y-1 text-[11px] text-slate-700">
+                    {computed.compositionStrip.map((seg) => {
+                      const pct = computed.compositionTotal > 0 ? (seg.sar / computed.compositionTotal) * 100 : 0;
+                      return (
+                        <li key={seg.key} className="flex items-center justify-between gap-2">
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            <span className="h-2 w-2 rounded-sm shrink-0" style={{ backgroundColor: seg.color }} />
+                            <span className="truncate">{seg.label}</span>
+                          </span>
+                          <span className="tabular-nums text-slate-900 shrink-0">
+                            {formatCurrencyString(seg.sar, { digits: 0 })}{' '}
+                            <span className="text-slate-500">({pct.toFixed(0)}%)</span>
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {computed.dailyNet14.length > 0 && (
+                <div className="min-w-0 flex flex-col">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Daily cashflow pulse</p>
+                  <p className="text-xs text-slate-600 mt-0.5 mb-1">Net per day (last 14 days), same rules as the cashflow tile.</p>
+                  <div className="h-[128px] w-full flex-1 min-h-[128px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={computed.dailyNet14} margin={{ top: 4, right: 6, left: 0, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                        <XAxis dataKey="name" tickLine={false} axisLine={{ stroke: '#CBD5E1' }} fontSize={9} interval="preserveStartEnd" />
+                        <YAxis
+                          tickFormatter={(v) => formatAxisNumber(Number(v))}
+                          tickLine={false}
+                          axisLine={{ stroke: '#CBD5E1' }}
+                          fontSize={9}
+                          width={40}
+                        />
+                        <ReferenceLine y={0} stroke="#94a3b8" strokeDasharray="4 3" />
+                        <Tooltip content={<DailyNetTooltip formatValue={(n) => formatCurrencyString(n, { digits: 0 })} />} />
+                        <Bar dataKey="net" radius={[4, 4, 0, 0]} maxBarSize={14}>
+                          {computed.dailyNet14.map((e, i) => (
+                            <Cell key={`dn-${e.dayKey}-${i}`} fill={e.net >= 0 ? '#059669' : '#e11d48'} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
         {/* Smart side widgets */}

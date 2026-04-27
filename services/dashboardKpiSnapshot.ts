@@ -4,7 +4,7 @@ import { savingsRateSar } from './financeMetrics';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from './fxDailySeries';
 import { computePersonalNetWorthSAR } from './personalNetWorth';
-import { computePersonalInvestmentKpisSar } from './investmentKpiCore';
+import { computePersonalInvestmentKpiBreakdown, type InvestmentCapitalSource } from './investmentKpiCore';
 
 /** KPI figures shared by Dashboard and System Health diagnostics (keep in sync with dashboard aggregation). */
 export type DashboardKpiSnapshot = {
@@ -18,6 +18,8 @@ export type DashboardKpiSnapshot = {
   liquidCashSar: number;
   /** Sum of income (SAR) over the last ~6 months ÷ 6; 0 if no income in window. */
   avgMonthlyIncomeSar6Mo: number;
+  /** How ROI net-capital denominator was chosen (`investmentKpiCore`). */
+  investmentCapitalSource: InvestmentCapitalSource;
 };
 
 export function computeDashboardKpiSnapshot(
@@ -82,7 +84,8 @@ export function computeDashboardKpiSnapshot(
     const netWorthPrevMonth = netWorth - monthlyPnL;
     const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
 
-    const { roi } = computePersonalInvestmentKpisSar(data, sarPerUsd, getAvailableCashForAccount);
+    const invBreakdown = computePersonalInvestmentKpiBreakdown(data, sarPerUsd, getAvailableCashForAccount);
+    const { roi, capitalSource: investmentCapitalSource } = invBreakdown;
 
     const pnlTrend =
       lastMonthPnL !== 0 ? ((monthlyPnL - lastMonthPnL) / Math.abs(lastMonthPnL)) * 100 : monthlyPnL > 0 ? 100 : 0;
@@ -116,6 +119,7 @@ export function computeDashboardKpiSnapshot(
       pnlTrend,
       liquidCashSar,
       avgMonthlyIncomeSar6Mo,
+      investmentCapitalSource,
     };
   } catch (e) {
     console.error('computeDashboardKpiSnapshot:', e);

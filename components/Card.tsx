@@ -15,6 +15,8 @@ interface CardProps {
   indicatorColor?: 'green' | 'yellow' | 'red';
   icon?: React.ReactNode;
   density?: 'comfortable' | 'compact';
+  /** Extra line below trend (e.g. link); clicks do not propagate to card onClick when using stopPropagation on children. */
+  footer?: React.ReactNode;
 }
 
 const isInvalidDisplayToken = (raw: string): boolean => {
@@ -50,7 +52,7 @@ const normalizeDisplayNode = (raw: React.ReactNode): React.ReactNode => {
   return raw;
 };
 
-const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, ariaLabel, valueColor, indicatorColor, icon, density = 'compact' }) => {
+const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, ariaLabel, valueColor, indicatorColor, icon, density = 'compact', footer }) => {
   const displayValue = normalizeDisplayNode(value);
   const displayTrend = typeof trend === 'string' && isInvalidDisplayToken(trend) ? undefined : trend;
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
@@ -135,6 +137,11 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
             <span className="break-words">{displayTrend}</span>
           </div>
         )}
+        {footer ? (
+          <div className={`mt-2 ${compact ? 'text-[11px]' : 'text-xs'} leading-snug text-slate-500 min-w-0`} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            {footer}
+          </div>
+        ) : null}
       </div>
     </div>
   );

@@ -4427,6 +4427,10 @@ Save anyway?`)) return;
                         onDeleteUniverse={(t: UniverseTicker) => { void deleteUniverseTicker(t.id); }}
                         simulatedPrices={simulatedPrices}
                         onNavigateToWatchlist={onNavigateToTab ? () => onNavigateToTab('Watchlist') : undefined}
+                        onFullAutoSetup={async () => {
+                          if (canAddWatchlistHoldings) await addWatchlistAndHoldingsToUniverse();
+                          await autoConfigureUniverseWeights();
+                        }}
                     />
                 </div>
 
