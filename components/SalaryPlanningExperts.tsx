@@ -22,8 +22,8 @@ import { CheckIcon } from './icons/CheckIcon';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { lookupHintForTitle } from '../content/sectionInfoHints';
 import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
-import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
+import { toSAR } from '../utils/currencyMath';
+import { computePersonalHeadlineNetWorthSar } from '../services/personalNetWorth';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { getPersonalAccounts, getPersonalLiabilities, getPersonalTransactions, getPersonalInvestments } from '../utils/wealthScope';
@@ -89,7 +89,11 @@ const SalaryPlanningExperts: React.FC = () => {
     const [translatingResult, setTranslatingResult] = useState(false);
     const [translateError, setTranslateError] = useState<string | null>(null);
 
-    const sarPerUsd = React.useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+    const headlineNw = React.useMemo(
+        () => computePersonalHeadlineNetWorthSar(data ?? null, exchangeRate, { getAvailableCashForAccount }),
+        [data, exchangeRate, getAvailableCashForAccount],
+    );
+    const sarPerUsd = headlineNw.sarPerUsd;
     const personalAccounts = React.useMemo(() => getPersonalAccounts(data ?? null), [data]);
     const personalTransactions = React.useMemo(() => getPersonalTransactions(data ?? null), [data]);
     const personalLiabilities = React.useMemo(() => getPersonalLiabilities(data ?? null), [data]);
@@ -127,10 +131,8 @@ const SalaryPlanningExperts: React.FC = () => {
         return cash;
     }, [personalAccounts, sarPerUsd]);
 
-    /** Same formula as Summary / Dashboard (investments, brokerage cash, commodities, assets, liabilities). */
-    const liveNetWorthSAR = React.useMemo(() => {
-        return computePersonalNetWorthSAR(data ?? null, sarPerUsd, { getAvailableCashForAccount });
-    }, [data, sarPerUsd, getAvailableCashForAccount]);
+    /** Same headline as Dashboard / Summary (balance sheet NW + headline FX path). */
+    const liveNetWorthSAR = headlineNw.netWorth;
 
     // Fixed expenses: from Budgets (sum limits current month) or Transactions (fixed expenses, last 3 months avg)
     const { suggestedFixedExpenses, suggestedFixedExpensesSource } = React.useMemo(() => {

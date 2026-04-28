@@ -10,18 +10,67 @@ export interface BuyScoreInput {
   driftFromTargetPct?: number;
 }
 
-export function buyScore(i: BuyScoreInput): number {
-  let s = 50;
+/** Transparent decomposition of `buyScore` — same formula, for cockpit UI. */
+export type BuyScoreBreakdown = {
+  total: number;
+  /** Starting point before adjustments. */
+  base: number;
+  /** +15 strong liquidity, −25 fragile, 0 neutral band. */
+  liquidityAdjust: number;
+  /** −20 when largest holding % is at/above policy max (concentration risk). */
+  concentrationAdjust: number;
+  /** +10 when sleeve drift magnitude exceeds 5% (rebalance pressure — engine rewards addressing drift). */
+  driftAdjust: number;
+  emergencyFundMonths: number;
+  runwayMonths: number;
+  maxPositionPct: number;
+  currentPositionPct: number;
+  driftAbsPct: number;
+};
+
+export function buyScoreBreakdown(i: BuyScoreInput): BuyScoreBreakdown {
+  const base = 50;
+  let s = base;
   const ef = i.emergencyFundMonths ?? 6;
   const run = i.runwayMonths ?? 6;
-  if (ef >= 3 && run >= 3) s += 15;
-  else if (ef < 1 || run < 1) s -= 25;
+  let liquidityAdjust = 0;
+  if (ef >= 3 && run >= 3) {
+    s += 15;
+    liquidityAdjust = 15;
+  } else if (ef < 1 || run < 1) {
+    s -= 25;
+    liquidityAdjust = -25;
+  }
   const maxP = i.maxPositionPct ?? 20;
   const cur = i.currentPositionPct ?? 0;
-  if (cur >= maxP) s -= 20;
-  const drift = Math.abs(i.driftFromTargetPct ?? 0);
-  if (drift > 5) s += 10;
-  return Math.max(0, Math.min(100, Math.round(s)));
+  let concentrationAdjust = 0;
+  if (cur >= maxP) {
+    s -= 20;
+    concentrationAdjust = -20;
+  }
+  const driftAbs = Math.abs(i.driftFromTargetPct ?? 0);
+  let driftAdjust = 0;
+  if (driftAbs > 5) {
+    s += 10;
+    driftAdjust = 10;
+  }
+  const total = Math.max(0, Math.min(100, Math.round(s)));
+  return {
+    total,
+    base,
+    liquidityAdjust,
+    concentrationAdjust,
+    driftAdjust,
+    emergencyFundMonths: ef,
+    runwayMonths: run,
+    maxPositionPct: maxP,
+    currentPositionPct: cur,
+    driftAbsPct: driftAbs,
+  };
+}
+
+export function buyScore(i: BuyScoreInput): number {
+  return buyScoreBreakdown(i).total;
 }
 
 export type SellReason = 'trim' | 'thesis_broken' | 'max_weight' | 'rebalance';

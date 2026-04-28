@@ -26,7 +26,8 @@ import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { personalMonthlyNetByMonthKeySar } from '../services/financeMetrics';
-import { computeGoalFundingPlan } from '../services/goalFundingRouter';
+import { computeGoalFundingPlan, GOAL_NO_DEADLINE_AMORTIZATION_MONTHS } from '../services/goalFundingRouter';
+import { computeWindfallAllocationPct } from '../services/windfallAllocation';
 import { monteCarloGoalSuccess } from '../services/portfolioConstruction';
 import { projectedGoalCompletionDate, goalFundingGap as goalGapShared } from '../services/goalMetrics';
 import { detectGoalConflict, goalFeasibilityCheck, type GoalConflict } from '../services/goalConflictEngine';
@@ -837,14 +838,11 @@ const Goals: React.FC<{
             })
             .filter((g) => g.gap > 0);
         const totalWeightedGap = goals.reduce((s, g) => s + g.weightedGap, 0);
-        const emergencyBufferPct =
-            efGoals.monthsCovered < 2 ? 35 :
-            efGoals.monthsCovered < 4 ? 25 :
-            efGoals.monthsCovered < 6 ? 15 : 10;
-        const goalFundingPct = totalWeightedGap > 0
-            ? Math.max(30, Math.min(75, Math.round((totalWeightedGap / (totalWeightedGap + 50000)) * 100)))
-            : 40;
-        const investPct = Math.max(0, 100 - goalFundingPct - emergencyBufferPct);
+        const allocation = computeWindfallAllocationPct({
+            emergencyRunwayMonths: efGoals.monthsCovered,
+            weightedGoalGapSum: totalWeightedGap,
+            annualSurplusAnchorSar: rollingAnnualNetSar,
+        });
         const topGoals = goals
             .sort((a, b) => b.weightedGap - a.weightedGap)
             .slice(0, 3)
@@ -852,8 +850,14 @@ const Goals: React.FC<{
                 ...g,
                 pctOfGoalBucket: totalWeightedGap > 0 ? (g.weightedGap / totalWeightedGap) * 100 : 0,
             }));
-        return { goalFundingPct, emergencyBufferPct, investPct, topGoals };
-    }, [data?.goals, goalCurrentAmountByGoalId, efGoals.monthsCovered]);
+        return {
+            goalFundingPct: allocation.goalsPct,
+            emergencyBufferPct: allocation.emergencyPct,
+            investPct: allocation.investPct,
+            derivationLines: allocation.derivationLines,
+            topGoals,
+        };
+    }, [data?.goals, goalCurrentAmountByGoalId, efGoals.monthsCovered, rollingAnnualNetSar]);
     const goalValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
         const goals = data?.goals ?? [];
@@ -998,9 +1002,11 @@ const Goals: React.FC<{
         defaultExpanded
       >
         <p className="text-xs text-slate-600 mb-3">
-          Baseline uses your <strong>last 12 months</strong> net cashflow in SAR (≈{' '}
-          <span className="font-semibold">{formatCurrencyString(rollingAnnualNetSar, { digits: 0 })}</span> total) ÷ 12 →{' '}
-          <span className="font-semibold">{formatCurrencyString(fundingPlan?.totalMonthlySurplus ?? 0, { digits: 0 })}</span>/month to split across goals.
+          Baseline uses your <strong>last 12 calendar months</strong> of personal-scope net cashflow in SAR (income − expenses, dated FX), summed to{' '}
+          <span className="font-semibold">{formatCurrencyString(rollingAnnualNetSar, { digits: 0 })}</span>, then ÷ 12 →{' '}
+          <span className="font-semibold">{formatCurrencyString(fundingPlan?.totalMonthlySurplus ?? 0, { digits: 0 })}</span>/mo for funding math.
+          Goals <strong>past deadline</strong> show a catch-up gap (not divided by months). Goals <strong>without a deadline</strong> amortize over{' '}
+          {GOAL_NO_DEADLINE_AMORTIZATION_MONTHS} months.
         </p>
 
         <div className="flex flex-col lg:flex-row gap-3">
@@ -1039,11 +1045,13 @@ const Goals: React.FC<{
                   .map((s) => {
                     const goal = (data?.goals ?? []).find((g) => g.id === s.goalId);
                     const name = goal?.name ?? s.name;
+                    const catchUp = Number(s.overdueCatchUpSar) || 0;
+                    const isCatchUp = catchUp > 0;
                     const required = Number(s.requiredPerMonth) || 0;
                     const suggested = Number(s.suggestedPerMonth) || 0;
-                    const short = Math.max(0, required - suggested);
-                    const ok = s.status === 'on_track' || short <= 0.01;
-                    const pct = required > 0 ? Math.min(100, (suggested / required) * 100) : 0;
+                    const short = isCatchUp ? catchUp : Math.max(0, required - suggested);
+                    const ok = !isCatchUp && (s.status === 'on_track' || short <= 0.01);
+                    const pct = !isCatchUp && required > 0 ? Math.min(100, (suggested / required) * 100) : 0;
                     const priority = goal?.priority || 'Medium';
                     const deadline = goal?.deadline ? String(goal.deadline).slice(0, 10) : '';
 
@@ -1072,6 +1080,9 @@ const Goals: React.FC<{
                                 {priority}
                               </span>
                               {deadline && <span>Deadline: {deadline}</span>}
+                              {!isCatchUp && (s.monthsToDeadline ?? 0) > 0 && (
+                                <span className="text-slate-500">· ~{s.monthsToDeadline} mo left</span>
+                              )}
                             </div>
                           </div>
 
@@ -1080,39 +1091,51 @@ const Goals: React.FC<{
                               ok ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
                             }`}
                           >
-                            {ok ? 'On track' : 'Need more'}
+                            {isCatchUp ? 'Catch-up' : ok ? 'On track' : 'Need more'}
                           </span>
                         </div>
 
-                        <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs tabular-nums">
-                          <div className="rounded-lg border border-slate-200 bg-white/80 px-2.5 py-1.5">
-                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Required</p>
-                            <p className="font-bold text-slate-900">{formatCurrencyString(required, { digits: 0 })}/mo</p>
-                          </div>
-                          <div className="rounded-lg border border-slate-200 bg-white/80 px-2.5 py-1.5">
-                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Suggested</p>
-                            <p className="font-bold text-slate-900">{formatCurrencyString(suggested, { digits: 0 })}/mo</p>
-                          </div>
-                          <div className="rounded-lg border border-slate-200 bg-white/80 px-2.5 py-1.5">
-                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Shortfall</p>
-                            <p className={`font-bold ${short > 0 ? 'text-amber-800' : 'text-emerald-800'}`}>
-                              {short > 0 ? formatCurrencyString(short, { digits: 0 }) : '0'}
-                              {short > 0 ? '/mo' : ''}
+                        {isCatchUp ? (
+                          <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50/60 px-2.5 py-2 text-xs text-rose-950">
+                            <p className="font-semibold">Deadline passed — remaining gap</p>
+                            <p className="tabular-nums font-bold mt-0.5">{formatCurrencyString(catchUp, { digits: 0 })} SAR</p>
+                            <p className="text-[11px] text-rose-900/90 mt-1 leading-snug">
+                              Not annualized into a monthly run-rate; fund from surplus or windfall as you can.
                             </p>
                           </div>
-                        </div>
+                        ) : (
+                          <>
+                            <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs tabular-nums">
+                              <div className="rounded-lg border border-slate-200 bg-white/80 px-2.5 py-1.5">
+                                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Required</p>
+                                <p className="font-bold text-slate-900">{formatCurrencyString(required, { digits: 0 })}/mo</p>
+                              </div>
+                              <div className="rounded-lg border border-slate-200 bg-white/80 px-2.5 py-1.5">
+                                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Suggested</p>
+                                <p className="font-bold text-slate-900">{formatCurrencyString(suggested, { digits: 0 })}/mo</p>
+                              </div>
+                              <div className="rounded-lg border border-slate-200 bg-white/80 px-2.5 py-1.5">
+                                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Shortfall</p>
+                                <p className={`font-bold ${short > 0 ? 'text-amber-800' : 'text-emerald-800'}`}>
+                                  {short > 0 ? formatCurrencyString(short, { digits: 0 }) : '0'}
+                                  {short > 0 ? '/mo' : ''}
+                                </p>
+                              </div>
+                            </div>
 
-                        <div className="mt-2">
-                          <div className="h-2.5 w-full rounded-full bg-slate-200 overflow-hidden" aria-hidden>
-                            <div
-                              className={`h-full rounded-full ${ok ? 'bg-emerald-500' : 'bg-amber-500'}`}
-                              style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
-                            />
-                          </div>
-                          <p className="mt-1 text-[11px] text-slate-600">
-                            Coverage: <span className="font-semibold">{pct.toFixed(0)}%</span> of required
-                          </p>
-                        </div>
+                            <div className="mt-2">
+                              <div className="h-2.5 w-full rounded-full bg-slate-200 overflow-hidden" aria-hidden>
+                                <div
+                                  className={`h-full rounded-full ${ok ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                                  style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
+                                />
+                              </div>
+                              <p className="mt-1 text-[11px] text-slate-600">
+                                Coverage: <span className="font-semibold">{pct.toFixed(0)}%</span> of required monthly
+                              </p>
+                            </div>
+                          </>
+                        )}
                       </div>
                     );
                   })}
@@ -1185,27 +1208,37 @@ const Goals: React.FC<{
         resolvedCurrentByGoalId={resolvedGoalTotalsMap}
       />
 
-      <CollapsibleSection title="Bonus / windfall allocation ideas" summary="Dynamic split based on current goals" className="border border-slate-200">
-        <p className="text-xs text-slate-600 mb-2">Auto-derived from your goal gaps, priorities, and emergency runway.</p>
+      <CollapsibleSection title="Bonus / windfall allocation ideas" summary="Deterministic split tied to surplus + gaps" className="border border-slate-200">
+        <p className="text-xs text-slate-600 mb-2">
+          Percentages sum to 100%. Emergency tier uses runway; the rest splits by weighted goal gaps vs your rolling 12‑month net (same anchor as the funding cockpit).
+        </p>
         <ul className="text-sm text-slate-700 space-y-2">
           <li>
-            <strong>{dynamicWindfallPlan.goalFundingPct}% to goals</strong>
-            <span className="text-slate-600"> · prioritize by gap × priority weight</span>
+            <strong>{dynamicWindfallPlan.emergencyBufferPct}% emergency buffer</strong>
+            <span className="text-slate-600"> · liquid runway ~{efGoals.monthsCovered.toFixed(1)} mo</span>
           </li>
           <li>
-            <strong>{dynamicWindfallPlan.investPct}% to investing</strong>
-            <span className="text-slate-600"> · long-term growth bucket</span>
+            <strong>{dynamicWindfallPlan.goalFundingPct}% toward goal gaps</strong>
+            <span className="text-slate-600"> · weighted by gap × priority (same weights as below)</span>
           </li>
           <li>
-            <strong>{dynamicWindfallPlan.emergencyBufferPct}% to emergency buffer</strong>
-            <span className="text-slate-600"> · runway currently {efGoals.monthsCovered.toFixed(1)} months</span>
+            <strong>{dynamicWindfallPlan.investPct}% toward long-term investing</strong>
+            <span className="text-slate-600"> · scales with your annual surplus anchor ({formatCurrencyString(rollingAnnualNetSar, { digits: 0 })} SAR/yr)</span>
           </li>
           {dynamicWindfallPlan.topGoals.length > 0 && (
             <li className="text-slate-600">
-              Top goal recipients: {dynamicWindfallPlan.topGoals.map((g) => `${g.name} (${g.pctOfGoalBucket.toFixed(0)}%)`).join(' · ')}
+              Within the goal slice, top weighted gaps:{' '}
+              {dynamicWindfallPlan.topGoals.map((g) => `${g.name} (${g.pctOfGoalBucket.toFixed(0)}%)`).join(' · ')}
             </li>
           )}
         </ul>
+        {dynamicWindfallPlan.derivationLines && dynamicWindfallPlan.derivationLines.length > 0 && (
+          <ul className="mt-3 text-[11px] text-slate-600 space-y-1 list-disc pl-5 leading-relaxed border-t border-slate-100 pt-3">
+            {dynamicWindfallPlan.derivationLines.map((line, i) => (
+              <li key={`wf-${i}`}>{line}</li>
+            ))}
+          </ul>
+        )}
       </CollapsibleSection>
 
       <AIAdvisor

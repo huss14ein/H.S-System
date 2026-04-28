@@ -2,7 +2,8 @@ import { useMemo } from 'react';
 import type { FinancialData, Account, Transaction, Budget } from '../types';
 import { getPersonalWealthData } from '../utils/wealthScope';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
-import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
+import { brokerCashBucketsFromInvestmentAccount } from '../services/investmentCashLedger';
 import { getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
 import { useCurrency } from '../context/CurrencyContext';
 
@@ -35,7 +36,7 @@ function budgetToMonthly(limit: number, period?: string): number {
 }
 
 export interface EmergencyFundMetrics {
-    /** Liquid cash: Checking + Savings (positive balances only). */
+    /** Liquid cash: Checking + Savings + Investment platform cash (Accounts balance per broker), SAR. */
     emergencyCash: number;
     /** Estimated monthly core/essential expenses (SAR). */
     monthlyCoreExpenses: number;
@@ -76,7 +77,7 @@ function txExpenseSar(
  * Computes emergency fund metrics from financial data.
  * Uses: (1) rolling 6‑month average of core expenses from transactions, or
  *       (2) sum of current month budgets for essential categories if no core transactions.
- * Liquid cash = Checking + Savings (positive only), normalized to **SAR** using account currency + FX rate.
+ * Liquid cash = Checking + Savings (positive only) + tradable cash on Investment accounts (same as `getAvailableCashForAccount`), normalized to **SAR**.
  */
 export function computeEmergencyFundMetrics(
     data: FinancialData | null | undefined,
@@ -111,12 +112,18 @@ export function computeEmergencyFundMetrics(
 
     const accById = new Map(accounts.map((a) => [a.id, a]));
 
-    const emergencyCash = accounts
+    const bankCashSar = accounts
         .filter((a) => a.type === 'Checking' || a.type === 'Savings')
         .reduce((sum, a) => {
             const cur = a.currency === 'USD' ? 'USD' : 'SAR';
             return sum + toSAR(Math.max(0, a.balance ?? 0), cur, spotSarPerUsd);
         }, 0);
+    let platformCashSar = 0;
+    for (const a of accounts) {
+        if (a.type !== 'Investment') continue;
+        platformCashSar += tradableCashBucketToSAR(brokerCashBucketsFromInvestmentAccount(a), spotSarPerUsd);
+    }
+    const emergencyCash = bankCashSar + platformCashSar;
 
     const now = new Date();
     const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);

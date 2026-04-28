@@ -17,7 +17,8 @@ import { generateNextBestActions } from '../services/nextBestActionEngine';
 import { salaryToExpenseCoverage } from '../services/salaryExpenseCoverage';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
-import { getPersonalTransactions } from '../utils/wealthScope';
+import { getPersonalTransactions, getPersonalInvestments } from '../utils/wealthScope';
+import { engineSleeveKeyToTickerStatus, inferEngineSleeveKeyFromHolding } from '../services/inferHoldingUniverseClassification';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
@@ -840,6 +841,17 @@ const InvestmentPlanView: React.FC<{
         const universe = data?.portfolioUniverse ?? [];
         const plannedTrades = data?.plannedTrades ?? [];
         const statusBySymbol = new Map(universe.map((t: any) => [String(t.ticker || '').toUpperCase(), t.status]));
+        const inferredFromHoldings = new Map<string, string>();
+        for (const p of getPersonalInvestments(data)) {
+            for (const h of p.holdings ?? []) {
+                const sym = String(h.symbol ?? '').toUpperCase();
+                if (!sym) continue;
+                inferredFromHoldings.set(
+                    sym,
+                    engineSleeveKeyToTickerStatus(inferEngineSleeveKeyFromHolding(h)),
+                );
+            }
+        }
         const rowsBySymbol = new Map<string, {
             plan: PlannedTrade; universeStatus: string; recommendation: string; aligned: boolean | null; reason: string; suggestedTradeType: 'buy' | 'sell'; aiNudge: string;
         }>();
@@ -850,7 +862,10 @@ const InvestmentPlanView: React.FC<{
             const rowKey =
                 (plan as any)?.id ??
                 `${symbolKey}|${plan.tradeType}|${plan.conditionType}|${Number((plan as any)?.targetValue) || 0}`;
-            const universeStatus = statusBySymbol.get(symbolKey) || 'Untracked';
+            const universeStatus =
+                statusBySymbol.get(symbolKey)
+                ?? inferredFromHoldings.get(symbolKey)
+                ?? 'Untracked';
             const isBuy = plan.tradeType === 'buy';
             const recommendation = universeStatus === 'Core' || universeStatus === 'High-Upside'
                 ? (universeStatus === 'Core' ? 'Core: steady accumulation' : 'High-upside: opportunistic adds within caps')
@@ -879,7 +894,7 @@ const InvestmentPlanView: React.FC<{
                     : universeStatus === 'Quarantine'
                     ? 'Quarantine: de-risking direction matches a trim or hold-without-adds view.'
                     : 'Direction supports current universe posture.')
-                : 'Symbol is not mapped in portfolio universe yet.';
+                : 'Symbol has no universe row and is not held — add a universe mapping or a holding to classify it.';
             const aiNudge = suggestedTradeType === 'sell'
                 ? (universeStatus === 'Quarantine'
                     ? 'Prefer trimming or not adding new exposure while quarantine is active.'
@@ -888,7 +903,9 @@ const InvestmentPlanView: React.FC<{
                 ? 'Favor staged buys that respect your core sleeve and monthly weight in the universe table.'
                 : universeStatus === 'High-Upside'
                 ? 'Favor add-ons that stay within sleeve weight and the max position for this ticker.'
-                : 'Map the symbol in the universe, then set trigger and size in the plan editor.';
+                : universeStatus === 'Untracked'
+                ? 'Add a universe row or hold this symbol so sleeve classification can apply.'
+                : 'Tune trigger and size in the plan editor to match your sleeve posture.';
             const row = { plan, universeStatus, recommendation, aligned, reason, suggestedTradeType, aiNudge };
             rowsBySymbol.set(rowKey, row);
         }
@@ -910,7 +927,7 @@ const InvestmentPlanView: React.FC<{
             conflictCount: rows.filter(r => r.aligned === false).length,
             untrackedCount: rows.filter(r => r.aligned === null).length,
         };
-    }, [data?.plannedTrades, data?.portfolioUniverse, alignmentFilter]);
+    }, [data, alignmentFilter]);
 
     const planValidationWarnings = useMemo(() => {
         const plans = data?.plannedTrades ?? [];

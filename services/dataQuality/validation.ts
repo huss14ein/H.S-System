@@ -211,7 +211,7 @@ export function validateTransactionCore(input: { date?: string; amount?: unknown
 }
 
 /** Validate settings (gold price, nisab) */
-export function validateSettings(input: { goldPrice?: unknown; nisabAmount?: unknown; budgetThreshold?: unknown; driftThreshold?: unknown; riskProfile?: string }): { valid: boolean; errors: string[] } {
+export function validateSettings(input: { goldPrice?: unknown; nisabAmount?: unknown; budgetThreshold?: unknown; driftThreshold?: unknown; riskProfile?: string; monthStartDay?: unknown }): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
   const gold = safeNumber(input.goldPrice, NaN);
   if (input.goldPrice != null && (Number.isNaN(gold) || gold <= 0 || gold > 1e6)) {
@@ -236,6 +236,11 @@ export function validateSettings(input: { goldPrice?: unknown; nisabAmount?: unk
   const rp = input.riskProfile;
   if (rp != null && rp !== '' && !VALID_RISK_PROFILES.includes(rp as any)) {
     errors.push(`Risk profile must be one of: ${VALID_RISK_PROFILES.join(', ')}.`);
+  }
+
+  const msd = safeNumber(input.monthStartDay, NaN);
+  if (input.monthStartDay != null && (Number.isNaN(msd) || !Number.isInteger(msd) || msd < 1 || msd > 28)) {
+    errors.push('Month start day must be an integer between 1 and 28.');
   }
 
   return { valid: errors.length === 0, errors };

@@ -26,6 +26,28 @@ describe('computeDashboardKpiSnapshot', () => {
     const snap = computeDashboardKpiSnapshot(data, 3.75, () => ({ SAR: 0, USD: 0 }));
     expect(snap).not.toBeNull();
     expect(snap!.liquidCashSar).toBeCloseTo(3750, 0);
+    expect(snap!.investmentCapitalSource).toBeDefined();
+  });
+
+  it('includes investment platform cash from getAvailableCashForAccount in liquidCashSar', () => {
+    const accounts: Account[] = [
+      { id: 'c1', name: 'Check', type: 'Checking', balance: 1000, currency: 'SAR' } as Account,
+      { id: 'inv1', name: 'Broker', type: 'Investment', balance: 5000, currency: 'SAR' } as Account,
+    ];
+    const data = {
+      accounts,
+      personalAccounts: accounts,
+      transactions: [] as Transaction[],
+      budgets: [],
+      investments: [],
+      investmentTransactions: [],
+    } as unknown as FinancialData;
+
+    const snap = computeDashboardKpiSnapshot(data, 3.75, (id) =>
+      id === 'inv1' ? { SAR: 5000, USD: 0 } : { SAR: 0, USD: 0 },
+    );
+    expect(snap).not.toBeNull();
+    expect(snap!.liquidCashSar).toBeCloseTo(6000, 0);
   });
 
   it('averages 6-month income in SAR via txCashflowSar', () => {

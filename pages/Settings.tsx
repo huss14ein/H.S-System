@@ -9,7 +9,9 @@ import InfoHint from '../components/InfoHint';
 import SectionCard from '../components/SectionCard';
 import { getDefaultWealthUltraConfig } from '../wealth-ultra';
 import { getAuditLog, clearAuditLog, exportAuditLogAsCsv, type AuditLogEntry, type AuditEntity } from '../services/auditLog';
-import { rankCapitalUses, buyScore } from '../services/decisionEngine';
+import { rankCapitalUses, buyScoreBreakdown } from '../services/decisionEngine';
+import { computeDecisionPreviewVerdict } from '../services/decisionPreviewVerdict';
+import DecisionPreviewPanel from '../components/DecisionPreviewPanel';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { loadTradingPolicy, saveTradingPolicy, type TradingPolicy, DEFAULT_TRADING_POLICY, TRADING_POLICY_PRESETS } from '../services/tradingPolicy';
 import { usePrivacyMask } from '../context/PrivacyContext';
@@ -24,6 +26,7 @@ import {
     type WealthSummaryReportInput,
 } from '../services/reportingEngine';
 import { useCurrency } from '../context/CurrencyContext';
+import { useMarketData } from '../context/MarketDataContext';
 import { useNotifications } from '../context/NotificationsContext';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
@@ -71,6 +74,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     const { showToast } = useToast();
     const auth = useContext(AuthContext)!;
     const { exchangeRate, currency, setCurrency } = useCurrency();
+    const { simulatedPrices } = useMarketData();
     const notifCtx = useNotifications();
     const [localSettings, setLocalSettings] = useState(data?.settings ?? {});
     const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
@@ -119,6 +123,10 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         () => Math.min(20, Math.max(0, Number(localSettings?.driftThreshold ?? 5))),
         [localSettings?.driftThreshold]
     );
+    const monthStartDaySetting = useMemo(
+        () => Math.min(28, Math.max(1, Math.round(Number((localSettings as any)?.monthStartDay ?? 1)))),
+        [localSettings]
+    );
     const portfolioDriftFlag = useMemo(
         () => countPortfolioDriftAttention(sleeveDriftPct, driftThresholdSetting),
         [sleeveDriftPct, driftThresholdSetting]
@@ -166,6 +174,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
             enableWeeklyEmail: Boolean(localSettings?.enableEmails),
             inAppSoundEnabled: playNotificationSound,
             liquidCashSarApprox: liquidCashSar,
+            monthStartDay: monthStartDaySetting,
         };
     }, [
         sarPerUsd,
@@ -186,6 +195,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         playNotificationSound,
         liquidCashSar,
         driftThresholdSetting,
+        monthStartDaySetting,
         data,
     ]);
 
@@ -221,22 +231,41 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     }, [data, liquidCashSar]);
 
     const capitalRanks = useMemo(() => rankCapitalUses(Math.max(0, capitalPreviewAmount)), [capitalPreviewAmount]);
-    const sampleBuyScore = useMemo(
+    const buyScoreBreakdownMemo = useMemo(
         () =>
-            buyScore({
+            buyScoreBreakdown({
                 emergencyFundMonths: ef.monthsCovered,
                 runwayMonths: ef.monthsCovered,
                 maxPositionPct: liveDecisionInputs.maxPositionPct,
                 currentPositionPct: liveDecisionInputs.currentPositionPct,
                 driftFromTargetPct: liveDecisionInputs.driftFromTargetPct,
             }),
-        [ef.monthsCovered, liveDecisionInputs]
+        [ef.monthsCovered, liveDecisionInputs],
     );
+    const decisionPreviewVerdict = useMemo(
+        () =>
+            computeDecisionPreviewVerdict({
+                buy: buyScoreBreakdownMemo,
+                sleeveDriftPct: liveDecisionInputs.sleeveDriftPct,
+                driftAlertThresholdPct: liveDecisionInputs.driftThresholdSettingPct,
+                minRunwayMonthsToAllowBuys: tradingPolicyLocal.minRunwayMonthsToAllowBuys,
+            }),
+        [
+            buyScoreBreakdownMemo,
+            liveDecisionInputs.sleeveDriftPct,
+            liveDecisionInputs.driftThresholdSettingPct,
+            tradingPolicyLocal.minRunwayMonthsToAllowBuys,
+        ],
+    );
+    const resetCapitalPreviewToDefault = useCallback(() => {
+        capitalPreviewTouchedRef.current = false;
+        setCapitalPreviewAmount(Math.max(5000, Math.round(liquidCashSar * 0.15)));
+    }, [liquidCashSar]);
 
     const wealthSummaryPayload = useMemo((): WealthSummaryReportInput | null => {
         if (!data) return null;
-        return computeWealthSummaryReportModel(data, sarPerUsd, getAvailableCashForAccount).wealthSummaryReportPayload;
-    }, [data, sarPerUsd, getAvailableCashForAccount]);
+        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount).wealthSummaryReportPayload;
+    }, [data, exchangeRate, getAvailableCashForAccount]);
 
     const [isAdmin, setIsAdmin] = useState(false);
     const [pendingUsers, setPendingUsers] = useState<{ id: string; name: string | null; email: string | null; created_at: string }[]>([]);
@@ -438,7 +467,7 @@ const hasData = accountsForEmptyCheck.length > 0;
                         { id: 'user-profile', label: 'Profile' },
                         { id: 'financial-preferences', label: 'Financial' },
                         { id: 'default-parameters', label: 'Parameters' },
-                        { id: 'decision-preview', label: 'Decision rules' },
+                        { id: 'decision-preview', label: 'Decision cockpit' },
                         { id: 'trading-policy', label: 'Trading policy' },
                         { id: 'notifications', label: 'Notifications' },
                         { id: 'ai-settings', label: 'AI' },
@@ -611,6 +640,23 @@ const hasData = accountsForEmptyCheck.length > 0;
                             <span className="text-sm font-semibold text-primary mt-1 block">{Math.min(20, Math.max(0, Number(localSettings?.driftThreshold ?? 5)))}%</span>
                         </div>
                         <div className="rounded-lg border border-slate-200 p-3">
+                            <label htmlFor="month-start-day" className="block text-sm font-medium text-slate-700 flex items-center">
+                                Month start day (1–28)
+                                <InfoHint text="Defines when your 'month' starts for KPIs and Budgets. 1 = calendar month. Example: 25 means a month runs from the 25th → 24th." />
+                            </label>
+                            <input
+                                id="month-start-day"
+                                type="range"
+                                min={1}
+                                max={28}
+                                step={1}
+                                value={monthStartDaySetting}
+                                onChange={(e) => handleSettingChange('monthStartDay', Number(e.target.value))}
+                                className="mt-2 w-full h-2 rounded-lg appearance-none bg-slate-200 accent-primary"
+                            />
+                            <span className="text-sm font-semibold text-primary mt-1 block">{monthStartDaySetting}</span>
+                        </div>
+                        <div className="rounded-lg border border-slate-200 p-3">
                             <label htmlFor="gold-price-settings" className="block text-sm font-medium text-slate-700 flex items-center">Gold price (SAR/gram) <InfoHint text="Current gold price per gram. Used to calculate the Nisab threshold (minimum wealth before Zakat is due). Usually gold price × 85 grams." /></label>
                             <input
                                 id="gold-price-settings"
@@ -691,68 +737,24 @@ const hasData = accountsForEmptyCheck.length > 0;
                 </div>
             </SectionCard>
 
-            <SectionCard id="decision-preview" title="Decision preview (rules)" collapsible collapsibleSummary="Buy score, allocation">
-                <p className="text-sm text-slate-600 mb-4">
-                    <strong className="text-slate-800">Fully automated from your data:</strong> largest holding weight, live sleeve drift (Wealth Ultra targets), policy caps, and runway refresh when investments or settings change. Lump-sum tracks liquid until you edit it.
-                </p>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">
-                    <div className="rounded-xl border border-indigo-100 bg-indigo-50/80 px-3 py-2.5">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700">Policy max position</p>
-                        <p className="text-lg font-bold tabular-nums text-indigo-950">{liveDecisionInputs.maxPositionPct}%</p>
-                    </div>
-                    <div className="rounded-xl border border-sky-100 bg-sky-50/80 px-3 py-2.5">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-sky-800">Largest holding</p>
-                        <p className="text-lg font-bold tabular-nums text-sky-950">{liveDecisionInputs.currentPositionPct}%</p>
-                    </div>
-                    <div className="rounded-xl border border-amber-100 bg-amber-50/80 px-3 py-2.5">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-900">Sleeve drift (max)</p>
-                        <p className="text-lg font-bold tabular-nums text-amber-950">
-                            {liveDecisionInputs.sleeveDriftPct == null ? '—' : `${liveDecisionInputs.sleeveDriftPct}%`}
-                        </p>
-                        <p className="text-[10px] text-amber-800/90 mt-0.5">Alert at {liveDecisionInputs.driftThresholdSettingPct}% (Financial preferences)</p>
-                    </div>
-                    <div className="rounded-xl border border-emerald-100 bg-emerald-50/80 px-3 py-2.5">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-800">Runway</p>
-                        <p className="text-lg font-bold tabular-nums text-emerald-950">{ef.monthsCovered.toFixed(1)} mo</p>
-                    </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-4">
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1 flex flex-wrap items-center gap-2">
-                                Windfall / lump sum (SAR)
-                                <span className="text-xs font-normal text-slate-500">Default ≈ 15% of liquid cash — edit to simulate</span>
-                            </label>
-                            <input
-                                id="cap-prev"
-                                type="number"
-                                min={0}
-                                step={1000}
-                                value={capitalPreviewAmount}
-                                onChange={(e) => {
-                                    capitalPreviewTouchedRef.current = true;
-                                    setCapitalPreviewAmount(Number(e.target.value) || 0);
-                                }}
-                                className="input-base w-full max-w-[200px]"
-                            />
-                        </div>
-                        <ul className="space-y-2 text-sm">
-                            {capitalRanks.map((row) => (
-                                <li key={row.use} className="flex justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                                    <span className="font-medium text-slate-800 capitalize">{row.use.replace(/_/g, ' ')}</span>
-                                    <span className="text-slate-600 tabular-nums">{Math.round(row.amount).toLocaleString()} SAR</span>
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-                    <div className="rounded-xl bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/25 p-5">
-                        <p className="text-xs font-semibold text-primary uppercase tracking-wide mb-1">Buy score (0–100)</p>
-                        <p className="text-4xl font-bold text-primary tabular-nums">{sampleBuyScore}</p>
-                        <p className="text-xs text-slate-600 mt-2">
-                            From decisionEngine: runway, trading policy max position, largest holding weight, and live sleeve drift (Wealth Ultra allocation vs targets). Drift alert % in Financial preferences is shown on the card above—not a substitute for measured drift.
-                        </p>
-                    </div>
-                </div>
+            <SectionCard id="decision-preview" title="Decision cockpit" collapsible collapsibleSummary="Signals, buy score, lump-sum model">
+                <DecisionPreviewPanel
+                    liquidCashSar={liquidCashSar}
+                    capitalPreviewAmount={capitalPreviewAmount}
+                    onCapitalChange={(n) => {
+                        capitalPreviewTouchedRef.current = true;
+                        setCapitalPreviewAmount(n);
+                    }}
+                    onResetCapitalToAutomatedDefault={resetCapitalPreviewToDefault}
+                    capitalRanks={capitalRanks}
+                    liveDecisionInputs={liveDecisionInputs}
+                    runwayMonths={ef.monthsCovered}
+                    buyBreakdown={buyScoreBreakdownMemo}
+                    verdict={decisionPreviewVerdict}
+                    minRunwayMonthsPolicy={tradingPolicyLocal.minRunwayMonthsToAllowBuys}
+                    setActivePage={setActivePage}
+                    triggerPageAction={triggerPageAction}
+                />
             </SectionCard>
 
             <SectionCard id="trading-policy" title="Trading policy (this device)" collapsible collapsibleSummary="Runway, position caps" defaultExpanded>
@@ -1012,7 +1014,12 @@ const hasData = accountsForEmptyCheck.length > 0;
                                 return;
                             }
                             const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
-                            const { budgetVariance, roi } = computeMonthlyReportFinancialKpis(data, sarPerUsd, getAvailableCashForAccount);
+                            const { budgetVariance, roi } = computeMonthlyReportFinancialKpis(
+                                data,
+                                sarPerUsd,
+                                getAvailableCashForAccount,
+                                simulatedPrices,
+                            );
                             const report = generateMonthlyReport({
                                 periodLabel: new Date().toISOString().slice(0, 7),
                                 netWorth: wealthSummaryPayload.netWorth,

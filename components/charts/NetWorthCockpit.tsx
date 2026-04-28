@@ -1,11 +1,25 @@
 import { useContext, useMemo, useState } from 'react';
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { DataContext } from '../../context/DataContext';
 import { useCurrency } from '../../context/CurrencyContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from '../../services/fxDailySeries';
-import { computePersonalNetWorthChartBucketsSAR } from '../../services/personalNetWorth';
+import { computePersonalHeadlineNetWorthSar } from '../../services/personalNetWorth';
 import { listNetWorthSnapshots } from '../../services/netWorthSnapshot';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../../utils/wealthScope';
 import type { Account, Transaction } from '../../types';
@@ -17,6 +31,15 @@ type TimePeriod = '1M' | '3M' | '6M' | '1Y' | 'All';
 
 function startOfLocalDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/** Monday-based week start (local), for consistent weekly cashflow buckets. */
+function mondayOfWeekContaining(d: Date): Date {
+  const x = startOfLocalDay(d);
+  const day = x.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  x.setDate(x.getDate() + diff);
+  return x;
 }
 
 function parseLocalDayKey(dayKey: string): Date {
@@ -98,6 +121,26 @@ function CashTooltip(props: {
   );
 }
 
+function DailyNetTooltip(props: {
+  active?: boolean;
+  payload?: Array<{ payload?: { name: string; dayKey: string; net: number } }>;
+  formatValue: (n: number) => string;
+}) {
+  const { active, payload, formatValue } = props;
+  if (!active || !payload?.length) return null;
+  const row = payload[0]?.payload;
+  if (!row) return null;
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-lg text-xs">
+      <p className="font-semibold text-slate-800">{shortLabel(row.dayKey) || row.dayKey}</p>
+      <p className={`mt-1 tabular-nums ${row.net >= 0 ? 'text-emerald-800' : 'text-rose-800'}`}>
+        Net cashflow: <span className="font-semibold">{formatValue(row.net)}</span>
+      </p>
+      <p className="mt-0.5 text-[10px] text-slate-500 leading-snug">Income − spending (excl. internal transfers).</p>
+    </div>
+  );
+}
+
 function netCashflowBetweenSarDated(args: {
   transactions: Transaction[];
   accounts: Account[];
@@ -144,21 +187,25 @@ export default function NetWorthCockpit(props: {
     if (!data) {
       return {
         sarPerUsd: 3.75,
-        live: null as null | ReturnType<typeof computePersonalNetWorthChartBucketsSAR>,
+        live: null as null | ReturnType<typeof computePersonalHeadlineNetWorthSar>['buckets'],
         series: [] as Array<{ dayKey: string; name: string; netWorth: number }>,
+        nwYAxisDomain: undefined as [number, number] | undefined,
         accounts: [] as Account[],
         investCashBars: [] as Array<{ label: string; sar: number }>,
         net30d: { income: 0, expenses: 0, net: 0 },
+        weeklyNet8: [] as Array<{ name: string; net: number; weekStartKey: string; dayKey: string }>,
+        compositionPieData: [] as Array<{ name: string; value: number; fill: string }>,
+        compositionStrip: [] as Array<{ key: string; label: string; sar: number; color: string }>,
+        compositionTotal: 0,
         lastSnapshotAttribution: null as null | ReturnType<typeof attributeNetWorthWithFlows>,
         movers: [] as Array<{ symbol: string; name: string; valueSar: number; gainLossSar: number; gainLossPct: number }>,
       };
     }
 
-    const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
     hydrateSarPerUsdDailySeries(data, exchangeRate, { horizonDays: 4000 });
-    const todayKey = new Date().toISOString().slice(0, 10);
-    const fxToday = getSarPerUsdForCalendarDay(todayKey, data, sarPerUsd);
-    const live = computePersonalNetWorthChartBucketsSAR(data, fxToday, { getAvailableCashForAccount });
+    const headline = computePersonalHeadlineNetWorthSar(data, exchangeRate, { getAvailableCashForAccount });
+    const live = headline.buckets;
+    const sarPerUsd = headline.sarPerUsd;
 
     const snaps = listNetWorthSnapshots();
     const cutoff = cutoffFor(period);
@@ -180,6 +227,16 @@ export default function NetWorthCockpit(props: {
       .slice()
       .reverse()
       .map((r) => ({ ...r, name: shortLabel(r.dayKey) }));
+
+    const nwVals = series.map((s) => s.netWorth).filter((n) => Number.isFinite(n));
+    let nwYAxisDomain: [number, number] | undefined;
+    if (nwVals.length >= 1) {
+      const mn = Math.min(...nwVals);
+      const mx = Math.max(...nwVals);
+      const span = Math.max(mx - mn, Math.abs(mx) * 0.0025, 1);
+      const pad = span * 0.15;
+      nwYAxisDomain = [mn - pad, mx + pad];
+    }
 
     const accounts = getPersonalAccounts(data) as Account[];
     const transactions = getPersonalTransactions(data) as Transaction[];
@@ -206,6 +263,41 @@ export default function NetWorthCockpit(props: {
       startIso: start30d.toISOString(),
       endIso: now.toISOString(),
     });
+
+    const weeklyNet8: Array<{ name: string; net: number; weekStartKey: string; dayKey: string }> = [];
+    const anchorMonday = mondayOfWeekContaining(now);
+    for (let i = 7; i >= 0; i--) {
+      const weekStart = new Date(anchorMonday);
+      weekStart.setDate(weekStart.getDate() - i * 7);
+      weekStart.setHours(0, 0, 0, 0);
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      weekEnd.setHours(23, 59, 59, 999);
+      const { net } = netCashflowBetweenSarDated({
+        transactions,
+        accounts,
+        data,
+        uiExchangeRate: sarPerUsd,
+        startIso: weekStart.toISOString(),
+        endIso: weekEnd.toISOString(),
+      });
+      const mk = `${weekStart.getMonth() + 1}/${weekStart.getDate()}`;
+      const dk = toDayKeyLocal(weekStart);
+      weeklyNet8.push({ name: mk, net, weekStartKey: dk, dayKey: dk });
+    }
+
+    const compositionStrip = [
+      { key: 'cash', label: 'Cash', sar: Math.max(0, live.cash), color: '#6366f1' },
+      { key: 'inv', label: 'Investments', sar: Math.max(0, live.investments), color: '#10b981' },
+      { key: 'phys', label: 'Physical', sar: Math.max(0, live.physicalAndCommodities), color: '#f59e0b' },
+      { key: 'rec', label: 'Receivables', sar: Math.max(0, live.receivables), color: '#a855f7' },
+    ].filter((x) => x.sar > 0.5);
+    const compositionTotal = compositionStrip.reduce((s, x) => s + x.sar, 0);
+    const compositionPieData = compositionStrip.map((s) => ({
+      name: s.label,
+      value: s.sar,
+      fill: s.color,
+    }));
 
     const snapsFull = listNetWorthSnapshots();
     const lastSnapshotAttribution =
@@ -250,7 +342,21 @@ export default function NetWorthCockpit(props: {
       .sort((a, b) => Math.abs(b.gainLossSar) - Math.abs(a.gainLossSar))
       .slice(0, 6);
 
-    return { sarPerUsd, live, series, accounts, investCashBars, net30d, lastSnapshotAttribution, movers };
+    return {
+      sarPerUsd,
+      live,
+      series,
+      nwYAxisDomain,
+      accounts,
+      investCashBars,
+      net30d,
+      weeklyNet8,
+      compositionStrip,
+      compositionPieData,
+      compositionTotal,
+      lastSnapshotAttribution,
+      movers,
+    };
   }, [data, exchangeRate, getAvailableCashForAccount, period]);
 
   const live = computed.live;
@@ -376,17 +482,17 @@ export default function NetWorthCockpit(props: {
           </p>
         </aside>
 
-        {/* Main chart */}
-        <section className="lg:col-span-6 rounded-2xl border border-slate-200 bg-white p-3 min-h-[320px]">
-          <div className="flex items-start justify-between gap-2 mb-2">
+        {/* Main chart + insight strip */}
+        <section className="lg:col-span-6 rounded-2xl border border-slate-200 bg-white p-3 min-h-[320px] flex flex-col">
+          <div className="flex items-start justify-between gap-2 mb-2 shrink-0">
             <div className="min-w-0">
               <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Net worth trend</p>
               <p className="text-xs text-slate-600 mt-0.5">
-                Uses daily snapshots (when you open the app) + today’s live books.
+                Uses daily snapshots (when you open the app) + today’s live books. Axis scales to your range so flat weeks still read clearly.
               </p>
             </div>
           </div>
-          <div className="h-[300px]">
+          <div className="h-[240px] shrink-0">
             {isEmpty ? (
               <div className="h-full rounded-xl border border-dashed border-slate-200 bg-slate-50 flex items-center justify-center text-sm text-slate-500">
                 No history yet. Open Dashboard on different days to build the trend.
@@ -402,14 +508,123 @@ export default function NetWorthCockpit(props: {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                  <XAxis dataKey="name" tickLine={false} axisLine={{ stroke: '#CBD5E1' }} fontSize={11} />
-                  <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} tickLine={false} axisLine={{ stroke: '#CBD5E1' }} fontSize={11} width={54} />
+                  <XAxis dataKey="name" tickLine={false} axisLine={{ stroke: '#CBD5E1' }} fontSize={11} interval="preserveStartEnd" minTickGap={24} />
+                  <YAxis
+                    domain={computed.nwYAxisDomain}
+                    allowDataOverflow
+                    tickFormatter={(v) => formatAxisNumber(Number(v))}
+                    tickLine={false}
+                    axisLine={{ stroke: '#CBD5E1' }}
+                    fontSize={11}
+                    width={54}
+                  />
                   <Tooltip content={<AreaTooltip formatValue={(n) => formatCurrencyString(n, { digits: 0 })} />} />
                   <Area type="monotone" dataKey="netWorth" stroke="#4F46E5" strokeWidth={2} fill="url(#nwFill)" />
                 </AreaChart>
               </ResponsiveContainer>
             )}
           </div>
+
+          {live && (
+            <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-1 xl:grid-cols-12 gap-5 flex-1 min-h-[260px]">
+              <div className="xl:col-span-5 flex flex-col min-h-[220px]">
+                <div className="mb-2">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Wealth composition</p>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Gross assets by role — see concentration at a glance (excludes liabilities).
+                  </p>
+                </div>
+                {computed.compositionTotal > 0 ? (
+                  <div className="flex flex-col sm:flex-row items-stretch gap-4 flex-1">
+                    <div className="relative h-[210px] w-full max-w-[260px] mx-auto sm:mx-0 shrink-0">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={computed.compositionPieData}
+                            dataKey="value"
+                            nameKey="name"
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={62}
+                            outerRadius={92}
+                            paddingAngle={2}
+                          >
+                            {computed.compositionPieData.map((entry) => (
+                              <Cell key={`cell-${entry.name}`} fill={entry.fill} stroke="#fff" strokeWidth={2} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(value: number) => formatCurrencyString(value, { digits: 0 })} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div className="pointer-events-none absolute inset-0 flex items-center justify-center pb-2">
+                        <div className="text-center px-2">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Gross assets</p>
+                          <p className="text-lg font-extrabold text-slate-900 tabular-nums leading-tight">
+                            {formatCurrencyString(computed.compositionTotal, { digits: 0 })}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <ul className="flex-1 w-full space-y-2 text-[12px] min-w-0">
+                      {computed.compositionStrip.map((seg) => {
+                        const pct = computed.compositionTotal > 0 ? (seg.sar / computed.compositionTotal) * 100 : 0;
+                        return (
+                          <li
+                            key={seg.key}
+                            className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2"
+                          >
+                            <span className="flex items-center gap-2 min-w-0">
+                              <span className="h-3 w-3 rounded-md shrink-0 shadow-sm" style={{ backgroundColor: seg.color }} />
+                              <span className="font-medium text-slate-800 truncate">{seg.label}</span>
+                            </span>
+                            <span className="tabular-nums text-right shrink-0 text-[11px] sm:text-xs">
+                              <span className="font-semibold text-slate-900">{formatCurrencyString(seg.sar, { digits: 0 })}</span>
+                              <span className="text-slate-500 ml-2">{pct.toFixed(0)}%</span>
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ) : (
+                  <div className="flex-1 rounded-xl border border-dashed border-slate-200 bg-slate-50 flex items-center justify-center text-sm text-slate-500 px-4 text-center min-h-[120px]">
+                    Link accounts and assets to see how wealth is allocated.
+                  </div>
+                )}
+              </div>
+
+              <div className="xl:col-span-7 flex flex-col min-h-[220px]">
+                <div className="mb-2">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Weekly savings rhythm</p>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Net per week (Mon–Sun) — income minus spending, same rules as your Summary cards. Weekly rolls up day-to-day noise.
+                  </p>
+                </div>
+                <div className="flex-1 min-h-[200px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={computed.weeklyNet8} margin={{ top: 10, right: 12, left: 4, bottom: 4 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
+                      <XAxis dataKey="name" tickLine={false} axisLine={{ stroke: '#CBD5E1' }} fontSize={11} interval={0} />
+                      <YAxis
+                        tickFormatter={(v) => formatAxisNumber(Number(v))}
+                        tickLine={false}
+                        axisLine={{ stroke: '#CBD5E1' }}
+                        fontSize={11}
+                        width={48}
+                      />
+                      <ReferenceLine y={0} stroke="#64748b" strokeDasharray="4 3" />
+                      <Tooltip content={<DailyNetTooltip formatValue={(n) => formatCurrencyString(n, { digits: 0 })} />} />
+                      <Bar dataKey="net" radius={[6, 6, 0, 0]} maxBarSize={40}>
+                        {computed.weeklyNet8.map((e, i) => (
+                          <Cell key={`wk-${e.weekStartKey}-${i}`} fill={e.net >= 0 ? '#059669' : '#e11d48'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Smart side widgets */}

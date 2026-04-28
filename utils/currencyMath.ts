@@ -102,8 +102,21 @@ export const tradableCashBucketToSAR = (
 };
 
 /**
+ * Same FX path as {@link tradableCashBucketToSAR} but does **not** floor SAR/USD at zero.
+ * Use for reconciliation when the ledger is inconsistent (spend exceeds balance) so drift is visible.
+ */
+export const tradableCashBucketToSARSigned = (
+  cash: { SAR: number; USD: number },
+  exchangeRate: number,
+): number => {
+  const sar = Number.isFinite(cash.SAR) ? cash.SAR : 0;
+  const usd = Number.isFinite(cash.USD) ? cash.USD : 0;
+  return sar + toSAR(usd, 'USD', exchangeRate);
+};
+
+/**
  * Liquid cash in SAR: Checking + Savings balances, plus **tradable** cash on investment platforms
- * (ledger from `investment_transactions`), not account `balance` and not holdings market value.
+ * (from each Investment account’s cash balance via `getAvailableCashForAccount`), not holdings market value.
  */
 export const totalLiquidCashSARFromAccounts = (
   accounts: { id: string; type?: string; balance?: number; currency?: TradeCurrency }[],

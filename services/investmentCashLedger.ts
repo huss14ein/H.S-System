@@ -3,6 +3,34 @@ import { deltaForInvestmentTrade } from './investmentBalanceDelta';
 import { inferInvestmentTransactionCurrency, resolveCanonicalAccountId, resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 
+/**
+ * Platform cash from the **Investment** row in Accounts (`balance` + `currency`).
+ * This is the user-visible broker / platform cash balance; trade limits and KPI deployable cash use this,
+ * not a pure replay of investment transactions (which can drift when flows are incomplete).
+ */
+export function brokerCashBucketsFromInvestmentAccount(
+  acc: Pick<Account, 'type' | 'balance' | 'currency'> | undefined | null,
+): { SAR: number; USD: number } {
+  if (!acc || acc.type !== 'Investment') return { SAR: 0, USD: 0 };
+  const bal = Number(acc.balance);
+  const n = Number.isFinite(bal) ? bal : 0;
+  const cur: TradeCurrency = acc.currency === 'USD' ? 'USD' : 'SAR';
+  return cur === 'USD' ? { SAR: 0, USD: n } : { SAR: n, USD: 0 };
+}
+
+/** Canonical investment account id → SAR/USD buckets from each platform's `balance`. */
+export function computeBrokerCashByAccountMap(accounts: Account[]): Record<string, { SAR: number; USD: number }> {
+  const map: Record<string, { SAR: number; USD: number }> = {};
+  for (const acc of accounts) {
+    if (acc.type !== 'Investment') continue;
+    const id = resolveCanonicalAccountId(acc.id, accounts) ?? acc.id;
+    if (!id) continue;
+    map[id] = brokerCashBucketsFromInvestmentAccount(acc);
+  }
+  return map;
+}
+
+/** Replay of investment transactions into SAR/USD buckets (reconciliation / audits — not primary available cash). */
 export function computeAvailableCashByAccountMap(args: {
   accounts: Account[];
   investments: InvestmentPortfolio[];

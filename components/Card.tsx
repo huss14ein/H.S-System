@@ -15,6 +15,8 @@ interface CardProps {
   indicatorColor?: 'green' | 'yellow' | 'red';
   icon?: React.ReactNode;
   density?: 'comfortable' | 'compact';
+  /** Extra line below trend (e.g. link); clicks do not propagate to card onClick when using stopPropagation on children. */
+  footer?: React.ReactNode;
 }
 
 const isInvalidDisplayToken = (raw: string): boolean => {
@@ -50,7 +52,7 @@ const normalizeDisplayNode = (raw: React.ReactNode): React.ReactNode => {
   return raw;
 };
 
-const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, ariaLabel, valueColor, indicatorColor, icon, density = 'compact' }) => {
+const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, ariaLabel, valueColor, indicatorColor, icon, density = 'compact', footer }) => {
   const displayValue = normalizeDisplayNode(value);
   const displayTrend = typeof trend === 'string' && isInvalidDisplayToken(trend) ? undefined : trend;
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
@@ -107,24 +109,29 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
       aria-label={onClick ? (ariaLabel ?? title) : undefined}
-      className={`${cardToneClass} ${compact ? 'p-4 min-h-[120px]' : 'p-5 min-h-[140px]'} rounded-xl shadow-md transition-all duration-300 ease-in-out flex flex-col h-full border border-t-4 ${indicatorClass} ${onClick ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2' : ''} ${flashClass}`}
+      className={`${cardToneClass} ${compact ? 'p-4 min-h-[120px]' : 'p-5 min-h-[140px]'} rounded-xl shadow-md transition-all duration-300 ease-in-out flex flex-col h-full min-w-0 w-full border border-t-4 ${indicatorClass} ${onClick ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2' : ''} ${flashClass}`}
       onClick={onClick}
       onKeyDown={handleKeyDown}
     >
       {/* Header: title + optional InfoHint (tooltip prop) + metric icon */}
-      <div className="flex items-center justify-between gap-2 min-h-[28px] flex-shrink-0 min-w-0">
-        <h3 className={`metric-label flex-1 min-w-0 ${compact ? 'text-xs' : 'text-sm'} font-medium text-slate-500 uppercase tracking-wide`}>{title}</h3>
+      <div className="flex items-start justify-between gap-2 min-h-[28px] flex-shrink-0 min-w-0">
+        <h3
+          className={`metric-label flex-1 min-w-0 ${compact ? 'text-xs' : 'text-sm'} font-medium text-slate-500 uppercase tracking-wide leading-snug line-clamp-2`}
+          title={title}
+        >
+          {title}
+        </h3>
         {(tooltipText || icon) && (
-          <div className="flex flex-shrink-0 items-center gap-1">
+          <div className="flex flex-shrink-0 items-center gap-1 self-start pt-0.5">
             {tooltipText ? <InfoHint text={tooltipText} popoverAlign="right" /> : null}
-            {icon ? <div>{icon}</div> : null}
+            {icon ? <div className="flex h-5 w-5 items-center justify-center [&>svg]:h-5 [&>svg]:w-5">{icon}</div> : null}
           </div>
         )}
       </div>
       {/* Value + trend: bottom-align for consistent KPI rows across varying formats. */}
       <div className="mt-2 flex-1 min-h-0 flex flex-col justify-end min-w-0 overflow-visible">
         <div
-          className={`metric-value whitespace-normal sm:whitespace-nowrap break-words max-w-full leading-none ${compact ? 'text-xl sm:text-2xl' : 'text-2xl sm:text-3xl'} font-extrabold tabular-nums ${valueToneClass}`}
+          className={`metric-value whitespace-normal break-words max-w-full leading-tight ${compact ? 'text-xl lg:text-2xl' : 'text-2xl sm:text-3xl'} font-extrabold tabular-nums ${valueToneClass}`}
         >
           {displayValue}
         </div>
@@ -135,6 +142,11 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
             <span className="break-words">{displayTrend}</span>
           </div>
         )}
+        {footer ? (
+          <div className={`mt-2 ${compact ? 'text-[11px]' : 'text-xs'} leading-snug text-slate-500 min-w-0`} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            {footer}
+          </div>
+        ) : null}
       </div>
     </div>
   );

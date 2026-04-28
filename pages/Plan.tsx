@@ -341,28 +341,48 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         };
     }, [processedPlanData, year]);
 
-    const insights = useMemo((): { monthsOverBudget: number; worst: { category: string; month: string; pct: number } | null; ytdPlannedIncome: number; ytdActualIncome: number } => {
-        const income = processedPlanData.find((r: PlanRow) => r.type === 'income');
+    /** Over-plan counts: one tick per (expense category × calendar month). Scoped to the same period as the summary (YTD for the selected year when it is the current year; full year for past years; none for future years). */
+    const insights = useMemo((): {
+        monthsOverBudget: number;
+        worst: { category: string; month: string; pct: number } | null;
+        overBudgetPeriodLabel: string | null;
+    } => {
+        const curY = new Date().getFullYear();
+        const curM = new Date().getMonth();
+        let endIdx = -1;
+        if (year > curY) endIdx = -1;
+        else if (year === curY) endIdx = curM;
+        else endIdx = 11;
+
         let monthsOverBudget = 0;
         let worst: { category: string; month: string; pct: number } | null = null;
-        processedPlanData.filter((r: PlanRow) => r.type === 'expense').forEach((row: PlanRow) => {
-            const isInvestment = row.category === 'Monthly investment';
-            row.monthly_planned.forEach((plan: number, mi: number) => {
-                const actual = row.monthly_actual[mi];
-                const over =
-                    isInvestment
-                        ? actual > plan + 1e-6
-                        : plan > 0 && actual > plan + 1e-6;
-                if (over) monthsOverBudget++;
-                const pct = plan > 0 ? ((actual - plan) / plan) * 100 : actual > 0 ? 100 : 0;
-                if (pct > 0 && (!worst || pct > worst.pct)) worst = { category: row.category, month: MONTHS[mi], pct };
+
+        if (endIdx >= 0) {
+            processedPlanData.filter((r: PlanRow) => r.type === 'expense').forEach((row: PlanRow) => {
+                const isInvestment = row.category === 'Monthly investment';
+                for (let mi = 0; mi <= endIdx; mi++) {
+                    const plan = Number(row.monthly_planned[mi] ?? 0);
+                    const actual = Number(row.monthly_actual[mi] ?? 0);
+                    const over =
+                        isInvestment
+                            ? actual > plan + 1e-6
+                            : plan > 0 && actual > plan + 1e-6;
+                    if (over) monthsOverBudget++;
+                    const pct = plan > 0 ? ((actual - plan) / plan) * 100 : actual > 0 ? 100 : 0;
+                    if (pct > 0 && (!worst || pct > worst.pct)) worst = { category: row.category, month: MONTHS[mi], pct };
+                }
             });
-        });
-        const currentMonth = new Date().getMonth();
-        const ytdPlannedIncome = income?.monthly_planned.slice(0, currentMonth + 1).reduce((a, b) => a + b, 0) ?? 0;
-        const ytdActualIncome = income?.monthly_actual.slice(0, currentMonth + 1).reduce((a, b) => a + b, 0) ?? 0;
-        return { monthsOverBudget, worst, ytdPlannedIncome, ytdActualIncome };
-    }, [processedPlanData]);
+        }
+
+        const overBudgetPeriodLabel =
+            endIdx < 0
+                ? null
+                : year < curY
+                  ? `full year ${year}`
+                  : `YTD through ${MONTHS[endIdx]} ${year}`;
+
+        return { monthsOverBudget, worst, overBudgetPeriodLabel };
+    }, [processedPlanData, year]);
 
     /** Planned vs actual through end of selected period (YTD for current year, full year for past years). Hidden for future years. */
     const planProgressPeriod = useMemo(() => {
@@ -432,10 +452,23 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 env.envelopeMonthly > 0
                     ? env.envelopeMonthly
                     : monthlySurplusAfterInvestment * (pct / 100);
+
+            /** Months to cover shortfall at this goal’s monthly plan allocation — not total household surplus. */
+            const monthsToReachAtAllocationRate =
+                shortfall > 0 && projectedMonthly > 1e-6 ? Math.ceil(shortfall / projectedMonthly) : undefined;
+
             let statusCard: 'On Track' | 'Needs Attention' | 'At Risk' | null = null;
             if (shortfall <= 0 || target <= 0) statusCard = null;
             else if (monthsRemaining <= 0) statusCard = 'At Risk';
-            else if (projectedMonthly > 0 && projectedMonthly < requiredPerMonth * 0.5) statusCard = 'At Risk';
+            else if (!(projectedMonthly > 1e-6) && requiredPerMonth > 1e-6) {
+                statusCard = 'At Risk';
+            } else if (
+                monthsToReachAtAllocationRate != null &&
+                monthsRemaining > 0 &&
+                monthsToReachAtAllocationRate > monthsRemaining
+            ) {
+                statusCard = 'At Risk';
+            } else if (projectedMonthly > 0 && projectedMonthly < requiredPerMonth * 0.5) statusCard = 'At Risk';
             else if (projectedMonthly > 0 && projectedMonthly < requiredPerMonth * 0.8) statusCard = 'Needs Attention';
             else statusCard = 'On Track';
 
@@ -444,10 +477,6 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 if (statusCard === 'At Risk' || statusCard === 'Needs Attention') status = 'need_more';
                 else status = 'on_track';
             }
-
-            const monthsToReachAtCurrentSurplus = shortfall > 0 && monthlySurplusAfterInvestment > 0
-                ? Math.ceil(shortfall / monthlySurplusAfterInvestment)
-                : undefined;
             return {
                 id: g.id,
                 name: g.name,
@@ -462,7 +491,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 statusCard,
                 monthlySurplusAfterInvestment,
                 projectedMonthlyAllocation: projectedMonthly,
-                monthsToReachAtCurrentSurplus,
+                monthsToReachAtAllocationRate,
             };
         });
     }, [goalsResolved, totals?.projectedNet, data, sarPerUsd]);
@@ -824,26 +853,26 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 const baselineNet = isFutureYear ? null : isPastYear ? totals.projectedNet : totals.ytdProjectedNet;
                 const baselineTooSmall = baselineNet != null && Math.abs(baselineNet) < 5000;
                 return (
-                <div className="mt-4 cards-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <div className={`p-4 rounded-xl border-2 min-w-0 overflow-hidden flex flex-col ${totals.projectedNet >= 0 ? 'bg-emerald-50/80 border-emerald-200' : 'bg-rose-50/80 border-rose-200'}`}>
+                <div className="mt-4 cards-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch [&>*]:min-h-[8.5rem]">
+                    <div className={`p-4 rounded-xl border-2 min-w-0 overflow-hidden flex flex-col justify-between h-full ${totals.projectedNet >= 0 ? 'bg-emerald-50/80 border-emerald-200' : 'bg-rose-50/80 border-rose-200'}`}>
                         <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">Projected surplus</p>
-                        <p className={`metric-value text-xl font-bold tabular-nums w-full ${totals.projectedNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                        <p className={`metric-value text-xl font-bold tabular-nums w-full min-h-[3rem] flex items-center ${totals.projectedNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                             {formatCurrencyString(totals.projectedNet, { inCurrency: 'SAR', digits: 0 })}
                         </p>
-                        <p className="text-xs text-gray-600 mt-0.5">Full year: planned income − planned expenses (incl. investment)</p>
+                        <p className="text-xs text-gray-600 mt-1">Full year: planned income − planned expenses (incl. investment)</p>
                     </div>
-                    <div className="p-4 rounded-xl border-2 border-slate-200 bg-slate-50/50 min-w-0 overflow-hidden flex flex-col">
+                    <div className="p-4 rounded-xl border-2 border-slate-200 bg-slate-50/50 min-w-0 overflow-hidden flex flex-col justify-between h-full">
                         <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">
                             {isPastYear ? 'Actual net (year)' : 'Actual net (YTD)'}
                         </p>
-                        <p className={`metric-value text-xl font-bold tabular-nums w-full ${summaryActualNet != null && summaryActualNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                        <p className={`metric-value text-xl font-bold tabular-nums w-full min-h-[3rem] flex items-center ${summaryActualNet != null && summaryActualNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                             {summaryActualNet != null ? formatCurrencyString(summaryActualNet, { inCurrency: 'SAR', digits: 0 }) : '—'}
                         </p>
-                        <p className="text-xs text-gray-600 mt-0.5">From transactions &amp; investment buys (SAR eq.)</p>
+                        <p className="text-xs text-gray-600 mt-1">From transactions &amp; investment buys (SAR eq.)</p>
                     </div>
-                    <div className="p-4 rounded-xl border-2 border-blue-200 bg-blue-50/30 min-w-0 overflow-hidden flex flex-col">
+                    <div className="p-4 rounded-xl border-2 border-blue-200 bg-blue-50/30 min-w-0 overflow-hidden flex flex-col justify-between h-full">
                         <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">Vs plan</p>
-                        <p className={`metric-value text-xl font-bold tabular-nums w-full ${(summaryVariancePct ?? 0) >= 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                        <p className={`metric-value text-xl font-bold tabular-nums w-full min-h-[3rem] flex items-center ${(summaryVariancePct ?? 0) >= 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
                             {summaryVarianceSar != null && baselineNet != null ? (
                                 baselineTooSmall ? (
                                     <span title="Planned net is close to zero; showing SAR delta for a stable comparison.">
@@ -857,14 +886,18 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                                 '—'
                             )}
                         </p>
-                        <p className="text-xs text-gray-600 mt-0.5">{summaryCompareLabel}</p>
+                        <p className="text-xs text-gray-600 mt-1">{summaryCompareLabel}</p>
                     </div>
-                    <div className="p-4 rounded-xl border-2 border-amber-200 bg-amber-50/30 min-w-0 overflow-hidden flex flex-col">
-                        <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">Months over budget</p>
-                        <p className={`metric-value text-xl font-bold tabular-nums w-full ${insights.monthsOverBudget === 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                    <div className="p-4 rounded-xl border-2 border-amber-200 bg-amber-50/30 min-w-0 overflow-hidden flex flex-col justify-between h-full">
+                        <p className="metric-label text-xs font-medium text-gray-500 uppercase tracking-wide w-full">Category-months over plan</p>
+                        <p className={`metric-value text-xl font-bold tabular-nums w-full min-h-[3rem] flex items-center ${insights.monthsOverBudget === 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
                             {insights.monthsOverBudget}
                         </p>
-                        <p className="text-xs text-gray-600 mt-0.5">Category-months above plan (investment counts if actual &gt; planned)</p>
+                        <p className="text-xs text-gray-600 mt-1">
+                            {insights.overBudgetPeriodLabel
+                                ? `${insights.overBudgetPeriodLabel}: each overspent budget row counts once per month`
+                                : 'Pick the current year to see plan vs actual'}
+                        </p>
                     </div>
                 </div>
                 );
@@ -970,17 +1003,25 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     {insights.monthsOverBudget > 0 ? (
                         <span className="inline-flex items-center gap-1.5 text-sm text-amber-800">
                             <ExclamationTriangleIcon className="h-5 w-5 text-amber-500" />
-                            {insights.monthsOverBudget} month{insights.monthsOverBudget !== 1 ? 's' : ''} over budget
+                            <span>
+                                {insights.monthsOverBudget} category-month{insights.monthsOverBudget !== 1 ? 's' : ''} above plan
+                                {insights.overBudgetPeriodLabel ? ` (${insights.overBudgetPeriodLabel})` : ''}
+                            </span>
                         </span>
                     ) : (
                         <span className="inline-flex items-center gap-1.5 text-sm text-emerald-700">
                             <CheckCircleIcon className="h-5 w-5 text-emerald-500" />
-                            No months over budget
+                            No category-months above plan
+                            {insights.overBudgetPeriodLabel
+                                ? ` (${insights.overBudgetPeriodLabel})`
+                                : year > new Date().getFullYear()
+                                  ? ' (no actuals compared for future years)'
+                                  : ''}
                         </span>
                     )}
                     {insights.worst && insights.worst.pct > 0 && (
                         <span className="text-sm text-gray-700">
-                            Largest variance: <strong>{insights.worst.category}</strong> in {insights.worst.month} (+{insights.worst.pct.toFixed(0)}%)
+                            Largest overspend: <strong>{insights.worst.category}</strong> in {insights.worst.month} (+{insights.worst.pct.toFixed(0)}%)
                         </span>
                     )}
                 </div>
@@ -1011,9 +1052,11 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             <div className="bg-white p-6 rounded-xl shadow border border-slate-200">
                 <h3 className="text-lg font-semibold text-dark mb-1 flex items-center gap-2">
                     <ScaleIcon className="h-5 w-5 text-primary" /> Goals & when you'll reach them
-                    <InfoHint text="Saved amounts include linked assets, investments, and active receivables (same as Goals). Status compares your allocation % of plan surplus to the monthly amount needed by the deadline." />
+                    <InfoHint text="Saved amounts include linked assets, investments, and active receivables (same as Goals). Status compares your envelope (linked budgets + deposits + allocation slice of planned surplus) to the monthly savings rate implied by the deadline." />
                 </h3>
-                <p className="text-sm text-gray-500 mb-4">Uses resolved balances from your wealth links and this year&apos;s projected plan surplus.</p>
+                <p className="text-sm text-gray-500 mb-4">
+                    Uses resolved balances from Goals and monthly funding from budgets, investment links, allocation % of this year&apos;s projected surplus, and required savings rate from the deadline.
+                </p>
                 {goalsAnalysis.length === 0 ? (
                     <div className="py-6 text-center text-gray-500 bg-slate-50 rounded-lg border border-dashed border-slate-200">
                         <p className="font-medium text-slate-600">No goals yet</p>
@@ -1067,11 +1110,16 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                                                     <span className="text-amber-700"> (plan surplus ~{formatCurrencyString(g.monthlySurplusAfterInvestment, { digits: 0 })}/month)</span>
                                                 )}
                                             </p>
-                                            {g.monthsToReachAtCurrentSurplus != null && (
+                                            {g.monthsToReachAtAllocationRate != null && (
                                                 <p className="text-slate-600">
-                                                    At current surplus: <strong>~{g.monthsToReachAtCurrentSurplus} months</strong> to reach this goal
-                                                    {g.status === 'need_more' && g.monthsRemaining > 0 && (
-                                                        <span className="text-amber-700"> (deadline in {g.monthsRemaining} months)</span>
+                                                    At this allocation: <strong>~{g.monthsToReachAtAllocationRate} months</strong> to close the remaining shortfall
+                                                    {g.monthsRemaining > 0 && (
+                                                        <span className="text-slate-600">
+                                                            {' '}(deadline window ~{g.monthsRemaining} months)
+                                                            {g.monthsToReachAtAllocationRate > g.monthsRemaining && (
+                                                                <span className="text-rose-700 font-medium"> — slower than needed for the deadline</span>
+                                                            )}
+                                                        </span>
                                                     )}
                                                 </p>
                                             )}
@@ -1117,8 +1165,8 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                                 contentStyle={{ backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' }}
                             />
                             <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
-                            <Bar dataKey="Expenses" fill={CHART_COLORS.negative} name="Planned expenses" radius={[4, 4, 0, 0]} />
-                            <Bar dataKey="ExpensesActual" fill="#fca5a5" name="Actual expenses" radius={[4, 4, 0, 0]} />
+                            <Bar dataKey="Expenses" fill={CHART_COLORS.negative} name="Planned expenses" radius={[4, 4, 0, 0]} maxBarSize={36} />
+                            <Bar dataKey="ExpensesActual" fill="#fca5a5" name="Actual expenses" radius={[4, 4, 0, 0]} maxBarSize={36} />
                             <Line type="monotone" dataKey="Income" stroke={CHART_COLORS.positive} strokeWidth={2} name="Planned income" dot={false} />
                             <Line type="monotone" dataKey="IncomeActual" stroke={CHART_COLORS.positive} strokeWidth={2} strokeDasharray="6 4" name="Actual income" dot={false} />
                             <Line type="monotone" dataKey="Net Savings" stroke={CHART_COLORS.primary} strokeWidth={2} name="Planned net" dot={false} />

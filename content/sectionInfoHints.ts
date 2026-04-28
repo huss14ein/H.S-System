@@ -227,14 +227,15 @@ const HINTS_BY_TITLE: Record<string, string> = {
   'user approvals': 'Pending signups or requests requiring admin action.',
   'financial preferences': 'Risk profile, budget/drift thresholds, presets. Guides AI and plan suggestions.',
   'enhanced default parameters': 'Advanced defaults for engines and forms.',
-  'decision preview (rules)':
-    'Live buy score and capital-rank preview: largest holding weight, max sleeve drift (same Core/Upside/Spec math as Wealth Ultra), trading policy max position, and runway. Financial preferences drift % is your alert threshold (shown under the sleeve drift tile). Lump-sum tracks ~15% of liquid until you edit it. Updates when data or settings change.',
+  'decision cockpit':
+    'Automated read from your portfolio: Wealth Ultra sleeve drift vs targets, trading policy caps, runway, and a transparent buy-score breakdown. Lump-sum simulator uses a fixed priority split (not bank transfers). Use “Reset to 15% liquid” to re-sync the default amount with cash on hand.',
   'settings snapshot': 'Quick read of key settings—open subsections to edit.',
   'overall goal progress': 'Aggregate progress across goals—drill into each goal for funding detail.',
   'savings allocation strategy': 'Suggested split across goals from engine heuristics—adjust to your priorities.',
   'system funding suggestions': 'Where extra cash might go first—suggestions only.',
   'funding waterfall (suggested order)': 'Priority order for applying surplus—customize on Goals.',
-  'bonus / windfall allocation ideas': 'Ideas for one-off inflows—not automatic transfers.',
+  'bonus / windfall allocation ideas':
+    'One-off ideas only (not auto-transfers). Percentages use your emergency runway, weighted goal gaps, and the same 12-month net cashflow total as the funding cockpit.',
   'goal conflict & feasibility': 'Flags competing goals or impossible timelines—resolve tradeoffs on Goals.',
 
   // Investment Plan

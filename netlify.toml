@@ -13,6 +13,9 @@
 [functions."gemini-proxy"]
   timeout = 26
 
+[functions."sahmk-proxy"]
+  timeout = 15
+
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"

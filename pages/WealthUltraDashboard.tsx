@@ -849,7 +849,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             defaultExpanded
           >
             <p className="text-xs text-slate-700 mb-5 font-medium">
-              Suggested limit orders from the engine. Export JSON or use the list as a manual checklist at your broker. Finova does not connect to any broker API and does not send trades automatically.
+              Suggested limit orders from the engine. <span className="text-slate-800 font-semibold">SELL lines are only for positions flagged trim (winners ~+40%: about a third of the lot) or exit (large drawdown: full line).</span> Other holdings are not shown as bulk sells; use export for target/trailing reference. Finova does not connect to any broker API.
             </p>
             {orders.length > 0 ? (
               <div className="space-y-5">
@@ -882,7 +882,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                   <div>
                     <div className="flex items-center gap-2 mb-3">
                       <div className="w-1 h-5 bg-rose-500 rounded-full"></div>
-                      <p className="text-sm font-bold text-slate-900 uppercase tracking-wide">Sell / Exit Orders ({sellOrders.length})</p>
+                      <p className="text-sm font-bold text-slate-900 uppercase tracking-wide">Trim / exit sells ({sellOrders.length})</p>
                     </div>
                     <ul className="space-y-2">
                       {sellOrders.map((o, i) => (
@@ -897,11 +897,12 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                             />
                           </span>
                           <span className="text-slate-700 font-medium">Qty: <span className="font-bold">{o.qty}</span></span>
-                          {(o.target1Price ?? o.target2Price ?? o.trailingStopPrice) ? (
-                            <span className="text-slate-600 text-xs font-medium">Targets / trailing in export</span>
-                          ) : (
-                            <span className="text-slate-400 text-xs">—</span>
-                          )}
+                          <span className="text-slate-600 text-xs min-w-0">
+                            {(o.target1Price ?? o.target2Price ?? o.trailingStopPrice) ? (
+                              <span className="block">Targets / trailing in export</span>
+                            ) : null}
+                            {o.rationale ? <span className="block mt-0.5 text-slate-500">{o.rationale}</span> : null}
+                          </span>
                         </li>
                       ))}
                     </ul>

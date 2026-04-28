@@ -47,7 +47,7 @@ export function holdingBookValueForZakat(h: Holding): number {
 
 /**
  * Sum zakatable holdings across portfolios, converting each line to SAR with the resolved portfolio currency.
- * Applies lunar hawl when acquisition date or earliest buy is known; otherwise keeps legacy “count full value” behavior.
+ * Applies strict lunar hawl: start date from acquisition or earliest buy; if unknown, the line is not counted.
  */
 export function summarizeZakatableInvestmentsForZakat(
   portfolios: InvestmentPortfolio[],

@@ -11,6 +11,7 @@ import type {
 import { resolveSarPerUsd, toSAR, inferInstrumentCurrencyFromSymbol } from '../../utils/currencyMath';
 import { holdingUsesLiveQuote } from '../../utils/holdingValuation';
 import { canonicalQuoteLookupKey } from '../finnhubService';
+import { engineSleeveKeyToTickerStatus, inferEngineSleeveKeyFromHolding } from '../inferHoldingUniverseClassification';
 
 export type EngineInstrumentKind = 'equity' | 'commodity' | 'sukuk';
 
@@ -38,7 +39,7 @@ export type EngineInstrument = {
   monthlyWeight?: number | null;
   maxPositionWeight?: number | null;
   /** Where this row came from (for explainability). */
-  source: 'Universe' | 'Holding' | 'Commodity' | 'Asset';
+  source: 'Universe' | 'Holding' | 'Holding (auto)' | 'Commodity' | 'Asset';
   /** Links back to concrete rows. */
   holdingId?: string;
   portfolioId?: string;
@@ -132,7 +133,8 @@ export function buildInvestmentEngineUniverse(args: {
       const sym = canonSymbol(h.symbol);
       if (!sym) continue;
       const u = uMap.get(sym);
-      const status: EngineInstrument['status'] = (u?.status as TickerStatus) || 'Untracked';
+      const autoStatus = engineSleeveKeyToTickerStatus(inferEngineSleeveKeyFromHolding(h as Holding));
+      const status: EngineInstrument['status'] = u ? ((u.status as TickerStatus) || autoStatus) : autoStatus;
       const qty = Number(h.quantity) || 0;
       const storedBook = Math.max(0, Number(h.currentValue) || 0);
       const useLive = holdingUsesLiveQuote(h as Holding);
@@ -160,7 +162,7 @@ export function buildInvestmentEngineUniverse(args: {
         status,
         monthlyWeight: u?.monthly_weight ?? null,
         maxPositionWeight: u?.max_position_weight ?? null,
-        source: u ? 'Universe' : 'Holding',
+        source: u ? 'Universe' : 'Holding (auto)',
         holdingId: h.id,
         portfolioId: p.id,
       });
@@ -209,7 +211,7 @@ export function buildInvestmentEngineUniverse(args: {
       positionValueSar: valueSar,
       priceNow: px && Number.isFinite(px) && px > 0 ? px : undefined,
       quantity: qty,
-      status: 'Untracked',
+      status: 'Core',
       monthlyWeight: null,
       maxPositionWeight: null,
       source: 'Commodity',
@@ -230,7 +232,7 @@ export function buildInvestmentEngineUniverse(args: {
       bookCurrency: 'SAR',
       positionValueBook: valueSar,
       positionValueSar: valueSar,
-      status: 'Untracked',
+      status: 'Core',
       monthlyWeight: null,
       maxPositionWeight: null,
       source: 'Asset',

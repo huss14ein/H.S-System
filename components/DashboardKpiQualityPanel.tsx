@@ -14,6 +14,7 @@ import {
 } from '../services/dashboardKpiSnapshot';
 import { listRecentKpiReconciliationDrift, type KpiDriftEvent } from '../services/kpiDriftTelemetry';
 import { useDashboardReconciliationPrefs } from '../hooks/useDashboardReconciliationPrefs';
+import { useMarketData } from '../context/MarketDataContext';
 
 /**
  * Dashboard validation, KPI reconciliation, and drift diagnostics — shown on System & APIs Health.
@@ -22,14 +23,15 @@ const DashboardKpiQualityPanel: React.FC = () => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
+    const { simulatedPrices } = useMarketData();
     const { formatCurrencyString } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
     const { strictReconciliationMode, setStrictReconciliationMode, hardBlockOnMismatch, setHardBlockOnMismatch } =
         useDashboardReconciliationPrefs(auth?.user?.id);
 
     const kpiSnapshot = useMemo(
-        () => computeDashboardKpiSnapshot(data, exchangeRate, getAvailableCashForAccount),
-        [data, exchangeRate, getAvailableCashForAccount],
+        () => computeDashboardKpiSnapshot(data, exchangeRate, getAvailableCashForAccount, simulatedPrices),
+        [data, exchangeRate, getAvailableCashForAccount, simulatedPrices],
     );
 
     const dashboardValidationWarnings = useMemo(
@@ -39,13 +41,18 @@ const DashboardKpiQualityPanel: React.FC = () => {
 
     const summaryModelForReconciliation = useMemo(() => {
         if (!data) return null;
-        return computeWealthSummaryReportModel(data, resolveSarPerUsd(data, exchangeRate), getAvailableCashForAccount);
+        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount);
     }, [data, exchangeRate, getAvailableCashForAccount]);
 
     const summaryMonthlyKpisForReconciliation = useMemo(() => {
         if (!data) return null;
-        return computeMonthlyReportFinancialKpis(data, resolveSarPerUsd(data, exchangeRate), getAvailableCashForAccount);
-    }, [data, exchangeRate, getAvailableCashForAccount]);
+        return computeMonthlyReportFinancialKpis(
+            data,
+            resolveSarPerUsd(data, exchangeRate),
+            getAvailableCashForAccount,
+            simulatedPrices,
+        );
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
 
     const kpiReconciliation = useMemo(() => {
         if (!summaryModelForReconciliation || !summaryMonthlyKpisForReconciliation || !kpiSnapshot) return null;

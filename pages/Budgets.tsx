@@ -77,6 +77,7 @@ import { learnAndAutoAdjust } from '../services/aiBudgetAutomation';
 import { getPersonalTransactions } from '../utils/wealthScope';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { addMonthsToKey, financialMonthKey, financialMonthRangeFromKey } from '../utils/financialMonth';
 import AIAdvisor from '../components/AIAdvisor';
 import { dedupeSharedBudgetRows, makeSharedOwnerCategoryKey, normalizeSharedCategoryKey, normalizeSharedOwnerKey } from '../services/sharedBudgetKeys';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
@@ -89,6 +90,7 @@ function sharedBudgetConsumedRpcArgs(
     ref: Date,
     currentYear: number,
     currentMonth: number,
+    monthStartDay: number,
 ): { p_year: number | null; p_month: number | null; p_range_start: string | null; p_range_end: string | null } {
     const iso = (d: Date) => {
         const y = d.getFullYear();
@@ -108,7 +110,11 @@ function sharedBudgetConsumedRpcArgs(
     };
 
     if (budgetView === 'Monthly') {
-        return { p_year: currentYear, p_month: currentMonth, p_range_start: null, p_range_end: null };
+        if (Number(monthStartDay) === 1) {
+            return { p_year: currentYear, p_month: currentMonth, p_range_start: null, p_range_end: null };
+        }
+        const { start, end } = financialMonthRangeFromKey({ year: currentYear, month: currentMonth }, monthStartDay);
+        return { p_year: null, p_month: null, p_range_start: iso(startOfDay(start)), p_range_end: iso(endOfDay(end)) };
     }
     if (budgetView === 'Yearly') {
         const rs = new Date(currentYear, 0, 1);
@@ -323,9 +329,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const [historyCollapsed, setHistoryCollapsed] = useState(false);
     const HISTORY_PAGE_SIZE = 15;
 
+    const monthStartDay = useMemo(() => {
+        const raw = Number((data?.settings as any)?.monthStartDay ?? (data?.settings as any)?.month_start_day ?? 1);
+        if (!Number.isFinite(raw)) return 1;
+        return Math.min(28, Math.max(1, Math.round(raw)));
+    }, [data?.settings]);
+
     const [currentDate, setCurrentDate] = useState(new Date());
-    const currentYear = currentDate.getFullYear();
-    const currentMonth = currentDate.getMonth() + 1;
+    const { year: currentYear, month: currentMonth } = useMemo(
+        () => financialMonthKey(currentDate, monthStartDay),
+        [currentDate, monthStartDay]
+    );
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [budgetView, setBudgetView] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
     const [budgetSubPage, setBudgetSubPage] = useState<'overview' | 'household'>('overview');
@@ -882,7 +896,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
 
             let consumedRows: any[] | null = null;
-            const rpcWindow = sharedBudgetConsumedRpcArgs(budgetView, currentDate, currentYear, currentMonth);
+            const rpcWindow = sharedBudgetConsumedRpcArgs(budgetView, currentDate, currentYear, currentMonth, monthStartDay);
             try {
                 let scoped = await supabase.rpc('get_shared_budget_consumed_for_me', rpcWindow as Record<string, unknown>);
                 if (scoped.error && rpcWindow.p_range_start != null && rpcWindow.p_range_end != null) {
@@ -977,15 +991,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const previousRangeEnd = new Date(now);
 
         if (budgetView === 'Monthly') {
-            rangeStart.setFullYear(currentYear, currentMonth - 1, 1);
-            rangeStart.setHours(0, 0, 0, 0);
-            rangeEnd.setFullYear(currentYear, currentMonth, 0);
-            rangeEnd.setHours(23, 59, 59, 999);
+            const cur = financialMonthRangeFromKey({ year: currentYear, month: currentMonth }, monthStartDay);
+            rangeStart.setTime(cur.start.getTime());
+            rangeEnd.setTime(cur.end.getTime());
 
-            previousRangeStart.setFullYear(currentYear, currentMonth - 2, 1);
-            previousRangeStart.setHours(0, 0, 0, 0);
-            previousRangeEnd.setFullYear(currentYear, currentMonth - 1, 0);
-            previousRangeEnd.setHours(23, 59, 59, 999);
+            const prevKey = addMonthsToKey({ year: currentYear, month: currentMonth }, -1);
+            const prev = financialMonthRangeFromKey(prevKey, monthStartDay);
+            previousRangeStart.setTime(prev.start.getTime());
+            previousRangeEnd.setTime(prev.end.getTime());
         } else if (budgetView === 'Weekly') {
             const day = now.getDay();
             const diffToMonday = (day + 6) % 7;
@@ -1144,8 +1157,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const adminApprovedOverviewRaw = useMemo<BudgetRow[]>(() => {
         const mo = approvedOverviewMonth;
         const yr = approvedOverviewYear;
-        const rangeStart = new Date(yr, mo - 1, 1);
-        const rangeEnd = new Date(yr, mo, 0, 23, 59, 59, 999);
+        const { start: rangeStart, end: rangeEnd } = financialMonthRangeFromKey({ year: yr, month: mo }, monthStartDay);
         const spending = new Map<string, number>();
         ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach((tx: { date: string; amount?: number; budgetCategory?: string; type?: string; category?: string; splitLines?: { category: string; amount: number }[] }) => {
             if (!countsAsExpenseForCashflowKpi(tx)) return;
@@ -1342,10 +1354,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const rangeEnd = new Date(now);
 
         if (budgetView === 'Monthly') {
-            rangeStart.setFullYear(currentYear, currentMonth - 1, 1);
-            rangeStart.setHours(0, 0, 0, 0);
-            rangeEnd.setFullYear(currentYear, currentMonth, 0);
-            rangeEnd.setHours(23, 59, 59, 999);
+            const cur = financialMonthRangeFromKey({ year: currentYear, month: currentMonth }, monthStartDay);
+            rangeStart.setTime(cur.start.getTime());
+            rangeEnd.setTime(cur.end.getTime());
         } else if (budgetView === 'Weekly') {
             const day = now.getDay();
             const diffToMonday = (day + 6) % 7;
@@ -3218,8 +3229,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                             const expense = Math.max(0, effectiveMonthExpense(month));
                             const net = income - expense;
                             const monthYear: number = Number((month as any).year) || currentYear;
-                            const rangeStart = new Date(monthYear, (monthNum - 1) % 12, 1, 0, 0, 0, 0);
-                            const rangeEnd = new Date(monthYear, (monthNum - 1) % 12 + 1, 0, 23, 59, 59, 999);
+                            const { start: rangeStart, end: rangeEnd } = financialMonthRangeFromKey({ year: monthYear, month: monthNum }, monthStartDay);
                             const categorySpending = new Map<string, number>();
                             const sourceTxs: any[] = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as any[];
                             sourceTxs

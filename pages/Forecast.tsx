@@ -11,8 +11,9 @@ import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import { useCurrency } from '../context/CurrencyContext';
+import { useMarketData } from '../context/MarketDataContext';
 import { getAllInvestmentsValueInSAR, resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
-import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
+import { computePersonalHeadlineNetWorthSar } from '../services/personalNetWorth';
 import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
 import type { Page, Transaction } from '../types';
 import { normalizedMonthlyExpenseSar, personalMonthlyNetByMonthKeySar, savingsRateSar } from '../services/financeMetrics';
@@ -32,6 +33,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate, currency: displayCurrency } = useCurrency();
+    const { simulatedPrices } = useMarketData();
     const [stressJobLossM, setStressJobLossM] = useState(3);
     const [stressMarketDrop, setStressMarketDrop] = useState(15);
     const [stressMedical, setStressMedical] = useState(8000);
@@ -98,8 +100,9 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         const d = data as any;
         const investments = d?.personalInvestments ?? data?.investments ?? [];
         const accounts = d?.personalAccounts ?? data?.accounts ?? [];
-        const fx = resolveSarPerUsd(data, exchangeRate);
-        const netWorth = computePersonalNetWorthSAR(data, fx, { getAvailableCashForAccount });
+        const headline = computePersonalHeadlineNetWorthSar(data, exchangeRate, { getAvailableCashForAccount });
+        const netWorth = headline.netWorth;
+        const fx = headline.sarPerUsd;
         const holdingsSar = getAllInvestmentsValueInSAR(investments, fx);
         const brokerageCashSar = accounts
             .filter((a: { type?: string }) => a.type === 'Investment')
@@ -292,7 +295,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const forecastValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
         const fx = resolveSarPerUsd(data, exchangeRate);
-        const kpis = computeMonthlyReportFinancialKpis(data, fx, getAvailableCashForAccount);
+        const kpis = computeMonthlyReportFinancialKpis(data, fx, getAvailableCashForAccount, simulatedPrices);
         if (!Number.isFinite(fx) || fx <= 0) warnings.push('Exchange rate is invalid — USD-linked balances may mis-state projections.');
         if (!Number.isFinite(initialValues.netWorth)) warnings.push('Net worth baseline is invalid.');
         if (!Number.isFinite(initialValues.investmentValue) || initialValues.investmentValue < 0) warnings.push('Investment baseline is invalid.');
@@ -307,7 +310,16 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         const hasUsd = ((data as any)?.personalAccounts ?? data?.accounts ?? []).some((a: { currency?: string }) => a.currency === 'USD');
         if (hasUsd && (!Number.isFinite(fx) || fx <= 0)) warnings.push('USD accounts detected — set SAR per USD in the header or Wealth Ultra.');
         return warnings;
-    }, [data, exchangeRate, getAvailableCashForAccount, initialValues, monthlySavings, stressInputs.monthlyExpense, liveProjection]);
+    }, [
+        data,
+        exchangeRate,
+        getAvailableCashForAccount,
+        simulatedPrices,
+        initialValues,
+        monthlySavings,
+        stressInputs.monthlyExpense,
+        liveProjection,
+    ]);
 
     const deltaProjected = summary ? summary.projectedNetWorth - initialValues.netWorth : 0;
 

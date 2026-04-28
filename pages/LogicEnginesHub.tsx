@@ -54,8 +54,8 @@ import { debtStressScore } from '../services/debtEngines';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useCurrency } from '../context/CurrencyContext';
-import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
-import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { computePersonalHeadlineNetWorthSar } from '../services/personalNetWorth';
+import { toSAR } from '../utils/currencyMath';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { getPersonalInvestments } from '../utils/wealthScope';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
@@ -127,14 +127,15 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
   const ef = useEmergencyFund(data ?? null);
   const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
   const { exchangeRate, currency: displayCurrency } = useCurrency();
-  const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+  const headlineNw = useMemo(
+    () => computePersonalHeadlineNetWorthSar(data ?? null, exchangeRate, { getAvailableCashForAccount }),
+    [data, exchangeRate, getAvailableCashForAccount],
+  );
+  const sarPerUsd = headlineNw.sarPerUsd;
+  const netWorth = headlineNw.netWorth;
 
   const scoped = useMemo(() => getScopedData(data ?? null), [data]);
   const goalResolvedMap = useMemo(() => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd), [data, sarPerUsd]);
-  const netWorth = useMemo(
-    () => computePersonalNetWorthSAR(data ?? null, sarPerUsd, { getAvailableCashForAccount }),
-    [data, sarPerUsd, getAvailableCashForAccount]
-  );
   /** Local NW snapshots (device); refresh when tab visible so Risk hub + Dashboard writes show up. */
   const snaps = useMemo(() => listNetWorthSnapshots(), [data?.accounts?.length, dataTick]);
   const liquidityRunway = useMemo(

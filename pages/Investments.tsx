@@ -76,7 +76,7 @@ import {
     quoteDailyPnLInBookCurrency,
 } from '../utils/currencyMath';
 import { holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
-import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestments, getPersonalWealthData } from '../utils/wealthScope';
+import { getPersonalAccounts, getPersonalInvestments, getPersonalWealthData } from '../utils/wealthScope';
 import {
     inferInvestmentTransactionCurrency,
     portfolioBelongsToAccount,
@@ -84,17 +84,14 @@ import {
     resolveInvestmentTransactionAccountId,
 } from '../utils/investmentLedgerCurrency';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
-import {
-    computePersonalCommoditiesContributionSAR,
-    computePersonalPlatformsRollupSAR,
-    computePlatformCardMetrics,
-} from '../services/investmentPlatformCardMetrics';
-import { computePersonalInvestmentKpisSar } from '../services/investmentKpiCore';
+import { computePersonalPlatformsRollupSAR, computePlatformCardMetrics } from '../services/investmentPlatformCardMetrics';
+import { computeHeadlinePersonalInvestmentRoiDecimal } from '../services/investmentKpiCore';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 import { aggregateMonthlyBudgetAcrossPortfolios, getEffectivePlanForPortfolio } from '../utils/investmentPlanPerPortfolio';
 import { computeGoalMonthlyFundingEnvelopeSar } from '../services/goalProjectionFunding';
 import { computeGoalTimelineStatus } from '../services/goalMetrics';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
+import { engineSleeveKeyToTickerStatus, inferEngineSleeveKeyFromHolding } from '../services/inferHoldingUniverseClassification';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -609,6 +606,14 @@ const RecordTradeModal: React.FC<{
     const tradingPolicy = useMemo(() => loadTradingPolicy(), [isOpen]);
     const availableGoals = useMemo(() => data?.goals ?? [], [data?.goals]);
     const availableCashByCurrency = useMemo(() => (accountId ? getAvailableCashForAccount(accountId) : { SAR: 0, USD: 0 }), [accountId, getAvailableCashForAccount]);
+    /** Per-bucket floor for pooled display (same as `recordTrade` guard). */
+    const tradableCashByCurrency = useMemo(
+        () => ({
+            SAR: Math.max(0, Number.isFinite(availableCashByCurrency.SAR) ? availableCashByCurrency.SAR : 0),
+            USD: Math.max(0, Number.isFinite(availableCashByCurrency.USD) ? availableCashByCurrency.USD : 0),
+        }),
+        [availableCashByCurrency],
+    );
     const selectedPortfolio = useMemo(
         () => (portfolioId ? portfolios.find(p => p.id === portfolioId) : null),
         [portfolioId, portfolios]
@@ -1153,10 +1158,14 @@ const RecordTradeModal: React.FC<{
             <form onSubmit={handleSubmit} className="space-y-4">
                  {accountId && (
                     <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 space-y-1">
-                        <p>Available cash in this platform (by currency):</p>
-                        <p className="font-medium">SAR: <span className="font-semibold">{formatCurrencyString(availableCashByCurrency.SAR, { inCurrency: 'SAR', digits: 0 })}</span> · USD: <span className="font-semibold">{formatCurrencyString(availableCashByCurrency.USD, { inCurrency: 'USD', digits: 0 })}</span></p>
+                        <p>Platform cash by currency (from Accounts → this investment platform’s balance):</p>
+                        <p className="font-medium">
+                            <span className="font-semibold">{formatCurrencyString(tradableCashByCurrency.SAR, { inCurrency: 'SAR', digits: 0 })}</span>
+                            <span className="text-slate-500"> · </span>
+                            <span className="font-semibold">{formatCurrencyString(tradableCashByCurrency.USD, { inCurrency: 'USD', digits: 0 })}</span>
+                        </p>
                         <p className="text-xs text-slate-700 mt-1">
-                            Available for trades in <strong>{tradeCurrency}</strong> (ledger):{' '}
+                            Tradable total in <strong>{tradeCurrency}</strong> (pooled):{' '}
                             <span className="font-semibold tabular-nums">{formatCurrencyString(availableCashInLedgerCurrency, { inCurrency: tradeCurrency, digits: 2 })}</span>
                             <span className="text-slate-500"> — uses {sarPerUsd.toFixed(4)} SAR/USD when pooling buckets (same rule as save).</span>
                         </p>
@@ -3030,19 +3039,19 @@ const InvestmentPlan: React.FC<{
         // 1. Start with explicit universe (de-dupe by ticker; last row wins for duplicate DB keys)
         portfolioUniverseDeduped.forEach(t => universeMap.set(t.ticker, { ...t, source: 'Universe' }));
 
-        // 2. Add holdings
+        // 2. Add holdings (sleeve / status is inferred from asset class + name — no manual mapping)
         investments.flatMap(p => p.holdings || []).forEach(h => {
             if (!universeMap.has(h.symbol)) {
                 universeMap.set(h.symbol, {
                     id: `holding-${h.id}`,
                     ticker: h.symbol,
                     name: h.name || h.symbol,
-                    status: 'Core',
-                    source: 'Holding'
+                    status: engineSleeveKeyToTickerStatus(inferEngineSleeveKeyFromHolding(h)),
+                    source: 'Holding (auto)',
                 });
             } else {
                 const existing = universeMap.get(h.symbol)!;
-                universeMap.set(h.symbol, { ...existing, source: existing.source === 'Universe' ? 'Universe + Holding' : 'Holding' });
+                universeMap.set(h.symbol, { ...existing, source: existing.source === 'Universe' ? 'Universe + Holding' : existing.source });
             }
         });
 
@@ -4427,6 +4436,10 @@ Save anyway?`)) return;
                         onDeleteUniverse={(t: UniverseTicker) => { void deleteUniverseTicker(t.id); }}
                         simulatedPrices={simulatedPrices}
                         onNavigateToWatchlist={onNavigateToTab ? () => onNavigateToTab('Watchlist') : undefined}
+                        onFullAutoSetup={async () => {
+                          if (canAddWatchlistHoldings) await addWatchlistAndHoldingsToUniverse();
+                          await autoConfigureUniverseWeights();
+                        }}
                     />
                 </div>
 
@@ -4607,39 +4620,12 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         sukukAssetsValueSAR: 0,
       };
     }
-    const allCommodities = getPersonalCommodityHoldings(data);
     const rate = resolveSarPerUsd(data, exchangeRate);
-    const { subtotalSAR: platformsRollupSAR, dailyPnLSAR: platformsDailyPnL } = computePersonalPlatformsRollupSAR(
-      data,
-      rate,
-      simulatedPrices,
-      getAvailableCashForAccount,
-    );
-    const { netCapitalSar: platformNetCapitalSar } = computePersonalInvestmentKpisSar(data, rate, getAvailableCashForAccount);
-    const { valueSAR: commoditiesValueSAR, dailyDeltaSAR: commoditiesDailySAR } = computePersonalCommoditiesContributionSAR(
-      data,
-      rate,
-      simulatedPrices,
-    );
-
-    const { personalAssets } = getPersonalWealthData(data);
-    const sukukAssets = (personalAssets ?? []).filter((a) => a?.type === 'Sukuk');
-    const sukukAssetsValueSAR = sukukAssets.reduce((sum, a) => sum + Math.max(0, Number(a?.value) || 0), 0);
-    const sukukAssetsCostSAR = sukukAssets.reduce((sum, a) => {
-      const v = Math.max(0, Number(a?.value) || 0);
-      const pp = Number(a?.purchasePrice);
-      const cost = Number.isFinite(pp) && pp > 0 ? pp : v;
-      return sum + cost;
-    }, 0);
-
-    const totalValue = platformsRollupSAR + commoditiesValueSAR + sukukAssetsValueSAR;
-    const totalDailyPnL = platformsDailyPnL + commoditiesDailySAR;
-    const commodityCost = allCommodities.reduce((sum: number, ch: { purchaseValue?: number }) => sum + toSAR(ch.purchaseValue ?? 0, 'USD', rate), 0);
-    const netCapital = Math.max(0, platformNetCapitalSar + commodityCost + sukukAssetsCostSAR);
-    const totalGainLoss = totalValue - netCapital;
-    const roiRaw = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
-    const roi = Number.isFinite(roiRaw) ? roiRaw : 0;
-
+    const h = computeHeadlinePersonalInvestmentRoiDecimal(data, rate, getAvailableCashForAccount, simulatedPrices);
+    const totalValue = h.totalExposureSar;
+    const totalGainLoss = h.totalGainLossSar;
+    const roi = Number.isFinite(h.roi) ? h.roi * 100 : 0;
+    const totalDailyPnL = h.platformsDailyPnLSar + h.commoditiesDailyPnLSar;
     const previousTotalValue = totalValue - totalDailyPnL;
     const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
 
@@ -4649,9 +4635,9 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
       roi,
       totalDailyPnL,
       trendPercentage,
-      platformsRollupSAR,
-      commoditiesValueSAR,
-      sukukAssetsValueSAR,
+      platformsRollupSAR: h.platformsRollupSar,
+      commoditiesValueSAR: h.commoditiesValueSar,
+      sukukAssetsValueSAR: h.sukukAssetsValueSar,
     };
   }, [data, simulatedPrices, exchangeRate, getAvailableCashForAccount]);
 
@@ -5087,7 +5073,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                         <div className="min-w-0">
                             <p className="text-sm font-bold text-amber-950">Investment KPI reconciliation: action needed</p>
                             <p className="text-xs text-amber-900/90 mt-1 leading-relaxed">
-                                Tradable cash is now computed from ledger flows. If a platform is missing flows (or cash drifts vs the ledger), KPIs and plan execution will look wrong until that platform is reconciled.
+                                Deployable platform cash follows each Investment account’s balance in Accounts. If that balance doesn’t match your recorded deposits/buys/sells (ledger drift), fix missing entries or adjust the balance until System Health is clean.
                             </p>
                         </div>
                         <button

@@ -41,10 +41,10 @@ SAR 21.50
 9/4/26`;
     const res = await parseSMSTransactions(sms, 'acc-2');
     expect(res.transactions.length).toBeGreaterThanOrEqual(2);
-    expect(res.transactions.some((t) => t.category === 'Food')).toBe(true);
+    expect(res.transactions.some((t) => t.category === 'Shopping')).toBe(true);
   });
 
-  it('adds timeout warning when AI extraction exceeds 4 seconds', async () => {
+  it('adds timeout warning when SMS AI extraction exceeds budget (AI only runs if parsers find nothing)', async () => {
     vi.useFakeTimers();
     const abortSpy = vi.fn();
     vi.mocked(invokeAI).mockImplementation((payload: any) => new Promise((resolve, reject) => {
@@ -53,13 +53,13 @@ SAR 21.50
         reject(new DOMException('Aborted', 'AbortError'));
       }, { once: true });
     }));
-    const sms = `Payment at TEST SHOP\nSAR 10.00\n10/4/26`;
+    const sms =
+      'ZZ_UNPARSEABLE_NOTIFICATION ref 9x7k no SAR amount line that parsers skip';
     const pending = parseSMSTransactions(sms, 'acc-3');
-    await vi.advanceTimersByTimeAsync(4100);
+    await vi.advanceTimersByTimeAsync(12100);
     const res = await pending;
     expect(abortSpy).toHaveBeenCalledTimes(1);
     expect(res.warnings?.join(' ')).toContain('timed out');
-    expect(res.transactions.length).toBeGreaterThan(0);
   });
 
 

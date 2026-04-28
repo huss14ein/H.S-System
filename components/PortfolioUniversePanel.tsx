@@ -9,6 +9,7 @@ import { ExclamationTriangleIcon } from './icons/ExclamationTriangleIcon';
 import { ChartPieIcon } from './icons/ChartPieIcon';
 import { ChevronDownIcon } from './icons/ChevronDownIcon';
 import { ChevronUpIcon } from './icons/ChevronUpIcon';
+import { BoltIcon } from './icons/BoltIcon';
 import CurrencyDualDisplay from './CurrencyDualDisplay';
 import { getUniverseRowPlanRole } from '../services/universePlanRole';
 import { inferInstrumentCurrencyFromSymbol } from '../utils/currencyMath';
@@ -54,12 +55,59 @@ function scoreAutomation(h: UniversePanelHealth, actionableExists: boolean): { s
 }
 
 const FILTER_OPTIONS: { id: UniverseFilter; short: string; help: string }[] = [
-  { id: 'all', short: 'All', help: 'Every stock and idea linked to this portfolio' },
-  { id: 'Core', short: 'Steady (Core)', help: 'Holdings the plan treats as your stable base' },
-  { id: 'High-Upside', short: 'Growth (High-upside)', help: 'Names that can receive the growth slice of the budget' },
-  { id: 'Watchlist', short: 'Ideas (Watchlist)', help: 'Tracking only; no money until you promote them' },
-  { id: 'Needs mapping', short: 'Needs link', help: 'Came from holdings or plans but is not in your official list yet' },
+  { id: 'all', short: 'Everything', help: 'All companies on this screen' },
+  { id: 'Core', short: 'Steady picks', help: 'Where most of each month’s money goes' },
+  { id: 'High-Upside', short: 'Growth picks', help: 'Higher-upside slice of your monthly budget' },
+  { id: 'Watchlist', short: 'Watching only', help: 'Tracked but no automatic buys' },
+  { id: 'Needs mapping', short: 'Needs a link', help: 'Imported from holdings but not finalized in your list yet' },
 ];
+
+/** Plain-language dropdown labels — values stay API-compatible. */
+const ROLE_OPTIONS: { value: TickerStatus; line: string }[] = [
+  { value: 'Core', line: 'Stable base (Core) — gets monthly savings' },
+  { value: 'High-Upside', line: 'Growth (High-upside) — growth slice of savings' },
+  { value: 'Watchlist', line: 'Ideas only (Watchlist) — watch, no auto-buy' },
+  { value: 'Quarantine', line: 'Paused (Quarantine) — no new buys for now' },
+  { value: 'Speculative', line: 'Extra risky (Speculative) — small bets only' },
+  { value: 'Excluded', line: 'Ignored (Excluded) — plan skips this ticker' },
+];
+
+const READINESS_R = 44;
+
+function ReadinessRing({ score }: { score: number }) {
+  const c = 2 * Math.PI * READINESS_R;
+  const pct = Math.max(0, Math.min(100, score));
+  const offset = c - (pct / 100) * c;
+  return (
+    <div className="relative h-[104px] w-[104px] shrink-0" aria-hidden>
+      <svg width="104" height="104" viewBox="0 0 104 104" className="-rotate-90">
+        <circle cx="52" cy="52" r={READINESS_R} fill="none" stroke="rgb(226 232 240)" strokeWidth="9" />
+        <circle
+          cx="52"
+          cy="52"
+          r={READINESS_R}
+          fill="none"
+          stroke="url(#portfolioUniverseRingGrad)"
+          strokeWidth="9"
+          strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={offset}
+          className="transition-all duration-500"
+        />
+        <defs>
+          <linearGradient id="portfolioUniverseRingGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#4f46e5" />
+            <stop offset="100%" stopColor="#059669" />
+          </linearGradient>
+        </defs>
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-[1.65rem] font-black leading-none text-slate-900 tabular-nums">{Math.round(pct)}</span>
+        <span className="mt-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">ready score</span>
+      </div>
+    </div>
+  );
+}
 
 const PortfolioUniversePanel: React.FC<{
   planCurrency: TradeCurrency;
@@ -92,6 +140,8 @@ const PortfolioUniversePanel: React.FC<{
   onDeleteUniverse: (ticker: UniverseSourceRow) => void;
   simulatedPrices: Record<string, { price?: number } | undefined>;
   onNavigateToWatchlist?: () => void;
+  /** One tap: pull in watchlist/holdings rows + rebalance slices (parent wiring). */
+  onFullAutoSetup?: () => void | Promise<void>;
   /** Ticker value display decimals for live column */
   priceDigits?: number;
 }> = ({
@@ -125,10 +175,12 @@ const PortfolioUniversePanel: React.FC<{
   onDeleteUniverse,
   simulatedPrices,
   onNavigateToWatchlist,
+  onFullAutoSetup,
   priceDigits = 2,
 }) => {
   const [guideOpen, setGuideOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [fullAutoBusy, setFullAutoBusy] = useState(false);
   const liveQuotesAny = useMemo(
     () => Object.keys(simulatedPrices ?? {}).some((k) => simulatedPrices[k]?.price != null),
     [simulatedPrices],
@@ -164,6 +216,23 @@ const PortfolioUniversePanel: React.FC<{
     });
   };
 
+  const runFullAutoSetup = async () => {
+    if (!onFullAutoSetup) return;
+    setFullAutoBusy(true);
+    try {
+      await onFullAutoSetup();
+    } finally {
+      setFullAutoBusy(false);
+    }
+  };
+
+  const readinessHeadline =
+    step1 && step2 && step3 && step4
+      ? 'Your plan can run smoothly'
+      : health.totalCount === 0
+        ? 'Start in one minute'
+        : 'Almost there — one tap can finish setup';
+
   return (
     <div className="xl:col-span-12">
       <div className="relative overflow-hidden rounded-2xl border border-slate-200/80 bg-gradient-to-br from-slate-50 via-white to-indigo-50/40 shadow-md">
@@ -181,8 +250,11 @@ const PortfolioUniversePanel: React.FC<{
                   <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md shrink-0" aria-hidden>
                     <ChartPieIcon className="h-5 w-5" />
                   </span>
-                  <span>Your stock list (smart automation)</span>
+                  <span>Portfolio menu — smart autopilot</span>
                 </h2>
+                <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-800 border border-indigo-200/80">
+                  Ultra
+                </span>
                 {liveQuotesAny && (
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200/80 bg-emerald-50/90 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" aria-hidden />
@@ -190,19 +262,19 @@ const PortfolioUniversePanel: React.FC<{
                   </span>
                 )}
                 <InfoHint
-                  text="This list controls how your monthly plan chooses stocks. You only pick each company’s “role” and how much of the plan it should get; Finova does the rest when you run the plan. Scoped to the portfolio you select below."
+                  text="You choose which companies receive your monthly savings and how big each slice is. Finova applies safety caps and balances slices automatically when you ask it to. Everything here applies only to the portfolio you pick on the right."
                   hintId="universe-hub-intro"
                   hintPage="Investments"
                 />
               </div>
               <p className="mt-2 text-sm sm:text-base text-slate-600 max-w-3xl leading-relaxed">
-                Simple: import your holdings/watchlist, choose a role, then click <strong>Auto‑balance</strong>.
-                The engine keeps weights near <strong>100%</strong> and enforces caps so monthly automation stays safe.
+                Built for people who don’t live in spreadsheets: pick your account, tap <strong>Do everything for me</strong> when it appears, or use the short checklist below.
+                No jargon required — “slice” just means how much of each month’s invest amount goes to that stock.
               </p>
             </div>
             {personalPortfolios.length > 0 && (
               <div className="w-full sm:w-72 shrink-0 rounded-2xl border border-white/60 bg-white/80 p-3 shadow-sm backdrop-blur-sm">
-                <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Which portfolio is this for?</label>
+                <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Which account?</label>
                 <select
                   value={selectedPortfolioId ?? ''}
                   onChange={(e) => onSelectPortfolio(e.target.value)}
@@ -219,52 +291,88 @@ const PortfolioUniversePanel: React.FC<{
             )}
           </div>
 
-          {/* 3-step wizard (simplified) */}
-          <div className="mt-6 rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Universe setup (3 steps)</p>
-                <p className="text-sm font-semibold text-slate-900 mt-1">
-                  {step1 && step2 && step3 && step4 ? 'Ready' : 'Almost ready'} ·{' '}
-                  <span className={`${score >= 80 ? 'text-emerald-700' : score >= 55 ? 'text-amber-700' : 'text-rose-700'}`}>{scoreLabel}</span>
-                  <span className="text-slate-500 font-medium"> · weight {(health.monthlyWeightTotal * 100).toFixed(0)}%</span>
-                </p>
-                <p className="text-xs text-slate-600 mt-1 leading-snug">{scoreHint}</p>
+          {/* Automation cockpit — visual readiness + one-tap setup */}
+          <div className="mt-6 rounded-2xl border-2 border-indigo-100 bg-gradient-to-br from-white via-indigo-50/40 to-emerald-50/30 p-4 sm:p-6 shadow-md">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+                <ReadinessRing score={score} />
+                <div className="min-w-0 text-center sm:text-left flex-1">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-indigo-600">Automation readiness</p>
+                  <p className="mt-1 text-lg sm:text-xl font-bold text-slate-900 leading-snug">{readinessHeadline}</p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    <span className={`font-semibold ${score >= 80 ? 'text-emerald-700' : score >= 55 ? 'text-amber-700' : 'text-rose-700'}`}>{scoreLabel}</span>
+                    <span className="text-slate-500"> · slices add to {(health.monthlyWeightTotal * 100).toFixed(0)}% ( aim ~100% )</span>
+                  </p>
+                  <p className="mt-2 text-xs text-slate-600 leading-relaxed max-w-xl">{scoreHint}</p>
+                </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {canAddWatchlistHoldings && (
+              <div className="flex flex-col gap-3 w-full lg:w-auto lg:min-w-[280px]">
+                {onFullAutoSetup && (
                   <button
                     type="button"
-                    onClick={onAddWatchlistAndHoldings}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-900 hover:bg-slate-50"
+                    onClick={() => void runFullAutoSetup()}
+                    disabled={fullAutoBusy}
+                    className="inline-flex items-center justify-center gap-2.5 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-3.5 text-sm font-extrabold text-white shadow-lg hover:from-indigo-500 hover:to-violet-500 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
                   >
-                    <PlusIcon className="h-4 w-4" />
-                    Step 1: Import
+                    <BoltIcon className="h-5 w-5 shrink-0" aria-hidden />
+                    {fullAutoBusy ? 'Working…' : 'Do everything for me — import & balance'}
                   </button>
                 )}
-                <div className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">
-                  <span className={`inline-flex items-center gap-1 ${step2 ? 'text-emerald-700' : 'text-amber-700'}`}>
-                    {step2 ? <CheckCircleIcon className="h-4 w-4" /> : <ExclamationTriangleIcon className="h-4 w-4" />}
-                    Step 2: Role
-                  </span>
-                  <span className="text-slate-300">|</span>
-                  <span className="text-slate-600">Core / High‑upside</span>
+                <p className="text-[11px] text-slate-600 leading-snug">
+                  {onFullAutoSetup
+                    ? 'Adds any missing stocks from your watchlist & holdings, then spreads monthly “slices” fairly and safely. You can still edit rows below.'
+                    : 'Use the buttons below to bring in stocks and balance slices — same result, more steps.'}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {canAddWatchlistHoldings && (
+                    <button
+                      type="button"
+                      onClick={onAddWatchlistAndHoldings}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-900 hover:bg-slate-50 shadow-sm"
+                    >
+                      <PlusIcon className="h-4 w-4" />
+                      Add missing stocks
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={onAutoConfigureWeights}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-xs font-extrabold text-white hover:bg-slate-800 shadow-sm"
+                  >
+                    <SparklesIcon className="h-4 w-4" />
+                    Balance slices only
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={onAutoConfigureWeights}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-extrabold text-white hover:bg-slate-800"
-                >
-                  <SparklesIcon className="h-4 w-4" />
-                  Step 3: Auto-balance
-                </button>
               </div>
             </div>
+            <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {[
+                { ok: step1, label: 'Has stocks on the list', short: 'List' },
+                { ok: step2, label: 'Ready for monthly money', short: 'Roles' },
+                { ok: step3, label: 'Slices ≈ 100%', short: 'Slices' },
+                { ok: step4, label: 'Everything linked', short: 'Linked' },
+              ].map((s) => (
+                <div
+                  key={s.short}
+                  className={`rounded-xl border px-3 py-2 flex items-start gap-2 ${s.ok ? 'border-emerald-200 bg-emerald-50/80' : 'border-slate-200 bg-white/90'}`}
+                >
+                  {s.ok ? (
+                    <CheckCircleIcon className="h-5 w-5 shrink-0 text-emerald-600 mt-0.5" aria-hidden />
+                  ) : (
+                    <ExclamationTriangleIcon className="h-5 w-5 shrink-0 text-amber-500 mt-0.5" aria-hidden />
+                  )}
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{s.short}</p>
+                    <p className="text-xs font-semibold text-slate-900 leading-snug">{s.label}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
             {Math.abs(health.monthlyWeightTotal - 1) > 0.01 && health.actionableCount > 0 && (
-              <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-950" role="status">
+              <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-950" role="status">
                 <ExclamationTriangleIcon className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
                 <p>
-                  Your active sleeve weights should add up to about <strong>100%</strong>. Tap <strong>Auto-balance</strong> (recommended) or adjust a couple of numbers below.
+                  Your monthly slices should add up to about <strong>100%</strong>. Tap <strong>Balance slices only</strong> or <strong>Do everything for me</strong> — or tweak numbers in the table.
                 </p>
               </div>
             )}
@@ -276,18 +384,18 @@ const PortfolioUniversePanel: React.FC<{
             className="mt-5 w-full sm:w-auto text-left text-sm font-semibold text-indigo-700 hover:text-indigo-900 flex items-center gap-2"
           >
             {guideOpen ? <ChevronUpIcon className="h-4 w-4" /> : <ChevronDownIcon className="h-4 w-4" />}
-            {guideOpen ? 'Hide' : 'Show'} quick guide (plain English)
+            {guideOpen ? 'Hide' : 'Show'} 60-second explanation
           </button>
           {guideOpen && (
             <ol className="mt-2 space-y-2 rounded-2xl border border-indigo-100 bg-indigo-50/50 px-4 py-3 text-sm text-slate-700 list-decimal list-inside max-w-4xl">
               <li>
-                <strong className="text-slate-900">Add or import</strong> tickers (type above, or pull from your watchlist and current holdings in one click).
+                <strong className="text-slate-900">Tell us what you own or watch</strong> — add symbols, or import from your watchlist &amp; holdings in one go.
               </li>
               <li>
-                <strong className="text-slate-900">Pick a simple role</strong> — <em>Steady (Core)</em> and <em>Growth (High-upside)</em> get the monthly money; <em>Watchlist</em> is watch-only; <em>Quarantine</em> blocks new buys.
+                <strong className="text-slate-900">Say who gets paid first</strong> — “stable” vs “growth” stocks share your monthly invest amount; “watching only” never auto-buys.
               </li>
               <li>
-                <strong className="text-slate-900">Balance the bar</strong> to ~100% so the split matches what you want each month. Caps stop any one stock from taking too much.
+                <strong className="text-slate-900">Let Finova split the pie</strong> — one tap balances percentages and keeps any single company from hogging the budget.
               </li>
             </ol>
           )}
@@ -296,19 +404,19 @@ const PortfolioUniversePanel: React.FC<{
           <div className="mt-6 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="w-full min-w-0 max-w-md">
               <label className="sr-only" htmlFor="universe-search">
-                Search this list
+                Search companies
               </label>
               <input
                 id="universe-search"
                 type="search"
                 value={searchQuery}
                 onChange={(e) => onSearchQuery(e.target.value)}
-                placeholder="Search by symbol or company name…"
+                placeholder="Search company or ticker…"
                 className="w-full rounded-xl border border-slate-200 bg-white/90 px-4 py-2.5 text-sm shadow-sm focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400"
               />
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold text-slate-500">Filter:</span>
+              <span className="text-xs font-semibold text-slate-500">Show:</span>
               {FILTER_OPTIONS.map((opt) => (
                 <button
                   key={opt.id}
@@ -355,7 +463,7 @@ const PortfolioUniversePanel: React.FC<{
                 className="inline-flex items-center gap-2 rounded-xl border-2 border-indigo-200 bg-indigo-50/80 px-4 py-2.5 text-sm font-semibold text-indigo-900 shadow-sm hover:bg-indigo-100/80"
               >
                 <SparklesIcon className="h-4 w-4" />
-                Add from watchlist &amp; holdings
+                Pull from watchlist &amp; holdings
               </button>
             )}
             <button
@@ -363,7 +471,7 @@ const PortfolioUniversePanel: React.FC<{
               onClick={onSyncPlanFromUniverse}
               className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
             >
-              Sync plan lists from this table
+              Update plan from this table
             </button>
             <div className="ml-auto flex flex-wrap gap-2 items-end">
               <input
@@ -397,8 +505,8 @@ const PortfolioUniversePanel: React.FC<{
               <div className="px-4 py-12 text-center text-slate-600">
                 {unifiedUniverse.length === 0 ? (
                   <>
-                    <p className="text-base font-semibold text-slate-800">Start your list in under a minute</p>
-                    <p className="text-sm mt-2 max-w-md mx-auto">Add a symbol above, or use <strong>Add from watchlist &amp; holdings</strong> to import everything you already follow.</p>
+                    <p className="text-base font-semibold text-slate-800">Your menu is empty — let’s fill it</p>
+                    <p className="text-sm mt-2 max-w-md mx-auto">Type a ticker above, or tap <strong>Pull from watchlist &amp; holdings</strong> (or <strong>Do everything for me</strong> when shown) to load what you already track.</p>
                     {onNavigateToWatchlist && (
                       <button type="button" onClick={onNavigateToWatchlist} className="mt-4 text-sm font-semibold text-indigo-600 hover:underline">
                         Open watchlist
@@ -416,17 +524,17 @@ const PortfolioUniversePanel: React.FC<{
                     <thead className="bg-slate-100/80 sticky top-0 z-10">
                       <tr>
                         <th className="px-3 py-2.5 text-left font-bold text-slate-600" />
-                        <th className="px-3 py-2.5 text-left font-bold text-slate-600">Symbol</th>
+                        <th className="px-3 py-2.5 text-left font-bold text-slate-600">Ticker</th>
                         <th className="px-3 py-2.5 text-left font-bold text-slate-600">Company</th>
-                        <th className="px-3 py-2.5 text-left font-bold text-slate-600">Live (spot)</th>
+                        <th className="px-3 py-2.5 text-left font-bold text-slate-600">Price today</th>
                         <th className="px-3 py-2.5 text-left font-bold text-slate-600">
-                          <span className="inline-flex items-center gap-1">Role in plan</span>
+                          <span className="inline-flex items-center gap-1">Plan role</span>
                         </th>
                         <th className="px-3 py-2.5 text-left font-bold text-slate-600">
                           <span className="inline-flex items-center gap-1">
-                            Your pick (status)
+                            Who gets savings?
                             <InfoHint
-                              text="Steady vs growth vs watch-only. The app uses this to route monthly money and safety rules."
+                              text="Stable vs growth vs watch-only. We use this to split your monthly invest amount safely."
                               hintId="universe-status-hub"
                               hintPage="Investments"
                             />
@@ -436,7 +544,7 @@ const PortfolioUniversePanel: React.FC<{
                           <span className="inline-flex items-center justify-center gap-1">Slice %</span>
                         </th>
                         <th className="px-3 py-2.5 text-center font-bold text-slate-600">
-                          <span className="inline-flex items-center justify-center gap-1">Max %</span>
+                          <span className="inline-flex items-center justify-center gap-1">Safety cap %</span>
                         </th>
                         <th className="px-3 py-2.5 text-right font-bold text-slate-600" />
                       </tr>
@@ -481,14 +589,14 @@ const PortfolioUniversePanel: React.FC<{
                                 <select
                                   value={ticker.status}
                                   onChange={(e) => onStatusUpdate(ticker, e.target.value as TickerStatus)}
-                                  className="w-full min-w-[9rem] rounded-lg border border-slate-200 p-1.5 text-xs font-medium bg-white"
+                                  className="w-full min-w-[11rem] rounded-lg border border-slate-200 p-1.5 text-xs font-medium bg-white"
+                                  aria-label="Who receives monthly savings"
                                 >
-                                  <option>Core</option>
-                                  <option>High-Upside</option>
-                                  <option>Watchlist</option>
-                                  <option>Quarantine</option>
-                                  <option>Speculative</option>
-                                  <option>Excluded</option>
+                                  {ROLE_OPTIONS.map((o) => (
+                                    <option key={o.value} value={o.value}>
+                                      {o.line}
+                                    </option>
+                                  ))}
                                 </select>
                               </td>
                               <td className="px-3 py-2 text-center">
@@ -550,9 +658,9 @@ const PortfolioUniversePanel: React.FC<{
                               <tr className="bg-slate-50/90 border-b border-slate-100">
                                 <td colSpan={9} className="px-4 py-3 text-xs text-slate-600">
                                   <p>
-                                    <strong className="text-slate-800">Source:</strong> {ticker.source || '—'}. The role above tells the app whether
-                                    to include this name when splitting your <strong>monthly invest amount</strong>. Slice % is your share of that
-                                    role’s piece of the budget; max % is a safety cap for one company.
+                                    <strong className="text-slate-800">Where this row came from:</strong> {ticker.source || '—'}.{' '}
+                                    <strong className="text-slate-800">Slice %</strong> is how much of your monthly invest pie this stock takes inside its group.
+                                    <strong className="text-slate-800"> Safety cap</strong> stops one company from growing too large.
                                   </p>
                                 </td>
                               </tr>
@@ -591,24 +699,24 @@ const PortfolioUniversePanel: React.FC<{
                         </div>
                         <p className="text-xs text-slate-600 mt-2">{getUniverseRowPlanRole(ticker)}</p>
                         <div className="mt-2 grid grid-cols-1 gap-2">
-                          <div>
-                            <span className="text-[10px] text-slate-500 block mb-0.5">Status</span>
+                            <div>
+                              <span className="text-[10px] text-slate-500 block mb-0.5">Who gets savings?</span>
                             <select
                               value={ticker.status}
                               onChange={(e) => onStatusUpdate(ticker, e.target.value as TickerStatus)}
                               className="w-full rounded-lg border p-1.5 text-sm"
+                              aria-label="Who receives monthly savings"
                             >
-                              <option>Core</option>
-                              <option>High-Upside</option>
-                              <option>Watchlist</option>
-                              <option>Quarantine</option>
-                              <option>Speculative</option>
-                              <option>Excluded</option>
+                              {ROLE_OPTIONS.map((o) => (
+                                <option key={o.value} value={o.value}>
+                                  {o.line}
+                                </option>
+                              ))}
                             </select>
                           </div>
                           <div className="grid grid-cols-2 gap-2">
                             <div>
-                              <span className="text-[10px] text-slate-500 block">Slice %</span>
+                              <span className="text-[10px] text-slate-500 block">Monthly slice %</span>
                               {isUniverseTicker(ticker) && isActionableUniverseStatus(ticker.status) ? (
                                 <input
                                   type="number"
@@ -622,7 +730,7 @@ const PortfolioUniversePanel: React.FC<{
                               )}
                             </div>
                             <div>
-                              <span className="text-[10px] text-slate-500 block">Max %</span>
+                              <span className="text-[10px] text-slate-500 block">Safety cap %</span>
                               {isUniverseTicker(ticker) && isActionableUniverseStatus(ticker.status) ? (
                                 <input
                                   type="number"
