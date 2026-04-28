@@ -23,6 +23,7 @@ import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { computeAllNetWorthChartBucketsSAR } from '../services/personalNetWorth';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
+import { useMarketData } from '../context/MarketDataContext';
 
 const TOOLTIP_STYLE = { backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' };
 
@@ -178,6 +179,7 @@ const AssetLiabilityChart: React.FC = () => {
 const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate, currency: displayCurrency } = useCurrency();
+    const { simulatedPrices } = useMarketData();
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
 
     const contextData = useMemo(() => {
@@ -224,7 +226,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const analysisValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
         const fx = resolveSarPerUsd(data, exchangeRate);
-        const monthlyKpis = computeMonthlyReportFinancialKpis(data, fx, getAvailableCashForAccount);
+        const monthlyKpis = computeMonthlyReportFinancialKpis(data, fx, getAvailableCashForAccount, simulatedPrices);
         if (!Number.isFinite(fx) || fx <= 0) warnings.push('Exchange rate is invalid — USD transactions may not convert correctly.');
         if (!Number.isFinite(monthlyKpis.budgetVariance)) warnings.push('Budget variance could not be computed.');
         if (!Number.isFinite(monthlyKpis.roi)) warnings.push('Investment ROI could not be computed.');
@@ -248,7 +250,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         const hasUsd = (data?.accounts ?? []).some((a) => a.currency === 'USD');
         if (hasUsd && (!Number.isFinite(fx) || fx <= 0)) warnings.push('USD accounts exist — set a valid SAR-per-USD rate in the header or Wealth Ultra.');
         return warnings;
-    }, [data, exchangeRate, getAvailableCashForAccount, contextData]);
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, contextData]);
 
     if (loading || !data) {
         return (

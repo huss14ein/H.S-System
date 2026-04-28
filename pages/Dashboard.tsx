@@ -32,7 +32,7 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
-import { toSAR, tradableCashBucketToSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { toSAR, tradableCashBucketToSAR, resolveSarPerUsd, totalLiquidCashSARFromAccounts } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
@@ -62,6 +62,7 @@ import { logKpiReconciliationDrift } from '../services/kpiDriftTelemetry';
 import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { useDashboardReconciliationPrefs } from '../hooks/useDashboardReconciliationPrefs';
+import { useMarketData } from '../context/MarketDataContext';
 
 interface ExtendedBudget extends Budget {
     spent: number;
@@ -417,6 +418,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
     const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
+    const { simulatedPrices } = useMarketData();
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
     const { maskBalance } = usePrivacyMask();
@@ -536,7 +538,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             const currentMonthBudgets = (data?.budgets ?? []).filter(
                 (b) => b.month === currentFinMonth.key.month && b.year === currentFinMonth.key.year,
             );
-            const snap = computeDashboardKpiSnapshot(data, exchangeRate, getAvailableCashForAccount);
+            const snap = computeDashboardKpiSnapshot(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
             if (!snap) {
                 return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
             }
@@ -604,13 +606,12 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
 
             const recentTransactions = [...transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-            // 30-day projected cash (personal only)
-            const cashAccounts = accounts.filter((a: { type?: string }) => ['Checking', 'Savings'].includes(a.type ?? ''));
-            const currentCash = cashAccounts.reduce((sum: number, acc: Account) => {
-                const bal = Math.max(0, acc.balance ?? 0);
-                const c = acc.currency === 'USD' ? 'USD' : 'SAR';
-                return sum + (c === 'SAR' ? bal : toSAR(bal, 'USD', sarPerUsd));
-            }, 0);
+            // 30-day projected cash: same liquid definition as KPI `liquidCashSar` / net worth (bank + platform cash per Accounts).
+            const currentCash = totalLiquidCashSARFromAccounts(
+                accounts as Account[],
+                getAvailableCashForAccount as (id: string) => { SAR: number; USD: number },
+                sarPerUsd,
+            );
             const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
             const recentTx = transactions.filter((t: { date: string }) => new Date(t.date) >= sixMonthsAgo);
             const monthlyNets = new Map<string, number>();
@@ -650,7 +651,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             console.error("Dashboard calculation error:", e);
             return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
         }
-    }, [data, exchangeRate, getAvailableCashForAccount]);
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
 
     useEffect(() => {
         if (!auth?.user || !data) return;
@@ -757,8 +758,13 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
 
     const summaryMonthlyKpisForReconciliation = useMemo(() => {
         if (!data) return null;
-        return computeMonthlyReportFinancialKpis(data, resolveSarPerUsd(data, exchangeRate), getAvailableCashForAccount);
-    }, [data, exchangeRate, getAvailableCashForAccount]);
+        return computeMonthlyReportFinancialKpis(
+            data,
+            resolveSarPerUsd(data, exchangeRate),
+            getAvailableCashForAccount,
+            simulatedPrices,
+        );
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
 
     const kpiReconciliation = useMemo(() => {
         if (!summaryModelForReconciliation || !summaryMonthlyKpisForReconciliation) return null;
@@ -832,9 +838,9 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         return {
             netWorth: <Card {...cardProps} title="My Net Worth" value={maskBalance(formatCurrencyString(kpiSummary.netWorth || 0))} trend={`${(kpiSummary.netWorthTrend || 0) >= 0 ? '+' : ''}${getTrendString(kpiSummary.netWorthTrend)}`} indicatorColor={(kpiSummary.netWorthTrend || 0) >= 0 ? 'green' : 'red'} tooltip="Personal wealth only. Items with Owner set (e.g. Father) are excluded." onClick={() => setActivePage('Summary')} icon={<ScaleIcon className="h-5 w-5 text-slate-400" />} />,
             monthlyPnL: <Card {...cardProps} title="This Month's P&L" value={formatCurrency(kpiSummary.monthlyPnL || 0, { colorize: true })} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'Surplus' : 'Deficit'} indicatorColor={(kpiSummary.monthlyPnL || 0) >= 0 ? 'green' : 'red'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-slate-400" />} />,
-            emergencyFund: <Card {...cardProps} title="Emergency Fund" value={emergencyFund.hasEssentialExpenseEstimate ? `${emergencyFund.monthsCovered.toFixed(1)} mo` : '—'} trend={efTrend} indicatorColor={efColor} tooltip={emergencyFund.hasEssentialExpenseEstimate ? `Liquid cash (Checking + Savings) covers ${emergencyFund.monthsCovered.toFixed(1)} months of essential expenses. Target: ${EMERGENCY_FUND_TARGET_MONTHS} months.${emergencyFund.shortfall > 0 ? ` Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : ''}` : 'Categorize essential spending or add budgets so we can estimate months of coverage.'} onClick={() => setActivePage('Summary')} icon={<ShieldCheckIcon className="h-5 w-5 text-slate-400" />} />,
+            emergencyFund: <Card {...cardProps} title="Emergency Fund" value={emergencyFund.hasEssentialExpenseEstimate ? `${emergencyFund.monthsCovered.toFixed(1)} mo` : '—'} trend={efTrend} indicatorColor={efColor} tooltip={emergencyFund.hasEssentialExpenseEstimate ? `Liquid cash (bank + idle cash on investment platforms from Accounts) covers ${emergencyFund.monthsCovered.toFixed(1)} months of essential expenses. Target: ${EMERGENCY_FUND_TARGET_MONTHS} months.${emergencyFund.shortfall > 0 ? ` Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : ''}` : 'Categorize essential spending or add budgets so we can estimate months of coverage.'} onClick={() => setActivePage('Summary')} icon={<ShieldCheckIcon className="h-5 w-5 text-slate-400" />} />,
             budgetVariance: <Card {...cardProps} title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, { colorize: true })} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'Under budget' : 'Over budget'} indicatorColor={(kpiSummary.budgetVariance || 0) >= 0 ? 'green' : 'red'} tooltip="Money saved from budget this month (positive = under budget). Over budget is shown in red." onClick={() => setActivePage('Budgets')} icon={<PiggyBankIcon className="h-5 w-5 text-slate-400" />} />,
-            investmentRoi: <Card {...cardProps} title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="(Holdings + cash at broker) vs net deposits/withdrawals. Cash waiting to be invested counts as portfolio value." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" />} footer={invCapitalSrc === 'ledger_inferred' ? (
+            investmentRoi: <Card {...cardProps} title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="Same formula as Investments: platform value (live rollup) + commodities + Sukuk vs net capital (deposits or fallback) including commodity and Sukuk cost. Uses your live quote feed when available." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" />} footer={invCapitalSrc === 'ledger_inferred' ? (
                 <button type="button" className="text-left w-full font-medium text-primary hover:underline" onClick={(e) => { e.stopPropagation(); goToInvestmentKpiReconciliation(); }}>
                     Ledger-inferred capital — open Investment KPI reconciliation →
                 </button>
@@ -1072,9 +1078,9 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 <div className="section-card border-l-4 border-primary/40">
                     <h3 className="section-title text-base">Cash & emergency fund</h3>
                     <p className="text-2xl font-bold text-dark tabular-nums">{maskBalance(formatCurrencyString(projectedCash30d ?? currentCash ?? 0))}</p>
-                    <p className="text-xs text-slate-500 mt-1">Projected cash in 30 days (current + average monthly flow).</p>
+                    <p className="text-xs text-slate-500 mt-1">Projected cash in 30 days (current liquid + average monthly net flow). Current liquid = bank balances + cash sitting on each investment platform (Accounts), same as headline KPI liquid cash.</p>
                     <div className="mt-3 pt-3 border-t border-slate-200">
-                        <p className="text-sm text-slate-700"><strong>Emergency fund:</strong> {maskBalance(formatCurrencyString(emergencyFund.emergencyCash))} liquid cash (Checking + Savings only; money moved to investments is not double-counted here)
+                        <p className="text-sm text-slate-700"><strong>Emergency fund:</strong> {maskBalance(formatCurrencyString(emergencyFund.emergencyCash))} liquid cash (Checking, Savings, and idle broker cash per Investment account in Accounts — holdings/market value are separate)
                             {emergencyFund.hasEssentialExpenseEstimate ? (
                                 <> = <strong>{emergencyFund.monthsCovered.toFixed(1)} months</strong> of essential expenses (target {EMERGENCY_FUND_TARGET_MONTHS} months). {emergencyFund.shortfall > 0 ? `Shortfall: ${maskBalance(formatCurrencyString(emergencyFund.shortfall))}.` : 'Target met.'}</>
                             ) : (

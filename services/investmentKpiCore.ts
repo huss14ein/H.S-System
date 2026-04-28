@@ -4,6 +4,12 @@ import { inferInvestmentTransactionCurrency, resolveInvestmentTransactionAccount
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { investmentTransactionCashAmountSarDated } from '../utils/investmentTransactionSar';
+import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
+import {
+  computePersonalPlatformsRollupSAR,
+  computePersonalCommoditiesContributionSAR,
+} from './investmentPlatformCardMetrics';
+import { getPersonalCommodityHoldings, getPersonalWealthData } from '../utils/wealthScope';
 
 type GetAvailableCashFn = (accountId: string) => { SAR?: number; USD?: number } | null | undefined;
 
@@ -185,5 +191,84 @@ export function computePersonalInvestmentKpisSar(
     netCapitalSar: b.netCapitalSar,
     totalGainLossSar: b.totalGainLossSar,
     roi: b.roi,
+  };
+}
+
+/** Same rollup as Investments hub headline: platforms (live rollup) + commodities + Sukuk assets vs net capital incl. commodity + Sukuk cost bases. */
+export type HeadlinePersonalInvestmentRoi = {
+  /** Total gain/(loss) in SAR (exposure − net capital). */
+  totalGainLossSar: number;
+  /** Exposure: platforms + commodities + Sukuk market values (SAR). */
+  totalExposureSar: number;
+  /** Capital: platform net capital + commodity purchase SAR + Sukuk cost (SAR). */
+  netCapitalSar: number;
+  /** Gain / net capital — **decimal** (e.g. 0.12 = 12%); matches Dashboard KPI card convention. */
+  roi: number;
+  capitalSource: InvestmentCapitalSource;
+  platformsRollupSar: number;
+  commoditiesValueSar: number;
+  sukukAssetsValueSar: number;
+  /** Intraday / live move in SAR — platforms only (same as rollup). */
+  platformsDailyPnLSar: number;
+  /** Approximate commodity position move in SAR (live quote × qty). */
+  commoditiesDailyPnLSar: number;
+};
+
+/**
+ * Single headline ROI path for Dashboard, Investments hub, and monthly KPI reconciliation.
+ * Uses `computePersonalPlatformsRollupSAR` (same as Investments cards), not raw `getAllInvestmentsValueInSAR`.
+ */
+export function computeHeadlinePersonalInvestmentRoiDecimal(
+  data: FinancialData,
+  sarPerUsd: number,
+  getAvailableCashForAccount: GetAvailableCashFn,
+  simulatedPrices: SimulatedPriceMap = {},
+): HeadlinePersonalInvestmentRoi {
+  const breakdown = computePersonalInvestmentKpiBreakdown(data, sarPerUsd, getAvailableCashForAccount);
+  const getCash = getAvailableCashForAccount as (id: string) => { SAR: number; USD: number };
+
+  const { subtotalSAR: platformsRollupSar, dailyPnLSAR: platformsDailyPnLSar } = computePersonalPlatformsRollupSAR(
+    data,
+    sarPerUsd,
+    simulatedPrices,
+    getCash,
+  );
+  const {
+    valueSAR: commoditiesValueSar,
+    dailyDeltaSAR: commoditiesDailyPnLSar,
+  } = computePersonalCommoditiesContributionSAR(data, sarPerUsd, simulatedPrices);
+
+  const allCommodities = getPersonalCommodityHoldings(data);
+  const commodityCost = allCommodities.reduce(
+    (sum: number, ch: { purchaseValue?: number }) => sum + toSAR(ch.purchaseValue ?? 0, 'SAR', sarPerUsd),
+    0,
+  );
+
+  const { personalAssets } = getPersonalWealthData(data);
+  const sukukAssets = (personalAssets ?? []).filter((a) => a?.type === 'Sukuk');
+  const sukukAssetsValueSar = sukukAssets.reduce((sum, a) => sum + Math.max(0, Number(a?.value) || 0), 0);
+  const sukukAssetsCostSar = sukukAssets.reduce((sum, a) => {
+    const v = Math.max(0, Number(a?.value) || 0);
+    const pp = Number((a as { purchasePrice?: number }).purchasePrice);
+    const cost = Number.isFinite(pp) && pp > 0 ? pp : v;
+    return sum + cost;
+  }, 0);
+
+  const totalExposureSar = platformsRollupSar + commoditiesValueSar + sukukAssetsValueSar;
+  const netCapitalSar = Math.max(0, breakdown.netCapitalSar + commodityCost + sukukAssetsCostSar);
+  const totalGainLossSar = totalExposureSar - netCapitalSar;
+  const roi = netCapitalSar > 0 ? totalGainLossSar / netCapitalSar : 0;
+
+  return {
+    totalGainLossSar,
+    totalExposureSar,
+    netCapitalSar,
+    roi,
+    capitalSource: breakdown.capitalSource,
+    platformsRollupSar,
+    commoditiesValueSar,
+    sukukAssetsValueSar,
+    platformsDailyPnLSar,
+    commoditiesDailyPnLSar,
   };
 }

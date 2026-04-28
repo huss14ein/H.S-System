@@ -4,8 +4,7 @@ import type { FunctionDeclaration, Content, Part, FunctionCall } from '@google/g
 import { SchemaType } from '../services/geminiSchemaTypes';
 import { DataContext } from '../context/DataContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { computePersonalHeadlineNetWorthSar } from '../services/personalNetWorth';
 import { invokeAI, formatAiError } from '../services/geminiService';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { HeadsetIcon } from './icons/HeadsetIcon';
@@ -58,8 +57,8 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
 
     // Function definitions
     const getNetWorth_ = useCallback(() => {
-        const fx = resolveSarPerUsd(data, exchangeRate);
-        return { netWorth: computePersonalNetWorthSAR(data, fx, { getAvailableCashForAccount }) };
+        const h = computePersonalHeadlineNetWorthSar(data, exchangeRate, { getAvailableCashForAccount });
+        return { netWorth: h.netWorth };
     }, [data, exchangeRate, getAvailableCashForAccount]);
 
     const getBudgetStatus_ = useCallback(({ category }: { category: string }) => {
@@ -107,8 +106,9 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
     };
 
     const buildDeterministicAdvisorReply = useCallback((question: string): string => {
-        const fx = resolveSarPerUsd(data, exchangeRate);
-        const netWorthSar = computePersonalNetWorthSAR(data, fx, { getAvailableCashForAccount });
+        const netWorthSar = computePersonalHeadlineNetWorthSar(data, exchangeRate, {
+            getAvailableCashForAccount,
+        }).netWorth;
         const budgets = data?.budgets ?? [];
         const tx = ((data as any)?.personalTransactions ?? data?.transactions ?? [])
             .slice()

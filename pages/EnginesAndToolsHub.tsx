@@ -8,10 +8,8 @@ import { Page } from '../types';
 import { DataContext } from '../context/DataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
+import { computePersonalHeadlineNetWorthSar } from '../services/personalNetWorth';
 import { netCashFlowForMonthSarDated } from '../services/financeMetrics';
-import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
-import { resolveSarPerUsd } from '../utils/currencyMath';
 import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import { useSelfLearning } from '../context/SelfLearningContext';
@@ -114,18 +112,22 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
   const { exchangeRate, currency: displayCurrency } = useCurrency();
   const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
 
+  const headlineMoneyTools = useMemo(
+    () =>
+      data ? computePersonalHeadlineNetWorthSar(data, exchangeRate, { getAvailableCashForAccount }) : null,
+    [data, exchangeRate, getAvailableCashForAccount, dataTick],
+  );
+
   const moneyToolsKpis = useMemo(() => {
-    if (!data) return null;
-    hydrateSarPerUsdDailySeries(data, exchangeRate);
-    const sar = resolveSarPerUsd(data, exchangeRate);
-    const nw = computePersonalNetWorthSAR(data, sar, { getAvailableCashForAccount });
+    if (!data || !headlineMoneyTools) return null;
+    const nw = headlineMoneyTools.netWorth;
     const accounts = getPersonalAccounts(data);
     const txs = getPersonalTransactions(data);
     const ref = new Date();
     const { income, expenses, net } = netCashFlowForMonthSarDated(txs, accounts, ref, data, exchangeRate);
     const sr = income <= 0 ? 0 : Math.max(0, Math.min(100, ((income - expenses) / income) * 100));
     return { nw, income, expenses, net, sr };
-  }, [data, exchangeRate, getAvailableCashForAccount, dataTick]);
+  }, [data, exchangeRate, getAvailableCashForAccount, dataTick, headlineMoneyTools]);
 
   const moneyToolsValidation = useMemo(() => {
     const msgs: { level: 'warn' | 'info'; text: string }[] = [];
@@ -170,8 +172,8 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
   }, [setActivePage, trackAction]);
 
   const sarPerUsdDisplay = useMemo(
-    () => (data ? resolveSarPerUsd(data, exchangeRate) : null),
-    [data, exchangeRate, dataTick]
+    () => headlineMoneyTools?.sarPerUsd ?? null,
+    [headlineMoneyTools],
   );
 
   const setTab = useCallback((tab: EnginesSubTab) => {

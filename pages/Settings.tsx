@@ -26,6 +26,7 @@ import {
     type WealthSummaryReportInput,
 } from '../services/reportingEngine';
 import { useCurrency } from '../context/CurrencyContext';
+import { useMarketData } from '../context/MarketDataContext';
 import { useNotifications } from '../context/NotificationsContext';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
@@ -73,6 +74,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     const { showToast } = useToast();
     const auth = useContext(AuthContext)!;
     const { exchangeRate, currency, setCurrency } = useCurrency();
+    const { simulatedPrices } = useMarketData();
     const notifCtx = useNotifications();
     const [localSettings, setLocalSettings] = useState(data?.settings ?? {});
     const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
@@ -1012,7 +1014,12 @@ const hasData = accountsForEmptyCheck.length > 0;
                                 return;
                             }
                             const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
-                            const { budgetVariance, roi } = computeMonthlyReportFinancialKpis(data, sarPerUsd, getAvailableCashForAccount);
+                            const { budgetVariance, roi } = computeMonthlyReportFinancialKpis(
+                                data,
+                                sarPerUsd,
+                                getAvailableCashForAccount,
+                                simulatedPrices,
+                            );
                             const report = generateMonthlyReport({
                                 periodLabel: new Date().toISOString().slice(0, 7),
                                 netWorth: wealthSummaryPayload.netWorth,

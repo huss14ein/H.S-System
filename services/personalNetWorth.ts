@@ -216,8 +216,9 @@ export function computePersonalNetWorthChartBucketsSAR(
 }
 
 /**
- * Personal-scope net worth in **SAR** — same formula as **Dashboard** and **Summary**
- * (cash/savings, physical assets, commodities, investments converted to SAR, minus debt, plus receivables).
+ * Raw personal-scope net worth in SAR from a **pre-resolved** SAR/USD rate.
+ * For any UI that must match Dashboard / Summary / cockpit, prefer **`computePersonalHeadlineNetWorthSar`**
+ * (it runs `hydrateSarPerUsdDailySeries` + `resolveSarPerUsd` so FX matches headline KPIs).
  */
 export function computePersonalNetWorthSAR(
   data: FinancialData | null | undefined,

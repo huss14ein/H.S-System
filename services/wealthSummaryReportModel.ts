@@ -19,7 +19,8 @@ import { computeRiskLaneFromData, type RiskLaneContext } from './riskLaneEngine'
 import { runShockDrill, type ShockDrillResult } from './shockDrillEngine';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { computeLiquidNetWorth } from './liquidNetWorth';
-import { computePersonalInvestmentKpisSar } from './investmentKpiCore';
+import { computeHeadlinePersonalInvestmentRoiDecimal } from './investmentKpiCore';
+import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import { financialMonthRange } from '../utils/financialMonth';
 
 export type GetAvailableCashFn = (accountId: string) => { SAR: number; USD: number };
@@ -92,7 +93,8 @@ function budgetToMonthly(b: { limit: number; period?: string }): number {
 export function computeMonthlyReportFinancialKpis(
   data: FinancialData,
   sarPerUsd: number,
-  getAvailableCashForAccount: GetAvailableCashFn
+  getAvailableCashForAccount: GetAvailableCashFn,
+  simulatedPrices: SimulatedPriceMap = {},
 ): { budgetVariance: number; roi: number } {
   const now = new Date();
   const monthStartDay = (data as any)?.settings?.monthStartDay ?? 1;
@@ -115,7 +117,7 @@ export function computeMonthlyReportFinancialKpis(
     .reduce((sum, b) => sum + budgetToMonthly(b), 0);
   const budgetVariance = totalBudget - monthlyExpenses;
 
-  const { roi } = computePersonalInvestmentKpisSar(data, sarPerUsd, getAvailableCashForAccount);
+  const { roi } = computeHeadlinePersonalInvestmentRoiDecimal(data, sarPerUsd, getAvailableCashForAccount, simulatedPrices);
 
   return { budgetVariance, roi };
 }

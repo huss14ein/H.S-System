@@ -1,10 +1,14 @@
 import type { Account, FinancialData, Transaction } from '../types';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { savingsRateSar } from './financeMetrics';
-import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { toSAR, resolveSarPerUsd, totalLiquidCashSARFromAccounts } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from './fxDailySeries';
 import { computePersonalHeadlineNetWorthSar } from './personalNetWorth';
-import { computePersonalInvestmentKpiBreakdown, type InvestmentCapitalSource } from './investmentKpiCore';
+import {
+  computeHeadlinePersonalInvestmentRoiDecimal,
+  type InvestmentCapitalSource,
+} from './investmentKpiCore';
+import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import {
   addMonthsToKey,
   financialMonthRange,
@@ -32,6 +36,7 @@ export function computeDashboardKpiSnapshot(
   data: FinancialData | null | undefined,
   exchangeRate: number,
   getAvailableCashForAccount: (accountId: string) => { SAR?: number; USD?: number } | null | undefined,
+  simulatedPrices: SimulatedPriceMap = {},
 ): DashboardKpiSnapshot | null {
   try {
     if (!data) return null;
@@ -97,8 +102,13 @@ export function computeDashboardKpiSnapshot(
     const netWorthPrevMonth = netWorth - monthlyPnL;
     const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
 
-    const invBreakdown = computePersonalInvestmentKpiBreakdown(data, sarPerUsd, getAvailableCashForAccount);
-    const { roi, capitalSource: investmentCapitalSource } = invBreakdown;
+    const headlineInv = computeHeadlinePersonalInvestmentRoiDecimal(
+      data,
+      sarPerUsd,
+      getAvailableCashForAccount as (id: string) => { SAR: number; USD: number },
+      simulatedPrices,
+    );
+    const { roi, capitalSource: investmentCapitalSource } = headlineInv;
 
     const pnlTrend =
       lastMonthPnL !== 0 ? ((monthlyPnL - lastMonthPnL) / Math.abs(lastMonthPnL)) * 100 : monthlyPnL > 0 ? 100 : 0;
@@ -111,16 +121,11 @@ export function computeDashboardKpiSnapshot(
     const incomeSumSar6Mo = incomeLast6Mo.reduce((s, t) => s + txCashflowSar(t), 0);
     const avgMonthlyIncomeSar6Mo = incomeLast6Mo.length > 0 ? incomeSumSar6Mo / 6 : 0;
 
-    let liquidCashSar = 0;
-    for (const a of accounts) {
-      if (!['Checking', 'Savings'].includes(a.type ?? '')) continue;
-      const bal = Math.max(0, Number(a.balance) || 0);
-      if (a.currency === 'USD') {
-        liquidCashSar += toSAR(bal, 'USD', sarPerUsd);
-      } else {
-        liquidCashSar += bal;
-      }
-    }
+    const liquidCashSar = totalLiquidCashSARFromAccounts(
+      accounts as Account[],
+      getAvailableCashForAccount as (id: string) => { SAR: number; USD: number },
+      sarPerUsd,
+    );
 
     return {
       netWorth,

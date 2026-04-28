@@ -76,7 +76,7 @@ import {
     quoteDailyPnLInBookCurrency,
 } from '../utils/currencyMath';
 import { holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
-import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestments, getPersonalWealthData } from '../utils/wealthScope';
+import { getPersonalAccounts, getPersonalInvestments, getPersonalWealthData } from '../utils/wealthScope';
 import {
     inferInvestmentTransactionCurrency,
     portfolioBelongsToAccount,
@@ -84,12 +84,8 @@ import {
     resolveInvestmentTransactionAccountId,
 } from '../utils/investmentLedgerCurrency';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
-import {
-    computePersonalCommoditiesContributionSAR,
-    computePersonalPlatformsRollupSAR,
-    computePlatformCardMetrics,
-} from '../services/investmentPlatformCardMetrics';
-import { computePersonalInvestmentKpisSar } from '../services/investmentKpiCore';
+import { computePersonalPlatformsRollupSAR, computePlatformCardMetrics } from '../services/investmentPlatformCardMetrics';
+import { computeHeadlinePersonalInvestmentRoiDecimal } from '../services/investmentKpiCore';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 import { aggregateMonthlyBudgetAcrossPortfolios, getEffectivePlanForPortfolio } from '../utils/investmentPlanPerPortfolio';
 import { computeGoalMonthlyFundingEnvelopeSar } from '../services/goalProjectionFunding';
@@ -4624,40 +4620,12 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         sukukAssetsValueSAR: 0,
       };
     }
-    const allCommodities = getPersonalCommodityHoldings(data);
     const rate = resolveSarPerUsd(data, exchangeRate);
-    const { subtotalSAR: platformsRollupSAR, dailyPnLSAR: platformsDailyPnL } = computePersonalPlatformsRollupSAR(
-      data,
-      rate,
-      simulatedPrices,
-      getAvailableCashForAccount,
-    );
-    const { netCapitalSar: platformNetCapitalSar } = computePersonalInvestmentKpisSar(data, rate, getAvailableCashForAccount);
-    const { valueSAR: commoditiesValueSAR, dailyDeltaSAR: commoditiesDailySAR } = computePersonalCommoditiesContributionSAR(
-      data,
-      rate,
-      simulatedPrices,
-    );
-
-    const { personalAssets } = getPersonalWealthData(data);
-    const sukukAssets = (personalAssets ?? []).filter((a) => a?.type === 'Sukuk');
-    const sukukAssetsValueSAR = sukukAssets.reduce((sum, a) => sum + Math.max(0, Number(a?.value) || 0), 0);
-    const sukukAssetsCostSAR = sukukAssets.reduce((sum, a) => {
-      const v = Math.max(0, Number(a?.value) || 0);
-      const pp = Number(a?.purchasePrice);
-      const cost = Number.isFinite(pp) && pp > 0 ? pp : v;
-      return sum + cost;
-    }, 0);
-
-    const totalValue = platformsRollupSAR + commoditiesValueSAR + sukukAssetsValueSAR;
-    const totalDailyPnL = platformsDailyPnL + commoditiesDailySAR;
-    /** Purchase values are SAR (same as stored currentValue / Commodities UI)—do not USD-convert. */
-    const commodityCost = allCommodities.reduce((sum: number, ch: { purchaseValue?: number }) => sum + toSAR(ch.purchaseValue ?? 0, 'SAR', rate), 0);
-    const netCapital = Math.max(0, platformNetCapitalSar + commodityCost + sukukAssetsCostSAR);
-    const totalGainLoss = totalValue - netCapital;
-    const roiRaw = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
-    const roi = Number.isFinite(roiRaw) ? roiRaw : 0;
-
+    const h = computeHeadlinePersonalInvestmentRoiDecimal(data, rate, getAvailableCashForAccount, simulatedPrices);
+    const totalValue = h.totalExposureSar;
+    const totalGainLoss = h.totalGainLossSar;
+    const roi = Number.isFinite(h.roi) ? h.roi * 100 : 0;
+    const totalDailyPnL = h.platformsDailyPnLSar + h.commoditiesDailyPnLSar;
     const previousTotalValue = totalValue - totalDailyPnL;
     const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
 
@@ -4667,9 +4635,9 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
       roi,
       totalDailyPnL,
       trendPercentage,
-      platformsRollupSAR,
-      commoditiesValueSAR,
-      sukukAssetsValueSAR,
+      platformsRollupSAR: h.platformsRollupSar,
+      commoditiesValueSAR: h.commoditiesValueSar,
+      sukukAssetsValueSAR: h.sukukAssetsValueSar,
     };
   }, [data, simulatedPrices, exchangeRate, getAvailableCashForAccount]);
 

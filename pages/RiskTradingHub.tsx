@@ -31,8 +31,8 @@ import { detectStaleMarketData } from '../services/dataQuality';
 import { MarketDataContext } from '../context/MarketDataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import type { Page, Transaction } from '../types';
-import { computePersonalNetWorthSAR } from '../services/personalNetWorth';
-import { getAllInvestmentsValueInSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { computePersonalHeadlineNetWorthSar } from '../services/personalNetWorth';
+import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 
@@ -84,11 +84,12 @@ const RiskTradingHub: React.FC<{
   }, [snaps, restoreDate]);
 
   const { exchangeRate } = useCurrency();
-  const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
-  const currentNetWorth = useMemo(
-    () => computePersonalNetWorthSAR(data ?? null, sarPerUsd, { getAvailableCashForAccount }),
-    [data, sarPerUsd, getAvailableCashForAccount]
+  const headlinePersonal = useMemo(
+    () => computePersonalHeadlineNetWorthSar(data ?? null, exchangeRate, { getAvailableCashForAccount }),
+    [data, exchangeRate, getAvailableCashForAccount],
   );
+  const sarPerUsd = headlinePersonal.sarPerUsd;
+  const currentNetWorth = headlinePersonal.netWorth;
 
   const reviewInputs = useMemo(() => {
     const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];

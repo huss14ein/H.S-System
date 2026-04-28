@@ -28,6 +28,7 @@ import { SHOCK_TEMPLATES } from '../services/shockDrillEngine';
 import { computeWealthSummaryReportModel } from '../services/wealthSummaryReportModel';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { usePrivacyMask } from '../context/PrivacyContext';
+import { useMarketData } from '../context/MarketDataContext';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { attributeNetWorthWithFlows } from '../services/portfolioAttribution';
 import { personalNetCashflowBetween } from '../services/netWorthPeriodFlows';
@@ -118,6 +119,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     const { trackAction } = useSelfLearning();
     const auth = useContext(AuthContext);
     const { exchangeRate, currency: displayCurrency } = useCurrency();
+    const { simulatedPrices } = useMarketData();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
 
     const fxBanner = useMemo(() => {
@@ -283,9 +285,9 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     const summaryMonthlyKpis = useMemo(
         () =>
             data
-                ? computeMonthlyReportFinancialKpis(data, sarPerUsd, getAvailableCashForAccount)
+                ? computeMonthlyReportFinancialKpis(data, sarPerUsd, getAvailableCashForAccount, simulatedPrices)
                 : { budgetVariance: Number.NaN, roi: Number.NaN },
-        [data, sarPerUsd, getAvailableCashForAccount]
+        [data, sarPerUsd, getAvailableCashForAccount, simulatedPrices]
     );
 
     const summaryValidationWarnings = useMemo(() => {
