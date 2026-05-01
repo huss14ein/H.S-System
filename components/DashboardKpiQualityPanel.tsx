@@ -222,14 +222,6 @@ const DashboardKpiQualityPanel: React.FC = () => {
                 )}
             </div>
 
-            {strictReconciliationMode && hardBlockOnMismatch && kpiReconciliation && !kpiReconciliation.ok && (
-                <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3">
-                    <p className="text-sm font-semibold text-red-800">Critical KPI mismatch detected</p>
-                    <p className="text-xs text-red-700 mt-1">
-                        Matching KPI cards on the Dashboard may be blocked. Resolve flagged rows above or relax hard-block in Settings.
-                    </p>
-                </div>
-            )}
         </div>
     );
 };

@@ -21,7 +21,7 @@ import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangle
 import { XCircleIcon } from '../components/icons/XCircleIcon';
 import { CloudIcon } from '../components/icons/CloudIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
-import { reconcileCashAccountBalance, reconcileCreditAccountBalance } from '../services/dataQuality';
+import { reconcileCashAccountBalance, reconcileCreditAccountBalance, buildFinancialIntegrityReport } from '../services/dataQuality';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { reconcileHoldings, reconciliationExceptionReport } from '../services/reconciliationEngine';
 import DashboardKpiQualityPanel from '../components/DashboardKpiQualityPanel';
@@ -33,7 +33,16 @@ import {
   clearExceptionQueue,
   getExceptionQueue,
 } from '../services/exceptionHandlingEngine';
-import type { InvestmentTransaction, Holding, Transaction, Account, Goal } from '../types';
+import type { InvestmentTransaction, Holding, Transaction, Account, Goal, Liability } from '../types';
+
+type SystemHealthTab = 'apis' | 'data' | 'developer';
+
+const HASH_TO_TAB = (hash: string): SystemHealthTab => {
+  const h = hash.replace(/^#/, '');
+  if (h === 'data-reconciliation' || h === 'investment-kpi-reconciliation') return 'data';
+  if (h === 'developer') return 'developer';
+  return 'apis';
+};
 
 type ServiceStatus = 'Operational' | 'Degraded Performance' | 'Outage' | 'Checking...' | 'Simulated';
 
@@ -102,6 +111,8 @@ type InvestmentKpiReconciliation = {
   holdingsCostBasisSar: number;
   fallbackInvestedSar: number;
   expectedCashFromLedgerSar: number;
+  /** Spot FX ledger cash — used for drift vs book balance (see `expectedCashFromLedgerSar` for dated-FX flows). */
+  expectedCashFromLedgerSpotSar: number;
   cashLedgerDriftSar: number;
   /** Mirrors Investments page headline cards: platforms + commodities + Sukuk. */
   investmentsHeadline: {
@@ -117,7 +128,8 @@ type InvestmentKpiReconciliation = {
   notes: string[];
 };
 
-const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
+const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
+  const [activeTab, setActiveTab] = useState<SystemHealthTab>('apis');
   const [services, setServices] = useState<Service[]>(initialServices);
   const [isLoading, setIsLoading] = useState(false);
   const [marketStatus, setMarketStatus] = useState<MarketStatusItem | null>(null);
@@ -300,6 +312,24 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     return () => window.clearInterval(timer);
   }, [runHealthChecks]);
 
+  const scrollToHashTarget = useCallback((hash: string) => {
+    const id = hash.replace(/^#/, '');
+    if (id !== 'investment-kpi-reconciliation') return;
+    window.requestAnimationFrame(() => {
+      document.getElementById('investment-kpi-reconciliation')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, []);
+
+  useEffect(() => {
+    const sync = () => {
+      setActiveTab(HASH_TO_TAB(window.location.hash || ''));
+      scrollToHashTarget(window.location.hash || '');
+    };
+    sync();
+    window.addEventListener('hashchange', sync);
+    return () => window.removeEventListener('hashchange', sync);
+  }, [scrollToHashTarget]);
+
   const overallStatus = useMemo((): ServiceStatus => {
     if (services.some((s) => s.status === 'Outage')) return 'Outage';
     if (services.some((s) => s.status === 'Degraded Performance')) return 'Degraded Performance';
@@ -339,6 +369,11 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     const goals = (financialData.goals ?? []) as Goal[];
     const rate = resolveSarPerUsd(financialData, exchangeRate);
     const personalAccountIds = new Set(accounts.map((a) => a.id));
+
+    const ledgerReport = buildFinancialIntegrityReport(accounts, transactions, {
+      sarPerUsd: rate,
+      liabilities: (financialData.liabilities ?? []) as Liability[],
+    });
 
     const integrity = validateSystemIntegrity({
       accounts: accounts.map((a) => ({ id: a.id, balance: a.balance })),
@@ -411,7 +446,8 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
         b.totalWithdrawnSar -
         b.feesSar -
         b.vatSar;
-      const cashLedgerDriftSar = brokerageCashRawSar - expectedCashFromLedgerSar;
+      /** Book balances are spot-valued; reconciliation must use spot ledger sums (not transaction-date USD FX). */
+      const cashLedgerDriftSar = brokerageCashRawSar - b.expectedCashFromLedgerSpotSar;
 
       const getCashStrict = (id: string) => {
         const c = getAvailableCash(id);
@@ -453,7 +489,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       }
       if (Math.abs(cashLedgerDriftSar) > 50) {
         notes.push(
-          'Cash drift uses signed broker cash (before per-currency flooring) vs the ledger identity. Large drift usually means missing trades, mis-tagged currency, or FX date mismatch.',
+          'Cash drift compares signed broker balances to ledger-implied cash using the **same spot** SAR/USD as the UI. If drift persists, check missing trades or wrong currency on rows — not historical FX.',
         );
       }
       if (b.feesSar > 0 || b.vatSar > 0) {
@@ -485,6 +521,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
         holdingsCostBasisSar: b.holdingsCostBasisSar,
         fallbackInvestedSar: b.fallbackInvestedSar,
         expectedCashFromLedgerSar,
+        expectedCashFromLedgerSpotSar: b.expectedCashFromLedgerSpotSar,
         cashLedgerDriftSar,
         investmentsHeadline: {
           totalValueSar: headlineTotalValueSar,
@@ -598,8 +635,9 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       investmentKpiReconciliation,
       repairSuggestions,
       queue,
+      ledgerReport,
     };
-  }, [appDataCtx, exchangeRate]);
+  }, [appDataCtx?.data, appDataCtx?.getAvailableCashForAccount, exchangeRate]);
 
   const sarPerUsdHealth = useMemo(
     () => resolveSarPerUsd(appDataCtx?.data ?? null, exchangeRate),
@@ -687,9 +725,160 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
         </div>
       </div>
 
-      <OverallStatusCard status={overallStatus} />
+      <nav className="flex flex-wrap gap-2 border-b border-slate-200 pb-3" aria-label="System health sections">
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('apis');
+            const base = `${window.location.pathname}${window.location.search}`;
+            window.history.replaceState(null, '', base);
+          }}
+          className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${
+            activeTab === 'apis' ? 'bg-primary text-white shadow-sm' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+          }`}
+        >
+          APIs &amp; probes
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('data');
+            window.location.hash = 'data-reconciliation';
+          }}
+          className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${
+            activeTab === 'data' ? 'bg-primary text-white shadow-sm' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+          }`}
+        >
+          Data reconciliation
+        </button>
+        {import.meta.env.DEV && (
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('developer');
+              window.location.hash = 'developer';
+            }}
+            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${
+              activeTab === 'developer' ? 'bg-primary text-white shadow-sm' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            Developer
+          </button>
+        )}
+      </nav>
 
-      {appDataCtx?.data && <DashboardKpiQualityPanel />}
+      {activeTab === 'data' && (
+        <div id="data-reconciliation" className="space-y-6 scroll-mt-24">
+          <section className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4 text-sm text-slate-700">
+            <p className="font-semibold text-slate-900">Single source of truth</p>
+            <p className="mt-1 leading-relaxed">
+              Headline net worth and dashboard KPIs use shared services:{' '}
+              <code className="text-xs bg-white/80 px-1 rounded border border-indigo-100">computePersonalHeadlineNetWorthSar</code> in{' '}
+              <code className="text-xs bg-white/80 px-1 rounded border border-indigo-100">personalNetWorth.ts</code>,{' '}
+              <code className="text-xs bg-white/80 px-1 rounded border border-indigo-100">computeDashboardKpiSnapshot</code> in{' '}
+              <code className="text-xs bg-white/80 px-1 rounded border border-indigo-100">dashboardKpiSnapshot.ts</code>, and investment ROI in{' '}
+              <code className="text-xs bg-white/80 px-1 rounded border border-indigo-100">investmentKpiCore.ts</code>. This tab audits ledger consistency; it does not re-derive those headline figures on a separate path.
+            </p>
+          </section>
+
+          {appDataCtx?.data && <DashboardKpiQualityPanel />}
+
+          {integritySummary && (
+            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-800 mb-1">Full ledger report</h3>
+              <p className="text-xs text-slate-600 mb-3">
+                Balances vs transaction nets, transfer groups, and credit-card mirror checks via{' '}
+                <code className="text-[11px]">buildFinancialIntegrityReport</code>.
+              </p>
+              <p className={`text-sm font-medium mb-2 ${integritySummary.ledgerReport.isAccurate ? 'text-emerald-700' : 'text-amber-800'}`}>
+                {integritySummary.ledgerReport.isAccurate
+                  ? 'No warning or critical issues from this pass.'
+                  : `${integritySummary.ledgerReport.issues.length} issue(s) — review below.`}
+              </p>
+              {integritySummary.ledgerReport.issues.length > 0 && (
+                <div className="mt-2 max-h-52 overflow-y-auto border border-slate-200 rounded-lg">
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-slate-50 sticky top-0">
+                      <tr className="text-left text-slate-600">
+                        <th className="p-2">Severity</th>
+                        <th className="p-2">Code</th>
+                        <th className="p-2">Message</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {integritySummary.ledgerReport.issues.map((iss, i) => (
+                        <tr key={`${iss.code}-${i}`} className="border-t border-slate-100">
+                          <td className="p-2">{iss.severity}</td>
+                          <td className="p-2 font-mono">{iss.code}</td>
+                          <td className="p-2 text-slate-800">{iss.message}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <details className="mt-3 rounded-lg border border-slate-100 bg-slate-50/50 p-2">
+                <summary className="cursor-pointer text-sm font-semibold text-slate-800">Account ledger summaries</summary>
+                <div className="mt-2 max-h-56 overflow-y-auto">
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-slate-100">
+                      <tr className="text-left text-slate-600">
+                        <th className="p-2">Account</th>
+                        <th className="p-2">Type</th>
+                        <th className="p-2">Stored</th>
+                        <th className="p-2">Tx net</th>
+                        <th className="p-2">Drift</th>
+                        <th className="p-2">#Tx</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {integritySummary.ledgerReport.accountSummaries.map((row) => (
+                        <tr key={row.accountId} className="border-t border-slate-100">
+                          <td className="p-2 font-mono break-all">{row.accountId}</td>
+                          <td className="p-2">{row.accountType}</td>
+                          <td className="p-2 tabular-nums">{row.storedBalance.toFixed(2)}</td>
+                          <td className="p-2 tabular-nums">{row.transactionNet.toFixed(2)}</td>
+                          <td className="p-2 tabular-nums">{row.drift.toFixed(2)}</td>
+                          <td className="p-2">{row.transactionCount}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+              <details className="mt-2 rounded-lg border border-slate-100 bg-slate-50/50 p-2">
+                <summary className="cursor-pointer text-sm font-semibold text-slate-800">Transfer groups</summary>
+                <div className="mt-2 max-h-48 overflow-y-auto">
+                  {integritySummary.ledgerReport.transferGroups.length === 0 ? (
+                    <p className="text-xs text-slate-500">No transfer groups in ledger.</p>
+                  ) : (
+                    <table className="min-w-full text-xs">
+                      <thead className="bg-slate-100">
+                        <tr className="text-left text-slate-600">
+                          <th className="p-2">Group ID</th>
+                          <th className="p-2">Out #</th>
+                          <th className="p-2">In #</th>
+                          <th className="p-2">Out SAR</th>
+                          <th className="p-2">In SAR</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {integritySummary.ledgerReport.transferGroups.map((g) => (
+                          <tr key={g.transferGroupId} className="border-t border-slate-100">
+                            <td className="p-2 font-mono break-all">{g.transferGroupId}</td>
+                            <td className="p-2">{g.outCount}</td>
+                            <td className="p-2">{g.inCount}</td>
+                            <td className="p-2 tabular-nums">{g.outAmountSar.toFixed(2)}</td>
+                            <td className="p-2 tabular-nums">{g.inAmountSar.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </details>
+            </section>
+          )}
 
       {integritySummary && (
         <div className="bg-white shadow rounded-lg p-4 border border-slate-200">
@@ -894,10 +1083,11 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
                     <p className="tabular-nums text-slate-700">VAT: {integritySummary.investmentKpiReconciliation.vatSar.toFixed(2)}</p>
                   </div>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
-                    <p className="font-semibold text-slate-700">Expected cash (ledger identity)</p>
-                    <p className="tabular-nums text-slate-900 mt-1">{integritySummary.investmentKpiReconciliation.expectedCashFromLedgerSar.toFixed(2)} SAR</p>
+                    <p className="font-semibold text-slate-700">Expected cash (reconciliation, spot FX)</p>
+                    <p className="tabular-nums text-slate-900 mt-1">{integritySummary.investmentKpiReconciliation.expectedCashFromLedgerSpotSar.toFixed(2)} SAR</p>
                     <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
-                      deposits − buys + sells + dividends − withdrawals − fees − VAT
+                      Same identity as left, using spot SAR/USD so it matches book balances. Dated-FX total (capital/ROI):{' '}
+                      {integritySummary.investmentKpiReconciliation.expectedCashFromLedgerSar.toFixed(2)} SAR
                     </p>
                   </div>
                   <div className={`rounded-lg border p-2 ${
@@ -919,7 +1109,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
                     <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
                       {Math.abs(integritySummary.investmentKpiReconciliation.cashLedgerDriftSar) <= 50
                         ? 'Looks consistent.'
-                        : 'Likely missing entries, wrong currency tags, or FX date mismatch.'}
+                        : 'Likely missing entries or wrong currency tags on investment transactions.'}
                     </p>
                   </div>
                 </div>
@@ -936,6 +1126,28 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
           )}
         </div>
       )}
+
+          <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h3 className="text-sm font-semibold text-slate-800 mb-1">Statement imports</h3>
+            <p className="text-sm text-slate-600">
+              Reconcile uploaded statements against your ledger on Statement History. That page keeps the operational Reconcile workflow; this tab focuses on diagnostics.
+            </p>
+            {setActivePage && (
+              <button
+                type="button"
+                onClick={() => setActivePage('Statement History')}
+                className="mt-3 px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800"
+              >
+                Open Statement History
+              </button>
+            )}
+          </section>
+        </div>
+      )}
+
+      {activeTab === 'apis' && (
+      <>
+      <OverallStatusCard status={overallStatus} />
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <Metric title="Health score" value={`${healthScore}/100`} tone={healthScore >= 85 ? 'good' : healthScore >= 60 ? 'warn' : 'bad'} />
@@ -1036,6 +1248,18 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
           </ul>
         )}
       </div>
+      </>
+      )}
+
+      {activeTab === 'developer' && import.meta.env.DEV && (
+        <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-700">
+          <p className="font-semibold text-slate-900">Developer</p>
+          <p className="mt-1 leading-relaxed">
+            Live bucket-sum vs net worth checks log in the browser console from the net worth composition chart (dev). Use the <strong>Data reconciliation</strong> tab for the full{' '}
+            <code className="text-xs">buildFinancialIntegrityReport</code> output.
+          </p>
+        </div>
+      )}
     </div>
   );
 };

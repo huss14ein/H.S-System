@@ -104,17 +104,18 @@ export function buildTransactionPayloadVariants(
     budgetCategory: budgetCat,
   });
 
-  const variants: Record<string, unknown>[] = [payloadWithSnakeCase, payloadWithCamelCase];
+  // Prefer camelCase first: many Supabase schemas use quoted "accountId" only (no account_id).
+  const variants: Record<string, unknown>[] = [payloadWithCamelCase, payloadWithSnakeCase];
   const hasNote = transactionClean.note != null && String(transactionClean.note).trim() !== '';
   if (hasNote) {
     const { note: _n0, ...snakeNoNote } = { ...payloadWithSnakeCase };
     const { note: _n1, ...camelNoNote } = { ...payloadWithCamelCase };
     // Try full payloads without note before falling back to minimal core payloads,
     // so legacy schemas missing only `note` keep metadata columns intact.
-    variants.push(snakeNoNote);
     variants.push(camelNoNote);
+    variants.push(snakeNoNote);
   }
-  variants.push(payloadWithSnakeCaseCore);
   variants.push(payloadWithCamelCaseCore);
+  variants.push(payloadWithSnakeCaseCore);
   return variants;
 }

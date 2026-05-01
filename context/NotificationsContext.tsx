@@ -32,6 +32,8 @@ export interface AppNotification {
   date: string;
   isRead: boolean;
   pageLink: Page;
+  /** e.g. #data-reconciliation — applied after navigation */
+  pageHash?: string;
   pageAction?: string;
   symbol?: string;
   severity?: 'info' | 'warning' | 'urgent';
@@ -321,9 +323,10 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         message: `Cash account balance may not match recorded transactions: ${driftCashNames.slice(0, 3).join(', ')}${driftCashNames.length > 3 ? '…' : ''}.`,
         date: now.toISOString(),
         isRead: false,
-        pageLink: 'Accounts',
+        pageLink: 'System & APIs Health',
+        pageHash: '#data-reconciliation',
         severity: 'warning',
-        actionHint: 'Open Accounts — compare “transaction net” to current balance; add missing history or an opening-balance adjustment.',
+        actionHint: 'Open System & APIs Health → Data reconciliation for cash drift and repair suggestions.',
       });
     }
 

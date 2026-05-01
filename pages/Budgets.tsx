@@ -332,7 +332,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const monthStartDay = useMemo(() => {
         const raw = Number((data?.settings as any)?.monthStartDay ?? (data?.settings as any)?.month_start_day ?? 1);
         if (!Number.isFinite(raw)) return 1;
-        return Math.min(28, Math.max(1, Math.round(raw)));
+        return Math.min(31, Math.max(1, Math.round(raw)));
     }, [data?.settings]);
 
     const [currentDate, setCurrentDate] = useState(new Date());
@@ -2572,7 +2572,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                         {setActivePage && (
                                             <button
                                                 type="button"
-                                                onClick={() => setActivePage('System & APIs Health')}
+                                                onClick={() => {
+                                                    setActivePage('System & APIs Health');
+                                                    window.location.hash = 'data-reconciliation';
+                                                }}
                                                 className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800 hover:bg-slate-50"
                                             >
                                                 <LinkIcon className="h-4 w-4" />

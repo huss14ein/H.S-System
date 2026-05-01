@@ -1,6 +1,15 @@
 import type { Account, FinancialData, Holding, InvestmentPortfolio, InvestmentTransaction } from '../types';
-import { getAllInvestmentsValueInSAR, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
-import { inferInvestmentTransactionCurrency, resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
+import {
+  getAllInvestmentsValueInSAR,
+  toSAR,
+  tradableCashBucketToSAR,
+  tradableCashBucketToSARSigned,
+} from '../utils/currencyMath';
+import {
+  inferInvestmentTransactionCurrency,
+  resolveCanonicalAccountId,
+  resolveInvestmentTransactionAccountId,
+} from '../utils/investmentLedgerCurrency';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { investmentTransactionCashAmountSarDated } from '../utils/investmentTransactionSar';
@@ -10,6 +19,7 @@ import {
   computePersonalCommoditiesContributionSAR,
 } from './investmentPlatformCardMetrics';
 import { getPersonalCommodityHoldings, getPersonalWealthData } from '../utils/wealthScope';
+import { brokerCashBucketsFromInvestmentAccount } from './investmentCashLedger';
 
 type GetAvailableCashFn = (accountId: string) => { SAR?: number; USD?: number } | null | undefined;
 
@@ -51,6 +61,11 @@ export type PersonalInvestmentKpiBreakdown = PersonalInvestmentKpisSar & {
   dividendsSar: number;
   feesSar: number;
   vatSar: number;
+  /**
+   * Cash implied by ledger flows using **spot** SAR/USD (`sarPerUsd`), same basis as book balances.
+   * Compare to signed broker cash for drift — **not** the dated-FX flow sums used for capital/ROI.
+   */
+  expectedCashFromLedgerSpotSar: number;
 };
 
 /**
@@ -97,6 +112,13 @@ export function computePersonalInvestmentKpiBreakdown(
       uiExchangeRate: sarPerUsd,
     }) || toSAR(getInvestmentTransactionCashAmount(t as any), inferInvestmentTransactionCurrency(t as any, accounts, investments), sarPerUsd);
 
+  /** Spot FX — matches how broker `balance` is converted for reconciliation (avoids false drift from historical USD rates). */
+  const invTxSarSpot = (t: InvestmentTransaction): number => {
+    const amount = Math.abs(getInvestmentTransactionCashAmount(t as any));
+    if (!(amount > 0)) return 0;
+    return toSAR(amount, inferInvestmentTransactionCurrency(t as any, accounts, investments), sarPerUsd);
+  };
+
   const depositsRecordedSar = invTx
     .filter((t) => isInvestmentTransactionType(t.type, 'deposit'))
     .reduce((sum, t) => sum + invTxSar(t), 0);
@@ -114,6 +136,22 @@ export function computePersonalInvestmentKpiBreakdown(
     .reduce((sum, t) => sum + invTxSar(t), 0);
   const feesSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'fee')).reduce((sum, t) => sum + invTxSar(t), 0);
   const vatSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'vat')).reduce((sum, t) => sum + invTxSar(t), 0);
+
+  const depositsSpotSar = invTx
+    .filter((t) => isInvestmentTransactionType(t.type, 'deposit'))
+    .reduce((sum, t) => sum + invTxSarSpot(t), 0);
+  const withdrawalsSpotSar = invTx
+    .filter((t) => isInvestmentTransactionType(t.type, 'withdrawal'))
+    .reduce((sum, t) => sum + invTxSarSpot(t), 0);
+  const buysSpotSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'buy')).reduce((sum, t) => sum + invTxSarSpot(t), 0);
+  const sellsSpotSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'sell')).reduce((sum, t) => sum + invTxSarSpot(t), 0);
+  const dividendsSpotSar = invTx
+    .filter((t) => isInvestmentTransactionType(t.type, 'dividend'))
+    .reduce((sum, t) => sum + invTxSarSpot(t), 0);
+  const feesSpotSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'fee')).reduce((sum, t) => sum + invTxSarSpot(t), 0);
+  const vatSpotSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'vat')).reduce((sum, t) => sum + invTxSarSpot(t), 0);
+  const expectedCashFromLedgerSpotSar =
+    depositsSpotSar - buysSpotSar + sellsSpotSar + dividendsSpotSar - withdrawalsSpotSar - feesSpotSar - vatSpotSar;
 
   /**
    * Heuristic when deposit history is empty: approximates “funds committed” from net purchases and
@@ -173,7 +211,94 @@ export function computePersonalInvestmentKpiBreakdown(
     dividendsSar,
     feesSar,
     vatSar,
+    expectedCashFromLedgerSpotSar,
   };
+}
+
+export type InvestmentPlatformCashDriftRow = {
+  accountId: string;
+  name: string;
+  brokerSarSigned: number;
+  expectedCashSpotSar: number;
+  driftSar: number;
+  hasLedgerFlows: boolean;
+};
+
+/**
+ * Per-platform broker cash vs ledger-implied cash (spot FX), for Investments / System Health banners.
+ * Matches {@link computePersonalInvestmentKpiBreakdown} aggregate identity when summed across platforms.
+ */
+export function computePersonalInvestmentCashDriftByPlatform(
+  data: FinancialData,
+  sarPerUsd: number,
+): InvestmentPlatformCashDriftRow[] {
+  const d = data as FinancialData & {
+    personalAccounts?: Account[];
+    personalInvestments?: InvestmentPortfolio[];
+  };
+  const accounts = (d.personalAccounts ?? data.accounts ?? []) as Account[];
+  const investments = (d.personalInvestments ?? data.investments ?? []) as InvestmentPortfolio[];
+  const personalIds = new Set(accounts.map((a) => a.id));
+  const txs = (data.investmentTransactions ?? []) as InvestmentTransaction[];
+
+  const invTxSarSpot = (t: InvestmentTransaction): number => {
+    const amount = Math.abs(getInvestmentTransactionCashAmount(t as any));
+    if (!(amount > 0)) return 0;
+    return toSAR(amount, inferInvestmentTransactionCurrency(t as any, accounts, investments), sarPerUsd);
+  };
+
+  const rows: InvestmentPlatformCashDriftRow[] = [];
+  for (const acc of accounts) {
+    if (acc.type !== 'Investment' || !personalIds.has(acc.id)) continue;
+    const canonicalId = resolveCanonicalAccountId(acc.id, accounts) ?? acc.id;
+    const accountTxs = txs.filter(
+      (t) => resolveInvestmentTransactionAccountId(t as any, accounts, investments) === canonicalId,
+    );
+
+    const hasLedgerFlows = accountTxs.some(
+      (t) =>
+        isInvestmentTransactionType(t.type, 'deposit') ||
+        isInvestmentTransactionType(t.type, 'withdrawal') ||
+        isInvestmentTransactionType(t.type, 'buy') ||
+        isInvestmentTransactionType(t.type, 'sell') ||
+        isInvestmentTransactionType(t.type, 'dividend') ||
+        isInvestmentTransactionType(t.type, 'fee') ||
+        isInvestmentTransactionType(t.type, 'vat'),
+    );
+
+    const brokerBuckets = brokerCashBucketsFromInvestmentAccount(acc);
+    const brokerSarSigned = tradableCashBucketToSARSigned(brokerBuckets, sarPerUsd);
+
+    let depositsSar = 0;
+    let withdrawalsSar = 0;
+    let buysSar = 0;
+    let sellsSar = 0;
+    let dividendsSar = 0;
+    let feesSar = 0;
+    let vatSar = 0;
+    for (const t of accountTxs) {
+      const sar = invTxSarSpot(t);
+      if (isInvestmentTransactionType(t.type, 'deposit')) depositsSar += sar;
+      else if (isInvestmentTransactionType(t.type, 'withdrawal')) withdrawalsSar += sar;
+      else if (isInvestmentTransactionType(t.type, 'buy')) buysSar += sar;
+      else if (isInvestmentTransactionType(t.type, 'sell')) sellsSar += sar;
+      else if (isInvestmentTransactionType(t.type, 'dividend')) dividendsSar += sar;
+      else if (isInvestmentTransactionType(t.type, 'fee')) feesSar += sar;
+      else if (isInvestmentTransactionType(t.type, 'vat')) vatSar += sar;
+    }
+    const expectedCashSpotSar = depositsSar - buysSar + sellsSar + dividendsSar - withdrawalsSar - feesSar - vatSar;
+    const driftSar = brokerSarSigned - expectedCashSpotSar;
+
+    rows.push({
+      accountId: canonicalId,
+      name: String(acc.name ?? 'Investment account'),
+      brokerSarSigned,
+      expectedCashSpotSar,
+      driftSar,
+      hasLedgerFlows,
+    });
+  }
+  return rows;
 }
 
 export function computePersonalInvestmentKpisSar(

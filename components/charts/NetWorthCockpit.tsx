@@ -176,8 +176,9 @@ export default function NetWorthCockpit(props: {
   onOpenInvestments?: () => void;
   onOpenAccounts?: () => void;
   onOpenAssets?: () => void;
+  onOpenDataReconciliation?: () => void;
 }) {
-  const { title = 'Net worth', onOpenSummary, onOpenInvestments, onOpenAccounts, onOpenAssets } = props;
+  const { title = 'Net worth', onOpenSummary, onOpenInvestments, onOpenAccounts, onOpenAssets, onOpenDataReconciliation } = props;
   const { data, getAvailableCashForAccount } = useContext(DataContext)!;
   const { exchangeRate } = useCurrency();
   const { formatCurrencyString } = useFormatCurrency();
@@ -478,7 +479,15 @@ export default function NetWorthCockpit(props: {
             <p className="text-sm text-slate-500">Add accounts and assets to populate this view.</p>
           )}
           <p className="mt-3 text-[11px] text-slate-500 leading-relaxed">
-            Tip: If something looks off, open <span className="font-semibold text-slate-700">System &amp; APIs Health</span> for reconciliation checks.
+            Tip: If something looks off,{' '}
+            {onOpenDataReconciliation ? (
+              <button type="button" className="font-semibold text-primary hover:underline" onClick={onOpenDataReconciliation}>
+                open System &amp; APIs Health — Data reconciliation
+              </button>
+            ) : (
+              <span className="font-semibold text-slate-700">System &amp; APIs Health → Data reconciliation</span>
+            )}
+            .
           </p>
         </aside>
 
@@ -744,7 +753,15 @@ export default function NetWorthCockpit(props: {
               </p>
             )}
             <p className="mt-3 text-[11px] text-slate-500 leading-relaxed">
-              If something looks wrong, open <span className="font-semibold text-slate-700">System &amp; APIs Health</span> for reconciliation checks.
+              If something looks wrong,{' '}
+              {onOpenDataReconciliation ? (
+                <button type="button" className="font-semibold text-primary hover:underline" onClick={onOpenDataReconciliation}>
+                  open System &amp; APIs Health — Data reconciliation
+                </button>
+              ) : (
+                <span className="font-semibold text-slate-700">System &amp; APIs Health → Data reconciliation</span>
+              )}
+              .
             </p>
           </div>
         </section>

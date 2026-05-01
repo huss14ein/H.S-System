@@ -16,6 +16,18 @@ describe('personalNetWorth', () => {
     expect(computePersonalNetWorthSAR(null, 3.75)).toBe(0);
   });
 
+  it('counts linked credit card debt once (liability only, not mirrored account)', () => {
+    const data: any = {
+      accounts: [{ id: 'cc1', type: 'Credit', balance: -500, currency: 'SAR' }],
+      liabilities: [{ type: 'Credit Card', amount: -500, status: 'Active', accountId: 'cc1' }],
+      assets: [],
+      commodityHoldings: [],
+      investments: [],
+    };
+    const breakdown = computePersonalNetWorthBreakdownSAR(data, 3.75);
+    expect(breakdown.totalDebt).toBe(500);
+  });
+
   it('computes assets, debt, receivable, and net worth consistently', () => {
     const data: any = {
       accounts: [

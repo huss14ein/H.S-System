@@ -1,4 +1,4 @@
-import type { Account, Transaction } from '../../types';
+import type { Account, Liability, Transaction } from '../../types';
 import { reconcileCashAccountBalance, reconcileCreditAccountBalance, transactionNetForAccount } from './accountReconciliation';
 
 const MONEY_EPSILON = 0.0001;
@@ -14,12 +14,16 @@ export interface IntegrityIssue {
     | 'ACCOUNT_BALANCE_DRIFT'
     | 'TRANSFER_GROUP_MISSING_LEG'
     | 'TRANSFER_GROUP_AMOUNT_MISMATCH'
-    | 'UNPAIRED_TRANSFER';
+    | 'UNPAIRED_TRANSFER'
+    | 'CREDIT_CARD_LIABILITY_NOT_LINKED'
+    | 'CREDIT_CARD_MIRROR_DRIFT'
+    | 'CREDIT_CARD_INVALID_ACCOUNT_LINK';
   severity: IntegritySeverity;
   message: string;
   accountId?: string;
   transactionId?: string;
   transferGroupId?: string;
+  liabilityId?: string;
 }
 
 export interface AccountLedgerSummary {
@@ -65,7 +69,7 @@ function isFiniteMoney(v: unknown): boolean {
 export function buildFinancialIntegrityReport(
   accounts: Account[],
   transactions: Transaction[],
-  options?: { sarPerUsd?: number }
+  options?: { sarPerUsd?: number; liabilities?: Liability[] }
 ): FinancialIntegrityReport {
   const issues: IntegrityIssue[] = [];
   const allAccounts = accounts ?? [];
@@ -214,6 +218,47 @@ export function buildFinancialIntegrityReport(
         transferGroupId: gid,
         message: `Transfer group ${gid} principal mismatch (SAR-normalized): out ${outAmountSar.toFixed(2)} vs in ${inAmountSar.toFixed(2)}.`,
       });
+    }
+  }
+
+  const liabs = options?.liabilities ?? [];
+  if (liabs.length > 0) {
+    const accountById = new Map(allAccounts.map((a) => [a.id, a]));
+    const DRIFT_EPS = 0.02;
+    for (const l of liabs) {
+      if (l.type !== 'Credit Card') continue;
+      if ((l.status ?? 'Active') !== 'Active') continue;
+      const link = (l as Liability & { account_id?: string }).accountId ?? (l as { account_id?: string }).account_id;
+      if (link == null || String(link).trim() === '') {
+        issues.push({
+          code: 'CREDIT_CARD_LIABILITY_NOT_LINKED',
+          severity: 'warning',
+          liabilityId: l.id,
+          message: `Credit card liability "${l.name}" is not linked to a Credit account (link for reconciliation).`,
+        });
+        continue;
+      }
+      const acc = accountById.get(String(link));
+      if (!acc || acc.type !== 'Credit') {
+        issues.push({
+          code: 'CREDIT_CARD_INVALID_ACCOUNT_LINK',
+          severity: 'warning',
+          liabilityId: l.id,
+          accountId: String(link),
+          message: `Credit card liability "${l.name}" links to a missing or non-Credit account.`,
+        });
+        continue;
+      }
+      const drift = (Number(acc.balance) || 0) - (Number(l.amount) || 0);
+      if (Math.abs(drift) > DRIFT_EPS) {
+        issues.push({
+          code: 'CREDIT_CARD_MIRROR_DRIFT',
+          severity: 'warning',
+          liabilityId: l.id,
+          accountId: acc.id,
+          message: `Credit card "${l.name}": liability amount ${Number(l.amount).toFixed(2)} vs account balance ${Number(acc.balance).toFixed(2)} (drift ${drift.toFixed(2)}).`,
+        });
+      }
     }
   }
 

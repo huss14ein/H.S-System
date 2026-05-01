@@ -19,6 +19,8 @@ export function countsAsExpenseForCashflowKpi(t: {
   type?: string;
   category?: string;
 }): boolean {
+  /** Card/loan payments recorded as `debt_payment` are not “spending” for budget/cashflow KPIs. */
+  if (normalizedTxType(t) === 'debt_payment') return false;
   return normalizedTxType(t) === 'expense' && !isInternalTransferTransaction(t);
 }
 

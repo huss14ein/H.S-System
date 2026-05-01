@@ -11,6 +11,7 @@ import {
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import {
   addMonthsToKey,
+  effectiveMonthStartDate,
   financialMonthRange,
   financialMonthRangeFromKey,
   type FinancialMonthKey,
@@ -114,7 +115,7 @@ export function computeDashboardKpiSnapshot(
       lastMonthPnL !== 0 ? ((monthlyPnL - lastMonthPnL) / Math.abs(lastMonthPnL)) * 100 : monthlyPnL > 0 ? 100 : 0;
 
     const startKey = addMonthsToKey(currentRange.key, -6);
-    const sixMoStart = new Date(startKey.year, startKey.month - 1, Number(monthStartDay) || 1);
+    const sixMoStart = effectiveMonthStartDate(startKey.year, startKey.month, monthStartDay);
     const incomeLast6Mo = transactions.filter(
       (t) => countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= sixMoStart,
     );

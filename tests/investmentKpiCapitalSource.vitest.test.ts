@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Account, FinancialData, Holding, InvestmentPortfolio, InvestmentTransaction } from '../types';
-import { computePersonalInvestmentKpiBreakdown } from '../services/investmentKpiCore';
+import { computePersonalInvestmentCashDriftByPlatform, computePersonalInvestmentKpiBreakdown } from '../services/investmentKpiCore';
 
 const SAR_PER_USD = 3.75;
 const PLATFORM_ID = 'platform-inv-1';
@@ -122,5 +122,26 @@ describe('investmentKpiCore capital source when deposits missing', () => {
     expect(b.depositsRecordedSar).toBe(0);
     expect(b.fallbackInvestedSar).toBeGreaterThan(400);
     expect(b.capitalSource).toBe('cost_basis_fallback');
+  });
+
+  it('exposes spot-based expected cash for reconciliation (matches signed broker at spot)', () => {
+    const acct = { ...baseAccount(), balance: 10_000 };
+    const data = {
+      accounts: [acct],
+      personalAccounts: [acct],
+      investments: [basePortfolio()],
+      personalInvestments: [basePortfolio()],
+      investmentTransactions: [tx({ id: 'd1', type: 'deposit', total: 10_000 })],
+      transactions: [],
+      budgets: [],
+    } as unknown as FinancialData;
+
+    const getCash = () => ({ SAR: 10_000, USD: 0 });
+    const b = computePersonalInvestmentKpiBreakdown(data, SAR_PER_USD, getCash);
+    expect(b.expectedCashFromLedgerSpotSar).toBeCloseTo(10_000, 5);
+
+    const rows = computePersonalInvestmentCashDriftByPlatform(data, SAR_PER_USD);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].driftSar).toBeCloseTo(0, 3);
   });
 });

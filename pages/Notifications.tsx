@@ -141,6 +141,11 @@ const Notifications: React.FC<{
           showToast('This alert action is not supported in this app version. Opened the related page instead.', 'info');
         }
         setActivePage(n.pageLink);
+        if (n.pageHash) {
+          window.setTimeout(() => {
+            window.location.hash = n.pageHash!.replace(/^#/, '');
+          }, 0);
+        }
       }
     }
   };

@@ -61,7 +61,6 @@ import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { logKpiReconciliationDrift } from '../services/kpiDriftTelemetry';
 import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
 import { useSelfLearning } from '../context/SelfLearningContext';
-import { useDashboardReconciliationPrefs } from '../hooks/useDashboardReconciliationPrefs';
 import { useMarketData } from '../context/MarketDataContext';
 
 interface ExtendedBudget extends Budget {
@@ -403,13 +402,6 @@ const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }>
 type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'emergencyFund' | 'budgetVariance' | 'investmentRoi' | 'investmentPlan' | 'wealthUltra' | 'marketEvents';
 
 const KPI_CARD_ORDER: KpiCardKey[] = ['netWorth', 'monthlyPnL', 'emergencyFund', 'budgetVariance', 'investmentRoi', 'investmentPlan', 'wealthUltra', 'marketEvents'];
-const RECON_KEY_TO_CARD: Record<string, KpiCardKey> = {
-    netWorth: 'netWorth',
-    monthlyPnL: 'monthlyPnL',
-    budgetVariance: 'budgetVariance',
-    investmentRoi: 'investmentRoi',
-    emergencyFundMonths: 'emergencyFund',
-};
 const AI_SUMMARY_LANG_KEY = 'finova_dashboard_ai_summary_lang_v1';
 
 const SYSTEM_HEALTH_PAGE = 'System & APIs Health' as Page;
@@ -424,7 +416,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
     const { maskBalance } = usePrivacyMask();
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
     const [isAdmin, setIsAdmin] = useState(false);
-    const { strictReconciliationMode, hardBlockOnMismatch } = useDashboardReconciliationPrefs(auth?.user?.id);
     const lastTelemetrySignatureRef = React.useRef<string>('');
     const kpiDensity = 'compact' as const;
     const todosOpt = useTodosOptional();
@@ -783,18 +774,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
 
     const getTrendString = (trend: number = 0) => trend.toFixed(1) + '%';
     const visibleKpiOrder: KpiCardKey[] = isAdmin ? KPI_CARD_ORDER : KPI_CARD_ORDER.filter((k) => k !== 'netWorth');
-    const blockedKpiCards = useMemo(() => {
-        if (!strictReconciliationMode || !hardBlockOnMismatch || !kpiReconciliation || kpiReconciliation.ok) return new Set<KpiCardKey>();
-        const s = new Set<KpiCardKey>();
-        kpiReconciliation.rows.filter((r) => !r.withinThreshold).forEach((r) => {
-            const card = RECON_KEY_TO_CARD[r.key];
-            if (card) s.add(card);
-        });
-        return s;
-    }, [strictReconciliationMode, hardBlockOnMismatch, kpiReconciliation]);
-
     useEffect(() => {
-        if (!strictReconciliationMode || !kpiReconciliation || kpiReconciliation.ok) return;
+        if (!kpiReconciliation || kpiReconciliation.ok) return;
         const day = new Date().toISOString().slice(0, 10);
         const signature = `${day}:${kpiReconciliation.rows.filter((r) => !r.withinThreshold).map((r) => r.key).join(',')}:${kpiReconciliation.mismatchCount}`;
         if (lastTelemetrySignatureRef.current === signature) return;
@@ -802,8 +783,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         void logKpiReconciliationDrift({
             page: 'Dashboard',
             userId: auth?.user?.id ?? null,
-            strictMode: strictReconciliationMode,
-            hardBlock: hardBlockOnMismatch,
+            strictMode: false,
+            hardBlock: false,
             mismatchCount: kpiReconciliation.mismatchCount,
             rows: kpiReconciliation.rows.map((r) => ({
                 key: r.key,
@@ -813,10 +794,11 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 deltaPct: r.deltaPct,
             })),
         });
-    }, [strictReconciliationMode, hardBlockOnMismatch, kpiReconciliation, auth?.user?.id]);
+    }, [kpiReconciliation, auth?.user?.id]);
 
     const goToInvestmentKpiReconciliation = useCallback(() => {
         setActivePage(SYSTEM_HEALTH_PAGE);
+        window.location.hash = 'investment-kpi-reconciliation';
         window.setTimeout(() => {
             document.getElementById('investment-kpi-reconciliation')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }, 480);
@@ -900,17 +882,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                             <p>You have {uncategorizedTransactions.length} uncategorized transaction(s) that need your review to keep your budget accurate.</p>
                         </div>
                     </div>
-                </div>
-            )}
-
-            {blockedKpiCards.size > 0 && (
-                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-3 flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-sm text-amber-950">
-                        <strong>{blockedKpiCards.size}</strong> KPI card(s) blocked due to reconciliation mismatch (strict + hard block).
-                    </p>
-                    <button type="button" onClick={() => setActivePage('System & APIs Health')} className="text-sm font-medium text-primary hover:underline shrink-0">
-                        Open data quality and KPI checks →
-                    </button>
                 </div>
             )}
 
@@ -1054,14 +1025,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                     content: (
                         <div className="min-h-[132px] flex flex-col h-full">
                             <div className="flex-1 min-h-0">
-                                {blockedKpiCards.has(cardKey) ? (
-                                    <div className="h-full rounded-xl border border-red-300 bg-red-50 p-3 flex flex-col justify-center items-center text-center">
-                                        <p className="text-sm font-semibold text-red-800">KPI blocked</p>
-                                        <p className="text-xs text-red-700 mt-1">Reconciliation mismatch exceeds threshold.</p>
-                                    </div>
-                                ) : (
-                                    kpiCards[cardKey]
-                                )}
+                                {kpiCards[cardKey]}
                             </div>
                         </div>
                     ),
@@ -1104,6 +1068,10 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                                 onOpenInvestments={() => setActivePage('Investments')}
                                 onOpenAccounts={() => setActivePage('Accounts')}
                                 onOpenAssets={() => setActivePage('Assets')}
+                                onOpenDataReconciliation={() => {
+                                    setActivePage('System & APIs Health');
+                                    window.location.hash = 'data-reconciliation';
+                                }}
                             />
                         </div>
                     </div>

@@ -24,6 +24,7 @@ import { useSelfLearning } from '../context/SelfLearningContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { computePersonalNetWorthBreakdownSAR } from '../services/personalNetWorth';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { getCreditCardLinkedAccountIds } from '../services/creditCardLinking';
 
 type StatusFilter = 'active' | 'paid' | 'all';
 
@@ -40,7 +41,8 @@ const LiabilityModal: React.FC<{
     onSave: (liability: Liability) => void;
     liabilityToEdit: Liability | null;
     goals: { id: string; name: string }[];
-}> = ({ isOpen, onClose, onSave, liabilityToEdit, goals }) => {
+    creditAccounts: Account[];
+}> = ({ isOpen, onClose, onSave, liabilityToEdit, goals, creditAccounts }) => {
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
     const [name, setName] = useState('');
     const [type, setType] = useState<Liability['type']>('Personal Loan');
@@ -48,6 +50,7 @@ const LiabilityModal: React.FC<{
     const [status, setStatus] = useState<Liability['status']>('Active');
     const [owner, setOwner] = useState('');
     const [goalId, setGoalId] = useState('');
+    const [accountId, setAccountId] = useState('');
 
     React.useEffect(() => {
         if (liabilityToEdit) {
@@ -57,6 +60,7 @@ const LiabilityModal: React.FC<{
             setStatus(liabilityToEdit.status ?? 'Active');
             setOwner(liabilityToEdit.owner ?? '');
             setGoalId(liabilityToEdit.goalId ?? '');
+            setAccountId(liabilityToEdit.accountId ?? '');
         } else {
             const learnedType = getLearnedDefault('liability-add', 'type') as Liability['type'] | undefined;
             const validTypes: Liability['type'][] = ['Credit Card', 'Loan', 'Personal Loan', 'Mortgage', 'Receivable'];
@@ -66,6 +70,7 @@ const LiabilityModal: React.FC<{
             setStatus('Active');
             setOwner('');
             setGoalId('');
+            setAccountId('');
         }
     }, [liabilityToEdit, isOpen, getLearnedDefault]);
 
@@ -80,6 +85,7 @@ const LiabilityModal: React.FC<{
             status,
             goalId: goalId || undefined,
             owner: owner.trim() || undefined,
+            ...(type === 'Credit Card' && accountId.trim() !== '' ? { accountId: accountId.trim() } : {}),
         };
         onSave(newLiability);
         if (!liabilityToEdit) trackFormDefault('liability-add', 'type', type);
@@ -133,6 +139,25 @@ const LiabilityModal: React.FC<{
                         ))}
                     </select>
                 </div>
+                {type === 'Credit Card' && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                            Linked Credit account (recommended)
+                            <InfoHint text="Pick the Credit Card account used for card transactions. Net worth and Zakat use the liability balance as the source of truth; the account balance is kept in sync." />
+                        </label>
+                        <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="select-base">
+                            <option value="">Not linked (legacy)</option>
+                            {creditAccounts.map((a) => (
+                                <option key={a.id} value={a.id}>
+                                    {a.name} ({a.currency === 'USD' ? 'USD' : 'SAR'})
+                                </option>
+                            ))}
+                        </select>
+                        {creditAccounts.length === 0 && (
+                            <p className="text-xs text-amber-700 mt-1">Add a Credit-type account under Accounts first, then link it here.</p>
+                        )}
+                    </div>
+                )}
                 {liabilityToEdit && (
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
@@ -242,8 +267,14 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     const allLiabilities: Liability[] = useMemo(() => {
         const accounts = data?.accounts ?? [];
         const liabilities = data?.liabilities ?? [];
+        const linkedCreditIds = getCreditCardLinkedAccountIds(liabilities);
         const creditCardDebts = accounts
-            .filter(a => a.type === 'Credit' && (a.balance ?? 0) < 0)
+            .filter(
+                (a) =>
+                    a.type === 'Credit' &&
+                    (a.balance ?? 0) < 0 &&
+                    !linkedCreditIds.has(String(a.id)),
+            )
             .map((a: Account) => ({
                 id: a.id,
                 name: a.name,
@@ -279,9 +310,16 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     const { totalDebt, totalReceivable, debtToAssetRatio, netPosition } = useMemo(() => {
         const personalLiabilities = (data as any)?.personalLiabilities ?? data?.liabilities ?? [];
         const allAccounts = data?.accounts ?? [];
-        /** Credit-card debt rows for "my" totals: only accounts with no owner (same rule as isPersonalWealth). */
+        const linkedCc = getCreditCardLinkedAccountIds(personalLiabilities as Liability[]);
+        /** Credit-card debt from accounts only when not already represented by a linked Credit Card liability. */
         const personalCreditCards = allAccounts
-            .filter((a: Account) => a.type === 'Credit' && (a.balance ?? 0) < 0 && isPersonalWealth(a))
+            .filter(
+                (a: Account) =>
+                    a.type === 'Credit' &&
+                    (a.balance ?? 0) < 0 &&
+                    isPersonalWealth(a) &&
+                    !linkedCc.has(String(a.id)),
+            )
             .map((a: Account) => ({
                 id: a.id,
                 name: a.name,
@@ -581,7 +619,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
             )}
 
             <SectionCard title="What I Owe" collapsible collapsibleSummary="Debts" defaultExpanded>
-                <p className="text-sm text-gray-500 mb-4">Loans, mortgages, credit card balances, and other debts. Credit card rows are synced from your linked accounts.</p>
+                <p className="text-sm text-gray-500 mb-4">Loans, mortgages, and credit card debt. Link each Credit Card liability to its Credit account (Accounts) so balances stay reconciled; unlinked credit accounts with debt still appear here.</p>
                 {debts.length === 0 ? (
                     <p className="text-center text-gray-500 py-8">No debts recorded. Add a liability or link a credit account with a negative balance.</p>
                 ) : (
@@ -629,6 +667,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 onSave={handleSaveLiability}
                 liabilityToEdit={liabilityToEdit}
                 goals={(data?.goals ?? []).map((g) => ({ id: g.id, name: g.name }))}
+                creditAccounts={(data?.accounts ?? []).filter((a) => a.type === 'Credit')}
             />
         </PageLayout>
     );

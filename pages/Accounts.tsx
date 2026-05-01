@@ -38,10 +38,11 @@ function calendarMonthIso(date = new Date()) {
 }
 import { useCurrency } from '../context/CurrencyContext';
 import { tradableCashBucketToSAR, resolveSarPerUsd, toSAR, fromSAR } from '../utils/currencyMath';
-import { reconcileCashAccountBalance, type CashAccountReconciliation } from '../services/dataQuality';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import { accountBookCurrency } from '../utils/cashAccountDisplay';
 import { isInternalTransferTransaction } from '../services/transactionFilters';
+import { findCreditCardLiabilityForAccount } from '../services/creditCardLinking';
+import { aggregateCreditCardStatementActivity, estimateMinimumCardPaymentDue } from '../services/creditCardLedger';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import AIAdvisor from '../components/AIAdvisor';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
@@ -260,9 +261,9 @@ const AccountCardComponent: React.FC<{
     onDeleteAccount: (acc: Account) => void;
     linkedPortfoliosCount?: number;
     readOnly?: boolean;
-    cashReconciliation?: CashAccountReconciliation | null;
     balanceMetricLabel?: string;
-}> = ({ account, onEditAccount, onDeleteAccount, linkedPortfoliosCount, readOnly = false, cashReconciliation, balanceMetricLabel = 'Current Balance' }) => {
+    footer?: React.ReactNode;
+}> = ({ account, onEditAccount, onDeleteAccount, linkedPortfoliosCount, readOnly = false, balanceMetricLabel = 'Current Balance', footer }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const { maskBalance } = usePrivacyMask();
 
@@ -317,18 +318,7 @@ const AccountCardComponent: React.FC<{
                 )}
                 {readOnly && <p className="text-xs text-slate-500 mt-1">Owner: {(account as SharedAccountRow).ownerEmail || 'Shared account'}</p>}
                 {!readOnly && account.owner && <OwnerBadge owner={account.owner} className="mt-2" />}
-                {!readOnly && cashReconciliation?.showWarning && (
-                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-900">
-                        <p className="font-semibold">Balance check</p>
-                        <p className="mt-0.5">
-                            Recorded transactions net to <strong>{formatCurrencyString(cashReconciliation.transactionNet, { inCurrency: accountBookCurrency(account) })}</strong>
-                            {' '}vs balance <strong>{formatCurrencyString(cashReconciliation.storedBalance, { inCurrency: accountBookCurrency(account) })}</strong>
-                            {cashReconciliation.txCount > 0 && (
-                                <> (drift {formatCurrencyString(cashReconciliation.drift, { inCurrency: accountBookCurrency(account) })}). May mean opening balance or missing entries.</>
-                            )}
-                        </p>
-                    </div>
-                )}
+                {footer && <div className="mt-3">{footer}</div>}
             </div>
         </div>
     );
@@ -454,15 +444,6 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
 
     const orderedCashAccounts = useMemo(() => [...cashAccounts].sort((a, b) => a.name.localeCompare(b.name)), [cashAccounts]);
 
-    const cashReconciliationById = useMemo(() => {
-        const tx = (data as any)?.personalTransactions ?? data?.transactions ?? [];
-        const m = new Map<string, CashAccountReconciliation>();
-        orderedCashAccounts.forEach((acc) => {
-            const r = reconcileCashAccountBalance(acc, tx);
-            if (r) m.set(acc.id, r);
-        });
-        return m;
-    }, [orderedCashAccounts, data?.transactions, (data as any)?.personalTransactions]);
     const orderedCreditAccounts = useMemo(() => [...creditAccounts].sort((a, b) => a.name.localeCompare(b.name)), [creditAccounts]);
     const orderedInvestmentAccounts = useMemo(() => [...investmentAccounts].sort((a, b) => a.name.localeCompare(b.name)), [investmentAccounts]);
     const accountValidationWarnings = useMemo(() => {
@@ -962,7 +943,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                         </button>
                     </div>
                 </div>
-                <p className="text-sm text-slate-600 mt-1 mb-2">One-time transfers or recurring auto transfers between Checking, Savings, and Investment accounts. Use &quot;Transfer now&quot; for a single move; &quot;Schedule auto transfer&quot; to repeat monthly on a set day.</p>
+                <p className="text-sm text-slate-600 mt-1 mb-2">One-time or recurring transfers between Checking, Savings, Investment, and Credit accounts. Paying a card = transfer <strong>to</strong> the Credit account (principal only). Use &quot;Transfer now&quot; or schedule monthly.</p>
 
                 {/* Tabs: Scheduled | History */}
                 <div className="flex gap-1 mb-4 border-b border-slate-200">
@@ -1029,7 +1010,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                                 <label className="text-xs font-medium text-slate-600 whitespace-nowrap">To account</label>
                                 <select value={transferFilterTo} onChange={(e) => setTransferFilterTo(e.target.value)} className="select-base text-sm py-1.5 min-w-[140px]">
                                     <option value="all">All accounts</option>
-                                    {(data?.accounts ?? []).filter(a => a.type !== 'Credit').map((acc) => (
+                                    {(data?.accounts ?? []).map((acc) => (
                                         <option key={acc.id} value={acc.id}>{acc.name}</option>
                                     ))}
                                 </select>
@@ -1135,7 +1116,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                         <label className="text-xs font-medium text-slate-600 whitespace-nowrap">To</label>
                         <select value={transferHistoryFilterTo} onChange={(e) => setTransferHistoryFilterTo(e.target.value)} className="select-base text-sm py-1.5 min-w-[140px]">
                             <option value="all">All accounts</option>
-                            {(data?.accounts ?? []).filter((a: { type?: string }) => a.type !== 'Credit').map((acc: { id: string; name: string }) => (
+                            {(data?.accounts ?? []).map((acc: { id: string; name: string }) => (
                                 <option key={acc.id} value={acc.id}>{acc.name}</option>
                             ))}
                         </select>
@@ -1202,6 +1183,16 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                     <button type="button" onClick={() => setActivePage('Investments')} className="btn-ghost py-1.5 text-indigo-700 hover:bg-indigo-50">Investments</button>
                     <button type="button" onClick={() => setActivePage('Plan')} className="btn-ghost py-1.5 text-primary hover:bg-primary/5">Plan</button>
                     <button type="button" onClick={() => setActivePage('Budgets')} className="btn-ghost py-1.5 text-amber-700 hover:bg-amber-50">Budgets</button>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setActivePage('System & APIs Health');
+                            window.location.hash = 'data-reconciliation';
+                        }}
+                        className="btn-ghost py-1.5 text-slate-700 hover:bg-slate-100"
+                    >
+                        Data reconciliation
+                    </button>
                 </div>
             )}
 
@@ -1215,7 +1206,6 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             onEditAccount={handleOpenAccountModal}
                             onDeleteAccount={handleOpenDeleteModal}
                             linkedPortfoliosCount={0}
-                            cashReconciliation={cashReconciliationById.get(acc.id) ?? null}
                         />
                     ))}
                 </div>
@@ -1223,10 +1213,78 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
 
             <section>
                 <h2 className="section-title text-xl mb-4">Credit Cards</h2>
+                <p className="text-sm text-slate-600 mb-3">
+                    Link each card to a <strong>Credit Card</strong> liability on the Liabilities page so debt is counted once on net worth. Use <strong>Pay card</strong> to record a checking/savings → credit transfer (not spending).
+                </p>
                 <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-                    {orderedCreditAccounts.map((acc) => (
-                        <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={0} />
-                    ))}
+                    {orderedCreditAccounts.map((acc) => {
+                        const liab = findCreditCardLiabilityForAccount(data?.liabilities ?? [], acc.id);
+                        const now = new Date();
+                        const y = now.getFullYear();
+                        const mo = now.getMonth();
+                        const startYmd = `${y}-${String(mo + 1).padStart(2, '0')}-01`;
+                        const lastDom = new Date(y, mo + 1, 0).getDate();
+                        const endYmd = `${y}-${String(mo + 1).padStart(2, '0')}-${String(lastDom).padStart(2, '0')}`;
+                        const agg = aggregateCreditCardStatementActivity(data?.transactions ?? [], acc.id, startYmd, endYmd);
+                        const purchaseMag = Math.abs(agg.purchaseFlow);
+                        const cur = acc.currency === 'USD' ? 'USD' : 'SAR';
+                        const footer = (
+                            <div className="space-y-2 text-xs text-slate-600">
+                                {liab ? (
+                                    <>
+                                        <p>
+                                            <span className="font-medium text-slate-700">Debt (liability)</span>{' '}
+                                            {maskBalance(formatCurrencyString(Math.abs(liab.amount), { inCurrency: cur }))}
+                                        </p>
+                                        <p>
+                                            <span className="font-medium text-slate-700">Card ledger balance</span>{' '}
+                                            {maskBalance(formatCurrencyString(acc.balance, { inCurrency: cur }))}
+                                        </p>
+                                    </>
+                                ) : (
+                                    <p className="text-amber-800 bg-amber-50/80 border border-amber-100 rounded-md px-2 py-1.5">
+                                        No linked Credit Card liability. Add one on <strong>Liabilities</strong> and link this account for authoritative debt on net worth / Zakat.
+                                    </p>
+                                )}
+                                <p>
+                                    <span className="font-medium text-slate-700">This month (activity)</span>
+                                    {' · '}
+                                    Purchases {maskBalance(formatCurrencyString(purchaseMag, { inCurrency: cur }))}
+                                    {' · '}
+                                    Payments in {maskBalance(formatCurrencyString(agg.paymentPrincipalIn, { inCurrency: cur }))}
+                                    {' · '}
+                                    Interest/fees {maskBalance(formatCurrencyString(agg.interestAndFees, { inCurrency: cur }))}
+                                </p>
+                                {purchaseMag > 0 && (
+                                    <p className="text-slate-500">
+                                        Est. min. due (rule-of-thumb):{' '}
+                                        {formatCurrencyString(estimateMinimumCardPaymentDue(purchaseMag, cur), { inCurrency: cur })}
+                                    </p>
+                                )}
+                                <button
+                                    type="button"
+                                    className="w-full btn-outline text-sm py-2"
+                                    onClick={() => {
+                                        setTransferFromAccount('');
+                                        setTransferToAccount(acc.id);
+                                        setIsTransferModalOpen(true);
+                                    }}
+                                >
+                                    Pay card (transfer from checking/savings)
+                                </button>
+                            </div>
+                        );
+                        return (
+                            <AccountCardComponent
+                                key={acc.id}
+                                account={acc}
+                                onEditAccount={handleOpenAccountModal}
+                                onDeleteAccount={handleOpenDeleteModal}
+                                linkedPortfoliosCount={0}
+                                footer={footer}
+                            />
+                        );
+                    })}
                 </div>
             </section>
 
@@ -1272,7 +1330,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                         <label className="block text-sm font-medium text-gray-700 mb-1">To account</label>
                         <select value={recurringToId} onChange={(e) => setRecurringToId(e.target.value)} required className="select-base w-full">
                             <option value="">Select destination</option>
-                            {(data?.accounts ?? []).filter(a => a.id !== recurringFromId && a.type !== 'Credit').map(acc => (
+                            {(data?.accounts ?? []).filter(a => a.id !== recurringFromId).map(acc => (
                                 <option key={acc.id} value={acc.id}>{acc.name} ({acc.type})</option>
                             ))}
                         </select>
@@ -1378,12 +1436,14 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             className="select-base"
                         >
                             <option value="">Select destination account</option>
-                            {(data?.accounts ?? []).filter(a => a.id !== transferFromAccount && a.type !== 'Credit').map(acc => (
+                            {(data?.accounts ?? []).filter(a => a.id !== transferFromAccount).map(acc => (
                                 <option key={acc.id} value={acc.id}>
                                     {acc.name} ({maskBalance(formatCurrencyString(
                                         acc.type === 'Investment'
                                             ? fromSAR(spendableBalanceSar(acc), ((data?.accounts ?? []).find(a => a.id === transferFromAccount))?.currency === 'USD' ? 'USD' : 'SAR', sarPerUsd)
-                                            : Math.max(0, Number(acc.balance) || 0),
+                                            : acc.type === 'Credit'
+                                              ? Number(acc.balance) || 0
+                                              : Math.max(0, Number(acc.balance) || 0),
                                         { inCurrency: acc.type === 'Investment' ? (((data?.accounts ?? []).find(a => a.id === transferFromAccount)?.currency === 'USD') ? 'USD' : 'SAR') : (acc.currency === 'USD' ? 'USD' : 'SAR') },
                                     ))})
                                 </option>

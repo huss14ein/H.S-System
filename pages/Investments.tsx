@@ -30,7 +30,6 @@ import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
 import InvestmentOverview from './InvestmentOverview';
-import InvestmentPlanAutopilot from './InvestmentPlanAutopilot';
 import { useMarketData } from '../context/MarketDataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useAI } from '../context/AiContext';
@@ -63,10 +62,8 @@ import { sellScore } from '../services/decisionEngine';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import type { Transaction } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
-import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import {
     resolveSarPerUsd,
-    toSAR,
     totalLiquidCashSARFromAccounts,
     tradableCashBucketToSAR,
     availableTradableCashInLedgerCurrency,
@@ -95,6 +92,7 @@ import { engineSleeveKeyToTickerStatus, inferEngineSleeveKeyFromHolding } from '
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
+const InvestmentPlanView = lazy(() => import('./InvestmentPlanView'));
 
 
 
@@ -2313,9 +2311,9 @@ const PlatformCard: React.FC<{
         if (sortedPortfolios.length === 0) return;
         setPortfolioExpanded((prev) => {
             const next: Record<string, boolean> = {};
-            sortedPortfolios.forEach((p, idx) => {
+            sortedPortfolios.forEach((p) => {
                 if (typeof prev[p.id] === 'boolean') next[p.id] = prev[p.id];
-                else next[p.id] = idx === 0;
+                else next[p.id] = false;
             });
             return next;
         });
@@ -2783,9 +2781,9 @@ const PlatformView: React.FC<{
         if (platformsData.length === 0) return;
         setPlatformExpanded((prev) => {
             const next: Record<string, boolean> = {};
-            platformsData.forEach((p, idx) => {
+            platformsData.forEach((p) => {
                 if (typeof prev[p.account.id] === 'boolean') next[p.account.id] = prev[p.account.id];
-                else next[p.account.id] = idx === 0;
+                else next[p.account.id] = false;
             });
             return next;
         });
@@ -4833,7 +4831,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         />;
       case 'Investment Plan': return (
                 <div className="flex flex-col gap-16 sm:gap-20">
-                    <InvestmentPlanAutopilot
+                    <InvestmentPlanView
                         embedded
                         onExecutePlan={() => {}}
                         setActivePage={setActivePage}
@@ -4975,152 +4973,22 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
             </p>
         )}
 
-        {(() => {
-            if (!data) return null;
-            const rate = resolveSarPerUsd(data, exchangeRate);
-            const invAccounts = getPersonalAccounts(data).filter((a) => a.type === 'Investment');
-            const txs = (data?.investmentTransactions ?? []) as InvestmentTransaction[];
-            const invPortfolios = getPersonalInvestments(data);
-
-            type PlatformIssue = {
-                accountId: string;
-                label: string;
-                kind: 'missing_flows' | 'cash_drift';
-                driftSar?: number;
-                hint: string;
-            };
-            const issues: PlatformIssue[] = [];
-
-            for (const acc of invAccounts) {
-                const canonicalId = resolveCanonicalAccountId(acc.id, data?.accounts ?? []) ?? acc.id;
-                const accLabel = String(acc.name || 'Investment account');
-                const accountTxs = txs.filter((t) =>
-                    resolveInvestmentTransactionAccountId(t as any, data?.accounts ?? [], invPortfolios) === canonicalId,
-                );
-
-                const hasAnyFlows = accountTxs.some((t) =>
-                    isInvestmentTransactionType(t.type, 'deposit') ||
-                    isInvestmentTransactionType(t.type, 'withdrawal') ||
-                    isInvestmentTransactionType(t.type, 'buy') ||
-                    isInvestmentTransactionType(t.type, 'sell') ||
-                    isInvestmentTransactionType(t.type, 'dividend') ||
-                    isInvestmentTransactionType(t.type, 'fee') ||
-                    isInvestmentTransactionType(t.type, 'vat'),
-                );
-
-                const hasHoldings = invPortfolios
-                    .filter((p) => portfolioBelongsToAccount(p as any, { id: canonicalId } as any, data?.accounts ?? []))
-                    .some((p) => (p.holdings ?? []).some((h) => Math.abs(Number((h as any)?.quantity) || 0) > 0));
-
-                const brokerCashSar = toSAR(Math.max(0, Number((acc as any)?.balance) || 0), (acc as any)?.currency ?? 'USD', rate);
-
-                if (!hasAnyFlows && (hasHoldings || brokerCashSar > 1)) {
-                    issues.push({
-                        accountId: canonicalId,
-                        label: accLabel,
-                        kind: 'missing_flows',
-                        hint: hasHoldings
-                            ? 'Holdings exist but there are no deposits/buys/sells/dividends/fees recorded for this platform.'
-                            : 'Broker cash exists but there are no ledger flows recorded (deposits/withdrawals/etc).',
-                    });
-                    continue;
-                }
-
-                // Cash drift check: broker cash vs expected cash from ledger flows (same formula as SystemHealth).
-                if (hasAnyFlows) {
-                    let depositsSar = 0;
-                    let withdrawalsSar = 0;
-                    let buysSar = 0;
-                    let sellsSar = 0;
-                    let dividendsSar = 0;
-                    let feesSar = 0;
-                    let vatSar = 0;
-                    for (const t of accountTxs) {
-                        const amtSar = toSAR(
-                            Math.abs(Number(getInvestmentTransactionCashAmount(t as any)) || 0),
-                            inferInvestmentTransactionCurrency(t as any, data?.accounts ?? [], invPortfolios) ?? (acc as any)?.currency ?? 'USD',
-                            rate,
-                        );
-                        if (isInvestmentTransactionType(t.type, 'deposit')) depositsSar += amtSar;
-                        else if (isInvestmentTransactionType(t.type, 'withdrawal')) withdrawalsSar += amtSar;
-                        else if (isInvestmentTransactionType(t.type, 'buy')) buysSar += amtSar;
-                        else if (isInvestmentTransactionType(t.type, 'sell')) sellsSar += amtSar;
-                        else if (isInvestmentTransactionType(t.type, 'dividend')) dividendsSar += amtSar;
-                        else if (isInvestmentTransactionType(t.type, 'fee')) feesSar += amtSar;
-                        else if (isInvestmentTransactionType(t.type, 'vat')) vatSar += amtSar;
-                    }
-                    const expectedCashSar = depositsSar - buysSar + sellsSar + dividendsSar - withdrawalsSar - feesSar - vatSar;
-                    const driftSar = brokerCashSar - expectedCashSar;
-                    if (Math.abs(driftSar) > 50) {
-                        issues.push({
-                            accountId: canonicalId,
-                            label: accLabel,
-                            kind: 'cash_drift',
-                            driftSar,
-                            hint: 'Broker cash does not reconcile to deposits/buys/sells/dividends/withdrawals/fees/VAT in the ledger. Usually a missing entry or wrong currency/date FX.',
-                        });
-                    }
-                }
-            }
-
-            if (issues.length === 0) return null;
-            const missing = issues.filter((i) => i.kind === 'missing_flows');
-            const drifted = issues.filter((i) => i.kind === 'cash_drift');
-            return (
-                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/80 p-4 shadow-sm" role="status">
-                    <div className="flex items-start gap-3">
-                        <ExclamationTriangleIcon className="h-5 w-5 text-amber-700 shrink-0 mt-0.5" />
-                        <div className="min-w-0">
-                            <p className="text-sm font-bold text-amber-950">Investment KPI reconciliation: action needed</p>
-                            <p className="text-xs text-amber-900/90 mt-1 leading-relaxed">
-                                Deployable platform cash follows each Investment account’s balance in Accounts. If that balance doesn’t match your recorded deposits/buys/sells (ledger drift), fix missing entries or adjust the balance until System Health is clean.
-                            </p>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={() => setActivePage?.('SystemHealth' as any)}
-                            className="shrink-0 inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-900 hover:bg-amber-50"
-                        >
-                            <LinkIcon className="h-4 w-4" />
-                            Open System Health
-                        </button>
-                    </div>
-
-                    <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
-                        {missing.length > 0 && (
-                            <div className="rounded-xl border border-amber-200 bg-white/80 p-3">
-                                <p className="text-xs font-bold text-amber-950">Platforms missing ledger flows</p>
-                                <ul className="mt-2 space-y-1 text-xs text-slate-800">
-                                    {missing.slice(0, 6).map((x) => (
-                                        <li key={`miss-${x.accountId}`} className="flex items-start justify-between gap-2">
-                                            <span className="font-semibold truncate">{x.label}</span>
-                                            <span className="text-[11px] text-slate-600 shrink-0">id {x.accountId}</span>
-                                        </li>
-                                    ))}
-                                </ul>
-                                <p className="mt-2 text-[11px] text-slate-600">{missing[0]?.hint}</p>
-                            </div>
-                        )}
-                        {drifted.length > 0 && (
-                            <div className="rounded-xl border border-amber-200 bg-white/80 p-3">
-                                <p className="text-xs font-bold text-amber-950">Platforms with broker-cash drift</p>
-                                <ul className="mt-2 space-y-1 text-xs text-slate-800 tabular-nums">
-                                    {drifted.slice(0, 6).map((x) => (
-                                        <li key={`drift-${x.accountId}`} className="flex items-start justify-between gap-2">
-                                            <span className="font-semibold truncate">{x.label}</span>
-                                            <span className={`font-extrabold shrink-0 ${Number(x.driftSar ?? 0) >= 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
-                                                {Number(x.driftSar ?? 0) >= 0 ? '+' : ''}{(x.driftSar ?? 0).toFixed(0)} SAR
-                                            </span>
-                                        </li>
-                                    ))}
-                                </ul>
-                                <p className="mt-2 text-[11px] text-slate-600">{drifted[0]?.hint}</p>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            );
-        })()}
+        {setActivePage && (
+            <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                Broker cash vs ledger and investment KPI detail:{' '}
+                <button
+                    type="button"
+                    className="font-semibold text-primary hover:underline"
+                    onClick={() => {
+                        setActivePage('System & APIs Health');
+                        window.location.hash = 'data-reconciliation';
+                    }}
+                >
+                    System &amp; APIs Health → Data reconciliation
+                </button>
+                .
+            </p>
+        )}
 
         <details className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <summary className="cursor-pointer select-none text-sm font-semibold text-slate-800">
@@ -5151,7 +5019,8 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 </div>
             </div>
             <p className="mt-3 text-xs text-slate-600 leading-relaxed">
-                If this number looks wrong, open <span className="font-semibold text-slate-800">System &amp; APIs Health</span> → <span className="font-semibold text-slate-800">Investment KPI reconciliation</span> to see the drift check (broker cash vs ledger flows) and what entry is missing.
+                If this number looks wrong, open <span className="font-semibold text-slate-800">System &amp; APIs Health</span>, tab{' '}
+                <span className="font-semibold text-slate-800">Data reconciliation</span>, section <span className="font-semibold text-slate-800">Investment KPI reconciliation</span> (set URL hash <code className="text-[11px]">#investment-kpi-reconciliation</code> or choose that tab and scroll).
             </p>
         </details>
 

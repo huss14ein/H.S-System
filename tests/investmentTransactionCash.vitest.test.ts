@@ -25,4 +25,9 @@ describe('getInvestmentTransactionCashAmount', () => {
   it('does not derive withdrawal from quantity*price noise when total/amount are missing', () => {
     expect(getInvestmentTransactionCashAmount({ type: 'withdrawal', quantity: 10, price: 100 } as any)).toBe(0);
   });
+
+  it('uses magnitude when withdrawal/fee totals are negative (broker cash-leg convention)', () => {
+    expect(getInvestmentTransactionCashAmount({ type: 'withdrawal', total: -500 } as any)).toBe(500);
+    expect(getInvestmentTransactionCashAmount({ type: 'fee', amount: -12 } as any)).toBe(12);
+  });
 });

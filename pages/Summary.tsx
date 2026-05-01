@@ -588,6 +588,14 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                             onOpenInvestments={setActivePage ? () => setActivePage('Investments') : undefined}
                             onOpenAccounts={setActivePage ? () => setActivePage('Accounts') : undefined}
                             onOpenAssets={setActivePage ? () => setActivePage('Assets') : undefined}
+                            onOpenDataReconciliation={
+                                setActivePage
+                                    ? () => {
+                                          setActivePage('System & APIs Health');
+                                          window.location.hash = 'data-reconciliation';
+                                      }
+                                    : undefined
+                            }
                         />
                     </div>
                 <div className="section-card flex flex-col min-h-[420px] h-[min(56vh,520px)]">

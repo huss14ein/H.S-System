@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildFinancialIntegrityReport } from '../services/dataQuality/financialIntegrity';
-import type { Account, Transaction } from '../types';
+import type { Account, Liability, Transaction } from '../types';
 
 describe('buildFinancialIntegrityReport', () => {
   it('passes clean reconciled data with balanced transfer group', () => {
@@ -55,6 +55,20 @@ describe('buildFinancialIntegrityReport', () => {
 
     const report = buildFinancialIntegrityReport(accounts, txs);
     expect(report.issues.some((i) => i.code === 'TRANSFER_GROUP_AMOUNT_MISMATCH')).toBe(true);
+  });
+
+  it('flags credit card liability drift and missing account link', () => {
+    const accounts: Account[] = [
+      { id: 'cc1', name: 'Visa', type: 'Credit', balance: -400, currency: 'SAR' } as Account,
+    ];
+    const liabilities: Liability[] = [
+      { id: 'l1', name: 'Visa', type: 'Credit Card', amount: -500, status: 'Active', accountId: 'cc1' } as Liability,
+      { id: 'l2', name: 'Orphan', type: 'Credit Card', amount: -100, status: 'Active' } as Liability,
+    ];
+    const report = buildFinancialIntegrityReport(accounts, [], { liabilities });
+    const codes = report.issues.map((i) => i.code);
+    expect(codes).toContain('CREDIT_CARD_MIRROR_DRIFT');
+    expect(codes).toContain('CREDIT_CARD_LIABILITY_NOT_LINKED');
   });
 
   it('does not flag FX-equivalent transfer principal mismatch after SAR normalization', () => {

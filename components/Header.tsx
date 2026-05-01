@@ -119,7 +119,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
     if (triggerPageActionPair) triggerPageActionPair('Notifications', 'notifications-tab:alerts');
     else setActivePage('Notifications');
   };
-  const openNotificationTarget = (notification: { id: string; pageLink: Page; pageAction?: string }) => {
+  const openNotificationTarget = (notification: { id: string; pageLink: Page; pageHash?: string; pageAction?: string }) => {
     setIsNotificationsPreviewOpen(false);
     setIsTasksPreviewOpen(false);
     notificationsContext?.markAsRead(notification.id);
@@ -127,6 +127,11 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
       triggerPageActionPair(notification.pageLink, notification.pageAction);
     } else {
       setActivePage(notification.pageLink);
+      if (notification.pageHash) {
+        window.setTimeout(() => {
+          window.location.hash = notification.pageHash!.replace(/^#/, '');
+        }, 0);
+      }
     }
   };
 

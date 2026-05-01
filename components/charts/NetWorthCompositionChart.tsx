@@ -567,6 +567,7 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
                         <p className="text-slate-500">
                             sum={Math.round(liveReconcile.componentsSum)} · NW={Math.round(liveBuckets.netWorth)}
                         </p>
+                        <p className="text-slate-500 mt-1">Full ledger + transfer checks: app menu → System &amp; APIs Health → Data reconciliation.</p>
                     </div>
                 </details>
             )}
