@@ -3651,7 +3651,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                             </div>
                             <span className="text-xs font-bold px-3 py-1.5 rounded-full bg-white/90 border border-indigo-200/90 text-indigo-800 shadow-sm tabular-nums">{sharedBudgetCards.length} shared</span>
                         </div>
-                        <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
                             {sharedBudgetCards.map((budget) => {
                                 const owner = sharedBudgetOwnerByCardId.get(budget.id) || 'Owner';
                                 const primaryMax =
@@ -3674,49 +3674,55 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                 return (
                                     <div
                                         key={`shared-card-${budget.id}`}
-                                        className="group transition-transform duration-300 hover:-translate-y-1"
+                                        className="group flex h-full min-h-0 w-full flex-col transition-transform duration-300 hover:-translate-y-1"
                                     >
                                         <BudgetCardShell utilizationLabel={utilLabel} budgetTier={budget.budgetTier ?? 'Optional'}>
-                                            <div className="flex gap-3 sm:gap-4 items-start">
+                                            <div className="flex min-h-0 flex-1 flex-col">
+                                            <div className="flex shrink-0 gap-3 sm:gap-4">
                                                 <BudgetUsageDial percentage={budget.percentage} utilizationLabel={utilLabel} size={58} />
                                                 <div className="min-w-0 flex-1">
-                                                    <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-700">Shared by</p>
-                                                    <p className="text-xs font-semibold text-slate-800 break-all leading-snug">{owner}</p>
-                                                    <h4 className="mt-2 text-lg sm:text-xl font-bold tracking-tight text-slate-900 inline-flex items-center gap-1.5">
-                                                        {budget.category}
-                                                        <InfoHint text={getCategoryHint(budget.category)} placement="bottom" />
-                                                    </h4>
-                                                    <span className="mt-2 inline-flex items-center rounded-full border border-indigo-200/80 bg-indigo-50/90 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-indigo-900 shadow-sm">
-                                                        {periodBadge}
-                                                    </span>
-                                                </div>
-                                                <div className="flex flex-col items-end gap-1.5 shrink-0">
-                                                    <span
-                                                        className={`text-[10px] font-bold px-2.5 py-1 rounded-full border shadow-sm backdrop-blur-sm ${
-                                                            budget.budgetTier === 'Core'
-                                                                ? 'bg-indigo-100/90 text-indigo-950 border-indigo-200/80'
-                                                                : budget.budgetTier === 'Supporting'
-                                                                  ? 'bg-sky-100/90 text-sky-950 border-sky-200/80'
-                                                                  : 'bg-slate-100/90 text-slate-800 border-slate-200/80'
-                                                        }`}
-                                                    >
-                                                        {budget.budgetTier ?? 'Optional'}
-                                                    </span>
-                                                    <span
-                                                        className={`text-[10px] font-bold px-2.5 py-1 rounded-full shadow-md ${
-                                                            utilLabel === 'Critical'
-                                                                ? 'bg-gradient-to-r from-rose-600 to-orange-600 text-white'
-                                                                : utilLabel === 'Watch'
-                                                                  ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white'
-                                                                  : 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white'
-                                                        }`}
-                                                    >
-                                                        {utilLabel}
-                                                    </span>
+                                                    <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-2">
+                                                        <div className="min-w-0">
+                                                            <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-700">Shared by</p>
+                                                            <p className="text-xs font-semibold text-slate-800 break-all leading-snug">{owner}</p>
+                                                            <h4 className="mt-2 text-lg sm:text-xl font-bold tracking-tight text-slate-900 inline-flex items-center gap-1.5">
+                                                                {budget.category}
+                                                                <InfoHint text={getCategoryHint(budget.category)} placement="bottom" />
+                                                            </h4>
+                                                            <span className="mt-2 inline-flex items-center rounded-full border border-indigo-200/80 bg-indigo-50/90 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-indigo-900 shadow-sm">
+                                                                {periodBadge}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex shrink-0 flex-row flex-wrap items-center justify-end gap-1.5">
+                                                            <span
+                                                                className={`text-[10px] font-bold px-2.5 py-1 rounded-full border shadow-sm backdrop-blur-sm ${
+                                                                    budget.budgetTier === 'Core'
+                                                                        ? 'bg-indigo-100/90 text-indigo-950 border-indigo-200/80'
+                                                                        : budget.budgetTier === 'Supporting'
+                                                                          ? 'bg-sky-100/90 text-sky-950 border-sky-200/80'
+                                                                          : 'bg-slate-100/90 text-slate-800 border-slate-200/80'
+                                                                }`}
+                                                            >
+                                                                {budget.budgetTier ?? 'Optional'}
+                                                            </span>
+                                                            <span
+                                                                className={`text-[10px] font-bold px-2.5 py-1 rounded-full shadow-md ${
+                                                                    utilLabel === 'Critical'
+                                                                        ? 'bg-gradient-to-r from-rose-600 to-orange-600 text-white'
+                                                                        : utilLabel === 'Watch'
+                                                                          ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white'
+                                                                          : 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white'
+                                                                }`}
+                                                            >
+                                                                {utilLabel}
+                                                            </span>
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             </div>
 
-                                            <div className="mt-5 space-y-3 flex-grow">
+                                            <div className="mt-5 flex min-h-0 flex-1 flex-col gap-0">
+                                            <div className="shrink-0 space-y-3">
                                             {budgetView === 'Monthly' && (budget.period ?? 'monthly') === 'monthly' && secondaryMax != null && secondaryVal != null && (budget.annualEnvelopeLimit ?? 0) > 0 ? (
                                                 <>
                                                     <div className="rounded-2xl border border-slate-200/90 bg-white/60 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] backdrop-blur-sm">
@@ -3814,7 +3820,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                                 </div>
                                             )}
                                             </div>
-                                            <p className="mt-4 text-[10px] text-center text-slate-400 font-medium uppercase tracking-wider">Read-only · owner&apos;s budget</p>
+                                            <div className="min-h-[1px] flex-1" aria-hidden />
+                                            <p className="mt-auto shrink-0 pt-3 text-[10px] text-center text-slate-400 font-medium uppercase tracking-wider">Read-only · owner&apos;s budget</p>
+                                            </div>
+                                            </div>
                                         </BudgetCardShell>
                                     </div>
                                 );
@@ -4224,7 +4233,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 </SectionCard>
             )}
 
-            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
                 {orderedBudgetData.map((budget) => {
                     const primaryMax =
                         budget.primaryBarMax ??
@@ -4247,7 +4256,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     <button
                         key={budget.id}
                         type="button"
-                        className={`group w-full text-left rounded-3xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-indigo-500/90 transition-transform duration-300 hover:-translate-y-1 active:translate-y-0 active:scale-[0.995] ${expandedCards[budget.id] ? 'md:col-span-2' : ''}`}
+                        className={`group flex h-full min-h-0 w-full flex-col text-left rounded-3xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-indigo-500/90 transition-transform duration-300 hover:-translate-y-1 active:translate-y-0 active:scale-[0.995] ${expandedCards[budget.id] ? 'md:col-span-2' : ''}`}
                         onClick={() => {
                             if (triggerPageAction) {
                                 const periodTag = budgetView.toLowerCase();
@@ -4256,10 +4265,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         }}
                     >
                         <BudgetCardShell utilizationLabel={utilLabel} budgetTier={budget.budgetTier ?? 'Optional'}>
-                        <div className="flex gap-3 sm:gap-4 items-start">
+                        <div className="flex min-h-0 flex-1 flex-col">
+                        <div className="flex shrink-0 gap-3 sm:gap-4">
                             <BudgetUsageDial percentage={budget.percentage} utilizationLabel={utilLabel} size={58} />
                             <div className="min-w-0 flex-1">
-                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-2">
                                     <div className="min-w-0">
                                         <h3 className="text-lg sm:text-xl font-bold tracking-tight text-slate-900 inline-flex items-center gap-1.5">
                                             {budget.category}
@@ -4269,7 +4279,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                             {periodBadge}
                                         </span>
                                     </div>
-                                    <div className="flex flex-col items-end gap-1.5 shrink-0">
+                                    <div className="flex shrink-0 flex-row flex-wrap items-center justify-end gap-1.5">
                                         <span
                                             className={`text-[10px] font-bold px-2.5 py-1 rounded-full border shadow-sm backdrop-blur-sm ${
                                                 budget.budgetTier === 'Core'
@@ -4300,7 +4310,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                             </div>
                         </div>
 
-                        <div className="mt-5 space-y-3 flex-grow">
+                        <div className="mt-5 flex min-h-0 flex-1 flex-col gap-0">
+                        <div className="shrink-0 space-y-3">
                             {budgetView === 'Monthly' && (budget.period ?? 'monthly') === 'monthly' && secondaryMax != null && secondaryVal != null && (budget.annualEnvelopeLimit ?? 0) > 0 ? (
                                 <>
                                     <div className="rounded-2xl border border-slate-200/90 bg-white/60 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] backdrop-blur-sm">
@@ -4371,8 +4382,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                     </p>
                                 </div>
                             )}
+                        </div>
 
-                            <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200/70 bg-slate-900/[0.03] px-3 py-2.5 text-[11px] shadow-inner">
+                            <div className="min-h-[1px] flex-1" aria-hidden />
+                            <div className="flex shrink-0 items-center justify-between gap-2 rounded-xl border border-slate-200/70 bg-slate-900/[0.03] px-3 py-2.5 text-[11px] shadow-inner">
                                 <span className="font-medium text-slate-600 tabular-nums">
                                     <span className="text-slate-400 font-semibold uppercase tracking-wide mr-1">Primary cap</span>
                                     {budget.percentage.toFixed(0)}%
@@ -4384,7 +4397,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                             </div>
                         </div>
 
-                        <div className="mt-4 pt-3 flex justify-end items-center gap-1 border-t border-slate-200/50">
+                        <div className="mt-auto flex shrink-0 justify-end items-center gap-1 border-t border-slate-200/50 pt-3">
                             <button type="button" onClick={() => toggleBudgetCardSize(budget.id)} className="p-2 text-slate-400 hover:text-primary rounded-lg hover:bg-white/80" title={expandedCards[budget.id] ? 'Compact card' : 'Expand card'} aria-label={expandedCards[budget.id] ? 'Compact card' : 'Expand card'}>
                                 <ChevronRightIcon className={`h-4 w-4 transition-transform ${expandedCards[budget.id] ? 'rotate-90' : ''}`} />
                             </button>
@@ -4410,6 +4423,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                             >
                                 <TrashIcon className="h-4 w-4"/>
                             </button>
+                        </div>
                         </div>
                         </BudgetCardShell>
                     </button>

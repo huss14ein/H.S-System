@@ -443,9 +443,9 @@ export default function NetWorthCockpit(props: {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 min-w-0">
-        {/* Left summary rail (like the reference UI) */}
-        <aside className="lg:col-span-3 min-w-0 rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
+      <div className="grid grid-cols-1 lg:grid-cols-12 lg:items-stretch gap-4 p-4 min-w-0">
+        {/* Left summary rail — narrow so the main column can use width */}
+        <aside className="lg:col-span-2 min-w-0 flex h-full min-h-0 flex-col rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
           <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-2">Today snapshot</p>
           {live ? (
             <ul className="space-y-2 text-sm">
@@ -491,8 +491,8 @@ export default function NetWorthCockpit(props: {
           </p>
         </aside>
 
-        {/* Main chart + insight strip */}
-        <section className="lg:col-span-6 min-w-0 rounded-2xl border border-slate-200 bg-white p-3 min-h-[320px] flex flex-col">
+        {/* Main chart + insight strip (wider column) */}
+        <section className="lg:col-span-7 flex h-full min-h-[320px] min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-3">
           <div className="flex items-start justify-between gap-2 mb-2 shrink-0">
             <div className="min-w-0">
               <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Net worth trend</p>
@@ -535,17 +535,26 @@ export default function NetWorthCockpit(props: {
           </div>
 
           {live && (
-            <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-1 xl:grid-cols-12 gap-5 flex-1 min-h-[260px]">
-              <div className="xl:col-span-5 flex flex-col min-h-[220px]">
-                <div className="mb-2">
+            <div className="mt-4 flex flex-1 flex-col gap-4 border-t border-slate-100 pt-4 min-h-0">
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Allocation &amp; weekly rhythm</p>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Wealth mix vs. net savings by week — side by side for a single read.
+                  </p>
+                </div>
+              </div>
+              <div className="grid flex-1 grid-cols-1 gap-4 min-h-[260px] lg:min-h-0 lg:grid-cols-2 lg:items-stretch lg:gap-5">
+                <div className="flex min-h-[220px] min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-slate-50/50 p-3 sm:p-4">
+                <div className="mb-2 shrink-0">
                   <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Wealth composition</p>
                   <p className="text-xs text-slate-600 mt-0.5">
                     Gross assets by role — see concentration at a glance (excludes liabilities).
                   </p>
                 </div>
                 {computed.compositionTotal > 0 ? (
-                  <div className="flex flex-col sm:flex-row items-stretch gap-4 flex-1 min-w-0">
-                    <div className="relative h-[210px] w-full max-w-[260px] mx-auto sm:mx-0 shrink-0">
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col items-stretch gap-4 sm:flex-row">
+                    <div className="relative mx-auto h-[210px] w-full max-w-[min(100%,300px)] shrink-0 sm:mx-0">
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                           <Pie
@@ -600,16 +609,16 @@ export default function NetWorthCockpit(props: {
                     Link accounts and assets to see how wealth is allocated.
                   </div>
                 )}
-              </div>
+                </div>
 
-              <div className="xl:col-span-7 flex flex-col min-h-[220px] min-w-0 z-0 isolate">
-                <div className="mb-2">
+                <div className="flex min-h-[220px] min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-slate-50/50 p-3 sm:p-4 z-0 isolate">
+                <div className="mb-2 shrink-0">
                   <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Weekly savings rhythm</p>
                   <p className="text-xs text-slate-600 mt-0.5">
                     Net per week (Mon–Sun) — income minus spending, same rules as your Summary cards. Weekly rolls up day-to-day noise.
                   </p>
                 </div>
-                <div className="flex-1 min-h-[200px] w-full min-w-0">
+                <div className="min-h-[200px] w-full min-w-0 flex-1 lg:min-h-[220px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={computed.weeklyNet8} margin={{ top: 10, right: 12, left: 10, bottom: 4 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
@@ -632,12 +641,13 @@ export default function NetWorthCockpit(props: {
                   </ResponsiveContainer>
                 </div>
               </div>
+              </div>
             </div>
           )}
         </section>
 
         {/* Smart side widgets */}
-        <section className="lg:col-span-3 min-w-0 grid grid-cols-1 gap-4">
+        <section className="lg:col-span-3 grid h-full min-h-0 min-w-0 grid-cols-1 content-start gap-4">
           <div className="rounded-2xl border border-slate-200 bg-white p-3">
             <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Investable cash</p>
             <p className="text-xs text-slate-600 mt-0.5">Cash sitting inside investment platforms (ready for trades).</p>

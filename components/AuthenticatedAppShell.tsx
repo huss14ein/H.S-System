@@ -192,7 +192,15 @@ const AuthenticatedAppShell: React.FC = () => {
                           <MultiBankProvider>
                             <PrivacyProvider>
                               <MarketSimulator />
-                              <Layout activePage={activePage} setActivePage={setActivePage} triggerPageAction={triggerPageAction} triggerPageActionPair={triggerPageAction}>
+                              <Layout
+                                activePage={activePage}
+                                setActivePage={setActivePage}
+                                triggerPageAction={triggerPageAction}
+                                triggerPageActionPair={triggerPageAction}
+                                contentMaxClass={
+                                  activePage === 'Dashboard' || activePage === 'Summary' ? 'max-w-screen-2xl' : 'max-w-7xl'
+                                }
+                              >
                                 <AppErrorBoundary pageLabel={activePage} onRecover={() => setActivePage('Dashboard')}>
                                   <Suspense fallback={<LoadingSpinner className="min-h-[24rem]" />}>
                                     {renderPage()}

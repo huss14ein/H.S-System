@@ -17,6 +17,8 @@ interface LayoutProps {
   triggerPageAction: (page: Page, action: string) => void;
   /** Deep-link into a page (e.g. Notifications → tasks tab) */
   triggerPageActionPair?: (page: Page, action: string) => void;
+  /** Main column max width (Tailwind classes). Wider on data-heavy pages (Dashboard / Summary). */
+  contentMaxClass?: string;
 }
 
 const Layout: React.FC<LayoutProps> = ({
@@ -25,6 +27,7 @@ const Layout: React.FC<LayoutProps> = ({
   setActivePage,
   triggerPageAction,
   triggerPageActionPair,
+  contentMaxClass = 'max-w-7xl',
 }) => {
   useTrackPageVisit(activePage);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
@@ -78,7 +81,7 @@ const Layout: React.FC<LayoutProps> = ({
         aria-label="Main content"
         className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-6 lg:p-8 w-full"
       >
-        <div className="max-w-7xl mx-auto w-full animate-fadeIn min-w-0">
+        <div className={`${contentMaxClass} mx-auto w-full animate-fadeIn min-w-0`}>
           {ready && (
             <CrossEngineAlertsBanner
               ready={ready}
