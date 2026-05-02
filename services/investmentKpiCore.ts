@@ -66,7 +66,37 @@ export type PersonalInvestmentKpiBreakdown = PersonalInvestmentKpisSar & {
    * Compare to signed broker cash for drift — **not** the dated-FX flow sums used for capital/ROI.
    */
   expectedCashFromLedgerSpotSar: number;
+  /**
+   * Ledger-implied cash using **transaction-dated** SAR (same basis as `buysSar`, `depositsRecordedSar`, etc.).
+   * Identity: deposits − buys + sells + dividends − withdrawals − fees − vat.
+   */
+  expectedCashFromLedgerDatedSar: number;
 };
+
+/**
+ * Investment ledger rows attributed to the signed-in user’s accounts — same filter as
+ * {@link computePersonalInvestmentKpiBreakdown} (resolves `portfolio_id` → platform account).
+ */
+export function getPersonalInvestmentTransactionsForKpis(data: FinancialData): InvestmentTransaction[] {
+  const d = data as FinancialData & {
+    personalAccounts?: Account[];
+    personalInvestments?: InvestmentPortfolio[];
+  };
+  const accounts = (d.personalAccounts ?? data.accounts ?? []) as Account[];
+  const investments = (d.personalInvestments ?? data.investments ?? []) as InvestmentPortfolio[];
+  const personalAccountIds = new Set(accounts.map((a) => a.id));
+
+  const hits = (t: InvestmentTransaction) => {
+    const accountId = resolveInvestmentTransactionAccountId(
+      t as InvestmentTransaction & { account_id?: string; portfolio_id?: string },
+      accounts,
+      investments,
+    );
+    return !!accountId && personalAccountIds.has(accountId);
+  };
+
+  return ((data.investmentTransactions ?? []) as InvestmentTransaction[]).filter(hits);
+}
 
 /**
  * Canonical personal-investment KPI math shared across Dashboard, Investments summary, and reporting.
@@ -94,15 +124,7 @@ export function computePersonalInvestmentKpiBreakdown(
   }
   const totalInvestmentsValueSar = holdingsValueSar + brokerageCashSar;
 
-  const txHitsPersonalInvestment = (t: InvestmentTransaction) => {
-    const accountId = resolveInvestmentTransactionAccountId(
-      t as InvestmentTransaction & { account_id?: string; portfolio_id?: string },
-      accounts,
-      investments,
-    );
-    return !!accountId && personalAccountIds.has(accountId);
-  };
-  const invTx = (data.investmentTransactions ?? []).filter((t) => txHitsPersonalInvestment(t as InvestmentTransaction)) as InvestmentTransaction[];
+  const invTx = getPersonalInvestmentTransactionsForKpis(data);
   const invTxSar = (t: InvestmentTransaction) =>
     investmentTransactionCashAmountSarDated({
       tx: t,
@@ -152,6 +174,9 @@ export function computePersonalInvestmentKpiBreakdown(
   const vatSpotSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'vat')).reduce((sum, t) => sum + invTxSarSpot(t), 0);
   const expectedCashFromLedgerSpotSar =
     depositsSpotSar - buysSpotSar + sellsSpotSar + dividendsSpotSar - withdrawalsSpotSar - feesSpotSar - vatSpotSar;
+
+  const expectedCashFromLedgerDatedSar =
+    depositsRecordedSar - buysSar + sellsSar + dividendsSar - totalWithdrawnSar - feesSar - vatSar;
 
   /**
    * Heuristic when deposit history is empty: approximates “funds committed” from net purchases and
@@ -212,6 +237,7 @@ export function computePersonalInvestmentKpiBreakdown(
     feesSar,
     vatSar,
     expectedCashFromLedgerSpotSar,
+    expectedCashFromLedgerDatedSar,
   };
 }
 
@@ -337,6 +363,12 @@ export type HeadlinePersonalInvestmentRoi = {
   platformsDailyPnLSar: number;
   /** Approximate commodity position move in SAR (live quote × qty). */
   commoditiesDailyPnLSar: number;
+  /** Same inputs as headline net capital decomposition (single source for reconciliation UI). */
+  commodityCostSar: number;
+  sukukAssetsCostSar: number;
+  /** max(ledger net capital, holdings cost basis + floored broker cash) — platform slice before commodities/Sukuk. */
+  platformNetForHeadlineSar: number;
+  economicDeployedPlatformSar: number;
 };
 
 /**
@@ -380,7 +412,14 @@ export function computeHeadlinePersonalInvestmentRoiDecimal(
   }, 0);
 
   const totalExposureSar = platformsRollupSar + commoditiesValueSar + sukukAssetsValueSar;
-  const netCapitalSar = Math.max(0, breakdown.netCapitalSar + commodityCost + sukukAssetsCostSar);
+  /**
+   * Deposit/withdrawal history alone often understates capital still deployed (reinvested dividends, transfers
+   * not logged as deposits). Floor platform net capital at cost basis + idle broker cash so headline ROI / gain
+   * do not imply triple-digit returns purely from ledger gaps.
+   */
+  const economicDeployedSar = Math.max(0, breakdown.holdingsCostBasisSar + breakdown.brokerageCashSar);
+  const platformNetForHeadline = Math.max(breakdown.netCapitalSar, economicDeployedSar);
+  const netCapitalSar = Math.max(0, platformNetForHeadline + commodityCost + sukukAssetsCostSar);
   const totalGainLossSar = totalExposureSar - netCapitalSar;
   const roi = netCapitalSar > 0 ? totalGainLossSar / netCapitalSar : 0;
 
@@ -395,5 +434,9 @@ export function computeHeadlinePersonalInvestmentRoiDecimal(
     sukukAssetsValueSar,
     platformsDailyPnLSar,
     commoditiesDailyPnLSar,
+    commodityCostSar: commodityCost,
+    sukukAssetsCostSar,
+    platformNetForHeadlineSar: platformNetForHeadline,
+    economicDeployedPlatformSar: economicDeployedSar,
   };
 }

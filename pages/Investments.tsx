@@ -5222,7 +5222,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 density="compact"
                 indicatorColor={roi >= 0 ? 'green' : 'red'}
                 icon={<ArrowTrendingUpIcon className={`h-5 w-5 ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
-                tooltip="Simple return: unrealized profit or loss divided by net capital you put in (deposits minus withdrawals, plus commodity purchase cost). Positive means your portfolio is worth more than that net input."
+                tooltip="Return on capital at risk: net gain or loss divided by the larger of (deposits − withdrawals) and (position cost basis + idle broker cash), plus commodity and Sukuk purchase costs. The floor avoids overstated returns when deposit history is incomplete but your books show real deployed capital."
             />
             <Card
                 title="Daily P/L"

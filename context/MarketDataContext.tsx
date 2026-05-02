@@ -1,5 +1,6 @@
 
 import React, { createContext, useState, useCallback, ReactNode, useContext, useEffect } from 'react';
+import { cacheRowsToSimulatedMap, loadQuoteCacheRows } from '../services/quotePriceCache';
 
 interface SimulatedPrices {
     [symbol: string]: { price: number; change: number; changePercent: number };
@@ -30,10 +31,21 @@ interface MarketDataContextType {
 export const MarketDataContext = createContext<MarketDataContextType | null>(null);
 
 export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-    const [simulatedPrices, setSimulatedPrices] = useState<SimulatedPrices>({});
+    const [simulatedPrices, setSimulatedPrices] = useState<SimulatedPrices>(() => {
+        const m = cacheRowsToSimulatedMap(loadQuoteCacheRows());
+        const out: SimulatedPrices = {};
+        for (const [k, v] of Object.entries(m)) {
+            out[k] = {
+                price: v.price,
+                change: v.change ?? 0,
+                changePercent: v.changePercent ?? 0,
+            };
+        }
+        return out;
+    });
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-    const [isLive, setIsLive] = useState(false);
+    const [isLive, setIsLive] = useState(() => Object.keys(loadQuoteCacheRows()).length > 0);
     const [symbolQuoteUpdatedAt, setSymbolQuoteUpdatedAt] = useState<SymbolQuoteTimestamps>({});
 
     const touchQuoteTimestamps = useCallback((symbols: string[]) => {

@@ -4,17 +4,19 @@ import type { Page } from '../types';
 import { probeGeminiProxyHealth, type SystemHealthAiContext } from '../services/geminiService';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 import { useCurrency } from '../context/CurrencyContext';
-import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestments, getPersonalTransactions, getPersonalWealthData } from '../utils/wealthScope';
+import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import AIAdvisor from '../components/AIAdvisor';
 import { getMarketStatus, getMarketHolidays, finnhubFetch, resolveQuotePrice, type MarketStatusItem, type MarketHoliday } from '../services/finnhubService';
 import { DataContext } from '../context/DataContext';
-import { computePersonalInvestmentKpiBreakdown, type InvestmentCapitalSource } from '../services/investmentKpiCore';
+import { MarketDataContext } from '../context/MarketDataContext';
 import {
-  computePersonalCommoditiesContributionSAR,
-  computePersonalPlatformsRollupSAR,
-  type SimulatedPriceMap,
-} from '../services/investmentPlatformCardMetrics';
-import { toSAR, tradableCashBucketToSARSigned } from '../utils/currencyMath';
+  computeHeadlinePersonalInvestmentRoiDecimal,
+  computePersonalInvestmentKpiBreakdown,
+  getPersonalInvestmentTransactionsForKpis,
+  type InvestmentCapitalSource,
+} from '../services/investmentKpiCore';
+import type { SimulatedPriceMap } from '../services/investmentPlatformCardMetrics';
+import { tradableCashBucketToSARSigned } from '../utils/currencyMath';
 import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
@@ -33,7 +35,9 @@ import {
   clearExceptionQueue,
   getExceptionQueue,
 } from '../services/exceptionHandlingEngine';
-import type { InvestmentTransaction, Holding, Transaction, Account, Goal, Liability } from '../types';
+import type { Holding, Transaction, Account, Goal, Liability } from '../types';
+
+const EMPTY_SIMULATED_PRICES: SimulatedPriceMap = {};
 
 type SystemHealthTab = 'apis' | 'data' | 'developer';
 
@@ -110,11 +114,18 @@ type InvestmentKpiReconciliation = {
   inferredInvestedFromLedgerSar: number;
   holdingsCostBasisSar: number;
   fallbackInvestedSar: number;
-  expectedCashFromLedgerSar: number;
-  /** Spot FX ledger cash — used for drift vs book balance (see `expectedCashFromLedgerSar` for dated-FX flows). */
+  /** Transaction-dated SAR ledger cash identity (matches KPI flow sums). */
+  expectedCashFromLedgerDatedSar: number;
+  /** Spot FX ledger cash — used for drift vs signed broker balance. */
   expectedCashFromLedgerSpotSar: number;
   cashLedgerDriftSar: number;
-  /** Mirrors Investments page headline cards: platforms + commodities + Sukuk. */
+  /** Net capital if deposit gross were chosen (always shown for transparency). */
+  netCapitalIfDepositPathSar: number;
+  /** Net capital if inferred ledger gross were chosen (hypothetical when deposits exist too). */
+  netCapitalIfInferredPathSar: number;
+  /** Net capital if cost-basis fallback gross were chosen. */
+  netCapitalIfFallbackPathSar: number;
+  /** Mirrors Investments page headline: `computeHeadlinePersonalInvestmentRoiDecimal` + live quotes. */
   investmentsHeadline: {
     totalValueSar: number;
     platformsRollupSar: number;
@@ -124,6 +135,13 @@ type InvestmentKpiReconciliation = {
     sukukCostSar: number;
     combinedNetCapitalSar: number;
     combinedGainLossSar: number;
+    /** Stocks-only net capital from ledger/deposit/fallback rules (before headline floor). */
+    stocksNetCapitalBeforeFloorSar: number;
+    holdingsCostBasisPlusBrokerCashSar: number;
+    /** max(stocks net capital, holdings cost basis + broker cash) — platform capital after headline floor. */
+    platformNetAfterFloorSar: number;
+    economicFloorApplied: boolean;
+    headlineRoiDecimal: number;
   };
   notes: string[];
 };
@@ -138,6 +156,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   const [nextRefreshIn, setNextRefreshIn] = useState(AUTO_REFRESH_SECONDS);
   const [incidents, setIncidents] = useState<HealthIncident[]>([]);
   const appDataCtx = useContext(DataContext);
+  const marketDataCtx = useContext(MarketDataContext);
   const { exchangeRate } = useCurrency();
 
   const runHealthChecks = useCallback(async (_trigger: 'manual' | 'auto' = 'manual') => {
@@ -360,6 +379,8 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     return { degraded, outages, avgLatency, topIncident, recommendations: recommendations.slice(0, 3) };
   }, [services, incidents]);
 
+  const liveQuoteMap = marketDataCtx?.simulatedPrices ?? EMPTY_SIMULATED_PRICES;
+
   const integritySummary = useMemo(() => {
     const financialData = appDataCtx?.data;
     if (!financialData) return null;
@@ -420,16 +441,18 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       .filter((x): x is NonNullable<typeof x> => x != null);
 
     const holdings: Holding[] = getPersonalInvestments(financialData).flatMap((p) => (p.holdings ?? [])) as Holding[];
-    const invAccountIds = new Set(accounts.filter((a) => a.type === 'Investment').map((a) => a.id));
-    const investmentTxs: InvestmentTransaction[] = (financialData.investmentTransactions ?? []).filter((t) =>
-      invAccountIds.has((t as InvestmentTransaction).accountId ?? '')
-    ) as InvestmentTransaction[];
+    /** Same attribution as `computePersonalInvestmentKpiBreakdown` (includes portfolio-linked rows). */
+    const investmentTxs = getPersonalInvestmentTransactionsForKpis(financialData);
 
     const investmentKpiReconciliation: InvestmentKpiReconciliation | null = (() => {
       const getAvailableCash = appDataCtx?.getAvailableCashForAccount;
       if (!getAvailableCash) return null;
 
       const b = computePersonalInvestmentKpiBreakdown(financialData, rate, getAvailableCash);
+
+      const netCapitalIfDepositPathSar = Math.max(0, b.depositsRecordedSar - b.totalWithdrawnSar);
+      const netCapitalIfInferredPathSar = Math.max(0, b.inferredInvestedFromLedgerSar - b.totalWithdrawnSar);
+      const netCapitalIfFallbackPathSar = Math.max(0, b.fallbackInvestedSar - b.totalWithdrawnSar);
 
       let brokerageCashRawSar = 0;
       for (const account of accounts) {
@@ -438,38 +461,13 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
         brokerageCashRawSar += tradableCashBucketToSARSigned({ SAR: cash?.SAR ?? 0, USD: cash?.USD ?? 0 }, rate);
       }
 
-      const expectedCashFromLedgerSar =
-        b.depositsRecordedSar -
-        b.buysSar +
-        b.sellsSar +
-        b.dividendsSar -
-        b.totalWithdrawnSar -
-        b.feesSar -
-        b.vatSar;
       /** Book balances are spot-valued; reconciliation must use spot ledger sums (not transaction-date USD FX). */
       const cashLedgerDriftSar = brokerageCashRawSar - b.expectedCashFromLedgerSpotSar;
 
-      const getCashStrict = (id: string) => {
-        const c = getAvailableCash(id);
-        return { SAR: c?.SAR ?? 0, USD: c?.USD ?? 0 };
-      };
-      const emptyPrices: SimulatedPriceMap = {};
-      const { subtotalSAR: platformsRollupSar } = computePersonalPlatformsRollupSAR(financialData, rate, emptyPrices, getCashStrict);
-      const { valueSAR: commoditiesValueSar } = computePersonalCommoditiesContributionSAR(financialData, rate, emptyPrices);
-      const allCommodities = getPersonalCommodityHoldings(financialData);
-      const commodityCostSar = allCommodities.reduce((sum, ch) => sum + toSAR(ch.purchaseValue ?? 0, 'SAR', rate), 0);
-      const { personalAssets } = getPersonalWealthData(financialData);
-      const sukukAssets = (personalAssets ?? []).filter((a) => a?.type === 'Sukuk');
-      const sukukAssetsValueSAR = sukukAssets.reduce((sum, a) => sum + Math.max(0, Number(a?.value) || 0), 0);
-      const sukukAssetsCostSAR = sukukAssets.reduce((sum, a) => {
-        const v = Math.max(0, Number(a?.value) || 0);
-        const pp = Number(a?.purchasePrice);
-        const cost = Number.isFinite(pp) && pp > 0 ? pp : v;
-        return sum + cost;
-      }, 0);
-      const headlineTotalValueSar = platformsRollupSar + commoditiesValueSar + sukukAssetsValueSAR;
-      const headlineNetCapitalSar = Math.max(0, b.netCapitalSar + commodityCostSar + sukukAssetsCostSAR);
-      const headlineGainLossSar = headlineTotalValueSar - headlineNetCapitalSar;
+      const headlineRoi = computeHeadlinePersonalInvestmentRoiDecimal(financialData, rate, getAvailableCash, liveQuoteMap as SimulatedPriceMap);
+
+      const platformNetAfterFloorSar = headlineRoi.platformNetForHeadlineSar;
+      const economicFloorApplied = platformNetAfterFloorSar > b.netCapitalSar + 1e-9;
 
       const notes: string[] = [];
       if (!(b.depositsRecordedSar > 0) && (b.buysSar > 0 || b.sellsSar > 0)) {
@@ -479,7 +477,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       }
       if (b.capitalSource === 'ledger_inferred') {
         notes.push(
-          'Ledger-inferred gross uses max(0, buys − sells − dividends + floored broker cash + withdrawals). Net capital is max(0, that gross − withdrawals again) — withdrawals appear twice in different roles; see step-by-step.',
+          'Ledger-inferred gross uses max(0, buys − sells − dividends + floored broker cash + withdrawals). Net capital if this path wins is max(0, that gross − withdrawals) — withdrawals enter the gross heuristic and again when forming net capital; see step-by-step.',
         );
       }
       if (b.capitalSource === 'cost_basis_fallback') {
@@ -520,18 +518,26 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
         inferredInvestedFromLedgerSar: b.inferredInvestedFromLedgerSar,
         holdingsCostBasisSar: b.holdingsCostBasisSar,
         fallbackInvestedSar: b.fallbackInvestedSar,
-        expectedCashFromLedgerSar,
+        expectedCashFromLedgerDatedSar: b.expectedCashFromLedgerDatedSar,
         expectedCashFromLedgerSpotSar: b.expectedCashFromLedgerSpotSar,
         cashLedgerDriftSar,
+        netCapitalIfDepositPathSar,
+        netCapitalIfInferredPathSar,
+        netCapitalIfFallbackPathSar,
         investmentsHeadline: {
-          totalValueSar: headlineTotalValueSar,
-          platformsRollupSar,
-          commoditiesValueSar,
-          sukukValueSar: sukukAssetsValueSAR,
-          commodityCostSar,
-          sukukCostSar: sukukAssetsCostSAR,
-          combinedNetCapitalSar: headlineNetCapitalSar,
-          combinedGainLossSar: headlineGainLossSar,
+          totalValueSar: headlineRoi.totalExposureSar,
+          platformsRollupSar: headlineRoi.platformsRollupSar,
+          commoditiesValueSar: headlineRoi.commoditiesValueSar,
+          sukukValueSar: headlineRoi.sukukAssetsValueSar,
+          commodityCostSar: headlineRoi.commodityCostSar,
+          sukukCostSar: headlineRoi.sukukAssetsCostSar,
+          combinedNetCapitalSar: headlineRoi.netCapitalSar,
+          combinedGainLossSar: headlineRoi.totalGainLossSar,
+          stocksNetCapitalBeforeFloorSar: b.netCapitalSar,
+          holdingsCostBasisPlusBrokerCashSar: headlineRoi.economicDeployedPlatformSar,
+          platformNetAfterFloorSar,
+          economicFloorApplied,
+          headlineRoiDecimal: headlineRoi.roi,
         },
         notes,
       };
@@ -637,7 +643,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       queue,
       ledgerReport,
     };
-  }, [appDataCtx?.data, appDataCtx?.getAvailableCashForAccount, exchangeRate]);
+  }, [appDataCtx?.data, appDataCtx?.getAvailableCashForAccount, exchangeRate, liveQuoteMap]);
 
   const sarPerUsdHealth = useMemo(
     () => resolveSarPerUsd(appDataCtx?.data ?? null, exchangeRate),
@@ -944,7 +950,8 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
             <div id="investment-kpi-reconciliation" className="mt-4 pt-4 border-t border-slate-200 scroll-mt-20">
               <h4 className="text-sm font-semibold text-slate-800">Investment KPI reconciliation</h4>
               <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                <strong>Stocks + broker cash</strong> uses one shared engine (<code className="text-[11px]">investmentKpiCore</code>). The Investments page <strong>headline</strong> adds commodities and Sukuk on top — both are spelled out below so numbers cannot silently disagree.
+                <strong>Section A</strong> uses <code className="text-[11px]">computePersonalInvestmentKpiBreakdown</code> (same SAR basis as portfolio/account balances).{' '}
+                <strong>Section B</strong> uses <code className="text-[11px]">computeHeadlinePersonalInvestmentRoiDecimal</code>: live equity quotes from Market Data, commodities/Sukuk marks, and an <strong>economic floor</strong> on platform net capital (max of ledger net capital vs holdings cost basis + broker cash) — identical to the Investments headline cards.
               </p>
 
               <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mt-3 mb-1">A — Stocks &amp; broker cash only (canonical)</p>
@@ -1001,33 +1008,46 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
                     <li>Deposits (sum of deposit transactions, SAR): {integritySummary.investmentKpiReconciliation.depositsSar.toFixed(2)}</li>
                     <li>Withdrawals (sum, SAR): {integritySummary.investmentKpiReconciliation.withdrawalsSar.toFixed(2)}</li>
                   </ul>
-                  <p className="font-semibold text-slate-800 pt-1">If deposits = 0 — ledger-inferred gross invested</p>
+                  <p className="tabular-nums text-slate-800 pt-1">
+                    → If gross invested = deposits: net capital = max(0, deposits − withdrawals) ={' '}
+                    {integritySummary.investmentKpiReconciliation.netCapitalIfDepositPathSar.toFixed(2)}
+                  </p>
+                  <p className="font-semibold text-slate-800 pt-1">Ledger-inferred gross (when deposits = 0 this path can win)</p>
                   <p className="text-[11px] text-slate-600 leading-relaxed">
                     inferredGross = max(0, buys − sells − dividends + floored broker cash + withdrawals) ={' '}
                     {integritySummary.investmentKpiReconciliation.inferredInvestedFromLedgerSar.toFixed(2)}
                   </p>
                   <p className="tabular-nums text-slate-800 pt-1">
-                    → net capital = max(0, inferredGross − withdrawals) = max(0,{' '}
+                    → If gross invested = inferredGross: net capital = max(0, inferredGross − withdrawals) = max(0,{' '}
                     {integritySummary.investmentKpiReconciliation.inferredInvestedFromLedgerSar.toFixed(2)} −{' '}
                     {integritySummary.investmentKpiReconciliation.withdrawalsSar.toFixed(2)}) ={' '}
-                    {integritySummary.investmentKpiReconciliation.netCapitalSar.toFixed(2)}{' '}
-                    <span className="text-slate-500 font-normal">
-                      (only when this path beats deposits and fallback)
-                    </span>
+                    {integritySummary.investmentKpiReconciliation.netCapitalIfInferredPathSar.toFixed(2)}
+                    <span className="text-slate-500 font-normal"> (hypothetical unless capital source is ledger_inferred)</span>
                   </p>
-                  <p className="font-semibold text-slate-800 pt-1">If that is also 0 — cost-basis fallback gross</p>
+                  <p className="font-semibold text-slate-800 pt-1">Cost-basis fallback gross (when deposits = 0 and inferred path loses ratio checks)</p>
                   <ul className="list-none space-y-0.5 tabular-nums">
                     <li>Holdings avg-cost basis (SAR): {integritySummary.investmentKpiReconciliation.holdingsCostBasisSar.toFixed(2)}</li>
                     <li>+ broker cash (SAR, floored): {integritySummary.investmentKpiReconciliation.brokerageCashSar.toFixed(2)}</li>
                     <li>+ withdrawals (SAR): {integritySummary.investmentKpiReconciliation.withdrawalsSar.toFixed(2)}</li>
                     <li className="font-semibold">→ fallback gross (max with 0): {integritySummary.investmentKpiReconciliation.fallbackInvestedSar.toFixed(2)}</li>
                   </ul>
+                  <p className="tabular-nums text-slate-800 pt-1">
+                    → If gross invested = fallback gross: net capital = max(0, fallback gross − withdrawals) ={' '}
+                    {integritySummary.investmentKpiReconciliation.netCapitalIfFallbackPathSar.toFixed(2)}
+                  </p>
                   <p className="pt-2 border-t border-slate-100 font-semibold text-slate-900">
-                    Net capital shown = max(0, chosen gross invested − withdrawals) = {integritySummary.investmentKpiReconciliation.netCapitalSar.toFixed(2)}{' '}
+                    Net capital used in Section A = max(0, chosen gross invested − withdrawals) = {integritySummary.investmentKpiReconciliation.netCapitalSar.toFixed(2)}{' '}
                     <span className="font-normal text-slate-600">
                       (capital source: {integritySummary.investmentKpiReconciliation.capitalSource})
                     </span>
                   </p>
+                  {integritySummary.investmentKpiReconciliation.depositsSar > 0 &&
+                    integritySummary.investmentKpiReconciliation.capitalSource === 'deposits' && (
+                      <p className="text-[11px] text-slate-600 pt-1 leading-relaxed">
+                        Deposits are recorded, so gross invested follows the deposit path. Inferred-only net capital would be{' '}
+                        {integritySummary.investmentKpiReconciliation.netCapitalIfInferredPathSar.toFixed(2)} SAR — shown for comparison only.
+                      </p>
+                    )}
                 </div>
               </details>
 
@@ -1050,8 +1070,12 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
                     {integritySummary.investmentKpiReconciliation.investmentsHeadline.combinedNetCapitalSar.toFixed(2)} SAR
                   </p>
                   <p className="text-xs text-slate-600 mt-1 tabular-nums leading-relaxed">
-                    Stocks net capital {integritySummary.investmentKpiReconciliation.netCapitalSar.toFixed(2)} + commodity cost {integritySummary.investmentKpiReconciliation.investmentsHeadline.commodityCostSar.toFixed(2)} + Sukuk cost{' '}
-                    {integritySummary.investmentKpiReconciliation.investmentsHeadline.sukukCostSar.toFixed(2)}
+                    Platform slice after floor {integritySummary.investmentKpiReconciliation.investmentsHeadline.platformNetAfterFloorSar.toFixed(2)} + commodity cost{' '}
+                    {integritySummary.investmentKpiReconciliation.investmentsHeadline.commodityCostSar.toFixed(2)} + Sukuk cost{' '}
+                    {integritySummary.investmentKpiReconciliation.investmentsHeadline.sukukCostSar.toFixed(2)}. Floor = max(Section A net capital{' '}
+                    {integritySummary.investmentKpiReconciliation.investmentsHeadline.stocksNetCapitalBeforeFloorSar.toFixed(2)}, holdings cost + broker cash{' '}
+                    {integritySummary.investmentKpiReconciliation.investmentsHeadline.holdingsCostBasisPlusBrokerCashSar.toFixed(2)})
+                    {integritySummary.investmentKpiReconciliation.investmentsHeadline.economicFloorApplied ? ' — floor applied.' : ' — floor not raised.'}
                   </p>
                 </div>
                 <div className={`rounded-lg border p-3 ${
@@ -1068,6 +1092,10 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
                   <p className="text-xs text-slate-600 mt-1">headline value − headline net capital</p>
                 </div>
               </div>
+              <p className="text-[11px] text-slate-600 mt-2 tabular-nums leading-relaxed">
+                Headline ROI (same as Investments / Dashboard):{' '}
+                {(integritySummary.investmentKpiReconciliation.investmentsHeadline.headlineRoiDecimal * 100).toFixed(2)}% = net gain/loss ÷ headline net capital.
+              </p>
 
               <details className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
                 <summary className="cursor-pointer text-sm font-semibold text-slate-800 select-none">
@@ -1087,7 +1115,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
                     <p className="tabular-nums text-slate-900 mt-1">{integritySummary.investmentKpiReconciliation.expectedCashFromLedgerSpotSar.toFixed(2)} SAR</p>
                     <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
                       Same identity as left, using spot SAR/USD so it matches book balances. Dated-FX total (capital/ROI):{' '}
-                      {integritySummary.investmentKpiReconciliation.expectedCashFromLedgerSar.toFixed(2)} SAR
+                      {integritySummary.investmentKpiReconciliation.expectedCashFromLedgerDatedSar.toFixed(2)} SAR
                     </p>
                   </div>
                   <div className={`rounded-lg border p-2 ${
