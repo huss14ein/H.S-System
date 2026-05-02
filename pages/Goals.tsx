@@ -1016,17 +1016,17 @@ const Goals: React.FC<{
                 <p className="text-sm font-semibold text-slate-900">Suggested monthly funding (per goal)</p>
                 <p className="text-[11px] text-slate-500 mt-0.5">
                   Green = on track. Amber = shortfall. Values are computed in SAR for correctness.
-                </p>
-              </div>
+                        </p>
+                    </div>
               <div className="flex flex-wrap gap-1.5">
                 <span className="inline-flex items-center rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">
                   On track
                 </span>
                 <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
                   Need more
-                </span>
-              </div>
-            </div>
+                    </span>
+                </div>
+        </div>
 
             {(fundingPlan?.suggestions ?? []).length === 0 ? (
               <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-6 text-center text-sm text-slate-500">
@@ -1153,7 +1153,7 @@ const Goals: React.FC<{
               </div>
             </div>
 
-            {fundingWaterfallOrder.length === 0 ? (
+          {fundingWaterfallOrder.length === 0 ? (
               <div className="mt-3 rounded-xl border border-dashed border-violet-200 bg-white/60 px-3 py-6 text-center text-sm text-slate-500">
                 Add goals to see suggested order.
               </div>
@@ -1188,10 +1188,10 @@ const Goals: React.FC<{
                           {p}
                         </span>
                       </div>
-                    </li>
+              </li>
                   );
                 })}
-              </ol>
+        </ol>
             )}
           </div>
         </div>
