@@ -63,9 +63,15 @@ function decodeHashPage(): string {
   }
 }
 
+/** Hash anchors that denote a section on System Health (not standalone page names). */
+function isSystemHealthSectionHash(decoded: string): boolean {
+  return decoded === 'data-reconciliation' || decoded === 'investment-kpi-reconciliation' || decoded === 'developer';
+}
+
 function getPageFromHash(): Page | null {
   const decoded = decodeHashPage();
   if (!decoded) return null;
+  if (isSystemHealthSectionHash(decoded)) return 'System & APIs Health';
   if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(decoded as Page)) return 'Investments';
   if (VALID_PAGES.includes(decoded as Page)) return decoded as Page;
   return null;

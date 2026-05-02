@@ -226,7 +226,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const analysisValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
         const fx = resolveSarPerUsd(data, exchangeRate);
-        const monthlyKpis = computeMonthlyReportFinancialKpis(data, fx, getAvailableCashForAccount, simulatedPrices);
+        const monthlyKpis = computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
         if (!Number.isFinite(fx) || fx <= 0) warnings.push('Exchange rate is invalid — USD transactions may not convert correctly.');
         if (!Number.isFinite(monthlyKpis.budgetVariance)) warnings.push('Budget variance could not be computed.');
         if (!Number.isFinite(monthlyKpis.roi)) warnings.push('Investment ROI could not be computed.');

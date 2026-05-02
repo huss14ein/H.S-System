@@ -314,9 +314,9 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
 
   const scrollToHashTarget = useCallback((hash: string) => {
     const id = hash.replace(/^#/, '');
-    if (id !== 'investment-kpi-reconciliation') return;
+    if (id !== 'investment-kpi-reconciliation' && id !== 'data-reconciliation') return;
     window.requestAnimationFrame(() => {
-      document.getElementById('investment-kpi-reconciliation')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   }, []);
 

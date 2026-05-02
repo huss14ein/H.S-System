@@ -1081,10 +1081,9 @@ const hasData = accountsForEmptyCheck.length > 0;
                                 showToast('Add accounts and data to generate a monthly report.', 'warning');
                                 return;
                             }
-                            const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
                             const { budgetVariance, roi } = computeMonthlyReportFinancialKpis(
                                 data,
-                                sarPerUsd,
+                                exchangeRate,
                                 getAvailableCashForAccount,
                                 simulatedPrices,
                             );

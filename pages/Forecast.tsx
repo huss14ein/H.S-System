@@ -181,9 +181,9 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
 
     const confidenceBand = useMemo(() => {
         if (!summary) return null;
-        const volBase = Math.max(1, Math.abs(savingsAnalytics.averageMonthlyNet));
-        const volatilityFactor = clamp(savingsAnalytics.monthlyStdDev / volBase, 0, 1.5);
-        const horizonRisk = Math.sqrt(Math.max(1, horizon));
+                const volBase = Math.max(1, Math.abs(savingsAnalytics.averageMonthlyNet));
+                const volatilityFactor = clamp(savingsAnalytics.monthlyStdDev / volBase, 0, 1.5);
+                const horizonRisk = Math.sqrt(Math.max(1, horizon));
         const spread = summary.projectedNetWorth * (0.05 + volatilityFactor * 0.08) * (horizonRisk / 4);
         return {
             low: Math.max(0, Math.round(summary.projectedNetWorth - spread)),
@@ -295,7 +295,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const forecastValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
         const fx = resolveSarPerUsd(data, exchangeRate);
-        const kpis = computeMonthlyReportFinancialKpis(data, fx, getAvailableCashForAccount, simulatedPrices);
+        const kpis = computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
         if (!Number.isFinite(fx) || fx <= 0) warnings.push('Exchange rate is invalid — USD-linked balances may mis-state projections.');
         if (!Number.isFinite(initialValues.netWorth)) warnings.push('Net worth baseline is invalid.');
         if (!Number.isFinite(initialValues.investmentValue) || initialValues.investmentValue < 0) warnings.push('Investment baseline is invalid.');
@@ -382,9 +382,9 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     </div>
                 </div>
 
-                <AIAdvisor
+            <AIAdvisor
                     pageContext="forecast"
-                    contextData={{
+                contextData={{
                         baselineNetWorth: initialValues.netWorth,
                         baselineInvestments: initialValues.investmentValue,
                         projectedNetWorth: summary?.projectedNetWorth ?? 0,
@@ -395,16 +395,16 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     title="Forecast advisor"
                     subtitle="Plain-language read on your sliders and projected path"
                     buttonLabel="Get AI forecast insights"
-                />
+            />
 
-                {forecastValidationWarnings.length > 0 && (
+            {forecastValidationWarnings.length > 0 && (
                     <div className="rounded-2xl border-l-4 border-l-amber-500 bg-amber-50/90 border border-amber-100 px-4 py-3 shadow-sm" role="status">
                         <p className="text-sm font-semibold text-amber-950">Checks before you trust the chart</p>
                         <ul className="text-xs text-amber-950 mt-2 space-y-1 list-disc pl-4">
                             {forecastValidationWarnings.slice(0, 8).map((w, i) => (
                                 <li key={`fv-${i}`}>{w}</li>
-                            ))}
-                        </ul>
+                        ))}
+                    </ul>
                     </div>
                 )}
 
@@ -414,44 +414,44 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     className="border border-sky-100 bg-gradient-to-br from-sky-50/80 via-white to-slate-50/50 shadow-sm"
                     defaultExpanded={false}
                 >
-                    <ul className="text-sm text-slate-700 space-y-2 list-disc pl-5 leading-relaxed">
-                        <li>
+                <ul className="text-sm text-slate-700 space-y-2 list-disc pl-5 leading-relaxed">
+                    <li>
                             <strong className="text-slate-900">What moves:</strong> we grow one “investment pile” (your portfolios + brokerage cash today) with your monthly contribution and return %. Everything else in today’s net worth (home, Sukuk, cash outside that pile, debt) stays fixed — so this is a <strong>simplified</strong> story, not a full balance-sheet simulator.
-                        </li>
-                        <li>
+                    </li>
+                    <li>
                             <strong className="text-slate-900">Net worth line:</strong> fixed slice of today’s NW + growing investment pile — stays aligned month by month (no rounding drift).
-                        </li>
-                        <li>
+                    </li>
+                    <li>
                             <strong className="text-slate-900">History defaults:</strong> your 12‑month net cash flow is converted to <strong>SAR</strong> per transaction (mixed USD/SAR accounts supported).
-                        </li>
-                        <li>
+                    </li>
+                    <li>
                             <strong className="text-slate-900">Grey band:</strong> rough sensitivity only — not a formal confidence interval.
-                        </li>
-                    </ul>
+                    </li>
+                </ul>
                     <p className="text-xs text-slate-500 mt-4 border-t border-slate-200/80 pt-3">Educational only — not investment advice.</p>
-                </CollapsibleSection>
+            </CollapsibleSection>
 
-                <div className="cards-grid grid grid-cols-1 lg:grid-cols-4 gap-6 lg:gap-8 lg:items-start">
-                    <div className="lg:col-span-1 min-w-0 w-full lg:self-start">
-                        <div className="lg:sticky lg:top-24">
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-4 gap-6 lg:gap-8 lg:items-start">
+                <div className="lg:col-span-1 min-w-0 w-full lg:self-start">
+                    <div className="lg:sticky lg:top-24">
                             <SectionCard title="Your assumptions" className="w-full border-l-4 border-l-primary/40 shadow-md" collapsible collapsibleSummary="Presets & sliders" defaultExpanded>
-                                <div className="space-y-5">
+                            <div className="space-y-5">
                                     <p className="text-xs text-slate-600 flex items-center gap-1.5 flex-wrap">
                                         <InfoHint text="Presets only change growth sliders — compare scenarios in the table." /> Scenario presets
                                     </p>
-                                    <div className="flex flex-wrap gap-2">
-                                        {(['Conservative', 'Base', 'Aggressive'] as const).map((preset) => (
-                                            <button
-                                                key={preset}
+                                <div className="flex flex-wrap gap-2">
+                                    {(['Conservative', 'Base', 'Aggressive'] as const).map((preset) => (
+                                        <button
+                                            key={preset}
                                                 type="button"
-                                                onClick={() => applyScenarioPreset(preset)}
+                                            onClick={() => applyScenarioPreset(preset)}
                                                 className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
                                                     scenarioPreset === preset ? 'bg-primary text-white border-primary shadow-sm' : 'bg-white text-gray-700 border-gray-300 hover:border-primary'
                                                 }`}
-                                            >
-                                                {preset}
-                                            </button>
-                                        ))}
+                                        >
+                                            {preset}
+                                        </button>
+                                    ))}
                                         <button
                                             type="button"
                                             onClick={resetFromHistory}
@@ -459,33 +459,33 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                                         >
                                             Reset from history
                                         </button>
-                                    </div>
-                                    <div>
+                                </div>
+                                <div>
                                         <label htmlFor="horizon" className="block text-sm font-medium text-slate-700">
                                             Years ahead: <span className="tabular-nums font-semibold text-primary">{horizon}</span>
                                             <InfoHint text="How far to project — longer spans show more uncertainty." />
                                         </label>
                                         <input type="range" id="horizon" min={1} max={30} value={horizon} onChange={(e) => setHorizon(Number(e.target.value))} className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-primary mt-2" />
-                                    </div>
-                                    <div>
+                                </div>
+                                <div>
                                         <label htmlFor="monthly-savings" className="block text-sm font-medium text-slate-700">
                                             Monthly savings (model) <InfoHint text="Money you add to investments each month in this simplified story." />
                                         </label>
-                                        <input
-                                            type="number"
-                                            id="monthly-savings"
-                                            value={monthlySavings}
-                                            onChange={(e) => {
-                                                setMonthlySavingsTouched(true);
-                                                setMonthlySavings(Number(e.target.value));
-                                            }}
-                                            className="input-base mt-1"
-                                        />
+                                    <input
+                                        type="number"
+                                        id="monthly-savings"
+                                        value={monthlySavings}
+                                        onChange={(e) => {
+                                            setMonthlySavingsTouched(true);
+                                            setMonthlySavings(Number(e.target.value));
+                                        }}
+                                        className="input-base mt-1"
+                                    />
                                         <p className="text-xs text-slate-500 mt-1">
                                             12‑month median net flow {formatCurrencyString(savingsAnalytics.medianMonthlyNet)} · average {formatCurrencyString(savingsAnalytics.averageMonthlyNet)} (SAR)
-                                        </p>
-                                    </div>
-                                    <div>
+                                    </p>
+                                </div>
+                                <div>
                                         <label htmlFor="investment-growth" className="block text-sm font-medium text-slate-700">
                                             Expected yearly investment return (%)
                                         </label>
@@ -496,8 +496,8 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                                             onChange={(e) => handleManualInvestmentGrowthChange(Number(e.target.value))}
                                             className="input-base mt-1"
                                         />
-                                    </div>
-                                    <div>
+                                </div>
+                                <div>
                                         <label htmlFor="income-growth" className="block text-sm font-medium text-slate-700">
                                             Yearly increase in savings contribution (%)
                                         </label>
@@ -512,13 +512,13 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                                     <div className="flex items-center gap-2 rounded-xl bg-slate-50 border border-slate-100 px-3 py-2 text-xs text-slate-600">
                                         <SparklesIcon className="h-4 w-4 text-primary shrink-0" aria-hidden />
                                         <span>Projections update instantly — no run button needed.</span>
-                                    </div>
                                 </div>
-                            </SectionCard>
-                        </div>
+                            </div>
+                        </SectionCard>
                     </div>
+                </div>
 
-                    <div className="lg:col-span-3 min-w-0 w-full space-y-6 lg:self-start">
+                <div className="lg:col-span-3 min-w-0 w-full space-y-6 lg:self-start">
                         {summary && (
                             <>
                                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-md">
@@ -531,7 +531,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                                         >
                                             {scenarioPreset}
                                         </span>
-                                    </div>
+                            </div>
                                     <div className="cards-grid grid grid-cols-1 md:grid-cols-3 gap-4">
                                         <Card
                                             title={`Net worth (year ${horizon})`}
@@ -551,7 +551,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                                             tooltip="Projected net worth minus today’s net worth (SAR)."
                                             indicatorColor={deltaProjected >= 0 ? 'green' : 'yellow'}
                                         />
-                                    </div>
+                        </div>
                                 </div>
 
                                 {confidenceBand && (
@@ -573,9 +573,9 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                                         </div>
                                         <p className="text-xs text-slate-500 mt-3">Spread scales with how jumpy your monthly savings were and how long you forecast — for intuition only.</p>
                                     </div>
-                                )}
-                            </>
                         )}
+                        </>
+                    )}
 
                         {chartDisplayData.length > 0 ? (
                             <SectionCard title="Growth chart" className="flex flex-col border-t-4 border-t-primary/25 shadow-md" collapsible collapsibleSummary="Net worth vs investment pile" defaultExpanded>
@@ -583,20 +583,20 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                                     Long horizons are <strong>sampled</strong> on screen so the chart stays readable — your numbers in the cards use every month.
                                 </p>
                                 <div className="h-[400px] sm:h-[460px] w-full rounded-xl overflow-hidden border border-slate-100 bg-slate-50/30">
-                                    <ResponsiveContainer width="100%" height="100%">
+                                <ResponsiveContainer width="100%" height="100%">
                                         <ComposedChart data={chartDisplayData} margin={{ ...CHART_MARGIN, right: 28, left: 12, bottom: 8 }}>
-                                            <CartesianGrid strokeDasharray={CHART_GRID_STROKE} stroke={CHART_GRID_COLOR} />
+                                        <CartesianGrid strokeDasharray={CHART_GRID_STROKE} stroke={CHART_GRID_COLOR} />
                                             <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} fontSize={10} tickLine={false} interval="preserveStartEnd" angle={-25} textAnchor="end" height={52} />
                                             <YAxis domain={chartYDomain} tickFormatter={(v) => formatAxisNumber(Number(v))} stroke={CHART_AXIS_COLOR} fontSize={11} tickLine={false} width={58} />
                                             <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })} contentStyle={TOOLTIP_STYLE} />
-                                            <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                                            <defs>
+                                        <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+                                        <defs>
                                                 <linearGradient id="fcInvestFill2" x1="0" y1="0" x2="0" y2="1">
                                                     <stop offset="5%" stopColor={CHART_COLORS.secondary} stopOpacity={0.35} />
                                                     <stop offset="95%" stopColor={CHART_COLORS.secondary} stopOpacity={0.08} />
                                                 </linearGradient>
-                                            </defs>
-                                            {goalReferenceLines.map((line) => (
+                                        </defs>
+                                        {goalReferenceLines.map((line) => (
                                                 <ReferenceLine
                                                     key={line.key}
                                                     y={line.y}
@@ -606,16 +606,16 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                                                 />
                                             ))}
                                             <Area type="monotone" dataKey="Investment Value" stroke={CHART_COLORS.secondary} fill="url(#fcInvestFill2)" name="Investment pile" />
-                                            <Line type="monotone" dataKey="Net Worth" stroke={CHART_COLORS.primary} strokeWidth={2.5} name="Net worth" dot={false} />
-                                        </ComposedChart>
-                                    </ResponsiveContainer>
-                                </div>
-                            </SectionCard>
-                        ) : (
+                                        <Line type="monotone" dataKey="Net Worth" stroke={CHART_COLORS.primary} strokeWidth={2.5} name="Net worth" dot={false} />
+                                    </ComposedChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </SectionCard>
+                    ) : (
                             <SectionCard title="Growth chart">
                                 <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 min-h-[200px] flex items-center justify-center text-sm text-slate-500">Add data to project wealth.</div>
                             </SectionCard>
-                        )}
+                    )}
 
                         <SectionCard title={`Scenario comparison (${horizon} years)`} collapsible defaultExpanded className="shadow-md">
                             <div className="overflow-x-auto rounded-xl border border-slate-200">
@@ -652,16 +652,16 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
 
                         {goalProjections.length > 0 && (
                             <SectionCard title="Goal outlook" collapsible collapsibleSummary="Simple threshold view" defaultExpanded>
-                                <div className="cards-grid grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 gap-3">
                                     {goalProjections.map((proj) => (
                                         <div
                                             key={proj.name}
                                             className={`flex items-start gap-3 p-4 rounded-xl border ${proj.met ? 'border-emerald-200 bg-emerald-50/80' : 'border-slate-200 bg-slate-50/80'}`}
                                         >
-                                            <FlagIcon className={`h-6 w-6 flex-shrink-0 mt-0.5 ${proj.met ? 'text-emerald-600' : 'text-slate-400'}`} />
-                                            <div>
-                                                <p className="font-semibold text-slate-900">{proj.name}</p>
-                                                {proj.met ? (
+                                        <FlagIcon className={`h-6 w-6 flex-shrink-0 mt-0.5 ${proj.met ? 'text-emerald-600' : 'text-slate-400'}`} />
+                                        <div>
+                                            <p className="font-semibold text-slate-900">{proj.name}</p>
+                                            {proj.met ? (
                                                     <p className="text-sm text-emerald-900 mt-1">
                                                         Crosses illustrative threshold in{' '}
                                                         <span className="font-semibold">
@@ -670,13 +670,13 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                                                     </p>
                                                 ) : (
                                                     <p className="text-sm text-slate-600 mt-1">Not reached within {horizon} years at these assumptions.</p>
-                                                )}
-                                            </div>
+                                            )}
                                         </div>
-                                    ))}
-                                </div>
-                            </SectionCard>
-                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </SectionCard>
+                    )}
 
                         <div className="rounded-xl border border-slate-200 bg-gradient-to-r from-slate-50 to-white p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
@@ -699,61 +699,61 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                         {currentSavingsRate < 15 && (
                             <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
                                 <strong>Gentle heads-up:</strong> many plans assume saving at least ~15% of income. Your recent rate is lower — tighten spending or lift income if you want the forecast to feel realistic.
-                            </div>
-                        )}
-                    </div>
+                        </div>
+                    )}
                 </div>
+            </div>
 
                 <CollapsibleSection title="Stress test (illustrative)" summary="Job loss, market dip, one-off bill" defaultExpanded={false}>
                     <p className="text-xs text-slate-600 mb-4">Rough resilience check using SAR‑normalized cash and spending.</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-                        <div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                    <div>
                             <label className="text-xs font-medium text-slate-600">Job loss (months)</label>
                             <input type="range" min={0} max={12} value={stressJobLossM} onChange={(e) => setStressJobLossM(Number(e.target.value))} className="w-full accent-primary" />
-                            <p className="text-sm font-semibold">{stressJobLossM} mo</p>
-                        </div>
-                        <div>
+                        <p className="text-sm font-semibold">{stressJobLossM} mo</p>
+                    </div>
+                    <div>
                             <label className="text-xs font-medium text-slate-600">Market drop (% on slice)</label>
                             <input type="range" min={0} max={40} value={stressMarketDrop} onChange={(e) => setStressMarketDrop(Number(e.target.value))} className="w-full accent-primary" />
-                            <p className="text-sm font-semibold">{stressMarketDrop}%</p>
-                        </div>
-                        <div>
+                        <p className="text-sm font-semibold">{stressMarketDrop}%</p>
+                    </div>
+                    <div>
                             <label className="text-xs font-medium text-slate-600">One-off cost (SAR)</label>
-                            <input type="number" min={0} step={500} value={stressMedical} onChange={(e) => setStressMedical(Number(e.target.value))} className="input-base mt-1" />
-                        </div>
+                        <input type="number" min={0} step={500} value={stressMedical} onChange={(e) => setStressMedical(Number(e.target.value))} className="input-base mt-1" />
                     </div>
-                    <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-sm space-y-2">
+                </div>
+                <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-sm space-y-2">
                         <p className="font-semibold text-amber-950">{stressResult.headline}</p>
-                        <p className="text-slate-700">
+                    <p className="text-slate-700">
                             Cash (checking/savings, SAR): <strong>{formatCurrencyString(stressInputs.liquidCash, { digits: 0 })}</strong> · Typical monthly spend:{' '}
-                            <strong>{formatCurrencyString(stressInputs.monthlyExpense, { digits: 0 })}</strong>
-                        </p>
-                    </div>
-                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-600">
+                        <strong>{formatCurrencyString(stressInputs.monthlyExpense, { digits: 0 })}</strong>
+                    </p>
+                </div>
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-600">
                         <div className="rounded-lg border border-slate-200 p-3 bg-white">
                             <p className="font-semibold text-slate-800 mb-1">Strategy lens</p>
-                            <p>{strategyCompare.aggressive}</p>
-                            <p className="mt-1">{strategyCompare.balanced}</p>
-                        </div>
+                        <p>{strategyCompare.aggressive}</p>
+                        <p className="mt-1">{strategyCompare.balanced}</p>
+                    </div>
                         <div className="rounded-lg border border-slate-200 p-3 bg-white">
                             <p className="font-semibold text-slate-800 mb-1">Lump sum vs DCA</p>
-                            <p>{lumpDca.lumpNote}</p>
-                            <p className="mt-1">{lumpDca.dcaNote}</p>
-                        </div>
+                        <p>{lumpDca.lumpNote}</p>
+                        <p className="mt-1">{lumpDca.dcaNote}</p>
                     </div>
-                </CollapsibleSection>
+                </div>
+            </CollapsibleSection>
 
-                {timeline && (
+            {timeline && (
                     <SectionCard title="Scenario timeline" collapsible defaultExpanded={false}>
-                        <ol className="space-y-2 text-sm text-slate-700 list-decimal pl-5">
+                    <ol className="space-y-2 text-sm text-slate-700 list-decimal pl-5">
                             {timeline.events.map((e) => (
-                                <li key={`${e.yearOffset}-${e.label}`}>
-                                    <span className="font-semibold">{e.label}:</span> {e.narrative}
-                                </li>
-                            ))}
-                        </ol>
-                    </SectionCard>
-                )}
+                            <li key={`${e.yearOffset}-${e.label}`}>
+                                <span className="font-semibold">{e.label}:</span> {e.narrative}
+                            </li>
+                        ))}
+                    </ol>
+                </SectionCard>
+            )}
             </div>
         </PageLayout>
     );

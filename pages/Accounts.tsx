@@ -1186,7 +1186,6 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                     <button
                         type="button"
                         onClick={() => {
-                            setActivePage('System & APIs Health');
                             window.location.hash = 'data-reconciliation';
                         }}
                         className="btn-ghost py-1.5 text-slate-700 hover:bg-slate-100"

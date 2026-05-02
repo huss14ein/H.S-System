@@ -4,8 +4,9 @@
  */
 
 import type { Account, FinancialData, Holding, InvestmentPortfolio, InvestmentTransaction, TradeCurrency } from '../types';
-import { quoteDailyPnLInBookCurrency, quoteNotionalInBookCurrency, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
-import { holdingUsesLiveQuote } from '../utils/holdingValuation';
+import { quoteDailyPnLInBookCurrency, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
+import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote } from '../utils/holdingValuation';
+import { lookupLiveQuoteForSymbol } from '../services/finnhubService';
 import {
   inferInvestmentTransactionCurrency,
   portfolioBelongsToAccount,
@@ -19,6 +20,7 @@ import {
   getPersonalCommodityHoldings,
   getPersonalInvestments,
 } from '../utils/wealthScope';
+import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 
 export type SimulatedPriceMap = Record<string, { price: number; change?: number; changePercent?: number }>;
 
@@ -75,32 +77,14 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
     platformCurrency,
   } = args;
 
-  let valueSarFromSim = 0;
-  let valueUsdFromSim = 0;
-  let valueSarFromStored = 0;
-  let valueUsdFromStored = 0;
-
+  /** One implementation for position market value: {@link effectiveHoldingValueInBookCurrency} (same as holdings table / Overview). */
+  let holdingsValueInSAR = 0;
   portfolios.forEach((p) => {
-    const cur = ((p.currency as TradeCurrency) || 'USD') as TradeCurrency;
+    const cur = resolveInvestmentPortfolioCurrency(p);
     (p.holdings || []).forEach((h: Holding) => {
-      const symbol = (h.symbol || '').trim().toUpperCase();
-      const qty = Number(h.quantity ?? 0);
-      const avgCost = Number(h.avgCost ?? 0);
-      const costBasis = Number.isFinite(avgCost) && Number.isFinite(qty) ? avgCost * qty : 0;
-      const priceInfo = holdingUsesLiveQuote(h) ? simulatedPrices[symbol] : undefined;
-      if (priceInfo && Number.isFinite(priceInfo.price) && qty > 0) {
-        const liveInBook = quoteNotionalInBookCurrency(priceInfo.price, qty, symbol, cur, rate);
-        if (Number.isFinite(liveInBook) && liveInBook > 0) {
-          if (cur === 'SAR') valueSarFromSim += liveInBook;
-          else valueUsdFromSim += liveInBook;
-          return;
-        }
-      }
-      const stored = Number.isFinite(h.currentValue) ? (h.currentValue as number) : 0;
-      const effective = stored > 0 ? stored : costBasis > 0 ? costBasis : 0;
-      if (!Number.isFinite(effective) || effective <= 0) return;
-      if (cur === 'SAR') valueSarFromStored += effective;
-      else valueUsdFromStored += effective;
+      const v = effectiveHoldingValueInBookCurrency(h, cur, simulatedPrices, rate);
+      if (!Number.isFinite(v) || v <= 0) return;
+      holdingsValueInSAR += toSAR(v, cur, rate);
     });
   });
 
@@ -108,7 +92,6 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
     { SAR: availableCashByCurrency.SAR ?? 0, USD: availableCashByCurrency.USD ?? 0 },
     rate,
   );
-  const holdingsValueInSAR = valueSarFromSim + valueSarFromStored + (valueUsdFromStored + valueUsdFromSim) * rate;
   const totalValueInSAR = holdingsValueInSAR + cashInSar;
   const holdingsValue =
     platformCurrency === 'SAR'
@@ -123,7 +106,7 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
         ? totalValueInSAR / rate
         : totalValueInSAR;
   const holdingsCostBasisSAR = portfolios.reduce((sum, p) => {
-    const cur = ((p.currency as TradeCurrency) || 'USD') as TradeCurrency;
+    const cur = resolveInvestmentPortfolioCurrency(p);
     const cost = (p.holdings || []).reduce((s: number, h: Holding) => {
       const qty = Number(h.quantity ?? 0);
       const avg = Number(h.avgCost ?? 0);
@@ -229,12 +212,15 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
   let dailySar = 0;
   let dailyUsd = 0;
   portfolios.forEach((p) => {
-    const cur = ((p.currency as TradeCurrency) || 'USD') as TradeCurrency;
+    const cur = resolveInvestmentPortfolioCurrency(p);
     (p.holdings || []).forEach((h: Holding) => {
-      const symbol = (h.symbol || '').trim().toUpperCase();
-      const info = holdingUsesLiveQuote(h) ? simulatedPrices[symbol] : undefined;
-      if (!info || !Number.isFinite(info.change) || (h.quantity ?? 0) <= 0) return;
-      const d = quoteDailyPnLInBookCurrency(info.change as number, h.quantity || 0, symbol, cur, rate);
+      if (!holdingUsesLiveQuote(h)) return;
+      const qty = h.quantity ?? 0;
+      if (qty <= 0) return;
+      const symRaw = (h.symbol || '').trim();
+      const info = lookupLiveQuoteForSymbol(simulatedPrices, symRaw);
+      if (!info || !Number.isFinite(info.change)) return;
+      const d = quoteDailyPnLInBookCurrency(info.change, qty, symRaw.toUpperCase(), cur, rate);
       if (cur === 'SAR') dailySar += d;
       else dailyUsd += d;
     });
@@ -274,6 +260,110 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
     netCapitalSAR,
   };
   return sanitizeAndValidatePlatformMetrics(out, platformCurrency, rate);
+}
+
+const HOLDINGS_WEIGHT_EPS = 1e-9;
+
+export type PortfolioMetricsBundle = {
+  metricsByPortfolioId: Map<string, PlatformCardMetrics>;
+  /** Account cash buckets split by this portfolio’s share of total position value (SAR), for tooltips. */
+  allocatedCashByPortfolioId: Map<string, { SAR: number; USD: number }>;
+};
+
+function investmentTransactionBelongsToPortfolio(
+  t: InvestmentTransaction,
+  portfolioId: string,
+): boolean {
+  const pid = String(
+    t.portfolioId ?? (t as { portfolio_id?: string }).portfolio_id ?? '',
+  ).trim();
+  return pid === portfolioId;
+}
+
+/**
+ * Per-portfolio KPIs for one platform card row: reuses {@link computePlatformCardMetrics} with
+ * (a) transactions filtered to that portfolio, and (b) broker cash allocated from the account bucket
+ * by each portfolio’s **holdings value in SAR** (same sim/stored rules as the platform). When all
+ * positions are zero, splits cash equally. Not a second formula — same engine, scoped inputs.
+ */
+export function computePortfolioMetricsBundle(args: {
+  /** Portfolios listed on this account row (siblings on the same broker). */
+  siblingPortfolios: InvestmentPortfolio[];
+  /** Investment transactions already scoped to this platform account (same as PlatformCard). */
+  transactions: InvestmentTransaction[];
+  accounts: Account[];
+  allInvestments: InvestmentPortfolio[];
+  sarPerUsd: number;
+  simulatedPrices: SimulatedPriceMap;
+  accountAvailableCashByCurrency: { SAR: number; USD: number };
+}): PortfolioMetricsBundle {
+  const {
+    siblingPortfolios,
+    transactions,
+    accounts: accList,
+    allInvestments: invList,
+    sarPerUsd: rate,
+    simulatedPrices,
+    accountAvailableCashByCurrency,
+  } = args;
+
+  const metricsByPortfolioId = new Map<string, PlatformCardMetrics>();
+  const allocatedCashByPortfolioId = new Map<string, { SAR: number; USD: number }>();
+
+  const holdingsSarById = new Map<string, number>();
+  for (const p of siblingPortfolios) {
+    const pc = resolveInvestmentPortfolioCurrency(p);
+    const mHold = computePlatformCardMetrics({
+      portfolios: [p],
+      transactions: [],
+      accounts: accList,
+      allInvestments: invList,
+      sarPerUsd: rate,
+      availableCashByCurrency: { SAR: 0, USD: 0 },
+      simulatedPrices,
+      platformCurrency: pc,
+    });
+    holdingsSarById.set(p.id, mHold.holdingsValueInSAR);
+  }
+
+  const totalHoldingsSar = siblingPortfolios.reduce((s, p) => s + (holdingsSarById.get(p.id) ?? 0), 0);
+  const n = siblingPortfolios.length;
+
+  const sarBucket = accountAvailableCashByCurrency.SAR ?? 0;
+  const usdBucket = accountAvailableCashByCurrency.USD ?? 0;
+
+  for (const p of siblingPortfolios) {
+    const mine = holdingsSarById.get(p.id) ?? 0;
+    const share =
+      totalHoldingsSar > HOLDINGS_WEIGHT_EPS
+        ? mine / totalHoldingsSar
+        : n > 0
+          ? 1 / n
+          : 1;
+    const allocated = {
+      SAR: sarBucket * share,
+      USD: usdBucket * share,
+    };
+    allocatedCashByPortfolioId.set(p.id, allocated);
+
+    const filtered = transactions.filter((t) => investmentTransactionBelongsToPortfolio(t, p.id));
+    const pc = resolveInvestmentPortfolioCurrency(p);
+    metricsByPortfolioId.set(
+      p.id,
+      computePlatformCardMetrics({
+        portfolios: [p],
+        transactions: filtered,
+        accounts: accList,
+        allInvestments: invList,
+        sarPerUsd: rate,
+        availableCashByCurrency: allocated,
+        simulatedPrices,
+        platformCurrency: pc,
+      }),
+    );
+  }
+
+  return { metricsByPortfolioId, allocatedCashByPortfolioId };
 }
 
 const RECONCILIATION_EPSILON = 1e-6;
@@ -397,7 +487,7 @@ export function computePersonalPlatformCardRow(
       return canon === account.id || txAccountId === account.id;
     })
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  const currencies = [...new Set(portfoliosOnAccount.map((p) => (p.currency || 'USD') as TradeCurrency))];
+  const currencies = [...new Set(portfoliosOnAccount.map((p) => resolveInvestmentPortfolioCurrency(p)))];
   const platformCurrency = currencies.length === 1 ? currencies[0] : undefined;
   return computePlatformCardMetrics({
     portfolios: portfoliosOnAccount,

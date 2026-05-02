@@ -749,12 +749,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
 
     const summaryMonthlyKpisForReconciliation = useMemo(() => {
         if (!data) return null;
-        return computeMonthlyReportFinancialKpis(
-            data,
-            resolveSarPerUsd(data, exchangeRate),
-            getAvailableCashForAccount,
-            simulatedPrices,
-        );
+        return computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
     }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
 
     const kpiReconciliation = useMemo(() => {
@@ -1069,7 +1064,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                                 onOpenAccounts={() => setActivePage('Accounts')}
                                 onOpenAssets={() => setActivePage('Assets')}
                                 onOpenDataReconciliation={() => {
-                                    setActivePage('System & APIs Health');
                                     window.location.hash = 'data-reconciliation';
                                 }}
                             />

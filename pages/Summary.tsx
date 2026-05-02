@@ -20,7 +20,6 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import PageLayout from '../components/PageLayout';
 import InfoHint from '../components/InfoHint';
 import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import type { Page } from '../types';
@@ -120,16 +119,19 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     const auth = useContext(AuthContext);
     const { exchangeRate, currency: displayCurrency } = useCurrency();
     const { simulatedPrices } = useMarketData();
-    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
-
+    const reportModel = useMemo(
+        () => (data ? computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount) : null),
+        [data, exchangeRate, getAvailableCashForAccount]
+    );
     const fxBanner = useMemo(() => {
         const w = Number(data?.wealthUltraConfig?.fxRate);
         const hasWu = Number.isFinite(w) && w > 0;
+        const rate = reportModel?.sarPerUsd ?? exchangeRate;
         return {
-            rate: sarPerUsd,
+            rate,
             sourceLabel: hasWu ? 'Wealth Ultra / saved FX' : 'Live header rate (or SAR peg default)',
         };
-    }, [data?.wealthUltraConfig?.fxRate, sarPerUsd]);
+    }, [data?.wealthUltraConfig?.fxRate, reportModel?.sarPerUsd, exchangeRate]);
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const [analysis, setAnalysis] = useState<PersonaAnalysis | null>(null);
     const [analysisEn, setAnalysisEn] = useState<PersonaAnalysis | null>(null);
@@ -161,11 +163,6 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         };
         loadRole();
     }, [auth?.user?.id]);
-
-    const reportModel = useMemo(
-        () => (data ? computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount) : null),
-        [data, exchangeRate, getAvailableCashForAccount]
-    );
 
     const { maskBalance } = usePrivacyMask();
 
@@ -285,9 +282,9 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     const summaryMonthlyKpis = useMemo(
         () =>
             data
-                ? computeMonthlyReportFinancialKpis(data, sarPerUsd, getAvailableCashForAccount, simulatedPrices)
+                ? computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices)
                 : { budgetVariance: Number.NaN, roi: Number.NaN },
-        [data, sarPerUsd, getAvailableCashForAccount, simulatedPrices]
+        [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]
     );
 
     const summaryValidationWarnings = useMemo(() => {
@@ -296,7 +293,8 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         if (!fm) return out;
         const scopedAccounts = ((data as { personalAccounts?: { currency?: 'SAR' | 'USD' }[] })?.personalAccounts ?? data?.accounts ?? []) as { currency?: 'SAR' | 'USD' }[];
         const hasUsdAccounts = scopedAccounts.some((a) => a.currency === 'USD');
-        const fxLooksValid = Number.isFinite(sarPerUsd) && sarPerUsd > 0;
+        const rate = reportModel?.sarPerUsd;
+        const fxLooksValid = Number.isFinite(rate) && (rate ?? 0) > 0;
         const liquid = reportModel?.liquidNw;
         const runway = reportModel?.liquidityRunway;
 
@@ -317,14 +315,14 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                 out.push('Debt breakdown (cards vs loans) does not match total debt — review liability rows and credit accounts.');
             }
         }
-        if (fxLooksValid && Math.abs(exchangeRate - sarPerUsd) > 0.06) {
+        if (fxLooksValid && Math.abs(exchangeRate - (rate ?? 0)) > 0.06) {
             out.push('Display FX and calculation FX differ; totals use the resolved SAR-per-USD rate (see banner below).');
         }
         if (runway && !Number.isFinite(runway.monthsOfRunway)) {
             out.push('Liquidity runway could not be calculated from current data.');
         }
         return out;
-    }, [reportModel, summaryMonthlyKpis, data, sarPerUsd, exchangeRate]);
+    }, [reportModel, summaryMonthlyKpis, data, exchangeRate]);
 
     if (loading || !data) {
         return (
@@ -588,14 +586,9 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                             onOpenInvestments={setActivePage ? () => setActivePage('Investments') : undefined}
                             onOpenAccounts={setActivePage ? () => setActivePage('Accounts') : undefined}
                             onOpenAssets={setActivePage ? () => setActivePage('Assets') : undefined}
-                            onOpenDataReconciliation={
-                                setActivePage
-                                    ? () => {
-                                          setActivePage('System & APIs Health');
-                                          window.location.hash = 'data-reconciliation';
-                                      }
-                                    : undefined
-                            }
+                            onOpenDataReconciliation={() => {
+                                window.location.hash = 'data-reconciliation';
+                            }}
                         />
                     </div>
                 <div className="section-card flex flex-col min-h-[420px] h-[min(56vh,520px)]">

@@ -5,10 +5,23 @@ interface ProgressBarProps {
   value: number;
   max: number;
   color?: string;
+  /** When set, used as the fill instead of `color` (e.g. gradient classes). */
+  fillClassName?: string;
+  /** Track (background) bar — default neutral gray */
+  trackClassName?: string;
+  heightClass?: string;
 }
 
-const ProgressBar: React.FC<ProgressBarProps> = ({ value, max, color = 'bg-primary' }) => {
+const ProgressBar: React.FC<ProgressBarProps> = ({
+  value,
+  max,
+  color = 'bg-primary',
+  fillClassName,
+  trackClassName = 'bg-slate-200/90',
+  heightClass = 'h-2.5',
+}) => {
   const [width, setWidth] = useState(0);
+  const fill = fillClassName ?? color;
   
   useEffect(() => {
     const percentage = max > 0 ? Math.min((value / max) * 100, 100) : 0;
@@ -18,9 +31,9 @@ const ProgressBar: React.FC<ProgressBarProps> = ({ value, max, color = 'bg-prima
   }, [value, max]);
 
   return (
-    <div className="w-full bg-gray-200 rounded-full h-2.5">
+    <div className={`w-full overflow-hidden rounded-full ${trackClassName} ${heightClass} shadow-inner`}>
       <div
-        className={`${color} h-2.5 rounded-full transition-all duration-1000 ease-out`}
+        className={`${fill} ${heightClass} rounded-full transition-all duration-1000 ease-out shadow-sm ring-1 ring-white/30`}
         style={{ width: `${width}%` }}
       ></div>
     </div>

@@ -2,6 +2,9 @@
  * Single source of truth for wealth summary exports (Settings, Summary) and related KPIs.
  * Pass **CurrencyContext `exchangeRate`** (not a pre-resolved SAR/USD) so FX hydration matches
  * `computePersonalHeadlineNetWorthSar` / Dashboard / Net worth cockpit.
+ * Current-month cashflow (income, expenses, P&L) uses `financialMonthNetCashflowSar` from
+ * `dashboardKpiSnapshot.ts` — same SAR logic and financial month as `computeDashboardKpiSnapshot`
+ * (transaction-dated FX for USD lines).
  */
 
 import type { FinancialData, TradeCurrency } from '../types';
@@ -13,15 +16,13 @@ import { deriveCashflowStressSummary } from './householdBudgetStress';
 import { computeDisciplineScore, type DisciplineScoreSummary } from './disciplineScoreEngine';
 import { computeLiquidityRunwayFromData, type LiquidityRunwaySummary } from './liquidityRunwayEngine';
 import { computePersonalHeadlineNetWorthSar, computePersonalNetWorthBreakdownSAR } from './personalNetWorth';
-import { hydrateSarPerUsdDailySeries } from './fxDailySeries';
 import type { WealthSummaryReportInput } from './reportingEngine';
 import { computeRiskLaneFromData, type RiskLaneContext } from './riskLaneEngine';
 import { runShockDrill, type ShockDrillResult } from './shockDrillEngine';
-import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { computeLiquidNetWorth } from './liquidNetWorth';
 import { computeHeadlinePersonalInvestmentRoiDecimal } from './investmentKpiCore';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
-import { financialMonthRange } from '../utils/financialMonth';
+import { financialMonthNetCashflowSar } from './dashboardKpiSnapshot';
 
 export type GetAvailableCashFn = (accountId: string) => { SAR: number; USD: number };
 
@@ -78,6 +79,8 @@ export interface WealthSummaryReportModel {
   shockDrill: ShockDrillResult | null;
   liquidNw: ReturnType<typeof computeLiquidNetWorth>;
   wealthSummaryReportPayload: WealthSummaryReportInput;
+  /** SAR per USD from `computePersonalHeadlineNetWorthSar` (matches Dashboard headline NW FX path). */
+  sarPerUsd: number;
 }
 
 function budgetToMonthly(b: { limit: number; period?: string }): number {
@@ -88,35 +91,25 @@ function budgetToMonthly(b: { limit: number; period?: string }): number {
 }
 
 /**
- * Monthly report extras: budget headroom vs actual spend (Dashboard-aligned) and portfolio ROI vs net capital.
+ * Monthly report extras: budget headroom vs actual spend (Dashboard-aligned SAR cashflow) and portfolio ROI vs net capital.
+ * Pass **CurrencyContext `exchangeRate`** (same as `computeWealthSummaryReportModel` / Dashboard KPIs).
  */
 export function computeMonthlyReportFinancialKpis(
   data: FinancialData,
-  sarPerUsd: number,
+  uiExchangeRate: number,
   getAvailableCashForAccount: GetAvailableCashFn,
   simulatedPrices: SimulatedPriceMap = {},
 ): { budgetVariance: number; roi: number } {
-  const now = new Date();
-  const monthStartDay = (data as any)?.settings?.monthStartDay ?? 1;
-  const { start: firstDayOfMonth, end: endOfMonth, key } = financialMonthRange(now, monthStartDay);
-  const currentMonth = key.month;
-  const currentYear = key.year;
-  const d = data as { personalTransactions?: typeof data.transactions };
-  const transactions = d?.personalTransactions ?? data.transactions ?? [];
-
-  const monthlyTransactions = transactions.filter((t: { date: string }) => {
-    const d = new Date(t.date);
-    return d >= firstDayOfMonth && d <= endOfMonth;
-  });
-  const monthlyExpenses = monthlyTransactions
-    .filter((t: { type?: string; category?: string }) => countsAsExpenseForCashflowKpi(t))
-    .reduce((sum: number, t: { amount?: number }) => sum + Math.abs(Number(t.amount) ?? 0), 0);
+  const { monthlyExpensesSar, currentRange } = financialMonthNetCashflowSar(data, uiExchangeRate);
+  const currentMonth = currentRange.key.month;
+  const currentYear = currentRange.key.year;
 
   const totalBudget = (data.budgets ?? [])
     .filter((b) => b.month === currentMonth && b.year === currentYear)
     .reduce((sum, b) => sum + budgetToMonthly(b), 0);
-  const budgetVariance = totalBudget - monthlyExpenses;
+  const budgetVariance = totalBudget - monthlyExpensesSar;
 
+  const sarPerUsd = resolveSarPerUsd(data, uiExchangeRate);
   const { roi } = computeHeadlinePersonalInvestmentRoiDecimal(data, sarPerUsd, getAvailableCashForAccount, simulatedPrices);
 
   return { budgetVariance, roi };
@@ -127,27 +120,14 @@ export function computeWealthSummaryReportModel(
   uiExchangeRate: number,
   getAvailableCashForAccount: GetAvailableCashFn
 ): WealthSummaryReportModel {
-  const now = new Date();
-  hydrateSarPerUsdDailySeries(data, uiExchangeRate);
-  const sarPerUsd = resolveSarPerUsd(data, uiExchangeRate);
   const nwOpts = { getAvailableCashForAccount };
   const headlineNw = computePersonalHeadlineNetWorthSar(data, uiExchangeRate, nwOpts);
-  const transactions = (data as { personalTransactions?: typeof data.transactions }).personalTransactions ?? data.transactions ?? [];
-  const monthStartDay = (data as any)?.settings?.monthStartDay ?? 1;
-  const { start: firstDayOfMonth, end: endOfMonth } = financialMonthRange(now, monthStartDay);
-  const recentTransactions = transactions.filter((t) => {
-    const d = new Date(t.date);
-    return d >= firstDayOfMonth && d <= endOfMonth;
-  });
-
-  const monthlyIncome = recentTransactions
-    .filter((t) => countsAsIncomeForCashflowKpi(t))
-    .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
-  const monthlyExpenses = recentTransactions
-    .filter((t) => countsAsExpenseForCashflowKpi(t))
-    .reduce((sum, t) => sum + Math.abs(Number(t.amount) ?? 0), 0);
+  const sarPerUsd = headlineNw.sarPerUsd;
+  const cf = financialMonthNetCashflowSar(data, uiExchangeRate);
+  const monthlyIncome = cf.monthlyIncomeSar;
+  const monthlyExpenses = cf.monthlyExpensesSar;
   const savingsRate = monthlyIncome > 0 ? (monthlyIncome - monthlyExpenses) / monthlyIncome : 0;
-  const monthlyPnL = monthlyIncome - monthlyExpenses;
+  const monthlyPnL = cf.monthlyPnLSar;
 
   const investments = (data as { personalInvestments?: typeof data.investments }).personalInvestments ?? data.investments ?? [];
   const netWorth = headlineNw.netWorth;
@@ -314,7 +294,7 @@ export function computeWealthSummaryReportModel(
       monthlyOverrides: [],
       financialData: data,
       sarPerUsd,
-      uiExchangeRate: sarPerUsd,
+      uiExchangeRate,
     }
   );
   const householdPlan = buildHouseholdBudgetPlan(householdInput);
@@ -431,5 +411,6 @@ export function computeWealthSummaryReportModel(
     shockDrill,
     liquidNw,
     wealthSummaryReportPayload,
+    sarPerUsd,
   };
 }

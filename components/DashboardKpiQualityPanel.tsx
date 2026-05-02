@@ -5,7 +5,6 @@ import { AuthContext } from '../context/AuthContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
-import { resolveSarPerUsd } from '../utils/currencyMath';
 import { computeMonthlyReportFinancialKpis, computeWealthSummaryReportModel } from '../services/wealthSummaryReportModel';
 import { reconcileDashboardVsSummaryKpis } from '../services/kpiReconciliation';
 import {
@@ -46,12 +45,7 @@ const DashboardKpiQualityPanel: React.FC = () => {
 
     const summaryMonthlyKpisForReconciliation = useMemo(() => {
         if (!data) return null;
-        return computeMonthlyReportFinancialKpis(
-            data,
-            resolveSarPerUsd(data, exchangeRate),
-            getAvailableCashForAccount,
-            simulatedPrices,
-        );
+        return computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
     }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
 
     const kpiReconciliation = useMemo(() => {
