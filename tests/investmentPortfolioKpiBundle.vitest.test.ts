@@ -3,7 +3,7 @@ import { computePortfolioMetricsBundle } from '../services/investmentPlatformCar
 import type { Account, InvestmentPortfolio, InvestmentTransaction } from '../types';
 
 describe('computePortfolioMetricsBundle', () => {
-  it('allocates account cash by holdings weight in SAR and uses filtered transactions', () => {
+  it('exposes full account cash buckets on each portfolio for UI sync; metrics are positions-only cash + filtered txs', () => {
     const account: Account = {
       id: 'acc-1',
       name: 'Inv',
@@ -82,18 +82,24 @@ describe('computePortfolioMetricsBundle', () => {
 
     const a = bundle.allocatedCashByPortfolioId.get('port-a');
     const b = bundle.allocatedCashByPortfolioId.get('port-b');
-    expect(a?.SAR).toBeCloseTo(250, 5);
-    expect(b?.SAR).toBeCloseTo(750, 5);
+    expect(a?.SAR).toBe(1000);
+    expect(b?.SAR).toBe(1000);
 
     const ma = bundle.metricsByPortfolioId.get('port-a')!;
     const mb = bundle.metricsByPortfolioId.get('port-b')!;
     expect(ma.totalInvestedSAR).toBe(500);
     expect(mb.totalInvestedSAR).toBe(200);
-    expect(ma.totalValueInSAR).toBeCloseTo(1000 + 250, 5);
-    expect(mb.totalValueInSAR).toBeCloseTo(3000 + 750, 5);
+    expect(ma.totalValueInSAR).toBeCloseTo(1000, 5);
+    expect(mb.totalValueInSAR).toBeCloseTo(3000, 5);
+    expect(ma.totalAvailable).toBe(0);
+    expect(mb.totalAvailable).toBe(0);
+    // Unrealized P/L = holdings value − qty×avg cost (same idea as each holdings row).
+    expect(ma.totalGainLossSAR).toBeCloseTo(0, 5);
+    expect(mb.totalGainLossSAR).toBeCloseTo(2500, 5);
+    expect(ma.unrealizedPnLBasis).toBe('holdings_cost');
   });
 
-  it('splits cash equally when all holdings values are zero', () => {
+  it('repeats full cash buckets for each portfolio when there are no holdings', () => {
     const account: Account = {
       id: 'acc-2',
       name: 'Inv',
@@ -123,7 +129,7 @@ describe('computePortfolioMetricsBundle', () => {
       simulatedPrices: {},
       accountAvailableCashByCurrency: { SAR: 100, USD: 0 },
     });
-    expect(bundle.allocatedCashByPortfolioId.get('x')?.SAR).toBe(50);
-    expect(bundle.allocatedCashByPortfolioId.get('y')?.SAR).toBe(50);
+    expect(bundle.allocatedCashByPortfolioId.get('x')?.SAR).toBe(100);
+    expect(bundle.allocatedCashByPortfolioId.get('y')?.SAR).toBe(100);
   });
 });

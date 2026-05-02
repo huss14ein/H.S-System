@@ -49,7 +49,7 @@ import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import type { HoldingFundamentals } from '../services/finnhubService';
-import { getHoldingFundamentals } from '../services/finnhubService';
+import { getHoldingFundamentals, lookupLiveQuoteForSymbol } from '../services/finnhubService';
 import { dollarToShareQuantity } from '../services/portfolioConstruction';
 import { checkExtendedHoursGuardrail, getTIFLabel, getNBBOStub, getSORStub, getVWAPSlices, type TIF } from '../services/tradingExecution';
 import { getSettlementDate, isSettled } from '../services/riskCompliance';
@@ -2619,9 +2619,9 @@ const PlatformCard: React.FC<{
                     const portfolioHoldings = holdingsWithGains(portfolio.holdings || [], portfolioCurrency);
                     const portfolioValue = portfolioHoldings.reduce((sum, h) => sum + h.currentValue, 0);
                     const pk = portfolioKpiBundle.metricsByPortfolioId.get(portfolio.id);
-                    const allocatedBuckets = portfolioKpiBundle.allocatedCashByPortfolioId.get(portfolio.id) ?? { SAR: 0, USD: 0 };
                     const portfolioHeadlineValue = pk != null ? pk.totalValue : portfolioValue;
-                    const portfolioCashSAR = tradableCashBucketToSAR(allocatedBuckets, sarPerUsd);
+                    /** Same pooled ledger as the platform header — not split across portfolios. */
+                    const portfolioCashSAR = tradableCashBucketToSAR(availableCashByCurrency, sarPerUsd);
                     const portfolioRoi = pk?.roi ?? 0;
                     const positionsTotalForAlloc = pk != null ? pk.holdingsValue : portfolioValue;
                     return (
@@ -2670,7 +2670,7 @@ const PlatformCard: React.FC<{
                                     <p className="px-4 sm:px-5 pt-3 pb-2 text-[11px] text-slate-600 leading-snug bg-gradient-to-r from-slate-50/90 to-teal-50/30 border-b border-slate-100/80">
                                         <span className="font-semibold text-slate-700">Portfolio KPIs</span>
                                         {' — '}
-                                        Same rules and ledger path as the platform summary above. Idle cash shows your share of this account’s broker balance, allocated by each portfolio’s position value (converted to SAR for the split).
+                                        Same ledger rules as the platform summary. <strong>Unrealized P/L</strong> and <strong>ROI</strong> use position value vs average cost (like the holdings table), not deposits. Idle cash is shared — <strong>Available cash</strong> matches the platform header.
                                     </p>
                                     <dl
                                         className="portfolio-inline-kpis grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 px-4 sm:px-5 py-4 bg-gradient-to-b from-white via-slate-50/30 to-teal-50/20 border-b border-slate-100 items-stretch"
@@ -2703,26 +2703,29 @@ const PlatformCard: React.FC<{
                                                     )}
                                                 </span>
                                                 <span className="relative mt-auto inline-flex items-center justify-center gap-1 text-[10px] font-medium text-slate-500 group/pcash">
-                                                    <span>Allocated share</span>
+                                                    <span>Shared pool</span>
                                                     <span
                                                         role="tooltip"
                                                         className="pointer-events-none absolute left-1/2 bottom-full z-30 mb-2 w-max max-w-[min(18rem,90vw)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700 shadow-lg opacity-0 transition-opacity group-hover/pcash:opacity-100"
                                                     >
                                                         <span className="font-semibold tabular-nums text-slate-900 block">
-                                                            {formatCurrencyString(allocatedBuckets.SAR, { inCurrency: 'SAR', digits: 0 })}
+                                                            {formatCurrencyString(availableCashByCurrency.SAR, { inCurrency: 'SAR', digits: 0 })}
                                                         </span>
                                                         <span className="font-semibold tabular-nums text-slate-900 block mt-1">
-                                                            {formatCurrencyString(allocatedBuckets.USD, { inCurrency: 'USD', digits: 0 })}
+                                                            {formatCurrencyString(availableCashByCurrency.USD, { inCurrency: 'USD', digits: 0 })}
                                                         </span>
                                                         <span className="text-[11px] text-slate-500 mt-1.5 block leading-snug">
-                                                            Your portion of this account’s SAR/USD cash buckets, weighted by this portfolio’s market value vs siblings.
+                                                            Same SAR/USD buckets as the platform card — one broker cash ledger for all portfolios here.
                                                         </span>
                                                     </span>
                                                 </span>
                                             </dd>
                                         </div>
                                         <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
-                                            <dt className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-[0.12em] leading-tight px-0.5">
+                                            <dt
+                                                className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-[0.12em] leading-tight px-0.5"
+                                                title="Market value minus qty × avg cost for positions with cost — same idea as each holdings row."
+                                            >
                                                 Unrealized P/L
                                             </dt>
                                             <dd className="metric-value flex flex-1 flex-col items-center justify-center mt-2 min-h-0">
@@ -2738,7 +2741,10 @@ const PlatformCard: React.FC<{
                                             </dd>
                                         </div>
                                         <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
-                                            <dt className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-[0.12em] leading-tight px-0.5">
+                                            <dt
+                                                className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-[0.12em] leading-tight px-0.5"
+                                                title="Unrealized P/L divided by total cost basis (qty × avg) for lots with cost — not deposits."
+                                            >
                                                 ROI
                                             </dt>
                                             <dd
@@ -2799,22 +2805,28 @@ const PlatformCard: React.FC<{
                                                             : 0;
                                                     /** Row amounts are already in portfolio book currency from holdingsWithGains / stored lots. */
                                                     const holdingDisplayCurrency: TradeCurrency = portfolioCurrency;
-                                                    const rowDailyPnL = holdingUsesLiveQuote(h)
-                                                        ? quoteDailyPnLInBookCurrency(
-                                                              simulatedPrices[hSym]?.change ?? 0,
-                                                              h.quantity || 0,
-                                                              hSym,
-                                                              portfolioCurrency,
-                                                              sarPerUsd,
-                                                          )
-                                                        : 0;
+                                                    /** Same alias resolution as valuation (`effectiveHoldingValueInBookCurrency`) — not only `simulatedPrices[SYMBOL]`. */
+                                                    const liveQuoteRow = holdingUsesLiveQuote(h)
+                                                        ? lookupLiveQuoteForSymbol(simulatedPrices, h.symbol ?? hSym)
+                                                        : undefined;
+                                                    const rowDailyPnL =
+                                                        holdingUsesLiveQuote(h) && liveQuoteRow
+                                                            ? quoteDailyPnLInBookCurrency(
+                                                                  liveQuoteRow.change ?? 0,
+                                                                  h.quantity || 0,
+                                                                  hSym,
+                                                                  portfolioCurrency,
+                                                                  sarPerUsd,
+                                                              )
+                                                            : 0;
                                                     const gainLossPct = (h.totalCost && h.totalCost > 0) ? (h.gainLoss / h.totalCost) * 100 : 0;
                                                     const hasLivePrice =
                                                         holdingUsesLiveQuote(h) &&
-                                                        simulatedPrices[hSym]?.price != null &&
-                                                        Number.isFinite(simulatedPrices[hSym].price) &&
-                                                        (simulatedPrices[hSym].price as number) > 0;
-                                                    const manualPriceRow = !holdingUsesLiveQuote(h) || !hasLivePrice;
+                                                        liveQuoteRow != null &&
+                                                        Number.isFinite(liveQuoteRow.price) &&
+                                                        liveQuoteRow.price > 0;
+                                                    const nonTickerStoredPrice = !holdingUsesLiveQuote(h);
+                                                    const tickerMissingQuote = holdingUsesLiveQuote(h) && !hasLivePrice;
                                                     const avgCostDisplay = h.avgCost ?? 0;
                                                     const currentValueDisplay = h.currentValue;
                                                     const purchasedCostDisplay = (h.avgCost ?? 0) * (h.quantity || 0);
@@ -2826,7 +2838,16 @@ const PlatformCard: React.FC<{
                                                                 <div className="flex items-center gap-2 min-w-0">
                                                                     <button
                                                                         type="button"
-                                                                        onClick={() => onHoldingClick({ ...h, gainLossPercent: gainLossPct, priceChangePercent: holdingUsesLiveQuote(h) ? (simulatedPrices[hSym]?.changePercent ?? 0) : 0 }, portfolio)}
+                                                                        onClick={() =>
+                                                                            onHoldingClick(
+                                                                                {
+                                                                                    ...h,
+                                                                                    gainLossPercent: gainLossPct,
+                                                                                    priceChangePercent: liveQuoteRow?.changePercent ?? 0,
+                                                                                },
+                                                                                portfolio,
+                                                                            )
+                                                                        }
                                                                         className="text-left rounded-lg py-0.5 pr-1 -ml-1 hover:bg-slate-100/80 transition-colors min-w-0 flex-1 overflow-hidden"
                                                                     >
                                                                         <ResolvedSymbolLabel
@@ -2865,9 +2886,20 @@ const PlatformCard: React.FC<{
                                                                             size="base"
                                                                             className="justify-end text-slate-900"
                                                                         />
-                                                                        {manualPriceRow && (
-                                                                            <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 bg-amber-50 border border-amber-100 px-1.5 py-0 rounded">
+                                                                        {nonTickerStoredPrice && (
+                                                                            <span
+                                                                                className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 bg-amber-50 border border-amber-100 px-1.5 py-0 rounded"
+                                                                                title="This lot uses stored NAV / manual valuation — not a live ticker quote."
+                                                                            >
                                                                                 Manual
+                                                                            </span>
+                                                                        )}
+                                                                        {tickerMissingQuote && (
+                                                                            <span
+                                                                                className="text-[10px] font-semibold uppercase tracking-wide text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0 rounded"
+                                                                                title="Showing last saved market value; live quote not resolved in the price cache (refresh or check symbol)."
+                                                                            >
+                                                                                Stored
                                                                             </span>
                                                                         )}
                                                                     </span>

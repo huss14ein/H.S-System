@@ -42,6 +42,10 @@ export interface PlatformCardMetrics {
   totalInvestedSAR: number;
   totalWithdrawnSAR: number;
   netCapitalSAR: number;
+  /** Sum of qty×avg cost (SAR) for lots with both set — used when `unrealizedPnLBasis` is `holdings_cost`. */
+  holdingsCostBasisSAR?: number;
+  /** When set on output, unrealized P/L and ROI use holdings vs cost (portfolio rows), not value − net deposits. */
+  unrealizedPnLBasis?: 'net_capital' | 'holdings_cost';
 }
 
 export interface PlatformMetricValidationResult {
@@ -59,6 +63,11 @@ export interface ComputePlatformCardMetricsArgs {
   simulatedPrices: SimulatedPriceMap;
   /** Single portfolio currency, or undefined when mixed / unknown (same fallbacks as PlatformCard). */
   platformCurrency: TradeCurrency | undefined;
+  /**
+   * `net_capital` (default): total value − (deposits − withdrawals) — whole-platform economics.
+   * `holdings_cost`: unrealized P/L = holdings value − sum(qty×avg cost); ROI vs that cost — matches holdings table & portfolio rows.
+   */
+  unrealizedPnLBasis?: 'net_capital' | 'holdings_cost';
 }
 
 /**
@@ -75,6 +84,7 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
     availableCashByCurrency,
     simulatedPrices,
     platformCurrency,
+    unrealizedPnLBasis = 'net_capital',
   } = args;
 
   /** One implementation for position market value: {@link effectiveHoldingValueInBookCurrency} (same as holdings table / Overview). */
@@ -258,15 +268,18 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
     totalInvestedSAR,
     totalWithdrawnSAR,
     netCapitalSAR,
+    holdingsCostBasisSAR,
+    unrealizedPnLBasis,
   };
-  return sanitizeAndValidatePlatformMetrics(out, platformCurrency, rate);
+  return sanitizeAndValidatePlatformMetrics(out, platformCurrency, rate, { unrealizedPnLBasis });
 }
-
-const HOLDINGS_WEIGHT_EPS = 1e-9;
 
 export type PortfolioMetricsBundle = {
   metricsByPortfolioId: Map<string, PlatformCardMetrics>;
-  /** Account cash buckets split by this portfolio’s share of total position value (SAR), for tooltips. */
+  /**
+   * Full account SAR/USD tradable buckets repeated per portfolio id (same values for every sibling).
+   * Broker cash is one pooled ledger per platform — not split across portfolios.
+   */
   allocatedCashByPortfolioId: Map<string, { SAR: number; USD: number }>;
 };
 
@@ -281,10 +294,11 @@ function investmentTransactionBelongsToPortfolio(
 }
 
 /**
- * Per-portfolio KPIs for one platform card row: reuses {@link computePlatformCardMetrics} with
- * (a) transactions filtered to that portfolio, and (b) broker cash allocated from the account bucket
- * by each portfolio’s **holdings value in SAR** (same sim/stored rules as the platform). When all
- * positions are zero, splits cash equally. Not a second formula — same engine, scoped inputs.
+ * Per-portfolio KPIs for one platform row: same ledger rules as {@link computePlatformCardMetrics},
+ * with transactions scoped per portfolio. **Idle broker cash is not duplicated into totals** —
+ * cash lives at the account (platform) level only; per-portfolio value/P&amp;L here is **positions-only**
+ * plus portfolio-specific flows. Use {@link PortfolioMetricsBundle.allocatedCashByPortfolioId} for the
+ * full SAR/USD buckets on every row (synced with the platform header).
  */
 export function computePortfolioMetricsBundle(args: {
   /** Portfolios listed on this account row (siblings on the same broker). */
@@ -310,41 +324,12 @@ export function computePortfolioMetricsBundle(args: {
   const metricsByPortfolioId = new Map<string, PlatformCardMetrics>();
   const allocatedCashByPortfolioId = new Map<string, { SAR: number; USD: number }>();
 
-  const holdingsSarById = new Map<string, number>();
-  for (const p of siblingPortfolios) {
-    const pc = resolveInvestmentPortfolioCurrency(p);
-    const mHold = computePlatformCardMetrics({
-      portfolios: [p],
-      transactions: [],
-      accounts: accList,
-      allInvestments: invList,
-      sarPerUsd: rate,
-      availableCashByCurrency: { SAR: 0, USD: 0 },
-      simulatedPrices,
-      platformCurrency: pc,
-    });
-    holdingsSarById.set(p.id, mHold.holdingsValueInSAR);
-  }
-
-  const totalHoldingsSar = siblingPortfolios.reduce((s, p) => s + (holdingsSarById.get(p.id) ?? 0), 0);
-  const n = siblingPortfolios.length;
-
-  const sarBucket = accountAvailableCashByCurrency.SAR ?? 0;
-  const usdBucket = accountAvailableCashByCurrency.USD ?? 0;
+  const sarBucket = Math.max(0, accountAvailableCashByCurrency.SAR ?? 0);
+  const usdBucket = Math.max(0, accountAvailableCashByCurrency.USD ?? 0);
+  const sharedBuckets = { SAR: sarBucket, USD: usdBucket };
 
   for (const p of siblingPortfolios) {
-    const mine = holdingsSarById.get(p.id) ?? 0;
-    const share =
-      totalHoldingsSar > HOLDINGS_WEIGHT_EPS
-        ? mine / totalHoldingsSar
-        : n > 0
-          ? 1 / n
-          : 1;
-    const allocated = {
-      SAR: sarBucket * share,
-      USD: usdBucket * share,
-    };
-    allocatedCashByPortfolioId.set(p.id, allocated);
+    allocatedCashByPortfolioId.set(p.id, { ...sharedBuckets });
 
     const filtered = transactions.filter((t) => investmentTransactionBelongsToPortfolio(t, p.id));
     const pc = resolveInvestmentPortfolioCurrency(p);
@@ -356,9 +341,10 @@ export function computePortfolioMetricsBundle(args: {
         accounts: accList,
         allInvestments: invList,
         sarPerUsd: rate,
-        availableCashByCurrency: allocated,
+        availableCashByCurrency: { SAR: 0, USD: 0 },
         simulatedPrices,
         platformCurrency: pc,
+        unrealizedPnLBasis: 'holdings_cost',
       }),
     );
   }
@@ -383,12 +369,21 @@ export function validatePlatformMetrics(
   const m = metrics;
 
   for (const [k, v] of Object.entries(m)) {
+    if (typeof v !== 'number') continue;
     if (!Number.isFinite(v)) issues.push(`${k} is not finite`);
   }
 
-  const derivedGain = m.totalValueInSAR - m.netCapitalSAR;
-  if (Math.abs(derivedGain - m.totalGainLossSAR) > RECONCILIATION_EPSILON) {
-    issues.push('totalGainLossSAR mismatch with totalValueInSAR - netCapitalSAR');
+  if (m.unrealizedPnLBasis !== 'holdings_cost') {
+    const derivedGain = m.totalValueInSAR - m.netCapitalSAR;
+    if (Math.abs(derivedGain - m.totalGainLossSAR) > RECONCILIATION_EPSILON) {
+      issues.push('totalGainLossSAR mismatch with totalValueInSAR - netCapitalSAR');
+    }
+  } else {
+    const basis = m.holdingsCostBasisSAR ?? 0;
+    const derivedUnreal = m.holdingsValueInSAR - basis;
+    if (Math.abs(derivedUnreal - m.totalGainLossSAR) > RECONCILIATION_EPSILON) {
+      issues.push('totalGainLossSAR mismatch with holdingsValueInSAR - holdingsCostBasisSAR');
+    }
   }
 
   const derivedNetCapital = Math.max(0, m.totalInvestedSAR - m.totalWithdrawnSAR);
@@ -411,8 +406,12 @@ function sanitizeAndValidatePlatformMetrics(
   metrics: PlatformCardMetrics,
   platformCurrency: TradeCurrency | undefined,
   sarPerUsd: number,
+  opts?: { unrealizedPnLBasis?: 'net_capital' | 'holdings_cost' },
 ): PlatformCardMetrics {
   const rate = sanitizeFinite(sarPerUsd) > 0 ? sarPerUsd : 1;
+  const basisMode = opts?.unrealizedPnLBasis ?? metrics.unrealizedPnLBasis ?? 'net_capital';
+  const basisSAR = sanitizeFinite(metrics.holdingsCostBasisSAR ?? 0);
+
   const safe: PlatformCardMetrics = {
     totalValue: sanitizeFinite(metrics.totalValue),
     totalValueInSAR: sanitizeFinite(metrics.totalValueInSAR),
@@ -429,11 +428,20 @@ function sanitizeAndValidatePlatformMetrics(
     totalInvestedSAR: Math.max(0, sanitizeFinite(metrics.totalInvestedSAR)),
     totalWithdrawnSAR: Math.max(0, sanitizeFinite(metrics.totalWithdrawnSAR)),
     netCapitalSAR: Math.max(0, sanitizeFinite(metrics.netCapitalSAR)),
+    holdingsCostBasisSAR: basisSAR,
+    unrealizedPnLBasis: basisMode === 'holdings_cost' ? 'holdings_cost' : undefined,
   };
 
   // Canonical derivations (single source of truth).
   safe.netCapitalSAR = Math.max(0, safe.totalInvestedSAR - safe.totalWithdrawnSAR);
-  safe.totalGainLossSAR = safe.totalValueInSAR - safe.netCapitalSAR;
+  if (basisMode === 'holdings_cost') {
+    safe.totalGainLossSAR = safe.holdingsValueInSAR - basisSAR;
+    safe.roi = basisSAR > 1e-9 ? (safe.totalGainLossSAR / basisSAR) * 100 : 0;
+  } else {
+    safe.totalGainLossSAR = safe.totalValueInSAR - safe.netCapitalSAR;
+    safe.roi =
+      safe.netCapitalSAR > 1e-9 ? (safe.totalGainLossSAR / safe.netCapitalSAR) * 100 : 0;
+  }
   safe.totalGainLoss =
     platformCurrency === 'USD' ? safe.totalGainLossSAR / rate
       : platformCurrency === 'SAR' ? safe.totalGainLossSAR
@@ -450,7 +458,6 @@ function sanitizeAndValidatePlatformMetrics(
     platformCurrency === 'USD' ? safe.totalWithdrawnSAR / rate
       : platformCurrency === 'SAR' ? safe.totalWithdrawnSAR
       : safe.totalWithdrawnSAR;
-  safe.roi = safe.netCapitalSAR > 0 ? (safe.totalGainLossSAR / safe.netCapitalSAR) * 100 : 0;
 
   safe.holdingsValueInSAR = Math.max(0, sanitizeFinite(metrics.holdingsValueInSAR));
   safe.holdingsValue =
