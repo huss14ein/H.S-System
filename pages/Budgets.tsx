@@ -84,6 +84,11 @@ import { addMonthsToKey, financialMonthKey, financialMonthRangeFromKey } from '.
 import AIAdvisor from '../components/AIAdvisor';
 import { dedupeSharedBudgetRows, makeSharedOwnerCategoryKey, normalizeSharedCategoryKey, normalizeSharedOwnerKey } from '../services/sharedBudgetKeys';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
+import {
+    aggregateSmartFillSpendByCategorySar,
+    buildSmartFillThreeFinancialMonthSegments,
+    monthlySuggestionsFromCategoryTotals,
+} from '../services/smartFillBudgetHistory';
 import { annualEnvelopeLimitForCategory } from '../services/budgetEnvelopeMath';
 
 
@@ -1829,40 +1834,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
     const handleSmartFillBudgets = () => {
         if (!isAdmin) return;
-        const allTx = ((data as any)?.personalTransactions ?? data?.transactions ?? []).filter((t: { type?: string; budgetCategory?: string; category?: string; splitLines?: { category: string; amount: number }[] }) => countsAsExpenseForCashflowKpi(t));
-        if (allTx.length === 0) {
-            alert('No expense history with budget categories found to smart-fill from.');
+        const segments = buildSmartFillThreeFinancialMonthSegments(currentYear, currentMonth, monthStartDay);
+        if (segments.length === 0) {
+            alert('No valid date window for smart-fill for this month. Pick a month that overlaps today or past spending.');
             return;
         }
-        const now = new Date(currentYear, currentMonth - 1, 1);
-        const threeMonthsAgo = new Date(now);
-        threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-
-        const byCategory = new Map<string, { total: number; months: Set<string> }>();
-        allTx.forEach((t: { date: string; budgetCategory?: string; amount?: number; splitLines?: { category: string; amount: number }[] }) => {
-            const d = new Date(t.date);
-            if (d < threeMonthsAgo || d > now) return;
-            const key = `${d.getFullYear()}-${d.getMonth()}`;
-            const allocations = getTransactionBudgetAllocations(t as any);
-            allocations.forEach((allocation) => {
-                const entry = byCategory.get(allocation.category) || { total: 0, months: new Set<string>() };
-                entry.total += Math.abs(allocation.amount ?? 0);
-                entry.months.add(key);
-                byCategory.set(allocation.category, entry);
-            });
-        });
-
-        const suggestions: { category: string; monthly: number }[] = [];
-        byCategory.forEach((v, category) => {
-            const monthCount = v.months.size || 1;
-            const avg = v.total / monthCount;
-            if (avg > 0) {
-                suggestions.push({ category, monthly: Math.round(avg) });
-            }
-        });
+        const allTx = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const totals = aggregateSmartFillSpendByCategorySar(segments, allTx, ownerSharedTransactions, sarPerUsd, accountCurrencyById);
+        const suggestions = monthlySuggestionsFromCategoryTotals(totals, segments.length);
 
         if (suggestions.length === 0) {
-            alert('Not enough recent history to suggest budgets.');
+            alert('Not enough approved expense history in the last 3 financial months (with budget categories) to suggest budgets.');
             return;
         }
 
@@ -1880,7 +1862,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
         if (
             !window.confirm(
-                `Smart-fill will create ${toCreate.length} budgets for this month using the last ~3 months of spending averages. Continue?`
+                `Smart-fill will create ${toCreate.length} budgets for this month using average approved spending over the last ${segments.length} financial month(s), in SAR (same rules as budget cards). Continue?`
             )
         ) {
             return;
@@ -1906,7 +1888,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         if (!isAdmin) return;
         const txs = getPersonalTransactions(data) as import('../types').Transaction[];
         const budgets = (data?.budgets ?? []) as Budget[];
-        const adjusted = await learnAndAutoAdjust(txs, budgets, currentMonth, currentYear);
+        const adjusted = await learnAndAutoAdjust(txs, budgets, currentMonth, currentYear, {
+            monthStartDay,
+            sarPerUsd,
+            accountCurrencyById,
+            ownerSharedTransactions,
+        });
         const currentForMonth = budgets.filter(b => b.month === currentMonth && b.year === currentYear);
         const proposals: Array<{ orig: Budget; proposed: Budget }> = [];
         currentForMonth.forEach(orig => {
@@ -1916,7 +1903,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             }
         });
         if (proposals.length === 0) {
-            alert('No budget adjustments suggested. Need at least 2 months of spending data per category.');
+            alert(
+                'No budget adjustments suggested. Each category needs at least 2 financial months of approved spending (through this month), in SAR, matching your budget cards — or thresholds (±20% / decrease only after 3 months) were not met.',
+            );
             return;
         }
         setSuggestedAdjustments(proposals);

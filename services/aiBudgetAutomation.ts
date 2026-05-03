@@ -8,6 +8,11 @@ import { invokeAI } from './geminiService';
 import { countsAsExpenseForCashflowKpi } from './transactionFilters';
 import { EXPENSE_CATEGORIES } from './hybridBudgetCategorization';
 import { capitalizeCategoryName } from '../utils/categoryFormat';
+import {
+    aggregateSpendThroughMonthByBudgetCategorySar,
+    distinctMonthCount,
+} from './budgetAdjustmentFromHistory';
+import { budgetLimitFromMonthlyEquivalent, monthlyEquivalentFromBudgetLimit } from './householdBudgetEngine';
 
 export interface SpendingPattern {
   category: string;
@@ -480,63 +485,72 @@ Provide refined predictions with enhanced confidence and factors.`;
   }
 }
 
+export type LearnBudgetAdjustmentContext = {
+    monthStartDay: unknown;
+    sarPerUsd: number;
+    accountCurrencyById: Map<string, 'SAR' | 'USD'>;
+    ownerSharedTransactions: Array<{
+        status?: string;
+        transaction_date?: string;
+        date?: string;
+        budget_category?: string;
+        amount?: number;
+        currency?: string;
+        accountId?: string;
+        account_id?: string;
+    }>;
+};
+
 /**
- * Learn from user behavior and auto-adjust budgets
+ * Learn from approved spending (same rules as budget cards) and suggest limit changes.
+ * Uses financial months through the selected budget month, SAR conversion, split allocations, and shared spend.
  */
 export async function learnAndAutoAdjust(
-  transactions: Transaction[],
-  budgets: Budget[],
-  currentMonth: number,
-  currentYear: number
+    transactions: Transaction[],
+    budgets: Budget[],
+    currentMonth: number,
+    currentYear: number,
+    ctx: LearnBudgetAdjustmentContext,
 ): Promise<Budget[]> {
-  const expenses = transactions.filter(t =>
-    countsAsExpenseForCashflowKpi(t) &&
-    t.budgetCategory &&
-    new Date(t.date).getFullYear() === currentYear
-  );
+    const categorySpending = aggregateSpendThroughMonthByBudgetCategorySar(
+        transactions as unknown as Array<Record<string, unknown>>,
+        ctx.ownerSharedTransactions,
+        {
+            currentYear,
+            currentMonth,
+            monthStartDay: ctx.monthStartDay,
+            sarPerUsd: ctx.sarPerUsd,
+            accountCurrencyById: ctx.accountCurrencyById,
+        },
+    );
 
-  const categorySpending = new Map<string, { total: number; count: number; months: Set<number> }>();
-  
-  expenses.forEach(t => {
-    const cat = t.budgetCategory!;
-    const month = new Date(t.date).getMonth() + 1;
-    if (!categorySpending.has(cat)) {
-      categorySpending.set(cat, { total: 0, count: 0, months: new Set() });
-    }
-    const data = categorySpending.get(cat)!;
-    data.total += Math.abs(t.amount);
-    data.count++;
-    data.months.add(month);
-  });
+    const adjustedBudgets = budgets.map((budget) => {
+        if (budget.month !== currentMonth || budget.year !== currentYear) return budget;
 
-  const adjustedBudgets = budgets.map(budget => {
-    if (budget.month !== currentMonth || budget.year !== currentYear) return budget;
+        const spending = categorySpending.get(budget.category);
+        const monthsWithData = distinctMonthCount(spending);
+        if (!spending || monthsWithData < 2) return budget;
 
-    const spending = categorySpending.get(budget.category);
-    if (!spending || spending.months.size < 2) return budget; // Need at least 2 months of data
+        const avgMonthlySpending = spending.totalSar / monthsWithData;
+        const currentLimitMonthly = monthlyEquivalentFromBudgetLimit(budget.limit, budget.period ?? 'monthly');
 
-    const avgMonthlySpending = spending.total / spending.months.size;
-    const currentLimit = budget.period === 'yearly' ? budget.limit / 12 : budget.limit;
+        if (avgMonthlySpending > currentLimitMonthly * 1.2) {
+            const newMonthly = Math.round(avgMonthlySpending * 1.1);
+            return {
+                ...budget,
+                limit: budgetLimitFromMonthlyEquivalent(newMonthly, budget.period ?? 'monthly'),
+            };
+        }
+        if (avgMonthlySpending < currentLimitMonthly * 0.7 && monthsWithData >= 3) {
+            const newMonthly = Math.round(avgMonthlySpending * 1.1);
+            return {
+                ...budget,
+                limit: budgetLimitFromMonthlyEquivalent(newMonthly, budget.period ?? 'monthly'),
+            };
+        }
 
-    // Auto-adjust if spending consistently differs by more than 20%
-    if (avgMonthlySpending > currentLimit * 1.2) {
-      // Spending is consistently higher - increase budget
-      const newLimit = Math.round(avgMonthlySpending * 1.1); // 10% buffer
-      return {
-        ...budget,
-        limit: budget.period === 'yearly' ? newLimit * 12 : newLimit
-      };
-    } else if (avgMonthlySpending < currentLimit * 0.7 && spending.months.size >= 3) {
-      // Spending is consistently lower - decrease budget (but only after 3+ months)
-      const newLimit = Math.round(avgMonthlySpending * 1.1);
-      return {
-        ...budget,
-        limit: budget.period === 'yearly' ? newLimit * 12 : newLimit
-      };
-    }
+        return budget;
+    });
 
-    return budget;
-  });
-
-  return adjustedBudgets;
+    return adjustedBudgets;
 }

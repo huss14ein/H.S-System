@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useContext, useMemo, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
 import type { Page } from '../types';
-import { probeGeminiProxyHealth, type SystemHealthAiContext } from '../services/geminiService';
+import { probeGeminiProxyHealth, type DataReconciliationAiContext, type SystemHealthAiContext } from '../services/geminiService';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 import { useCurrency } from '../context/CurrencyContext';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
@@ -145,6 +145,16 @@ type InvestmentKpiReconciliation = {
   };
   notes: string[];
 };
+
+function formatSarFixed2(n: unknown): string {
+  const v = Number(n);
+  return Number.isFinite(v) ? v.toFixed(2) : '—';
+}
+
+function formatRoiDecimalAsPct(decimal: unknown): string {
+  const v = Number(decimal);
+  return Number.isFinite(v) ? (v * 100).toFixed(2) : '—';
+}
 
 const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
   const [activeTab, setActiveTab] = useState<SystemHealthTab>('apis');
@@ -684,6 +694,51 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     sarPerUsdHealth,
   ]);
 
+  const dataReconciliationAiContext = useMemo((): DataReconciliationAiContext => {
+    const sar = sarPerUsdHealth;
+    if (!integritySummary) {
+      return { sarPerUsd: sar, dataLoaded: false };
+    }
+    const q = integritySummary.queue ?? [];
+    const inv = integritySummary.investmentKpiReconciliation;
+    let investmentKpiNarrative = '';
+    if (inv) {
+      const lines = [
+        `Section A (stocks + broker): total value SAR ${formatSarFixed2(inv.totalValueSar)}; net capital ${formatSarFixed2(inv.netCapitalSar)} (source: ${String(inv.capitalSource ?? 'unknown')}); stocks-slice ROI ${formatRoiDecimalAsPct(inv.roi)}%.`,
+        `Flows: deposits ${formatSarFixed2(inv.depositsSar)} · withdrawals ${formatSarFixed2(inv.withdrawalsSar)} SAR · broker vs spot-ledger cash drift ${formatSarFixed2(inv.cashLedgerDriftSar)} SAR.`,
+        `Hypothetical net capital if deposit gross only: ${formatSarFixed2(inv.netCapitalIfDepositPathSar)}; if inferred gross: ${formatSarFixed2(inv.netCapitalIfInferredPathSar)}; if cost-basis fallback gross: ${formatSarFixed2(inv.netCapitalIfFallbackPathSar)} SAR.`,
+      ];
+      const h = inv.investmentsHeadline;
+      if (h && typeof h === 'object') {
+        lines.push(
+          `Section B (headline): exposure ${formatSarFixed2(h.totalValueSar)} SAR; headline net capital ${formatSarFixed2(h.combinedNetCapitalSar)}; headline ROI ${formatRoiDecimalAsPct(h.headlineRoiDecimal)}%; economic floor on platform capital applied: ${String(h.economicFloorApplied ?? 'unknown')}.`,
+        );
+      }
+      investmentKpiNarrative = lines.join('\n');
+    }
+    return {
+      sarPerUsd: sar,
+      dataLoaded: true,
+      integrityOk: integritySummary.integrityOk,
+      queueLength: q.length,
+      ledgerIsAccurate: integritySummary.ledgerReport.isAccurate,
+      ledgerIssueCount: integritySummary.ledgerReport.issues.length,
+      reconciliationWarningCount: integritySummary.reconciliation.length,
+      holdingMismatchCount: integritySummary.holdingExceptions.length,
+      cashDriftAccountCount: integritySummary.cashExceptions.length,
+      creditDriftAccountCount: integritySummary.creditExceptions.length,
+      topExceptions: q.slice(0, 14).map((ex: { severity?: string; code?: string; message?: string }) => ({
+        severity: String(ex.severity ?? 'unknown'),
+        code: ex.code != null ? String(ex.code) : undefined,
+        message: String(ex.message ?? '').slice(0, 280),
+      })),
+      repairSuggestionLines: (integritySummary.repairSuggestions ?? []).slice(0, 10).map((s) =>
+        [s.action, s.detail].filter(Boolean).join(' — ').slice(0, 320),
+      ),
+      investmentKpiNarrative: investmentKpiNarrative || undefined,
+    };
+  }, [integritySummary, sarPerUsdHealth]);
+
   const OverallStatusCard: React.FC<{ status: ServiceStatus }> = ({ status }) => {
     const { text, icon } = getStatusInfo(status);
     const message = {
@@ -785,6 +840,22 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
               <code className="text-xs bg-white/80 px-1 rounded border border-indigo-100">dashboardKpiSnapshot.ts</code>, and investment ROI in{' '}
               <code className="text-xs bg-white/80 px-1 rounded border border-indigo-100">investmentKpiCore.ts</code>. This tab audits ledger consistency; it does not re-derive those headline figures on a separate path.
             </p>
+          </section>
+
+          <section className="rounded-xl border border-emerald-200/80 bg-gradient-to-br from-emerald-50/50 via-white to-slate-50 p-4 shadow-sm">
+            <p className="text-sm font-semibold text-slate-900">Senior accountant AI</p>
+            <p className="text-xs text-slate-600 mt-1 max-w-3xl leading-relaxed">
+              Reads the same automated checks as this tab (ledger report, exception queue, investment KPI bridge). Framed as a CPA-style triage: materiality, plausible causes, and prioritized clean-up steps. Numbers below are passed verbatim to the model — it should not invent balances.
+            </p>
+            <div className="mt-4">
+              <AIAdvisor
+                pageContext="dataReconciliation"
+                contextData={dataReconciliationAiContext}
+                title="Reconciliation review (accountant lens)"
+                subtitle="Materiality · hypotheses · next steps · English / العربية"
+                buttonLabel="Get accountant-style review"
+              />
+            </div>
           </section>
 
           {appDataCtx?.data && <DashboardKpiQualityPanel />}
@@ -931,11 +1002,11 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
             <p className="text-sm text-emerald-800 mt-3">No exceptions queued.</p>
           )}
 
-          {integritySummary.repairSuggestions.length > 0 && (
+          {(integritySummary.repairSuggestions ?? []).length > 0 && (
             <div className="mt-4 pt-4 border-t border-slate-200">
               <p className="text-xs font-semibold text-slate-500 mb-2">Repair suggestions</p>
               <ul className="space-y-1 text-sm text-slate-700">
-                {integritySummary.repairSuggestions.map((s, i) => (
+                {(integritySummary.repairSuggestions ?? []).map((s, i) => (
                   <li key={`repair-${i}`}>
                     {s.action}
                     {s.detail ? ` — ${s.detail}` : ''}

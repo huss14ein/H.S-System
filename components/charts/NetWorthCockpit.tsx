@@ -444,55 +444,166 @@ export default function NetWorthCockpit(props: {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 lg:items-stretch gap-4 p-4 min-w-0">
-        {/* Left summary rail — narrow so the main column can use width */}
-        <aside className="lg:col-span-2 min-w-0 flex h-full min-h-0 flex-col rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
-          <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-2">Today snapshot</p>
-          {live ? (
-            <ul className="space-y-2 text-sm">
-              <li className="flex items-center justify-between gap-2">
-                <span className="text-slate-600">Assets</span>
-                <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(assetsSar, { digits: 0 })}</span>
-              </li>
-              <li className="flex items-center justify-between gap-2">
-                <span className="text-slate-600">Liabilities</span>
-                <span className="font-semibold text-rose-800 tabular-nums">−{formatCurrencyString(liabilitiesSar, { digits: 0 })}</span>
-              </li>
-              <li className="h-px bg-slate-200 my-1" />
-              <li className="flex items-center justify-between gap-2">
-                <span className="text-slate-600">Cash</span>
-                <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(live.cash, { digits: 0 })}</span>
-              </li>
-              <li className="flex items-center justify-between gap-2">
-                <span className="text-slate-600">Investments</span>
-                <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(live.investments, { digits: 0 })}</span>
-              </li>
-              <li className="flex items-center justify-between gap-2">
-                <span className="text-slate-600">Physical</span>
-                <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(live.physicalAndCommodities, { digits: 0 })}</span>
-              </li>
-              <li className="flex items-center justify-between gap-2">
-                <span className="text-slate-600">Receivables</span>
-                <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(live.receivables, { digits: 0 })}</span>
-              </li>
-            </ul>
-          ) : (
-            <p className="text-sm text-slate-500">Add accounts and assets to populate this view.</p>
-          )}
-          <p className="mt-3 text-[11px] text-slate-500 leading-relaxed">
-            Tip: If something looks off,{' '}
-            {onOpenDataReconciliation ? (
-              <button type="button" className="font-semibold text-primary hover:underline" onClick={onOpenDataReconciliation}>
-                open System &amp; APIs Health — Data reconciliation
-              </button>
+        {/* Left: today snapshot + allocation & weekly rhythm (uses vertical space under snapshot) */}
+        <aside className="lg:col-span-4 flex h-full min-h-0 min-w-0 flex-col gap-4">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3 shrink-0">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-2">Today snapshot</p>
+            {live ? (
+              <ul className="space-y-2 text-sm">
+                <li className="flex items-center justify-between gap-2">
+                  <span className="text-slate-600">Assets</span>
+                  <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(assetsSar, { digits: 0 })}</span>
+                </li>
+                <li className="flex items-center justify-between gap-2">
+                  <span className="text-slate-600">Liabilities</span>
+                  <span className="font-semibold text-rose-800 tabular-nums">−{formatCurrencyString(liabilitiesSar, { digits: 0 })}</span>
+                </li>
+                <li className="h-px bg-slate-200 my-1" />
+                <li className="flex items-center justify-between gap-2">
+                  <span className="text-slate-600">Cash</span>
+                  <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(live.cash, { digits: 0 })}</span>
+                </li>
+                <li className="flex items-center justify-between gap-2">
+                  <span className="text-slate-600">Investments</span>
+                  <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(live.investments, { digits: 0 })}</span>
+                </li>
+                <li className="flex items-center justify-between gap-2">
+                  <span className="text-slate-600">Physical</span>
+                  <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(live.physicalAndCommodities, { digits: 0 })}</span>
+                </li>
+                <li className="flex items-center justify-between gap-2">
+                  <span className="text-slate-600">Receivables</span>
+                  <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(live.receivables, { digits: 0 })}</span>
+                </li>
+              </ul>
             ) : (
-              <span className="font-semibold text-slate-700">System &amp; APIs Health → Data reconciliation</span>
+              <p className="text-sm text-slate-500">Add accounts and assets to populate this view.</p>
             )}
-            .
-          </p>
+            <p className="mt-3 text-[11px] text-slate-500 leading-relaxed">
+              Tip: If something looks off,{' '}
+              {onOpenDataReconciliation ? (
+                <button type="button" className="font-semibold text-primary hover:underline" onClick={onOpenDataReconciliation}>
+                  open System &amp; APIs Health — Data reconciliation
+                </button>
+              ) : (
+                <span className="font-semibold text-slate-700">System &amp; APIs Health → Data reconciliation</span>
+              )}
+              .
+            </p>
+          </div>
+
+          {live && (
+            <div className="flex flex-1 flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-3 min-h-0 lg:min-h-[280px]">
+              <div className="shrink-0">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Allocation &amp; weekly rhythm</p>
+                <p className="text-xs text-slate-600 mt-0.5">
+                  Wealth mix and net savings by week — stacked here so the trend chart can use the full center column.
+                </p>
+              </div>
+              <div className="flex flex-1 flex-col gap-4 min-h-0">
+                <div className="flex min-h-[200px] flex-1 min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-slate-50/50 p-3 sm:p-4">
+                  <div className="mb-2 shrink-0">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Wealth composition</p>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      Gross assets by role — excludes liabilities.
+                    </p>
+                  </div>
+                  {computed.compositionTotal > 0 ? (
+                    <div className="flex min-h-0 min-w-0 flex-1 flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+                      <div className="relative mx-auto h-[180px] w-full max-w-[min(100%,260px)] shrink-0 sm:h-[200px] sm:mx-0">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={computed.compositionPieData}
+                              dataKey="value"
+                              nameKey="name"
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={52}
+                              outerRadius={78}
+                              paddingAngle={2}
+                            >
+                              {computed.compositionPieData.map((entry) => (
+                                <Cell key={`cell-${entry.name}`} fill={entry.fill} stroke="#fff" strokeWidth={2} />
+                              ))}
+                            </Pie>
+                            <Tooltip formatter={(value: number) => formatCurrencyString(value, { digits: 0 })} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                        <div className="pointer-events-none absolute inset-0 flex items-center justify-center pb-2">
+                          <div className="text-center px-2">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Gross assets</p>
+                            <p className="text-base sm:text-lg font-extrabold text-slate-900 tabular-nums leading-tight">
+                              {formatCurrencyString(computed.compositionTotal, { digits: 0 })}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      <ul className="flex-1 min-w-0 w-full space-y-2 text-[12px] overflow-x-hidden">
+                        {computed.compositionStrip.map((seg) => {
+                          const pct = computed.compositionTotal > 0 ? (seg.sar / computed.compositionTotal) * 100 : 0;
+                          return (
+                            <li
+                              key={seg.key}
+                              className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2"
+                            >
+                              <span className="flex items-center gap-2 min-w-0">
+                                <span className="h-3 w-3 rounded-md shrink-0 shadow-sm" style={{ backgroundColor: seg.color }} />
+                                <span className="font-medium text-slate-800 truncate">{seg.label}</span>
+                              </span>
+                              <span className="tabular-nums text-right shrink-0 text-[11px] sm:text-xs">
+                                <span className="font-semibold text-slate-900">{formatCurrencyString(seg.sar, { digits: 0 })}</span>
+                                <span className="text-slate-500 ml-2">{pct.toFixed(0)}%</span>
+                              </span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ) : (
+                    <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500 min-h-[100px]">
+                      Link accounts and assets to see how wealth is allocated.
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex min-h-[180px] flex-1 min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-slate-50/50 p-3 sm:p-4 z-0 isolate">
+                  <div className="mb-2 shrink-0">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Weekly savings rhythm</p>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      Net per week (Mon–Sun) — income minus spending, same rules as your Summary cards.
+                    </p>
+                  </div>
+                  <div className="min-h-[160px] w-full min-w-0 flex-1">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={computed.weeklyNet8} margin={{ top: 10, right: 8, left: 4, bottom: 4 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
+                        <XAxis dataKey="name" tickLine={false} axisLine={{ stroke: '#CBD5E1' }} fontSize={10} interval={0} />
+                        <YAxis
+                          tickFormatter={(v) => formatAxisNumber(Number(v))}
+                          tickLine={false}
+                          axisLine={{ stroke: '#CBD5E1' }}
+                          fontSize={10}
+                          width={44}
+                        />
+                        <ReferenceLine y={0} stroke="#64748b" strokeDasharray="4 3" />
+                        <Tooltip content={<DailyNetTooltip formatValue={(n) => formatCurrencyString(n, { digits: 0 })} />} />
+                        <Bar dataKey="net" radius={[6, 6, 0, 0]} maxBarSize={36}>
+                          {computed.weeklyNet8.map((e, i) => (
+                            <Cell key={`wk-${e.weekStartKey}-${i}`} fill={e.net >= 0 ? '#059669' : '#e11d48'} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </aside>
 
-        {/* Main chart + insight strip (wider column) */}
-        <section className="lg:col-span-7 flex h-full min-h-[320px] min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-3">
+        {/* Center: net worth trend only — chart grows with column height */}
+        <section className="lg:col-span-5 flex h-full min-h-0 min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-3">
           <div className="flex items-start justify-between gap-2 mb-2 shrink-0">
             <div className="min-w-0">
               <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Net worth trend</p>
@@ -501,9 +612,9 @@ export default function NetWorthCockpit(props: {
               </p>
             </div>
           </div>
-          <div className="h-[240px] shrink-0">
+          <div className="min-h-[260px] flex-1 min-w-0 w-full lg:min-h-[320px]">
             {isEmpty ? (
-              <div className="h-full rounded-xl border border-dashed border-slate-200 bg-slate-50 flex items-center justify-center text-sm text-slate-500">
+              <div className="h-full min-h-[240px] rounded-xl border border-dashed border-slate-200 bg-slate-50 flex items-center justify-center text-sm text-slate-500">
                 No history yet. Open Dashboard on different days to build the trend.
               </div>
             ) : (
@@ -533,117 +644,6 @@ export default function NetWorthCockpit(props: {
               </ResponsiveContainer>
             )}
           </div>
-
-          {live && (
-            <div className="mt-4 flex flex-1 flex-col gap-4 border-t border-slate-100 pt-4 min-h-0">
-              <div className="flex flex-wrap items-end justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Allocation &amp; weekly rhythm</p>
-                  <p className="text-xs text-slate-600 mt-0.5">
-                    Wealth mix vs. net savings by week — side by side for a single read.
-                  </p>
-                </div>
-              </div>
-              <div className="grid flex-1 grid-cols-1 gap-4 min-h-[260px] lg:min-h-0 lg:grid-cols-2 lg:items-stretch lg:gap-5">
-                <div className="flex min-h-[220px] min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-slate-50/50 p-3 sm:p-4">
-                <div className="mb-2 shrink-0">
-                  <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Wealth composition</p>
-                  <p className="text-xs text-slate-600 mt-0.5">
-                    Gross assets by role — see concentration at a glance (excludes liabilities).
-                  </p>
-                </div>
-                {computed.compositionTotal > 0 ? (
-                  <div className="flex min-h-0 min-w-0 flex-1 flex-col items-stretch gap-4 sm:flex-row">
-                    <div className="relative mx-auto h-[210px] w-full max-w-[min(100%,300px)] shrink-0 sm:mx-0">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={computed.compositionPieData}
-                            dataKey="value"
-                            nameKey="name"
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={62}
-                            outerRadius={92}
-                            paddingAngle={2}
-                          >
-                            {computed.compositionPieData.map((entry) => (
-                              <Cell key={`cell-${entry.name}`} fill={entry.fill} stroke="#fff" strokeWidth={2} />
-                            ))}
-                          </Pie>
-                          <Tooltip formatter={(value: number) => formatCurrencyString(value, { digits: 0 })} />
-                        </PieChart>
-                      </ResponsiveContainer>
-                      <div className="pointer-events-none absolute inset-0 flex items-center justify-center pb-2">
-                        <div className="text-center px-2">
-                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Gross assets</p>
-                          <p className="text-lg font-extrabold text-slate-900 tabular-nums leading-tight">
-                            {formatCurrencyString(computed.compositionTotal, { digits: 0 })}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                    <ul className="flex-1 min-w-0 w-full max-w-full space-y-2 text-[12px] overflow-x-hidden">
-                      {computed.compositionStrip.map((seg) => {
-                        const pct = computed.compositionTotal > 0 ? (seg.sar / computed.compositionTotal) * 100 : 0;
-                        return (
-                          <li
-                            key={seg.key}
-                            className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2"
-                          >
-                            <span className="flex items-center gap-2 min-w-0">
-                              <span className="h-3 w-3 rounded-md shrink-0 shadow-sm" style={{ backgroundColor: seg.color }} />
-                              <span className="font-medium text-slate-800 truncate">{seg.label}</span>
-                            </span>
-                            <span className="tabular-nums text-right shrink-0 text-[11px] sm:text-xs">
-                              <span className="font-semibold text-slate-900">{formatCurrencyString(seg.sar, { digits: 0 })}</span>
-                              <span className="text-slate-500 ml-2">{pct.toFixed(0)}%</span>
-                            </span>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                ) : (
-                  <div className="flex-1 rounded-xl border border-dashed border-slate-200 bg-slate-50 flex items-center justify-center text-sm text-slate-500 px-4 text-center min-h-[120px]">
-                    Link accounts and assets to see how wealth is allocated.
-                  </div>
-                )}
-                </div>
-
-                <div className="flex min-h-[220px] min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-slate-50/50 p-3 sm:p-4 z-0 isolate">
-                <div className="mb-2 shrink-0">
-                  <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Weekly savings rhythm</p>
-                  <p className="text-xs text-slate-600 mt-0.5">
-                    Net per week (Mon–Sun) — income minus spending, same rules as your Summary cards. Weekly rolls up day-to-day noise.
-                  </p>
-                </div>
-                <div className="min-h-[200px] w-full min-w-0 flex-1 lg:min-h-[220px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={computed.weeklyNet8} margin={{ top: 10, right: 12, left: 10, bottom: 4 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
-                      <XAxis dataKey="name" tickLine={false} axisLine={{ stroke: '#CBD5E1' }} fontSize={11} interval={0} />
-                      <YAxis
-                        tickFormatter={(v) => formatAxisNumber(Number(v))}
-                        tickLine={false}
-                        axisLine={{ stroke: '#CBD5E1' }}
-                        fontSize={11}
-                        width={48}
-                      />
-                      <ReferenceLine y={0} stroke="#64748b" strokeDasharray="4 3" />
-                      <Tooltip content={<DailyNetTooltip formatValue={(n) => formatCurrencyString(n, { digits: 0 })} />} />
-                      <Bar dataKey="net" radius={[6, 6, 0, 0]} maxBarSize={40}>
-                        {computed.weeklyNet8.map((e, i) => (
-                          <Cell key={`wk-${e.weekStartKey}-${i}`} fill={e.net >= 0 ? '#059669' : '#e11d48'} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-              </div>
-            </div>
-          )}
         </section>
 
         {/* Smart side widgets */}
