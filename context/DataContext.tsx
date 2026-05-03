@@ -99,7 +99,14 @@ interface DataContextType {
   addRecurringTransaction: (recurring: Omit<RecurringTransaction, 'id' | 'user_id'>) => Promise<void>;
   updateRecurringTransaction: (recurring: RecurringTransaction) => Promise<void>;
   deleteRecurringTransaction: (id: string) => Promise<void>;
+  /** `skipped` counts any rule where `applyRecurringRuleForMonth` returns `skipped: true` (not only duplicate-in-month). */
   applyRecurringForMonth: (year: number, month: number) => Promise<{ applied: number; skipped: number }>;
+  /** Create one month’s transaction for a single recurring rule (same duplicate rules as bulk apply). */
+  applyRecurringRuleForMonth: (
+    recurringId: string,
+    year: number,
+    month: number,
+  ) => Promise<{ applied: boolean; skipped: boolean; skipReason?: 'disabled' | 'manual' | 'already' | 'not_found' }>;
   applyRecurringDueToday: () => Promise<number>;
   /** `balance` optional for new accounts (defaults to 0). Investment platforms usually omit it. */
   addPlatform: (platform: Omit<Account, 'id' | 'user_id' | 'balance'> & { balance?: number }) => Promise<string | undefined>;
@@ -2245,48 +2252,64 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         else setData(prev => ({ ...prev, recurringTransactions: prev.recurringTransactions.filter(r => r.id !== id) }));
     };
 
+    const applyRecurringRuleForMonth = async (
+        recurringId: string,
+        year: number,
+        month: number,
+    ): Promise<{ applied: boolean; skipped: boolean; skipReason?: 'disabled' | 'manual' | 'already' | 'not_found' }> => {
+        const rule = data.recurringTransactions.find((r) => r.id === recurringId);
+        if (!rule) return { applied: false, skipped: true, skipReason: 'not_found' };
+        if (!rule.enabled) return { applied: false, skipped: true, skipReason: 'disabled' };
+        if (rule.addManually === true) return { applied: false, skipped: true, skipReason: 'manual' };
+        if (!supabase || !auth?.user) return { applied: false, skipped: true };
+
+        const monthStr = String(month).padStart(2, '0');
+        const dayStr = (d: number) => String(d).padStart(2, '0');
+        const date = `${year}-${monthStr}-${dayStr(rule.dayOfMonth)}`;
+        const monthPrefix = `${year}-${monthStr}-`;
+        const already = (data?.transactions ?? []).some((t) => {
+            const rid = t.recurringId ?? (t as any).recurring_id;
+            if (rid !== rule.id) return false;
+            if (!t.date.startsWith(monthPrefix)) return false;
+            if (rule.dayOfMonth === 28) {
+                const day = parseInt(t.date.slice(8, 10), 10);
+                if (day >= 28) return true;
+            }
+            return t.date.startsWith(date);
+        });
+        if (already) return { applied: false, skipped: true, skipReason: 'already' };
+
+        cashBalanceAccumulatorRef.current = {};
+        const amount = rule.type === 'income' ? rule.amount : -rule.amount;
+        try {
+            await addTransaction({
+                date,
+                description: rule.description,
+                amount,
+                category: rule.category,
+                accountId: rule.accountId,
+                budgetCategory: rule.type === 'expense' ? rule.budgetCategory : undefined,
+                type: rule.type,
+                recurringId: rule.id,
+            });
+            cashBalanceAccumulatorRef.current = {};
+            return { applied: true, skipped: false };
+        } catch (_) {
+            cashBalanceAccumulatorRef.current = {};
+            return { applied: false, skipped: true };
+        }
+    };
+
     const applyRecurringForMonth = async (year: number, month: number): Promise<{ applied: number; skipped: number }> => {
         if (!supabase || !auth?.user) return { applied: 0, skipped: 0 };
         cashBalanceAccumulatorRef.current = {};
-        const enabled = data.recurringTransactions.filter(r => r.enabled && !(r.addManually === true));
-        const monthStr = String(month).padStart(2, '0');
-        const dayStr = (d: number) => String(d).padStart(2, '0');
+        const enabled = data.recurringTransactions.filter((r) => r.enabled && !(r.addManually === true));
         let applied = 0;
         let skipped = 0;
         for (const rule of enabled) {
-            const date = `${year}-${monthStr}-${dayStr(rule.dayOfMonth)}`;
-            const monthPrefix = `${year}-${monthStr}-`;
-            // For EOM rules (dayOfMonth 28), treat any transaction on 28–31 in this month as already applied (matches applyRecurringDueToday which uses effectiveDateStr 28th on days 29–31)
-            const already = (data?.transactions ?? []).some(t => {
-                const rid = t.recurringId ?? (t as any).recurring_id;
-                if (rid !== rule.id) return false;
-                if (!t.date.startsWith(monthPrefix)) return false;
-                if (rule.dayOfMonth === 28) {
-                    const day = parseInt(t.date.slice(8, 10), 10);
-                    if (day >= 28) return true;
-                }
-                return t.date.startsWith(date);
-            });
-            if (already) {
-                skipped++;
-                continue;
-            }
-            const amount = rule.type === 'income' ? rule.amount : -rule.amount;
-            try {
-                await addTransaction({
-                    date,
-                    description: rule.description,
-                    amount,
-                    category: rule.category,
-                    accountId: rule.accountId,
-                    budgetCategory: rule.type === 'expense' ? rule.budgetCategory : undefined,
-                    type: rule.type,
-                    recurringId: rule.id,
-                });
-                applied++;
-            } catch (_) {
-                // already alerted in addTransaction
-            }
+            const res = await applyRecurringRuleForMonth(rule.id, year, month);
+            if (res.applied) applied++;
+            else if (res.skipped) skipped++;
         }
         cashBalanceAccumulatorRef.current = {};
         return { applied, skipped };
@@ -3482,7 +3505,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         })();
     }, [loading, auth?.user?.id, data.investments]);
 
-    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

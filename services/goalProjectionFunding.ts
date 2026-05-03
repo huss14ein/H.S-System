@@ -1,7 +1,7 @@
 import type { Budget, FinancialData, Goal } from '../types';
 import { toSAR } from '../utils/currencyMath';
 import { computeGoalMonthlyAllocation } from './goalAllocation';
-import { averageRollingMonthlyNetSurplus } from './goalResolvedTotals';
+import { averageRollingMonthlyNetSurplus, GOAL_NET_CASHFLOW_LOOKBACK_MONTHS } from './goalResolvedTotals';
 
 /** Monthly SAR equivalent of a budget row limit (matches Budgets page cards). */
 export function budgetMonthlyEquivalentSar(b: Budget): number {
@@ -24,7 +24,7 @@ export function rollingSurplusAfterAllGoalBudgetReservations(
   /** CurrencyContext SAR/USD rate — keeps rolling net aligned with mixed-currency accounts. */
   uiExchangeRate?: number,
 ): number {
-  const rolling = averageRollingMonthlyNetSurplus(data ?? null, 6, uiExchangeRate);
+  const rolling = averageRollingMonthlyNetSurplus(data ?? null, GOAL_NET_CASHFLOW_LOOKBACK_MONTHS, uiExchangeRate);
   let reserved = 0;
   (data?.budgets ?? []).forEach((b) => {
     const gid = String((b as Budget).goalId ?? '').trim();
@@ -163,7 +163,7 @@ export function goalMonthlyInvestmentContributionSar(
   goalId: string,
   data: FinancialData | null | undefined,
   sarPerUsd: number,
-  monthsBack = 6,
+  monthsBack = GOAL_NET_CASHFLOW_LOOKBACK_MONTHS,
 ): number {
   const gid = String(goalId ?? '').trim();
   if (!gid || !data) return 0;
@@ -306,7 +306,7 @@ export function computeGoalMonthlyFundingEnvelopeSar(args: {
   const rate = Number(args.sarPerUsd);
   const sarPerUsd = Number.isFinite(rate) && rate > 0 ? rate : 3.75;
   const gid = String(goal.id || '').trim();
-  const rollingSurplusMonthly = averageRollingMonthlyNetSurplus(data ?? null, 6, sarPerUsd);
+  const rollingSurplusMonthly = averageRollingMonthlyNetSurplus(data ?? null, GOAL_NET_CASHFLOW_LOOKBACK_MONTHS, sarPerUsd);
 
   const budgets = (data?.budgets ?? []) as Budget[];
   let assignedBudgetMonthly = 0;

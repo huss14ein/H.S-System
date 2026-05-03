@@ -84,7 +84,7 @@ function formatAxisNumber(n: number): string {
 
 function AreaTooltip(props: {
   active?: boolean;
-  payload?: Array<{ payload?: { dayKey: string; netWorth: number } }>;
+  payload?: Array<{ payload?: { dayKey: string; netWorth: number; deltaFromPrev?: number } }>;
   label?: string;
   formatValue: (n: number) => string;
 }) {
@@ -92,12 +92,19 @@ function AreaTooltip(props: {
   if (!active || !payload?.length) return null;
   const row = payload[0]?.payload;
   if (!row) return null;
+  const d = typeof row.deltaFromPrev === 'number' && Number.isFinite(row.deltaFromPrev) ? row.deltaFromPrev : null;
   return (
     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-lg text-xs">
       <p className="font-semibold text-slate-800">{shortLabel(row.dayKey) || row.dayKey}</p>
       <p className="mt-1 text-slate-600 tabular-nums">
         Net worth: <span className="font-semibold text-slate-900">{formatValue(row.netWorth)}</span>
       </p>
+      {d != null && d !== 0 && (
+        <p className={`mt-1 tabular-nums font-medium ${d >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+          vs prior point: {d >= 0 ? '+' : ''}
+          {formatValue(d)}
+        </p>
+      )}
     </div>
   );
 }
@@ -189,8 +196,15 @@ export default function NetWorthCockpit(props: {
       return {
         sarPerUsd: 3.75,
         live: null as null | ReturnType<typeof computePersonalHeadlineNetWorthSar>['buckets'],
-        series: [] as Array<{ dayKey: string; name: string; netWorth: number }>,
+        series: [] as Array<{ dayKey: string; name: string; netWorth: number; deltaFromPrev: number }>,
         nwYAxisDomain: undefined as [number, number] | undefined,
+        nwTrendInChart: null as null | {
+          fromDayKey: string;
+          toDayKey: string;
+          deltaSar: number;
+          deltaPct: number;
+          points: number;
+        },
         accounts: [] as Account[],
         investCashBars: [] as Array<{ label: string; sar: number }>,
         net30d: { income: 0, expenses: 0, net: 0 },
@@ -224,10 +238,36 @@ export default function NetWorthCockpit(props: {
         ? rawRows.map((r) => (r.dayKey === todayLocalKey ? { ...r, netWorth: safeNumber(live.netWorth) } : r))
         : [{ dayKey: todayLocalKey, netWorth: safeNumber(live.netWorth) }, ...rawRows];
 
-    const series = rows
+    const seriesChrono = rows
       .slice()
       .reverse()
       .map((r) => ({ ...r, name: shortLabel(r.dayKey) }));
+    const series = seriesChrono.map((r, i) => ({
+      ...r,
+      deltaFromPrev: i > 0 ? r.netWorth - seriesChrono[i - 1].netWorth : 0,
+    }));
+
+    let nwTrendInChart: {
+      fromDayKey: string;
+      toDayKey: string;
+      deltaSar: number;
+      deltaPct: number;
+      points: number;
+    } | null = null;
+    if (series.length >= 1) {
+      const first = series[0];
+      const last = series[series.length - 1];
+      const deltaSar = last.netWorth - first.netWorth;
+      const denom = Math.abs(first.netWorth);
+      const deltaPct = denom > 1e-6 ? (deltaSar / denom) * 100 : 0;
+      nwTrendInChart = {
+        fromDayKey: first.dayKey,
+        toDayKey: last.dayKey,
+        deltaSar,
+        deltaPct,
+        points: series.length,
+      };
+    }
 
     const nwVals = series.map((s) => s.netWorth).filter((n) => Number.isFinite(n));
     let nwYAxisDomain: [number, number] | undefined;
@@ -348,6 +388,7 @@ export default function NetWorthCockpit(props: {
       live,
       series,
       nwYAxisDomain,
+      nwTrendInChart,
       accounts,
       investCashBars,
       net30d,
@@ -602,15 +643,48 @@ export default function NetWorthCockpit(props: {
           )}
         </aside>
 
-        {/* Center: net worth trend only — chart grows with column height */}
-        <section className="lg:col-span-5 flex h-full min-h-0 min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-3">
-          <div className="flex items-start justify-between gap-2 mb-2 shrink-0">
-            <div className="min-w-0">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Net worth trend</p>
-              <p className="text-xs text-slate-600 mt-0.5">
-                Uses daily snapshots (when you open the app) + today’s live books. Axis scales to your range so flat weeks still read clearly.
-              </p>
+        {/* Center: net worth trend — summary strip + chart */}
+        <section className="lg:col-span-5 flex h-full min-h-0 min-w-0 flex-col rounded-2xl border border-slate-200 bg-gradient-to-b from-white to-slate-50/40 p-3 shadow-sm">
+          <div className="mb-2 shrink-0 space-y-2">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Net worth trend</p>
+                  <span className="rounded-md bg-slate-200/80 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 tabular-nums">{period}</span>
+                </div>
+                <p className="text-xs text-slate-600 mt-0.5 leading-snug max-w-prose">
+                  One point per calendar day you opened the app (stored history), ending with <strong>today’s live</strong> headline net worth. Hover a point for level and day-over-day step.
+                </p>
+              </div>
             </div>
+            {!isEmpty && computed.nwTrendInChart && computed.nwTrendInChart.points >= 2 && (
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1.5 rounded-xl border border-indigo-200/80 bg-gradient-to-r from-indigo-50 via-white to-violet-50/50 px-3 py-2.5 shadow-sm">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-indigo-900/80 shrink-0">In this window</span>
+                <span className="text-xs text-slate-600 tabular-nums shrink-0">
+                  {shortLabel(computed.nwTrendInChart.fromDayKey)} → {shortLabel(computed.nwTrendInChart.toDayKey)}
+                </span>
+                <span
+                  className={`text-sm font-extrabold tabular-nums shrink-0 ${computed.nwTrendInChart.deltaSar >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}
+                  title="Change from first to last point on the chart (not investment return)"
+                >
+                  {computed.nwTrendInChart.deltaSar >= 0 ? '+' : ''}
+                  {formatCurrencyString(computed.nwTrendInChart.deltaSar, { digits: 0 })}
+                </span>
+                <span
+                  className={`text-xs font-bold tabular-nums ${computed.nwTrendInChart.deltaPct >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}
+                  title="Percent change from first point’s net worth to last"
+                >
+                  ({computed.nwTrendInChart.deltaPct >= 0 ? '+' : ''}
+                  {computed.nwTrendInChart.deltaPct.toFixed(1)}%)
+                </span>
+                <span className="text-[11px] text-slate-500 ml-auto tabular-nums">{computed.nwTrendInChart.points} days</span>
+              </div>
+            )}
+            {!isEmpty && computed.nwTrendInChart && computed.nwTrendInChart.points < 2 && (
+              <p className="text-xs text-amber-900 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 leading-snug">
+                Only one snapshot in this range — visit on another day (or widen to <strong>All</strong>) to see movement across time.
+              </p>
+            )}
           </div>
           <div className="min-h-[260px] flex-1 min-w-0 w-full lg:min-h-[320px]">
             {isEmpty ? (
@@ -619,7 +693,7 @@ export default function NetWorthCockpit(props: {
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={computed.series} margin={{ top: 10, right: 18, left: 0, bottom: 0 }}>
+                <AreaChart data={computed.series} margin={{ top: 12, right: 18, left: 0, bottom: 4 }}>
                   <defs>
                     <linearGradient id="nwFill" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#4F46E5" stopOpacity={0.32} />
@@ -627,7 +701,7 @@ export default function NetWorthCockpit(props: {
                       <stop offset="100%" stopColor="#4F46E5" stopOpacity={0.04} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
                   <XAxis dataKey="name" tickLine={false} axisLine={{ stroke: '#CBD5E1' }} fontSize={11} interval="preserveStartEnd" minTickGap={24} />
                   <YAxis
                     domain={computed.nwYAxisDomain}
@@ -639,7 +713,33 @@ export default function NetWorthCockpit(props: {
                     width={54}
                   />
                   <Tooltip content={<AreaTooltip formatValue={(n) => formatCurrencyString(n, { digits: 0 })} />} />
-                  <Area type="monotone" dataKey="netWorth" stroke="#4F46E5" strokeWidth={2} fill="url(#nwFill)" />
+                  <Area
+                    type="monotone"
+                    dataKey="netWorth"
+                    stroke="#4338ca"
+                    strokeWidth={2.5}
+                    fill="url(#nwFill)"
+                    activeDot={{ r: 6, stroke: '#fff', strokeWidth: 2, fill: '#312e81' }}
+                    dot={(dotProps: { cx?: number; cy?: number; index?: number }) => {
+                      const { cx, cy, index } = dotProps;
+                      const last = computed.series.length - 1;
+                      if (cx == null || cy == null || index !== last || last < 1) {
+                        return <g key={`nw-skip-${index ?? 0}`} />;
+                      }
+                      return (
+                        <circle
+                          key="nw-latest-dot"
+                          cx={cx}
+                          cy={cy}
+                          r={5}
+                          fill="#312e81"
+                          stroke="#fff"
+                          strokeWidth={2}
+                          className="drop-shadow-sm"
+                        />
+                      );
+                    }}
+                  />
                 </AreaChart>
               </ResponsiveContainer>
             )}

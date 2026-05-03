@@ -8,6 +8,7 @@ import { PiggyBankIcon } from '../components/icons/PiggyBankIcon';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
+import { ArrowTrendingDownIcon } from '../components/icons/ArrowTrendingDownIcon';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import Card from '../components/Card';
 import CollapsibleSection from '../components/CollapsibleSection';
@@ -451,17 +452,30 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                             <InfoHint text="Everything you own minus what you owe, for accounts and items marked as yours. Family members’ items with a different Owner are left out — same rule as the Dashboard." placement="bottom" hintId="summary-personal-wealth" hintPage="Summary" />
                         </div>
                         <p className="text-5xl font-extrabold text-dark my-2">{maskBalance(formatCurrencyString(financialMetricsWithEf.netWorth, { digits: 0 }))}</p>
-                        <p className={`${financialMetricsWithEf.netWorthTrend >= 0 ? 'text-success' : 'text-danger'} font-semibold flex flex-wrap items-center justify-center gap-2`}>
-                            <span>{financialMetricsWithEf.netWorthTrend >= 0 ? '+' : ''}{financialMetricsWithEf.netWorthTrend.toFixed(1)}% rough trend</span>
-                            <span className="inline-flex flex-shrink-0">
+                        <div
+                            className={`mt-1 flex flex-col items-center gap-1 ${financialMetricsWithEf.netWorthTrend >= 0 ? 'text-success' : 'text-danger'}`}
+                        >
+                            <div className="flex items-center justify-center gap-2">
+                                {financialMetricsWithEf.netWorthTrend >= 0 ? (
+                                    <ArrowTrendingUpIcon className="h-6 w-6 shrink-0 opacity-90" aria-hidden />
+                                ) : (
+                                    <ArrowTrendingDownIcon className="h-6 w-6 shrink-0 opacity-90" aria-hidden />
+                                )}
+                                <span className="text-2xl sm:text-3xl font-extrabold tabular-nums tracking-tight">
+                                    {financialMetricsWithEf.netWorthTrend >= 0 ? '+' : ''}
+                                    {financialMetricsWithEf.netWorthTrend.toFixed(1)}%
+                                </span>
                                 <InfoHint
-                                    text="Approximate: compares today’s net worth with an implied figure from this month’s income and spending. It is not investment performance — use the chart and investments section for that."
+                                    text="This financial month’s net cashflow (income − expenses, same KPI filters as Dashboard) expressed as a percent of implied net worth at month start. It is not portfolio time-weighted return — use Investments and the net worth cockpit chart for that."
                                     placement="bottom"
                                     hintId="summary-nw-trend"
                                     hintPage="Summary"
                                 />
-                            </span>
-                        </p>
+                            </div>
+                            <p className="text-xs font-medium text-slate-600 max-w-[16rem] leading-snug text-center">
+                                This month’s flow vs implied month start net worth (same as Dashboard card).
+                            </p>
+                        </div>
                         <p className="text-xs text-slate-500 mt-2">Tap to review property &amp; Sukuk on Assets</p>
                         {isAdmin && managedWealthTotal > 0 && (
                             <p className="text-xs text-amber-800 mt-2 font-medium rounded-lg bg-amber-50 px-2 py-1 border border-amber-100">Household / managed wealth on top of yours: {maskBalance(formatCurrencyString(managedWealthTotal, { digits: 0 }))}</p>

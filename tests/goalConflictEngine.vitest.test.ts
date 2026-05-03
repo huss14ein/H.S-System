@@ -1,5 +1,37 @@
 import { describe, expect, it } from 'vitest';
-import { goalFeasibilityCheck } from '../services/goalConflictEngine';
+import { detectGoalConflict, goalFeasibilityCheck } from '../services/goalConflictEngine';
+import { buildGoalFundingScheduleRows } from '../services/goalFundingRouter';
+import type { FinancialData, Goal } from '../types';
+
+describe('detectGoalConflict', () => {
+  it('sums required monthly from the same schedule as buildGoalFundingScheduleRows when data is passed', () => {
+    const future = new Date();
+    future.setFullYear(future.getFullYear() + 3);
+    const iso = future.toISOString().slice(0, 10);
+    const goals: Goal[] = [
+      { id: 'a', name: 'A', targetAmount: 120_000, currentAmount: 0, deadline: iso, priority: 'High' } as Goal,
+      { id: 'b', name: 'B', targetAmount: 60_000, currentAmount: 0, deadline: iso, priority: 'Medium' } as Goal,
+    ];
+    const data = {
+      goals,
+      accounts: [],
+      transactions: [],
+      investments: [],
+      assets: [],
+      liabilities: [],
+    } as unknown as FinancialData;
+    const rows = buildGoalFundingScheduleRows(data, 3.75);
+    const expectedSum = rows.filter((r) => r.requiredPerMonth > 0).reduce((s, r) => s + r.requiredPerMonth, 0);
+    const conflicts = detectGoalConflict({
+      goals,
+      monthlySurplusForGoals: 1,
+      data,
+      sarPerUsdUi: 3.75,
+    });
+    const same = conflicts.find((c) => c.reason === 'same_cash_source');
+    expect(same?.requiredMonthlyTotal).toBeCloseTo(expectedSum, 5);
+  });
+});
 
 describe('goalFeasibilityCheck', () => {
   const baseGoal = {
