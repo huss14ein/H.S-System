@@ -858,7 +858,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
             </div>
           </section>
 
-          {appDataCtx?.data && <DashboardKpiQualityPanel />}
+      {appDataCtx?.data && <DashboardKpiQualityPanel />}
 
           {integritySummary && (
             <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -1034,7 +1034,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
                     Holdings {integritySummary.investmentKpiReconciliation.holdingsValueSar.toFixed(2)} + broker cash {integritySummary.investmentKpiReconciliation.brokerageCashSar.toFixed(2)}{' '}
                     <span className="text-slate-500">(cash floored per currency before SAR sum)</span>
                   </p>
-                </div>
+        </div>
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                   <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Net capital (SAR)</p>
                   <p className="font-semibold tabular-nums text-slate-900">{integritySummary.investmentKpiReconciliation.netCapitalSar.toFixed(2)}</p>
