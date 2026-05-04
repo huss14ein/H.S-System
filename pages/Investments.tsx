@@ -46,6 +46,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import LivePricesStatus from '../components/LivePricesStatus';
 import { CurrencyDollarIcon } from '../components/icons/CurrencyDollarIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
+import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import type { HoldingFundamentals } from '../services/finnhubService';
@@ -2339,6 +2340,7 @@ const PlatformCard: React.FC<{
     onToggleExpanded: () => void;
 }> = (props) => {
     const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded } = props;
+    const { refreshPricesForPlatform, isRefreshing: quotesRefreshing } = useMarketData();
     const portfoliosForMetrics = metricsPortfolios ?? portfolios;
     const showPersonalScopeNote = portfolios.length > portfoliosForMetrics.length;
     const { formatCurrencyString } = useFormatCurrency();
@@ -2491,9 +2493,24 @@ const PlatformCard: React.FC<{
                             ) : null}
                         </div>
                     </div>
-                    <button type="button" onClick={() => setIsTxnModalOpen(true)} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-primary rounded-xl border-2 border-primary/30 hover:bg-primary/5 shrink-0 w-full sm:w-auto transition-colors">
-                        <ArrowsRightLeftIcon className="h-4 w-4" /> Transaction Log
-                    </button>
+                    <div className="flex flex-col sm:flex-row gap-2 shrink-0 w-full sm:w-auto">
+                        <button
+                            type="button"
+                            onClick={() => void refreshPricesForPlatform(platform.id)}
+                            disabled={quotesRefreshing}
+                            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-slate-700 rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50 transition-colors"
+                            title="Live quotes for this platform’s tickers only"
+                        >
+                            <ArrowPathIcon className={`h-4 w-4 ${quotesRefreshing ? 'animate-spin' : ''}`} aria-hidden />
+                            {quotesRefreshing ? 'Updating…' : 'Sync quotes (this platform)'}
+                        </button>
+                        <span className="hidden sm:inline-flex items-center self-center">
+                            <InfoHint text="Fetches market data only for symbols in this platform’s portfolios. Does not refresh watchlist, planned trades, or commodities — fewer API calls than the global Refresh prices control in the header." />
+                        </span>
+                        <button type="button" onClick={() => setIsTxnModalOpen(true)} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-primary rounded-xl border-2 border-primary/30 hover:bg-primary/5 transition-colors">
+                            <ArrowsRightLeftIcon className="h-4 w-4" /> Transaction Log
+                        </button>
+                    </div>
                 </div>
                 {isExpanded && (
                 <dl className="platform-metrics grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5" aria-label="Platform metrics">
@@ -2670,7 +2687,16 @@ const PlatformCard: React.FC<{
                                     <p className="px-4 sm:px-5 pt-3 pb-2 text-[11px] text-slate-600 leading-snug bg-gradient-to-r from-slate-50/90 to-teal-50/30 border-b border-slate-100/80">
                                         <span className="font-semibold text-slate-700">Portfolio KPIs</span>
                                         {' — '}
-                                        Same ledger rules as the platform summary. <strong>Unrealized P/L</strong> and <strong>ROI</strong> use position value vs average cost (like the holdings table), not deposits. Idle cash is shared — <strong>Available cash</strong> matches the platform header.
+                                        {sortedPortfolios.length === 1 ? (
+                                          <>
+                                            Single portfolio on this account — <strong>Invested</strong>, <strong>Withdrawn</strong>, and <strong>ROI</strong> match the platform strip (full ledger + pooled cash, net-capital basis).
+                                          </>
+                                        ) : (
+                                          <>
+                                            <strong>Invested</strong> / <strong>Withdrawn</strong> include deposits &amp; withdrawals tied to this portfolio, plus a <strong>share of account-level transfers</strong> (no portfolio tag) split by position value.
+                                            <strong> Unrealized P/L</strong> and <strong>ROI</strong> use position vs average cost like the holdings table. Idle cash is shared — <strong>Available cash</strong> matches the platform header.
+                                          </>
+                                        )}
                                     </p>
                                     <dl
                                         className="portfolio-inline-kpis grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 px-4 sm:px-5 py-4 bg-gradient-to-b from-white via-slate-50/30 to-teal-50/20 border-b border-slate-100 items-stretch"

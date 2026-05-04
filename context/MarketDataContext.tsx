@@ -1,5 +1,5 @@
 
-import React, { createContext, useState, useCallback, ReactNode, useContext, useEffect } from 'react';
+import React, { createContext, useState, useCallback, ReactNode, useContext, useEffect, useRef } from 'react';
 import { cacheRowsToSimulatedMap, loadQuoteCacheRows } from '../services/quotePriceCache';
 
 interface SimulatedPrices {
@@ -9,14 +9,21 @@ interface SimulatedPrices {
 /** ISO timestamp when each symbol’s quote was last refreshed this session. */
 export type SymbolQuoteTimestamps = Record<string, string>;
 
+/** `all` = every tracked symbol (header refresh). `platform` = one investment account’s holdings only (saves API quota). */
+export type PriceRefreshScope = { kind: 'all' } | { kind: 'platform'; platformId: string };
+
 interface MarketDataContextType {
   simulatedPrices: SimulatedPrices;
   setSimulatedPrices: (prices: SimulatedPrices) => void;
   isRefreshing: boolean;
   setIsRefreshing: (v: boolean) => void;
   refreshPrices: () => Promise<void>;
+  /** Refresh live quotes for holdings under one investment platform only (skips watchlist, planned trades, commodities). */
+  refreshPricesForPlatform: (platformId: string) => Promise<void>;
   /** Increment refresh counter so MarketSimulator runs a live/simulated price pass. */
-  bumpPriceRefresh: () => void;
+  bumpPriceRefresh: (scope?: PriceRefreshScope) => void;
+  /** Read and clear the scope for the pending tick (used by MarketSimulator). */
+  consumePriceRefreshScope: () => PriceRefreshScope;
   lastUpdated: Date | null;
   /** Set last updated time (e.g. when live fetch completes). */
   setLastUpdated: (date: Date | null) => void;
@@ -68,16 +75,33 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
     }, []);
 
     const [refreshTrigger, setRefreshTrigger] = useState(0);
+    const pendingScopeRef = useRef<PriceRefreshScope>({ kind: 'all' });
 
-    const bumpPriceRefresh = useCallback(() => {
+    const consumePriceRefreshScope = useCallback((): PriceRefreshScope => {
+        const s = pendingScopeRef.current;
+        pendingScopeRef.current = { kind: 'all' };
+        return s;
+    }, []);
+
+    const bumpPriceRefresh = useCallback((scope: PriceRefreshScope = { kind: 'all' }) => {
+        pendingScopeRef.current = scope;
         setRefreshTrigger((prev) => prev + 1);
     }, []);
 
     const refreshPrices = useCallback(async () => {
         setIsRefreshing(true);
-        bumpPriceRefresh();
+        bumpPriceRefresh({ kind: 'all' });
         // MarketSimulator performs fetch + sets isRefreshing false when done
     }, [bumpPriceRefresh]);
+
+    const refreshPricesForPlatform = useCallback(
+        async (platformId: string) => {
+            if (!platformId?.trim()) return;
+            setIsRefreshing(true);
+            bumpPriceRefresh({ kind: 'platform', platformId: platformId.trim() });
+        },
+        [bumpPriceRefresh],
+    );
 
     const value: MarketDataContextType = {
         simulatedPrices,
@@ -85,7 +109,9 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         isRefreshing,
         setIsRefreshing,
         refreshPrices,
+        refreshPricesForPlatform,
         bumpPriceRefresh,
+        consumePriceRefreshScope,
         lastUpdated,
         setLastUpdated,
         isLive,

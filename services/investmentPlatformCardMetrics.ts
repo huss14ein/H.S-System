@@ -283,22 +283,86 @@ export type PortfolioMetricsBundle = {
   allocatedCashByPortfolioId: Map<string, { SAR: number; USD: number }>;
 };
 
-function investmentTransactionBelongsToPortfolio(
-  t: InvestmentTransaction,
-  portfolioId: string,
-): boolean {
-  const pid = String(
-    t.portfolioId ?? (t as { portfolio_id?: string }).portfolio_id ?? '',
-  ).trim();
-  return pid === portfolioId;
+function transactionPortfolioIdTrimmed(t: InvestmentTransaction): string {
+  return String(t.portfolioId ?? (t as { portfolio_id?: string }).portfolio_id ?? '').trim();
+}
+
+/** Account-level deposits/withdrawals without `portfolioId` — allocate across siblings for KPI math. */
+function isOrphanPortfolioCashFlowTx(t: InvestmentTransaction): boolean {
+  if (transactionPortfolioIdTrimmed(t)) return false;
+  return (
+    isInvestmentTransactionType(t.type, 'deposit') || isInvestmentTransactionType(t.type, 'withdrawal')
+  );
 }
 
 /**
- * Per-portfolio KPIs for one platform row: same ledger rules as {@link computePlatformCardMetrics},
- * with transactions scoped per portfolio. **Idle broker cash is not duplicated into totals** —
- * cash lives at the account (platform) level only; per-portfolio value/P&amp;L here is **positions-only**
- * plus portfolio-specific flows. Use {@link PortfolioMetricsBundle.allocatedCashByPortfolioId} for the
- * full SAR/USD buckets on every row (synced with the platform header).
+ * Weights for splitting orphan cashflows: each portfolio’s live position value in SAR (same basis as holdings KPIs).
+ */
+function portfolioSiblingAttributionWeights(
+  siblingPortfolios: InvestmentPortfolio[],
+  rate: number,
+  simulatedPrices: SimulatedPriceMap,
+): number[] {
+  const sarEach = siblingPortfolios.map((p) => {
+    const cur = resolveInvestmentPortfolioCurrency(p);
+    let sumBook = 0;
+    (p.holdings || []).forEach((h: Holding) => {
+      const v = effectiveHoldingValueInBookCurrency(h, cur, simulatedPrices, rate);
+      if (Number.isFinite(v) && v > 0) sumBook += v;
+    });
+    return toSAR(sumBook, cur, rate);
+  });
+  const total = sarEach.reduce((s, v) => s + v, 0);
+  const n = Math.max(1, siblingPortfolios.length);
+  if (!(total > 0)) return siblingPortfolios.map(() => 1 / n);
+  return sarEach.map((v) => v / total);
+}
+
+/**
+ * Ledger rows tagged to this portfolio + proportional share of orphan deposits/withdrawals (no `portfolioId`).
+ */
+function transactionsAttributedToPortfolioForKpis(args: {
+  portfolioId: string;
+  portfolioIndex: number;
+  transactions: InvestmentTransaction[];
+  weights: number[];
+}): InvestmentTransaction[] {
+  const { portfolioId, portfolioIndex, transactions, weights } = args;
+  const w = weights[portfolioIndex] ?? 0;
+  const out: InvestmentTransaction[] = [];
+
+  for (const t of transactions) {
+    const pid = transactionPortfolioIdTrimmed(t);
+    if (pid === portfolioId) {
+      out.push(t);
+      continue;
+    }
+    if (pid) continue;
+
+    if (!isOrphanPortfolioCashFlowTx(t) || !(w > 0)) continue;
+    const base = getInvestmentTransactionCashAmount(t as any);
+    if (!(base > 0)) continue;
+    const scaled = base * w;
+    if (!(scaled > 1e-12)) continue;
+    out.push({
+      ...t,
+      id: `${t.id}~kpiAlloc~${portfolioId}`,
+      portfolioId,
+      total: scaled,
+    } as InvestmentTransaction);
+  }
+
+  return out;
+}
+
+/**
+ * Per-portfolio KPIs for one platform row: same ledger rules as {@link computePlatformCardMetrics}.
+ *
+ * - **Single portfolio** on the account: use the **full** platform transaction list + **pooled** tradable cash and
+ *   **`net_capital`** basis so Invested / Withdrawn / ROI match the platform header (one book).
+ * - **Multiple portfolios**: rows use **positions-only cash** (`0` in metrics) but **split** account-level deposits &
+ *   withdrawals without `portfolioId` across siblings by **holdings market value** weights; ROI/P&amp;L stay
+ *   `holdings_cost` (per holdings table).
  */
 export function computePortfolioMetricsBundle(args: {
   /** Portfolios listed on this account row (siblings on the same broker). */
@@ -328,10 +392,39 @@ export function computePortfolioMetricsBundle(args: {
   const usdBucket = Math.max(0, accountAvailableCashByCurrency.USD ?? 0);
   const sharedBuckets = { SAR: sarBucket, USD: usdBucket };
 
-  for (const p of siblingPortfolios) {
+  if (siblingPortfolios.length === 1) {
+    const p = siblingPortfolios[0];
+    allocatedCashByPortfolioId.set(p.id, { ...sharedBuckets });
+    const pc = resolveInvestmentPortfolioCurrency(p);
+    metricsByPortfolioId.set(
+      p.id,
+      computePlatformCardMetrics({
+        portfolios: [p],
+        transactions,
+        accounts: accList,
+        allInvestments: invList,
+        sarPerUsd: rate,
+        availableCashByCurrency: accountAvailableCashByCurrency,
+        simulatedPrices,
+        platformCurrency: pc,
+        unrealizedPnLBasis: 'net_capital',
+      }),
+    );
+    return { metricsByPortfolioId, allocatedCashByPortfolioId };
+  }
+
+  const weights = portfolioSiblingAttributionWeights(siblingPortfolios, rate, simulatedPrices);
+
+  for (let i = 0; i < siblingPortfolios.length; i++) {
+    const p = siblingPortfolios[i];
     allocatedCashByPortfolioId.set(p.id, { ...sharedBuckets });
 
-    const filtered = transactions.filter((t) => investmentTransactionBelongsToPortfolio(t, p.id));
+    const filtered = transactionsAttributedToPortfolioForKpis({
+      portfolioId: p.id,
+      portfolioIndex: i,
+      transactions,
+      weights,
+    });
     const pc = resolveInvestmentPortfolioCurrency(p);
     metricsByPortfolioId.set(
       p.id,

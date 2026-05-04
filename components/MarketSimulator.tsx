@@ -1,6 +1,7 @@
 import React, { useEffect, useContext, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
 import { PriceAlert } from '../types';
+import type { InvestmentPortfolio } from '../types';
 import { MarketDataContext } from '../context/MarketDataContext';
 import { getLivePrices, getAICommodityPrices } from '../services/geminiService';
 import {
@@ -58,14 +59,24 @@ const MarketSimulator: React.FC = () => {
                 return;
             }
 
+            const priceScope = marketContext.consumePriceRefreshScope();
+            const platformIdOnly = priceScope.kind === 'platform' ? priceScope.platformId : null;
+            const scopeIsPlatform = platformIdOnly != null;
+
             const { data, batchUpdateHoldingValues, batchUpdateCommodityHoldingValues, updatePriceAlert } = dataContext;
             const { setSimulatedPrices, simulatedPrices: currentSimulatedPrices, setIsLive, setLastUpdated, touchQuoteTimestamps } = marketContext;
             const sarPerUsd = resolveSarPerUsd(data, contextRef.current.exchangeRate);
 
-            const allHoldings = ((data as any)?.personalInvestments ?? data?.investments ?? []).flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []);
-            const allWatchlistItems = data?.watchlist ?? [];
-            const allPlannedTrades = data?.plannedTrades ?? [];
-            const allCommodities = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
+            const allInvestments = ((data as any)?.personalInvestments ?? data?.investments ?? []) as InvestmentPortfolio[];
+            const portfoliosInScope = platformIdOnly
+                ? allInvestments.filter((p) => p.accountId === platformIdOnly)
+                : allInvestments;
+            const allHoldings = portfoliosInScope.flatMap((p) => p.holdings ?? []);
+            const allWatchlistItems = scopeIsPlatform ? [] : (data?.watchlist ?? []);
+            const allPlannedTrades = scopeIsPlatform ? [] : (data?.plannedTrades ?? []);
+            const allCommodities = scopeIsPlatform
+                ? []
+                : ((data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? []);
             
             const uniqueSymbols = Array.from(new Set([
                 ...(allHoldings as { symbol?: string }[]).map((h: { symbol?: string }) => h.symbol).filter((s: string | undefined): s is string => s != null && s !== ''),
@@ -154,8 +165,6 @@ const MarketSimulator: React.FC = () => {
                                 const r = lookupLiveQuoteForSymbol(newPrices, s);
                                 return r != null && r.price > 0;
                             }));
-
-                    if (liveStatus && setLastUpdated) setLastUpdated(new Date());
                 } catch (error) {
                     console.error('Failed to fetch real prices, falling back to cache then simulation:', error);
                     const cacheRows = loadQuoteCacheRows();
@@ -239,9 +248,16 @@ const MarketSimulator: React.FC = () => {
                 }
             });
             
-            setSimulatedPrices(newPrices);
-            setIsLive(liveStatus);
+            if (scopeIsPlatform) {
+                setSimulatedPrices({ ...currentSimulatedPrices, ...newPrices });
+            } else {
+                setSimulatedPrices(newPrices);
+                setIsLive(liveStatus);
+            }
             touchQuoteTimestamps(Object.keys(newPrices));
+            // Only bump the global "last updated" clock on a full refresh.
+            // Platform-scoped refreshes intentionally update a subset of symbols and must not make the header look fresh.
+            if (!scopeIsPlatform && liveStatus && setLastUpdated) setLastUpdated(new Date());
 
             // currentValue is stored in portfolio book currency (USD or SAR); live quotes are typically USD notional.
             // Mixed books: display/metrics convert via getSarPerUsd; DB persistence may still hold raw USD notional until normalized.

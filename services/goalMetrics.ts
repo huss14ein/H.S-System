@@ -89,8 +89,10 @@ export function monthsRemainingToDeadline(goal: Goal, fromDate: Date = new Date(
 }
 
 /**
- * Same status logic as Goals → GoalCard: compares allocation-based monthly contribution
- * to equal-payment requirement from remaining gap ÷ months left.
+ * **Single source** for goal timeline health (Goals page cards, funding cockpit badge, Investments hub):
+ * compares the goal’s **funding envelope** (budgets + investment deposits + savings % of surplus) to
+ * the equal-payment requirement (gap ÷ months to deadline). If `projectedMonthlyContribution` is 0 with
+ * a remaining gap, status is **Needs Attention** (not on track).
  */
 export function computeGoalTimelineStatus(args: {
   goal: Goal;
@@ -123,10 +125,17 @@ export function computeGoalTimelineStatus(args: {
     status = 'On Track';
   } else if (monthsLeft <= 0) {
     status = 'At Risk';
-  } else if (projectedMonthlyContribution > 0 && projectedMonthlyContribution < requiredMonthlyContribution * 0.5) {
-    status = 'At Risk';
-  } else if (projectedMonthlyContribution > 0 && projectedMonthlyContribution < requiredMonthlyContribution * 0.8) {
-    status = 'Needs Attention';
+  } else if (remainingAmount > 0) {
+    /** Envelope = 0 with a remaining gap is not "on track" (same bug as Goals card vs funding list). */
+    if (projectedMonthlyContribution <= 0) {
+      status = 'Needs Attention';
+    } else if (projectedMonthlyContribution < requiredMonthlyContribution * 0.5) {
+      status = 'At Risk';
+    } else if (projectedMonthlyContribution < requiredMonthlyContribution * 0.8) {
+      status = 'Needs Attention';
+    } else {
+      status = 'On Track';
+    }
   }
 
   return {

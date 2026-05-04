@@ -32,7 +32,7 @@ import { personalMonthlyNetByMonthKeySar } from '../services/financeMetrics';
 import { computeGoalFundingPlan, GOAL_NO_DEADLINE_AMORTIZATION_MONTHS } from '../services/goalFundingRouter';
 import { computeWindfallAllocationPct } from '../services/windfallAllocation';
 import { monteCarloGoalSuccess } from '../services/portfolioConstruction';
-import { projectedGoalCompletionDate, goalFundingGap as goalGapShared } from '../services/goalMetrics';
+import { projectedGoalCompletionDate, goalFundingGap as goalGapShared, computeGoalTimelineStatus } from '../services/goalMetrics';
 import { detectGoalConflict, goalFeasibilityCheck, type GoalConflict } from '../services/goalConflictEngine';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
@@ -395,7 +395,14 @@ const GoalConflictAndFeasibilitySection: React.FC<{
   );
 };
 
-const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void; onSeeInPlan?: () => void }> = ({ goal, onEdit, onDelete, onSeeInPlan }) => {
+const GoalCard: React.FC<{
+  goal: Goal;
+  /** Canonical SAR saved (from `computeGoalResolvedAmountsSar`) — must match funding cockpit & Plan. */
+  resolvedCurrentAmountSar: number;
+  onEdit: () => void;
+  onDelete: () => void;
+  onSeeInPlan?: () => void;
+}> = ({ goal, resolvedCurrentAmountSar, onEdit, onDelete, onSeeInPlan }) => {
     const { data } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
@@ -424,7 +431,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
             [personalLiabilities, goal.id],
         );
 
-        const { linkedAssets, calculatedCurrentAmount } = useMemo(() => {
+        const { linkedAssets } = useMemo(() => {
             const linkedItems: { name: string; value: number }[] = [];
             const assets = (data as any)?.personalAssets ?? data?.assets ?? [];
             const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
@@ -459,9 +466,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                 linkedItems.push({ name: `${l.name || 'Receivable'} (owed to you)`, value: v });
             });
 
-            const totalValue = linkedItems.reduce((sum, item) => sum + (item.value ?? 0), 0);
-
-            return { linkedAssets: linkedItems, calculatedCurrentAmount: totalValue };
+            return { linkedAssets: linkedItems };
         }, [data?.assets, data?.investments, goal.id, sarPerUsd, goalHoldingNames, personalLiabilities]);
 
     const fundingEnvelope = useMemo(
@@ -472,63 +477,52 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
     const handleGetAIPlan = useCallback(async () => {
         setIsLoading(true);
         const rollingAfter = rollingSurplusAfterAllGoalBudgetReservations(data ?? null, exchangeRate);
-        const plan = await getGoalAIPlan(goal, rollingAfter, calculatedCurrentAmount, {
+        const plan = await getGoalAIPlan(goal, rollingAfter, resolvedCurrentAmountSar, {
             projectedMonthlyOverride: fundingEnvelope.envelopeMonthly,
         });
         setAiPlan(plan);
         setIsLoading(false);
-    }, [goal, calculatedCurrentAmount, data, fundingEnvelope.envelopeMonthly, exchangeRate]);
-    
+    }, [goal, resolvedCurrentAmountSar, data, fundingEnvelope.envelopeMonthly, exchangeRate]);
 
     const { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution, borderColor } = useMemo(() => {
-        const currentAmount = calculatedCurrentAmount;
-        const now = new Date();
-        const MONTH_MS = 30.44 * 24 * 60 * 60 * 1000;
-        const deadline = goal.deadline ? new Date(goal.deadline) : null;
-        const monthsLeft = (() => {
-            if (!deadline || Number.isNaN(deadline.getTime())) return 0;
-            const diffMs = deadline.getTime() - now.getTime();
-            if (diffMs <= 0) return 0;
-            return Math.ceil(diffMs / MONTH_MS);
-        })();
-        const targetAmt = goal.targetAmount ?? 0;
-        const progressPercentRaw = targetAmt > 0 ? (currentAmount / targetAmt) * 100 : 0;
-        const progressPercent = Math.min(100, Math.max(0, progressPercentRaw));
-        const remainingAmount = Math.max(0, targetAmt - currentAmount);
-        const requiredMonthlyContribution = monthsLeft > 0 ? remainingAmount / monthsLeft : remainingAmount;
-        const projectedMonthlyContribution = fundingEnvelope.envelopeMonthly;
-
-        let status: 'On Track' | 'Needs Attention' | 'At Risk' = 'On Track';
-        if (progressPercent >= 100) {
-            status = 'On Track';
-        } else if (monthsLeft <= 0) {
-            status = 'At Risk';
-        } else if (projectedMonthlyContribution > 0 && projectedMonthlyContribution < requiredMonthlyContribution * 0.5) {
-            status = 'At Risk';
-        } else if (projectedMonthlyContribution > 0 && projectedMonthlyContribution < requiredMonthlyContribution * 0.8) {
-            status = 'Needs Attention';
-        }
-        
-        const color = progressPercent < 33 ? 'bg-danger' : progressPercent < 66 ? 'bg-warning' : 'bg-success';
-        const borderColor = status === 'At Risk' ? 'border-danger' : status === 'Needs Attention' ? 'border-warning' : 'border-success';
-
-        return { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution, borderColor };
-    }, [goal, calculatedCurrentAmount, fundingEnvelope.envelopeMonthly]);
+        const tl = computeGoalTimelineStatus({
+            goal,
+            resolvedCurrentAmountSar,
+            projectedMonthlyContribution: fundingEnvelope.envelopeMonthly,
+        });
+        const colorTone =
+            tl.progressPercent < 33 ? 'bg-danger' : tl.progressPercent < 66 ? 'bg-warning' : 'bg-success';
+        const borderTone =
+            tl.status === 'At Risk'
+                ? 'border-danger'
+                : tl.status === 'Needs Attention'
+                  ? 'border-warning'
+                  : 'border-success';
+        return {
+            monthsLeft: tl.monthsLeft,
+            progressPercent: tl.progressPercent,
+            status: tl.status,
+            color: colorTone,
+            requiredMonthlyContribution: tl.requiredMonthlyContribution,
+            projectedMonthlyContribution: tl.projectedMonthlyContribution,
+            borderColor: borderTone,
+        };
+    }, [goal, resolvedCurrentAmountSar, fundingEnvelope.envelopeMonthly]);
 
     const completionAtRequired = useMemo(() => {
-        const g = { ...goal, currentAmount: calculatedCurrentAmount } as Goal;
+        const g = { ...goal, currentAmount: resolvedCurrentAmountSar } as Goal;
         const gap = goalGapShared(g);
         if (gap <= 0) return null;
         const m = Math.max(requiredMonthlyContribution, projectedMonthlyContribution, 1);
         return projectedGoalCompletionDate(g, m);
-    }, [goal, calculatedCurrentAmount, requiredMonthlyContribution, projectedMonthlyContribution]);
+    }, [goal, resolvedCurrentAmountSar, requiredMonthlyContribution, projectedMonthlyContribution]);
 
     const monteCarloResult = useMemo(() => {
         const targetAmt = goal.targetAmount ?? 0;
-        if (targetAmt <= 0 || monthsLeft <= 0 || calculatedCurrentAmount >= targetAmt) return null;
+        if (targetAmt <= 0 || monthsLeft <= 0 || resolvedCurrentAmountSar >= targetAmt) return null;
         const monthlyContrib = Math.max(0, projectedMonthlyContribution || requiredMonthlyContribution * 0.5);
         return monteCarloGoalSuccess({
-            currentAmount: calculatedCurrentAmount,
+            currentAmount: resolvedCurrentAmountSar,
             targetAmount: targetAmt,
             monthlyContribution: monthlyContrib,
             monthsRemaining: monthsLeft,
@@ -536,7 +530,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
             annualVolatility: 0.15,
             numSimulations: 2000,
         });
-    }, [goal.targetAmount, monthsLeft, calculatedCurrentAmount, projectedMonthlyContribution, requiredMonthlyContribution]);
+    }, [goal.targetAmount, monthsLeft, resolvedCurrentAmountSar, projectedMonthlyContribution, requiredMonthlyContribution]);
 
     return (
         <div className={`bg-gradient-to-br from-white via-slate-50 to-primary/5 p-6 rounded-lg shadow space-y-4 flex flex-col justify-between hover:shadow-xl transition-shadow duration-300 border-t-4 ${borderColor}`}>
@@ -562,11 +556,11 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                  <div className="flex justify-between items-baseline text-sm">
                     <div>
                         <span className="text-gray-500">Saved: </span>
-                        <span className="font-semibold text-dark">{formatCurrencyString(calculatedCurrentAmount)}</span>
+                        <span className="font-semibold text-dark">{formatCurrencyString(resolvedCurrentAmountSar)}</span>
                     </div>
                     <div>
                         <span className="text-gray-500">Remaining: </span>
-                        <span className="font-semibold text-dark">{formatCurrencyString(Math.max(0, (goal.targetAmount ?? 0) - calculatedCurrentAmount))}</span>
+                        <span className="font-semibold text-dark">{formatCurrencyString(Math.max(0, (goal.targetAmount ?? 0) - resolvedCurrentAmountSar))}</span>
                     </div>
                 </div>
             </div>
@@ -576,9 +570,9 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                 <div className="text-center md:text-left space-y-1">
                     <p className="text-sm text-gray-600 mb-2">Status ({monthsLeft} months left)</p>
                     <GoalStatus status={status} />
-                    {projectedMonthlyContribution > 0 && ((goal.targetAmount ?? 0) - calculatedCurrentAmount) > 0 && (
+                    {projectedMonthlyContribution > 0 && ((goal.targetAmount ?? 0) - resolvedCurrentAmountSar) > 0 && (
                         <p className="text-xs text-slate-600 mt-2">
-                            At current rate: <span className="font-semibold text-dark">~{Math.ceil(((goal.targetAmount ?? 0) - calculatedCurrentAmount) / projectedMonthlyContribution)} months</span> to goal
+                            At current rate: <span className="font-semibold text-dark">~{Math.ceil(((goal.targetAmount ?? 0) - resolvedCurrentAmountSar) / projectedMonthlyContribution)} months</span> to goal
                         </p>
                     )}
                     {monteCarloResult != null && (
@@ -587,7 +581,7 @@ const GoalCard: React.FC<{ goal: Goal; onEdit: () => void; onDelete: () => void;
                             <span className="text-slate-500 font-normal ml-1">(Monte Carlo, 2k scenarios)</span>
                         </p>
                     )}
-                    {completionAtRequired && (goal.targetAmount ?? 0) > calculatedCurrentAmount && (
+                    {completionAtRequired && (goal.targetAmount ?? 0) > resolvedCurrentAmountSar && (
                         <p className="text-xs text-slate-600 mt-2">
                             At required/current pace: reach target by{' '}
                             <span className="font-semibold text-dark">{completionAtRequired.toLocaleDateString()}</span>
@@ -812,6 +806,23 @@ const Goals: React.FC<{
         () => computeGoalFundingPlan(data, rollingAnnualNetSar, exchangeRate),
         [data, rollingAnnualNetSar, exchangeRate],
     );
+
+    /** One status per goal for cards + funding list — `computeGoalTimelineStatus` (envelope vs required pace). */
+    const goalTimelineByGoalId = useMemo(() => {
+        const m = new Map<string, ReturnType<typeof computeGoalTimelineStatus>>();
+        (data?.goals ?? []).forEach((g) => {
+            const env = computeGoalMonthlyFundingEnvelopeSar({ goal: g, data: data ?? null, sarPerUsd });
+            m.set(
+                g.id,
+                computeGoalTimelineStatus({
+                    goal: g,
+                    resolvedCurrentAmountSar: goalCurrentAmountByGoalId[g.id] ?? 0,
+                    projectedMonthlyContribution: env.envelopeMonthly,
+                }),
+            );
+        });
+        return m;
+    }, [data?.goals, data, sarPerUsd, goalCurrentAmountByGoalId]);
 
     const goalsByPriority = useMemo(() => {
         const rank = { High: 0, Medium: 1, Low: 2 } as const;
@@ -1084,7 +1095,7 @@ const Goals: React.FC<{
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-slate-900">Suggested monthly funding (per goal)</p>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Green = on track. Amber = shortfall. Values are computed in SAR for correctness.
+                  Badge matches each goal card (envelope vs required monthly pace). Rows below still show surplus-split suggested amounts.
                         </p>
                     </div>
               <div className="flex flex-wrap gap-1.5">
@@ -1092,7 +1103,10 @@ const Goals: React.FC<{
                   On track
                 </span>
                 <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                  Need more
+                  Needs attention
+                    </span>
+                <span className="inline-flex items-center rounded-full bg-rose-50 border border-rose-200 px-2 py-0.5 text-[10px] font-semibold text-rose-900">
+                  At risk
                     </span>
                 </div>
         </div>
@@ -1121,7 +1135,8 @@ const Goals: React.FC<{
                     const short = isCatchUp
                         ? catchUp
                         : Math.max(0, Math.round(required) - Math.round(suggested));
-                    const ok = !isCatchUp && (s.status === 'on_track' || short <= 0.01);
+                    const tl = goalTimelineByGoalId.get(s.goalId);
+                    const ok = !isCatchUp && tl?.status === 'On Track';
                     const pct = !isCatchUp && required > 0 ? Math.min(100, (suggested / required) * 100) : 0;
                     const priority = goal?.priority || 'Medium';
                     const deadline = goal?.deadline ? String(goal.deadline).slice(0, 10) : '';
@@ -1130,7 +1145,11 @@ const Goals: React.FC<{
                       <div
                         key={`fund-${s.goalId}`}
                         className={`rounded-xl border px-3 py-2.5 shadow-sm ${
-                          ok ? 'border-emerald-200 bg-emerald-50/40' : 'border-amber-200 bg-amber-50/40'
+                          ok
+                            ? 'border-emerald-200 bg-emerald-50/40'
+                            : isCatchUp || tl?.status === 'At Risk'
+                              ? 'border-rose-200 bg-rose-50/30'
+                              : 'border-amber-200 bg-amber-50/40'
                         }`}
                       >
                         <div className="flex flex-wrap items-start justify-between gap-2">
@@ -1159,10 +1178,22 @@ const Goals: React.FC<{
 
                           <span
                             className={`shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                              ok ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                              ok
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : tl?.status === 'At Risk'
+                                  ? 'bg-rose-100 text-rose-900'
+                                  : 'bg-amber-100 text-amber-800'
                             }`}
                           >
-                            {isCatchUp ? 'Catch-up' : ok ? 'On track' : 'Need more'}
+                            {isCatchUp
+                              ? 'Catch-up'
+                              : !tl
+                                ? '—'
+                                : tl.status === 'On Track'
+                                  ? 'On track'
+                                  : tl.status === 'Needs Attention'
+                                    ? 'Needs attention'
+                                    : 'At risk'}
                           </span>
                         </div>
 
@@ -1197,7 +1228,9 @@ const Goals: React.FC<{
                             <div className="mt-2">
                               <div className="h-2.5 w-full rounded-full bg-slate-200 overflow-hidden" aria-hidden>
                                 <div
-                                  className={`h-full rounded-full ${ok ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                                  className={`h-full rounded-full ${
+                                    ok ? 'bg-emerald-500' : tl?.status === 'At Risk' ? 'bg-rose-500' : 'bg-amber-500'
+                                  }`}
                                   style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
                                 />
                               </div>
@@ -1333,6 +1366,7 @@ const Goals: React.FC<{
             >
                 <GoalCard
                     goal={goal}
+                    resolvedCurrentAmountSar={goalCurrentAmountByGoalId[goal.id] ?? 0}
                     onEdit={() => handleOpenModal(goal)}
                     onDelete={() => handleOpenDeleteModal(goal)}
                     onSeeInPlan={setActivePage ? () => setActivePage('Plan') : undefined}
