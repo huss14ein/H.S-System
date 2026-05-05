@@ -25,4 +25,8 @@ describe('transactionFilters', () => {
     expect(countsAsExpenseForCashflowKpi({ type: 'expense', category: 'Groceries' })).toBe(true);
     expect(countsAsIncomeForCashflowKpi({ type: 'income', category: 'Salary' })).toBe(true);
   });
+
+  it('excludes debt_payment from expense KPIs (card/loan paydown is not spending)', () => {
+    expect(countsAsExpenseForCashflowKpi({ type: 'debt_payment', category: 'Transfer' })).toBe(false);
+  });
 });

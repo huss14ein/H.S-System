@@ -9,7 +9,11 @@ export function getInvestmentTransactionCashAmount(tx: Partial<InvestmentTransac
   const total = Number((tx as any).total ?? tx.amount ?? 0);
   if (Number.isFinite(total) && total > 0) return total;
 
-  if (type !== 'buy' && type !== 'sell') return 0;
+  // Withdrawals / fees / VAT / etc. are often stored as negative cash legs; use magnitude like `deltaForInvestmentTrade`.
+  if (type !== 'buy' && type !== 'sell') {
+    if (Number.isFinite(total) && total < 0) return Math.abs(total);
+    return 0;
+  }
 
   const qty = Number(tx.quantity ?? 0);
   const price = Number(tx.price ?? 0);

@@ -9,6 +9,12 @@ import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import { personalMonthlyNetByMonthKeySar } from './financeMetrics';
 import { receivableContributionForGoal } from './goalReceivableContribution';
 
+/**
+ * Single lookback window (calendar months) for Goals-page net cashflow: savings allocation banner,
+ * surplus after goal-linked budgets, goal funding envelopes, and alignment with the funding cockpit baseline (÷12).
+ */
+export const GOAL_NET_CASHFLOW_LOOKBACK_MONTHS = 12;
+
 export function computeGoalResolvedAmountsSar(
   data: FinancialData | null | undefined,
   sarPerUsd: number,

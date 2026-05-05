@@ -2,21 +2,33 @@ import { describe, expect, it } from 'vitest';
 import { computeDeductibleLiabilities } from '../services/zakatLiabilityMath';
 
 describe('computeDeductibleLiabilities', () => {
-  it('does not double-count manual credit-card liabilities when credit accounts already carry debt', () => {
+  it('uses linked Credit Card liability as canonical debt and skips the credit account balance', () => {
     const out = computeDeductibleLiabilities({
       accounts: [
         { id: 'cc1', name: 'Visa', type: 'Credit', balance: -1000, currency: 'SAR' },
       ] as any,
       liabilities: [
-        { id: 'l1', name: 'Visa', type: 'Credit Card', amount: -1000, status: 'Active' },
+        { id: 'l1', name: 'Visa', type: 'Credit Card', amount: -1000, status: 'Active', accountId: 'cc1' },
       ] as any,
       otherDebts: 0,
       sarPerUsd: 3.75,
     });
 
-    expect(out.shortTermDebts).toBe(1000);
-    expect(out.trackedLiabilities).toBe(0);
+    expect(out.shortTermDebts).toBe(0);
+    expect(out.trackedLiabilities).toBe(1000);
     expect(out.total).toBe(1000);
+  });
+
+  it('counts unlinked credit card liability rows in tracked liabilities', () => {
+    const out = computeDeductibleLiabilities({
+      accounts: [],
+      liabilities: [{ id: 'l1', name: 'Amex', type: 'Credit Card', amount: -800, status: 'Active' }] as any,
+      otherDebts: 0,
+      sarPerUsd: 3.75,
+    });
+    expect(out.shortTermDebts).toBe(0);
+    expect(out.trackedLiabilities).toBe(800);
+    expect(out.total).toBe(800);
   });
 
   it('still counts non-credit tracked liabilities and clamps otherDebts to non-negative', () => {

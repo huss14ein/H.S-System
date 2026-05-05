@@ -8,7 +8,7 @@ import { getSarPerUsdForCalendarDay, hydrateSarPerUsdDailySeries } from '../serv
  * Convert an investment transaction cash amount to SAR using a dated FX rate (per calendar day)
  * when the transaction currency is USD. Falls back to the resolved spot rate when day is missing.
  *
- * NOTE: Amounts are derived from `total` for non-buy/sell types; dividends MUST have `total > 0`.
+ * NOTE: Amounts are derived from `total` / `amount` for non-buy/sell types (negative legs use magnitude).
  */
 export function investmentTransactionCashAmountSarDated(args: {
   tx: InvestmentTransaction;
@@ -18,7 +18,7 @@ export function investmentTransactionCashAmountSarDated(args: {
   uiExchangeRate: number;
 }): number {
   const { tx, accounts, portfolios, data, uiExchangeRate } = args;
-  const amount = getInvestmentTransactionCashAmount(tx as any);
+  const amount = Math.abs(getInvestmentTransactionCashAmount(tx as any));
   if (!(amount > 0)) return 0;
 
   const currency = inferInvestmentTransactionCurrency(tx as any, accounts, portfolios);

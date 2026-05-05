@@ -12,6 +12,7 @@ import {
     getAINotificationsDigest,
     getAISettingsGuidance,
     getAISystemHealthDigest,
+    getAIDataReconciliationAccountantReview,
     getAICommoditiesInsight,
     getAIWealthUltraInsight,
     type CommoditiesAiContext,
@@ -21,6 +22,7 @@ import {
     type NotificationDigestItem,
     type SettingsGuidanceContext,
     type SystemHealthAiContext,
+    type DataReconciliationAiContext,
     formatAiError,
     translateFinancialInsightToArabic,
 } from '../services/geminiService';
@@ -47,6 +49,7 @@ type AIContext =
     | 'notifications'
     | 'settings'
     | 'systemHealth'
+    | 'dataReconciliation'
     | 'commodities'
     | 'wealthUltra';
 
@@ -223,6 +226,13 @@ const getAnalysisForPage = (
                 return Promise.resolve('Not enough system health context. Run checks first.');
             }
             return getAISystemHealthDigest(ctx);
+        }
+        case 'dataReconciliation': {
+            const ctx = contextData as DataReconciliationAiContext | undefined;
+            if (!ctx || typeof ctx.sarPerUsd !== 'number') {
+                return Promise.resolve('Not enough reconciliation context. Reload after opening Accounts.');
+            }
+            return getAIDataReconciliationAccountantReview(ctx);
         }
         default:
             return Promise.resolve("AI analysis for this section is not configured yet.");

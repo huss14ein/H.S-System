@@ -1,6 +1,7 @@
-import type { FinancialData } from '../types';
+import type { FinancialData, Liability } from '../types';
 import { getAllInvestmentsValueInSAR, resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { getPersonalAccounts, getPersonalAssets, getPersonalLiabilities, getPersonalCommodityHoldings, getPersonalInvestments } from '../utils/wealthScope';
+import { getCreditCardLinkedAccountIds } from './creditCardLinking';
 import { hydrateSarPerUsdDailySeries } from './fxDailySeries';
 
 export type PersonalNetWorthOptions = {
@@ -79,12 +80,16 @@ function accumulateBalanceSheetSlices(
       return sum + Math.abs(toSAR(acc.balance ?? 0, cur as 'SAR' | 'USD', exchangeRate));
     }, 0);
 
+  const linkedCreditIds = getCreditCardLinkedAccountIds(liabilities as Liability[]);
   const totalDebt =
     liabilities
       .filter((l: { amount?: number }) => (l.amount ?? 0) < 0)
       .reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0) +
     accounts
-      .filter((a: { type?: string; balance?: number }) => a.type === 'Credit' && (a.balance ?? 0) < 0)
+      .filter(
+        (a: { id?: string; type?: string; balance?: number }) =>
+          a.type === 'Credit' && (a.balance ?? 0) < 0 && !linkedCreditIds.has(String(a.id ?? '')),
+      )
       .reduce((sum: number, acc: { balance?: number }) => sum + Math.abs(acc.balance ?? 0), 0) +
     cashAndSavingsNegative;
 

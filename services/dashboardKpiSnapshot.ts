@@ -11,10 +11,64 @@ import {
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import {
   addMonthsToKey,
+  effectiveMonthStartDate,
   financialMonthRange,
   financialMonthRangeFromKey,
   type FinancialMonthKey,
 } from '../utils/financialMonth';
+
+export type FinancialMonthCashflowSar = {
+  monthlyIncomeSar: number;
+  monthlyExpensesSar: number;
+  monthlyPnLSar: number;
+  currentRange: ReturnType<typeof financialMonthRange>;
+};
+
+/**
+ * Current financial month income, expenses, and P&amp;L in SAR (transaction-dated FX for USD lines).
+ * Single path shared with `computeWealthSummaryReportModel` so Summary matches Dashboard KPIs.
+ */
+export function financialMonthNetCashflowSar(
+  data: FinancialData,
+  uiExchangeRate: number,
+): FinancialMonthCashflowSar {
+  hydrateSarPerUsdDailySeries(data, uiExchangeRate);
+  const now = new Date();
+  const monthStartDay = (data as any)?.settings?.monthStartDay ?? 1;
+  const currentRange = financialMonthRange(now, monthStartDay);
+  const d = data as FinancialData & { personalTransactions?: Transaction[]; personalAccounts?: Account[] };
+  const transactions = (d.personalTransactions ?? data.transactions ?? []) as Transaction[];
+  const accounts = (d.personalAccounts ?? data.accounts ?? []) as Account[];
+  const accountsById = new Map(accounts.map((a) => [a.id, a]));
+
+  const txCashflowSar = (t: { accountId?: string; amount?: number; date: string }) => {
+    const acc = accountsById.get(t.accountId ?? '') as Account | undefined;
+    const c = acc?.currency === 'USD' ? 'USD' : 'SAR';
+    const raw = Math.abs(Number(t.amount) || 0);
+    if (c === 'SAR') return raw;
+    const day = t.date.slice(0, 10);
+    const r = getSarPerUsdForCalendarDay(day, data, uiExchangeRate);
+    return toSAR(raw, 'USD', r);
+  };
+
+  const monthlyTransactions = transactions.filter((t) => {
+    const dt = new Date(t.date);
+    return dt >= currentRange.start && dt <= currentRange.end;
+  });
+  const monthlyIncomeSar = monthlyTransactions
+    .filter((t) => countsAsIncomeForCashflowKpi(t))
+    .reduce((sum, t) => sum + txCashflowSar(t), 0);
+  const monthlyExpensesSar = monthlyTransactions
+    .filter((t) => countsAsExpenseForCashflowKpi(t))
+    .reduce((sum, t) => sum + txCashflowSar(t), 0);
+
+  return {
+    monthlyIncomeSar,
+    monthlyExpensesSar,
+    monthlyPnLSar: monthlyIncomeSar - monthlyExpensesSar,
+    currentRange,
+  };
+}
 
 /** KPI figures shared by Dashboard and System Health diagnostics (keep in sync with dashboard aggregation). */
 export type DashboardKpiSnapshot = {
@@ -46,9 +100,9 @@ export function computeDashboardKpiSnapshot(
     });
     const sarPerUsd = headline.sarPerUsd;
 
-    const now = new Date();
+    const cf = financialMonthNetCashflowSar(data, exchangeRate);
+    const { monthlyExpensesSar: monthlyExpenses, monthlyPnLSar: monthlyPnL, currentRange } = cf;
     const monthStartDay = (data as any)?.settings?.monthStartDay ?? 1;
-    const currentRange = financialMonthRange(now, monthStartDay);
     const prevKey: FinancialMonthKey = addMonthsToKey(currentRange.key, -1);
     /** Use `financialMonthRangeFromKey` — do not derive the period via `financialMonthRange(midCalendarDay)`; when `monthStartDay > 15`, a mid-month reference falls before the period start and maps to the wrong financial month. */
     const prevRange = financialMonthRangeFromKey(prevKey, monthStartDay);
@@ -67,18 +121,6 @@ export function computeDashboardKpiSnapshot(
       const r = getSarPerUsdForCalendarDay(day, data, exchangeRate);
       return toSAR(raw, 'USD', r);
     };
-
-    const monthlyTransactions = transactions.filter((t) => {
-      const d = new Date(t.date);
-      return d >= currentRange.start && d <= currentRange.end;
-    });
-    const monthlyIncome = monthlyTransactions
-      .filter((t) => countsAsIncomeForCashflowKpi(t))
-      .reduce((sum, t) => sum + txCashflowSar(t), 0);
-    const monthlyExpenses = monthlyTransactions
-      .filter((t) => countsAsExpenseForCashflowKpi(t))
-      .reduce((sum, t) => sum + txCashflowSar(t), 0);
-    const monthlyPnL = monthlyIncome - monthlyExpenses;
 
     const budgetToMonthly = (b: { limit: number; period?: string }) =>
       b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
@@ -114,7 +156,7 @@ export function computeDashboardKpiSnapshot(
       lastMonthPnL !== 0 ? ((monthlyPnL - lastMonthPnL) / Math.abs(lastMonthPnL)) * 100 : monthlyPnL > 0 ? 100 : 0;
 
     const startKey = addMonthsToKey(currentRange.key, -6);
-    const sixMoStart = new Date(startKey.year, startKey.month - 1, Number(monthStartDay) || 1);
+    const sixMoStart = effectiveMonthStartDate(startKey.year, startKey.month, monthStartDay);
     const incomeLast6Mo = transactions.filter(
       (t) => countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= sixMoStart,
     );

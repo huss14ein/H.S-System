@@ -46,7 +46,37 @@ const CrossEngineAlertsBanner: React.FC<CrossEngineAlertsBannerProps> = ({
   }, [analysis, actionQueue]);
   const hasAlerts = alerts.length > 0;
   const hasActions = actionQueue.length > 0;
-  if (!ready || (!hasAlerts && !hasActions)) return null;
+  if (!ready) return null;
+
+  /** Stable shell when engines report no urgent items (banner no longer vanishes after load). */
+  if (!hasAlerts && !hasActions) {
+    if (variant === 'embedded') {
+      return (
+        <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2.5 text-xs text-slate-600">
+          <span className="font-semibold text-slate-700">Engines:</span> No urgent alerts — cash runway, portfolio risk, and household stress signals look stable.
+        </div>
+      );
+    }
+    return (
+      <div
+        className="mb-4 rounded-2xl border border-slate-200/90 bg-white shadow-sm ring-1 ring-slate-100"
+        role="region"
+        aria-label="Cross-engine status"
+      >
+        <div className="flex w-full items-center gap-3 px-4 py-3 text-left min-w-0">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
+            <BoltIcon className="h-5 w-5" aria-hidden />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-slate-900">Alerts &amp; suggested actions</p>
+            <p className="text-xs text-slate-600">
+              No urgent items from cash, risk, and household engines right now. Alerts appear here when signals warrant action.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const criticalCount = alerts.filter((a) => a.severity === 'critical').length;
   const warningCount = alerts.filter((a) => a.severity === 'warning').length;

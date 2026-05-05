@@ -1187,18 +1187,18 @@ const InvestmentPlanView: React.FC<{
     const planBody = (
             <div className="max-w-7xl mx-auto space-y-14 sm:space-y-16">
                 {embedded ? (
-                    <div className="rounded-2xl border border-indigo-100 bg-indigo-50/40 px-4 py-3 sm:px-5">
-                        <p className="text-sm font-medium text-slate-900">Scheduled buy and sell rules</p>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 sm:px-5">
+                        <p className="text-sm font-medium text-slate-900">Trade plans</p>
                         <p className="mt-1 text-sm text-slate-600 leading-relaxed">
                             {PAGE_INTROS['Investment Plan']?.description ?? 'Pick a stock, set a price or date, and we’ll tell you when it’s time to act.'}{' '}
-                            <span className="text-slate-500">Tip: use “Create plan” or add from the AI list below.</span>
+                            <span className="text-slate-500">Start with Create plan, or add from universe-aligned candidates when you want a starting point—everything stays in your control.</span>
                         </p>
                     </div>
                 ) : (
                     <PageIntro
                         title={PAGE_INTROS['Investment Plan']?.title ?? 'Plan your trades ahead of time'}
                         description={PAGE_INTROS['Investment Plan']?.description ?? 'Set buy or sell plans that trigger when a price or date is reached. The system suggests ideas and checks them against AI recommendations.'}
-                        tip="Start with “Create plan” or pick a suggestion from the AI list below. You stay in control—we only prepare the trade when your rule is met."
+                        tip="Start with Create plan, or use a universe-aligned candidate as a draft. You decide targets and size—we only flag when your rule is met."
                     />
                 )}
                 <InvestmentPlanControlTower />
@@ -1228,7 +1228,7 @@ const InvestmentPlanView: React.FC<{
                         return (
                             <div className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50 to-blue-50 p-6">
                                 <p className="font-semibold text-indigo-900">Your next step</p>
-                                <p className="mt-1 text-indigo-800">Create your first plan, or add one from the AI candidates below. Both options pre-fill details for you.</p>
+                                <p className="mt-1 text-indigo-800">Create your first plan from scratch, or start from a universe-aligned candidate below and edit before saving.</p>
                             </div>
                         );
                     }

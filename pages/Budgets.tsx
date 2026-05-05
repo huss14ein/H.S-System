@@ -1,5 +1,8 @@
 import React, { useMemo, useState, useContext, useEffect, useRef } from 'react';
 import ProgressBar from '../components/ProgressBar';
+import BudgetCardShell from '../components/BudgetCardShell';
+import BudgetUsageDial from '../components/BudgetUsageDial';
+import { budgetProgressGradient, budgetSecondaryProgressGradient } from '../services/budgetCardVisuals';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';
 import { Budget, Goal, type Page } from '../types';
@@ -81,6 +84,12 @@ import { addMonthsToKey, financialMonthKey, financialMonthRangeFromKey } from '.
 import AIAdvisor from '../components/AIAdvisor';
 import { dedupeSharedBudgetRows, makeSharedOwnerCategoryKey, normalizeSharedCategoryKey, normalizeSharedOwnerKey } from '../services/sharedBudgetKeys';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
+import {
+    aggregateSmartFillSpendByCategorySar,
+    buildSmartFillThreeFinancialMonthSegments,
+    monthlySuggestionsFromCategoryTotals,
+} from '../services/smartFillBudgetHistory';
+import { annualEnvelopeLimitForCategory } from '../services/budgetEnvelopeMath';
 
 
 
@@ -111,7 +120,7 @@ function sharedBudgetConsumedRpcArgs(
 
     if (budgetView === 'Monthly') {
         if (Number(monthStartDay) === 1) {
-            return { p_year: currentYear, p_month: currentMonth, p_range_start: null, p_range_end: null };
+        return { p_year: currentYear, p_month: currentMonth, p_range_start: null, p_range_end: null };
         }
         const { start, end } = financialMonthRangeFromKey({ year: currentYear, month: currentMonth }, monthStartDay);
         return { p_year: null, p_month: null, p_range_start: iso(startOfDay(start)), p_range_end: iso(endOfDay(end)) };
@@ -261,17 +270,22 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
                     </select>
                 </div>
                  <div>
-                    <label htmlFor="limit" className="block text-sm font-medium text-gray-700 flex items-center">Budget Amount <InfoHint text="Choose Monthly or Yearly. Yearly budgets (e.g. housing) are stored as-is and compared to spending per month (limit÷12) in reports." /></label>
+                    <label htmlFor="limit" className="block text-sm font-medium text-gray-700 flex items-center">Budget Amount <InfoHint text="Whole amount for the period you pick below. Yearly = one full-year cap; on the Budgets page (Monthly view) progress compares year-to-date spend to that cap." /></label>
                     <input type="number" id="limit" value={limit} onChange={e => setLimit(e.target.value)} required className="input-base" />
                 </div>
                 <div>
-                    <label htmlFor="limitPeriod" className="block text-sm font-medium text-gray-700 flex items-center">Amount Period <InfoHint text="Monthly or Yearly. Yearly is stored as-is and applies to all months of the year." /></label>
+                    <label htmlFor="limitPeriod" className="block text-sm font-medium text-gray-700 flex items-center">Amount Period <InfoHint text="Monthly: limit per month (annual envelope = sum of months or ×12). Yearly: single cap for the calendar year — not split into 12; overspend in one month reduces headroom for later months." /></label>
                     <select id="limitPeriod" value={limitPeriod} onChange={(e) => setLimitPeriod(e.target.value as any)} className="select-base">
                         <option value="Monthly">Monthly</option>
                         <option value="Weekly">Weekly</option>
                         <option value="Daily">Daily</option>
                         <option value="Yearly">Yearly (all months)</option>
                     </select>
+                    {limitPeriod === 'Yearly' && (
+                        <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+                            One cap for the whole calendar year. On Budgets with Monthly view, progress is <strong>year-to-date</strong> vs this amount (not divided by month).
+                        </p>
+                    )}
                 </div>
                 <div>
                     <label htmlFor="budget-goal-link" className="block text-sm font-medium text-gray-700 flex items-center">
@@ -332,7 +346,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const monthStartDay = useMemo(() => {
         const raw = Number((data?.settings as any)?.monthStartDay ?? (data?.settings as any)?.month_start_day ?? 1);
         if (!Number.isFinite(raw)) return 1;
-        return Math.min(28, Math.max(1, Math.round(raw)));
+        return Math.min(31, Math.max(1, Math.round(raw)));
     }, [data?.settings]);
 
     const [currentDate, setCurrentDate] = useState(new Date());
@@ -575,6 +589,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         trendDirection?: 'up' | 'down' | 'flat';
         budgetTier?: BudgetTier;
         utilizationLabel?: 'Healthy' | 'Watch' | 'Critical';
+        /** Calendar YTD through end of selected financial month (Monthly view envelope). */
+        spentYtd?: number;
+        /** Implied annual cap for monthly-period rows (sum of month limits or ×12). */
+        annualEnvelopeLimit?: number;
+        primaryBarValue?: number;
+        primaryBarMax?: number;
+        secondaryBarValue?: number;
+        secondaryBarMax?: number;
     };
 
     const householdProfileStorageKey = useMemo(() => `household-profile:${auth?.user?.id ?? 'anon'}`, [auth?.user?.id]);
@@ -983,6 +1005,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const budgetData = useMemo<BudgetRow[]>(() => {
         const spending = new Map<string, number>();
         const previousSpending = new Map<string, number>();
+        const ytdSpending = new Map<string, number>();
 
         const now = new Date();
         const rangeStart = new Date(now);
@@ -1031,6 +1054,16 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             previousRangeEnd.setHours(23, 59, 59, 999);
         }
 
+        const ytdStart =
+            budgetView === 'Monthly'
+                ? (() => {
+                      const d = new Date(currentYear, 0, 1);
+                      d.setHours(0, 0, 0, 0);
+                      return d;
+                  })()
+                : null;
+        const ytdEnd = budgetView === 'Monthly' ? rangeEnd : null;
+
         ((data as any)?.personalTransactions ?? data?.transactions ?? [])
             .filter((t: { type?: string; status?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && (t.status ?? 'Approved') === 'Approved')
             .forEach((t: { date: string; amount?: number; budgetCategory?: string; category?: string; splitLines?: { category: string; amount: number }[] }) => {
@@ -1040,6 +1073,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     const amount = txAmountSar({ ...t, amount: allocation.amount });
                     if (txDate >= rangeStart && txDate <= rangeEnd) {
                         spending.set(allocation.category, (spending.get(allocation.category) || 0) + amount);
+                    }
+                    if (ytdStart && ytdEnd && txDate >= ytdStart && txDate <= ytdEnd) {
+                        ytdSpending.set(allocation.category, (ytdSpending.get(allocation.category) || 0) + amount);
                     }
                     if (txDate >= previousRangeStart && txDate <= previousRangeEnd) {
                         previousSpending.set(allocation.category, (previousSpending.get(allocation.category) || 0) + amount);
@@ -1051,20 +1087,28 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         ownerSharedTransactions.forEach((tx) => {
             if ((tx.status ?? 'Approved') !== 'Approved') return;
             const d = new Date(tx.transaction_date || tx.date);
-            if (!(d >= rangeStart && d <= rangeEnd)) return;
             const cat = String(tx.budget_category || '').trim();
             if (!cat) return;
             const amount = txAmountSar(tx);
-            spending.set(cat, (spending.get(cat) || 0) + amount);
+            if (d >= rangeStart && d <= rangeEnd) {
+                spending.set(cat, (spending.get(cat) || 0) + amount);
+            }
+            if (ytdStart && ytdEnd && d >= ytdStart && d <= ytdEnd) {
+                ytdSpending.set(cat, (ytdSpending.get(cat) || 0) + amount);
+            }
         });
 
         // Installment projection: counts *due* installments into budgets for their due month (does not hit today's budget).
         // This is intentionally separate from `transactions` so future installments don't change account balances today.
         installmentBudgetRows.forEach((r) => {
             const d = new Date(String(r.dueDate));
-            if (!(d >= rangeStart && d <= rangeEnd)) return;
             const amount = toSAR(Math.abs(Number(r.amountMinor) || 0) / 100, r.currency, sarPerUsd);
-            spending.set(r.budgetCategory, (spending.get(r.budgetCategory) || 0) + amount);
+            if (d >= rangeStart && d <= rangeEnd) {
+                spending.set(r.budgetCategory, (spending.get(r.budgetCategory) || 0) + amount);
+            }
+            if (ytdStart && ytdEnd && d >= ytdStart && d <= ytdEnd) {
+                ytdSpending.set(r.budgetCategory, (ytdSpending.get(r.budgetCategory) || 0) + amount);
+            }
         });
 
         const ownScopedBudgets = (data?.budgets ?? [])
@@ -1141,17 +1185,81 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 .sort((a, b) => b.spent - a.spent);
         }
 
-        return scopedBudgets.map((budget) => {
-                const monthlyEquivalent = budget.period === 'yearly' ? budget.limit / 12 : budget.period === 'weekly' ? budget.limit * (52 / 12) : budget.period === 'daily' ? budget.limit * (365 / 12) : budget.limit;
-                const spent = spending.get(budget.category) || 0;
-                const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
-                const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
+        const allBudgetRows = data?.budgets ?? [];
+
+        return scopedBudgets
+            .map((budget) => {
+                const period = budget.period ?? 'monthly';
+                const monthlyEquivalent =
+                    period === 'yearly'
+                        ? budget.limit / 12
+                        : period === 'weekly'
+                          ? budget.limit * (52 / 12)
+                          : period === 'daily'
+                            ? budget.limit * (365 / 12)
+                            : budget.limit;
+                const spentPeriod = spending.get(budget.category) || 0;
+                const spentYtd =
+                    budgetView === 'Monthly' ? ytdSpending.get(budget.category) || 0 : spentPeriod;
+
+                let percentage = 0;
+                let utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = 'Healthy';
                 let colorClass = 'bg-primary';
-                if (percentage > 100) colorClass = 'bg-danger';
-                else if (percentage > 90) colorClass = 'bg-warning';
-                return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
-            }).sort((a,b) => b.spent - a.spent);
-    }, [data?.transactions, (data as any)?.personalTransactions, data?.budgets, data?.budgetRequests, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id, sarPerUsd, accountCurrencyById, installmentBudgetRows]);
+                let primaryBarValue = spentPeriod;
+                let primaryBarMax = monthlyEquivalent > 0 ? monthlyEquivalent : 1;
+                let secondaryBarValue: number | undefined;
+                let secondaryBarMax: number | undefined;
+                let annualEnvelopeLimit = 0;
+
+                if (budgetView === 'Monthly') {
+                    if (period === 'yearly') {
+                        primaryBarValue = spentYtd;
+                        primaryBarMax = budget.limit > 0 ? budget.limit : 1;
+                        percentage = budget.limit > 0 ? (spentYtd / budget.limit) * 100 : 0;
+                    } else {
+                        annualEnvelopeLimit = annualEnvelopeLimitForCategory(budget.category, currentYear, allBudgetRows);
+                        primaryBarValue = spentYtd;
+                        primaryBarMax = annualEnvelopeLimit > 0 ? annualEnvelopeLimit : 1;
+                        percentage = annualEnvelopeLimit > 0 ? (spentYtd / annualEnvelopeLimit) * 100 : 0;
+                        secondaryBarValue = spentPeriod;
+                        secondaryBarMax = monthlyEquivalent > 0 ? monthlyEquivalent : 1;
+                    }
+                } else {
+                    percentage = monthlyEquivalent > 0 ? (spentPeriod / monthlyEquivalent) * 100 : 0;
+                }
+
+                if (percentage > 100) {
+                    colorClass = 'bg-danger';
+                    utilizationLabel = 'Critical';
+                } else if (percentage > 90) {
+                    colorClass = 'bg-warning';
+                    utilizationLabel = 'Watch';
+                } else {
+                    utilizationLabel = 'Healthy';
+                }
+
+                return {
+                    ...budget,
+                    spent: spentPeriod,
+                    spentYtd,
+                    annualEnvelopeLimit,
+                    primaryBarValue,
+                    primaryBarMax,
+                    secondaryBarValue,
+                    secondaryBarMax,
+                    displayLimit: budget.limit,
+                    monthlyLimit: monthlyEquivalent,
+                    percentage,
+                    colorClass,
+                    previousPeriodSpent: 0,
+                    trendDelta: 0,
+                    trendDirection: 'flat' as const,
+                    budgetTier: (budget.tier ?? 'Optional') as BudgetTier,
+                    utilizationLabel,
+                };
+            })
+            .sort((a, b) => b.spent - a.spent);
+    }, [data?.transactions, (data as any)?.personalTransactions, data?.budgets, data?.budgetRequests, currentYear, currentMonth, monthStartDay, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id, sarPerUsd, accountCurrencyById, installmentBudgetRows]);
 
     // Admin Approved Budgets Overview: data for the selected month/year (for filters and period display)
     const adminApprovedOverviewRaw = useMemo<BudgetRow[]>(() => {
@@ -1349,6 +1457,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
     const sharedBudgetCards = useMemo<BudgetRow[]>(() => {
         const spendingByOwnerCategory = new Map<string, number>();
+        const ytdSpendingByOwnerCategory = new Map<string, number>();
         const now = new Date();
         const rangeStart = new Date(now);
         const rangeEnd = new Date(now);
@@ -1374,30 +1483,52 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             rangeEnd.setHours(23, 59, 59, 999);
         }
 
+        const ytdStart =
+            budgetView === 'Monthly'
+                ? (() => {
+                      const d = new Date(currentYear, 0, 1);
+                      d.setHours(0, 0, 0, 0);
+                      return d;
+                  })()
+                : null;
+        const ytdEnd = budgetView === 'Monthly' ? rangeEnd : null;
+
+        const bumpYtd = (key: string, amount: number) => {
+            ytdSpendingByOwnerCategory.set(key, (ytdSpendingByOwnerCategory.get(key) || 0) + amount);
+        };
+
         mySharedBudgetTransactions
             .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
             .forEach((tx) => {
                 const d = new Date(tx.transaction_date || tx.date);
-                if (!(d >= rangeStart && d <= rangeEnd)) return;
                 const category = normalizeSharedCategoryKey(tx.budget_category || '');
                 if (!category) return;
                 const amount = txAmountSar(tx);
                 const ownerKey = normalizeSharedOwnerKey(tx.owner_user_id || tx.owner_id || tx.user_id || 'owner');
                 const key = makeSharedOwnerCategoryKey(ownerKey, category);
-                spendingByOwnerCategory.set(key, (spendingByOwnerCategory.get(key) || 0) + amount);
+                if (d >= rangeStart && d <= rangeEnd) {
+                    spendingByOwnerCategory.set(key, (spendingByOwnerCategory.get(key) || 0) + amount);
+                }
+                if (ytdStart && ytdEnd && d >= ytdStart && d <= ytdEnd) {
+                    bumpYtd(key, amount);
+                }
             });
 
         ownerSharedTransactions
             .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
             .forEach((tx) => {
                 const d = new Date(tx.transaction_date || tx.date);
-                if (!(d >= rangeStart && d <= rangeEnd)) return;
                 const category = normalizeSharedCategoryKey(tx.budget_category || '');
                 if (!category) return;
                 const amount = txAmountSar(tx);
                 const ownerKey = normalizeSharedOwnerKey(tx.owner_user_id || tx.owner_id || tx.user_id || auth?.user?.id || 'owner');
                 const key = makeSharedOwnerCategoryKey(ownerKey, category);
-                spendingByOwnerCategory.set(key, (spendingByOwnerCategory.get(key) || 0) + amount);
+                if (d >= rangeStart && d <= rangeEnd) {
+                    spendingByOwnerCategory.set(key, (spendingByOwnerCategory.get(key) || 0) + amount);
+                }
+                if (ytdStart && ytdEnd && d >= ytdStart && d <= ytdEnd) {
+                    bumpYtd(key, amount);
+                }
             });
 
         const rowsForYear = (sharedBudgets ?? [])
@@ -1458,19 +1589,75 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 return month === currentMonth || (b.period === 'yearly' && year === currentYear);
             })
             .map((b) => {
-                const monthlyEquivalent = b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
+                const period = b.period ?? 'monthly';
+                const monthlyEquivalent =
+                    period === 'yearly'
+                        ? b.limit / 12
+                        : period === 'weekly'
+                          ? b.limit * (52 / 12)
+                          : period === 'daily'
+                            ? b.limit * (365 / 12)
+                            : b.limit;
                 const ownerKey = normalizeSharedOwnerKey((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
                 const ownerCategoryKey = makeSharedOwnerCategoryKey(ownerKey, b.category);
-                const spent = sharedConsumedByOwnerCategory.get(ownerCategoryKey) || spendingByOwnerCategory.get(ownerCategoryKey) || 0;
-                const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
-                const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
+                const spentPeriod =
+                    sharedConsumedByOwnerCategory.get(ownerCategoryKey) || spendingByOwnerCategory.get(ownerCategoryKey) || 0;
+                const spentYtd =
+                    budgetView === 'Monthly' ? ytdSpendingByOwnerCategory.get(ownerCategoryKey) || 0 : spentPeriod;
+
+                const ownerEnvelopeRows = rowsForYear.filter((row) => {
+                    const ok =
+                        normalizeSharedOwnerKey((row as any).owner_user_id || row.user_id || (row as any).ownerEmail || 'owner') ===
+                        ownerKey;
+                    return ok && row.category === b.category;
+                });
+
+                let percentage = 0;
+                let utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = 'Healthy';
                 let colorClass = 'bg-primary';
-                if (percentage > 100) colorClass = 'bg-danger';
-                else if (percentage > 90) colorClass = 'bg-warning';
+                let primaryBarValue = spentPeriod;
+                let primaryBarMax = monthlyEquivalent > 0 ? monthlyEquivalent : 1;
+                let secondaryBarValue: number | undefined;
+                let secondaryBarMax: number | undefined;
+                let annualEnvelopeLimit = 0;
+
+                if (budgetView === 'Monthly') {
+                    if (period === 'yearly') {
+                        primaryBarValue = spentYtd;
+                        primaryBarMax = b.limit > 0 ? b.limit : 1;
+                        percentage = b.limit > 0 ? (spentYtd / b.limit) * 100 : 0;
+                    } else {
+                        annualEnvelopeLimit = annualEnvelopeLimitForCategory(b.category, currentYear, ownerEnvelopeRows as Budget[]);
+                        primaryBarValue = spentYtd;
+                        primaryBarMax = annualEnvelopeLimit > 0 ? annualEnvelopeLimit : 1;
+                        percentage = annualEnvelopeLimit > 0 ? (spentYtd / annualEnvelopeLimit) * 100 : 0;
+                        secondaryBarValue = spentPeriod;
+                        secondaryBarMax = monthlyEquivalent > 0 ? monthlyEquivalent : 1;
+                    }
+                } else {
+                    percentage = monthlyEquivalent > 0 ? (spentPeriod / monthlyEquivalent) * 100 : 0;
+                }
+
+                if (percentage > 100) {
+                    colorClass = 'bg-danger';
+                    utilizationLabel = 'Critical';
+                } else if (percentage > 90) {
+                    colorClass = 'bg-warning';
+                    utilizationLabel = 'Watch';
+                } else {
+                    utilizationLabel = 'Healthy';
+                }
+
                 return {
                     ...b,
                     id: `shared-${ownerKey}-${b.id}`,
-                    spent,
+                    spent: spentPeriod,
+                    spentYtd,
+                    annualEnvelopeLimit,
+                    primaryBarValue,
+                    primaryBarMax,
+                    secondaryBarValue,
+                    secondaryBarMax,
                     percentage,
                     colorClass,
                     displayLimit: b.limit,
@@ -1483,7 +1670,19 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 };
             })
             .sort((a, b) => b.spent - a.spent);
-    }, [sharedBudgets, mySharedBudgetTransactions, ownerSharedTransactions, sharedConsumedByOwnerCategory, budgetView, currentYear, currentMonth, auth?.user?.id, sarPerUsd, accountCurrencyById]);
+    }, [
+        sharedBudgets,
+        mySharedBudgetTransactions,
+        ownerSharedTransactions,
+        sharedConsumedByOwnerCategory,
+        budgetView,
+        currentYear,
+        currentMonth,
+        monthStartDay,
+        auth?.user?.id,
+        sarPerUsd,
+        accountCurrencyById,
+    ]);
 
     const sharedBudgetOwnerByCardId = useMemo(() => {
         return new Map(
@@ -1635,40 +1834,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
     const handleSmartFillBudgets = () => {
         if (!isAdmin) return;
-        const allTx = ((data as any)?.personalTransactions ?? data?.transactions ?? []).filter((t: { type?: string; budgetCategory?: string; category?: string; splitLines?: { category: string; amount: number }[] }) => countsAsExpenseForCashflowKpi(t));
-        if (allTx.length === 0) {
-            alert('No expense history with budget categories found to smart-fill from.');
+        const segments = buildSmartFillThreeFinancialMonthSegments(currentYear, currentMonth, monthStartDay);
+        if (segments.length === 0) {
+            alert('No valid date window for smart-fill for this month. Pick a month that overlaps today or past spending.');
             return;
         }
-        const now = new Date(currentYear, currentMonth - 1, 1);
-        const threeMonthsAgo = new Date(now);
-        threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-
-        const byCategory = new Map<string, { total: number; months: Set<string> }>();
-        allTx.forEach((t: { date: string; budgetCategory?: string; amount?: number; splitLines?: { category: string; amount: number }[] }) => {
-            const d = new Date(t.date);
-            if (d < threeMonthsAgo || d > now) return;
-            const key = `${d.getFullYear()}-${d.getMonth()}`;
-            const allocations = getTransactionBudgetAllocations(t as any);
-            allocations.forEach((allocation) => {
-                const entry = byCategory.get(allocation.category) || { total: 0, months: new Set<string>() };
-                entry.total += Math.abs(allocation.amount ?? 0);
-                entry.months.add(key);
-                byCategory.set(allocation.category, entry);
-            });
-        });
-
-        const suggestions: { category: string; monthly: number }[] = [];
-        byCategory.forEach((v, category) => {
-            const monthCount = v.months.size || 1;
-            const avg = v.total / monthCount;
-            if (avg > 0) {
-                suggestions.push({ category, monthly: Math.round(avg) });
-            }
-        });
+        const allTx = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const totals = aggregateSmartFillSpendByCategorySar(segments, allTx, ownerSharedTransactions, sarPerUsd, accountCurrencyById);
+        const suggestions = monthlySuggestionsFromCategoryTotals(totals, segments.length);
 
         if (suggestions.length === 0) {
-            alert('Not enough recent history to suggest budgets.');
+            alert('Not enough approved expense history in the last 3 financial months (with budget categories) to suggest budgets.');
             return;
         }
 
@@ -1686,7 +1862,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
         if (
             !window.confirm(
-                `Smart-fill will create ${toCreate.length} budgets for this month using the last ~3 months of spending averages. Continue?`
+                `Smart-fill will create ${toCreate.length} budgets for this month using average approved spending over the last ${segments.length} financial month(s), in SAR (same rules as budget cards). Continue?`
             )
         ) {
             return;
@@ -1712,7 +1888,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         if (!isAdmin) return;
         const txs = getPersonalTransactions(data) as import('../types').Transaction[];
         const budgets = (data?.budgets ?? []) as Budget[];
-        const adjusted = await learnAndAutoAdjust(txs, budgets, currentMonth, currentYear);
+        const adjusted = await learnAndAutoAdjust(txs, budgets, currentMonth, currentYear, {
+            monthStartDay,
+            sarPerUsd,
+            accountCurrencyById,
+            ownerSharedTransactions,
+        });
         const currentForMonth = budgets.filter(b => b.month === currentMonth && b.year === currentYear);
         const proposals: Array<{ orig: Budget; proposed: Budget }> = [];
         currentForMonth.forEach(orig => {
@@ -1722,7 +1903,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             }
         });
         if (proposals.length === 0) {
-            alert('No budget adjustments suggested. Need at least 2 months of spending data per category.');
+            alert(
+                'No budget adjustments suggested. Each category needs at least 2 financial months of approved spending (through this month), in SAR, matching your budget cards — or thresholds (±20% / decrease only after 3 months) were not met.',
+            );
             return;
         }
         setSuggestedAdjustments(proposals);
@@ -2059,7 +2242,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     return (
         <PageLayout
             title={`Budgets (${budgetView})`}
-            description="Set monthly spending limits for categories (groceries, dining, etc.). Get alerts when you're close to the limit."
+            description="Monthly envelopes roll up to an annual cap—overspend earlier in the year reduces what’s left for later months. Yearly budgets use one total for the whole year (compared to year-to-date spend in Monthly view)."
             action={
                 <div className="w-full flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-end gap-2 sm:gap-3">
                     <div className="inline-flex items-center p-1 rounded-lg border border-slate-200 bg-white">
@@ -2572,7 +2755,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                         {setActivePage && (
                                             <button
                                                 type="button"
-                                                onClick={() => setActivePage('System & APIs Health')}
+                                                onClick={() => {
+                                                    window.location.hash = 'data-reconciliation';
+                                                }}
                                                 className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800 hover:bg-slate-50"
                                             >
                                                 <LinkIcon className="h-4 w-4" />
@@ -3002,7 +3187,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 </div>
 
                 {/* Smart cashflow cockpit (replaces the old “show/hide” blocks) */}
-                <div className="mt-6 pt-6 border-t border-slate-200">
+                    <div className="mt-6 pt-6 border-t border-slate-200">
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
                         <div className="min-w-0">
                             <h4 className="text-sm font-bold text-slate-900">Smart cashflow cockpit</h4>
@@ -3017,16 +3202,16 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                 { id: 'scenarios', label: 'Scenarios' },
                                 { id: 'seasonality', label: 'Seasonality' },
                             ] as const).map((t) => (
-                                <button
+                            <button
                                     key={t.id}
-                                    type="button"
+                                type="button"
                                     onClick={() => setCashflowFocusTab(t.id)}
                                     className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
                                         cashflowFocusTab === t.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-800'
                                     }`}
                                 >
                                     {t.label}
-                                </button>
+                            </button>
                             ))}
                         </div>
                     </div>
@@ -3040,12 +3225,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                             Next {forecast.offset}: {MONTHS[(forecast.month - 1) % 12]}
                                         </p>
                                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
-                                            forecast.confidence === 'high' ? 'bg-emerald-100 text-emerald-700' :
-                                            forecast.confidence === 'medium' ? 'bg-amber-100 text-amber-700' :
-                                            'bg-rose-100 text-rose-700'
-                                        }`}>
+                                                forecast.confidence === 'high' ? 'bg-emerald-100 text-emerald-700' :
+                                                forecast.confidence === 'medium' ? 'bg-amber-100 text-amber-700' :
+                                                'bg-rose-100 text-rose-700'
+                                            }`}>
                                             {forecast.confidence} confidence
-                                        </span>
+                                            </span>
                                     </div>
                                     <div className="mt-3 grid grid-cols-2 gap-2 text-xs tabular-nums">
                                         <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 px-3 py-2">
@@ -3067,17 +3252,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                             </p>
                                         </div>
                                     </div>
-                                    {forecast.factors.length > 0 && (
+                                            {forecast.factors.length > 0 && (
                                         <ul className="mt-3 text-xs text-slate-600 list-disc list-inside space-y-0.5">
                                             {forecast.factors.slice(0, 3).map((factor, idx) => (
                                                 <li key={`fc-factor-${idx}`}>{factor}</li>
-                                            ))}
-                                        </ul>
-                                    )}
+                                                    ))}
+                                                </ul>
+                                            )}
                                 </div>
                             ))}
-                        </div>
-                    )}
+                    </div>
+                )}
 
                     {cashflowFocusTab === 'scenarios' && scenarios.length > 0 && (
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -3111,25 +3296,25 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                                 {scenario.projectedYearEndBalanceChange >= 0 ? '+' : ''}{formatCurrencyString(scenario.projectedYearEndBalanceChange, { digits: 0 })}
                                             </p>
                                         </div>
-                                    </div>
-                                    {scenario.goalAchievementImpact.length > 0 && (
+                                        </div>
+                                        {scenario.goalAchievementImpact.length > 0 && (
                                         <div className="mt-3 rounded-xl border border-slate-200 bg-white/70 px-3 py-2">
                                             <p className="text-xs font-semibold text-slate-800 mb-1">Goal impact (delay)</p>
                                             {scenario.goalAchievementImpact.slice(0, 3).map((impact, i) => (
                                                 <div key={`impact-${i}`} className="flex justify-between gap-3 text-xs text-slate-600">
-                                                    <span className="truncate">{impact.goalName}</span>
+                                                        <span className="truncate">{impact.goalName}</span>
                                                     <span className="shrink-0 font-semibold tabular-nums text-slate-900">
-                                                        {impact.achievementDelayMonths >= 0 ? '+' : ''}
-                                                        {impact.achievementDelayMonths.toFixed(1)} mo
-                                                    </span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
+                                                            {impact.achievementDelayMonths >= 0 ? '+' : ''}
+                                                            {impact.achievementDelayMonths.toFixed(1)} mo
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                 </div>
                             ))}
-                        </div>
-                    )}
+                    </div>
+                )}
 
                 </div>
 
@@ -3189,10 +3374,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                     {last6.map((month, idx) => {
                                         const income = incomes[idx] ?? 0;
                                         const expense = expenses[idx] ?? 0;
-                                        const net = income - expense;
-                                        const monthNum = month.month ?? (month.monthIndex ?? idx) + 1;
+                                    const net = income - expense;
+                                    const monthNum = month.month ?? (month.monthIndex ?? idx) + 1;
                                         const selected = selectedTrendMonthIdx === idx;
-                                        return (
+                                    return (
                                             <button
                                                 key={`trend-${idx}`}
                                                 type="button"
@@ -3206,18 +3391,18 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                                 <div className="mt-2 h-24 flex flex-col justify-end gap-1">
                                                     <div className="h-2.5 rounded bg-emerald-200 overflow-hidden">
                                                         <div className="h-full bg-emerald-500" style={{ width: `${Math.max(0, Math.min(100, (income / maxV) * 100))}%` }} />
-                                                    </div>
+                                            </div>
                                                     <div className="h-2.5 rounded bg-rose-200 overflow-hidden">
                                                         <div className="h-full bg-rose-500" style={{ width: `${Math.max(0, Math.min(100, (expense / maxV) * 100))}%` }} />
-                                                    </div>
+                                        </div>
                                                 </div>
                                                 <p className={`mt-2 text-xs font-extrabold tabular-nums ${net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                                                     {net >= 0 ? '+' : ''}{formatCurrencyString(net, { digits: 0 })}
                                                 </p>
                                             </button>
-                                        );
-                                    })}
-                                </div>
+                                    );
+                                })}
+                            </div>
                             );
                         })()}
 
@@ -3256,20 +3441,20 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                         <div>
                                             <p className="text-sm font-bold text-slate-900">{MONTHS[(monthNum - 1) % 12]} snapshot</p>
                                             <p className="text-xs text-slate-600 mt-0.5">Actual-first; planned used only when actual is missing.</p>
-                                        </div>
+                                </div>
                                         <span className={`text-xs font-extrabold tabular-nums ${net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                                             Net {net >= 0 ? '+' : ''}{formatCurrencyString(net, { digits: 0 })}
                                         </span>
-                                    </div>
+                                </div>
                                     <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs tabular-nums">
                                         <div className="rounded-xl border border-emerald-200 bg-white/80 px-3 py-2">
                                             <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Income</p>
                                             <p className="text-sm font-extrabold text-slate-900">{formatCurrencyString(income, { digits: 0 })}</p>
-                                        </div>
+                            </div>
                                         <div className="rounded-xl border border-rose-200 bg-white/80 px-3 py-2">
                                             <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Expense</p>
                                             <p className="text-sm font-extrabold text-slate-900">{formatCurrencyString(expense, { digits: 0 })}</p>
-                                        </div>
+                        </div>
                                         <div className="rounded-xl border border-slate-200 bg-white/80 px-3 py-2">
                                             <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Coverage</p>
                                             <p className="text-[11px] text-slate-600">How much of expense was covered by income.</p>
@@ -3448,42 +3633,187 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
                 {sharedBudgetCards.length > 0 && (
                     <div className="mt-4 space-y-3">
-                        <div className="flex items-center justify-between bg-gradient-to-r from-indigo-50 via-violet-50 to-fuchsia-50 border border-indigo-100 rounded-xl px-4 py-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-indigo-200/70 bg-gradient-to-r from-indigo-600/[0.07] via-violet-600/[0.08] to-fuchsia-600/[0.07] px-5 py-4 shadow-lg shadow-indigo-950/5 backdrop-blur-md ring-1 ring-white/60">
                             <div>
-                                <p className="text-sm font-semibold text-slate-800">Shared budgets in your view</p>
-                                <p className="text-xs text-slate-600">These budgets use the same spend-progress style as your own cards.</p>
+                                <p className="text-sm font-bold tracking-tight text-slate-900">Shared budgets in your view</p>
+                                <p className="text-xs text-slate-600 mt-0.5">Same envelope logic and visuals as your cards — spending affects the owner&apos;s totals.</p>
                             </div>
-                            <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-white border border-indigo-200 text-indigo-700">{sharedBudgetCards.length} shared</span>
+                            <span className="text-xs font-bold px-3 py-1.5 rounded-full bg-white/90 border border-indigo-200/90 text-indigo-800 shadow-sm tabular-nums">{sharedBudgetCards.length} shared</span>
                         </div>
-                        <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+                        <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
                             {sharedBudgetCards.map((budget) => {
                                 const owner = sharedBudgetOwnerByCardId.get(budget.id) || 'Owner';
-                                const remaining = (budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent);
+                                const primaryMax =
+                                    budget.primaryBarMax ??
+                                    (budgetView === 'Yearly' ? budget.limit : budget.monthlyLimit) ??
+                                    1;
+                                const primaryVal = budget.primaryBarValue ?? budget.spent;
+                                const primaryRem = primaryMax - primaryVal;
+                                const secondaryMax = budget.secondaryBarMax;
+                                const secondaryVal = budget.secondaryBarValue;
+                                const utilLabel = budget.utilizationLabel ?? 'Healthy';
+                                const periodBadge =
+                                    (budget.period ?? 'monthly') === 'yearly'
+                                        ? 'Yearly total'
+                                        : (budget.period ?? 'monthly') === 'weekly'
+                                          ? 'Weekly'
+                                          : (budget.period ?? 'monthly') === 'daily'
+                                            ? 'Daily'
+                                            : 'Monthly';
                                 return (
-                                    <div key={`shared-card-${budget.id}`} className="bg-gradient-to-br from-white via-indigo-50/30 to-violet-50/40 p-5 rounded-lg shadow-sm hover:shadow-md transition-shadow duration-300 border border-indigo-100">
-                                        <div className="flex items-start justify-between gap-3">
-                                            <div>
-                                                <p className="text-[11px] uppercase tracking-wide text-indigo-700 font-semibold">Shared by</p>
-                                                <p className="text-sm font-medium text-slate-800 break-all">{owner}</p>
+                                    <div
+                                        key={`shared-card-${budget.id}`}
+                                        className="group flex h-full min-h-0 w-full flex-col transition-transform duration-300 hover:-translate-y-1"
+                                    >
+                                        <BudgetCardShell utilizationLabel={utilLabel} budgetTier={budget.budgetTier ?? 'Optional'}>
+                                            <div className="flex min-h-0 flex-1 flex-col">
+                                            <div className="flex shrink-0 gap-3 sm:gap-4">
+                                                <BudgetUsageDial percentage={budget.percentage} utilizationLabel={utilLabel} size={58} />
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-2">
+                                                        <div className="min-w-0">
+                                                            <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-700">Shared by</p>
+                                                            <p className="text-xs font-semibold text-slate-800 break-all leading-snug">{owner}</p>
+                                                            <h4 className="mt-2 text-lg sm:text-xl font-bold tracking-tight text-slate-900 inline-flex items-center gap-1.5">
+                                                                {budget.category}
+                                                                <InfoHint text={getCategoryHint(budget.category)} placement="bottom" />
+                                                            </h4>
+                                                            <span className="mt-2 inline-flex items-center rounded-full border border-indigo-200/80 bg-indigo-50/90 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-indigo-900 shadow-sm">
+                                                                {periodBadge}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex shrink-0 flex-row flex-wrap items-center justify-end gap-1.5">
+                                                            <span
+                                                                className={`text-[10px] font-bold px-2.5 py-1 rounded-full border shadow-sm backdrop-blur-sm ${
+                                                                    budget.budgetTier === 'Core'
+                                                                        ? 'bg-indigo-100/90 text-indigo-950 border-indigo-200/80'
+                                                                        : budget.budgetTier === 'Supporting'
+                                                                          ? 'bg-sky-100/90 text-sky-950 border-sky-200/80'
+                                                                          : 'bg-slate-100/90 text-slate-800 border-slate-200/80'
+                                                                }`}
+                                                            >
+                                                                {budget.budgetTier ?? 'Optional'}
+                                                            </span>
+                                                            <span
+                                                                className={`text-[10px] font-bold px-2.5 py-1 rounded-full shadow-md ${
+                                                                    utilLabel === 'Critical'
+                                                                        ? 'bg-gradient-to-r from-rose-600 to-orange-600 text-white'
+                                                                        : utilLabel === 'Watch'
+                                                                          ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white'
+                                                                          : 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white'
+                                                                }`}
+                                                            >
+                                                                {utilLabel}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                </div>
                                             </div>
-                                            <span className="text-[11px] px-2 py-1 rounded-full bg-indigo-100 text-indigo-800">{budget.budgetTier ?? 'Optional'}</span>
-                                        </div>
 
-                                        <h4 className="mt-3 text-base font-semibold text-slate-900 inline-flex items-center gap-1">
-                                            {budget.category}
-                                            <InfoHint text={getCategoryHint(budget.category)} placement="bottom" />
-                                        </h4>
-
-                                        <div className="mt-4">
-                                            <div className="flex justify-between items-baseline mb-1">
-                                                <span className="font-medium text-secondary">{formatCurrencyString(budget.spent, { digits: 0 })}</span>
-                                                <span className="text-xs text-gray-600">/ {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}{budget.period === 'yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : budget.period === 'weekly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/wk)` : budget.period === 'daily' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/day)` : ''}</span>
+                                            <div className="mt-5 flex min-h-0 flex-1 flex-col gap-0">
+                                            <div className="shrink-0 space-y-3">
+                                            {budgetView === 'Monthly' && (budget.period ?? 'monthly') === 'monthly' && secondaryMax != null && secondaryVal != null && (budget.annualEnvelopeLimit ?? 0) > 0 ? (
+                                                <>
+                                                    <div className="rounded-2xl border border-slate-200/90 bg-white/60 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] backdrop-blur-sm">
+                                                        <div className="flex justify-between items-baseline gap-2 mb-2">
+                                                            <span className="text-[11px] font-bold uppercase tracking-wide text-slate-600">Annual envelope</span>
+                                                            <span className="text-xs font-medium text-slate-600 tabular-nums">
+                                                                YTD {formatCurrencyString(budget.spentYtd ?? 0, { digits: 0 })} /{' '}
+                                                                {formatCurrencyString(budget.annualEnvelopeLimit ?? 0, { digits: 0 })}
+                                                            </span>
+                                                        </div>
+                                                        <ProgressBar value={primaryVal} max={primaryMax} fillClassName={budgetProgressGradient(utilLabel)} color={budget.colorClass} trackClassName="bg-slate-300/80" heightClass="h-3.5" />
+                                                        <p className={`text-right text-sm font-semibold mt-2 tabular-nums ${primaryRem >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                                                            {primaryRem >= 0
+                                                                ? `${formatCurrencyString(primaryRem, { digits: 0 })} left this year`
+                                                                : `${formatCurrencyString(Math.abs(primaryRem), { digits: 0 })} over annual cap`}
+                                                        </p>
+                                                    </div>
+                                                    <div className="rounded-2xl border border-violet-200/90 bg-gradient-to-br from-violet-50/90 to-fuchsia-50/50 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] backdrop-blur-sm">
+                                                        <div className="flex justify-between items-baseline gap-2 mb-2">
+                                                            <span className="text-[11px] font-bold uppercase tracking-wide text-violet-800">This month</span>
+                                                            <span className="text-xs font-medium text-violet-900/80 tabular-nums">
+                                                                {formatCurrencyString(secondaryVal, { digits: 0 })} / {formatCurrencyString(secondaryMax, { digits: 0 })}
+                                                            </span>
+                                                        </div>
+                                                        <ProgressBar value={secondaryVal} max={secondaryMax} fillClassName={budgetSecondaryProgressGradient()} color="bg-violet-500" trackClassName="bg-violet-200/80" heightClass="h-3" />
+                                                        <p
+                                                            className={`text-right text-xs mt-2 font-medium tabular-nums ${
+                                                                secondaryMax - secondaryVal >= 0 ? 'text-violet-900/80' : 'text-rose-600'
+                                                            }`}
+                                                        >
+                                                            {secondaryMax - secondaryVal >= 0
+                                                                ? `${formatCurrencyString(secondaryMax - secondaryVal, { digits: 0 })} left this period`
+                                                                : `${formatCurrencyString(Math.abs(secondaryMax - secondaryVal), { digits: 0 })} over this month`}
+                                                        </p>
+                                                    </div>
+                                                </>
+                                            ) : budgetView === 'Monthly' && (budget.period ?? 'monthly') === 'yearly' ? (
+                                                <div className="rounded-2xl border border-slate-200/90 bg-white/60 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] backdrop-blur-sm">
+                                                    <div className="flex justify-between items-baseline gap-2 mb-2">
+                                                        <span className="text-[11px] font-bold uppercase tracking-wide text-slate-600">Year to date</span>
+                                                        <span className="text-xs font-medium text-slate-600 tabular-nums">
+                                                            {formatCurrencyString(budget.spentYtd ?? budget.spent, { digits: 0 })} /{' '}
+                                                            {formatCurrencyString(budget.displayLimit, { digits: 0 })} / yr
+                                                        </span>
+                                                    </div>
+                                                    <ProgressBar value={primaryVal} max={Math.max(primaryMax, 1)} fillClassName={budgetProgressGradient(utilLabel)} color={budget.colorClass} trackClassName="bg-slate-300/80" heightClass="h-3.5" />
+                                                    <p className={`text-right text-sm font-semibold mt-2 tabular-nums ${primaryRem >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                                                        {primaryRem >= 0
+                                                            ? `${formatCurrencyString(primaryRem, { digits: 0 })} remaining in ${currentYear}`
+                                                            : `${formatCurrencyString(Math.abs(primaryRem), { digits: 0 })} over full-year budget`}
+                                                    </p>
+                                                </div>
+                                            ) : (
+                                                <div className="rounded-2xl border border-slate-200/90 bg-white/60 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] backdrop-blur-sm">
+                                                    <div className="flex justify-between items-baseline gap-2 mb-2">
+                                                        <span className="text-[11px] font-bold uppercase tracking-wide text-slate-600">This period</span>
+                                                        <span className="text-xs font-medium text-slate-600 tabular-nums">
+                                                            {formatCurrencyString(budget.spent, { digits: 0 })} / {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}
+                                                            {budgetView === 'Yearly'
+                                                                ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)`
+                                                                : (budget.period ?? 'monthly') === 'yearly'
+                                                                  ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)`
+                                                                  : (budget.period ?? 'monthly') === 'weekly'
+                                                                    ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/wk)`
+                                                                    : (budget.period ?? 'monthly') === 'daily'
+                                                                      ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/day)`
+                                                                      : ''}
+                                                        </span>
+                                                    </div>
+                                                    <ProgressBar
+                                                        value={budget.spent}
+                                                        max={budgetView === 'Yearly' ? (budget.limit ?? 1) : (budget.monthlyLimit ?? 1)}
+                                                        fillClassName={budgetProgressGradient(utilLabel)}
+                                                        color={budget.colorClass}
+                                                        trackClassName="bg-slate-300/80"
+                                                        heightClass="h-3.5"
+                                                    />
+                                                    <p
+                                                        className={`text-right text-sm font-semibold mt-2 tabular-nums ${
+                                                            (budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent) >= 0
+                                                                ? 'text-emerald-700'
+                                                                : 'text-rose-600'
+                                                        }`}
+                                                    >
+                                                        {(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent) >= 0
+                                                            ? `${formatCurrencyString(
+                                                                  budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent,
+                                                                  { digits: 0 },
+                                                              )} remaining`
+                                                            : `${formatCurrencyString(
+                                                                  Math.abs(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent),
+                                                                  { digits: 0 },
+                                                              )} over`}
+                                                    </p>
+                                                </div>
+                                            )}
                                             </div>
-                                            <ProgressBar value={budget.spent} max={budgetView === 'Yearly' ? (budget.limit ?? 1) : (budget.monthlyLimit ?? 1)} color={budget.colorClass} />
-                                            <p className={`text-right text-sm mt-1 ${remaining >= 0 ? 'text-gray-600' : 'text-danger font-medium'}`}>
-                                                {remaining >= 0 ? `${formatCurrencyString(remaining, { digits: 0 })} remaining` : `${formatCurrencyString(Math.abs(remaining), { digits: 0 })} over budget`}
-                                            </p>
-                                        </div>
+                                            <div className="min-h-[1px] flex-1" aria-hidden />
+                                            <p className="mt-auto shrink-0 pt-3 text-[10px] text-center text-slate-400 font-medium uppercase tracking-wider">Read-only · owner&apos;s budget</p>
+                                            </div>
+                                            </div>
+                                        </BudgetCardShell>
                                     </div>
                                 );
                             })}
@@ -3892,12 +4222,30 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 </SectionCard>
             )}
 
-            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-                {orderedBudgetData.map((budget) => (
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
+                {orderedBudgetData.map((budget) => {
+                    const primaryMax =
+                        budget.primaryBarMax ??
+                        (budgetView === 'Yearly' ? budget.limit : budget.monthlyLimit) ??
+                        1;
+                    const primaryVal = budget.primaryBarValue ?? budget.spent;
+                    const primaryRem = primaryMax - primaryVal;
+                    const secondaryMax = budget.secondaryBarMax;
+                    const secondaryVal = budget.secondaryBarValue;
+                    const utilLabel = budget.utilizationLabel ?? 'Healthy';
+                    const periodBadge =
+                        (budget.period ?? 'monthly') === 'yearly'
+                            ? 'Yearly total'
+                            : (budget.period ?? 'monthly') === 'weekly'
+                              ? 'Weekly'
+                              : (budget.period ?? 'monthly') === 'daily'
+                                ? 'Daily'
+                                : 'Monthly';
+                    return (
                     <button
                         key={budget.id}
                         type="button"
-                        className={`text-left bg-gradient-to-br from-white via-slate-50 to-primary/5 p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300 flex flex-col border border-slate-100 ${expandedCards[budget.id] ? 'md:col-span-2' : ''}`}
+                        className={`group flex h-full min-h-0 w-full flex-col text-left rounded-3xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-indigo-500/90 transition-transform duration-300 hover:-translate-y-1 active:translate-y-0 active:scale-[0.995] ${expandedCards[budget.id] ? 'md:col-span-2' : ''}`}
                         onClick={() => {
                             if (triggerPageAction) {
                                 const periodTag = budgetView.toLowerCase();
@@ -3905,36 +4253,141 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                             }
                         }}
                     >
-                        <div className="flex-grow">
-                            <div className="flex items-center justify-between gap-2">
-                                <h3 className="text-lg font-semibold text-dark inline-flex items-center gap-1">
-                                    {budget.category}
-                                    <InfoHint text={getCategoryHint(budget.category)} placement="bottom" />
-                                </h3>
-                                <span className={`text-[11px] px-2 py-1 rounded ${budget.budgetTier === 'Core' ? 'bg-indigo-100 text-indigo-800' : budget.budgetTier === 'Supporting' ? 'bg-cyan-100 text-cyan-800' : 'bg-slate-100 text-slate-700'}`}>{budget.budgetTier}</span>
-                            </div>
-                            <div className="mt-4">
-                                <div className="flex justify-between items-baseline mb-1">
-                                    <span className="font-medium text-secondary">{formatCurrencyString(budget.spent, { digits: 0 })}</span>
-                                    <span className="text-sm text-gray-500">/ {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}{budgetView === 'Yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : budget.period === 'yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : budget.period === 'weekly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/wk)` : budget.period === 'daily' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/day)` : ''}</span>
+                        <BudgetCardShell utilizationLabel={utilLabel} budgetTier={budget.budgetTier ?? 'Optional'}>
+                        <div className="flex min-h-0 flex-1 flex-col">
+                        <div className="flex shrink-0 gap-3 sm:gap-4">
+                            <BudgetUsageDial percentage={budget.percentage} utilizationLabel={utilLabel} size={58} />
+                            <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-2">
+                                    <div className="min-w-0">
+                                        <h3 className="text-lg sm:text-xl font-bold tracking-tight text-slate-900 inline-flex items-center gap-1.5">
+                                            {budget.category}
+                                            <InfoHint text={getCategoryHint(budget.category)} placement="bottom" />
+                                        </h3>
+                                        <span className="mt-2 inline-flex items-center rounded-full border border-slate-200/90 bg-white/80 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-600 shadow-sm backdrop-blur-sm">
+                                            {periodBadge}
+                                        </span>
+                                    </div>
+                                    <div className="flex shrink-0 flex-row flex-wrap items-center justify-end gap-1.5">
+                                        <span
+                                            className={`text-[10px] font-bold px-2.5 py-1 rounded-full border shadow-sm backdrop-blur-sm ${
+                                                budget.budgetTier === 'Core'
+                                                    ? 'bg-indigo-100/90 text-indigo-950 border-indigo-200/80'
+                                                    : budget.budgetTier === 'Supporting'
+                                                      ? 'bg-sky-100/90 text-sky-950 border-sky-200/80'
+                                                      : 'bg-slate-100/90 text-slate-800 border-slate-200/80'
+                                            }`}
+                                        >
+                                            {budget.budgetTier}
+                                        </span>
+                                        <span
+                                            className={`text-[10px] font-bold px-2.5 py-1 rounded-full shadow-md ${
+                                                utilLabel === 'Critical'
+                                                    ? 'bg-gradient-to-r from-rose-600 to-orange-600 text-white'
+                                                    : utilLabel === 'Watch'
+                                                      ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white'
+                                                      : 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white'
+                                            }`}
+                                        >
+                                            {utilLabel}
+                                        </span>
+                                    </div>
                                 </div>
-                                <ProgressBar value={budget.spent} max={budgetView === 'Yearly' ? (budget.limit ?? 1) : (budget.monthlyLimit ?? 1)} color={budget.colorClass} />
-                                <p className={`text-right text-sm mt-1 ${(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent) >= 0 ? 'text-gray-600' : 'text-danger font-medium'}`}>
-                                    {(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent) >= 0 
-                                        ? `${formatCurrencyString(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent, { digits: 0 })} remaining`
-                                        : `${formatCurrencyString(Math.abs(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent), { digits: 0 })} over`
-                                    }
+                                <p className="mt-2 text-[11px] text-slate-500 leading-snug">
+                                    Tap to open matching transactions for this view.
                                 </p>
-                                <div className="mt-2 flex items-center justify-between text-xs">
-                                    <span className={`px-2 py-1 rounded ${budget.utilizationLabel === 'Critical' ? 'bg-rose-100 text-rose-800' : budget.utilizationLabel === 'Watch' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>{budget.utilizationLabel}</span>
-                                    <span className={budget.trendDirection === 'up' ? 'text-rose-600' : budget.trendDirection === 'down' ? 'text-emerald-600' : 'text-gray-500'}>
-                                        {budget.trendDirection === 'up' ? '↑' : budget.trendDirection === 'down' ? '↓' : '→'} {formatCurrencyString(Math.abs(budget.trendDelta ?? 0), { digits: 0 })} vs previous
-                                    </span>
-                                </div>
                             </div>
                         </div>
-                         <div className="border-t mt-4 pt-2 flex justify-end items-center space-x-2">
-                            <button type="button" onClick={() => toggleBudgetCardSize(budget.id)} className="p-2 text-gray-400 hover:text-primary" title={expandedCards[budget.id] ? 'Compact card' : 'Expand card'} aria-label={expandedCards[budget.id] ? 'Compact card' : 'Expand card'}>
+
+                        <div className="mt-5 flex min-h-0 flex-1 flex-col gap-0">
+                        <div className="shrink-0 space-y-3">
+                            {budgetView === 'Monthly' && (budget.period ?? 'monthly') === 'monthly' && secondaryMax != null && secondaryVal != null && (budget.annualEnvelopeLimit ?? 0) > 0 ? (
+                                <>
+                                    <div className="rounded-2xl border border-slate-200/90 bg-white/60 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] backdrop-blur-sm">
+                                        <div className="flex justify-between items-baseline gap-2 mb-2">
+                                            <span className="text-[11px] font-bold uppercase tracking-wide text-slate-600">Annual envelope</span>
+                                            <span className="text-xs font-medium text-slate-600 tabular-nums">
+                                                YTD {formatCurrencyString(budget.spentYtd ?? 0, { digits: 0 })} / {formatCurrencyString(budget.annualEnvelopeLimit ?? 0, { digits: 0 })}
+                                            </span>
+                                        </div>
+                                        <ProgressBar value={primaryVal} max={primaryMax} fillClassName={budgetProgressGradient(utilLabel)} color={budget.colorClass} trackClassName="bg-slate-300/80" heightClass="h-3.5" />
+                                        <p className={`text-right text-sm font-semibold mt-2 tabular-nums ${primaryRem >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                                            {primaryRem >= 0
+                                                ? `${formatCurrencyString(primaryRem, { digits: 0 })} left this year`
+                                                : `${formatCurrencyString(Math.abs(primaryRem), { digits: 0 })} over annual cap`}
+                                        </p>
+                                    </div>
+                                    <div className="rounded-2xl border border-violet-200/90 bg-gradient-to-br from-violet-50/90 to-fuchsia-50/50 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] backdrop-blur-sm">
+                                        <div className="flex justify-between items-baseline gap-2 mb-2">
+                                            <span className="text-[11px] font-bold uppercase tracking-wide text-violet-800">This month</span>
+                                            <span className="text-xs font-medium text-violet-900/80 tabular-nums">
+                                                {formatCurrencyString(secondaryVal, { digits: 0 })} / {formatCurrencyString(secondaryMax, { digits: 0 })}
+                                            </span>
+                                        </div>
+                                        <ProgressBar value={secondaryVal} max={secondaryMax} fillClassName={budgetSecondaryProgressGradient()} color="bg-violet-500" trackClassName="bg-violet-200/80" heightClass="h-3" />
+                                        <p className={`text-right text-xs mt-2 font-medium tabular-nums ${secondaryMax - secondaryVal >= 0 ? 'text-violet-900/80' : 'text-rose-600'}`}>
+                                            {secondaryMax - secondaryVal >= 0
+                                                ? `${formatCurrencyString(secondaryMax - secondaryVal, { digits: 0 })} left this period`
+                                                : `${formatCurrencyString(Math.abs(secondaryMax - secondaryVal), { digits: 0 })} over this month`}
+                                        </p>
+                                    </div>
+                                </>
+                            ) : budgetView === 'Monthly' && (budget.period ?? 'monthly') === 'yearly' ? (
+                                <div className="rounded-2xl border border-slate-200/90 bg-white/60 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] backdrop-blur-sm">
+                                    <div className="flex justify-between items-baseline gap-2 mb-2">
+                                        <span className="text-[11px] font-bold uppercase tracking-wide text-slate-600">Year to date</span>
+                                        <span className="text-xs font-medium text-slate-600 tabular-nums">
+                                            {formatCurrencyString(budget.spentYtd ?? budget.spent, { digits: 0 })} / {formatCurrencyString(budget.displayLimit, { digits: 0 })} / yr
+                                        </span>
+                                    </div>
+                                    <ProgressBar value={primaryVal} max={Math.max(primaryMax, 1)} fillClassName={budgetProgressGradient(utilLabel)} color={budget.colorClass} trackClassName="bg-slate-300/80" heightClass="h-3.5" />
+                                    <p className={`text-right text-sm font-semibold mt-2 tabular-nums ${primaryRem >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                                        {primaryRem >= 0
+                                            ? `${formatCurrencyString(primaryRem, { digits: 0 })} remaining in ${currentYear}`
+                                            : `${formatCurrencyString(Math.abs(primaryRem), { digits: 0 })} over full-year budget`}
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="rounded-2xl border border-slate-200/90 bg-white/60 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] backdrop-blur-sm">
+                                    <div className="flex justify-between items-baseline gap-2 mb-2">
+                                        <span className="text-[11px] font-bold uppercase tracking-wide text-slate-600">This period</span>
+                                        <span className="text-xs font-medium text-slate-600 tabular-nums">
+                                            {formatCurrencyString(budget.spent, { digits: 0 })} / {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}
+                                            {budgetView === 'Yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : (budget.period ?? 'monthly') === 'yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : (budget.period ?? 'monthly') === 'weekly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/wk)` : (budget.period ?? 'monthly') === 'daily' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/day)` : ''}
+                                        </span>
+                                    </div>
+                                    <ProgressBar
+                                        value={budget.spent}
+                                        max={budgetView === 'Yearly' ? (budget.limit ?? 1) : (budget.monthlyLimit ?? 1)}
+                                        fillClassName={budgetProgressGradient(utilLabel)}
+                                        color={budget.colorClass}
+                                        trackClassName="bg-slate-300/80"
+                                        heightClass="h-3.5"
+                                    />
+                                    <p className={`text-right text-sm font-semibold mt-2 tabular-nums ${(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent) >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                                        {(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent) >= 0
+                                            ? `${formatCurrencyString(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent, { digits: 0 })} remaining`
+                                            : `${formatCurrencyString(Math.abs(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent), { digits: 0 })} over`}
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+
+                            <div className="min-h-[1px] flex-1" aria-hidden />
+                            <div className="flex shrink-0 items-center justify-between gap-2 rounded-xl border border-slate-200/70 bg-slate-900/[0.03] px-3 py-2.5 text-[11px] shadow-inner">
+                                <span className="font-medium text-slate-600 tabular-nums">
+                                    <span className="text-slate-400 font-semibold uppercase tracking-wide mr-1">Primary cap</span>
+                                    {budget.percentage.toFixed(0)}%
+                                </span>
+                                <span className={budget.trendDirection === 'up' ? 'text-rose-600 font-semibold' : budget.trendDirection === 'down' ? 'text-emerald-600 font-semibold' : 'text-slate-400'}>
+                                    {budget.trendDirection === 'up' ? '↑' : budget.trendDirection === 'down' ? '↓' : '→'}{' '}
+                                    {formatCurrencyString(Math.abs(budget.trendDelta ?? 0), { digits: 0 })} vs previous
+                                </span>
+                            </div>
+                        </div>
+
+                        <div className="mt-auto flex shrink-0 justify-end items-center gap-1 border-t border-slate-200/50 pt-3">
+                            <button type="button" onClick={() => toggleBudgetCardSize(budget.id)} className="p-2 text-slate-400 hover:text-primary rounded-lg hover:bg-white/80" title={expandedCards[budget.id] ? 'Compact card' : 'Expand card'} aria-label={expandedCards[budget.id] ? 'Compact card' : 'Expand card'}>
                                 <ChevronRightIcon className={`h-4 w-4 transition-transform ${expandedCards[budget.id] ? 'rotate-90' : ''}`} />
                             </button>
                             <button
@@ -3944,7 +4397,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                     e.stopPropagation();
                                     handleOpenModal({ ...budget, limit: budget.displayLimit });
                                 }}
-                                className="p-2 text-gray-400 hover:text-primary disabled:opacity-40"
+                                className="p-2 text-slate-400 hover:text-primary rounded-lg hover:bg-white/80 disabled:opacity-40"
                             >
                                 <PencilIcon className="h-4 w-4"/>
                             </button>
@@ -3955,17 +4408,20 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                     e.stopPropagation();
                                     deleteBudget(budget.category, budget.month, budget.year);
                                 }}
-                                className="p-2 text-gray-400 hover:text-danger disabled:opacity-40"
+                                className="p-2 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 disabled:opacity-40"
                             >
                                 <TrashIcon className="h-4 w-4"/>
                             </button>
                         </div>
+                        </div>
+                        </BudgetCardShell>
                     </button>
-                ))}
+                    );
+                })}
             </div>
              {budgetData.length === 0 && (
-                <div className="text-center py-12 bg-white rounded-lg shadow">
-                    <p className="text-gray-500">No budgets set for this month.</p>
+                <div className="text-center py-14 px-6 rounded-3xl border border-dashed border-slate-300/90 bg-gradient-to-b from-slate-50 via-white to-indigo-50/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+                    <p className="text-slate-600 font-medium">No budgets set for this month.</p>
                     {setActivePage && (
                         <p className="mt-2 text-sm text-slate-600">
                             Add a budget above, or{' '}

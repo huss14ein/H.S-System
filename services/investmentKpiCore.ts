@@ -1,6 +1,15 @@
 import type { Account, FinancialData, Holding, InvestmentPortfolio, InvestmentTransaction } from '../types';
-import { getAllInvestmentsValueInSAR, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
-import { inferInvestmentTransactionCurrency, resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
+import {
+  getAllInvestmentsValueInSAR,
+  toSAR,
+  tradableCashBucketToSAR,
+  tradableCashBucketToSARSigned,
+} from '../utils/currencyMath';
+import {
+  inferInvestmentTransactionCurrency,
+  resolveCanonicalAccountId,
+  resolveInvestmentTransactionAccountId,
+} from '../utils/investmentLedgerCurrency';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { investmentTransactionCashAmountSarDated } from '../utils/investmentTransactionSar';
@@ -10,6 +19,7 @@ import {
   computePersonalCommoditiesContributionSAR,
 } from './investmentPlatformCardMetrics';
 import { getPersonalCommodityHoldings, getPersonalWealthData } from '../utils/wealthScope';
+import { brokerCashBucketsFromInvestmentAccount } from './investmentCashLedger';
 
 type GetAvailableCashFn = (accountId: string) => { SAR?: number; USD?: number } | null | undefined;
 
@@ -51,7 +61,42 @@ export type PersonalInvestmentKpiBreakdown = PersonalInvestmentKpisSar & {
   dividendsSar: number;
   feesSar: number;
   vatSar: number;
+  /**
+   * Cash implied by ledger flows using **spot** SAR/USD (`sarPerUsd`), same basis as book balances.
+   * Compare to signed broker cash for drift — **not** the dated-FX flow sums used for capital/ROI.
+   */
+  expectedCashFromLedgerSpotSar: number;
+  /**
+   * Ledger-implied cash using **transaction-dated** SAR (same basis as `buysSar`, `depositsRecordedSar`, etc.).
+   * Identity: deposits − buys + sells + dividends − withdrawals − fees − vat.
+   */
+  expectedCashFromLedgerDatedSar: number;
 };
+
+/**
+ * Investment ledger rows attributed to the signed-in user’s accounts — same filter as
+ * {@link computePersonalInvestmentKpiBreakdown} (resolves `portfolio_id` → platform account).
+ */
+export function getPersonalInvestmentTransactionsForKpis(data: FinancialData): InvestmentTransaction[] {
+  const d = data as FinancialData & {
+    personalAccounts?: Account[];
+    personalInvestments?: InvestmentPortfolio[];
+  };
+  const accounts = (d.personalAccounts ?? data.accounts ?? []) as Account[];
+  const investments = (d.personalInvestments ?? data.investments ?? []) as InvestmentPortfolio[];
+  const personalAccountIds = new Set(accounts.map((a) => a.id));
+
+  const hits = (t: InvestmentTransaction) => {
+    const accountId = resolveInvestmentTransactionAccountId(
+      t as InvestmentTransaction & { account_id?: string; portfolio_id?: string },
+      accounts,
+      investments,
+    );
+    return !!accountId && personalAccountIds.has(accountId);
+  };
+
+  return ((data.investmentTransactions ?? []) as InvestmentTransaction[]).filter(hits);
+}
 
 /**
  * Canonical personal-investment KPI math shared across Dashboard, Investments summary, and reporting.
@@ -79,15 +124,7 @@ export function computePersonalInvestmentKpiBreakdown(
   }
   const totalInvestmentsValueSar = holdingsValueSar + brokerageCashSar;
 
-  const txHitsPersonalInvestment = (t: InvestmentTransaction) => {
-    const accountId = resolveInvestmentTransactionAccountId(
-      t as InvestmentTransaction & { account_id?: string; portfolio_id?: string },
-      accounts,
-      investments,
-    );
-    return !!accountId && personalAccountIds.has(accountId);
-  };
-  const invTx = (data.investmentTransactions ?? []).filter((t) => txHitsPersonalInvestment(t as InvestmentTransaction)) as InvestmentTransaction[];
+  const invTx = getPersonalInvestmentTransactionsForKpis(data);
   const invTxSar = (t: InvestmentTransaction) =>
     investmentTransactionCashAmountSarDated({
       tx: t,
@@ -96,6 +133,13 @@ export function computePersonalInvestmentKpiBreakdown(
       data,
       uiExchangeRate: sarPerUsd,
     }) || toSAR(getInvestmentTransactionCashAmount(t as any), inferInvestmentTransactionCurrency(t as any, accounts, investments), sarPerUsd);
+
+  /** Spot FX — matches how broker `balance` is converted for reconciliation (avoids false drift from historical USD rates). */
+  const invTxSarSpot = (t: InvestmentTransaction): number => {
+    const amount = Math.abs(getInvestmentTransactionCashAmount(t as any));
+    if (!(amount > 0)) return 0;
+    return toSAR(amount, inferInvestmentTransactionCurrency(t as any, accounts, investments), sarPerUsd);
+  };
 
   const depositsRecordedSar = invTx
     .filter((t) => isInvestmentTransactionType(t.type, 'deposit'))
@@ -114,6 +158,25 @@ export function computePersonalInvestmentKpiBreakdown(
     .reduce((sum, t) => sum + invTxSar(t), 0);
   const feesSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'fee')).reduce((sum, t) => sum + invTxSar(t), 0);
   const vatSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'vat')).reduce((sum, t) => sum + invTxSar(t), 0);
+
+  const depositsSpotSar = invTx
+    .filter((t) => isInvestmentTransactionType(t.type, 'deposit'))
+    .reduce((sum, t) => sum + invTxSarSpot(t), 0);
+  const withdrawalsSpotSar = invTx
+    .filter((t) => isInvestmentTransactionType(t.type, 'withdrawal'))
+    .reduce((sum, t) => sum + invTxSarSpot(t), 0);
+  const buysSpotSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'buy')).reduce((sum, t) => sum + invTxSarSpot(t), 0);
+  const sellsSpotSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'sell')).reduce((sum, t) => sum + invTxSarSpot(t), 0);
+  const dividendsSpotSar = invTx
+    .filter((t) => isInvestmentTransactionType(t.type, 'dividend'))
+    .reduce((sum, t) => sum + invTxSarSpot(t), 0);
+  const feesSpotSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'fee')).reduce((sum, t) => sum + invTxSarSpot(t), 0);
+  const vatSpotSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'vat')).reduce((sum, t) => sum + invTxSarSpot(t), 0);
+  const expectedCashFromLedgerSpotSar =
+    depositsSpotSar - buysSpotSar + sellsSpotSar + dividendsSpotSar - withdrawalsSpotSar - feesSpotSar - vatSpotSar;
+
+  const expectedCashFromLedgerDatedSar =
+    depositsRecordedSar - buysSar + sellsSar + dividendsSar - totalWithdrawnSar - feesSar - vatSar;
 
   /**
    * Heuristic when deposit history is empty: approximates “funds committed” from net purchases and
@@ -173,7 +236,95 @@ export function computePersonalInvestmentKpiBreakdown(
     dividendsSar,
     feesSar,
     vatSar,
+    expectedCashFromLedgerSpotSar,
+    expectedCashFromLedgerDatedSar,
   };
+}
+
+export type InvestmentPlatformCashDriftRow = {
+  accountId: string;
+  name: string;
+  brokerSarSigned: number;
+  expectedCashSpotSar: number;
+  driftSar: number;
+  hasLedgerFlows: boolean;
+};
+
+/**
+ * Per-platform broker cash vs ledger-implied cash (spot FX), for Investments / System Health banners.
+ * Matches {@link computePersonalInvestmentKpiBreakdown} aggregate identity when summed across platforms.
+ */
+export function computePersonalInvestmentCashDriftByPlatform(
+  data: FinancialData,
+  sarPerUsd: number,
+): InvestmentPlatformCashDriftRow[] {
+  const d = data as FinancialData & {
+    personalAccounts?: Account[];
+    personalInvestments?: InvestmentPortfolio[];
+  };
+  const accounts = (d.personalAccounts ?? data.accounts ?? []) as Account[];
+  const investments = (d.personalInvestments ?? data.investments ?? []) as InvestmentPortfolio[];
+  const personalIds = new Set(accounts.map((a) => a.id));
+  const txs = (data.investmentTransactions ?? []) as InvestmentTransaction[];
+
+  const invTxSarSpot = (t: InvestmentTransaction): number => {
+    const amount = Math.abs(getInvestmentTransactionCashAmount(t as any));
+    if (!(amount > 0)) return 0;
+    return toSAR(amount, inferInvestmentTransactionCurrency(t as any, accounts, investments), sarPerUsd);
+  };
+
+  const rows: InvestmentPlatformCashDriftRow[] = [];
+  for (const acc of accounts) {
+    if (acc.type !== 'Investment' || !personalIds.has(acc.id)) continue;
+    const canonicalId = resolveCanonicalAccountId(acc.id, accounts) ?? acc.id;
+    const accountTxs = txs.filter(
+      (t) => resolveInvestmentTransactionAccountId(t as any, accounts, investments) === canonicalId,
+    );
+
+    const hasLedgerFlows = accountTxs.some(
+      (t) =>
+        isInvestmentTransactionType(t.type, 'deposit') ||
+        isInvestmentTransactionType(t.type, 'withdrawal') ||
+        isInvestmentTransactionType(t.type, 'buy') ||
+        isInvestmentTransactionType(t.type, 'sell') ||
+        isInvestmentTransactionType(t.type, 'dividend') ||
+        isInvestmentTransactionType(t.type, 'fee') ||
+        isInvestmentTransactionType(t.type, 'vat'),
+    );
+
+    const brokerBuckets = brokerCashBucketsFromInvestmentAccount(acc);
+    const brokerSarSigned = tradableCashBucketToSARSigned(brokerBuckets, sarPerUsd);
+
+    let depositsSar = 0;
+    let withdrawalsSar = 0;
+    let buysSar = 0;
+    let sellsSar = 0;
+    let dividendsSar = 0;
+    let feesSar = 0;
+    let vatSar = 0;
+    for (const t of accountTxs) {
+      const sar = invTxSarSpot(t);
+      if (isInvestmentTransactionType(t.type, 'deposit')) depositsSar += sar;
+      else if (isInvestmentTransactionType(t.type, 'withdrawal')) withdrawalsSar += sar;
+      else if (isInvestmentTransactionType(t.type, 'buy')) buysSar += sar;
+      else if (isInvestmentTransactionType(t.type, 'sell')) sellsSar += sar;
+      else if (isInvestmentTransactionType(t.type, 'dividend')) dividendsSar += sar;
+      else if (isInvestmentTransactionType(t.type, 'fee')) feesSar += sar;
+      else if (isInvestmentTransactionType(t.type, 'vat')) vatSar += sar;
+    }
+    const expectedCashSpotSar = depositsSar - buysSar + sellsSar + dividendsSar - withdrawalsSar - feesSar - vatSar;
+    const driftSar = brokerSarSigned - expectedCashSpotSar;
+
+    rows.push({
+      accountId: canonicalId,
+      name: String(acc.name ?? 'Investment account'),
+      brokerSarSigned,
+      expectedCashSpotSar,
+      driftSar,
+      hasLedgerFlows,
+    });
+  }
+  return rows;
 }
 
 export function computePersonalInvestmentKpisSar(
@@ -212,6 +363,12 @@ export type HeadlinePersonalInvestmentRoi = {
   platformsDailyPnLSar: number;
   /** Approximate commodity position move in SAR (live quote × qty). */
   commoditiesDailyPnLSar: number;
+  /** Same inputs as headline net capital decomposition (single source for reconciliation UI). */
+  commodityCostSar: number;
+  sukukAssetsCostSar: number;
+  /** max(ledger net capital, holdings cost basis + floored broker cash) — platform slice before commodities/Sukuk. */
+  platformNetForHeadlineSar: number;
+  economicDeployedPlatformSar: number;
 };
 
 /**
@@ -255,7 +412,14 @@ export function computeHeadlinePersonalInvestmentRoiDecimal(
   }, 0);
 
   const totalExposureSar = platformsRollupSar + commoditiesValueSar + sukukAssetsValueSar;
-  const netCapitalSar = Math.max(0, breakdown.netCapitalSar + commodityCost + sukukAssetsCostSar);
+  /**
+   * Deposit/withdrawal history alone often understates capital still deployed (reinvested dividends, transfers
+   * not logged as deposits). Floor platform net capital at cost basis + idle broker cash so headline ROI / gain
+   * do not imply triple-digit returns purely from ledger gaps.
+   */
+  const economicDeployedSar = Math.max(0, breakdown.holdingsCostBasisSar + breakdown.brokerageCashSar);
+  const platformNetForHeadline = Math.max(breakdown.netCapitalSar, economicDeployedSar);
+  const netCapitalSar = Math.max(0, platformNetForHeadline + commodityCost + sukukAssetsCostSar);
   const totalGainLossSar = totalExposureSar - netCapitalSar;
   const roi = netCapitalSar > 0 ? totalGainLossSar / netCapitalSar : 0;
 
@@ -270,5 +434,9 @@ export function computeHeadlinePersonalInvestmentRoiDecimal(
     sukukAssetsValueSar,
     platformsDailyPnLSar,
     commoditiesDailyPnLSar,
+    commodityCostSar: commodityCost,
+    sukukAssetsCostSar,
+    platformNetForHeadlineSar: platformNetForHeadline,
+    economicDeployedPlatformSar: economicDeployedSar,
   };
 }

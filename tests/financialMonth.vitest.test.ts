@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { financialMonthRange, financialMonthRangeFromKey, addMonthsToKey } from '../utils/financialMonth';
+import {
+  financialMonthKey,
+  financialMonthRange,
+  financialMonthRangeFromKey,
+  addMonthsToKey,
+  effectiveMonthStartDay,
+} from '../utils/financialMonth';
 
 describe('financialMonthRangeFromKey vs calendar reference', () => {
   it('does not mis-assign prev period when monthStartDay > 15 (day-15 calendar trick)', () => {
@@ -29,5 +35,18 @@ describe('financialMonthRangeFromKey vs calendar reference', () => {
     expect(prevRange.start.getFullYear()).toBe(prevKey.year);
     expect(prevRange.start.getMonth()).toBe(prevKey.month - 1);
     expect(prevRange.start.getDate()).toBe(monthStartDay);
+  });
+
+  it('caps preferred day 31 to the last day of shorter months', () => {
+    expect(effectiveMonthStartDay(2026, 2, 31)).toBe(28);
+    expect(effectiveMonthStartDay(2024, 2, 31)).toBe(29);
+    expect(effectiveMonthStartDay(2026, 4, 31)).toBe(30);
+  });
+
+  it('maps late-February dates correctly when preference is 31', () => {
+    const beforeStart = financialMonthKey(new Date(2026, 1, 27), 31);
+    expect(beforeStart).toEqual({ year: 2026, month: 1 });
+    const onStart = financialMonthKey(new Date(2026, 1, 28), 31);
+    expect(onStart).toEqual({ year: 2026, month: 2 });
   });
 });

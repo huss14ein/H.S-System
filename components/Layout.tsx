@@ -1,13 +1,12 @@
 
 
-import React, { useState, useEffect, useRef, useContext } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Header from './Header';
 import { Page } from '../types';
 import QuickActionsSidebar from './QuickActionsSidebar';
 import CommandPalette from './CommandPalette';
 import LiveAdvisorModal from './LiveAdvisorModal';
 import { useTrackPageVisit } from '../context/SelfLearningContext';
-import { DataContext } from '../context/DataContext';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import CrossEngineAlertsBanner from './CrossEngineAlertsBanner';
 
@@ -18,6 +17,8 @@ interface LayoutProps {
   triggerPageAction: (page: Page, action: string) => void;
   /** Deep-link into a page (e.g. Notifications → tasks tab) */
   triggerPageActionPair?: (page: Page, action: string) => void;
+  /** Main column max width (Tailwind classes). Wider on data-heavy pages (Dashboard / Summary). */
+  contentMaxClass?: string;
 }
 
 const Layout: React.FC<LayoutProps> = ({
@@ -26,12 +27,12 @@ const Layout: React.FC<LayoutProps> = ({
   setActivePage,
   triggerPageAction,
   triggerPageActionPair,
+  contentMaxClass = 'max-w-7xl',
 }) => {
   useTrackPageVisit(activePage);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isLiveAdvisorOpen, setIsLiveAdvisorOpen] = useState(false);
   const mainContentRef = useRef<HTMLElement>(null);
-  const { data } = useContext(DataContext)!;
   const { ready, analysis, actionQueue } = useFinancialEnginesIntegration();
 
   const skipToMainContent = () => {
@@ -80,8 +81,8 @@ const Layout: React.FC<LayoutProps> = ({
         aria-label="Main content"
         className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-6 lg:p-8 w-full"
       >
-        <div className="max-w-7xl mx-auto w-full animate-fadeIn min-w-0">
-          {data && (
+        <div className={`${contentMaxClass} mx-auto w-full animate-fadeIn min-w-0`}>
+          {ready && (
             <CrossEngineAlertsBanner
               ready={ready}
               analysis={analysis ?? undefined}

@@ -1,4 +1,4 @@
-import type { FinancialData } from '../types';
+import type { FinancialData, Liability } from '../types';
 import {
   resolveSarPerUsd,
   toSAR,
@@ -15,6 +15,7 @@ import {
   getPersonalLiabilities,
   getPersonalTransactions,
 } from '../utils/wealthScope';
+import { getCreditCardLinkedAccountIds } from './creditCardLinking';
 
 export type LiquidNetWorthOptions = {
   getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number };
@@ -94,8 +95,14 @@ export function computeLiquidNetWorth(
     if ((l as { type?: string }).type === 'Credit Card') creditCardDebtSar += absAmt;
     else loanAndMortgageDebtSar += absAmt;
   }
+  const linkedCc = getCreditCardLinkedAccountIds(liab as Liability[]);
   for (const a of accounts) {
-    if ((a as { type?: string }).type === 'Credit' && (Number((a as { balance?: number }).balance) || 0) < 0) {
+    const id = String((a as { id?: string }).id ?? '');
+    if (
+      (a as { type?: string }).type === 'Credit' &&
+      (Number((a as { balance?: number }).balance) || 0) < 0 &&
+      !linkedCc.has(id)
+    ) {
       const bal = Math.abs(Number((a as { balance?: number }).balance) || 0);
       const cur = (a as { currency?: string }).currency === 'USD' ? 'USD' : 'SAR';
       creditCardDebtSar += toSAR(bal, cur, fx);

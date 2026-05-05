@@ -59,7 +59,10 @@ const Card: React.FC<CardProps> = ({ title, value, trend, tooltip, onClick, aria
   const prevValueRef = useRef<number | undefined>(undefined);
 
   const isPositive = displayTrend?.includes('+') || (displayTrend && /(surplus|under|healthy)/i.test(displayTrend));
-  const isNegative = displayTrend?.includes('-') || (displayTrend && /(deficit|over|critical|low)/i.test(displayTrend));
+  /** Avoid treating hyphenated words (e.g. "month-start") as negative; require minus before a digit. */
+  const isNegative =
+    (typeof displayTrend === 'string' && /(^|[\s(])-[\d.]/.test(displayTrend)) ||
+    (displayTrend && /(deficit|over budget|critical|low)/i.test(displayTrend));
   let trendColor = 'text-slate-500';
   if (isPositive) trendColor = 'text-green-700';
   if (isNegative) trendColor = 'text-red-700';

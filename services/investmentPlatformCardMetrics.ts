@@ -4,8 +4,9 @@
  */
 
 import type { Account, FinancialData, Holding, InvestmentPortfolio, InvestmentTransaction, TradeCurrency } from '../types';
-import { quoteDailyPnLInBookCurrency, quoteNotionalInBookCurrency, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
-import { holdingUsesLiveQuote } from '../utils/holdingValuation';
+import { quoteDailyPnLInBookCurrency, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
+import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote } from '../utils/holdingValuation';
+import { lookupLiveQuoteForSymbol } from '../services/finnhubService';
 import {
   inferInvestmentTransactionCurrency,
   portfolioBelongsToAccount,
@@ -19,6 +20,7 @@ import {
   getPersonalCommodityHoldings,
   getPersonalInvestments,
 } from '../utils/wealthScope';
+import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 
 export type SimulatedPriceMap = Record<string, { price: number; change?: number; changePercent?: number }>;
 
@@ -40,6 +42,10 @@ export interface PlatformCardMetrics {
   totalInvestedSAR: number;
   totalWithdrawnSAR: number;
   netCapitalSAR: number;
+  /** Sum of qty×avg cost (SAR) for lots with both set — used when `unrealizedPnLBasis` is `holdings_cost`. */
+  holdingsCostBasisSAR?: number;
+  /** When set on output, unrealized P/L and ROI use holdings vs cost (portfolio rows), not value − net deposits. */
+  unrealizedPnLBasis?: 'net_capital' | 'holdings_cost';
 }
 
 export interface PlatformMetricValidationResult {
@@ -57,6 +63,11 @@ export interface ComputePlatformCardMetricsArgs {
   simulatedPrices: SimulatedPriceMap;
   /** Single portfolio currency, or undefined when mixed / unknown (same fallbacks as PlatformCard). */
   platformCurrency: TradeCurrency | undefined;
+  /**
+   * `net_capital` (default): total value − (deposits − withdrawals) — whole-platform economics.
+   * `holdings_cost`: unrealized P/L = holdings value − sum(qty×avg cost); ROI vs that cost — matches holdings table & portfolio rows.
+   */
+  unrealizedPnLBasis?: 'net_capital' | 'holdings_cost';
 }
 
 /**
@@ -73,34 +84,17 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
     availableCashByCurrency,
     simulatedPrices,
     platformCurrency,
+    unrealizedPnLBasis = 'net_capital',
   } = args;
 
-  let valueSarFromSim = 0;
-  let valueUsdFromSim = 0;
-  let valueSarFromStored = 0;
-  let valueUsdFromStored = 0;
-
+  /** One implementation for position market value: {@link effectiveHoldingValueInBookCurrency} (same as holdings table / Overview). */
+  let holdingsValueInSAR = 0;
   portfolios.forEach((p) => {
-    const cur = ((p.currency as TradeCurrency) || 'USD') as TradeCurrency;
+    const cur = resolveInvestmentPortfolioCurrency(p);
     (p.holdings || []).forEach((h: Holding) => {
-      const symbol = (h.symbol || '').trim().toUpperCase();
-      const qty = Number(h.quantity ?? 0);
-      const avgCost = Number(h.avgCost ?? 0);
-      const costBasis = Number.isFinite(avgCost) && Number.isFinite(qty) ? avgCost * qty : 0;
-      const priceInfo = holdingUsesLiveQuote(h) ? simulatedPrices[symbol] : undefined;
-      if (priceInfo && Number.isFinite(priceInfo.price) && qty > 0) {
-        const liveInBook = quoteNotionalInBookCurrency(priceInfo.price, qty, symbol, cur, rate);
-        if (Number.isFinite(liveInBook) && liveInBook > 0) {
-          if (cur === 'SAR') valueSarFromSim += liveInBook;
-          else valueUsdFromSim += liveInBook;
-          return;
-        }
-      }
-      const stored = Number.isFinite(h.currentValue) ? (h.currentValue as number) : 0;
-      const effective = stored > 0 ? stored : costBasis > 0 ? costBasis : 0;
-      if (!Number.isFinite(effective) || effective <= 0) return;
-      if (cur === 'SAR') valueSarFromStored += effective;
-      else valueUsdFromStored += effective;
+      const v = effectiveHoldingValueInBookCurrency(h, cur, simulatedPrices, rate);
+      if (!Number.isFinite(v) || v <= 0) return;
+      holdingsValueInSAR += toSAR(v, cur, rate);
     });
   });
 
@@ -108,7 +102,6 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
     { SAR: availableCashByCurrency.SAR ?? 0, USD: availableCashByCurrency.USD ?? 0 },
     rate,
   );
-  const holdingsValueInSAR = valueSarFromSim + valueSarFromStored + (valueUsdFromStored + valueUsdFromSim) * rate;
   const totalValueInSAR = holdingsValueInSAR + cashInSar;
   const holdingsValue =
     platformCurrency === 'SAR'
@@ -123,7 +116,7 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
         ? totalValueInSAR / rate
         : totalValueInSAR;
   const holdingsCostBasisSAR = portfolios.reduce((sum, p) => {
-    const cur = ((p.currency as TradeCurrency) || 'USD') as TradeCurrency;
+    const cur = resolveInvestmentPortfolioCurrency(p);
     const cost = (p.holdings || []).reduce((s: number, h: Holding) => {
       const qty = Number(h.quantity ?? 0);
       const avg = Number(h.avgCost ?? 0);
@@ -229,12 +222,15 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
   let dailySar = 0;
   let dailyUsd = 0;
   portfolios.forEach((p) => {
-    const cur = ((p.currency as TradeCurrency) || 'USD') as TradeCurrency;
+    const cur = resolveInvestmentPortfolioCurrency(p);
     (p.holdings || []).forEach((h: Holding) => {
-      const symbol = (h.symbol || '').trim().toUpperCase();
-      const info = holdingUsesLiveQuote(h) ? simulatedPrices[symbol] : undefined;
-      if (!info || !Number.isFinite(info.change) || (h.quantity ?? 0) <= 0) return;
-      const d = quoteDailyPnLInBookCurrency(info.change as number, h.quantity || 0, symbol, cur, rate);
+      if (!holdingUsesLiveQuote(h)) return;
+      const qty = h.quantity ?? 0;
+      if (qty <= 0) return;
+      const symRaw = (h.symbol || '').trim();
+      const info = lookupLiveQuoteForSymbol(simulatedPrices, symRaw);
+      if (!info || !Number.isFinite(info.change)) return;
+      const d = quoteDailyPnLInBookCurrency(info.change, qty, symRaw.toUpperCase(), cur, rate);
       if (cur === 'SAR') dailySar += d;
       else dailyUsd += d;
     });
@@ -272,8 +268,181 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
     totalInvestedSAR,
     totalWithdrawnSAR,
     netCapitalSAR,
+    holdingsCostBasisSAR,
+    unrealizedPnLBasis,
   };
-  return sanitizeAndValidatePlatformMetrics(out, platformCurrency, rate);
+  return sanitizeAndValidatePlatformMetrics(out, platformCurrency, rate, { unrealizedPnLBasis });
+}
+
+export type PortfolioMetricsBundle = {
+  metricsByPortfolioId: Map<string, PlatformCardMetrics>;
+  /**
+   * Full account SAR/USD tradable buckets repeated per portfolio id (same values for every sibling).
+   * Broker cash is one pooled ledger per platform — not split across portfolios.
+   */
+  allocatedCashByPortfolioId: Map<string, { SAR: number; USD: number }>;
+};
+
+function transactionPortfolioIdTrimmed(t: InvestmentTransaction): string {
+  return String(t.portfolioId ?? (t as { portfolio_id?: string }).portfolio_id ?? '').trim();
+}
+
+/** Account-level deposits/withdrawals without `portfolioId` — allocate across siblings for KPI math. */
+function isOrphanPortfolioCashFlowTx(t: InvestmentTransaction): boolean {
+  if (transactionPortfolioIdTrimmed(t)) return false;
+  return (
+    isInvestmentTransactionType(t.type, 'deposit') || isInvestmentTransactionType(t.type, 'withdrawal')
+  );
+}
+
+/**
+ * Weights for splitting orphan cashflows: each portfolio’s live position value in SAR (same basis as holdings KPIs).
+ */
+function portfolioSiblingAttributionWeights(
+  siblingPortfolios: InvestmentPortfolio[],
+  rate: number,
+  simulatedPrices: SimulatedPriceMap,
+): number[] {
+  const sarEach = siblingPortfolios.map((p) => {
+    const cur = resolveInvestmentPortfolioCurrency(p);
+    let sumBook = 0;
+    (p.holdings || []).forEach((h: Holding) => {
+      const v = effectiveHoldingValueInBookCurrency(h, cur, simulatedPrices, rate);
+      if (Number.isFinite(v) && v > 0) sumBook += v;
+    });
+    return toSAR(sumBook, cur, rate);
+  });
+  const total = sarEach.reduce((s, v) => s + v, 0);
+  const n = Math.max(1, siblingPortfolios.length);
+  if (!(total > 0)) return siblingPortfolios.map(() => 1 / n);
+  return sarEach.map((v) => v / total);
+}
+
+/**
+ * Ledger rows tagged to this portfolio + proportional share of orphan deposits/withdrawals (no `portfolioId`).
+ */
+function transactionsAttributedToPortfolioForKpis(args: {
+  portfolioId: string;
+  portfolioIndex: number;
+  transactions: InvestmentTransaction[];
+  weights: number[];
+}): InvestmentTransaction[] {
+  const { portfolioId, portfolioIndex, transactions, weights } = args;
+  const w = weights[portfolioIndex] ?? 0;
+  const out: InvestmentTransaction[] = [];
+
+  for (const t of transactions) {
+    const pid = transactionPortfolioIdTrimmed(t);
+    if (pid === portfolioId) {
+      out.push(t);
+      continue;
+    }
+    if (pid) continue;
+
+    if (!isOrphanPortfolioCashFlowTx(t) || !(w > 0)) continue;
+    const base = getInvestmentTransactionCashAmount(t as any);
+    if (!(base > 0)) continue;
+    const scaled = base * w;
+    if (!(scaled > 1e-12)) continue;
+    out.push({
+      ...t,
+      id: `${t.id}~kpiAlloc~${portfolioId}`,
+      portfolioId,
+      total: scaled,
+    } as InvestmentTransaction);
+  }
+
+  return out;
+}
+
+/**
+ * Per-portfolio KPIs for one platform row: same ledger rules as {@link computePlatformCardMetrics}.
+ *
+ * - **Single portfolio** on the account: use the **full** platform transaction list + **pooled** tradable cash and
+ *   **`net_capital`** basis so Invested / Withdrawn / ROI match the platform header (one book).
+ * - **Multiple portfolios**: rows use **positions-only cash** (`0` in metrics) but **split** account-level deposits &
+ *   withdrawals without `portfolioId` across siblings by **holdings market value** weights; ROI/P&amp;L stay
+ *   `holdings_cost` (per holdings table).
+ */
+export function computePortfolioMetricsBundle(args: {
+  /** Portfolios listed on this account row (siblings on the same broker). */
+  siblingPortfolios: InvestmentPortfolio[];
+  /** Investment transactions already scoped to this platform account (same as PlatformCard). */
+  transactions: InvestmentTransaction[];
+  accounts: Account[];
+  allInvestments: InvestmentPortfolio[];
+  sarPerUsd: number;
+  simulatedPrices: SimulatedPriceMap;
+  accountAvailableCashByCurrency: { SAR: number; USD: number };
+}): PortfolioMetricsBundle {
+  const {
+    siblingPortfolios,
+    transactions,
+    accounts: accList,
+    allInvestments: invList,
+    sarPerUsd: rate,
+    simulatedPrices,
+    accountAvailableCashByCurrency,
+  } = args;
+
+  const metricsByPortfolioId = new Map<string, PlatformCardMetrics>();
+  const allocatedCashByPortfolioId = new Map<string, { SAR: number; USD: number }>();
+
+  const sarBucket = Math.max(0, accountAvailableCashByCurrency.SAR ?? 0);
+  const usdBucket = Math.max(0, accountAvailableCashByCurrency.USD ?? 0);
+  const sharedBuckets = { SAR: sarBucket, USD: usdBucket };
+
+  if (siblingPortfolios.length === 1) {
+    const p = siblingPortfolios[0];
+    allocatedCashByPortfolioId.set(p.id, { ...sharedBuckets });
+    const pc = resolveInvestmentPortfolioCurrency(p);
+    metricsByPortfolioId.set(
+      p.id,
+      computePlatformCardMetrics({
+        portfolios: [p],
+        transactions,
+        accounts: accList,
+        allInvestments: invList,
+        sarPerUsd: rate,
+        availableCashByCurrency: accountAvailableCashByCurrency,
+        simulatedPrices,
+        platformCurrency: pc,
+        unrealizedPnLBasis: 'net_capital',
+      }),
+    );
+    return { metricsByPortfolioId, allocatedCashByPortfolioId };
+  }
+
+  const weights = portfolioSiblingAttributionWeights(siblingPortfolios, rate, simulatedPrices);
+
+  for (let i = 0; i < siblingPortfolios.length; i++) {
+    const p = siblingPortfolios[i];
+    allocatedCashByPortfolioId.set(p.id, { ...sharedBuckets });
+
+    const filtered = transactionsAttributedToPortfolioForKpis({
+      portfolioId: p.id,
+      portfolioIndex: i,
+      transactions,
+      weights,
+    });
+    const pc = resolveInvestmentPortfolioCurrency(p);
+    metricsByPortfolioId.set(
+      p.id,
+      computePlatformCardMetrics({
+        portfolios: [p],
+        transactions: filtered,
+        accounts: accList,
+        allInvestments: invList,
+        sarPerUsd: rate,
+        availableCashByCurrency: { SAR: 0, USD: 0 },
+        simulatedPrices,
+        platformCurrency: pc,
+        unrealizedPnLBasis: 'holdings_cost',
+      }),
+    );
+  }
+
+  return { metricsByPortfolioId, allocatedCashByPortfolioId };
 }
 
 const RECONCILIATION_EPSILON = 1e-6;
@@ -293,12 +462,21 @@ export function validatePlatformMetrics(
   const m = metrics;
 
   for (const [k, v] of Object.entries(m)) {
+    if (typeof v !== 'number') continue;
     if (!Number.isFinite(v)) issues.push(`${k} is not finite`);
   }
 
-  const derivedGain = m.totalValueInSAR - m.netCapitalSAR;
-  if (Math.abs(derivedGain - m.totalGainLossSAR) > RECONCILIATION_EPSILON) {
-    issues.push('totalGainLossSAR mismatch with totalValueInSAR - netCapitalSAR');
+  if (m.unrealizedPnLBasis !== 'holdings_cost') {
+    const derivedGain = m.totalValueInSAR - m.netCapitalSAR;
+    if (Math.abs(derivedGain - m.totalGainLossSAR) > RECONCILIATION_EPSILON) {
+      issues.push('totalGainLossSAR mismatch with totalValueInSAR - netCapitalSAR');
+    }
+  } else {
+    const basis = m.holdingsCostBasisSAR ?? 0;
+    const derivedUnreal = m.holdingsValueInSAR - basis;
+    if (Math.abs(derivedUnreal - m.totalGainLossSAR) > RECONCILIATION_EPSILON) {
+      issues.push('totalGainLossSAR mismatch with holdingsValueInSAR - holdingsCostBasisSAR');
+    }
   }
 
   const derivedNetCapital = Math.max(0, m.totalInvestedSAR - m.totalWithdrawnSAR);
@@ -321,8 +499,12 @@ function sanitizeAndValidatePlatformMetrics(
   metrics: PlatformCardMetrics,
   platformCurrency: TradeCurrency | undefined,
   sarPerUsd: number,
+  opts?: { unrealizedPnLBasis?: 'net_capital' | 'holdings_cost' },
 ): PlatformCardMetrics {
   const rate = sanitizeFinite(sarPerUsd) > 0 ? sarPerUsd : 1;
+  const basisMode = opts?.unrealizedPnLBasis ?? metrics.unrealizedPnLBasis ?? 'net_capital';
+  const basisSAR = sanitizeFinite(metrics.holdingsCostBasisSAR ?? 0);
+
   const safe: PlatformCardMetrics = {
     totalValue: sanitizeFinite(metrics.totalValue),
     totalValueInSAR: sanitizeFinite(metrics.totalValueInSAR),
@@ -339,11 +521,20 @@ function sanitizeAndValidatePlatformMetrics(
     totalInvestedSAR: Math.max(0, sanitizeFinite(metrics.totalInvestedSAR)),
     totalWithdrawnSAR: Math.max(0, sanitizeFinite(metrics.totalWithdrawnSAR)),
     netCapitalSAR: Math.max(0, sanitizeFinite(metrics.netCapitalSAR)),
+    holdingsCostBasisSAR: basisSAR,
+    unrealizedPnLBasis: basisMode === 'holdings_cost' ? 'holdings_cost' : undefined,
   };
 
   // Canonical derivations (single source of truth).
   safe.netCapitalSAR = Math.max(0, safe.totalInvestedSAR - safe.totalWithdrawnSAR);
-  safe.totalGainLossSAR = safe.totalValueInSAR - safe.netCapitalSAR;
+  if (basisMode === 'holdings_cost') {
+    safe.totalGainLossSAR = safe.holdingsValueInSAR - basisSAR;
+    safe.roi = basisSAR > 1e-9 ? (safe.totalGainLossSAR / basisSAR) * 100 : 0;
+  } else {
+    safe.totalGainLossSAR = safe.totalValueInSAR - safe.netCapitalSAR;
+    safe.roi =
+      safe.netCapitalSAR > 1e-9 ? (safe.totalGainLossSAR / safe.netCapitalSAR) * 100 : 0;
+  }
   safe.totalGainLoss =
     platformCurrency === 'USD' ? safe.totalGainLossSAR / rate
       : platformCurrency === 'SAR' ? safe.totalGainLossSAR
@@ -360,7 +551,6 @@ function sanitizeAndValidatePlatformMetrics(
     platformCurrency === 'USD' ? safe.totalWithdrawnSAR / rate
       : platformCurrency === 'SAR' ? safe.totalWithdrawnSAR
       : safe.totalWithdrawnSAR;
-  safe.roi = safe.netCapitalSAR > 0 ? (safe.totalGainLossSAR / safe.netCapitalSAR) * 100 : 0;
 
   safe.holdingsValueInSAR = Math.max(0, sanitizeFinite(metrics.holdingsValueInSAR));
   safe.holdingsValue =
@@ -397,7 +587,7 @@ export function computePersonalPlatformCardRow(
       return canon === account.id || txAccountId === account.id;
     })
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  const currencies = [...new Set(portfoliosOnAccount.map((p) => (p.currency || 'USD') as TradeCurrency))];
+  const currencies = [...new Set(portfoliosOnAccount.map((p) => resolveInvestmentPortfolioCurrency(p)))];
   const platformCurrency = currencies.length === 1 ? currencies[0] : undefined;
   return computePlatformCardMetrics({
     portfolios: portfoliosOnAccount,

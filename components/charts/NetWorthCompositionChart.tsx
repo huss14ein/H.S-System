@@ -13,6 +13,7 @@ import {
     NW_BUCKETS_SCHEMA_V2,
 } from '../../services/netWorthSnapshot';
 import { bucketSumMatchesNetWorth, logNetWorthSnapshotDriftInDev } from '../../services/netWorthReconciliation';
+import { forwardFillDailyNetWorthRows, inheritBucketsWhenMissing } from '../../services/netWorthChartDense';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../../services/transactionFilters';
 import InfoHint from '../InfoHint';
 
@@ -264,6 +265,10 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
                 Liabilities: Math.round(x.liabilities),
             }));
 
+        if (!useLedgerEstimateWhenSparse || finalData.length >= 2) {
+            finalData = forwardFillDailyNetWorthRows(inheritBucketsWhenMissing(finalData));
+        }
+
         // If snapshots are sparse, optionally synthesize a monthly line from ledger cashflow (cashflow-only; not full NW).
         if (useLedgerEstimateWhenSparse && finalData.length < 2) {
             const txs = data.transactions ?? [];
@@ -383,7 +388,7 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
                         )}
                     </div>
                     <p className="text-xs text-slate-500 mt-1 max-w-xl">
-                        Snapshots keep one row per <strong>calendar day</strong> (local time) with the same bucket model as your dashboard; today is always refreshed from live data. Sparse history can use a <strong>ledger cashflow estimate</strong> (monthly-only trend—not true daily net worth).
+                        Snapshots keep one row per <strong>calendar day</strong> (local time) with the same bucket model as your dashboard; today is always refreshed from live data. <strong>Days without a new snapshot</strong> carry forward the previous day&apos;s amounts (so the stack never drops to a false zero). Sparse history can use a <strong>ledger cashflow estimate</strong> (monthly-only trend—not true daily net worth).
                     </p>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
                         <span className="inline-flex items-center rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-semibold text-emerald-900">
@@ -567,6 +572,7 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
                         <p className="text-slate-500">
                             sum={Math.round(liveReconcile.componentsSum)} · NW={Math.round(liveBuckets.netWorth)}
                         </p>
+                        <p className="text-slate-500 mt-1">Full ledger + transfer checks: app menu → System &amp; APIs Health → Data reconciliation.</p>
                     </div>
                 </details>
             )}

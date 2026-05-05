@@ -226,7 +226,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const analysisValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
         const fx = resolveSarPerUsd(data, exchangeRate);
-        const monthlyKpis = computeMonthlyReportFinancialKpis(data, fx, getAvailableCashForAccount, simulatedPrices);
+        const monthlyKpis = computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
         if (!Number.isFinite(fx) || fx <= 0) warnings.push('Exchange rate is invalid — USD transactions may not convert correctly.');
         if (!Number.isFinite(monthlyKpis.budgetVariance)) warnings.push('Budget variance could not be computed.');
         if (!Number.isFinite(monthlyKpis.roi)) warnings.push('Investment ROI could not be computed.');
@@ -239,7 +239,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         const reconstructedNw = assetsSum - debtMag;
         const nwFromBuckets = computeAllNetWorthChartBucketsSAR(data, fx, { getAvailableCashForAccount }).netWorth;
         if (Math.abs(reconstructedNw - nwFromBuckets) > 2) {
-            warnings.push('Position bars do not reconcile to net worth — check accounts, liabilities, and FX.');
+            warnings.push('Position bars do not reconcile to net worth — check accounts, liabilities, and FX (System & APIs Health → Data reconciliation).');
         }
         if ((contextData.trendData ?? []).every((x) => (x.income ?? 0) === 0 && (x.expenses ?? 0) === 0)) {
             warnings.push('No income/expense signal in the last 6 months (after SAR conversion).');

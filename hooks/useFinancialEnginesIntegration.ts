@@ -92,10 +92,11 @@ export interface UseFinancialEnginesIntegrationResult {
  * Use in Plan, Budgets, Wealth Ultra, and Investment Plan for shared constraints and alerts.
  */
 export function useFinancialEnginesIntegration(): UseFinancialEnginesIntegrationResult {
-  const { data } = useContext(DataContext)!;
+  const { data, loading } = useContext(DataContext)!;
 
   const result = useMemo(() => {
-    if (!data) {
+    /** Avoid cross-engine alerts from stale `initialData` while Supabase fetch is in flight — fixes banner flash then disappearance. */
+    if (!data || loading) {
       return {
         context: null,
         analysis: null,
@@ -135,6 +136,7 @@ export function useFinancialEnginesIntegration(): UseFinancialEnginesIntegration
       ready: true,
     };
   }, [
+    loading,
     data?.transactions,
     data?.accounts,
     data?.budgets,

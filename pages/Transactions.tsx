@@ -1131,7 +1131,7 @@ const RecurringModal: React.FC<{
 };
 
 const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
-    const { data, loading, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth } = useContext(DataContext)!;
+    const { data, loading, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const recurringList = data?.recurringTransactions ?? [];
     const auth = useContext(AuthContext);
@@ -1154,6 +1154,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     const [isRecurringModalOpen, setIsRecurringModalOpen] = useState(false);
     const [recurringToEdit, setRecurringToEdit] = useState<RecurringTransaction | null>(null);
     const [applyingRecurring, setApplyingRecurring] = useState(false);
+    const [applyingRecurringRuleId, setApplyingRecurringRuleId] = useState<string | null>(null);
     
     const [filters, setFilters] = useState({ 
         accountId: 'all', 
@@ -1573,11 +1574,36 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         setApplyingRecurring(true);
         try {
             const { applied, skipped } = await applyRecurringForMonth(year, month);
-            alert(`Recurring: ${applied} transaction(s) created, ${skipped} already applied for this month.`);
+            alert(
+                `Recurring: ${applied} transaction(s) created, ${skipped} not posted (e.g. already in this month, rule missing, or post failed — see any error above).`,
+            );
         } catch (e) {
             // already alerted in context
         } finally {
             setApplyingRecurring(false);
+        }
+    };
+
+    const handleApplyOneRecurringForMonth = async (ruleId: string) => {
+        const [year, month] = filters.month.split('-').map(Number);
+        setApplyingRecurringRuleId(ruleId);
+        try {
+            const res = await applyRecurringRuleForMonth(ruleId, year, month);
+            if (res.applied) {
+                alert('Created 1 transaction from this rule for the selected month.');
+            } else if (res.skipReason === 'already') {
+                alert('This rule already has a matching transaction in that month (nothing added).');
+            } else if (res.skipReason === 'disabled') {
+                alert('This recurring rule is paused. Enable it, then apply again.');
+            } else if (res.skipReason === 'manual') {
+                alert('This rule is set to add manually only — use Add transaction instead.');
+            } else if (res.skipReason === 'not_found') {
+                alert('That recurring rule no longer exists. Refresh the page.');
+            } else {
+                alert('Could not create the transaction. If an error appeared above, fix it and try again.');
+            }
+        } finally {
+            setApplyingRecurringRuleId(null);
         }
     };
     
@@ -1808,14 +1834,14 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 defaultExpanded
                 headerAction={
                     <div className="flex items-center gap-2">
-                        <InfoHint text="Define templates (e.g. salary deposit, rent). Use &quot;Apply for this month&quot; to create actual transactions from them. Each rule runs once per month on the chosen day." />
+                        <InfoHint text="Define templates (e.g. salary deposit, rent). Use Apply all for the month shown in filters, or Apply on each row for one rule only. Each eligible rule posts once per month on the chosen day." />
                         <button
                             type="button"
                             onClick={handleApplyRecurringForMonth}
-                            disabled={applyingRecurring || recurringList.length === 0}
+                            disabled={applyingRecurring || applyingRecurringRuleId !== null || recurringList.length === 0}
                             className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            {applyingRecurring ? 'Applying…' : `Apply for ${new Date(filters.month + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`}
+                            {applyingRecurring ? 'Applying…' : `Apply all for ${new Date(filters.month + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`}
                         </button>
                         <button type="button" onClick={() => { setRecurringToEdit(null); setIsRecurringModalOpen(true); }} className="btn-outline">
                             Add recurring
@@ -1841,7 +1867,27 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                     </span>
                                     {!r.enabled && <span className="ml-2 text-xs text-amber-600">(paused)</span>}
                                 </div>
-                                <div className="flex items-center gap-1">
+                                <div className="flex flex-wrap items-center gap-1">
+                                    <button
+                                        type="button"
+                                        onClick={() => handleApplyOneRecurringForMonth(r.id)}
+                                        disabled={
+                                            applyingRecurring ||
+                                            applyingRecurringRuleId !== null ||
+                                            !r.enabled ||
+                                            r.addManually === true
+                                        }
+                                        className="btn-outline text-xs px-2 py-1 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                                        title={
+                                            !r.enabled
+                                                ? 'Enable this rule to post from it.'
+                                                : r.addManually
+                                                  ? 'Manual-only rules are not auto-posted.'
+                                                  : `Post this rule once for ${new Date(filters.month + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`
+                                        }
+                                    >
+                                        {applyingRecurringRuleId === r.id ? 'Applying…' : 'Apply'}
+                                    </button>
                                     <button type="button" onClick={() => { setRecurringToEdit(r); setIsRecurringModalOpen(true); }} className="p-1.5 text-gray-500 hover:text-primary rounded" title="Edit"><PencilIcon className="h-4 w-4" /></button>
                                     <button type="button" onClick={() => deleteRecurringTransaction(r.id)} className="p-1.5 text-gray-500 hover:text-red-600 rounded" title="Delete"><TrashIcon className="h-4 w-4" /></button>
                                 </div>

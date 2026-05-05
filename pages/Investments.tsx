@@ -30,7 +30,6 @@ import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
 import InvestmentOverview from './InvestmentOverview';
-import InvestmentPlanAutopilot from './InvestmentPlanAutopilot';
 import { useMarketData } from '../context/MarketDataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useAI } from '../context/AiContext';
@@ -47,10 +46,11 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import LivePricesStatus from '../components/LivePricesStatus';
 import { CurrencyDollarIcon } from '../components/icons/CurrencyDollarIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
+import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import type { HoldingFundamentals } from '../services/finnhubService';
-import { getHoldingFundamentals } from '../services/finnhubService';
+import { getHoldingFundamentals, lookupLiveQuoteForSymbol } from '../services/finnhubService';
 import { dollarToShareQuantity } from '../services/portfolioConstruction';
 import { checkExtendedHoursGuardrail, getTIFLabel, getNBBOStub, getSORStub, getVWAPSlices, type TIF } from '../services/tradingExecution';
 import { getSettlementDate, isSettled } from '../services/riskCompliance';
@@ -63,10 +63,8 @@ import { sellScore } from '../services/decisionEngine';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import type { Transaction } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
-import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import {
     resolveSarPerUsd,
-    toSAR,
     totalLiquidCashSARFromAccounts,
     tradableCashBucketToSAR,
     availableTradableCashInLedgerCurrency,
@@ -75,7 +73,7 @@ import {
     quoteNotionalInBookCurrency,
     quoteDailyPnLInBookCurrency,
 } from '../utils/currencyMath';
-import { holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
+import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalWealthData } from '../utils/wealthScope';
 import {
     inferInvestmentTransactionCurrency,
@@ -84,7 +82,11 @@ import {
     resolveInvestmentTransactionAccountId,
 } from '../utils/investmentLedgerCurrency';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
-import { computePersonalPlatformsRollupSAR, computePlatformCardMetrics } from '../services/investmentPlatformCardMetrics';
+import {
+  computePersonalPlatformsRollupSAR,
+  computePlatformCardMetrics,
+  computePortfolioMetricsBundle,
+} from '../services/investmentPlatformCardMetrics';
 import { computeHeadlinePersonalInvestmentRoiDecimal } from '../services/investmentKpiCore';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 import { aggregateMonthlyBudgetAcrossPortfolios, getEffectivePlanForPortfolio } from '../utils/investmentPlanPerPortfolio';
@@ -92,9 +94,12 @@ import { computeGoalMonthlyFundingEnvelopeSar } from '../services/goalProjection
 import { computeGoalTimelineStatus } from '../services/goalMetrics';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { engineSleeveKeyToTickerStatus, inferEngineSleeveKeyFromHolding } from '../services/inferHoldingUniverseClassification';
+import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
+import { parseMoneyInput, roundAvgCostPerUnit, roundMoney } from '../utils/money';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
+const InvestmentPlanView = lazy(() => import('./InvestmentPlanView'));
 
 
 
@@ -936,7 +941,7 @@ const RecordTradeModal: React.FC<{
         const pr = parseFloat(price);
         if (!Number.isFinite(q) || !Number.isFinite(pr) || q <= 0 || pr <= 0) return { allowed: true as const };
         const notional = q * pr;
-        const book = ((p.currency as TradeCurrency) || 'USD') as TradeCurrency;
+        const book = resolveInvestmentPortfolioCurrency(p);
         const effVal = (h: Holding) => {
             const s = (h.symbol || '').toUpperCase().trim();
             const qty = Number(h.quantity ?? 0);
@@ -970,7 +975,7 @@ const RecordTradeModal: React.FC<{
         const norm = symbol.toUpperCase().trim();
         const h = p.holdings.find((x) => x.symbol.toUpperCase().trim() === norm);
         if (!h) return null;
-        const book = ((p.currency as TradeCurrency) || 'USD') as TradeCurrency;
+        const book = resolveInvestmentPortfolioCurrency(p);
         const effVal = (x: Holding) => {
             const s = (x.symbol || '').toUpperCase().trim();
             const qty = Number(x.quantity ?? 0);
@@ -1644,9 +1649,9 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
 
     if (!holding) return null;
 
-    const portfolioCurrency: TradeCurrency = (portfolio?.currency as TradeCurrency) || 'USD';
-    const inferredHoldingCurrency = inferInstrumentCurrencyFromSymbol((holding.symbol || '').trim().toUpperCase());
-    const holdingCurrency: TradeCurrency = inferredHoldingCurrency ?? portfolioCurrency;
+    const portfolioCurrency: TradeCurrency = portfolio ? resolveInvestmentPortfolioCurrency(portfolio) : 'USD';
+    /** Book/display currency follows the portfolio — not the listing venue (US symbols no longer force USD rows). */
+    const holdingCurrency: TradeCurrency = portfolioCurrency;
     const fundamentalsCurrencyRaw = (fundamentals?.currency || '').toUpperCase();
     const fundamentalsCurrency: TradeCurrency =
         fundamentalsCurrencyRaw === 'SAR' ? 'SAR' : 'USD';
@@ -1984,12 +1989,27 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
 
 const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (holding: Holding) => void, holding: Holding | null }> = ({ isOpen, onClose, onSave, holding }) => {
     const { data } = useContext(DataContext)!;
+    const { simulatedPrices } = useMarketData();
+    const { formatCurrencyString } = useFormatCurrency();
     const [name, setName] = useState('');
     const [zakahClass, setZakahClass] = useState<'Zakatable' | 'Non-Zakatable'>('Zakatable');
     const [assetClass, setAssetClass] = useState<HoldingAssetClass>('Stock');
     const [goalId, setGoalId] = useState<string | undefined>();
     const [acquisitionDate, setAcquisitionDate] = useState('');
-    
+    const [manualTotalStr, setManualTotalStr] = useState('');
+    const [manualPriceStr, setManualPriceStr] = useState('');
+    const [manualValError, setManualValError] = useState<string | null>(null);
+
+    const portfolioForHolding = useMemo(() => {
+        if (!holding || !data) return null;
+        const personal = getPersonalInvestments(data);
+        const fromPersonal = personal.find((p) => p.holdings?.some((h) => h.id === holding.id));
+        if (fromPersonal) return fromPersonal;
+        return (data.investments ?? []).find((p) => p.holdings?.some((h) => h.id === holding.id)) ?? null;
+    }, [data, holding]);
+
+    const bookCurrency: TradeCurrency = portfolioForHolding ? resolveInvestmentPortfolioCurrency(portfolioForHolding) : 'USD';
+
     useEffect(() => {
         if (holding) {
             const currentName = holding.name || (holding as any).name || '';
@@ -1998,6 +2018,12 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
             setAssetClass((holding.assetClass as HoldingAssetClass) || 'Stock');
             setGoalId(holding.goalId);
             setAcquisitionDate(holding.acquisitionDate ?? (holding as { acquisition_date?: string }).acquisition_date ?? '');
+            const cv = Number(holding.currentValue);
+            const qty = Number(holding.quantity) || 0;
+            setManualTotalStr(Number.isFinite(cv) && cv >= 0 ? String(cv) : '');
+            const pps = qty > 0 && Number.isFinite(cv) ? cv / qty : Number(holding.avgCost ?? 0);
+            setManualPriceStr(Number.isFinite(pps) && pps >= 0 ? String(pps) : '');
+            setManualValError(null);
             if (!currentName.trim() && holding.symbol.trim().length >= 2) {
                 fetchCompanyNameForSymbol(holding.symbol).then((apiName) => {
                     if (apiName) setName(apiName);
@@ -2006,18 +2032,107 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
         }
     }, [holding, isOpen]);
 
+    const needsManualMarketValue = useMemo(() => {
+        if (!holding) return false;
+        if (!holdingUsesLiveQuote(holding)) return true;
+        const sym = (holding.symbol || '').trim().toUpperCase();
+        const px = simulatedPrices[sym]?.price;
+        return !(px != null && Number.isFinite(px) && px > 0);
+    }, [holding, simulatedPrices]);
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (holding) {
             const ad = acquisitionDate.trim();
-            onSave({ ...holding, name, zakahClass, assetClass, goalId, acquisitionDate: ad ? ad.slice(0, 10) : undefined });
+            let currentValue = holding.currentValue;
+            if (needsManualMarketValue) {
+                const qty = Number(holding.quantity) || 0;
+                const totalTrim = manualTotalStr.trim();
+                const priceTrim = manualPriceStr.trim();
+                const totalParsed = totalTrim === '' ? NaN : parseMoneyInput(manualTotalStr);
+                const priceParsed = priceTrim === '' ? NaN : parseMoneyInput(manualPriceStr);
+                if (qty > 0) {
+                    if (totalTrim !== '' && Number.isFinite(totalParsed) && totalParsed >= 0) {
+                        currentValue = totalParsed;
+                    } else if (priceTrim !== '' && Number.isFinite(priceParsed) && priceParsed >= 0) {
+                        currentValue = priceParsed * qty;
+                    } else {
+                        setManualValError(`Enter a valid market total or price per share (${bookCurrency}).`);
+                        return;
+                    }
+                } else {
+                    if (totalTrim === '' || !Number.isFinite(totalParsed) || totalParsed < 0) {
+                        setManualValError(`Enter a valid current market value (${bookCurrency}).`);
+                        return;
+                    }
+                    currentValue = totalParsed;
+                }
+            }
+            setManualValError(null);
+            onSave({ ...holding, name, zakahClass, assetClass, goalId, acquisitionDate: ad ? ad.slice(0, 10) : undefined, currentValue });
             onClose();
         }
     };
     if (!holding) return null;
+
+    const qtyNum = Number(holding.quantity) || 0;
+    const syncPriceFromTotal = () => {
+        const t = parseMoneyInput(manualTotalStr);
+        if (qtyNum > 0 && Number.isFinite(t) && t >= 0) {
+            setManualPriceStr(String(roundAvgCostPerUnit(t / qtyNum)));
+        }
+    };
+    const syncTotalFromPrice = () => {
+        const p = parseMoneyInput(manualPriceStr);
+        if (qtyNum > 0 && Number.isFinite(p) && p >= 0) {
+            setManualTotalStr(String(roundMoney(p * qtyNum)));
+        }
+    };
+
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Edit ${holding.symbol}`}>
              <form onSubmit={handleSubmit} className="space-y-4">
+                {needsManualMarketValue && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-3 space-y-2">
+                        <p className="text-sm font-medium text-amber-900">Manual market value</p>
+                        <p className="text-xs text-amber-800/90">
+                            {holdingUsesLiveQuote(holding)
+                                ? 'No live price is available for this symbol. Enter the current total or price per share so totals and P/L stay accurate.'
+                                : 'This holding is not updated from live quotes. Enter the current market total or price per share.'}
+                        </p>
+                        <p className="text-xs text-slate-600">
+                            Amounts are in <strong>{bookCurrency}</strong> (portfolio book currency). Quantity:{' '}
+                            <strong className="tabular-nums">{qtyNum}</strong>
+                        </p>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">Current market value (total)</label>
+                            <input
+                                type="text"
+                                inputMode="decimal"
+                                value={manualTotalStr}
+                                onChange={(e) => setManualTotalStr(e.target.value)}
+                                onBlur={syncPriceFromTotal}
+                                className="mt-1 w-full p-2 border border-gray-300 rounded-md tabular-nums"
+                                placeholder={formatCurrencyString(0, { inCurrency: bookCurrency, digits: 2 })}
+                            />
+                        </div>
+                        {qtyNum > 0 && (
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Or price per share / unit</label>
+                                <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={manualPriceStr}
+                                    onChange={(e) => setManualPriceStr(e.target.value)}
+                                    onBlur={syncTotalFromPrice}
+                                    className="mt-1 w-full p-2 border border-gray-300 rounded-md tabular-nums"
+                                    placeholder={formatCurrencyString(0, { inCurrency: bookCurrency, digits: HOLDING_PER_UNIT_DECIMALS })}
+                                />
+                            </div>
+                        )}
+                        {manualValError && <p className="text-sm text-red-600">{manualValError}</p>}
+                    </div>
+                )}
                 <div><label className="block text-sm font-medium text-gray-700">Holding Name</label><input type="text" value={name} onChange={e => setName(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md"/></div>
                 <div>
                     <label className="block text-sm font-medium text-gray-700">Asset Class</label>
@@ -2225,6 +2340,11 @@ const PlatformCard: React.FC<{
     onToggleExpanded: () => void;
 }> = (props) => {
     const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded } = props;
+    const { refreshPricesForPlatform, isRefreshing: quotesRefreshing, quotesRefreshUIScope } = useMarketData();
+    const thisPlatformSyncing =
+        quotesRefreshing &&
+        (quotesRefreshUIScope.mode === 'all' ||
+            (quotesRefreshUIScope.mode === 'platform' && quotesRefreshUIScope.accountId === platform.id));
     const portfoliosForMetrics = metricsPortfolios ?? portfolios;
     const showPersonalScopeNote = portfolios.length > portfoliosForMetrics.length;
     const { formatCurrencyString } = useFormatCurrency();
@@ -2237,7 +2357,7 @@ const PlatformCard: React.FC<{
     }, [dataCtx]);
 
     const platformCurrency = useMemo(() => {
-        const currencies = [...new Set(portfoliosForMetrics.map(p => p.currency || 'USD'))];
+        const currencies = [...new Set(portfoliosForMetrics.map((p) => resolveInvestmentPortfolioCurrency(p)))];
         return currencies.length === 1 ? (currencies[0] as TradeCurrency) : undefined;
     }, [portfoliosForMetrics]);
     const hasMixedCurrencies = platformCurrency === undefined && portfoliosForMetrics.length > 1;
@@ -2265,25 +2385,13 @@ const PlatformCard: React.FC<{
         [portfoliosForMetrics, transactions, metricsTransactions, simulatedPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx?.accounts, investmentsForInfer],
     );
 
+    /** Position values from {@link effectiveHoldingValueInBookCurrency} — matches `computePlatformCardMetrics` / portfolio KPIs. */
     const holdingsWithGains = (holdings: Holding[], bookCurrency: TradeCurrency) =>
         holdings
             .map((h) => {
                 const qty = Number(h.quantity ?? 0);
                 const totalCost = (h.avgCost ?? 0) * qty;
-                const sym = (h.symbol || '').trim().toUpperCase();
-                let liveValue: number;
-                if (holdingUsesLiveQuote(h)) {
-                    const priceInfo = simulatedPrices[sym];
-                    if (priceInfo && Number.isFinite(priceInfo.price) && qty > 0) {
-                        liveValue = quoteNotionalInBookCurrency(priceInfo.price, qty, sym, bookCurrency, sarPerUsd);
-                    } else {
-                        const currentMktPrice =
-                            qty > 0 ? (Number(h.currentValue) || 0) / qty : 0;
-                        liveValue = currentMktPrice * qty;
-                    }
-                } else {
-                    liveValue = Number.isFinite(h.currentValue) ? Number(h.currentValue) : 0;
-                }
+                let liveValue = effectiveHoldingValueInBookCurrency(h, bookCurrency, simulatedPrices, sarPerUsd);
                 if (liveValue <= 0 && totalCost > 0) liveValue = totalCost;
                 const gainLoss = liveValue - totalCost;
                 return { ...h, currentValue: liveValue, totalCost, gainLoss };
@@ -2313,13 +2421,36 @@ const PlatformCard: React.FC<{
         if (sortedPortfolios.length === 0) return;
         setPortfolioExpanded((prev) => {
             const next: Record<string, boolean> = {};
-            sortedPortfolios.forEach((p, idx) => {
+            sortedPortfolios.forEach((p) => {
                 if (typeof prev[p.id] === 'boolean') next[p.id] = prev[p.id];
-                else next[p.id] = idx === 0;
+                else next[p.id] = false;
             });
             return next;
         });
     }, [sortedPortfolios]);
+
+    const portfolioKpiBundle = useMemo(
+        () =>
+            computePortfolioMetricsBundle({
+                siblingPortfolios: sortedPortfolios,
+                transactions: metricsTransactions ?? transactions,
+                accounts: dataCtx?.accounts ?? [],
+                allInvestments: investmentsForInfer,
+                sarPerUsd,
+                simulatedPrices,
+                accountAvailableCashByCurrency: availableCashByCurrency,
+            }),
+        [
+            sortedPortfolios,
+            transactions,
+            metricsTransactions,
+            dataCtx?.accounts,
+            investmentsForInfer,
+            sarPerUsd,
+            simulatedPrices,
+            availableCashByCurrency,
+        ],
+    );
 
     const totalHoldings = portfolios.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
     const metricsHoldingsCount = portfoliosForMetrics.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
@@ -2366,9 +2497,24 @@ const PlatformCard: React.FC<{
                             ) : null}
                         </div>
                     </div>
-                    <button type="button" onClick={() => setIsTxnModalOpen(true)} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-primary rounded-xl border-2 border-primary/30 hover:bg-primary/5 shrink-0 w-full sm:w-auto transition-colors">
-                        <ArrowsRightLeftIcon className="h-4 w-4" /> Transaction Log
-                    </button>
+                    <div className="flex flex-col sm:flex-row gap-2 shrink-0 w-full sm:w-auto">
+                        <button
+                            type="button"
+                            onClick={() => void refreshPricesForPlatform(platform.id)}
+                            disabled={thisPlatformSyncing}
+                            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-slate-700 rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50 transition-colors"
+                            title="Live quotes for this platform’s tickers only"
+                        >
+                            <ArrowPathIcon className={`h-4 w-4 ${thisPlatformSyncing ? 'animate-spin' : ''}`} aria-hidden />
+                            {thisPlatformSyncing ? 'Updating…' : 'Sync quotes (this platform)'}
+                        </button>
+                        <span className="hidden sm:inline-flex items-center self-center">
+                            <InfoHint text="Fetches market data only for symbols in this platform’s portfolios. Does not refresh watchlist, planned trades, or commodities — fewer API calls than the global Refresh prices control in the header." />
+                        </span>
+                        <button type="button" onClick={() => setIsTxnModalOpen(true)} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-primary rounded-xl border-2 border-primary/30 hover:bg-primary/5 transition-colors">
+                            <ArrowsRightLeftIcon className="h-4 w-4" /> Transaction Log
+                        </button>
+                    </div>
                 </div>
                 {isExpanded && (
                 <dl className="platform-metrics grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5" aria-label="Platform metrics">
@@ -2490,9 +2636,15 @@ const PlatformCard: React.FC<{
                 ) : null}
                 {sortedPortfolios.map((portfolio) => {
                     const portfolioOpen = portfolioExpanded[portfolio.id] === true;
-                    const portfolioCurrency = (portfolio.currency as TradeCurrency) || 'USD';
+                    const portfolioCurrency = resolveInvestmentPortfolioCurrency(portfolio);
                     const portfolioHoldings = holdingsWithGains(portfolio.holdings || [], portfolioCurrency);
                     const portfolioValue = portfolioHoldings.reduce((sum, h) => sum + h.currentValue, 0);
+                    const pk = portfolioKpiBundle.metricsByPortfolioId.get(portfolio.id);
+                    const portfolioHeadlineValue = pk != null ? pk.totalValue : portfolioValue;
+                    /** Same pooled ledger as the platform header — not split across portfolios. */
+                    const portfolioCashSAR = tradableCashBucketToSAR(availableCashByCurrency, sarPerUsd);
+                    const portfolioRoi = pk?.roi ?? 0;
+                    const positionsTotalForAlloc = pk != null ? pk.holdingsValue : portfolioValue;
                     return (
                         <section key={portfolio.id} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
                             {/* Portfolio header: name, value, goal, actions — contained in box */}
@@ -2516,7 +2668,7 @@ const PlatformCard: React.FC<{
                                             )}
                                         </div>
                                         <div className="text-sm font-semibold text-primary tabular-nums mt-0.5 min-w-0 max-w-full overflow-x-auto">
-                                            <CurrencyDualDisplay value={portfolioValue} inCurrency={portfolioCurrency} size="base" className="text-primary" />
+                                            <CurrencyDualDisplay value={portfolioHeadlineValue} inCurrency={portfolioCurrency} size="base" className="text-primary" />
                                         </div>
                                         {(portfolio.holdings?.length ?? 0) > 0 && (
                                             <p className="text-xs text-slate-500 mt-0.5">{(portfolio.holdings?.length ?? 0)} holding{(portfolio.holdings?.length ?? 0) !== 1 ? 's' : ''}</p>
@@ -2534,6 +2686,122 @@ const PlatformCard: React.FC<{
                                     <button type="button" onClick={() => onDeletePortfolio(portfolio)} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors" title="Remove portfolio" aria-label="Remove portfolio"><TrashIcon className="h-4 w-4"/></button>
                                 </div>
                             </div>
+                            {pk != null && (
+                                <>
+                                    <p className="px-4 sm:px-5 pt-3 pb-2 text-[11px] text-slate-600 leading-snug bg-gradient-to-r from-slate-50/90 to-teal-50/30 border-b border-slate-100/80">
+                                        <span className="font-semibold text-slate-700">Portfolio KPIs</span>
+                                        {' — '}
+                                        {sortedPortfolios.length === 1 ? (
+                                          <>
+                                            Single portfolio on this account — <strong>Invested</strong>, <strong>Withdrawn</strong>, and <strong>ROI</strong> match the platform strip (full ledger + pooled cash, net-capital basis).
+                                          </>
+                                        ) : (
+                                          <>
+                                            <strong>Invested</strong> / <strong>Withdrawn</strong> include deposits &amp; withdrawals tied to this portfolio, plus a <strong>share of account-level transfers</strong> (no portfolio tag) split by position value.
+                                            <strong> Unrealized P/L</strong> and <strong>ROI</strong> use position vs average cost like the holdings table. Idle cash is shared — <strong>Available cash</strong> matches the platform header.
+                                          </>
+                                        )}
+                                    </p>
+                                    <dl
+                                        className="portfolio-inline-kpis grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 px-4 sm:px-5 py-4 bg-gradient-to-b from-white via-slate-50/30 to-teal-50/20 border-b border-slate-100 items-stretch"
+                                        aria-label={`Portfolio metrics for ${portfolio.name ?? 'portfolio'}`}
+                                    >
+                                        <div className="rounded-2xl bg-gradient-to-b from-white to-teal-50/45 border border-teal-100/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
+                                            <dt className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-teal-700 uppercase tracking-[0.12em] leading-tight px-0.5">
+                                                Holdings (ex-cash)
+                                            </dt>
+                                            <dd className="metric-value flex flex-1 flex-col items-center justify-center gap-1 mt-2 text-sm sm:text-base text-teal-950 tabular-nums leading-tight min-h-0">
+                                                <CurrencyDualDisplay value={pk.holdingsValueInSAR} inCurrency="SAR" digits={0} size="base" weight="bold" />
+                                                <span className="text-[10px] text-slate-500 font-normal">Positions only</span>
+                                            </dd>
+                                        </div>
+                                        <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
+                                            <dt className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-[0.12em] leading-tight px-0.5">
+                                                Available cash
+                                            </dt>
+                                            <dd className="metric-value flex flex-1 flex-col items-center justify-center gap-1.5 mt-2 text-sm sm:text-base text-slate-900 tabular-nums min-h-0">
+                                                <CurrencyDualDisplay value={portfolioCashSAR} inCurrency="SAR" digits={0} size="base" weight="bold" />
+                                                <span className="min-h-[1.375rem] flex items-center justify-center w-full">
+                                                    {portfolioCashSAR >= 1000 ? (
+                                                        <span className="inline-flex items-center justify-center rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 text-[10px] font-semibold leading-tight">
+                                                            Ready to reinvest (≥ 1,000 SAR)
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-[10px] text-transparent select-none" aria-hidden>
+                                                            —
+                                                        </span>
+                                                    )}
+                                                </span>
+                                                <span className="relative mt-auto inline-flex items-center justify-center gap-1 text-[10px] font-medium text-slate-500 group/pcash">
+                                                    <span>Shared pool</span>
+                                                    <span
+                                                        role="tooltip"
+                                                        className="pointer-events-none absolute left-1/2 bottom-full z-30 mb-2 w-max max-w-[min(18rem,90vw)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700 shadow-lg opacity-0 transition-opacity group-hover/pcash:opacity-100"
+                                                    >
+                                                        <span className="font-semibold tabular-nums text-slate-900 block">
+                                                            {formatCurrencyString(availableCashByCurrency.SAR, { inCurrency: 'SAR', digits: 0 })}
+                                                        </span>
+                                                        <span className="font-semibold tabular-nums text-slate-900 block mt-1">
+                                                            {formatCurrencyString(availableCashByCurrency.USD, { inCurrency: 'USD', digits: 0 })}
+                                                        </span>
+                                                        <span className="text-[11px] text-slate-500 mt-1.5 block leading-snug">
+                                                            Same SAR/USD buckets as the platform card — one broker cash ledger for all portfolios here.
+                                                        </span>
+                                                    </span>
+                                                </span>
+                                            </dd>
+                                        </div>
+                                        <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
+                                            <dt
+                                                className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-[0.12em] leading-tight px-0.5"
+                                                title="Market value minus qty × avg cost for positions with cost — same idea as each holdings row."
+                                            >
+                                                Unrealized P/L
+                                            </dt>
+                                            <dd className="metric-value flex flex-1 flex-col items-center justify-center mt-2 min-h-0">
+                                                <CurrencyDualDisplay value={pk.totalGainLossSAR} inCurrency="SAR" digits={0} size="base" colorize weight="bold" />
+                                            </dd>
+                                        </div>
+                                        <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
+                                            <dt className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-[0.12em] leading-tight px-0.5">
+                                                Daily P/L
+                                            </dt>
+                                            <dd className="metric-value flex flex-1 flex-col items-center justify-center mt-2 min-h-0">
+                                                <CurrencyDualDisplay value={pk.dailyPnLSAR} inCurrency="SAR" digits={0} size="base" colorize weight="bold" />
+                                            </dd>
+                                        </div>
+                                        <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
+                                            <dt
+                                                className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-[0.12em] leading-tight px-0.5"
+                                                title="Unrealized P/L divided by total cost basis (qty × avg) for lots with cost — not deposits."
+                                            >
+                                                ROI
+                                            </dt>
+                                            <dd
+                                                className={`metric-value flex flex-1 flex-col items-center justify-center mt-2 font-bold text-base sm:text-lg tabular-nums min-h-0 ${portfolioRoi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}
+                                            >
+                                                {portfolioRoi.toFixed(1)}%
+                                            </dd>
+                                        </div>
+                                        <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
+                                            <dt className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-[0.12em] leading-tight px-0.5">
+                                                Invested
+                                            </dt>
+                                            <dd className="metric-value flex flex-1 flex-col items-center justify-center mt-2 text-slate-800 min-h-0">
+                                                <CurrencyDualDisplay value={pk.totalInvestedSAR} inCurrency="SAR" digits={0} size="base" weight="bold" />
+                                            </dd>
+                                        </div>
+                                        <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
+                                            <dt className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-[0.12em] leading-tight px-0.5">
+                                                Withdrawn
+                                            </dt>
+                                            <dd className="metric-value flex flex-1 flex-col items-center justify-center mt-2 text-slate-800 min-h-0">
+                                                <CurrencyDualDisplay value={pk.totalWithdrawnSAR} inCurrency="SAR" digits={0} size="base" weight="bold" />
+                                            </dd>
+                                        </div>
+                                    </dl>
+                                </>
+                            )}
                             {/* Holdings — expand portfolio row to view */}
                             {portfolioOpen && (
                             <div className="overflow-x-auto max-h-96 overflow-y-auto">
@@ -2561,38 +2829,55 @@ const PlatformCard: React.FC<{
                                             <tbody className="divide-y divide-slate-100">
                                                 {portfolioHoldings.map(h => {
                                                     const hSym = (h.symbol || '').trim().toUpperCase();
-                                                    const allocationPct = portfolioValue > 0 ? (h.currentValue / portfolioValue) * 100 : 0;
-                                                    const inferredHoldingCurrency = inferInstrumentCurrencyFromSymbol(hSym || h.symbol || '');
-                                                    const holdingDisplayCurrency: TradeCurrency = inferredHoldingCurrency ?? portfolioCurrency;
-                                                    const toHoldingDisplayCurrency = (amountInPortfolioBook: number): number =>
-                                                        convertBetweenTradeCurrencies(
-                                                            Number(amountInPortfolioBook) || 0,
-                                                            portfolioCurrency,
-                                                            holdingDisplayCurrency,
-                                                            sarPerUsd
-                                                        );
-                                                    const rowDailyPnL = holdingUsesLiveQuote(h)
-                                                        ? quoteDailyPnLInBookCurrency(
-                                                              simulatedPrices[hSym]?.change ?? 0,
-                                                              h.quantity || 0,
-                                                              hSym,
-                                                              portfolioCurrency,
-                                                              sarPerUsd,
-                                                          )
-                                                        : 0;
+                                                    const allocationPct =
+                                                        positionsTotalForAlloc > 0
+                                                            ? (h.currentValue / positionsTotalForAlloc) * 100
+                                                            : 0;
+                                                    /** Row amounts are already in portfolio book currency from holdingsWithGains / stored lots. */
+                                                    const holdingDisplayCurrency: TradeCurrency = portfolioCurrency;
+                                                    /** Same alias resolution as valuation (`effectiveHoldingValueInBookCurrency`) — not only `simulatedPrices[SYMBOL]`. */
+                                                    const liveQuoteRow = holdingUsesLiveQuote(h)
+                                                        ? lookupLiveQuoteForSymbol(simulatedPrices, h.symbol ?? hSym)
+                                                        : undefined;
+                                                    const rowDailyPnL =
+                                                        holdingUsesLiveQuote(h) && liveQuoteRow
+                                                            ? quoteDailyPnLInBookCurrency(
+                                                                  liveQuoteRow.change ?? 0,
+                                                                  h.quantity || 0,
+                                                                  hSym,
+                                                                  portfolioCurrency,
+                                                                  sarPerUsd,
+                                                              )
+                                                            : 0;
                                                     const gainLossPct = (h.totalCost && h.totalCost > 0) ? (h.gainLoss / h.totalCost) * 100 : 0;
-                                                    const avgCostDisplay = toHoldingDisplayCurrency(h.avgCost ?? 0);
-                                                    const currentValueDisplay = toHoldingDisplayCurrency(h.currentValue);
-                                                    const purchasedCostDisplay = toHoldingDisplayCurrency((h.avgCost ?? 0) * (h.quantity || 0));
-                                                    const gainLossDisplay = toHoldingDisplayCurrency(h.gainLoss);
-                                                    const rowDailyPnLDisplay = toHoldingDisplayCurrency(rowDailyPnL);
+                                                    const hasLivePrice =
+                                                        holdingUsesLiveQuote(h) &&
+                                                        liveQuoteRow != null &&
+                                                        Number.isFinite(liveQuoteRow.price) &&
+                                                        liveQuoteRow.price > 0;
+                                                    const nonTickerStoredPrice = !holdingUsesLiveQuote(h);
+                                                    const tickerMissingQuote = holdingUsesLiveQuote(h) && !hasLivePrice;
+                                                    const avgCostDisplay = h.avgCost ?? 0;
+                                                    const currentValueDisplay = h.currentValue;
+                                                    const purchasedCostDisplay = (h.avgCost ?? 0) * (h.quantity || 0);
+                                                    const gainLossDisplay = h.gainLoss;
+                                                    const rowDailyPnLDisplay = rowDailyPnL;
                                                     return (
                                                         <tr key={h.id} className="group hover:bg-slate-50/80 transition-colors">
                                                             <td className="px-4 py-3 min-w-0 max-w-[200px]">
                                                                 <div className="flex items-center gap-2 min-w-0">
                                                                     <button
                                                                         type="button"
-                                                                        onClick={() => onHoldingClick({ ...h, gainLossPercent: gainLossPct, priceChangePercent: holdingUsesLiveQuote(h) ? (simulatedPrices[hSym]?.changePercent ?? 0) : 0 }, portfolio)}
+                                                                        onClick={() =>
+                                                                            onHoldingClick(
+                                                                                {
+                                                                                    ...h,
+                                                                                    gainLossPercent: gainLossPct,
+                                                                                    priceChangePercent: liveQuoteRow?.changePercent ?? 0,
+                                                                                },
+                                                                                portfolio,
+                                                                            )
+                                                                        }
                                                                         className="text-left rounded-lg py-0.5 pr-1 -ml-1 hover:bg-slate-100/80 transition-colors min-w-0 flex-1 overflow-hidden"
                                                                     >
                                                                         <ResolvedSymbolLabel
@@ -2608,7 +2893,7 @@ const PlatformCard: React.FC<{
                                                                 </div>
                                                             </td>
                                                             <td className="px-3 py-3 text-right">
-                                                                {portfolioValue > 0 && (
+                                                                {positionsTotalForAlloc > 0 && (
                                                                     <div className="flex items-center justify-end gap-1.5">
                                                                         <div className="w-10 h-1.5 bg-slate-200 rounded-full overflow-hidden" title={`${allocationPct.toFixed(1)}%`}>
                                                                             <div className="h-full bg-primary rounded-full" style={{ width: `${Math.min(100, allocationPct)}%` }} />
@@ -2623,7 +2908,7 @@ const PlatformCard: React.FC<{
                                                             </td>
                                                             <td className="px-3 py-3 text-right align-top">
                                                                 <div className="inline-flex flex-col items-end gap-0.5 tabular-nums min-w-0">
-                                                                    <span className="text-sm font-bold text-slate-900 leading-tight inline-flex justify-end">
+                                                                    <span className="text-sm font-bold text-slate-900 leading-tight inline-flex flex-wrap justify-end items-center gap-1">
                                                                         <CurrencyDualDisplay
                                                                             value={currentValueDisplay}
                                                                             inCurrency={holdingDisplayCurrency}
@@ -2631,6 +2916,22 @@ const PlatformCard: React.FC<{
                                                                             size="base"
                                                                             className="justify-end text-slate-900"
                                                                         />
+                                                                        {nonTickerStoredPrice && (
+                                                                            <span
+                                                                                className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 bg-amber-50 border border-amber-100 px-1.5 py-0 rounded"
+                                                                                title="This lot uses stored NAV / manual valuation — not a live ticker quote."
+                                                                            >
+                                                                                Manual
+                                                                            </span>
+                                                                        )}
+                                                                        {tickerMissingQuote && (
+                                                                            <span
+                                                                                className="text-[10px] font-semibold uppercase tracking-wide text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0 rounded"
+                                                                                title="Showing last saved market value; live quote not resolved in the price cache (refresh or check symbol)."
+                                                                            >
+                                                                                Stored
+                                                                            </span>
+                                                                        )}
                                                                     </span>
                                                                     <span
                                                                         className="text-[11px] font-medium text-slate-500 leading-tight"
@@ -2783,9 +3084,9 @@ const PlatformView: React.FC<{
         if (platformsData.length === 0) return;
         setPlatformExpanded((prev) => {
             const next: Record<string, boolean> = {};
-            platformsData.forEach((p, idx) => {
+            platformsData.forEach((p) => {
                 if (typeof prev[p.account.id] === 'boolean') next[p.account.id] = prev[p.account.id];
-                else next[p.account.id] = idx === 0;
+                else next[p.account.id] = false;
             });
             return next;
         });
@@ -3175,7 +3476,7 @@ const InvestmentPlan: React.FC<{
 
         const portfoliosForBudget = (data as any)?.personalInvestments ?? data?.investments ?? [];
         const investedBase = portfoliosForBudget.reduce((sum: number, portfolio: InvestmentPortfolio) => {
-            const portfolioCurrency = ((portfolio.currency as TradeCurrency) || 'USD');
+            const portfolioCurrency = resolveInvestmentPortfolioCurrency(portfolio);
             const portfolioTotal = (portfolio.holdings || []).reduce((inner: number, h: Holding) => inner + (h.currentValue || 0), 0);
             return sum + convertAmount(portfolioTotal, portfolioCurrency, budgetCurrency as TradeCurrency);
         }, 0);
@@ -3433,7 +3734,7 @@ const InvestmentPlan: React.FC<{
 
             const portfoliosForPlan = (data as any)?.personalInvestments ?? data?.investments ?? [];
             const investedBase = portfoliosForPlan.reduce((sum: number, portfolio: InvestmentPortfolio) => {
-                const portfolioCurrency = ((portfolio.currency as TradeCurrency) || 'USD');
+                const portfolioCurrency = resolveInvestmentPortfolioCurrency(portfolio);
                 const portfolioTotal = (portfolio.holdings || []).reduce((inner: number, h: Holding) => inner + (h.currentValue || 0), 0);
                 return sum + convertAmount(portfolioTotal, portfolioCurrency, planCurrency);
             }, 0);
@@ -3640,8 +3941,8 @@ Save anyway?`)) return;
     const tickerCurrencyMap = useMemo<Record<string, TradeCurrency>>(() => {
         const map: Record<string, TradeCurrency> = {};
         const portfolios = (data as any)?.personalInvestments ?? data?.investments ?? [];
-        portfolios.forEach((portfolio: { currency?: string; holdings?: { symbol?: string }[] }) => {
-            const portfolioCurrency = (portfolio.currency === 'SAR' || portfolio.currency === 'USD') ? portfolio.currency : 'USD';
+        portfolios.forEach((portfolio: InvestmentPortfolio) => {
+            const portfolioCurrency = resolveInvestmentPortfolioCurrency(portfolio);
             (portfolio.holdings ?? []).forEach((holding: { symbol?: string }) => {
                 const symbol = (holding.symbol || '').trim().toUpperCase();
                 if (symbol) map[symbol] = portfolioCurrency as TradeCurrency;
@@ -3734,7 +4035,7 @@ Save anyway?`)) return;
         if (addOnPoolBudget <= 0) return [];
 
         getPersonalInvestments(data ?? null).forEach((portfolio) => {
-            const book = ((portfolio.currency as TradeCurrency) || 'USD') as TradeCurrency;
+            const book = resolveInvestmentPortfolioCurrency(portfolio);
             const holdings = portfolio.holdings || [];
             const liveHoldingValues = holdings.map((holding) => {
                 const symbol = (holding.symbol || '').trim().toUpperCase();
@@ -3814,7 +4115,7 @@ Save anyway?`)) return;
                     portfolioWeight: Number((portfolioWeight * 100).toFixed(2)),
                     maxWeight: Number((maxWeight * 100).toFixed(1)),
                     capacityPlanAmount,
-                    tradeCurrency: tickerCurrencyMap[symbol] || ((portfolio.currency as TradeCurrency) || 'USD'),
+                    tradeCurrency: tickerCurrencyMap[symbol] || resolveInvestmentPortfolioCurrency(portfolio),
                     pullbackPrice,
                     deepPullbackPrice,
                     confidence,
@@ -4681,7 +4982,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                     const normalizedSymbol = (plan.symbol || '').trim().toUpperCase();
                     const targetPortfolio = inv.find((p: InvestmentPortfolio) =>
                         (p.holdings || []).some((h: Holding) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol)
-                    ) || inv.find((p: InvestmentPortfolio) => ((p.currency as TradeCurrency) || 'USD') === (plan.tradeCurrency || 'USD')) || inv[0];
+                    ) || inv.find((p: InvestmentPortfolio) => resolveInvestmentPortfolioCurrency(p) === (plan.tradeCurrency || 'USD')) || inv[0];
                     setTradeInitialData({
                         symbol: plan.symbol,
                         name: plan.name,
@@ -4693,7 +4994,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                         reason: plan.reason,
                         accountId: targetPortfolio?.accountId ?? accounts[0]?.id,
                         portfolioId: targetPortfolio?.id,
-                        tradeCurrency: (targetPortfolio?.currency as TradeCurrency) || 'USD',
+                        tradeCurrency: targetPortfolio ? resolveInvestmentPortfolioCurrency(targetPortfolio) : 'USD',
                     });
                 } else {
                     setTradeInitialData(null);
@@ -4833,7 +5134,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         />;
       case 'Investment Plan': return (
                 <div className="flex flex-col gap-16 sm:gap-20">
-                    <InvestmentPlanAutopilot
+                    <InvestmentPlanView
                         embedded
                         onExecutePlan={() => {}}
                         setActivePage={setActivePage}
@@ -4861,7 +5162,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                                 const inv = data?.investments ?? [];
                                 const targetPortfolio = inv.find((portfolio) =>
                                     (portfolio.holdings || []).some((holding) => (holding.symbol || '').trim().toUpperCase() === normalizedSymbol)
-                                ) || inv.find((portfolio) => ((portfolio.currency as TradeCurrency) || 'USD') === (trade.tradeCurrency || 'USD')) || inv[0];
+                                ) || inv.find((portfolio) => resolveInvestmentPortfolioCurrency(portfolio) === (trade.tradeCurrency || 'USD')) || inv[0];
                                 setTradeInitialData({
                                     symbol: trade.ticker,
                                     amount: trade.amount,
@@ -4951,7 +5252,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 density="compact"
                 indicatorColor={roi >= 0 ? 'green' : 'red'}
                 icon={<ArrowTrendingUpIcon className={`h-5 w-5 ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
-                tooltip="Simple return: unrealized profit or loss divided by net capital you put in (deposits minus withdrawals, plus commodity purchase cost). Positive means your portfolio is worth more than that net input."
+                tooltip="Return on capital at risk: net gain or loss divided by the larger of (deposits − withdrawals) and (position cost basis + idle broker cash), plus commodity and Sukuk purchase costs. The floor avoids overstated returns when deposit history is incomplete but your books show real deployed capital."
             />
             <Card
                 title="Daily P/L"
@@ -4975,152 +5276,21 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
             </p>
         )}
 
-        {(() => {
-            if (!data) return null;
-            const rate = resolveSarPerUsd(data, exchangeRate);
-            const invAccounts = getPersonalAccounts(data).filter((a) => a.type === 'Investment');
-            const txs = (data?.investmentTransactions ?? []) as InvestmentTransaction[];
-            const invPortfolios = getPersonalInvestments(data);
-
-            type PlatformIssue = {
-                accountId: string;
-                label: string;
-                kind: 'missing_flows' | 'cash_drift';
-                driftSar?: number;
-                hint: string;
-            };
-            const issues: PlatformIssue[] = [];
-
-            for (const acc of invAccounts) {
-                const canonicalId = resolveCanonicalAccountId(acc.id, data?.accounts ?? []) ?? acc.id;
-                const accLabel = String(acc.name || 'Investment account');
-                const accountTxs = txs.filter((t) =>
-                    resolveInvestmentTransactionAccountId(t as any, data?.accounts ?? [], invPortfolios) === canonicalId,
-                );
-
-                const hasAnyFlows = accountTxs.some((t) =>
-                    isInvestmentTransactionType(t.type, 'deposit') ||
-                    isInvestmentTransactionType(t.type, 'withdrawal') ||
-                    isInvestmentTransactionType(t.type, 'buy') ||
-                    isInvestmentTransactionType(t.type, 'sell') ||
-                    isInvestmentTransactionType(t.type, 'dividend') ||
-                    isInvestmentTransactionType(t.type, 'fee') ||
-                    isInvestmentTransactionType(t.type, 'vat'),
-                );
-
-                const hasHoldings = invPortfolios
-                    .filter((p) => portfolioBelongsToAccount(p as any, { id: canonicalId } as any, data?.accounts ?? []))
-                    .some((p) => (p.holdings ?? []).some((h) => Math.abs(Number((h as any)?.quantity) || 0) > 0));
-
-                const brokerCashSar = toSAR(Math.max(0, Number((acc as any)?.balance) || 0), (acc as any)?.currency ?? 'USD', rate);
-
-                if (!hasAnyFlows && (hasHoldings || brokerCashSar > 1)) {
-                    issues.push({
-                        accountId: canonicalId,
-                        label: accLabel,
-                        kind: 'missing_flows',
-                        hint: hasHoldings
-                            ? 'Holdings exist but there are no deposits/buys/sells/dividends/fees recorded for this platform.'
-                            : 'Broker cash exists but there are no ledger flows recorded (deposits/withdrawals/etc).',
-                    });
-                    continue;
-                }
-
-                // Cash drift check: broker cash vs expected cash from ledger flows (same formula as SystemHealth).
-                if (hasAnyFlows) {
-                    let depositsSar = 0;
-                    let withdrawalsSar = 0;
-                    let buysSar = 0;
-                    let sellsSar = 0;
-                    let dividendsSar = 0;
-                    let feesSar = 0;
-                    let vatSar = 0;
-                    for (const t of accountTxs) {
-                        const amtSar = toSAR(
-                            Math.abs(Number(getInvestmentTransactionCashAmount(t as any)) || 0),
-                            inferInvestmentTransactionCurrency(t as any, data?.accounts ?? [], invPortfolios) ?? (acc as any)?.currency ?? 'USD',
-                            rate,
-                        );
-                        if (isInvestmentTransactionType(t.type, 'deposit')) depositsSar += amtSar;
-                        else if (isInvestmentTransactionType(t.type, 'withdrawal')) withdrawalsSar += amtSar;
-                        else if (isInvestmentTransactionType(t.type, 'buy')) buysSar += amtSar;
-                        else if (isInvestmentTransactionType(t.type, 'sell')) sellsSar += amtSar;
-                        else if (isInvestmentTransactionType(t.type, 'dividend')) dividendsSar += amtSar;
-                        else if (isInvestmentTransactionType(t.type, 'fee')) feesSar += amtSar;
-                        else if (isInvestmentTransactionType(t.type, 'vat')) vatSar += amtSar;
-                    }
-                    const expectedCashSar = depositsSar - buysSar + sellsSar + dividendsSar - withdrawalsSar - feesSar - vatSar;
-                    const driftSar = brokerCashSar - expectedCashSar;
-                    if (Math.abs(driftSar) > 50) {
-                        issues.push({
-                            accountId: canonicalId,
-                            label: accLabel,
-                            kind: 'cash_drift',
-                            driftSar,
-                            hint: 'Broker cash does not reconcile to deposits/buys/sells/dividends/withdrawals/fees/VAT in the ledger. Usually a missing entry or wrong currency/date FX.',
-                        });
-                    }
-                }
-            }
-
-            if (issues.length === 0) return null;
-            const missing = issues.filter((i) => i.kind === 'missing_flows');
-            const drifted = issues.filter((i) => i.kind === 'cash_drift');
-            return (
-                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/80 p-4 shadow-sm" role="status">
-                    <div className="flex items-start gap-3">
-                        <ExclamationTriangleIcon className="h-5 w-5 text-amber-700 shrink-0 mt-0.5" />
-                        <div className="min-w-0">
-                            <p className="text-sm font-bold text-amber-950">Investment KPI reconciliation: action needed</p>
-                            <p className="text-xs text-amber-900/90 mt-1 leading-relaxed">
-                                Deployable platform cash follows each Investment account’s balance in Accounts. If that balance doesn’t match your recorded deposits/buys/sells (ledger drift), fix missing entries or adjust the balance until System Health is clean.
-                            </p>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={() => setActivePage?.('SystemHealth' as any)}
-                            className="shrink-0 inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-900 hover:bg-amber-50"
-                        >
-                            <LinkIcon className="h-4 w-4" />
-                            Open System Health
-                        </button>
-                    </div>
-
-                    <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
-                        {missing.length > 0 && (
-                            <div className="rounded-xl border border-amber-200 bg-white/80 p-3">
-                                <p className="text-xs font-bold text-amber-950">Platforms missing ledger flows</p>
-                                <ul className="mt-2 space-y-1 text-xs text-slate-800">
-                                    {missing.slice(0, 6).map((x) => (
-                                        <li key={`miss-${x.accountId}`} className="flex items-start justify-between gap-2">
-                                            <span className="font-semibold truncate">{x.label}</span>
-                                            <span className="text-[11px] text-slate-600 shrink-0">id {x.accountId}</span>
-                                        </li>
-                                    ))}
-                                </ul>
-                                <p className="mt-2 text-[11px] text-slate-600">{missing[0]?.hint}</p>
-                            </div>
-                        )}
-                        {drifted.length > 0 && (
-                            <div className="rounded-xl border border-amber-200 bg-white/80 p-3">
-                                <p className="text-xs font-bold text-amber-950">Platforms with broker-cash drift</p>
-                                <ul className="mt-2 space-y-1 text-xs text-slate-800 tabular-nums">
-                                    {drifted.slice(0, 6).map((x) => (
-                                        <li key={`drift-${x.accountId}`} className="flex items-start justify-between gap-2">
-                                            <span className="font-semibold truncate">{x.label}</span>
-                                            <span className={`font-extrabold shrink-0 ${Number(x.driftSar ?? 0) >= 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
-                                                {Number(x.driftSar ?? 0) >= 0 ? '+' : ''}{(x.driftSar ?? 0).toFixed(0)} SAR
-                                            </span>
-                                        </li>
-                                    ))}
-                                </ul>
-                                <p className="mt-2 text-[11px] text-slate-600">{drifted[0]?.hint}</p>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            );
-        })()}
+        {setActivePage && (
+            <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                Broker cash vs ledger and investment KPI detail:{' '}
+                <button
+                    type="button"
+                    className="font-semibold text-primary hover:underline"
+                    onClick={() => {
+                        window.location.hash = 'data-reconciliation';
+                    }}
+                >
+                    System &amp; APIs Health → Data reconciliation
+                </button>
+                .
+            </p>
+        )}
 
         <details className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <summary className="cursor-pointer select-none text-sm font-semibold text-slate-800">
@@ -5151,7 +5321,8 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 </div>
             </div>
             <p className="mt-3 text-xs text-slate-600 leading-relaxed">
-                If this number looks wrong, open <span className="font-semibold text-slate-800">System &amp; APIs Health</span> → <span className="font-semibold text-slate-800">Investment KPI reconciliation</span> to see the drift check (broker cash vs ledger flows) and what entry is missing.
+                If this number looks wrong, open <span className="font-semibold text-slate-800">System &amp; APIs Health</span>, tab{' '}
+                <span className="font-semibold text-slate-800">Data reconciliation</span>, section <span className="font-semibold text-slate-800">Investment KPI reconciliation</span> (set URL hash <code className="text-[11px]">#investment-kpi-reconciliation</code> or choose that tab and scroll).
             </p>
         </details>
 

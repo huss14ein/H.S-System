@@ -178,6 +178,8 @@ export interface Liability {
   type: 'Mortgage' | 'Loan' | 'Credit Card' | 'Personal Loan' | 'Receivable';
   amount: number;
   status: 'Active' | 'Paid';
+  /** When type is Credit Card: links to the `Account` of type Credit used for card transactions (NW uses liability amount as source of truth). */
+  accountId?: string;
   goalId?: string;
   owner?: string;
 }
@@ -424,7 +426,7 @@ export interface Settings {
     goldPrice: number;
     /**
      * Defines the "financial month" boundary across KPIs and Budgets.
-     * 1 = calendar month. 2–28 shifts the month window start to that day.
+     * 1 = calendar month. 2–31 shifts the preferred window start; short months cap to the last day (e.g. 31 → Feb 28/29).
      */
     monthStartDay?: number;
     /** Optional: nisab amount override (e.g. in SAR). When set, Zakat uses this instead of goldPrice * 85. */

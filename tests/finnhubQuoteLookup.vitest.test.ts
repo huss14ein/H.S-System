@@ -33,4 +33,13 @@ describe('expandLiveQuotesForRequestedSymbols', () => {
     expect(out['2222.SR']).toEqual(tick);
     expect(out['2222']).toEqual(tick);
   });
+
+  it('does not inject unrelated keys from the source quote map', () => {
+    const aapl: LiveQuoteRow = { price: 100, change: 1, changePercent: 1 };
+    const nflx: LiveQuoteRow = { price: 200, change: 2, changePercent: 1 };
+    const quotes = { AAPL: aapl, NFLX: nflx };
+    const out = expandLiveQuotesForRequestedSymbols(['AAPL'], quotes);
+    expect(out.AAPL).toEqual(aapl);
+    expect(out.NFLX).toBeUndefined();
+  });
 });

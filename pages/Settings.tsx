@@ -45,6 +45,7 @@ import {
 import { computeWealthSummaryReportModel, computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { computeMaxAbsSleeveDriftPercent } from '../services/settingsDecisionPreview';
 import type { FinancialData } from '../types';
+import { financialMonthRange } from '../utils/financialMonth';
 
 /** Largest single holding as % of total managed holdings value (personal scope). */
 function computeLargestHoldingWeightPercent(data: FinancialData | null): number {
@@ -124,9 +125,19 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         [localSettings?.driftThreshold]
     );
     const monthStartDaySetting = useMemo(
-        () => Math.min(28, Math.max(1, Math.round(Number((localSettings as any)?.monthStartDay ?? 1)))),
-        [localSettings]
+        () => Math.min(31, Math.max(1, Math.round(Number((localSettings as any)?.monthStartDay ?? 1)))),
+        [(localSettings as any)?.monthStartDay]
     );
+
+    const financialMonthPreview = useMemo(() => {
+        const { start, end, key } = financialMonthRange(new Date(), monthStartDaySetting);
+        const opts: Intl.DateTimeFormatOptions = { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' };
+        return {
+            rangeLabel: `${start.toLocaleDateString(undefined, opts)} → ${end.toLocaleDateString(undefined, opts)}`,
+            keyLabel: `${key.year}-${String(key.month).padStart(2, '0')}`,
+            startDayUsed: start.getDate(),
+        };
+    }, [monthStartDaySetting]);
     const portfolioDriftFlag = useMemo(
         () => countPortfolioDriftAttention(sleeveDriftPct, driftThresholdSetting),
         [sleeveDriftPct, driftThresholdSetting]
@@ -639,22 +650,79 @@ const hasData = accountsForEmptyCheck.length > 0;
                             <input id="drift-threshold" type="range" min={0} max={20} step={1} value={Math.min(20, Math.max(0, Number(localSettings?.driftThreshold ?? 5)))} onChange={(e) => handleSettingChange('driftThreshold', Number(e.target.value))} className="mt-2 w-full h-2 rounded-lg appearance-none bg-slate-200 accent-primary"/>
                             <span className="text-sm font-semibold text-primary mt-1 block">{Math.min(20, Math.max(0, Number(localSettings?.driftThreshold ?? 5)))}%</span>
                         </div>
-                        <div className="rounded-lg border border-slate-200 p-3">
-                            <label htmlFor="month-start-day" className="block text-sm font-medium text-slate-700 flex items-center">
-                                Month start day (1–28)
-                                <InfoHint text="Defines when your 'month' starts for KPIs and Budgets. 1 = calendar month. Example: 25 means a month runs from the 25th → 24th." />
+                        <div className="rounded-lg border border-slate-200 p-3 md:col-span-2">
+                            <label htmlFor="month-start-day-input" className="block text-sm font-medium text-slate-700 flex items-center gap-1">
+                                Financial month (budget &amp; KPI period)
+                                <InfoHint text="Your ‘month’ for Dashboard KPIs, budget windows, and reports. Day 1 = standard calendar month. If you pick 25, the period runs from the 25th through the day before the next 25th. For 29–31, short months use the last day (e.g. 31 → Feb 28/29). This is separate from credit-card statement dates (those are per card on Accounts)." />
                             </label>
-                            <input
-                                id="month-start-day"
-                                type="range"
-                                min={1}
-                                max={28}
-                                step={1}
-                                value={monthStartDaySetting}
-                                onChange={(e) => handleSettingChange('monthStartDay', Number(e.target.value))}
-                                className="mt-2 w-full h-2 rounded-lg appearance-none bg-slate-200 accent-primary"
-                            />
-                            <span className="text-sm font-semibold text-primary mt-1 block">{monthStartDaySetting}</span>
+                            <p className="text-xs text-slate-600 mt-1 mb-2">
+                                <strong>Current period:</strong>{' '}
+                                <span className="text-slate-800">{financialMonthPreview.rangeLabel}</span>
+                                <span className="text-slate-500"> · financial month {financialMonthPreview.keyLabel}</span>
+                                {monthStartDaySetting >= 29 && financialMonthPreview.startDayUsed !== monthStartDaySetting && (
+                                    <span className="block mt-1 text-amber-800">
+                                        This month starts on day {financialMonthPreview.startDayUsed} (calendar cap for shorter months).
+                                    </span>
+                                )}
+                            </p>
+                            <div className="flex flex-wrap items-center gap-2 mb-2">
+                                {[
+                                    { d: 1, label: '1st (calendar)' },
+                                    { d: 15, label: '15th' },
+                                    { d: 25, label: '25th' },
+                                    { d: 28, label: '28th' },
+                                ].map((p) => (
+                                    <button
+                                        key={p.d}
+                                        type="button"
+                                        onClick={() => handleSettingChange('monthStartDay', p.d)}
+                                        className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors ${
+                                            monthStartDaySetting === p.d
+                                                ? 'border-primary bg-primary/10 text-primary'
+                                                : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+                                        }`}
+                                    >
+                                        {p.label}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="flex flex-wrap items-end gap-4">
+                                <div>
+                                    <label htmlFor="month-start-day-input" className="sr-only">
+                                        Preferred start day (1–31)
+                                    </label>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs text-slate-600">Day</span>
+                                        <input
+                                            id="month-start-day-input"
+                                            type="number"
+                                            min={1}
+                                            max={31}
+                                            step={1}
+                                            value={monthStartDaySetting}
+                                            onChange={(e) => {
+                                                const v = parseInt(e.target.value, 10);
+                                                if (!Number.isFinite(v)) return;
+                                                handleSettingChange('monthStartDay', Math.min(31, Math.max(1, v)));
+                                            }}
+                                            className="w-20 input-base text-center tabular-nums"
+                                        />
+                                        <span className="text-xs text-slate-500">of each month (1–31)</span>
+                                    </div>
+                                </div>
+                                <div className="flex-1 min-w-[160px]">
+                                    <input
+                                        type="range"
+                                        min={1}
+                                        max={31}
+                                        step={1}
+                                        value={monthStartDaySetting}
+                                        onChange={(e) => handleSettingChange('monthStartDay', Number(e.target.value))}
+                                        className="w-full h-2 rounded-lg appearance-none bg-slate-200 accent-primary"
+                                        aria-label="Adjust financial month start day"
+                                    />
+                                </div>
+                            </div>
                         </div>
                         <div className="rounded-lg border border-slate-200 p-3">
                             <label htmlFor="gold-price-settings" className="block text-sm font-medium text-slate-700 flex items-center">Gold price (SAR/gram) <InfoHint text="Current gold price per gram. Used to calculate the Nisab threshold (minimum wealth before Zakat is due). Usually gold price × 85 grams." /></label>
@@ -1013,10 +1081,9 @@ const hasData = accountsForEmptyCheck.length > 0;
                                 showToast('Add accounts and data to generate a monthly report.', 'warning');
                                 return;
                             }
-                            const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
                             const { budgetVariance, roi } = computeMonthlyReportFinancialKpis(
                                 data,
-                                sarPerUsd,
+                                exchangeRate,
                                 getAvailableCashForAccount,
                                 simulatedPrices,
                             );

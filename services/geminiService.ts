@@ -1043,6 +1043,98 @@ export type SystemHealthAiContext = {
   lastCheckedLabel?: string;
 };
 
+/** Grounding for Data reconciliation tab — numeric diagnostics only; no raw PII beyond account ids in messages. */
+export type DataReconciliationAiContext = {
+  sarPerUsd: number;
+  dataLoaded: boolean;
+  integrityOk?: boolean;
+  queueLength?: number;
+  ledgerIsAccurate?: boolean;
+  ledgerIssueCount?: number;
+  reconciliationWarningCount?: number;
+  holdingMismatchCount?: number;
+  cashDriftAccountCount?: number;
+  creditDriftAccountCount?: number;
+  topExceptions?: Array<{ severity: string; code?: string; message: string }>;
+  repairSuggestionLines?: string[];
+  /** Multi-line SAR summary from investment KPI reconciliation when present. */
+  investmentKpiNarrative?: string;
+};
+
+export const getAIDataReconciliationAccountantReview = async (ctx: DataReconciliationAiContext): Promise<string> => {
+  const exSig =
+    (ctx.topExceptions ?? [])
+      .map((e) => `${e.severity}:${(e.code ?? '').slice(0, 32)}`)
+      .join('|') || 'none';
+  const cacheKey = `getAIDataReconciliationAccountantReview:${ctx.dataLoaded}:${ctx.integrityOk}:${ctx.queueLength}:${ctx.ledgerIssueCount}:${exSig.slice(0, 200)}`;
+  const cached = getFromCache(cacheKey);
+  if (cached) return cached;
+
+  if (!ctx.dataLoaded) {
+    const offline =
+      '### No ledger loaded yet\n- Sign in and open **Accounts** so Finova can run integrity checks, then return here.\n\nLast line exactly: Not personalized financial advice.';
+    setToCache(cacheKey, offline);
+    return offline;
+  }
+
+  try {
+    const exceptionsBlock =
+      (ctx.topExceptions?.length ?? 0) > 0
+        ? ctx
+            .topExceptions!.map((e, i) => `${i + 1}. [${e.severity}] ${e.code ? `${e.code}: ` : ''}${e.message}`)
+            .join('\n')
+        : '(none queued)';
+
+    const repairsBlock =
+      (ctx.repairSuggestionLines?.length ?? 0) > 0 ? ctx.repairSuggestionLines!.map((l, i) => `${i + 1}. ${l}`).join('\n') : '(none)';
+
+    const invBlock = ctx.investmentKpiNarrative?.trim() ? ctx.investmentKpiNarrative : '(investment KPI block not available this pass.)';
+
+    const prompt = `${DEFAULT_SYSTEM_INSTRUCTION}
+
+You are a **senior staff accountant** (CPA-style mindset) reviewing Finova’s **automated data reconciliation** output for a private individual in **Saudi Arabia (SAR primary)**. You are **not** auditing a statutory filing; you are helping the user interpret machine-generated checks.
+
+**FX reference:** 1 USD = ${ctx.sarPerUsd.toFixed(4)} SAR (UI reference only).
+
+**Integrity flag (automated):** integrityOk=${String(ctx.integrityOk)} · Exception queue length: ${ctx.queueLength ?? 0}
+**Ledger report:** isAccurate=${String(ctx.ledgerIsAccurate)} · issue rows: ${ctx.ledgerIssueCount ?? 0}
+**Reconciliation warnings (cash/credit/holdings/budget mapping):** ${ctx.reconciliationWarningCount ?? 0}
+**Counts:** holding quantity mismatches: ${ctx.holdingMismatchCount ?? 0} · cash drift accounts: ${ctx.cashDriftAccountCount ?? 0} · credit drift accounts: ${ctx.creditDriftAccountCount ?? 0}
+
+**Top queued exceptions (trimmed):**
+${exceptionsBlock}
+
+**Repair suggestions engine (trimmed):**
+${repairsBlock}
+
+**Investment KPI reconciliation (engine output, SAR — use only as given):**
+${invBlock}
+
+Markdown only. Be precise, calm, and practical. Do **not** invent amounts not shown above. If data is thin, say what is missing.
+
+### Materiality & risk
+- 2–3 bullets: what matters most for **trust in net worth / cash / investments** given the counts and messages.
+
+### Likely causes (hypotheses)
+- 2–4 bullets: common operational reasons (missing transfer pair, wrong currency tag, stale broker cash, duplicate/missing investment tx, category mapping, etc.) mapped to the **types** of issues seen — not accusations.
+
+### Recommended actions (prioritized)
+- Numbered list 1–5: concrete next steps in Finova (which areas to open, what to re-check, order of operations).
+
+### Controls going forward
+- 1–2 bullets: simple habits (cadence, documentation, spot checks) suitable for a household CFO.
+
+Last line exactly: Not personalized financial advice.`;
+
+    const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
+    const result = response.text?.trim() || 'Could not generate reconciliation review.';
+    setToCache(cacheKey, result);
+    return result;
+  } catch (error) {
+    return formatAiError(error);
+  }
+};
+
 export const getAISystemHealthDigest = async (ctx: SystemHealthAiContext): Promise<string> => {
   const cacheKey = `getAISystemHealthDigest:${ctx.overallStatus}:${ctx.healthScore}:${ctx.outageCount}`;
   const cached = getFromCache(cacheKey);

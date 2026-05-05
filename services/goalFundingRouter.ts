@@ -6,49 +6,30 @@ import { monthsRemainingToDeadline } from './goalMetrics';
 /** When a goal has no deadline, amortize required monthly amount over this horizon (months). */
 export const GOAL_NO_DEADLINE_AMORTIZATION_MONTHS = 60;
 
-export interface GoalFundingSuggestion {
-  goalId: string;
-  name: string;
-  /** Run-rate needed per month to hit deadline (0 if overdue catch-up only). */
+/** One row of the goal funding schedule — shared by funding cockpit and conflict detection. */
+export type GoalFundingScheduleRow = {
+  goal: Goal;
+  shortfall: number;
   requiredPerMonth: number;
-  suggestedPerMonth: number;
-  /** Share of monthly surplus bucket (sums to ~1 among monthly-active goals when scarce). */
-  priorityShare: number;
-  status: 'funded' | 'on_track' | 'need_more';
-  /** Full gap when deadline already passed — not a "/month" figure. */
-  overdueCatchUpSar?: number;
-  /** Months remaining to deadline (for goals with a future deadline). */
-  monthsToDeadline?: number;
-}
+  overdueCatchUpSar: number;
+  monthsToDeadline: number;
+  priorityWeight: number;
+};
 
-export interface GoalFundingPlan {
-  totalMonthlySurplus: number;
-  suggestions: GoalFundingSuggestion[];
-}
-
-export function computeGoalFundingPlan(
+/**
+ * Required monthly run-rate per goal (same SAR “saved so far” as `computeGoalResolvedAmountsSar`),
+ * same months-to-deadline as the funding cockpit. Overdue goals get catch-up SAR, not a /mo run-rate.
+ */
+export function buildGoalFundingScheduleRows(
   data: FinancialData | null | undefined,
-  projectedAnnualSurplus: number,
-  /** SAR per USD from CurrencyContext — enables resolved goal balances (linked assets/investments). */
   sarPerUsdUi?: number,
-): GoalFundingPlan {
+): GoalFundingScheduleRow[] {
   const goals = (data?.goals ?? []) as Goal[];
-  const monthlySurplus = projectedAnnualSurplus / 12;
   const sarPerUsd = resolveSarPerUsd(data ?? null, sarPerUsdUi);
   const resolvedByGoal = computeGoalResolvedAmountsSar(data, sarPerUsd);
-
   const now = new Date();
 
-  type Row = {
-    goal: Goal;
-    shortfall: number;
-    requiredPerMonth: number;
-    overdueCatchUpSar: number;
-    monthsToDeadline: number;
-    priorityWeight: number;
-  };
-
-  const rows: Row[] = goals.map((g) => {
+  return goals.map((g) => {
     const target = Number(g.targetAmount ?? 0);
     const current = Math.max(0, resolvedByGoal.get(g.id) ?? Number(g.currentAmount ?? 0));
     const shortfall = Math.max(0, target - current);
@@ -78,6 +59,36 @@ export function computeGoalFundingPlan(
     const priorityWeight = g.priority === 'High' ? 3 : g.priority === 'Low' ? 1 : 2;
     return { goal: g, shortfall, requiredPerMonth, overdueCatchUpSar, monthsToDeadline, priorityWeight };
   });
+}
+
+export interface GoalFundingSuggestion {
+  goalId: string;
+  name: string;
+  /** Run-rate needed per month to hit deadline (0 if overdue catch-up only). */
+  requiredPerMonth: number;
+  suggestedPerMonth: number;
+  /** Share of monthly surplus bucket (sums to ~1 among monthly-active goals when scarce). */
+  priorityShare: number;
+  status: 'funded' | 'on_track' | 'need_more';
+  /** Full gap when deadline already passed — not a "/month" figure. */
+  overdueCatchUpSar?: number;
+  /** Months remaining to deadline (for goals with a future deadline). */
+  monthsToDeadline?: number;
+}
+
+export interface GoalFundingPlan {
+  totalMonthlySurplus: number;
+  suggestions: GoalFundingSuggestion[];
+}
+
+export function computeGoalFundingPlan(
+  data: FinancialData | null | undefined,
+  projectedAnnualSurplus: number,
+  /** SAR per USD from CurrencyContext — enables resolved goal balances (linked assets/investments). */
+  sarPerUsdUi?: number,
+): GoalFundingPlan {
+  const monthlySurplus = projectedAnnualSurplus / 12;
+  const rows = buildGoalFundingScheduleRows(data, sarPerUsdUi);
 
   const monthlyActive = rows.filter((e) => e.shortfall > 0 && e.requiredPerMonth > 0);
   const totalRequired = monthlyActive.reduce((sum, e) => sum + e.requiredPerMonth, 0);

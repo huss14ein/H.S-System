@@ -239,8 +239,8 @@ export function validateSettings(input: { goldPrice?: unknown; nisabAmount?: unk
   }
 
   const msd = safeNumber(input.monthStartDay, NaN);
-  if (input.monthStartDay != null && (Number.isNaN(msd) || !Number.isInteger(msd) || msd < 1 || msd > 28)) {
-    errors.push('Month start day must be an integer between 1 and 28.');
+  if (input.monthStartDay != null && (Number.isNaN(msd) || !Number.isInteger(msd) || msd < 1 || msd > 31)) {
+    errors.push('Month start day must be an integer between 1 and 31.');
   }
 
   return { valid: errors.length === 0, errors };

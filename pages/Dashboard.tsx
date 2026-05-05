@@ -37,7 +37,8 @@ import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from '../serv
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import { pushNetWorthSnapshot, listNetWorthSnapshots } from '../services/netWorthSnapshot';
-import { subscriptionSpendMonthly } from '../services/transactionIntelligence';
+import { subscriptionSpendMonthlySar } from '../services/transactionIntelligence';
+import InfoHint from '../components/InfoHint';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { resolveInvestmentTransactionAccountId, inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { salaryToExpenseCoverage } from '../services/salaryExpenseCoverage';
@@ -61,7 +62,6 @@ import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { logKpiReconciliationDrift } from '../services/kpiDriftTelemetry';
 import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
 import { useSelfLearning } from '../context/SelfLearningContext';
-import { useDashboardReconciliationPrefs } from '../hooks/useDashboardReconciliationPrefs';
 import { useMarketData } from '../context/MarketDataContext';
 
 interface ExtendedBudget extends Budget {
@@ -403,13 +403,6 @@ const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }>
 type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'emergencyFund' | 'budgetVariance' | 'investmentRoi' | 'investmentPlan' | 'wealthUltra' | 'marketEvents';
 
 const KPI_CARD_ORDER: KpiCardKey[] = ['netWorth', 'monthlyPnL', 'emergencyFund', 'budgetVariance', 'investmentRoi', 'investmentPlan', 'wealthUltra', 'marketEvents'];
-const RECON_KEY_TO_CARD: Record<string, KpiCardKey> = {
-    netWorth: 'netWorth',
-    monthlyPnL: 'monthlyPnL',
-    budgetVariance: 'budgetVariance',
-    investmentRoi: 'investmentRoi',
-    emergencyFundMonths: 'emergencyFund',
-};
 const AI_SUMMARY_LANG_KEY = 'finova_dashboard_ai_summary_lang_v1';
 
 const SYSTEM_HEALTH_PAGE = 'System & APIs Health' as Page;
@@ -424,7 +417,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
     const { maskBalance } = usePrivacyMask();
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
     const [isAdmin, setIsAdmin] = useState(false);
-    const { strictReconciliationMode, hardBlockOnMismatch } = useDashboardReconciliationPrefs(auth?.user?.id);
     const lastTelemetrySignatureRef = React.useRef<string>('');
     const kpiDensity = 'compact' as const;
     const todosOpt = useTodosOptional();
@@ -678,9 +670,12 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
 
     const subsIntel = useMemo(() => {
         if (!data) return { monthlyEstimate: 0, count: 0 };
-        const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
-        return subscriptionSpendMonthly(txs as import('../types').Transaction[], 3);
-    }, [data]);
+        const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
+        const accounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []) as Account[];
+        hydrateSarPerUsdDailySeries(data, exchangeRate);
+        const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+        return subscriptionSpendMonthlySar(txs, accounts, sarPerUsd, 3);
+    }, [data, exchangeRate]);
 
     const nextBestActions = useMemo(() => {
         const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
@@ -758,12 +753,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
 
     const summaryMonthlyKpisForReconciliation = useMemo(() => {
         if (!data) return null;
-        return computeMonthlyReportFinancialKpis(
-            data,
-            resolveSarPerUsd(data, exchangeRate),
-            getAvailableCashForAccount,
-            simulatedPrices,
-        );
+        return computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
     }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
 
     const kpiReconciliation = useMemo(() => {
@@ -783,18 +773,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
 
     const getTrendString = (trend: number = 0) => trend.toFixed(1) + '%';
     const visibleKpiOrder: KpiCardKey[] = isAdmin ? KPI_CARD_ORDER : KPI_CARD_ORDER.filter((k) => k !== 'netWorth');
-    const blockedKpiCards = useMemo(() => {
-        if (!strictReconciliationMode || !hardBlockOnMismatch || !kpiReconciliation || kpiReconciliation.ok) return new Set<KpiCardKey>();
-        const s = new Set<KpiCardKey>();
-        kpiReconciliation.rows.filter((r) => !r.withinThreshold).forEach((r) => {
-            const card = RECON_KEY_TO_CARD[r.key];
-            if (card) s.add(card);
-        });
-        return s;
-    }, [strictReconciliationMode, hardBlockOnMismatch, kpiReconciliation]);
-
     useEffect(() => {
-        if (!strictReconciliationMode || !kpiReconciliation || kpiReconciliation.ok) return;
+        if (!kpiReconciliation || kpiReconciliation.ok) return;
         const day = new Date().toISOString().slice(0, 10);
         const signature = `${day}:${kpiReconciliation.rows.filter((r) => !r.withinThreshold).map((r) => r.key).join(',')}:${kpiReconciliation.mismatchCount}`;
         if (lastTelemetrySignatureRef.current === signature) return;
@@ -802,8 +782,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         void logKpiReconciliationDrift({
             page: 'Dashboard',
             userId: auth?.user?.id ?? null,
-            strictMode: strictReconciliationMode,
-            hardBlock: hardBlockOnMismatch,
+            strictMode: false,
+            hardBlock: false,
             mismatchCount: kpiReconciliation.mismatchCount,
             rows: kpiReconciliation.rows.map((r) => ({
                 key: r.key,
@@ -813,10 +793,11 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 deltaPct: r.deltaPct,
             })),
         });
-    }, [strictReconciliationMode, hardBlockOnMismatch, kpiReconciliation, auth?.user?.id]);
+    }, [kpiReconciliation, auth?.user?.id]);
 
     const goToInvestmentKpiReconciliation = useCallback(() => {
         setActivePage(SYSTEM_HEALTH_PAGE);
+        window.location.hash = 'investment-kpi-reconciliation';
         window.setTimeout(() => {
             document.getElementById('investment-kpi-reconciliation')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }, 480);
@@ -836,7 +817,17 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                   : 'Critical';
         const efColor = emergencyFund.status === 'healthy' ? 'green' : emergencyFund.status === 'adequate' ? 'green' : emergencyFund.status === 'low' ? 'yellow' : 'red';
         return {
-            netWorth: <Card {...cardProps} title="My Net Worth" value={maskBalance(formatCurrencyString(kpiSummary.netWorth || 0))} trend={`${(kpiSummary.netWorthTrend || 0) >= 0 ? '+' : ''}${getTrendString(kpiSummary.netWorthTrend)}`} indicatorColor={(kpiSummary.netWorthTrend || 0) >= 0 ? 'green' : 'red'} tooltip="Personal wealth only. Items with Owner set (e.g. Father) are excluded." onClick={() => setActivePage('Summary')} icon={<ScaleIcon className="h-5 w-5 text-slate-400" />} />,
+            netWorth: <Card
+                {...cardProps}
+                title="My Net Worth"
+                value={maskBalance(formatCurrencyString(kpiSummary.netWorth || 0))}
+                trend={`${(kpiSummary.netWorthTrend || 0) >= 0 ? '+' : ''}${getTrendString(kpiSummary.netWorthTrend)} vs implied month start`}
+                indicatorColor={(kpiSummary.netWorthTrend || 0) >= 0 ? 'green' : 'red'}
+                tooltip="Personal wealth only; other Owner tags are excluded. The % is this financial month’s net cashflow (income − expenses, KPI rules) as a share of implied net worth at month start — same idea as Summary, not investment time-weighted return."
+                footer={<span className="text-slate-600">Matches Summary’s net worth momentum line; open Summary or Net worth cockpit for history.</span>}
+                onClick={() => setActivePage('Summary')}
+                icon={<ScaleIcon className="h-5 w-5 text-slate-400" />}
+            />,
             monthlyPnL: <Card {...cardProps} title="This Month's P&L" value={formatCurrency(kpiSummary.monthlyPnL || 0, { colorize: true })} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'Surplus' : 'Deficit'} indicatorColor={(kpiSummary.monthlyPnL || 0) >= 0 ? 'green' : 'red'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-slate-400" />} />,
             emergencyFund: <Card {...cardProps} title="Emergency Fund" value={emergencyFund.hasEssentialExpenseEstimate ? `${emergencyFund.monthsCovered.toFixed(1)} mo` : '—'} trend={efTrend} indicatorColor={efColor} tooltip={emergencyFund.hasEssentialExpenseEstimate ? `Liquid cash (bank + idle cash on investment platforms from Accounts) covers ${emergencyFund.monthsCovered.toFixed(1)} months of essential expenses. Target: ${EMERGENCY_FUND_TARGET_MONTHS} months.${emergencyFund.shortfall > 0 ? ` Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : ''}` : 'Categorize essential spending or add budgets so we can estimate months of coverage.'} onClick={() => setActivePage('Summary')} icon={<ShieldCheckIcon className="h-5 w-5 text-slate-400" />} />,
             budgetVariance: <Card {...cardProps} title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, { colorize: true })} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'Under budget' : 'Over budget'} indicatorColor={(kpiSummary.budgetVariance || 0) >= 0 ? 'green' : 'red'} tooltip="Money saved from budget this month (positive = under budget). Over budget is shown in red." onClick={() => setActivePage('Budgets')} icon={<PiggyBankIcon className="h-5 w-5 text-slate-400" />} />,
@@ -903,17 +894,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 </div>
             )}
 
-            {blockedKpiCards.size > 0 && (
-                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-3 flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-sm text-amber-950">
-                        <strong>{blockedKpiCards.size}</strong> KPI card(s) blocked due to reconciliation mismatch (strict + hard block).
-                    </p>
-                    <button type="button" onClick={() => setActivePage('System & APIs Health')} className="text-sm font-medium text-primary hover:underline shrink-0">
-                        Open data quality and KPI checks →
-                    </button>
-                </div>
-            )}
-
             {(() => {
                 const today = new Date().getDate();
                 const isDueToday = (r: { dayOfMonth: number }) =>
@@ -935,8 +915,9 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
 
             {subsIntel.count > 0 && (
                 <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl bg-violet-50/80 border border-violet-100 text-sm mb-2">
-                    <span className="text-slate-700">
-                        <strong>Subscriptions (heuristic):</strong> ~{formatCurrencyString(subsIntel.monthlyEstimate, { digits: 0 })}/mo · {subsIntel.count} matching txs (3 mo)
+                    <span className="text-slate-700 inline-flex flex-wrap items-center gap-1.5">
+                        <strong>Subscriptions (heuristic):</strong> ~{formatCurrencyString(subsIntel.monthlyEstimate, { digits: 0 })}/mo SAR · {subsIntel.count} keyword-matched expense(s), last 3 calendar months
+                        <InfoHint text="Same rules as Analysis: expenses whose description matches common subscription merchants/SaaS keywords. Amounts use each account’s currency and your FX settings (not raw statement numbers in USD treated as SAR)." />
                     </span>
                     <button type="button" onClick={() => setActivePage('Analysis')} className="text-primary font-medium hover:underline text-sm">
                         Details in Analysis →
@@ -972,15 +953,18 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             )}
 
             <div className="mb-4 p-3 rounded-xl bg-slate-50 border border-slate-200 text-sm space-y-2">
-                <div className="flex flex-wrap items-center gap-3">
-                    <span className="font-medium text-slate-700">Financial health score</span>
+                <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-slate-700 inline-flex items-center gap-1.5">
+                        Financial health score
+                        <InfoHint text="Each pill below is a 0–100 ingredient (not a weight). Final score is a weighted blend: liquidity 22%, savings 18%, debt ease 18%, goals 18%, budget/expense control 14%, P&amp;L momentum vs prior month 10%. Momentum can swing when last month’s net was small (division effect in the KPI)." />
+                    </span>
                     {financialHealth.score != null ? (
                         <>
                             <span className={`font-bold tabular-nums text-lg ${financialHealth.score >= 70 ? 'text-green-700' : financialHealth.score >= 50 ? 'text-amber-700' : 'text-red-700'}`}>
                                 {financialHealth.score}/100
                             </span>
                             <span className="text-slate-500 text-xs max-w-xl">
-                                Blends emergency liquidity, SAR-based savings rate (this month + 3-mo avg), debt pressure, goal progress, budget control, and month-on-month PnL momentum—updates as transactions and balances change.
+                                Blends emergency liquidity, SAR savings rate (this month + 3-mo average), debt ease vs income, resolved goal progress, budget variance, and month-on-month P&amp;L momentum.
                             </span>
                         </>
                     ) : (
@@ -989,12 +973,12 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 </div>
                 {financialHealth.parts && (
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600 border-t border-slate-200/80 pt-2">
-                        <span title="Emergency fund vs target months">Liquidity {financialHealth.parts.liquidity}</span>
-                        <span title="From blended savings rate">Savings {financialHealth.parts.savings}</span>
-                        <span title="100 − debt stress">Debt {financialHealth.parts.debtRelief}</span>
-                        <span title="Goal funding progress">Goals {financialHealth.parts.goals}</span>
-                        <span title="Budget variance">Expenses {financialHealth.parts.expenses}</span>
-                        <span title="PnL vs prior month">Momentum {financialHealth.parts.momentum}</span>
+                        <span title="Months of essential expenses covered vs target (capped at 100).">Liquidity {financialHealth.parts.liquidity}</span>
+                        <span title="Savings rate 0–100: min(100, average of this month &amp; 3-mo rolling savings % × 2).">Savings {financialHealth.parts.savings}</span>
+                        <span title="100 = low debt stress vs income and cash; lower if payments are heavy vs income.">Debt ease {financialHealth.parts.debtRelief}</span>
+                        <span title="Progress toward goal targets using resolved SAR saved (linked assets + investments + receivables).">Goals {financialHealth.parts.goals}</span>
+                        <span title="From current-month budget variance (under budget scores higher).">Budget {financialHealth.parts.expenses}</span>
+                        <span title="PnL trend vs prior financial month mapped to 0–100 (50 = flat).">Momentum {financialHealth.parts.momentum}</span>
                     </div>
                 )}
             </div>
@@ -1054,14 +1038,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                     content: (
                         <div className="min-h-[132px] flex flex-col h-full">
                             <div className="flex-1 min-h-0">
-                                {blockedKpiCards.has(cardKey) ? (
-                                    <div className="h-full rounded-xl border border-red-300 bg-red-50 p-3 flex flex-col justify-center items-center text-center">
-                                        <p className="text-sm font-semibold text-red-800">KPI blocked</p>
-                                        <p className="text-xs text-red-700 mt-1">Reconciliation mismatch exceeds threshold.</p>
-                                    </div>
-                                ) : (
-                                    kpiCards[cardKey]
-                                )}
+                                {kpiCards[cardKey]}
                             </div>
                         </div>
                     ),
@@ -1104,6 +1081,9 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                                 onOpenInvestments={() => setActivePage('Investments')}
                                 onOpenAccounts={() => setActivePage('Accounts')}
                                 onOpenAssets={() => setActivePage('Assets')}
+                                onOpenDataReconciliation={() => {
+                                    window.location.hash = 'data-reconciliation';
+                                }}
                             />
                         </div>
                     </div>

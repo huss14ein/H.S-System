@@ -1,13 +1,22 @@
 import React, { useEffect, useContext, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
 import { PriceAlert } from '../types';
+import type { InvestmentPortfolio } from '../types';
 import { MarketDataContext } from '../context/MarketDataContext';
 import { getLivePrices, getAICommodityPrices } from '../services/geminiService';
 import {
     canonicalQuoteLookupKey,
     expandLiveQuotesForRequestedSymbols,
+    lookupLiveQuoteForSymbol,
     type LiveQuoteRow,
 } from '../services/finnhubService';
+import {
+    cacheRowsToSimulatedMap,
+    loadQuoteCacheRows,
+    saveQuoteCacheRows,
+    symbolsNeedingLiveFetch,
+    upsertCacheFromLiveQuotes,
+} from '../services/quotePriceCache';
 import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 import { holdingUsesLiveQuote } from '../utils/holdingValuation';
@@ -46,18 +55,28 @@ const MarketSimulator: React.FC = () => {
         const runSimulationTick = async (isRealFetch: boolean = false) => {
             const { dataContext, marketContext } = contextRef.current;
             if (!dataContext || !marketContext || !dataContext.data) {
-                marketContext?.setIsRefreshing(false);
+                marketContext?.finishQuotesRefresh();
                 return;
             }
+
+            const priceScope = marketContext.consumePriceRefreshScope();
+            const platformIdOnly = priceScope.kind === 'platform' ? priceScope.platformId : null;
+            const scopeIsPlatform = platformIdOnly != null;
 
             const { data, batchUpdateHoldingValues, batchUpdateCommodityHoldingValues, updatePriceAlert } = dataContext;
             const { setSimulatedPrices, simulatedPrices: currentSimulatedPrices, setIsLive, setLastUpdated, touchQuoteTimestamps } = marketContext;
             const sarPerUsd = resolveSarPerUsd(data, contextRef.current.exchangeRate);
 
-            const allHoldings = ((data as any)?.personalInvestments ?? data?.investments ?? []).flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []);
-            const allWatchlistItems = data?.watchlist ?? [];
-            const allPlannedTrades = data?.plannedTrades ?? [];
-            const allCommodities = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
+            const allInvestments = ((data as any)?.personalInvestments ?? data?.investments ?? []) as InvestmentPortfolio[];
+            const portfoliosInScope = platformIdOnly
+                ? allInvestments.filter((p) => p.accountId === platformIdOnly)
+                : allInvestments;
+            const allHoldings = portfoliosInScope.flatMap((p) => p.holdings ?? []);
+            const allWatchlistItems = scopeIsPlatform ? [] : (data?.watchlist ?? []);
+            const allPlannedTrades = scopeIsPlatform ? [] : (data?.plannedTrades ?? []);
+            const allCommodities = scopeIsPlatform
+                ? []
+                : ((data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? []);
             
             const uniqueSymbols = Array.from(new Set([
                 ...(allHoldings as { symbol?: string }[]).map((h: { symbol?: string }) => h.symbol).filter((s: string | undefined): s is string => s != null && s !== ''),
@@ -69,60 +88,133 @@ const MarketSimulator: React.FC = () => {
 
             let newPrices: Record<string, { price: number; change: number; changePercent: number }> = {};
             let liveStatus = false;
-            
+
+            const getInitialPrice = (symbol: string) => {
+                if (previousPricesRef.current[symbol]) return previousPricesRef.current[symbol];
+                let hash = 0;
+                for (let i = 0; i < symbol.length; i++) {
+                    hash = symbol.charCodeAt(i) + ((hash << 5) - hash);
+                }
+                const price = (hash % 450) + 50;
+                previousPricesRef.current[symbol] = price;
+                return price;
+            };
+
+            const simulateSymbol = (symbol: string) => {
+                const oldPrice = currentSimulatedPrices[symbol]?.price || getInitialPrice(symbol);
+                const changePercentRaw = (Math.random() - 0.495) * 0.03;
+                const newPrice = Math.max(oldPrice * (1 + changePercentRaw), 0.01);
+                const change = newPrice - oldPrice;
+                const changePercent = oldPrice > 0 ? (change / oldPrice) * 100 : 0;
+                newPrices[symbol] = { price: newPrice, change, changePercent };
+            };
+
             if (isRealFetch) {
                 try {
-                    const [investmentPrices, commodityData] = await Promise.all([
-                        uniqueSymbols.length > 0 ? getLivePrices(uniqueSymbols) : Promise.resolve({}),
-                        allCommodities.length > 0 ? getAICommodityPrices(allCommodities, { sarPerUsd }) : Promise.resolve({ prices: [], groundingChunks: [] })
+                    let cacheRows = loadQuoteCacheRows();
+                    const cacheSim = cacheRowsToSimulatedMap(cacheRows);
+                    let mergedEquity: Record<string, LiveQuoteRow> =
+                        uniqueSymbols.length > 0
+                            ? expandLiveQuotesForRequestedSymbols(
+                                  uniqueSymbols,
+                                  cacheSim as Record<string, LiveQuoteRow>,
+                              )
+                            : {};
+                    const toFetch = symbolsNeedingLiveFetch(uniqueSymbols, cacheRows);
+
+                    const [rawApi, commodityData] = await Promise.all([
+                        uniqueSymbols.length > 0 && toFetch.length > 0
+                            ? getLivePrices(toFetch)
+                            : Promise.resolve({} as Record<string, LiveQuoteRow>),
+                        allCommodities.length > 0
+                            ? getAICommodityPrices(allCommodities, { sarPerUsd })
+                            : Promise.resolve({ prices: [], groundingChunks: [] }),
                     ]);
 
-                    newPrices =
-                        uniqueSymbols.length > 0
-                            ? expandLiveQuotesForRequestedSymbols(uniqueSymbols, investmentPrices as Record<string, LiveQuoteRow>)
-                            : {};
-                    
-                    // Map commodity prices to the same format
-                    commodityData.prices.forEach(cp => {
+                    if (uniqueSymbols.length > 0 && toFetch.length > 0) {
+                        const raw = rawApi as Record<string, LiveQuoteRow>;
+                        cacheRows = upsertCacheFromLiveQuotes(cacheRows, toFetch, raw);
+                        saveQuoteCacheRows(cacheRows);
+                        const apiExpanded = expandLiveQuotesForRequestedSymbols(toFetch, raw);
+                        mergedEquity = { ...mergedEquity, ...apiExpanded };
+                    }
+
+                    newPrices = { ...mergedEquity };
+
+                    commodityData.prices.forEach((cp) => {
                         const oldPrice = currentSimulatedPrices[cp.symbol]?.price || cp.price;
                         const change = cp.price - oldPrice;
                         const changePercent = oldPrice > 0 ? (change / oldPrice) * 100 : 0;
                         newPrices[cp.symbol] = { price: cp.price, change, changePercent };
                     });
 
-                    liveStatus = Object.keys(newPrices).length > 0;
-                    if (liveStatus && setLastUpdated) setLastUpdated(new Date());
+                    const allTickerSymbols = Array.from(new Set([...uniqueSymbols, ...commoditySymbols]));
+                    let anyEquitySimulated = false;
+                    for (const symbol of allTickerSymbols) {
+                        const row = lookupLiveQuoteForSymbol(newPrices, symbol);
+                        if (row && row.price > 0) continue;
+                        simulateSymbol(symbol);
+                        if (uniqueSymbols.includes(symbol)) anyEquitySimulated = true;
+                    }
+
+                    /** Live = equity quotes came from cache or API this pass, not RNG fallback. */
+                    liveStatus =
+                        uniqueSymbols.length === 0 ||
+                        (!anyEquitySimulated &&
+                            uniqueSymbols.every((s) => {
+                                const r = lookupLiveQuoteForSymbol(newPrices, s);
+                                return r != null && r.price > 0;
+                            }));
                 } catch (error) {
-                    console.error("Failed to fetch real prices, falling back to simulation:", error);
-                    isRealFetch = false; // Fallback
+                    console.error('Failed to fetch real prices, falling back to cache then simulation:', error);
+                    const cacheRows = loadQuoteCacheRows();
+                    const cacheSim = cacheRowsToSimulatedMap(cacheRows);
+                    newPrices =
+                        uniqueSymbols.length > 0
+                            ? expandLiveQuotesForRequestedSymbols(
+                                  uniqueSymbols,
+                                  cacheSim as Record<string, LiveQuoteRow>,
+                              )
+                            : {};
+
+                    try {
+                        if (allCommodities.length > 0) {
+                            const commodityData = await getAICommodityPrices(allCommodities, { sarPerUsd });
+                            commodityData.prices.forEach((cp) => {
+                                const oldPrice = currentSimulatedPrices[cp.symbol]?.price || cp.price;
+                                const change = cp.price - oldPrice;
+                                const changePercent = oldPrice > 0 ? (change / oldPrice) * 100 : 0;
+                                newPrices[cp.symbol] = { price: cp.price, change, changePercent };
+                            });
+                        }
+                    } catch (commodityErr) {
+                        console.error('Commodity price fetch failed during fallback:', commodityErr);
+                    }
+
+                    const allTickerSymbols = Array.from(new Set([...uniqueSymbols, ...commoditySymbols]));
+                    let anyEquitySimulated = false;
+                    for (const symbol of allTickerSymbols) {
+                        const row = lookupLiveQuoteForSymbol(newPrices, symbol);
+                        if (row && row.price > 0) continue;
+                        simulateSymbol(symbol);
+                        if (uniqueSymbols.includes(symbol)) anyEquitySimulated = true;
+                    }
+
+                    liveStatus =
+                        uniqueSymbols.length === 0 ||
+                        (!anyEquitySimulated &&
+                            uniqueSymbols.every((s) => {
+                                const r = lookupLiveQuoteForSymbol(newPrices, s);
+                                return r != null && r.price > 0;
+                            }));
                 }
             }
 
-            // If not real fetch or real fetch failed/returned empty
-            if (!isRealFetch || Object.keys(newPrices).length === 0) {
+            if (Object.keys(newPrices).length === 0 && (uniqueSymbols.length > 0 || commoditySymbols.length > 0)) {
                 liveStatus = false;
-                const getInitialPrice = (symbol: string) => {
-                    if (previousPricesRef.current[symbol]) return previousPricesRef.current[symbol];
-                    let hash = 0;
-                    for (let i = 0; i < symbol.length; i++) {
-                        hash = symbol.charCodeAt(i) + ((hash << 5) - hash);
-                    }
-                    const price = (hash % 450) + 50; 
-                    previousPricesRef.current[symbol] = price;
-                    return price;
-                };
-
-                const allSymbols = Array.from(new Set([...uniqueSymbols, ...commoditySymbols]));
-
-                allSymbols.forEach(symbol => {
-                    const oldPrice = currentSimulatedPrices[symbol]?.price || getInitialPrice(symbol);
-                    const changePercentRaw = (Math.random() - 0.495) * 0.03; 
-                    const newPrice = Math.max(oldPrice * (1 + changePercentRaw), 0.01);
-                    const change = newPrice - oldPrice;
-                    const changePercent = oldPrice > 0 ? (change / oldPrice) * 100 : 0;
-                    
-                    newPrices[symbol] = { price: newPrice, change, changePercent };
-                });
+                Array.from(new Set([...uniqueSymbols, ...commoditySymbols])).forEach((symbol) =>
+                    simulateSymbol(symbol),
+                );
             }
 
             const holdingUpdates: { id: string, currentValue: number }[] = [];
@@ -156,9 +248,16 @@ const MarketSimulator: React.FC = () => {
                 }
             });
             
-            setSimulatedPrices(newPrices);
-            setIsLive(liveStatus);
+            if (scopeIsPlatform) {
+                setSimulatedPrices({ ...currentSimulatedPrices, ...newPrices });
+            } else {
+                setSimulatedPrices(newPrices);
+                setIsLive(liveStatus);
+            }
             touchQuoteTimestamps(Object.keys(newPrices));
+            // Only bump the global "last updated" clock on a full refresh.
+            // Platform-scoped refreshes intentionally update a subset of symbols and must not make the header look fresh.
+            if (!scopeIsPlatform && liveStatus && setLastUpdated) setLastUpdated(new Date());
 
             // currentValue is stored in portfolio book currency (USD or SAR); live quotes are typically USD notional.
             // Mixed books: display/metrics convert via getSarPerUsd; DB persistence may still hold raw USD notional until normalized.
@@ -205,7 +304,7 @@ const MarketSimulator: React.FC = () => {
             } catch (e) {
                 console.error('MarketSimulator tick failed:', e);
             } finally {
-                contextRef.current.marketContext?.setIsRefreshing(false);
+                contextRef.current.marketContext?.finishQuotesRefresh();
             }
         })();
 

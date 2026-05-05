@@ -25,7 +25,8 @@ interface LivePricesStatusProps {
  * Use on Watchlist, Investments, and anywhere prices are shown.
  */
 const LivePricesStatus: React.FC<LivePricesStatusProps> = ({ variant = 'inline', className = '' }) => {
-  const { isLive, lastUpdated, isRefreshing, symbolQuoteUpdatedAt } = useMarketData();
+  const { isLive, lastUpdated, isRefreshing, quotesRefreshUIScope, symbolQuoteUpdatedAt } = useMarketData();
+  const inlineRefreshing = isRefreshing && quotesRefreshUIScope.mode === 'all';
   const dataCtx = useContext(DataContext);
   const staleSymbols = useMemo(() => {
     const d = dataCtx?.data;
@@ -100,7 +101,7 @@ const LivePricesStatus: React.FC<LivePricesStatusProps> = ({ variant = 'inline',
       </span>
       <span className="text-slate-400">·</span>
       <span className="tabular-nums whitespace-nowrap">
-        {isRefreshing ? 'Updating…' : `Updated ${relativeTime}`}
+        {inlineRefreshing ? 'Updating…' : `Updated ${relativeTime}`}
       </span>
       {staleSymbols.length > 0 && (
         <>

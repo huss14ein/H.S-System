@@ -205,20 +205,48 @@ export function lookupLiveQuoteForSymbol(
   return undefined;
 }
 
-/** Duplicate quote rows onto every requested symbol variant so UI paths using exact user strings always resolve (watchlist vs SAHMK/Finnhub keys). */
+/**
+ * For each requested symbol, copy the matched quote onto common spelling/canonical keys.
+ * Does **not** forward the entire `quotes` map — callers may pass megabyte caches; platform-scoped
+ * refreshes must not broadcast unrelated tickers into `simulatedPrices`.
+ */
 export function expandLiveQuotesForRequestedSymbols(
   requestedSymbols: string[],
   quotes: Record<string, LiveQuoteRow>,
 ): Record<string, LiveQuoteRow> {
-  const out: Record<string, LiveQuoteRow> = { ...quotes };
+  const out: Record<string, LiveQuoteRow> = {};
   for (const sym of requestedSymbols) {
     const row = lookupLiveQuoteForSymbol(quotes, sym);
     if (!row) continue;
     const trimmed = sym.trim();
-    const u = trimmed.toUpperCase();
-    out[trimmed] = row;
-    out[u] = row;
-    out[canonicalQuoteLookupKey(sym)] = row;
+    const upper = trimmed.toUpperCase();
+
+    /** Keys we write for this ticker only (never the entire `quotes` map). */
+    const keysToWrite = new Set<string>();
+    const addKey = (k: string | null | undefined) => {
+      const t = String(k ?? '').trim();
+      if (!t) return;
+      keysToWrite.add(t);
+      keysToWrite.add(t.toUpperCase());
+    };
+
+    addKey(trimmed);
+    addKey(canonicalQuoteLookupKey(sym));
+
+    const tadawulMatch = upper.match(/^([A-Z0-9]{1,8})(?:\.(SR|SA|SE))?$/);
+    const isBareDigits = /^[0-9]{4,6}$/.test(upper);
+    if (tadawulMatch && (/\.(SR|SA|SE)$/i.test(trimmed) || isBareDigits)) {
+      const code = tadawulMatch[1];
+      addKey(code);
+      addKey(`${code}.SR`);
+      addKey(`${code}.SA`);
+      addKey(`${code}.SE`);
+      addKey(`TADAWUL:${code}`);
+    }
+
+    for (const k of keysToWrite) {
+      out[k] = row;
+    }
   }
   return out;
 }

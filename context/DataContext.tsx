@@ -34,9 +34,8 @@ import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
 import { deltaForInvestmentTrade } from '../services/investmentBalanceDelta';
 import { buildTransactionPayloadVariants } from '../services/transactionPayloadVariants';
 import { decodeInstallmentPaymentNote } from '../services/installments/installmentLinkNote';
-import type { PlanDraft } from '../services/investmentEngine/suggestions';
-import { applySuggestedPlansLocally } from '../services/investmentEngine/planWriter';
 import { brokerCashBucketsFromInvestmentAccount } from '../services/investmentCashLedger';
+import { findCreditCardLiabilityForAccount } from '../services/creditCardLinking';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
@@ -100,7 +99,14 @@ interface DataContextType {
   addRecurringTransaction: (recurring: Omit<RecurringTransaction, 'id' | 'user_id'>) => Promise<void>;
   updateRecurringTransaction: (recurring: RecurringTransaction) => Promise<void>;
   deleteRecurringTransaction: (id: string) => Promise<void>;
+  /** `skipped` counts any rule where `applyRecurringRuleForMonth` returns `skipped: true` (not only duplicate-in-month). */
   applyRecurringForMonth: (year: number, month: number) => Promise<{ applied: number; skipped: number }>;
+  /** Create one month’s transaction for a single recurring rule (same duplicate rules as bulk apply). */
+  applyRecurringRuleForMonth: (
+    recurringId: string,
+    year: number,
+    month: number,
+  ) => Promise<{ applied: boolean; skipped: boolean; skipReason?: 'disabled' | 'manual' | 'already' | 'not_found' }>;
   applyRecurringDueToday: () => Promise<number>;
   /** `balance` optional for new accounts (defaults to 0). Investment platforms usually omit it. */
   addPlatform: (platform: Omit<Account, 'id' | 'user_id' | 'balance'> & { balance?: number }) => Promise<string | undefined>;
@@ -129,8 +135,6 @@ interface DataContextType {
   addPlannedTrade: (plan: Omit<PlannedTrade, 'id' | 'user_id'>) => Promise<boolean>;
   updatePlannedTrade: (plan: PlannedTrade) => Promise<boolean>;
   deletePlannedTrade: (planId: string) => Promise<void>;
-  /** Auto-create/update plans from engine suggestions (equities only in v1). */
-  applySuggestedPlans: (drafts: PlanDraft[], opts?: { planCurrency?: TradeCurrency }) => Promise<{ created: number; updated: number; skipped: number; errors: string[] }>;
   saveInvestmentPlan: (plan: InvestmentPlanSettings, portfolioId?: string) => Promise<void>;
   addUniverseTicker: (ticker: Omit<UniverseTicker, 'id' | 'user_id'>) => Promise<void>;
   updateUniverseTickerStatus: (tickerId: string, status: TickerStatus, updates?: Partial<UniverseTicker>) => Promise<void>;
@@ -686,7 +690,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const type = (raw.type === 'Receivable' ? 'Receivable' : raw.type) as Liability['type'];
         const rawAmount = roundMoney(Number(raw.amount ?? 0));
         const amount = type === 'Receivable' ? Math.abs(rawAmount) : -Math.abs(rawAmount);
-        return { ...raw, type, amount: roundMoney(amount), goalId: raw.goalId ?? raw.goal_id };
+        const accountIdRaw = raw.accountId ?? raw.account_id;
+        const accountId =
+            accountIdRaw != null && String(accountIdRaw).trim() !== '' ? String(accountIdRaw) : undefined;
+        return {
+            ...raw,
+            type,
+            amount: roundMoney(amount),
+            goalId: raw.goalId ?? raw.goal_id,
+            accountId,
+        };
     };
 
     const liabilityPayloadVariants = (liability: Liability) => {
@@ -698,9 +711,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             owner: liability.owner ?? null,
         };
         const goal = liability.goalId != null && String(liability.goalId).trim() !== '' ? liability.goalId : null;
-        const snake = { ...common, goal_id: goal };
-        const camel = { ...common, goalId: goal };
-        return [snake, camel, common];
+        const accountLink =
+            liability.accountId != null && String(liability.accountId).trim() !== '' ? liability.accountId : null;
+        const snake = { ...common, goal_id: goal, account_id: accountLink };
+        const camel = { ...common, goalId: goal, accountId: accountLink };
+        const snakeLegacy = { ...common, goal_id: goal };
+        return [snake, snakeLegacy, camel, common];
     };
 
     const normalizeTransaction = (transaction: any): Transaction => {
@@ -1363,7 +1379,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     // --- Liabilities ---
     const addLiability = async (liability: Liability) => {
-      if(!supabase) return;
+      if(!supabase || !auth?.user) return;
       const v = validateLiability({ name: liability.name, type: liability.type, amount: liability.amount, status: liability.status });
       if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
       const db = supabase;
@@ -1379,7 +1395,28 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (lastErr) { console.error("Error adding liability:", lastErr); throw lastErr; }
       if (newLiability) {
         const normalized = normalizeLiability(newLiability);
-        setData(prev => ({ ...prev, liabilities: [...prev.liabilities, normalized] }));
+        let accountPatch: Account | null = null;
+        if (
+          normalized.type === 'Credit Card' &&
+          normalized.accountId &&
+          (normalized.status ?? 'Active') === 'Active'
+        ) {
+          const acc = (data?.accounts ?? []).find((a) => a.id === normalized.accountId);
+          if (acc?.type === 'Credit') {
+            const newBal = roundMoney(normalized.amount);
+            const { error: ae } = await supabase
+              .from('accounts')
+              .update({ balance: newBal })
+              .match({ id: acc.id, user_id: auth.user.id });
+            if (!ae) accountPatch = { ...acc, balance: newBal };
+            else console.warn('Could not mirror new credit card liability to account balance:', ae);
+          }
+        }
+        setData((prev) => ({
+          ...prev,
+          liabilities: [...prev.liabilities, normalized],
+          accounts: accountPatch ? prev.accounts.map((a) => (a.id === accountPatch!.id ? accountPatch! : a)) : prev.accounts,
+        }));
       }
     };
     const updateLiability = async (liability: Liability) => {
@@ -1395,7 +1432,26 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!isMissingColumnError(lastErr)) break;
       }
       if(lastErr) console.error("Error updating liability:", lastErr);
-      else setData(prev => ({ ...prev, liabilities: prev.liabilities.map(l => l.id === liability.id ? liability : l) }));
+      else {
+        let accountPatch: Account | null = null;
+        if (liability.type === 'Credit Card' && liability.accountId && (liability.status ?? 'Active') === 'Active') {
+          const acc = (data?.accounts ?? []).find((a) => a.id === liability.accountId);
+          if (acc?.type === 'Credit') {
+            const newBal = roundMoney(liability.amount);
+            const { error: ae } = await supabase
+              .from('accounts')
+              .update({ balance: newBal })
+              .match({ id: acc.id, user_id: auth.user.id });
+            if (!ae) accountPatch = { ...acc, balance: newBal };
+            else console.warn('Could not mirror credit card liability to account balance:', ae);
+          }
+        }
+        setData((prev) => ({
+          ...prev,
+          liabilities: prev.liabilities.map((l) => (l.id === liability.id ? liability : l)),
+          accounts: accountPatch ? prev.accounts.map((a) => (a.id === accountPatch!.id ? accountPatch! : a)) : prev.accounts,
+        }));
+      }
     };
     const deleteLiability = async (liabilityId: string) => {
       if(!supabase || !auth?.user) return;
@@ -2196,48 +2252,64 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         else setData(prev => ({ ...prev, recurringTransactions: prev.recurringTransactions.filter(r => r.id !== id) }));
     };
 
+    const applyRecurringRuleForMonth = async (
+        recurringId: string,
+        year: number,
+        month: number,
+    ): Promise<{ applied: boolean; skipped: boolean; skipReason?: 'disabled' | 'manual' | 'already' | 'not_found' }> => {
+        const rule = data.recurringTransactions.find((r) => r.id === recurringId);
+        if (!rule) return { applied: false, skipped: true, skipReason: 'not_found' };
+        if (!rule.enabled) return { applied: false, skipped: true, skipReason: 'disabled' };
+        if (rule.addManually === true) return { applied: false, skipped: true, skipReason: 'manual' };
+        if (!supabase || !auth?.user) return { applied: false, skipped: true };
+
+        const monthStr = String(month).padStart(2, '0');
+        const dayStr = (d: number) => String(d).padStart(2, '0');
+        const date = `${year}-${monthStr}-${dayStr(rule.dayOfMonth)}`;
+        const monthPrefix = `${year}-${monthStr}-`;
+        const already = (data?.transactions ?? []).some((t) => {
+            const rid = t.recurringId ?? (t as any).recurring_id;
+            if (rid !== rule.id) return false;
+            if (!t.date.startsWith(monthPrefix)) return false;
+            if (rule.dayOfMonth === 28) {
+                const day = parseInt(t.date.slice(8, 10), 10);
+                if (day >= 28) return true;
+            }
+            return t.date.startsWith(date);
+        });
+        if (already) return { applied: false, skipped: true, skipReason: 'already' };
+
+        cashBalanceAccumulatorRef.current = {};
+        const amount = rule.type === 'income' ? rule.amount : -rule.amount;
+        try {
+            await addTransaction({
+                date,
+                description: rule.description,
+                amount,
+                category: rule.category,
+                accountId: rule.accountId,
+                budgetCategory: rule.type === 'expense' ? rule.budgetCategory : undefined,
+                type: rule.type,
+                recurringId: rule.id,
+            });
+            cashBalanceAccumulatorRef.current = {};
+            return { applied: true, skipped: false };
+        } catch (_) {
+            cashBalanceAccumulatorRef.current = {};
+            return { applied: false, skipped: true };
+        }
+    };
+
     const applyRecurringForMonth = async (year: number, month: number): Promise<{ applied: number; skipped: number }> => {
         if (!supabase || !auth?.user) return { applied: 0, skipped: 0 };
         cashBalanceAccumulatorRef.current = {};
-        const enabled = data.recurringTransactions.filter(r => r.enabled && !(r.addManually === true));
-        const monthStr = String(month).padStart(2, '0');
-        const dayStr = (d: number) => String(d).padStart(2, '0');
+        const enabled = data.recurringTransactions.filter((r) => r.enabled && !(r.addManually === true));
         let applied = 0;
         let skipped = 0;
         for (const rule of enabled) {
-            const date = `${year}-${monthStr}-${dayStr(rule.dayOfMonth)}`;
-            const monthPrefix = `${year}-${monthStr}-`;
-            // For EOM rules (dayOfMonth 28), treat any transaction on 28–31 in this month as already applied (matches applyRecurringDueToday which uses effectiveDateStr 28th on days 29–31)
-            const already = (data?.transactions ?? []).some(t => {
-                const rid = t.recurringId ?? (t as any).recurring_id;
-                if (rid !== rule.id) return false;
-                if (!t.date.startsWith(monthPrefix)) return false;
-                if (rule.dayOfMonth === 28) {
-                    const day = parseInt(t.date.slice(8, 10), 10);
-                    if (day >= 28) return true;
-                }
-                return t.date.startsWith(date);
-            });
-            if (already) {
-                skipped++;
-                continue;
-            }
-            const amount = rule.type === 'income' ? rule.amount : -rule.amount;
-            try {
-                await addTransaction({
-                    date,
-                    description: rule.description,
-                    amount,
-                    category: rule.category,
-                    accountId: rule.accountId,
-                    budgetCategory: rule.type === 'expense' ? rule.budgetCategory : undefined,
-                    type: rule.type,
-                    recurringId: rule.id,
-                });
-                applied++;
-            } catch (_) {
-                // already alerted in addTransaction
-            }
+            const res = await applyRecurringRuleForMonth(rule.id, year, month);
+            if (res.applied) applied++;
+            else if (res.skipped) skipped++;
         }
         cashBalanceAccumulatorRef.current = {};
         return { applied, skipped };
@@ -2397,7 +2469,28 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } else {
             if (!opts?.fromTransactionDelta) delete cashBalanceAccumulatorRef.current[platform.id]; // Manual edit overrides; transaction-driven updates keep accumulator for next iteration
             const normalized = normalizeAccount({ ...platform, ...payload, linkedAccountIds: payload.linked_account_ids });
-            setData(prev => ({ ...prev, accounts: prev.accounts.map(a => a.id === platform.id ? normalized : a) }));
+            let liabilityPatch: Liability | null = null;
+            if (normalized.type === 'Credit') {
+              const liab = findCreditCardLiabilityForAccount(data?.liabilities ?? [], normalized.id);
+              if (liab && (liab.status ?? 'Active') === 'Active') {
+                const newAmt = roundMoney(normalized.balance);
+                if (Math.abs(newAmt - Number(liab.amount ?? 0)) > 0.0001) {
+                  const { error: le } = await supabase
+                    .from('liabilities')
+                    .update({ amount: newAmt })
+                    .match({ id: liab.id, user_id: auth.user.id });
+                  if (!le) liabilityPatch = { ...liab, amount: newAmt };
+                  else console.warn('Could not mirror credit account balance to liability:', le);
+                }
+              }
+            }
+            setData((prev) => ({
+              ...prev,
+              accounts: prev.accounts.map((a) => (a.id === platform.id ? normalized : a)),
+              liabilities: liabilityPatch
+                ? prev.liabilities.map((l) => (l.id === liabilityPatch!.id ? liabilityPatch! : l))
+                : prev.liabilities,
+            }));
         }
     };
     updatePlatformRef.current = updatePlatform;
@@ -2996,34 +3089,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setData(prev => ({ ...prev, plannedTrades: prev.plannedTrades.map(p => p.id === plan.id ? plan : p) }));
         return true;
     };
-    const applySuggestedPlans = async (
-        drafts: PlanDraft[],
-        opts?: { planCurrency?: TradeCurrency },
-    ): Promise<{ created: number; updated: number; skipped: number; errors: string[] }> => {
-        const planCurrency = (opts?.planCurrency as TradeCurrency) || ((data?.investmentPlan?.budgetCurrency as TradeCurrency) || 'SAR');
-        try {
-            const { toCreate, toUpdate, skipped } = applySuggestedPlansLocally({
-                drafts,
-                existingPlans: data?.plannedTrades ?? [],
-                planCurrency,
-                cooldownHours: 12,
-            });
-            let created = 0;
-            let updated = 0;
-            const errors: string[] = [];
-            for (const c of toCreate) {
-                const ok = await addPlannedTrade(c);
-                if (ok) created += 1;
-            }
-            for (const u of toUpdate) {
-                const ok = await updatePlannedTrade(u);
-                if (ok) updated += 1;
-            }
-            return { created, updated, skipped, errors };
-        } catch (e) {
-            return { created: 0, updated: 0, skipped: drafts.length, errors: [e instanceof Error ? e.message : String(e)] };
-        }
-    };
     const deletePlannedTrade = async (planId: string) => {
         if(!supabase || !auth?.user) return;
         const { error } = await supabase.from('planned_trades').delete().match({ id: planId, user_id: auth.user.id });
@@ -3181,7 +3246,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const updateSettings = async (settingsUpdate: Partial<Settings>) => {
         if (!supabase || !auth?.user) return;
-        const merged = { ...(data?.settings ?? {}), ...settingsUpdate };
+        let merged = { ...(data?.settings ?? {}), ...settingsUpdate };
         const toValidate: Partial<Settings> = {};
         if ('goldPrice' in settingsUpdate) toValidate.goldPrice = merged.goldPrice ?? (merged as any).gold_price;
         if ('nisabAmount' in settingsUpdate) toValidate.nisabAmount = merged.nisabAmount ?? (merged as any).nisab_amount;
@@ -3195,7 +3260,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         const overrides = settingsOverridesToRow(merged, settingsUpdate);
-        const row = { ...overrides, user_id: auth.user.id };
+        const row: Record<string, unknown> = { ...overrides, user_id: auth.user.id };
+        /** Always persist when the user changes this field — `settingsOverridesToRow` omits values equal to app defaults, which would leave a stale DB value (e.g. reverting 25 → 1). */
+        if ('monthStartDay' in settingsUpdate) {
+          const d = Math.min(31, Math.max(1, Math.round(Number(merged.monthStartDay ?? 1))));
+          row.month_start_day = d;
+          merged = { ...merged, monthStartDay: d };
+        }
         const { error } = await supabase.from('settings').upsert([row], { onConflict: 'user_id' });
         if (error) {
             console.error("Error updating settings:", error);
@@ -3434,7 +3505,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         })();
     }, [loading, auth?.user?.id, data.investments]);
 
-    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, applySuggestedPlans, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

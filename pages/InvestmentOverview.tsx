@@ -15,6 +15,8 @@ import { useMarketData } from '../context/MarketDataContext';
 import { quoteNotionalInBookCurrency, resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { holdingUsesLiveQuote } from '../utils/holdingValuation';
 import { getPersonalInvestments, getPersonalWealthData } from '../utils/wealthScope';
+import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
+import type { InvestmentPortfolio } from '../types';
 import type { Account } from '../types';
 import { computePersonalCommoditiesContributionSAR } from '../services/investmentPlatformCardMetrics';
 import { normalizeInvestmentAssetClassBucket } from '../services/investmentAssetClassBuckets';
@@ -72,8 +74,11 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
             .reduce((sum, a) => sum + Math.max(0, Number(a?.value) || 0), 0);
 
         const allHoldings: (Holding & { portfolioCurrency?: 'USD' | 'SAR' })[] = investments.flatMap(
-            (p: { holdings?: Holding[]; currency?: 'USD' | 'SAR' }) =>
-                (p.holdings || []).map((h: Holding) => ({ ...h, portfolioCurrency: p.currency })),
+            (p: InvestmentPortfolio) =>
+                (p.holdings || []).map((h: Holding) => ({
+                    ...h,
+                    portfolioCurrency: resolveInvestmentPortfolioCurrency(p),
+                })),
         );
 
         const allHoldingsWithGains = allHoldings
@@ -118,8 +123,8 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
             .sort((a: { value: number }, b: { value: number }) => b.value - a.value);
 
         const portfolioRows = investments
-            .map((p: { name?: string; currency?: string; holdings?: Holding[] }) => {
-                const cur = (p.currency ?? 'USD') as 'USD' | 'SAR';
+            .map((p: InvestmentPortfolio) => {
+                const cur = resolveInvestmentPortfolioCurrency(p);
                 let sumNative = 0;
                 for (const h of p.holdings || []) {
                     sumNative += holdingValueInBookCurrency(h, cur, simulatedPrices, sarPerUsd);
