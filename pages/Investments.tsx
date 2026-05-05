@@ -2340,7 +2340,11 @@ const PlatformCard: React.FC<{
     onToggleExpanded: () => void;
 }> = (props) => {
     const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded } = props;
-    const { refreshPricesForPlatform, isRefreshing: quotesRefreshing } = useMarketData();
+    const { refreshPricesForPlatform, isRefreshing: quotesRefreshing, quotesRefreshUIScope } = useMarketData();
+    const thisPlatformSyncing =
+        quotesRefreshing &&
+        (quotesRefreshUIScope.mode === 'all' ||
+            (quotesRefreshUIScope.mode === 'platform' && quotesRefreshUIScope.accountId === platform.id));
     const portfoliosForMetrics = metricsPortfolios ?? portfolios;
     const showPersonalScopeNote = portfolios.length > portfoliosForMetrics.length;
     const { formatCurrencyString } = useFormatCurrency();
@@ -2497,12 +2501,12 @@ const PlatformCard: React.FC<{
                         <button
                             type="button"
                             onClick={() => void refreshPricesForPlatform(platform.id)}
-                            disabled={quotesRefreshing}
+                            disabled={thisPlatformSyncing}
                             className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-slate-700 rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50 transition-colors"
                             title="Live quotes for this platform’s tickers only"
                         >
-                            <ArrowPathIcon className={`h-4 w-4 ${quotesRefreshing ? 'animate-spin' : ''}`} aria-hidden />
-                            {quotesRefreshing ? 'Updating…' : 'Sync quotes (this platform)'}
+                            <ArrowPathIcon className={`h-4 w-4 ${thisPlatformSyncing ? 'animate-spin' : ''}`} aria-hidden />
+                            {thisPlatformSyncing ? 'Updating…' : 'Sync quotes (this platform)'}
                         </button>
                         <span className="hidden sm:inline-flex items-center self-center">
                             <InfoHint text="Fetches market data only for symbols in this platform’s portfolios. Does not refresh watchlist, planned trades, or commodities — fewer API calls than the global Refresh prices control in the header." />

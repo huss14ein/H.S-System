@@ -55,7 +55,7 @@ const MarketSimulator: React.FC = () => {
         const runSimulationTick = async (isRealFetch: boolean = false) => {
             const { dataContext, marketContext } = contextRef.current;
             if (!dataContext || !marketContext || !dataContext.data) {
-                marketContext?.setIsRefreshing(false);
+                marketContext?.finishQuotesRefresh();
                 return;
             }
 
@@ -304,7 +304,7 @@ const MarketSimulator: React.FC = () => {
             } catch (e) {
                 console.error('MarketSimulator tick failed:', e);
             } finally {
-                contextRef.current.marketContext?.setIsRefreshing(false);
+                contextRef.current.marketContext?.finishQuotesRefresh();
             }
         })();
 

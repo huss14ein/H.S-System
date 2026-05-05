@@ -49,7 +49,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const auth = useContext(AuthContext);
   const { data } = useContext(DataContext)!;
   const { currency, setCurrency, exchangeRate } = useCurrency();
-  const { refreshPrices, isRefreshing, lastUpdated, isLive } = useMarketData();
+  const { refreshPrices, isRefreshing, quotesRefreshUIScope, lastUpdated, isLive } = useMarketData();
+  const headerRefreshing = isRefreshing && quotesRefreshUIScope.mode === 'all';
   const [pricesStatusLabel, setPricesStatusLabel] = useState('');
   const lastUpdatedRef = useRef(lastUpdated);
   lastUpdatedRef.current = lastUpdated;
@@ -316,8 +317,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
               <div className="hidden sm:flex flex-col items-end mr-2 min-w-[126px]">
                 <button 
                   onClick={refreshPrices} 
-                  disabled={isRefreshing}
-                  className={`p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all flex items-center justify-end gap-2 w-full ${isRefreshing ? 'animate-pulse' : ''}`}
+                  disabled={headerRefreshing}
+                  className={`p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all flex items-center justify-end gap-2 w-full ${headerRefreshing ? 'animate-pulse' : ''}`}
                   title={isLive ? (lastUpdated ? `Live prices · Updated ${pricesStatusLabel.split('·')[1] ?? 'recently'}. Click to refresh.` : 'Live prices. Click to refresh.') : 'Simulated prices. Click to fetch live prices.'}
                 >
                   <ArrowPathIcon className={`h-5 w-5 ${isRefreshing ? 'animate-spin' : ''}`} />
@@ -331,7 +332,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                 </button>
                 {pricesStatusLabel && (
                   <span className="text-[10px] text-gray-400 mt-0.5 px-2 hidden xl:block text-right leading-tight" title={lastUpdated ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}>
-                    {isRefreshing ? 'Updating…' : pricesStatusLabel}
+                    {headerRefreshing ? 'Updating…' : pricesStatusLabel}
                   </span>
                 )}
               </div>
@@ -622,7 +623,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                             onClick={() => { refreshPrices(); setIsMobileMenuOpen(false); }}
                             className="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-2xl hover:bg-gray-100 transition-colors relative"
                         >
-                            <ArrowPathIcon className={`h-6 w-6 text-gray-500 mb-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+                            <ArrowPathIcon className={`h-6 w-6 text-gray-500 mb-2 ${headerRefreshing ? 'animate-spin' : ''}`} />
                             <span className="text-xs font-bold text-gray-700">Refresh</span>
                             <span className={`absolute top-2 right-2 text-[8px] font-bold uppercase px-1 rounded ${isLive ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
                                 {isLive ? 'Live' : 'Sim'}

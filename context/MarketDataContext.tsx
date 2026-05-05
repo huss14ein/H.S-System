@@ -12,11 +12,21 @@ export type SymbolQuoteTimestamps = Record<string, string>;
 /** `all` = every tracked symbol (header refresh). `platform` = one investment account’s holdings only (saves API quota). */
 export type PriceRefreshScope = { kind: 'all' } | { kind: 'platform'; platformId: string };
 
+/** Drives spinners: full refresh updates header + every platform card; platform refresh only touches one card + omits header “Updating…”. */
+export type QuotesRefreshUIScope =
+    | { mode: 'idle' }
+    | { mode: 'all' }
+    | { mode: 'platform'; accountId: string };
+
 interface MarketDataContextType {
   simulatedPrices: SimulatedPrices;
   setSimulatedPrices: (prices: SimulatedPrices) => void;
   isRefreshing: boolean;
   setIsRefreshing: (v: boolean) => void;
+  /** Which UX surfaces should show busy state while `isRefreshing` is true. */
+  quotesRefreshUIScope: QuotesRefreshUIScope;
+  /** Clears refreshing state and UI scope (call when a quote tick completes). */
+  finishQuotesRefresh: () => void;
   refreshPrices: () => Promise<void>;
   /** Refresh live quotes for holdings under one investment platform only (skips watchlist, planned trades, commodities). */
   refreshPricesForPlatform: (platformId: string) => Promise<void>;
@@ -51,6 +61,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         return out;
     });
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [quotesRefreshUIScope, setQuotesRefreshUIScope] = useState<QuotesRefreshUIScope>({ mode: 'idle' });
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
     const [isLive, setIsLive] = useState(() => Object.keys(loadQuoteCacheRows()).length > 0);
     const [symbolQuoteUpdatedAt, setSymbolQuoteUpdatedAt] = useState<SymbolQuoteTimestamps>({});
@@ -88,17 +99,25 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         setRefreshTrigger((prev) => prev + 1);
     }, []);
 
+    const finishQuotesRefresh = useCallback(() => {
+        setIsRefreshing(false);
+        setQuotesRefreshUIScope({ mode: 'idle' });
+    }, []);
+
     const refreshPrices = useCallback(async () => {
+        setQuotesRefreshUIScope({ mode: 'all' });
         setIsRefreshing(true);
         bumpPriceRefresh({ kind: 'all' });
-        // MarketSimulator performs fetch + sets isRefreshing false when done
+        // MarketSimulator performs fetch + calls finishQuotesRefresh when done
     }, [bumpPriceRefresh]);
 
     const refreshPricesForPlatform = useCallback(
         async (platformId: string) => {
             if (!platformId?.trim()) return;
+            const id = platformId.trim();
+            setQuotesRefreshUIScope({ mode: 'platform', accountId: id });
             setIsRefreshing(true);
-            bumpPriceRefresh({ kind: 'platform', platformId: platformId.trim() });
+            bumpPriceRefresh({ kind: 'platform', platformId: id });
         },
         [bumpPriceRefresh],
     );
@@ -108,6 +127,8 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         setSimulatedPrices,
         isRefreshing,
         setIsRefreshing,
+        quotesRefreshUIScope,
+        finishQuotesRefresh,
         refreshPrices,
         refreshPricesForPlatform,
         bumpPriceRefresh,
