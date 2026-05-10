@@ -11,6 +11,25 @@ import type { HandlerEvent } from '@netlify/functions';
 
 const LOCAL_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
 
+/** RFC1918 + link-local — LAN dev often uses 192.168.x.x / 10.x / 172.16–31.x; CORS would otherwise 403 the AI proxy. */
+function isPrivateOrLocalNetworkOrigin(origin: string): boolean {
+  try {
+    const { hostname } = new URL(origin);
+    if (/^localhost$|^127\.0\.0\.1$|^\[::1\]$/i.test(hostname)) return true;
+    if (/^10\./.test(hostname)) return true;
+    if (/^192\.168\./.test(hostname)) return true;
+    if (/^169\.254\./.test(hostname)) return true;
+    const m172 = /^172\.(\d+)\./.exec(hostname);
+    if (m172) {
+      const n = Number(m172[1]);
+      if (n >= 16 && n <= 31) return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 function canonicalOrigin(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -53,6 +72,7 @@ function requestOrigin(event: HandlerEvent): string | undefined {
 
 export function isOriginAllowed(origin: string): boolean {
   if (LOCAL_ORIGIN_RE.test(origin)) return true;
+  if (isPrivateOrLocalNetworkOrigin(origin)) return true;
   return deployedAllowedOrigins().has(origin);
 }
 

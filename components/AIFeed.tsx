@@ -10,6 +10,7 @@ import { ExclamationTriangleIcon } from './icons/ExclamationTriangleIcon';
 import { FeedItem } from '../types';
 import SafeMarkdownRenderer from './SafeMarkdownRenderer';
 import { useAI } from '../context/AiContext';
+import AiProxyUnavailableHint from './AiProxyUnavailableHint';
 
 const FEED_AI_LANG_KEY = 'finova_default_ai_lang_v1';
 
@@ -38,8 +39,7 @@ const AIFeed: React.FC = () => {
     const [arItems, setArItems] = useState<{ title: string; description: string }[] | null>(null);
     const [translating, setTranslating] = useState(false);
     const { data } = useContext(DataContext)!;
-    const { isAiAvailable, aiHealthChecked, aiActionsEnabled, refreshAiHealth } = useAI();
-    const [aiRecheckBusy, setAiRecheckBusy] = useState(false);
+    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const dataRef = useRef(data);
 
     useEffect(() => {
@@ -190,21 +190,7 @@ const AIFeed: React.FC = () => {
             )}
 
             {aiHealthChecked && !isAiAvailable ? (
-                 <div className="text-center p-4 text-amber-900 bg-amber-50 border border-amber-200 rounded-md">
-                    <p className="font-semibold">AI Features Disabled</p>
-                    <p className="text-sm mt-1">Configure a provider key on the server and ensure the dev server exposes <code className="text-xs bg-amber-100 px-1 rounded">/api/gemini-proxy</code> (Netlify Vite plugin).</p>
-                    <button
-                        type="button"
-                        disabled={aiRecheckBusy}
-                        onClick={() => {
-                            setAiRecheckBusy(true);
-                            void refreshAiHealth().finally(() => setAiRecheckBusy(false));
-                        }}
-                        className="mt-3 px-3 py-1.5 text-sm font-medium rounded-lg bg-amber-100 text-amber-950 hover:bg-amber-200 disabled:opacity-60"
-                    >
-                        {aiRecheckBusy ? 'Checking…' : 'Retry connection check'}
-                    </button>
-                </div>
+                <AiProxyUnavailableHint title="AI features are off" />
             ) : (
                 feedItems.length === 0 && !isLoading && !error && (
                     <div className="text-center p-4 text-gray-500">

@@ -36,4 +36,10 @@ describe('corsAllowlist', () => {
     expect(isOriginAllowed('https://my-finova.netlify.app')).toBe(true);
     expect(isOriginAllowed('https://evil.netlify.app')).toBe(false);
   });
+
+  it('allows typical RFC1918 LAN origins for local network dev', () => {
+    expect(isOriginAllowed('http://192.168.1.42:5173')).toBe(true);
+    expect(isOriginAllowed('http://10.0.0.5:8888')).toBe(true);
+    expect(isOriginAllowed('http://172.20.1.1:3000')).toBe(true);
+  });
 });

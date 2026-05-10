@@ -16,6 +16,7 @@ import {
     formatAiError,
 } from '../services/geminiService';
 import { useAI } from '../context/AiContext';
+import AiProxyUnavailableHint from './AiProxyUnavailableHint';
 import { ChevronDownIcon } from './icons/ChevronDownIcon';
 import { DocumentDuplicateIcon } from './icons/DocumentDuplicateIcon';
 import { CheckIcon } from './icons/CheckIcon';
@@ -77,8 +78,7 @@ const SalaryPlanningExperts: React.FC = () => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
-    const { isAiAvailable, aiHealthChecked, aiActionsEnabled, refreshAiHealth } = useAI();
-    const [aiRecheckBusy, setAiRecheckBusy] = useState(false);
+    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>(initialExpertsExpanded);
     const [formValues, setFormValues] = useState<Record<string, string>>({} as Record<string, string>);
     const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -571,26 +571,7 @@ const SalaryPlanningExperts: React.FC = () => {
                 </button>
                 <span>All suggested values are normalized to SAR to avoid currency mismatch.</span>
             </div>
-            {aiHealthChecked && !isAiAvailable && (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 mb-6">
-                    <p className="font-medium">AI is unavailable.</p>
-                    <p className="mt-1 text-amber-900/90">
-                        Add GEMINI_API_KEY (or Anthropic / OpenAI / Grok) to your Netlify environment. For local dev, ensure{' '}
-                        <code className="text-xs bg-amber-100 px-1 rounded">@netlify/vite-plugin</code> is in <code className="text-xs bg-amber-100 px-1 rounded">vite.config.ts</code> so the proxy health check can reach <code className="text-xs bg-amber-100 px-1 rounded">/api/gemini-proxy</code>.
-                    </p>
-                    <button
-                        type="button"
-                        disabled={aiRecheckBusy}
-                        onClick={() => {
-                            setAiRecheckBusy(true);
-                            void refreshAiHealth().finally(() => setAiRecheckBusy(false));
-                        }}
-                        className="mt-3 px-3 py-1.5 text-sm font-medium rounded-lg bg-amber-100 text-amber-950 hover:bg-amber-200 disabled:opacity-60"
-                    >
-                        {aiRecheckBusy ? 'Checking…' : 'Retry AI connection'}
-                    </button>
-                </div>
-            )}
+            {aiHealthChecked && !isAiAvailable && <AiProxyUnavailableHint variant="banner" />}
             {dataWarnings.length > 0 && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 mb-6">
                     <p className="font-medium mb-1">Input validation warnings</p>
