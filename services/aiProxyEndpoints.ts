@@ -1,12 +1,11 @@
 import { getAiProxyAuthorizationHeader } from './aiProxyAuth';
 
 /**
- * Single source of truth for the Netlify `gemini-proxy` function URLs.
- * Production: `netlify.toml` rewrites `/api/*` → `/.netlify/functions/:splat`.
- * Local: `npm run dev` runs Netlify Dev (see `netlify.toml` [dev]) + `@netlify/vite-plugin` so `/api/*` hits functions with Netlify site env.
+ * Single source of truth for Netlify `gemini-proxy` URLs. Provider keys are read only in the function from
+ * Netlify Site → Environment variables (`process.env`), never in the client bundle.
  *
- * Optional: set `VITE_AI_PROXY_EXTRA_ORIGIN` (e.g. `https://your-site.netlify.app`) to try that
- * origin first when the app is served from a host without functions (advanced / debugging).
+ * `netlify.toml` rewrites `/api/*` → `/.netlify/functions/:splat`.
+ * Optional `VITE_AI_PROXY_EXTRA_ORIGIN`: try a deployed origin first (e.g. preview URL) when debugging cross-origin.
  */
 export function getGeminiProxyEndpoints(): string[] {
     const paths = ['/api/gemini-proxy', '/.netlify/functions/gemini-proxy'];

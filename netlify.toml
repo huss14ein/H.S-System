@@ -8,8 +8,7 @@
 [functions]
   directory = "netlify/functions"
 
-# Local dev: runs `npm run dev:vite` (Vite + @netlify/vite-plugin) with **Netlify site env** injected
-# when you use `npm run dev` → `netlify dev`. Link once: `netlify link` then keys match the dashboard.
+# Dev server command for Netlify CLI; site Environment variables apply to functions when linked.
 [dev]
   command = "npm run dev:vite"
   port = 5173

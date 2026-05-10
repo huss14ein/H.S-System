@@ -8,8 +8,7 @@ export default defineConfig(({ mode }) => {
   loadEnv(mode, process.cwd(), '');
 
   return {
-    // Emulates Netlify redirects (`/api/*` → functions) and runs `netlify/functions` locally.
-    // Without this, plain `vite` cannot reach `gemini-proxy`, so AiContext health fails and all AI stays disabled.
+    // Emulates Netlify redirects (`/api/*` → functions). Functions read AI keys from Netlify Site env server-side only.
     plugins: [react(), netlify()],
     build: {
       rollupOptions: {

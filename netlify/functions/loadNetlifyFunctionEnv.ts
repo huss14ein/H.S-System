@@ -1,9 +1,7 @@
 /**
- * Load `.env` / `.env.local` from the project root for local `npm run dev` + Netlify functions.
- * Netlify **deployed** functions already have Site → Environment variables in `process.env` before
- * this runs; `dotenv` does not override existing keys unless `.env.local` uses override (last wins for locals).
- *
- * Tries `process.cwd()` and paths derived from this file so functions still find `.env` if cwd differs.
+ * Optional local overlay after Netlify Site env: `netlify env:pull` may mirror dashboard vars into `.env`.
+ * Deployed functions already receive Site → Environment variables in `process.env`; dotenv does not override existing keys
+ * unless `.env.local` uses override (last wins for locals).
  */
 import { config } from 'dotenv';
 import { existsSync } from 'node:fs';

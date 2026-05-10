@@ -8,7 +8,7 @@ const shellBase =
 
 /**
  * Shown when the AI proxy health check finished and no server provider keys were found, or the proxy was unreachable.
- * Prefer this over hard-coded setup copy so messaging stays in sync with AiContext.
+ * AI keys are read only inside Netlify Functions from Site → Environment variables (never exposed to the browser).
  */
 export const AiProxyUnavailableHint: React.FC<{
   variant?: Variant;
@@ -23,38 +23,25 @@ export const AiProxyUnavailableHint: React.FC<{
   const headline =
     title ??
     (aiUnavailableReason === 'no_keys'
-      ? 'AI proxy is reachable — no provider API keys visible (check Netlify env or local .env)'
-      : 'Cannot reach the AI proxy from this browser');
+      ? 'No AI provider keys in Netlify for this site'
+      : 'Cannot reach the AI proxy');
 
   const detail =
     aiUnavailableReason === 'no_keys' ? (
       <>
-        <strong>Production</strong> reads AI keys from{' '}
-        <strong>Netlify → Site configuration → Environment variables</strong> (e.g.{' '}
+        Add at least one key under{' '}
+        <strong>Netlify → Site configuration → Environment variables</strong> (for example{' '}
         <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">GEMINI_API_KEY</code>,{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">OPENAI_API_KEY</code>, etc.) — redeploy after changes.
-        <br />
-        <span className="mt-1 inline-block">
-          <strong>Local</strong> default is <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">npm run dev</code> → <strong>Netlify Dev</strong>, which injects{' '}
-          <strong>the same keys as your linked Netlify site</strong> after <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify link</code>.{' '}
-          Project <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">.env</code> /{' '}
-          <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">.env.local</code> still merge on top. If you use{' '}
-          <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">npm run dev:vite</code> only, run{' '}
-          <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify env:pull</code> or copy keys by hand. Restart dev after env changes.
-        </span>
+        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">ANTHROPIC_API_KEY</code>,{' '}
+        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">OPENAI_API_KEY</code>, or{' '}
+        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">GROK_API_KEY</code>
+        ). Redeploy so functions reload. Keys exist only in Netlify&apos;s server-side environment for the proxy—never in the browser bundle.
       </>
     ) : (
       <>
-        Run <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">npm run dev</code> from the repo root — it starts{' '}
-        <strong>Netlify Dev</strong> (<code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify.toml</code> →{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">npm run dev:vite</code>) so Vite +{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">@netlify/vite-plugin</code> serves{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">/api/gemini-proxy</code> and injects{' '}
-        <strong>your linked Netlify site&apos;s environment variables</strong> into functions (run <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify link</code> once per clone).
-        Plain Vite only: <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">npm run dev:vite</code> or{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">FORCE_VITE_DEV=1 npm run dev</code> — then use{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify env:pull</code> or copy keys into <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">.env</code>.
-        LAN / private IPs are allowed by default for CORS. Click <strong>Retry</strong> after the dev server is up.
+        The browser must talk to your Netlify deployment&apos;s function URL so the proxy can use{' '}
+        <strong>Site → Environment variables</strong> on the server. After your site or dev session exposes functions with those variables, use{' '}
+        <strong>Retry connection check</strong>.
       </>
     );
 
