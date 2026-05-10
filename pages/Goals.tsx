@@ -48,6 +48,8 @@ import {
     rollingSurplusAfterAllGoalBudgetReservations,
 } from '../services/goalProjectionFunding';
 import { toast } from '../context/ToastContext';
+import { useAI } from '../context/AiContext';
+import AiProxyUnavailableHint from '../components/AiProxyUnavailableHint';
 
 // A more visual progress bar specific for goals
 const GoalProgressBar: React.FC<{ progress: number; colorClass: string }> = ({ progress, colorClass }) => {
@@ -403,6 +405,7 @@ const GoalCard: React.FC<{
   onDelete: () => void;
   onSeeInPlan?: () => void;
 }> = ({ goal, resolvedCurrentAmountSar, onEdit, onDelete, onSeeInPlan }) => {
+    const { aiActionsEnabled } = useAI();
     const { data } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
@@ -475,6 +478,10 @@ const GoalCard: React.FC<{
     );
 
     const handleGetAIPlan = useCallback(async () => {
+        if (!aiActionsEnabled) {
+            toast('AI is not available. Configure provider keys (Netlify or local .env) and retry.', 'warning');
+            return;
+        }
         setIsLoading(true);
         const rollingAfter = rollingSurplusAfterAllGoalBudgetReservations(data ?? null, exchangeRate);
         const plan = await getGoalAIPlan(goal, rollingAfter, resolvedCurrentAmountSar, {
@@ -482,7 +489,7 @@ const GoalCard: React.FC<{
         });
         setAiPlan(plan);
         setIsLoading(false);
-    }, [goal, resolvedCurrentAmountSar, data, fundingEnvelope.envelopeMonthly, exchangeRate]);
+    }, [aiActionsEnabled, goal, resolvedCurrentAmountSar, data, fundingEnvelope.envelopeMonthly, exchangeRate]);
 
     const { monthsLeft, progressPercent, status, color, requiredMonthlyContribution, projectedMonthlyContribution, borderColor } = useMemo(() => {
         const tl = computeGoalTimelineStatus({
@@ -683,7 +690,7 @@ const GoalCard: React.FC<{
                 </div>
             )}
             <div className="bg-indigo-50 p-4 rounded-lg">
-                <div className="flex items-center justify-between"><div><h4 className="font-semibold text-indigo-800">Savings Plan</h4><p className="text-xs text-indigo-700/80">From your expert advisor</p></div><button onClick={handleGetAIPlan} disabled={isLoading} className="flex items-center px-3 py-1 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors"><RocketLaunchIcon className="h-4 w-4 mr-2"/>{isLoading ? 'Generating...' : 'Get AI Plan'}</button></div>
+                <div className="flex items-center justify-between"><div><h4 className="font-semibold text-indigo-800">Savings Plan</h4><p className="text-xs text-indigo-700/80">From your expert advisor</p></div><button type="button" onClick={handleGetAIPlan} disabled={isLoading || !aiActionsEnabled} title={!aiActionsEnabled ? 'AI unavailable — configure provider keys' : undefined} className="flex items-center px-3 py-1 text-sm bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors"><RocketLaunchIcon className="h-4 w-4 mr-2"/>{isLoading ? 'Generating...' : 'Get AI Plan'}</button></div>
                 {isLoading && <div className="text-center p-4 text-sm text-gray-500">Generating your plan...</div>}
                 {aiPlan && !isLoading && <div className="mt-2"><SafeMarkdownRenderer content={aiPlan} /></div>}
             </div>
@@ -699,6 +706,7 @@ const Goals: React.FC<{
 }> = ({ setActivePage, pageAction, clearPageAction, triggerPageAction }) => {
     const { data, loading, addGoal, updateGoal, deleteGoal, updateGoalAllocations, getAvailableCashForAccount } =
         useContext(DataContext)!;
+    const { aiHealthChecked, isAiAvailable } = useAI();
     const { trackAction } = useSelfLearning();
     const { exchangeRate, currency: displayCurrency } = useCurrency();
     const { simulatedPrices } = useMarketData();
@@ -1042,6 +1050,8 @@ const Goals: React.FC<{
           </ul>
         </div>
       )}
+
+      {aiHealthChecked && !isAiAvailable && <AiProxyUnavailableHint variant="banner" title="Goal AI plans & advisor need a configured proxy" />}
 
       <SectionCard id="goals-savings-allocation" title="Savings Allocation Strategy" className="bg-gradient-to-br from-white via-slate-50 to-primary/5 border-slate-100" collapsible collapsibleSummary="Allocate %" defaultExpanded>
         <p className="text-sm text-gray-500 mb-4">

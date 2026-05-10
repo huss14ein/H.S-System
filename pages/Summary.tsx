@@ -41,6 +41,8 @@ import {
 } from '../services/reportingEngine';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import Modal from '../components/Modal';
+import { useAI } from '../context/AiContext';
+import AiProxyUnavailableHint from '../components/AiProxyUnavailableHint';
 
 function householdStressStyles(level: string) {
     const L = (level || '').toLowerCase();
@@ -115,6 +117,7 @@ interface SummaryProps {
 }
 
 const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) => {
+    const { aiActionsEnabled, aiHealthChecked, isAiAvailable } = useAI();
     const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const auth = useContext(AuthContext);
@@ -185,6 +188,12 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     }, [data, data?.transactions, data?.personalTransactions]);
 
     const handleGenerateAnalysis = useCallback(async () => {
+        if (!aiActionsEnabled) {
+            setError(
+                'AI is not available yet. Confirm the proxy health banner below: set GEMINI_API_KEY (or another provider) in Netlify or project `.env`, then Retry.',
+            );
+            return;
+        }
         const fm = reportModel?.financialMetricsWithEf;
         if (!fm) return;
         trackAction('generate-financial-persona', 'Summary');
@@ -206,10 +215,10 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
             setError(formatAiError(err));
         }
         setIsLoading(false);
-    }, [reportModel?.financialMetricsWithEf, trackAction]);
+    }, [aiActionsEnabled, reportModel?.financialMetricsWithEf, trackAction]);
 
     const handleTranslateAdvisorToArabic = useCallback(async () => {
-        if (!analysisEn) return;
+        if (!analysisEn || !aiActionsEnabled) return;
         setIsLoading(true);
         setError(null);
         try {
@@ -233,7 +242,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
             setError(formatAiError(err));
         }
         setIsLoading(false);
-    }, [analysisEn]);
+    }, [analysisEn, aiActionsEnabled]);
 
     const handleAdvisorEnglish = useCallback(() => {
         if (!analysisEn) return;
@@ -716,10 +725,13 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
             </div>
 
             <div className="section-card max-w-full">
+                {aiHealthChecked && !isAiAvailable && (
+                    <AiProxyUnavailableHint className="mb-4" title="Advisor summary requires the AI proxy" />
+                )}
                 <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
                     <div className="flex flex-col"><div className="flex items-center space-x-2"><LightBulbIcon className="h-6 w-6 text-yellow-500" /><h2 className="text-xl font-semibold text-dark">Financial Advisor</h2></div><p className="text-xs text-slate-500 mt-0.5">Direct, summarized guidance with a report card</p></div>
                     <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-                        <button onClick={handleGenerateAnalysis} disabled={isLoading} className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
+                        <button type="button" onClick={handleGenerateAnalysis} disabled={isLoading || !aiActionsEnabled} title={!aiActionsEnabled ? 'AI unavailable — configure provider keys' : undefined} className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
                             <SparklesIcon className="h-5 w-5 mr-2" />
                             {isLoading ? 'Analyzing...' : (analysis ? 'Refresh Advisor Summary' : 'Generate Advisor Summary')}
                         </button>
@@ -728,7 +740,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                                 <button type="button" onClick={handleAdvisorEnglish} disabled={analysisLanguage === 'en' || isLoading} className="px-3 py-2 text-xs rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                                     English
                                 </button>
-                                <button type="button" onClick={handleTranslateAdvisorToArabic} disabled={analysisLanguage === 'ar' || isLoading} className="px-3 py-2 text-xs rounded border border-violet-300 bg-violet-100 text-violet-800 hover:bg-violet-200 disabled:opacity-50">
+                                <button type="button" onClick={handleTranslateAdvisorToArabic} disabled={analysisLanguage === 'ar' || isLoading || !aiActionsEnabled} title={!aiActionsEnabled ? 'Translation needs AI' : undefined} className="px-3 py-2 text-xs rounded border border-violet-300 bg-violet-100 text-violet-800 hover:bg-violet-200 disabled:opacity-50">
                                     Translate to Arabic
                                 </button>
                             </>
