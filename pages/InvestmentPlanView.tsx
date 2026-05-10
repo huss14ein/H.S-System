@@ -39,6 +39,7 @@ import { resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
 import CurrencyDualDisplay from '../components/CurrencyDualDisplay';
 import { fetchCompanyNameForSymbol } from '../hooks/useSymbolCompanyName';
 import { translateFinancialInsightToArabic, formatAiError } from '../services/geminiService';
+import { useAI } from '../context/AiContext';
 import { lookupLiveQuoteForSymbol } from '../services/finnhubService';
 import { computeCanonicalPlanningSnapshot } from '../services/canonicalPlanningEngine';
 
@@ -766,6 +767,7 @@ const InvestmentPlanView: React.FC<{
     stagedAddOnPlanned?: { key: number; symbol: string; name?: string; targetPrice?: number; amount?: number; quantity?: number; tradeType?: 'buy' | 'sell'; notes?: string } | null;
     onStagedAddOnPlannedHandled?: () => void;
 }> = ({ onExecutePlan, setActivePage: _setActivePage, triggerPageAction, embedded = false, stagedAddOnPlanned, onStagedAddOnPlannedHandled }) => {
+    const { aiActionsEnabled } = useAI();
     const { data, loading, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker, getAvailableCashForAccount } = useContext(DataContext)!;
     const { trackAction, trackSuggestionFeedback } = useSelfLearning();
     const { simulatedPrices, symbolQuoteUpdatedAt } = useMarketData();
@@ -1098,6 +1100,10 @@ const InvestmentPlanView: React.FC<{
     }, [alignmentSummaryEn]);
 
     const handleTranslateAlignmentToArabic = useCallback(async () => {
+        if (!aiActionsEnabled) {
+            setAlignmentSummaryArError('Arabic translation requires AI. Configure provider keys (Netlify or `.env`) and retry.');
+            return;
+        }
         setIsTranslatingAlignment(true);
         setAlignmentSummaryArError(null);
         try {
@@ -1107,7 +1113,7 @@ const InvestmentPlanView: React.FC<{
             setAlignmentSummaryArError(formatAiError(e));
         }
         setIsTranslatingAlignment(false);
-    }, [alignmentSummaryEn]);
+    }, [aiActionsEnabled, alignmentSummaryEn]);
 
 
 
@@ -1670,7 +1676,8 @@ const InvestmentPlanView: React.FC<{
                                 <button
                                     type="button"
                                     onClick={() => void handleTranslateAlignmentToArabic()}
-                                    disabled={isTranslatingAlignment}
+                                    disabled={isTranslatingAlignment || !aiActionsEnabled}
+                                    title={!aiActionsEnabled ? 'AI unavailable for translation' : undefined}
                                     className="px-2.5 py-1 text-xs font-semibold border border-indigo-300 text-indigo-800 rounded-md hover:border-indigo-500 disabled:opacity-60"
                                 >
                                     {isTranslatingAlignment ? 'Translating…' : 'العربية'}

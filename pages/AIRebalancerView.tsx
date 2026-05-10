@@ -7,7 +7,7 @@ import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useAI } from '../context/AiContext';
-import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
+import AiProxyUnavailableHint from '../components/AiProxyUnavailableHint';
 import { getTargetAllocationForProfile, meanVarianceOptimization } from '../services/portfolioConstruction';
 import type { Holding, Page } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
@@ -563,13 +563,11 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
             </div>
 
             {aiHealthChecked && !isAiAvailable && !isLoading && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 mb-4 flex gap-3 items-start">
-                <ExclamationTriangleIcon className="h-5 w-5 text-amber-700 shrink-0 mt-0.5" />
-                <p className="text-sm text-amber-900">
-                  When the AI service is unavailable, the app uses the same deterministic summary as fallback—still tied to your
-                  holdings and totals.
-                </p>
-              </div>
+              <AiProxyUnavailableHint
+                variant="banner"
+                className="mb-4"
+                title="Rebalancing notes use rule-based fallback until AI is available"
+              />
             )}
 
             {planError && !isLoading && (

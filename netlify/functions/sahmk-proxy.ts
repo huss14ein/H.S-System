@@ -1,3 +1,4 @@
+import './loadNetlifyFunctionEnv';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 import { accessControlOriginHeader, assertBrowserOriginAllowed } from './corsAllowlist';
 import { assertProxySupabaseJwt } from './proxySupabaseJwt';

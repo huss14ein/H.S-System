@@ -12,6 +12,7 @@ import AIAdvisor from '../components/AIAdvisor';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import ExpenseBreakdownChart from '../components/charts/ExpenseBreakdownChart';
 import { getAICategorySuggestion } from '../services/geminiService';
+import { useAI } from '../context/AiContext';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import InfoHint from '../components/InfoHint';
 import { StatementIcons } from '../constants/statementIcons';
@@ -90,6 +91,7 @@ const TransactionModal: React.FC<{
     existingTransactions: Transaction[],
     sarPerUsd: number;
 }> = ({ isOpen, onClose, onSave, onSaveAndTrade, transactionToEdit, budgetCategories, budgets, allCategories, accounts, existingTransactions, sarPerUsd }) => {
+    const { aiActionsEnabled } = useAI();
     const { formatCurrencyString } = useFormatCurrency();
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
     const incomeCategoryOptions = React.useMemo(
@@ -597,6 +599,18 @@ const TransactionModal: React.FC<{
         setAiSuggestionNote(null);
         try {
             const categoriesToUse = budgetCategories.length > 0 ? budgetCategories : allCategories;
+            if (!aiActionsEnabled) {
+                const fallback = suggestCategoryLocally(description);
+                const matched = fallback ? matchToAllowedCategory(fallback, allCategories) : null;
+                if (matched) {
+                    setCategory(matched);
+                    applyBudgetForSuggestedCategory(matched);
+                    setAiSuggestionNote({ tone: 'warning', text: `AI proxy off — smart fallback: ${matched}` });
+                } else {
+                    setAiSuggestionNote({ tone: 'info', text: 'AI unavailable. Pick a category from the list.' });
+                }
+                return;
+            }
             const suggested = await getAICategorySuggestion(description, categoriesToUse);
             if (suggested && categoriesToUse.includes(suggested)) {
                 setCategory(suggested);
@@ -655,7 +669,7 @@ const TransactionModal: React.FC<{
         if (!isOpen || transactionToEdit || type !== 'expense' || !description?.trim() || description.trim().length < 5) return;
         const t = window.setTimeout(() => handleSuggestCategoryRef.current(), 700);
         return () => clearTimeout(t);
-    }, [description, type, isOpen, transactionToEdit]);
+    }, [description, type, isOpen, transactionToEdit, aiActionsEnabled]);
 
     const isInvestmentTransfer = type === 'expense' && budgetCategory === 'Savings & Investments';
 

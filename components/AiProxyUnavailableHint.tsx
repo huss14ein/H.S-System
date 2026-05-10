@@ -23,25 +23,33 @@ export const AiProxyUnavailableHint: React.FC<{
   const headline =
     title ??
     (aiUnavailableReason === 'no_keys'
-      ? 'AI proxy is up — no provider key on the server'
+      ? 'AI proxy is reachable — no provider API keys visible (check Netlify env or local .env)'
       : 'Cannot reach the AI proxy from this browser');
 
   const detail =
     aiUnavailableReason === 'no_keys' ? (
       <>
-        Add at least one server env var (Netlify or local <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">.env</code>):{' '}
+        <strong>Production</strong> reads AI keys from{' '}
+        <strong>Netlify → Site configuration → Environment variables</strong> (e.g.{' '}
         <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">GEMINI_API_KEY</code>,{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">OPENAI_API_KEY</code>,{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">ANTHROPIC_API_KEY</code>, or{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">GROK_API_KEY</code>. Restart the dev server after changing <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">.env</code>.
+        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">OPENAI_API_KEY</code>, etc.) — redeploy after changes.
+        <br />
+        <span className="mt-1 inline-block">
+          <strong>Local</strong> <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">npm run dev</code> loads the same variable names from the project root{' '}
+          <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">.env</code> /{' '}
+          <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">.env.local</code> (Netlify does not push dashboard env into plain Vite automatically). Sync from your site:{' '}
+          <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify link</code> then{' '}
+          <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify env:pull</code>, or run{' '}
+          <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify dev</code> which injects site env into functions. Restart dev after editing env files.
+        </span>
       </>
     ) : (
       <>
-        Confirm the app is served with <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">npm run dev</code> (Vite +{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">@netlify/vite-plugin</code> in{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">vite.config.ts</code> so <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">/api/gemini-proxy</code> exists). If you
-        use another host/port, add its full origin to <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">ALLOWED_ORIGINS</code> in Netlify (or{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">.env</code> for local functions). Try <strong>Retry</strong> after fixing.
+        Use <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">npm run dev</code> from the repo root so Vite +{' '}
+        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">@netlify/vite-plugin</code> exposes{' '}
+        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">/api/gemini-proxy</code>. If the browser origin is not localhost (e.g. LAN IP or custom port), add that full origin to{' '}
+        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">ALLOWED_ORIGINS</code> in Netlify <strong>or</strong> in <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">.env</code> for local functions. Click{' '}
+        <strong>Retry</strong> after fixing.
       </>
     );
 

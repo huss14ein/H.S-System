@@ -3,6 +3,8 @@ import { DataContext } from '../context/DataContext';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar } from 'recharts';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import AIAdvisor from '../components/AIAdvisor';
+import AiProxyUnavailableHint from '../components/AiProxyUnavailableHint';
+import { useAI } from '../context/AiContext';
 import PageLayout from '../components/PageLayout';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import { CHART_COLORS, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber } from '../components/charts/chartTheme';
@@ -177,6 +179,7 @@ const AssetLiabilityChart: React.FC = () => {
 };
 
 const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
+    const { aiHealthChecked, isAiAvailable } = useAI();
     const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate, currency: displayCurrency } = useCurrency();
     const { simulatedPrices } = useMarketData();
@@ -303,6 +306,10 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     )}
                 </div>
             </div>
+
+            {aiHealthChecked && !isAiAvailable && (
+                <AiProxyUnavailableHint className="mb-4" variant="banner" title="Spend insights coach needs the AI proxy" />
+            )}
 
             <AIAdvisor pageContext="analysis" contextData={contextData} />
 

@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./loadNetlifyFunctionEnv";
 import type { Handler, HandlerEvent } from "@netlify/functions";
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import { accessControlOriginHeader, assertBrowserOriginAllowed } from "./corsAllowlist";
