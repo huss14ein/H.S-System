@@ -634,7 +634,7 @@ export async function probeGeminiProxyHealth(): Promise<{
             return {
                 ok: false,
                 ms,
-                error: 'Could not reach AI proxy. Deploy Netlify functions, use dev with @netlify/vite-plugin, or set VITE_AI_PROXY_EXTRA_ORIGIN.',
+                error: 'Could not reach AI proxy. From repo root run `npm run dev` (Netlify Dev + Vite), or `netlify link` + same command for local functions. Set VITE_AI_PROXY_EXTRA_ORIGIN if the app is not served from the same host as the dev server.',
             };
         }
         if (!r.configured) {

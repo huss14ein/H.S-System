@@ -8,6 +8,13 @@
 [functions]
   directory = "netlify/functions"
 
+# Local dev: runs `npm run dev:vite` (Vite + @netlify/vite-plugin) with **Netlify site env** injected
+# when you use `npm run dev` → `netlify dev`. Link once: `netlify link` then keys match the dashboard.
+[dev]
+  command = "npm run dev:vite"
+  port = 5173
+  publish = "dist"
+
 # Increase the timeout for the AI proxy function to prevent 504 errors
 # on long-running Gemini API requests. Default is 10s, max is 26s.
 [functions."gemini-proxy"]

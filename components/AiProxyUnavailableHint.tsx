@@ -35,21 +35,26 @@ export const AiProxyUnavailableHint: React.FC<{
         <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">OPENAI_API_KEY</code>, etc.) — redeploy after changes.
         <br />
         <span className="mt-1 inline-block">
-          <strong>Local</strong> <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">npm run dev</code> loads the same variable names from the project root{' '}
-          <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">.env</code> /{' '}
-          <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">.env.local</code> (Netlify does not push dashboard env into plain Vite automatically). Sync from your site:{' '}
-          <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify link</code> then{' '}
-          <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify env:pull</code>, or run{' '}
-          <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify dev</code> which injects site env into functions. Restart dev after editing env files.
+          <strong>Local</strong> default is <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">npm run dev</code> → <strong>Netlify Dev</strong>, which injects{' '}
+          <strong>the same keys as your linked Netlify site</strong> after <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify link</code>.{' '}
+          Project <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">.env</code> /{' '}
+          <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">.env.local</code> still merge on top. If you use{' '}
+          <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">npm run dev:vite</code> only, run{' '}
+          <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify env:pull</code> or copy keys by hand. Restart dev after env changes.
         </span>
       </>
     ) : (
       <>
-        Use <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">npm run dev</code> from the repo root so Vite +{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">@netlify/vite-plugin</code> exposes{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">/api/gemini-proxy</code>. If the browser origin is not localhost (e.g. LAN IP or custom port), add that full origin to{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">ALLOWED_ORIGINS</code> in Netlify <strong>or</strong> in <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">.env</code> for local functions. Click{' '}
-        <strong>Retry</strong> after fixing.
+        Run <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">npm run dev</code> from the repo root — it starts{' '}
+        <strong>Netlify Dev</strong> (<code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify.toml</code> →{' '}
+        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">npm run dev:vite</code>) so Vite +{' '}
+        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">@netlify/vite-plugin</code> serves{' '}
+        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">/api/gemini-proxy</code> and injects{' '}
+        <strong>your linked Netlify site&apos;s environment variables</strong> into functions (run <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify link</code> once per clone).
+        Plain Vite only: <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">npm run dev:vite</code> or{' '}
+        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">FORCE_VITE_DEV=1 npm run dev</code> — then use{' '}
+        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify env:pull</code> or copy keys into <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">.env</code>.
+        LAN / private IPs are allowed by default for CORS. Click <strong>Retry</strong> after the dev server is up.
       </>
     );
 

@@ -42,4 +42,10 @@ describe('corsAllowlist', () => {
     expect(isOriginAllowed('http://10.0.0.5:8888')).toBe(true);
     expect(isOriginAllowed('http://172.20.1.1:3000')).toBe(true);
   });
+
+  it('allows mDNS .local and Tailscale CGNAT-style hosts', () => {
+    expect(isOriginAllowed('http://my-mac.local:5173')).toBe(true);
+    expect(isOriginAllowed('http://100.100.45.12:5173')).toBe(true);
+    expect(isOriginAllowed('http://100.50.1.2:5173')).toBe(false);
+  });
 });
