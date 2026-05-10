@@ -5,6 +5,9 @@
  * Configure production/preview origins via Netlify env: `URL`, `DEPLOY_PRIME_URL`, `DEPLOY_URL`, or
  * `ALLOWED_ORIGINS` (comma-separated full origins, e.g. `http://localhost:5173,https://app.example.com`).
  * Localhost / 127.0.0.1 / [::1] (any port) are always allowed for dev.
+ *
+ * Deploy previews (`https://<deploy-id>--<site-slug>.netlify.app`) are allowed automatically when the
+ * site slug matches any of `URL` / `DEPLOY_*` / `NETLIFY_SITE_URL` (no need to list every preview in `ALLOWED_ORIGINS`).
  */
 
 import type { HandlerEvent } from '@netlify/functions';
@@ -54,12 +57,53 @@ function canonicalOrigin(raw: string): string | null {
   }
 }
 
+/**
+ * Netlify site slug from `*.netlify.app` hostname: production `mysite.netlify.app` → `mysite`;
+ * deploy permalink `abc123--mysite.netlify.app` → `mysite`.
+ */
+export function netlifySiteSlugFromHostname(hostname: string): string | null {
+  const h = hostname.trim().toLowerCase();
+  if (!h.endsWith('.netlify.app')) return null;
+  const sub = h.slice(0, -'.netlify.app'.length);
+  const sep = sub.indexOf('--');
+  if (sep === -1) return sub || null;
+  return sub.slice(sep + 2) || null;
+}
+
+/** Resolve site slug from Netlify-injected URLs (same slug for production + every deploy preview). */
+function netlifySiteSlugFromContextEnv(): string | null {
+  for (const key of ['URL', 'NETLIFY_SITE_URL', 'DEPLOY_PRIME_URL', 'DEPLOY_URL'] as const) {
+    const v = process.env[key]?.trim();
+    if (!v) continue;
+    try {
+      const slug = netlifySiteSlugFromHostname(new URL(v).hostname);
+      if (slug) return slug;
+    } catch {
+      /* ignore */
+    }
+  }
+  const name = process.env.NETLIFY_SITE_NAME?.trim().toLowerCase();
+  return name || null;
+}
+
+/** Browser origin is any *.netlify.app URL for this site (including deploy previews). */
+function isNetlifyDeployOrProductionOriginForSite(origin: string, siteSlug: string): boolean {
+  try {
+    const { hostname } = new URL(origin);
+    const oSlug = netlifySiteSlugFromHostname(hostname);
+    if (!oSlug) return false;
+    return oSlug === siteSlug.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 /** Origins merged from Netlify deployment env + ALLOWED_ORIGINS. */
 export function deployedAllowedOrigins(): Set<string> {
   const set = new Set<string>();
   const extras = String(process.env.ALLOWED_ORIGINS ?? '')
-    .split(',')
-    .map((s) => s.trim())
+    .split(/[,\n]/)
+    .map((s) => s.trim().replace(/^["']+|["']+$/g, '').trim())
     .filter(Boolean);
   for (const e of extras) {
     const o = canonicalOrigin(e);
@@ -85,6 +129,8 @@ function requestOrigin(event: HandlerEvent): string | undefined {
 export function isOriginAllowed(origin: string): boolean {
   if (LOCAL_ORIGIN_RE.test(origin)) return true;
   if (isPrivateOrLocalNetworkOrigin(origin)) return true;
+  const ctxSlug = netlifySiteSlugFromContextEnv();
+  if (ctxSlug && isNetlifyDeployOrProductionOriginForSite(origin, ctxSlug)) return true;
   return deployedAllowedOrigins().has(origin);
 }
 

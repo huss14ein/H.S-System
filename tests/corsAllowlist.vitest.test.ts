@@ -10,6 +10,7 @@ describe('corsAllowlist', () => {
     delete process.env.DEPLOY_PRIME_URL;
     delete process.env.NETLIFY_SITE_URL;
     delete process.env.DEPLOY_URL;
+    delete process.env.NETLIFY_SITE_NAME;
     delete process.env.ALLOWED_ORIGINS;
   });
 
@@ -41,7 +42,26 @@ describe('corsAllowlist', () => {
   it('respects DEPLOY_URL origin (deploy permalink / preview)', () => {
     process.env.DEPLOY_URL = 'https://abc123--my-finova.netlify.app';
     expect(isOriginAllowed('https://abc123--my-finova.netlify.app')).toBe(true);
-    expect(isOriginAllowed('https://other--my-finova.netlify.app')).toBe(false);
+    // Same site slug as DEPLOY_URL → deploy previews all match (deploy id prefix may vary).
+    expect(isOriginAllowed('https://other--my-finova.netlify.app')).toBe(true);
+    expect(isOriginAllowed('https://not-my-finova.netlify.app')).toBe(false);
+  });
+
+  it('allows deploy-preview origins for the same site without listing each preview in ALLOWED_ORIGINS', () => {
+    process.env.URL = 'https://my-finova.netlify.app';
+    expect(isOriginAllowed('https://6a00b4efa46d9e000858a724--my-finova.netlify.app')).toBe(true);
+    expect(isOriginAllowed('https://deadbeef--my-finova.netlify.app')).toBe(true);
+  });
+
+  it('does not allow *.netlify.app deploy URLs for a different site slug', () => {
+    process.env.URL = 'https://my-finova.netlify.app';
+    expect(isOriginAllowed('https://abc123--other-site.netlify.app')).toBe(false);
+  });
+
+  it('strips surrounding quotes from ALLOWED_ORIGINS tokens', () => {
+    process.env.ALLOWED_ORIGINS = '"https://quoted.example.test", \'https://single.example.test\'';
+    expect(isOriginAllowed('https://quoted.example.test')).toBe(true);
+    expect(isOriginAllowed('https://single.example.test')).toBe(true);
   });
 
   it('allows typical RFC1918 LAN origins for local network dev', () => {
