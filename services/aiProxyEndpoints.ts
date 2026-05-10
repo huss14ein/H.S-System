@@ -1,3 +1,5 @@
+import { getAiProxyAuthorizationHeader } from './aiProxyAuth';
+
 /**
  * Single source of truth for the Netlify `gemini-proxy` function URLs.
  * Production: `netlify.toml` rewrites `/api/*` → `/.netlify/functions/:splat`.
@@ -37,9 +39,10 @@ export async function fetchGeminiProxyHealthStatus(signal?: AbortSignal): Promis
     const endpoints = getGeminiProxyEndpoints();
     for (const endpoint of endpoints) {
         try {
+            const authHeaders = await getAiProxyAuthorizationHeader();
             const res = await fetch(endpoint, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...authHeaders },
                 body: JSON.stringify({ health: true }),
                 signal,
             });

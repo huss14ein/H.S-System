@@ -461,7 +461,7 @@ export function generateWealthSummaryReportHtml(
   const metricCard = (label: string, value: string, tone: 'good' | 'warn' | 'bad' | 'neutral' = 'neutral') => `
     <article class="card ${toneClass(tone)}" role="listitem" aria-label="${escapeHtml(label)}">
       <div class="k">${escapeHtml(label)}</div>
-      <div class="v">${value}</div>
+      <div class="v">${escapeHtml(value)}</div>
     </article>
   `;
   return `<!doctype html>

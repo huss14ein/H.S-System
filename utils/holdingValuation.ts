@@ -1,5 +1,5 @@
 import type { Holding, TradeCurrency } from '../types';
-import { quoteNotionalInBookCurrency } from './currencyMath';
+import { convertBetweenTradeCurrencies, inferInstrumentCurrencyFromSymbol, quoteNotionalInBookCurrency } from './currencyMath';
 import { AVG_COST_DECIMALS } from './money';
 import { lookupLiveQuoteForSymbol } from '../services/finnhubService';
 
@@ -37,5 +37,37 @@ export function effectiveHoldingValueInBookCurrency(
     const costValue = Number.isFinite(avgCost) && Number.isFinite(qty) ? avgCost * qty : 0;
     if (marketValue > 0) return marketValue;
     if (costValue > 0) return costValue;
+    return 0;
+}
+
+/**
+ * Best-effort current price per unit, expressed in the portfolio's **book currency**.
+ * Mirrors the fallback chain used in aggregates:
+ * - live/simulated quote (instrument currency → book currency)
+ * - stored market value ÷ qty
+ * - avg cost
+ */
+export function effectiveHoldingUnitPriceInBookCurrency(
+    h: Holding,
+    bookCurrency: TradeCurrency,
+    simulatedPrices: Record<string, { price?: number; change?: number } | undefined>,
+    sarPerUsd: number,
+): number {
+    const qty = Number(h.quantity || 0);
+    const avgCost = Number(h.avgCost || 0);
+    const symRaw = (h.symbol || '').trim();
+    const sym = symRaw.toUpperCase();
+
+    const priceInfo = holdingUsesLiveQuote(h) ? lookupLiveQuoteForSymbol(simulatedPrices, symRaw || sym) : undefined;
+    if (priceInfo && Number.isFinite(priceInfo.price) && (priceInfo.price as number) > 0) {
+        // Quote is in instrument currency; convert to book currency for per-unit comparison.
+        return convertBetweenTradeCurrencies(priceInfo.price as number, inferInstrumentCurrencyFromSymbol(symRaw || sym), bookCurrency, sarPerUsd);
+    }
+
+    const marketValue = Number(h.currentValue || 0);
+    if (qty > 0 && Number.isFinite(marketValue) && marketValue > 0) {
+        return marketValue / qty;
+    }
+    if (Number.isFinite(avgCost) && avgCost > 0) return avgCost;
     return 0;
 }

@@ -5,7 +5,7 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useCurrency } from '../context/CurrencyContext';
 import InfoHint from '../components/InfoHint';
 import SectionCard from '../components/SectionCard';
-import type { Holding, InvestmentPortfolio, PlannedTrade, RecoveryOrderDraft, RecoveryPositionConfig, RecoveryGlobalConfig, TradeCurrency } from '../types';
+import type { Holding, PlannedTrade, RecoveryOrderDraft, RecoveryPositionConfig, RecoveryGlobalConfig, TradeCurrency } from '../types';
 import {
   buildRecoveryPlan,
   computeNewAverage,
@@ -19,7 +19,7 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { PresentationChartLineIcon } from '../components/icons/PresentationChartLineIcon';
 import { suggestRecoveryParameters, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
-import { holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
+import { HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
 import {
   saveRecoveryExecution,
   getRecoveryExecutionsBySymbol,
@@ -32,17 +32,14 @@ import {
 import type { Page } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import {
-  convertBetweenTradeCurrencies,
-  inferInstrumentCurrencyFromSymbol,
   resolveSarPerUsd,
-  tradableCashBucketToSAR,
 } from '../utils/currencyMath';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import { ResolvedSymbolLabel, formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
-import { getPersonalInvestments } from '../utils/wealthScope';
 import { toast } from '../context/ToastContext';
 import { recoveryOrderDraftToPlannedTrade, plannedTradeMatchesRecoveryDraft } from '../services/recoveryToPlannedTrade';
 import { validatePlannedTrade } from '../services/dataQuality/validation';
+import { computeCanonicalPlanningSnapshot } from '../services/canonicalPlanningEngine';
 
 interface RecoveryPlanViewProps {
   onNavigateToTab?: (tab: string) => void;
@@ -85,71 +82,26 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const { data, loading, getAvailableCashForAccount, addPlannedTrade } = ctx;
   const { exchangeRate } = useCurrency();
   const { trackAction } = useSelfLearning();
-  const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
-  const { simulatedPrices } = useMarketData();
+  const { simulatedPrices, symbolQuoteUpdatedAt } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
   const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
   const aiOptimizeDisabled = !aiActionsEnabled;
+  const canonical = useMemo(
+    () =>
+      data
+        ? computeCanonicalPlanningSnapshot({
+            data: data as any,
+            exchangeRate,
+            simulatedPrices,
+            getAvailableCashForAccount,
+            symbolQuoteUpdatedAt,
+          })
+        : null,
+    [data, exchangeRate, simulatedPrices, getAvailableCashForAccount, symbolQuoteUpdatedAt],
+  );
+  const sarPerUsd = canonical?.sarPerUsd ?? resolveSarPerUsd(data, exchangeRate);
 
-  const allHoldingsWithPortfolio = useMemo(() => {
-    const list: { holding: Holding; portfolioName: string; bookCurrency: TradeCurrency; accountId?: string }[] = [];
-    getPersonalInvestments(data ?? null).forEach((p: InvestmentPortfolio) => {
-      const bookCurrency: TradeCurrency =
-        p.currency === 'SAR' || p.currency === 'USD' ? p.currency : 'USD';
-      (p.holdings ?? [])
-        .filter((h: Holding) => (Number(h.quantity) || 0) > 0)
-        .forEach((h: Holding) => {
-          list.push({
-            holding: h,
-            portfolioName: p.name ?? 'Portfolio',
-            bookCurrency,
-            accountId: p.accountId,
-          });
-        });
-    });
-    return list;
-  }, [data]);
-  const allHoldings = useMemo(() => allHoldingsWithPortfolio.map(({ holding }) => holding), [allHoldingsWithPortfolio]);
-  const priceMap = useMemo(() => {
-    const map: Record<string, number> = {};
-    Object.entries(simulatedPrices).forEach(([sym, o]) => {
-      const s = sym.toUpperCase();
-      const price = (o as { price: number }).price;
-      if (Number.isFinite(price) && price > 0) map[s] = price;
-    });
-    allHoldings.forEach(h => {
-      const sym = (h.symbol || '').toUpperCase();
-      if (!sym) return;
-      if (sym in map) return;
-      const qty = Number(h.quantity) || 0;
-      const currentVal = h.currentValue != null ? Number(h.currentValue) : NaN;
-      const avgCost = h.avgCost != null ? Number(h.avgCost) : 0;
-      if (qty > 0 && Number.isFinite(currentVal) && currentVal > 0) {
-        map[sym] = currentVal / qty;
-      } else if (qty > 0 && avgCost > 0) {
-        map[sym] = avgCost;
-      }
-    });
-    return map;
-  }, [simulatedPrices, allHoldings]);
-
-  const deployableCashSAR = useMemo(() => {
-    const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-    const platformCashSAR = accounts
-      .filter((a: { type?: string; id: string }) => a.type === 'Investment')
-      .reduce(
-        (s: number, a: { id: string }) => s + tradableCashBucketToSAR(getAvailableCashForAccount(a.id), sarPerUsd),
-        0,
-      );
-
-    const total = platformCashSAR;
-    // Validate result
-    if (!Number.isFinite(total) || total < 0) {
-      console.warn('Invalid deployable cash calculated:', { platformCashSAR, total });
-      return 0;
-    }
-    return total;
-  }, [data?.accounts, (data as any)?.personalAccounts, getAvailableCashForAccount, sarPerUsd]);
+  const deployableCashSAR = canonical?.recoveryPlan?.deployableCashSar ?? 0;
 
   const globalConfig: RecoveryGlobalConfig = useMemo(() => ({
     ...DEFAULT_RECOVERY_GLOBAL_CONFIG,
@@ -163,23 +115,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     () => (data?.investmentPlan?.budgetCurrency as TradeCurrency) || 'SAR',
     [data?.investmentPlan?.budgetCurrency],
   );
-  const coreUpsideSpec = useMemo(() => {
-    const coreTickers: string[] = [];
-    const upsideTickers: string[] = [];
-    const specTickers: string[] = [];
-    universe.forEach((u: { ticker?: string; status?: string }) => {
-      const t = (u.ticker ?? '').toUpperCase();
-      if (!t) return;
-      if (u.status === 'Core') coreTickers.push(t);
-      else if (u.status === 'High-Upside') upsideTickers.push(t);
-      else if (u.status === 'Speculative') specTickers.push(t);
-    });
-    if (coreTickers.length === 0 && upsideTickers.length === 0 && data?.investmentPlan) {
-      (data.investmentPlan.corePortfolio ?? []).forEach((p: { ticker?: string }) => coreTickers.push((p.ticker ?? '').toUpperCase()));
-      (data.investmentPlan.upsideSleeve ?? []).forEach((p: { ticker?: string }) => upsideTickers.push((p.ticker ?? '').toUpperCase()));
-    }
-    return { coreTickers, upsideTickers, specTickers };
-  }, [universe, data?.investmentPlan]);
+  // Universe sleeve mappings are applied inside the positions memo (canonical snapshot + local AI overrides).
 
   const [selectedHoldingId, setSelectedHoldingId] = useState<string | null>(null);
   const [draftOrders, setDraftOrders] = useState<RecoveryOrderDraft[] | null>(null);
@@ -212,31 +148,35 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const [whatIfPrice, setWhatIfPrice] = useState('');
 
   const positionsWithRecovery = useMemo(() => {
-    return allHoldingsWithPortfolio.map(({ holding, portfolioName, bookCurrency }) => {
+    // Base snapshot comes from canonical engine; we re-apply AI overrides (if any) on top.
+    const base = canonical?.recoveryPlan?.positions ?? [];
+    if (!base.length) return [];
+    const universe = data?.portfolioUniverse ?? [];
+    const coreTickers: string[] = [];
+    const upsideTickers: string[] = [];
+    const specTickers: string[] = [];
+    universe.forEach((u: { ticker?: string; status?: string }) => {
+      const t = (u.ticker ?? '').toUpperCase();
+      if (!t) return;
+      if (u.status === 'Core') coreTickers.push(t);
+      else if (u.status === 'High-Upside') upsideTickers.push(t);
+      else if (u.status === 'Speculative') specTickers.push(t);
+    });
+    const sleeveRef = { coreTickers, upsideTickers, specTickers };
+
+    return base.map((row) => {
+      const holding = row.holding;
+      const portfolioName = row.portfolioName;
+      const bookCurrency = row.bookCurrency;
       const sym = (holding.symbol || '').toUpperCase();
       const qty = Number(holding.quantity) || 0;
       const currentVal = holding.currentValue != null ? Number(holding.currentValue) : NaN;
       const avgCost = (holding.avgCost != null ? Number(holding.avgCost) : 0) || 0;
-      const useLiveQuote = holdingUsesLiveQuote(holding);
-      const rawInstrumentPx = priceMap[sym];
-      let currentPrice: number;
-      if (useLiveQuote && rawInstrumentPx != null && Number.isFinite(rawInstrumentPx) && rawInstrumentPx > 0) {
-        currentPrice = convertBetweenTradeCurrencies(
-          rawInstrumentPx,
-          inferInstrumentCurrencyFromSymbol(sym),
-          bookCurrency,
-          sarPerUsd,
-        );
-      } else if (qty > 0 && Number.isFinite(currentVal) && currentVal > 0) {
-        currentPrice = currentVal / qty;
-      } else {
-        currentPrice = avgCost;
-      }
-      const sleeveType = tickerToSleeve(sym, coreUpsideSpec.coreTickers.length || coreUpsideSpec.upsideTickers.length ? coreUpsideSpec : undefined);
-      const riskTier = tickerToRiskTier(sym, coreUpsideSpec.coreTickers.length || coreUpsideSpec.upsideTickers.length ? coreUpsideSpec : undefined);
+      const currentPrice = row.currentUnitPriceBook;
+      const sleeveType = tickerToSleeve(sym, sleeveRef.coreTickers.length || sleeveRef.upsideTickers.length ? sleeveRef : undefined);
+      const riskTier = tickerToRiskTier(sym, sleeveRef.coreTickers.length || sleeveRef.upsideTickers.length ? sleeveRef : undefined);
       const roughPlPct = avgCost > 0 && currentPrice > 0 ? ((currentPrice - avgCost) / avgCost) * 100 : 0;
-      const deployableCashInBookCurrency =
-        bookCurrency === 'SAR' ? deployableCashSAR : deployableCashSAR / sarPerUsd;
+      const deployableCashInBookCurrency = bookCurrency === 'SAR' ? deployableCashSAR : deployableCashSAR / sarPerUsd;
       const dynamicConfig = deriveDynamicPositionConfig(sym, sleeveType, riskTier, deployableCashInBookCurrency, roughPlPct);
       const ai = aiRecoveryBySymbol[sym];
       const mergedConfig: RecoveryPositionConfig = ai
@@ -255,19 +195,22 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           deployableCashInBookCurrency * globalConfig.recoveryBudgetPct,
         ),
       );
-      const positionGlobalConfig: RecoveryGlobalConfig = {
-        ...globalConfig,
-        deployableCash: deployableCashInBookCurrency,
-      };
-      const positionConfig: RecoveryPositionConfig = {
-        ...mergedConfig,
-        maxAddShares: boundedMaxAddShares,
-        maxAddCost: Number(boundedMaxAddCost.toFixed(2)),
-      };
+      const positionGlobalConfig: RecoveryGlobalConfig = { ...globalConfig, deployableCash: deployableCashInBookCurrency };
+      const positionConfig: RecoveryPositionConfig = { ...mergedConfig, maxAddShares: boundedMaxAddShares, maxAddCost: Number(boundedMaxAddCost.toFixed(2)) };
       const plan = buildRecoveryPlan(holding, currentPrice, positionConfig, positionGlobalConfig);
-      return { holding, portfolioName, bookCurrency, currentPrice, positionConfig, plan, aiNotes: ai?.notes };
+      return {
+        holding,
+        portfolioName,
+        portfolioId: row.portfolioId,
+        bookCurrency,
+        currentPrice,
+        positionConfig,
+        plan,
+        aiNotes: ai?.notes,
+        priceProvenance: row.priceProvenance,
+      };
     });
-  }, [allHoldingsWithPortfolio, priceMap, globalConfig, coreUpsideSpec, deployableCashSAR, sarPerUsd, aiRecoveryBySymbol]);
+  }, [canonical, data?.portfolioUniverse, deployableCashSAR, sarPerUsd, aiRecoveryBySymbol, globalConfig]);
 
   const losingPositions = useMemo(() => positionsWithRecovery.filter(p => p.plan.plPct < 0), [positionsWithRecovery]);
   const recoverySymbols = useMemo(
@@ -429,11 +372,16 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       try {
         const displayName = resolveDisplayNameForDraft(draft);
         const limitPriceCurrency = selected?.bookCurrency ?? 'USD';
+        const invList = data?.personalInvestments ?? data?.investments ?? [];
+        const pfRow = selected?.portfolioId ? invList.find((p) => p.id === selected.portfolioId) : undefined;
+        const venueAccountId = pfRow?.accountId ? String(pfRow.accountId).trim() : undefined;
         const payload = recoveryOrderDraftToPlannedTrade(draft, {
           displayName,
           planCurrency,
           sarPerUsd,
           limitPriceCurrency,
+          portfolioId: selected?.portfolioId,
+          accountId: venueAccountId,
         });
         if (plannedTradeMatchesRecoveryDraft(data?.plannedTrades ?? [], payload)) {
           toast('This limit is already in Trade plans.', 'info');
@@ -453,7 +401,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         setInsertingPlanKey(null);
       }
     },
-    [addPlannedTrade, data?.plannedTrades, planCurrency, resolveDisplayNameForDraft, sarPerUsd, selected?.bookCurrency, trackAction],
+    [addPlannedTrade, data?.plannedTrades, data?.personalInvestments, data?.investments, planCurrency, resolveDisplayNameForDraft, sarPerUsd, selected?.bookCurrency, selected?.portfolioId, trackAction],
   );
 
   const insertAllRecoveryDraftsIntoInvestmentPlan = useCallback(async () => {
@@ -468,11 +416,16 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         const d = draftOrders[i];
         const displayName = resolveDisplayNameForDraft(d);
         const limitPriceCurrency = selected?.bookCurrency ?? 'USD';
+        const invList = data?.personalInvestments ?? data?.investments ?? [];
+        const pfRow = selected?.portfolioId ? invList.find((p) => p.id === selected.portfolioId) : undefined;
+        const venueAccountId = pfRow?.accountId ? String(pfRow.accountId).trim() : undefined;
         const payload = recoveryOrderDraftToPlannedTrade(d, {
           displayName,
           planCurrency,
           sarPerUsd,
           limitPriceCurrency,
+          portfolioId: selected?.portfolioId,
+          accountId: venueAccountId,
         });
         const dedupeKey = `${payload.symbol}|${payload.tradeType}|${payload.targetValue}|${payload.quantity}`;
         if (seen.has(dedupeKey)) continue;
@@ -507,12 +460,15 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }, [
     addPlannedTrade,
     data?.plannedTrades,
+    data?.personalInvestments,
+    data?.investments,
     draftOrders,
     onNavigateToTab,
     planCurrency,
     resolveDisplayNameForDraft,
     sarPerUsd,
     selected?.bookCurrency,
+    selected?.portfolioId,
     trackAction,
   ]);
 
@@ -1007,7 +963,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   </td>
                 </tr>
               ) : (
-                losingPositions.map(({ holding, portfolioName, bookCurrency, plan }) => (
+                losingPositions.map(({ holding, portfolioName, bookCurrency, plan, priceProvenance }) => (
                   <tr key={holding.id} className={`${isSelected(holding.id) ? 'bg-primary/10 border-l-4 border-primary' : 'hover:bg-slate-50'} transition-colors duration-150`}>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
@@ -1028,6 +984,25 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                             <span className="font-bold text-slate-900 text-lg">—</span>
                           )}
                           <span className="block text-sm text-slate-500">{portfolioName}</span>
+                          {priceProvenance && (
+                            <span
+                              className={`mt-1 inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+                                priceProvenance.quoteFreshness?.isStale
+                                  ? 'border-rose-200 bg-rose-50 text-rose-700'
+                                  : 'border-slate-200 bg-slate-50 text-slate-700'
+                              }`}
+                              title={[
+                                `Price source: ${priceProvenance.source}`,
+                                `Quote updated: ${priceProvenance.quoteFreshness?.updatedAtIso ?? 'unknown'}`,
+                                `Quote age (min): ${priceProvenance.quoteFreshness?.ageMinutes != null ? priceProvenance.quoteFreshness.ageMinutes.toFixed(1) : 'unknown'}`,
+                                priceProvenance.quoteFreshness?.isStale ? 'Stale quote: refresh prices for higher confidence.' : 'Quote fresh enough for decisions.',
+                              ].join('\n')}
+                            >
+                              <span>{priceProvenance.quoteFreshness?.isStale ? 'Stale' : 'Fresh'}</span>
+                              <span className="text-slate-400">·</span>
+                              <span>{String(priceProvenance.source).split('_').join(' ')}</span>
+                            </span>
+                          )}
                         </div>
                       </div>
                     </td>

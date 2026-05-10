@@ -5,7 +5,7 @@ import { SchemaType } from '../services/geminiSchemaTypes';
 import { DataContext } from '../context/DataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { computePersonalHeadlineNetWorthSar } from '../services/personalNetWorth';
-import { invokeAI, formatAiError } from '../services/geminiService';
+import { invokeAI, formatAiError, buildLiveAdvisorSystemInstruction } from '../services/geminiService';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { HeadsetIcon } from './icons/HeadsetIcon';
 import { SparklesIcon } from './icons/SparklesIcon';
@@ -30,14 +30,10 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
     });
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
-    const systemInstruction = useMemo(() => {
-        const base =
-            "You are Finova AI, a very clever expert financial and investment advisor. Be ultra direct: lead with the answer in one sentence, then 2-3 short bullets. Use Markdown: ### for sections, ** for emphasis. Use tools when the user asks about their data; cite specific numbers from tool results. Speak with authority and insight. No HTML. No filler. Important: All data from tools (net worth, budgets, transactions) is the user's personal wealth only—do not reference or mix in any third-party or managed wealth; respond only about the user's personal finances.";
-        if (replyLang === 'ar') {
-            return `${base} Always write your entire reply in Modern Standard Arabic. Keep numbers, percentages, dates, and currency labels (SAR, USD) exactly as in the data; keep Latin ticker symbols unchanged.`;
-        }
-        return base;
-    }, [replyLang]);
+    const systemInstruction = useMemo(
+        () => buildLiveAdvisorSystemInstruction(replyLang === 'ar' ? 'ar' : 'en'),
+        [replyLang],
+    );
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });

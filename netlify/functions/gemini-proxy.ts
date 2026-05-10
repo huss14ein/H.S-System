@@ -1,11 +1,15 @@
 import type { Handler, HandlerEvent } from "@netlify/functions";
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
+import { accessControlOriginHeader, assertBrowserOriginAllowed } from "./corsAllowlist";
+import { assertProxySupabaseJwt } from "./proxySupabaseJwt";
 
-const corsHeaders: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+function corsHeaders(event: HandlerEvent): Record<string, string> {
+  return {
+    ...accessControlOriginHeader(event),
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+  };
+}
 
 /** Fallback model if the requested one is unavailable (e.g. preview not enabled). */
 const FALLBACK_MODEL = 'gemini-2.0-flash';
@@ -274,14 +278,25 @@ async function callGrok(
 
 const handler: Handler = async (event: HandlerEvent) => {
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers: corsHeaders };
+    if (!assertBrowserOriginAllowed(event)) {
+      return { statusCode: 403, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ error: 'Origin not allowed' }) };
+    }
+    return { statusCode: 200, headers: corsHeaders(event) };
   }
 
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
-      headers: corsHeaders,
+      headers: corsHeaders(event),
       body: JSON.stringify({ error: 'Method Not Allowed' }),
+    };
+  }
+
+  if (!assertBrowserOriginAllowed(event)) {
+    return {
+      statusCode: 403,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ error: 'Origin not allowed' }),
     };
   }
 
@@ -305,7 +320,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         geminiConfigured || anthropicConfigured || grokConfigured || openaiConfigured;
       return {
         statusCode: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...corsHeaders(event), "Content-Type": "application/json" },
         body: JSON.stringify({
           ok: true,
           anyProviderConfigured,
@@ -316,6 +331,15 @@ const handler: Handler = async (event: HandlerEvent) => {
             openai: { configured: openaiConfigured },
           },
         }),
+      };
+    }
+
+    const jwtGate = await assertProxySupabaseJwt(event);
+    if (!jwtGate.ok) {
+      return {
+        statusCode: jwtGate.statusCode,
+        headers: { ...corsHeaders(event), "Content-Type": "application/json" },
+        body: JSON.stringify(jwtGate.body),
       };
     }
 
@@ -333,7 +357,7 @@ const handler: Handler = async (event: HandlerEvent) => {
           const result = await callGemini(key, requestedModel, contents, config);
           return {
             statusCode: 200,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            headers: { ...corsHeaders(event), "Content-Type": "application/json" },
             body: JSON.stringify(result),
           };
         } catch (geminiErr) {
@@ -351,7 +375,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const result = await callClaude(contents, config);
         return {
           statusCode: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          headers: { ...corsHeaders(event), "Content-Type": "application/json" },
           body: JSON.stringify(result),
         };
       } catch (claudeError) {
@@ -365,7 +389,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const result = await callOpenAI(contents, config);
         return {
           statusCode: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          headers: { ...corsHeaders(event), "Content-Type": "application/json" },
           body: JSON.stringify(result),
         };
       } catch (openaiError) {
@@ -379,7 +403,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         const result = await callGrok(contents, config);
         return {
           statusCode: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          headers: { ...corsHeaders(event), "Content-Type": "application/json" },
           body: JSON.stringify(result),
         };
       } catch (grokError) {
@@ -415,7 +439,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     console.error("Error in Gemini/Grok/Claude proxy function:", error);
     return {
       statusCode: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      headers: { ...corsHeaders(event), "Content-Type": "application/json" },
       body: JSON.stringify({ error: message }),
     };
   }

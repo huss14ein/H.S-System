@@ -18,6 +18,7 @@ import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolio
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { getPersonalInvestments } from '../utils/wealthScope';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { computeCanonicalPlanningSnapshot } from '../services/canonicalPlanningEngine';
 
 type RiskProfile = 'Conservative' | 'Moderate' | 'Aggressive';
 
@@ -31,10 +32,10 @@ interface AIRebalancerViewProps {
 }
 
 const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, onOpenWealthUltra, setActivePage: _setActivePage }) => {
-  const { data, loading } = useContext(DataContext)!;
+  const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
   const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
   const { trackAction } = useSelfLearning();
-  const { simulatedPrices } = useMarketData();
+  const { simulatedPrices, symbolQuoteUpdatedAt } = useMarketData();
   const { exchangeRate } = useCurrency();
   const { formatCurrencyString } = useFormatCurrency();
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>('');
@@ -57,6 +58,19 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
 
   const portfolios = useMemo(() => getPersonalInvestments(data), [data]);
   const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+  const canonical = useMemo(
+    () =>
+      data
+        ? computeCanonicalPlanningSnapshot({
+            data: data as any,
+            exchangeRate,
+            simulatedPrices,
+            getAvailableCashForAccount,
+            symbolQuoteUpdatedAt,
+          })
+        : null,
+    [data, exchangeRate, simulatedPrices, getAvailableCashForAccount, symbolQuoteUpdatedAt],
+  );
 
   useEffect(() => {
     const r = data?.settings?.riskProfile;
@@ -82,7 +96,48 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
     [selectedPortfolio],
   );
 
+  const decisionSnapshot = useMemo(() => {
+    if (!selectedPortfolio) return null;
+    const snap = canonical?.aiBalancer?.portfolios?.find((p) => p.portfolioId === selectedPortfolio.id) ?? null;
+    if (!snap || snap.totalHoldingsValueBook <= 0) return null;
+    const top = (snap.allocationBySymbol ?? []).slice().sort((a, b) => b.weightPct - a.weightPct);
+    const top1 = top[0];
+    const top2 = top[1];
+    const top1Pct = top1?.weightPct ?? 0;
+    const topTwoPct = (top1?.weightPct ?? 0) + (top2?.weightPct ?? 0);
+    const concentration =
+      top1Pct >= 35 ? 'high' : top1Pct >= 20 ? 'moderate' : 'controlled';
+    const actions: { title: string; detail: string }[] = [];
+    if (top1 && top1Pct >= 25) {
+      actions.push({
+        title: 'Reduce concentration risk',
+        detail: `${top1.symbol} is ~${top1Pct.toFixed(1)}% of the portfolio. Consider trimming future buys in this name until it is below ~20% (education only).`,
+      });
+    }
+    if (topTwoPct >= 45) {
+      actions.push({
+        title: 'Diversify gradually',
+        detail: `Top 2 holdings are ~${topTwoPct.toFixed(1)}% combined. Prefer spreading new contributions into underweighted names or sukuk/bonds per your risk profile.`,
+      });
+    }
+    if (!actions.length) {
+      actions.push({
+        title: 'Stay the course',
+        detail: `Concentration looks ${concentration}. Focus on consistent monthly buys and keep position sizing disciplined.`,
+      });
+    }
+    return { snap, top1Pct, topTwoPct, concentration, actions };
+  }, [canonical, selectedPortfolio]);
+
   const currentAllocation = useMemo(() => {
+    if (!selectedPortfolio) return [];
+    const snap = canonical?.aiBalancer?.portfolios?.find((p) => p.portfolioId === selectedPortfolio.id);
+    if (snap) {
+      return (snap.allocationBySymbol ?? [])
+        .map((x) => ({ name: x.symbol, value: x.valueBook }))
+        .filter((row) => Number.isFinite(row.value) && row.value > 0);
+    }
+    // Fallback (should be rare): local computation.
     if (!selectedPortfolio?.holdings?.length) return [];
     const book = resolveInvestmentPortfolioCurrency(selectedPortfolio);
     return (selectedPortfolio.holdings ?? [])
@@ -91,12 +146,14 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
         return { name: h.symbol ?? '', value: v };
       })
       .filter((row: { name: string; value: number }) => Number.isFinite(row.value) && row.value > 0);
-  }, [selectedPortfolio, simulatedPrices, sarPerUsd]);
+  }, [selectedPortfolio, canonical, simulatedPrices, sarPerUsd]);
 
-  const totalPortfolioValueBook = useMemo(
-    () => currentAllocation.reduce((s: number, r: { name: string; value: number }) => s + r.value, 0),
-    [currentAllocation],
-  );
+  const totalPortfolioValueBook = useMemo(() => {
+    if (!selectedPortfolio) return 0;
+    const snap = canonical?.aiBalancer?.portfolios?.find((p) => p.portfolioId === selectedPortfolio.id);
+    if (snap) return snap.totalHoldingsValueBook ?? 0;
+    return currentAllocation.reduce((s: number, r: { name: string; value: number }) => s + r.value, 0);
+  }, [canonical, currentAllocation, selectedPortfolio]);
 
   const canGeneratePlan = Boolean(
     selectedPortfolio && currentAllocation.length > 0 && totalPortfolioValueBook > 0 && !isLoading,
@@ -287,6 +344,36 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
         </div>
       </div>
 
+      {decisionSnapshot && (
+        <div className="section-card p-6 sm:p-8">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+            <div className="min-w-0">
+              <h3 className="section-title mb-1">Decision maker (rule-based)</h3>
+              <p className="text-sm text-slate-600">
+                Grounded to the same values as the allocation chart. This does not place trades—use it to decide where your next contribution should go.
+              </p>
+            </div>
+            <div className="shrink-0 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Concentration</p>
+              <p className="text-lg font-bold text-slate-900">
+                {decisionSnapshot.concentration.toUpperCase()}
+              </p>
+              <p className="text-xs text-slate-600 mt-1 tabular-nums">
+                Top 1 ~{decisionSnapshot.top1Pct.toFixed(1)}% · Top 2 ~{decisionSnapshot.topTwoPct.toFixed(1)}%
+              </p>
+            </div>
+          </div>
+          <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+            {decisionSnapshot.actions.slice(0, 4).map((a) => (
+              <div key={a.title} className="rounded-xl border border-slate-200 bg-white p-4">
+                <p className="text-sm font-bold text-slate-900">{a.title}</p>
+                <p className="text-sm text-slate-600 mt-1 leading-relaxed">{a.detail}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 lg:gap-8 items-start">
         <div className="lg:col-span-2 space-y-6">
           <div className="section-card p-6 sm:p-8">
@@ -326,16 +413,17 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
                   />
                 </h4>
                 <div className="h-64 w-full mx-auto">
-                  <AllocationPieChart data={currentAllocation} showLegend={false} />
+                  <AllocationPieChart data={currentAllocation} showLegend={false} inCurrency={portfolioBookCurrency} />
                 </div>
                 {currentAllocation.length > 0 && (
                   <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px] sm:text-xs">
                     {currentAllocation.slice(0, 10).map((item, idx) => {
                       const palette = ['bg-indigo-500', 'bg-cyan-500', 'bg-emerald-500', 'bg-amber-500', 'bg-violet-500', 'bg-rose-500'];
+                      const pct = totalPortfolioValueBook > 0 ? (item.value / totalPortfolioValueBook) * 100 : 0;
                       return (
                         <div key={`${item.name}-${idx}`} className="flex items-center gap-1.5 min-w-0">
                           <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${palette[idx % palette.length]}`} aria-hidden />
-                          <span className="truncate text-slate-700" title={`${item.name}: ${item.value.toFixed(1)}%`}>
+                          <span className="truncate text-slate-700" title={`${item.name}: ${pct.toFixed(2)}%`}>
                             {item.name}
                           </span>
                         </div>

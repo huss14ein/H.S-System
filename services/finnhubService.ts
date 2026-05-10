@@ -206,6 +206,40 @@ export function lookupLiveQuoteForSymbol(
 }
 
 /**
+ * Resolve ISO timestamp for when a symbol's quote was last refreshed, using the same alias rules as {@link lookupLiveQuoteForSymbol}.
+ */
+export function lookupQuoteUpdatedAtIso(
+  updatedAtMap: Record<string, string | undefined> | undefined | null,
+  symbol: string | null | undefined,
+): string | null {
+  if (!updatedAtMap || symbol == null) return null;
+  const raw = String(symbol).trim();
+  if (!raw) return null;
+  const u = raw.toUpperCase();
+  const canon = canonicalQuoteLookupKey(raw);
+
+  const takeIso = (iso: string | undefined): string | null => {
+    if (iso == null) return null;
+    const s = String(iso).trim();
+    return s.length > 0 ? s : null;
+  };
+
+  for (const k of [raw, u, canon]) {
+    const hit = takeIso(updatedAtMap[k]);
+    if (hit) return hit;
+  }
+
+  const targetCanon = canon;
+  for (const mapKey of Object.keys(updatedAtMap)) {
+    if (canonicalQuoteLookupKey(mapKey) === targetCanon) {
+      const hit = takeIso(updatedAtMap[mapKey]);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+/**
  * For each requested symbol, copy the matched quote onto common spelling/canonical keys.
  * Does **not** forward the entire `quotes` map — callers may pass megabyte caches; platform-scoped
  * refreshes must not broadcast unrelated tickers into `simulatedPrices`.

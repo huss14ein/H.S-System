@@ -1,6 +1,6 @@
 import React, { useState, useContext, useEffect, useMemo, useCallback, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
-import { PlannedTrade, type Page, type TradeCurrency } from '../types';
+import { PlannedTrade, type Page, type TradeCurrency, type InvestmentPortfolio } from '../types';
 import Modal from '../components/Modal';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { PlusIcon } from '../components/icons/PlusIcon';
@@ -17,7 +17,7 @@ import { generateNextBestActions } from '../services/nextBestActionEngine';
 import { salaryToExpenseCoverage } from '../services/salaryExpenseCoverage';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
-import { getPersonalTransactions, getPersonalInvestments } from '../utils/wealthScope';
+import { getPersonalTransactions, getPersonalInvestments, getPersonalAccounts } from '../utils/wealthScope';
 import { engineSleeveKeyToTickerStatus, inferEngineSleeveKeyFromHolding } from '../services/inferHoldingUniverseClassification';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
@@ -35,9 +35,12 @@ import { ClockIcon, TargetIcon } from '../components/icons';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd, convertBetweenTradeCurrencies, inferInstrumentCurrencyFromSymbol } from '../utils/currencyMath';
+import { resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
 import CurrencyDualDisplay from '../components/CurrencyDualDisplay';
 import { fetchCompanyNameForSymbol } from '../hooks/useSymbolCompanyName';
 import { translateFinancialInsightToArabic, formatAiError } from '../services/geminiService';
+import { lookupLiveQuoteForSymbol } from '../services/finnhubService';
+import { computeCanonicalPlanningSnapshot } from '../services/canonicalPlanningEngine';
 
 const ISO_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -71,6 +74,8 @@ const PlanTradeModal: React.FC<{
     const [amount, setAmount] = useState('');
     const [priority, setPriority] = useState<'High' | 'Medium' | 'Low'>('Medium');
     const [notes, setNotes] = useState('');
+    /** Empty = Auto (infer deployable cash / execute route). */
+    const [executionPortfolioId, setExecutionPortfolioId] = useState('');
     const lastSymbolAtFocusRef = useRef('');
     const skipUniverseAutofillRef = useRef(false);
 
@@ -79,6 +84,8 @@ const PlanTradeModal: React.FC<{
     const planCcy = (budgetCurrency || 'SAR') as TradeCurrency;
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
     const instrumentCurrency = useMemo(() => inferInstrumentCurrencyFromSymbol(symbol), [symbol]);
+    const portfolios = useMemo(() => getPersonalInvestments(data ?? null), [data]);
+    const investmentPlatforms = useMemo(() => getPersonalAccounts(data ?? null).filter((a) => a.type === 'Investment'), [data]);
 
     useEffect(() => {
         if (!isOpen) {
@@ -98,10 +105,12 @@ const PlanTradeModal: React.FC<{
             setAmount(String(planToEdit?.amount ?? ''));
             setPriority(planToEdit.priority);
             setNotes(planToEdit.notes || '');
+            setExecutionPortfolioId(planToEdit.portfolioId ?? '');
         } else {
             // Reset form
             setSymbol(''); setName(''); setTradeType('buy'); setConditionType('price');
             setTargetValue(''); setQuantity(''); setAmount(''); setPriority('Medium'); setNotes('');
+            setExecutionPortfolioId('');
             lastSymbolAtFocusRef.current = '';
         }
     }, [planToEdit, isOpen]);
@@ -236,6 +245,21 @@ const PlanTradeModal: React.FC<{
             }
         }
         
+        const execPid = executionPortfolioId.trim();
+        const execPf = execPid ? portfolios.find((p) => p.id === execPid) : undefined;
+        const venueFields: Pick<PlannedTrade, 'portfolioId' | 'accountId'> =
+            tradeType === 'buy' && execPf
+                ? {
+                      portfolioId: execPf.id,
+                      accountId: (() => {
+                          const aidRaw = String(execPf.accountId ?? '').trim();
+                          return aidRaw
+                              ? resolveCanonicalAccountId(aidRaw, getPersonalAccounts(data ?? null)) || aidRaw
+                              : undefined;
+                      })(),
+                  }
+                : { portfolioId: undefined, accountId: undefined };
+
         const planData = {
             symbol: symbol.toUpperCase().trim(),
             name: name.trim() || symbol.toUpperCase().trim(),
@@ -246,7 +270,8 @@ const PlanTradeModal: React.FC<{
             amount: amount ? parseFloat(amount) : undefined,
             priority,
             notes: notes.trim(),
-            status: 'Planned' as const
+            status: 'Planned' as const,
+            ...venueFields,
         };
         
         const saveResult = planToEdit
@@ -284,7 +309,7 @@ const PlanTradeModal: React.FC<{
     useEffect(() => {
         if (!isOpen || planToEdit || conditionType !== 'price' || targetValue) return;
         const sym = symbol.trim().toUpperCase();
-        const price = simulatedPrices[sym]?.price;
+        const price = lookupLiveQuoteForSymbol(simulatedPrices, sym)?.price;
         if (price && Number.isFinite(price)) setTargetValue(String(price));
     }, [isOpen, planToEdit, symbol, conditionType, simulatedPrices]);
 
@@ -416,7 +441,11 @@ const PlanTradeModal: React.FC<{
                         <select 
                             id="trade-type"
                             value={tradeType} 
-                            onChange={e => setTradeType(e.target.value as any)} 
+                            onChange={(e) => {
+                                const v = e.target.value as 'buy' | 'sell';
+                                setTradeType(v);
+                                if (v === 'sell') setExecutionPortfolioId('');
+                            }} 
                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
                         >
                             <option value="buy">Buy</option>
@@ -439,6 +468,43 @@ const PlanTradeModal: React.FC<{
                         </select>
                     </div>
                 </div>
+
+                {tradeType === 'buy' && (
+                    <div>
+                        <label htmlFor="plan-execution-portfolio" className="block text-sm font-semibold text-gray-700 mb-2">
+                            Execute on (optional)
+                            <InfoHint
+                                text="Cash check and “Record trade” pre-select this portfolio’s platform. Auto infers from where you hold the symbol, or uses all platforms if you do not hold it."
+                                hintId="plan-execution-venue"
+                                hintPage="Investment Plan"
+                            />
+                        </label>
+                        <select
+                            id="plan-execution-portfolio"
+                            value={executionPortfolioId}
+                            onChange={(e) => setExecutionPortfolioId(e.target.value)}
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                        >
+                            <option value="">Auto — infer from holdings or all platforms</option>
+                            {portfolios.map((p: InvestmentPortfolio) => {
+                                const rawAid = String(p.accountId ?? '').trim();
+                                const plat = rawAid
+                                    ? investmentPlatforms.find(
+                                          (a) =>
+                                              a.id === rawAid ||
+                                              resolveCanonicalAccountId(rawAid, investmentPlatforms) === a.id,
+                                      )
+                                    : undefined;
+                                const label = `${p.name ?? 'Portfolio'} (${plat?.name ?? 'Platform'})`;
+                                return (
+                                    <option key={p.id} value={p.id}>
+                                        {label}
+                                    </option>
+                                );
+                            })}
+                        </select>
+                    </div>
+                )}
                 
                 <fieldset className="border border-gray-200 rounded-lg p-4">
                     <legend className="text-sm font-semibold text-gray-700 px-2 inline-flex items-center gap-1">
@@ -700,11 +766,15 @@ const InvestmentPlanView: React.FC<{
     stagedAddOnPlanned?: { key: number; symbol: string; name?: string; targetPrice?: number; amount?: number; quantity?: number; tradeType?: 'buy' | 'sell'; notes?: string } | null;
     onStagedAddOnPlannedHandled?: () => void;
 }> = ({ onExecutePlan, setActivePage: _setActivePage, triggerPageAction, embedded = false, stagedAddOnPlanned, onStagedAddOnPlannedHandled }) => {
-    const { data, loading, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker } = useContext(DataContext)!;
+    const { data, loading, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker, getAvailableCashForAccount } = useContext(DataContext)!;
     const { trackAction, trackSuggestionFeedback } = useSelfLearning();
-    const { simulatedPrices } = useMarketData();
+    const { simulatedPrices, symbolQuoteUpdatedAt } = useMarketData();
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
+    const canonicalPlan = useMemo(
+        () => (data ? computeCanonicalPlanningSnapshot({ data: data as any, exchangeRate, simulatedPrices, getAvailableCashForAccount, symbolQuoteUpdatedAt }) : null),
+        [data, exchangeRate, simulatedPrices, getAvailableCashForAccount, symbolQuoteUpdatedAt],
+    );
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [planToEdit, setPlanToEdit] = useState<PlannedTrade | null>(null);
@@ -771,6 +841,8 @@ const InvestmentPlanView: React.FC<{
                 quantity: plan.quantity,
                 price: plan.conditionType === 'price' ? plan.targetValue : undefined,
                 executedPlanId: plan.id,
+                portfolioId: plan.portfolioId,
+                accountId: plan.accountId,
                 reason: 'From Investment Plan',
             }));
             triggerPageAction('Investments', 'open-trade-modal:from-plan');
@@ -789,7 +861,9 @@ const InvestmentPlanView: React.FC<{
 
     const getPriceSignalClass = (plan: PlannedTrade): string => {
         const plannedPrice = getTriggerPriceForComparison(plan);
-        const currentPrice = simulatedPrices[plan.symbol]?.price;
+        const currentPrice =
+            canonicalPlan?.investmentPlan?.rows.find((r) => r.plan.id === plan.id)?.spotPrice
+            ?? lookupLiveQuoteForSymbol(simulatedPrices as any, plan.symbol ?? '')?.price;
         if (!plannedPrice || !currentPrice) return 'bg-gray-100 text-gray-600';
 
         const ratio = (currentPrice - plannedPrice) / plannedPrice;
@@ -802,7 +876,9 @@ const InvestmentPlanView: React.FC<{
 
     const getPriceSignalLabel = (plan: PlannedTrade): string => {
         const plannedPrice = getTriggerPriceForComparison(plan);
-        const currentPrice = simulatedPrices[plan.symbol]?.price;
+        const currentPrice =
+            canonicalPlan?.investmentPlan?.rows.find((r) => r.plan.id === plan.id)?.spotPrice
+            ?? lookupLiveQuoteForSymbol(simulatedPrices as any, plan.symbol ?? '')?.price;
         if (!plannedPrice || !currentPrice) return 'Waiting price';
 
         const ratio = Math.abs((currentPrice - plannedPrice) / plannedPrice);
@@ -811,13 +887,50 @@ const InvestmentPlanView: React.FC<{
         return currentPrice >= plannedPrice ? 'Favorable' : 'Below plan';
     };
 
+    const getPlanDecisionDetails = (plan: PlannedTrade) => {
+        const row = canonicalPlan?.investmentPlan?.rows.find((r) => r.plan.id === plan.id);
+        const age = row?.spotQuoteFreshness?.ageMinutes;
+        const isStale = row?.spotQuoteFreshness?.isStale;
+        const isAgeUnknown = row?.spotQuoteFreshness?.isAgeUnknown;
+        const confidence = row?.decision?.confidence ?? 'low';
+        const canDecide = row?.decision?.canDecide ?? false;
+        const reasons = row?.decision?.reasons ?? [];
+        return { ageMinutes: age, isStale: Boolean(isStale), isAgeUnknown: Boolean(isAgeUnknown), confidence, canDecide, reasons };
+    };
+
+    const getCashCheckSummary = (plan: PlannedTrade) => canonicalPlan?.investmentPlan?.rows.find((r) => r.plan.id === plan.id)?.cash;
+
+    const getPlanVenueLine = (plan: PlannedTrade): string | null => {
+        if (plan.tradeType !== 'buy') return null;
+        if (plan.portfolioId) {
+            const pf = getPersonalInvestments(data).find((p) => p.id === plan.portfolioId);
+            return pf ? `Execute on: ${pf.name}` : 'Execute on: selected portfolio';
+        }
+        if (plan.accountId) {
+            const a = getPersonalAccounts(data).find((x) => x.id === plan.accountId);
+            return a ? `Execute on: ${a.name}` : 'Execute on: selected platform';
+        }
+        return 'Execute on: Auto';
+    };
+
+    const formatAgeLabel = (ageMinutes: number | null | undefined) => {
+        if (ageMinutes == null || !Number.isFinite(ageMinutes)) return 'unknown';
+        if (ageMinutes < 1) return '<1m';
+        if (ageMinutes < 60) return `${Math.round(ageMinutes)}m`;
+        const h = Math.floor(ageMinutes / 60);
+        const m = Math.round(ageMinutes % 60);
+        return m ? `${h}h ${m}m` : `${h}h`;
+    };
+
     
     const renderCondition = (plan: PlannedTrade) => {
         if (plan.conditionType === 'date') {
             return `On ${new Date(plan.targetValue).toLocaleDateString()}`;
         }
         const instr = inferInstrumentCurrencyFromSymbol(plan.symbol ?? '');
-        const currentPrice = simulatedPrices[plan.symbol]?.price;
+        const currentPrice =
+            canonicalPlan?.investmentPlan?.rows.find((r) => r.plan.id === plan.id)?.spotPrice
+            ?? lookupLiveQuoteForSymbol(simulatedPrices as any, plan.symbol ?? '')?.price;
         const side = plan.tradeType === 'buy' ? 'Buy when' : 'Sell when';
         return (
             <div className="space-y-1">
@@ -949,7 +1062,7 @@ const InvestmentPlanView: React.FC<{
             if (plan.conditionType === 'price') {
                 const target = Number(plan.targetValue);
                 if (!Number.isFinite(target) || target <= 0) invalidPriceCount += 1;
-                const spot = Number(simulatedPrices[sym]?.price);
+                const spot = Number(lookupLiveQuoteForSymbol(simulatedPrices, sym)?.price);
                 if (!Number.isFinite(spot) || spot <= 0) stalePriceCount += 1;
                 const qty = Number(plan.quantity ?? 0);
                 const amt = Number(plan.amount ?? 0);
@@ -1125,7 +1238,7 @@ const InvestmentPlanView: React.FC<{
                 return;
             }
 
-            const priceAnchor = simulatedPrices[candidate.symbol]?.price;
+            const priceAnchor = lookupLiveQuoteForSymbol(simulatedPrices, candidate.symbol)?.price;
             if (priceAnchor == null || !Number.isFinite(priceAnchor) || priceAnchor <= 0) {
                 toast(`No live price for ${candidate.symbol}. Wait for a quote or set the plan manually.`, 'error');
                 return;
@@ -1170,8 +1283,8 @@ const InvestmentPlanView: React.FC<{
     const isTriggered = (plan: PlannedTrade) => {
         if (plan.status === 'Executed') return false;
         if (plan.conditionType === 'price') {
-            const priceInfo = simulatedPrices[plan.symbol];
-            if (!priceInfo) return false;
+            const priceInfo = lookupLiveQuoteForSymbol(simulatedPrices, plan.symbol);
+            if (!priceInfo?.price) return false;
             return (plan.tradeType === 'buy' && priceInfo.price <= (plan.targetValue ?? 0)) || (plan.tradeType === 'sell' && priceInfo.price >= (plan.targetValue ?? 0));
         }
         if (plan.conditionType === 'date') {
@@ -1694,6 +1807,46 @@ const InvestmentPlanView: React.FC<{
                     </div>
                 )}
 
+                {canonicalPlan && canonicalPlan.investmentPlan.prioritizedPricePlans.length > 0 && (
+                    <SectionCard title="Decision queue (price rules)" collapsible collapsibleSummary="Prioritized by urgency & readiness" defaultExpanded>
+                        <p className="text-sm text-slate-600 mb-4">
+                            Uses your live quote + deployable cash on the platform that holds the symbol (or total investment cash if you don’t hold it yet). Refreshes quotes when symbols look stale.
+                        </p>
+                        <ul className="space-y-3">
+                            {canonicalPlan.investmentPlan.prioritizedPricePlans.slice(0, 6).map((row) => (
+                                <li
+                                    key={row.plan.id}
+                                    className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2"
+                                >
+                                    <div className="min-w-0">
+                                        <p className="font-semibold text-slate-900">
+                                            {row.plan.symbol} · {row.plan.tradeType.toUpperCase()} · {row.plan.priority}
+                                        </p>
+                                        <p className="text-sm text-slate-600 truncate" title={row.cash.detail}>
+                                            {row.statusLabel}
+                                            {row.plan.tradeType === 'buy' && row.cash.status !== 'n/a' ? ` · ${row.cash.detail}` : ''}
+                                        </p>
+                                    </div>
+                                    <div className="shrink-0 flex flex-wrap gap-2">
+                                        <span
+                                            className={`px-2.5 py-1 rounded-full text-xs font-bold border ${
+                                                row.decision.canDecide
+                                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                                    : 'bg-amber-50 text-amber-900 border-amber-200'
+                                            }`}
+                                        >
+                                            {row.decision.canDecide ? 'Ready to review' : 'Needs attention'}
+                                        </span>
+                                        <span className="px-2.5 py-1 rounded-full text-xs font-semibold border border-slate-200 bg-white text-slate-700">
+                                            {row.decision.confidence} confidence
+                                        </span>
+                                    </div>
+                                </li>
+                            ))}
+                        </ul>
+                    </SectionCard>
+                )}
+
                 {/* Plans Table */}
                 <SectionCard title="All your plans" className="min-h-0" collapsible collapsibleSummary="Edit or record trades" defaultExpanded>
                     <div className="overflow-x-auto">
@@ -1704,18 +1857,24 @@ const InvestmentPlanView: React.FC<{
                                     <th className="px-3 sm:px-6 py-3.5">Buy or sell</th>
                                     <th className="px-3 sm:px-6 py-3.5" title="Date trigger, or per-share trigger in the stock’s traded currency">Trigger</th>
                                     <th className="px-3 sm:px-6 py-3.5" title="Whether today’s price lines up with your plan">Hint</th>
+                                    <th className="px-3 sm:px-6 py-3.5" title="Deployable cash vs estimated buy size (sells: n/a)">Cash check</th>
                                     <th className="px-3 sm:px-6 py-3.5" title="How soon you want to act if the rule is met">Urgency</th>
                                     <th className="px-3 sm:px-6 py-3.5">Stage</th>
                                     <th className="px-3 sm:px-6 py-3.5">Next step</th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
-                                {visiblePlans.map(plan => (
+                                {visiblePlans.map((plan) => {
+                                    const venueLine = getPlanVenueLine(plan);
+                                    return (
                                     <tr key={plan.id} className={`${isTriggered(plan) ? 'bg-yellow-50' : ''} hover:bg-gray-50 transition-colors`}>
                                         <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap">
                                             <div>
                                                 <div className="font-medium text-gray-900">{plan.symbol ?? '—'}</div>
                                                 <div className="text-sm text-gray-500">{plan.name}</div>
+                                                {venueLine && (
+                                                    <div className="text-[11px] text-slate-500 mt-1">{venueLine}</div>
+                                                )}
                                             </div>
                                         </td>
                                         <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap">
@@ -1725,14 +1884,87 @@ const InvestmentPlanView: React.FC<{
                                         </td>
                                         <td className="px-3 sm:px-6 py-3 sm:py-4 align-top">{renderCondition(plan)}</td>
                                         <td className="px-3 sm:px-6 py-3 sm:py-4">
-                                            <span
-                                                className={`px-3 py-1 inline-flex text-xs font-semibold rounded-full ${getPriceSignalClass(plan)}`}
-                                                title={plan.tradeType === 'buy'
-                                                    ? 'For buy plans: Favorable means current price is at/below trigger; Above trigger means current price is still above your buy trigger.'
-                                                    : 'For sell plans: Favorable means current price is at/above trigger; Below plan means current price has not reached your sell trigger yet.'}
-                                            >
-                                                {getPriceSignalLabel(plan)}
-                                            </span>
+                                            {(() => {
+                                                const hint = getPriceSignalLabel(plan);
+                                                const hintClass = getPriceSignalClass(plan);
+                                                const d = getPlanDecisionDetails(plan);
+                                                const freshnessClass = d.isStale
+                                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                                    : d.isAgeUnknown
+                                                      ? 'bg-amber-50 text-amber-900 border-amber-200'
+                                                      : 'bg-slate-50 text-slate-700 border-slate-200';
+                                                const confidenceClass =
+                                                    d.confidence === 'high'
+                                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                        : d.confidence === 'medium'
+                                                        ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                                        : 'bg-slate-50 text-slate-600 border-slate-200';
+                                                const title = [
+                                                    `Decision: ${d.canDecide ? 'actionable' : 'needs attention'}`,
+                                                    `Confidence: ${d.confidence}`,
+                                                    d.isStale
+                                                        ? `Quote age: stale (${formatAgeLabel(d.ageMinutes)})`
+                                                        : d.isAgeUnknown
+                                                          ? 'Quote age: unknown (refresh prices to timestamp)'
+                                                          : `Quote age: fresh (${formatAgeLabel(d.ageMinutes)})`,
+                                                    ...(d.reasons.length ? ['Reasons:', ...d.reasons.map((r) => `- ${r}`)] : []),
+                                                ].join('\n');
+                                                const freshnessLabel = d.isStale
+                                                    ? `Stale · ${formatAgeLabel(d.ageMinutes)}`
+                                                    : d.isAgeUnknown
+                                                      ? 'Age unknown'
+                                                      : `Fresh · ${formatAgeLabel(d.ageMinutes)}`;
+                                                return (
+                                                    <div className="flex flex-wrap gap-1.5 items-center" title={title}>
+                                                        <span
+                                                            className={`px-3 py-1 inline-flex text-xs font-semibold rounded-full ${hintClass}`}
+                                                            title={plan.tradeType === 'buy'
+                                                                ? 'For buy plans: Favorable means current price is at/below trigger; Above trigger means current price is still above your buy trigger.'
+                                                                : 'For sell plans: Favorable means current price is at/above trigger; Below plan means current price has not reached your sell trigger yet.'}
+                                                        >
+                                                            {hint}
+                                                        </span>
+                                                        <span className={`px-2 py-0.5 inline-flex text-[11px] font-semibold rounded-full border ${freshnessClass}`}>
+                                                            {freshnessLabel}
+                                                        </span>
+                                                        <span className={`px-2 py-0.5 inline-flex text-[11px] font-semibold rounded-full border ${confidenceClass}`}>
+                                                            {d.canDecide ? 'Actionable' : 'Review'} · {d.confidence}
+                                                        </span>
+                                                    </div>
+                                                );
+                                            })()}
+                                        </td>
+                                        <td className="px-3 sm:px-6 py-3 sm:py-4 align-top max-w-[16rem]">
+                                            {(() => {
+                                                const cash = getCashCheckSummary(plan);
+                                                if (!cash || cash.status === 'n/a') {
+                                                    return <span className="text-xs text-slate-500">—</span>;
+                                                }
+                                                const badge =
+                                                    cash.status === 'sufficient'
+                                                        ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                                        : cash.status === 'tight'
+                                                          ? 'bg-amber-50 text-amber-900 border-amber-200'
+                                                          : cash.status === 'insufficient'
+                                                            ? 'bg-rose-50 text-rose-800 border-rose-200'
+                                                            : 'bg-slate-50 text-slate-700 border-slate-200';
+                                                const short =
+                                                    cash.status === 'sufficient'
+                                                        ? 'Fits cash'
+                                                        : cash.status === 'tight'
+                                                          ? 'Tight vs cash'
+                                                          : cash.status === 'insufficient'
+                                                            ? 'Over cash'
+                                                            : 'Size unknown';
+                                                return (
+                                                    <div className="space-y-1">
+                                                        <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-bold border ${badge}`}>{short}</span>
+                                                        <p className="text-[11px] text-slate-600 leading-snug line-clamp-3" title={cash.detail}>
+                                                            {cash.detail}
+                                                        </p>
+                                                    </div>
+                                                );
+                                            })()}
                                         </td>
                                         <td className="px-3 sm:px-6 py-3 sm:py-4">
                                             <span className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${priorityClass(plan.priority)}`}>
@@ -1781,7 +2013,8 @@ const InvestmentPlanView: React.FC<{
                                             </div>
                                         </td>
                                     </tr>
-                                ))}
+                                );
+                                })}
                             </tbody>
                         </table>
                         {visiblePlans.length === 0 && (

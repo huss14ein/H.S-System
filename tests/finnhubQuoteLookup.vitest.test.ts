@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   lookupLiveQuoteForSymbol,
+  lookupQuoteUpdatedAtIso,
   expandLiveQuotesForRequestedSymbols,
   type LiveQuoteRow,
 } from '../services/finnhubService';
@@ -21,6 +22,21 @@ describe('lookupLiveQuoteForSymbol', () => {
     const tick: LiveQuoteRow = { price: 100, change: 1, changePercent: 1 };
     const quoted = { '1180.SE': tick };
     expect(lookupLiveQuoteForSymbol(quoted, '1180.SR')).toEqual(tick);
+  });
+});
+
+describe('lookupQuoteUpdatedAtIso', () => {
+  it('matches Saudi alias keys on the timestamp map', () => {
+    const ts = '2026-05-10T12:00:00.000Z';
+    const updatedAt = { '2222': ts };
+    expect(lookupQuoteUpdatedAtIso(updatedAt, '2222.SR')).toBe(ts);
+    expect(lookupQuoteUpdatedAtIso(updatedAt, '2222.sa')).toBe(ts);
+  });
+
+  it('finds timestamp when only provider-side keys exist', () => {
+    const ts = '2026-05-10T12:00:00.000Z';
+    const updatedAt = { '1180.SE': ts };
+    expect(lookupQuoteUpdatedAtIso(updatedAt, '1180.SR')).toBe(ts);
   });
 });
 

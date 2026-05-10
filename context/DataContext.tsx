@@ -36,6 +36,7 @@ import { buildTransactionPayloadVariants } from '../services/transactionPayloadV
 import { decodeInstallmentPaymentNote } from '../services/installments/installmentLinkNote';
 import { brokerCashBucketsFromInvestmentAccount } from '../services/investmentCashLedger';
 import { findCreditCardLiabilityForAccount } from '../services/creditCardLinking';
+import { normalizePlannedTradeRow, plannedTradeToDbInsert, plannedTradeToDbUpdate } from '../utils/plannedTradeDb';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
@@ -1050,7 +1051,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 settings: normalizeSettings((settings as any).data ?? initialData.settings),
                 zakatPayments: filterOwnedRows(zakatPayments.data as any[]),
                 priceAlerts: filterOwnedRows(priceAlerts.data as any[]).map(normalizePriceAlert),
-                plannedTrades: filterOwnedRows(plannedTrades.data as any[]),
+                plannedTrades: filterOwnedRows(plannedTrades.data as any[]).map(normalizePlannedTradeRow),
                 notifications: [],
                 investmentPlan: normalizeInvestmentPlan((investmentPlan as any).data),
                 wealthUltraConfig,
@@ -3075,16 +3076,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if(!supabase) return false;
         const v = validatePlannedTrade({ symbol: plan.symbol, name: plan.name, tradeType: plan.tradeType, conditionType: plan.conditionType, targetValue: plan.targetValue, quantity: plan.quantity, amount: plan.amount, priority: plan.priority });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return false; }
-        const { data: newPlan, error } = await supabase.from('planned_trades').insert(withUser(plan)).select().single();
+        const { data: newPlan, error } = await supabase.from('planned_trades').insert(withUser(plannedTradeToDbInsert(plan))).select().single();
         if (error) { console.error(error); return false; }
-        if (newPlan) { setData(prev => ({ ...prev, plannedTrades: [...prev.plannedTrades, newPlan] })); return true; }
+        if (newPlan) { setData(prev => ({ ...prev, plannedTrades: [...prev.plannedTrades, normalizePlannedTradeRow(newPlan)] })); return true; }
         return false;
     };
     const updatePlannedTrade = async (plan: PlannedTrade): Promise<boolean> => {
         if(!supabase || !auth?.user) return false;
         const v = validatePlannedTrade({ symbol: plan.symbol, name: plan.name, tradeType: plan.tradeType, conditionType: plan.conditionType, targetValue: plan.targetValue, quantity: plan.quantity, amount: plan.amount, priority: plan.priority });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return false; }
-        const { error } = await supabase.from('planned_trades').update(plan).match({ id: plan.id, user_id: auth.user.id });
+        const { error } = await supabase.from('planned_trades').update(plannedTradeToDbUpdate(plan)).match({ id: plan.id, user_id: auth.user.id });
         if (error) { console.error(error); return false; }
         setData(prev => ({ ...prev, plannedTrades: prev.plannedTrades.map(p => p.id === plan.id ? plan : p) }));
         return true;

@@ -3,10 +3,13 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, Label } from
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { CHART_COLORS } from './chartTheme';
 import ChartContainer from './ChartContainer';
+import type { TradeCurrency } from '../../types';
 
 interface AllocationPieChartProps {
   data: { name: string; value: number }[];
   showLegend?: boolean;
+  /** Currency of `value` amounts (for tooltip formatting). */
+  inCurrency?: TradeCurrency;
 }
 
 const COLORS = CHART_COLORS.categorical;
@@ -25,7 +28,7 @@ const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, per
   );
 };
 
-const CustomTooltip: React.FC<any> = ({ active, payload, totalValue }) => {
+const CustomTooltip: React.FC<any> = ({ active, payload, totalValue, inCurrency }) => {
     const { formatCurrencyString } = useFormatCurrency();
     if (active && payload && payload.length) {
         const point = payload[0].payload;
@@ -33,7 +36,7 @@ const CustomTooltip: React.FC<any> = ({ active, payload, totalValue }) => {
         return (
             <div className="bg-white border border-slate-200 rounded-xl shadow-lg px-3 py-2.5 text-sm min-w-[120px]">
                 <p className="font-bold text-dark">{point.name}</p>
-                <p className="text-gray-600">{formatCurrencyString(point.value)}</p>
+                <p className="text-gray-600">{formatCurrencyString(point.value, inCurrency ? { inCurrency, digits: 0 } : { digits: 0 })}</p>
                 <p className="font-medium" style={{ color: payload[0].fill }}>{percentage.toFixed(2)}% of total</p>
             </div>
         );
@@ -50,7 +53,7 @@ const formatCompactAmount = (value: number): string => {
   return value.toFixed(0);
 };
 
-const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data, showLegend = true }) => {
+const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data, showLegend = true, inCurrency }) => {
   const chartHostRef = useRef<HTMLDivElement | null>(null);
   const [chartSize, setChartSize] = useState({ width: 0, height: 0 });
 
@@ -92,7 +95,7 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data, showLegen
           TOTAL VALUE
         </text>
         <text x={cx} y={cy + 18} textAnchor="middle" className="fill-slate-800 text-[34px] font-bold tabular-nums" style={{ fontSize: '34px' }}>
-          {totalDisplay}
+          {inCurrency ? `${totalDisplay} ${inCurrency}` : totalDisplay}
         </text>
         {sanitizedData.length === 1 && (
           <text x={cx} y={cy + 40} textAnchor="middle" className="fill-slate-500 text-[11px]">
@@ -128,7 +131,7 @@ const AllocationPieChart: React.FC<AllocationPieChartProps> = ({ data, showLegen
           </Pie>
           {!isEmpty && (
             <Tooltip
-              content={<CustomTooltip totalValue={totalValue} />}
+              content={<CustomTooltip totalValue={totalValue} inCurrency={inCurrency} />}
               position={tooltipPosition}
               allowEscapeViewBox={{ x: true, y: true }}
               wrapperStyle={{ pointerEvents: 'none' }}
