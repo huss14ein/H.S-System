@@ -9,6 +9,7 @@ describe('corsAllowlist', () => {
     delete process.env.URL;
     delete process.env.DEPLOY_PRIME_URL;
     delete process.env.NETLIFY_SITE_URL;
+    delete process.env.DEPLOY_URL;
     delete process.env.ALLOWED_ORIGINS;
   });
 
@@ -35,6 +36,12 @@ describe('corsAllowlist', () => {
     process.env.NETLIFY_SITE_URL = 'https://my-finova.netlify.app';
     expect(isOriginAllowed('https://my-finova.netlify.app')).toBe(true);
     expect(isOriginAllowed('https://evil.netlify.app')).toBe(false);
+  });
+
+  it('respects DEPLOY_URL origin (deploy permalink / preview)', () => {
+    process.env.DEPLOY_URL = 'https://abc123--my-finova.netlify.app';
+    expect(isOriginAllowed('https://abc123--my-finova.netlify.app')).toBe(true);
+    expect(isOriginAllowed('https://other--my-finova.netlify.app')).toBe(false);
   });
 
   it('allows typical RFC1918 LAN origins for local network dev', () => {

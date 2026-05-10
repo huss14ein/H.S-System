@@ -2,7 +2,7 @@
  * Restrict browser `Origin` headers on Netlify functions so arbitrary websites cannot drive
  * quota/cost abuse against AI or market-data proxies via credentialed or simple fetch.
  *
- * Configure production/preview origins via Netlify env: `URL`, `DEPLOY_PRIME_URL`, or
+ * Configure production/preview origins via Netlify env: `URL`, `DEPLOY_PRIME_URL`, `DEPLOY_URL`, or
  * `ALLOWED_ORIGINS` (comma-separated full origins, e.g. `http://localhost:5173,https://app.example.com`).
  * Localhost / 127.0.0.1 / [::1] (any port) are always allowed for dev.
  */
@@ -65,7 +65,9 @@ export function deployedAllowedOrigins(): Set<string> {
     const o = canonicalOrigin(e);
     if (o) set.add(o);
   }
-  for (const key of ['URL', 'DEPLOY_PRIME_URL', 'NETLIFY_SITE_URL'] as const) {
+  // Include DEPLOY_URL so deploy previews / unique deploy permalinks match the browser Origin
+  // (primary URL alone is not enough for https://<hash>--site.netlify.app).
+  for (const key of ['URL', 'DEPLOY_PRIME_URL', 'DEPLOY_URL', 'NETLIFY_SITE_URL'] as const) {
     const v = process.env[key];
     if (!v?.trim()) continue;
     const o = canonicalOrigin(v.trim());

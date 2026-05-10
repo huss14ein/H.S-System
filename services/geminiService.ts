@@ -631,10 +631,19 @@ export async function probeGeminiProxyHealth(): Promise<{
         const r = await fetchGeminiProxyHealthStatus(controller.signal);
         const ms = Math.round(performance.now() - start);
         if (!r.reachable) {
+            let error =
+                'Could not reach the AI proxy (offline, blocked origin, or URL without Netlify Functions).';
+            if (r.unreachableReason === 'origin_forbidden') {
+                error =
+                    'AI proxy returned 403 — add this browser origin to Netlify ALLOWED_ORIGINS (comma-separated), redeploy.';
+            } else if (r.unreachableReason === 'spa_shell') {
+                error =
+                    'AI proxy path returned HTML instead of the function. Use your Netlify site URL or set VITE_AI_PROXY_EXTRA_ORIGIN to the deployed origin.';
+            }
             return {
                 ok: false,
                 ms,
-                error: 'Could not reach the AI proxy. Confirm Site → Environment variables are set in Netlify and this session loads your site’s Netlify Functions.',
+                error,
             };
         }
         if (!r.configured) {

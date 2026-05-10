@@ -1,10 +1,24 @@
 import React, { useState } from 'react';
-import { useAI } from '../context/AiContext';
+import { useAI, type AiUnavailableReason } from '../context/AiContext';
 
 type Variant = 'centered' | 'banner';
 
 const shellBase =
-    'rounded-md border border-amber-200 bg-amber-50/90 p-4 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100';
+  'rounded-md border border-amber-200 bg-amber-50/90 p-4 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100';
+
+function defaultHeadline(reason: AiUnavailableReason): string {
+  switch (reason) {
+    case 'no_keys':
+      return 'No AI provider keys in Netlify for this site';
+    case 'origin_blocked':
+      return 'This browser origin is blocked by the AI proxy';
+    case 'spa_shell':
+      return 'The AI proxy URL returned the web app instead of the function';
+    case 'network':
+    default:
+      return 'Cannot reach the AI proxy';
+  }
+}
 
 /**
  * Shown when the AI proxy health check finished and no server provider keys were found, or the proxy was unreachable.
@@ -20,30 +34,52 @@ export const AiProxyUnavailableHint: React.FC<{
 
   if (!aiHealthChecked || isAiAvailable) return null;
 
-  const headline =
-    title ??
-    (aiUnavailableReason === 'no_keys'
-      ? 'No AI provider keys in Netlify for this site'
-      : 'Cannot reach the AI proxy');
+  const headline = title ?? defaultHeadline(aiUnavailableReason);
 
-  const detail =
-    aiUnavailableReason === 'no_keys' ? (
-      <>
-        Add at least one key under{' '}
-        <strong>Netlify → Site configuration → Environment variables</strong> (for example{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">GEMINI_API_KEY</code>,{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">ANTHROPIC_API_KEY</code>,{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">OPENAI_API_KEY</code>, or{' '}
-        <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">GROK_API_KEY</code>
-        ). Redeploy so functions reload. Keys exist only in Netlify&apos;s server-side environment for the proxy—never in the browser bundle.
-      </>
-    ) : (
-      <>
-        The browser must talk to your Netlify deployment&apos;s function URL so the proxy can use{' '}
-        <strong>Site → Environment variables</strong> on the server. After your site or dev session exposes functions with those variables, use{' '}
-        <strong>Retry connection check</strong>.
-      </>
-    );
+  const detail = (() => {
+    switch (aiUnavailableReason) {
+      case 'no_keys':
+        return (
+          <>
+            Add at least one key under{' '}
+            <strong>Netlify → Site configuration → Environment variables</strong> (for example{' '}
+            <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">GEMINI_API_KEY</code>,{' '}
+            <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">ANTHROPIC_API_KEY</code>,{' '}
+            <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">OPENAI_API_KEY</code>, or{' '}
+            <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">GROK_API_KEY</code>
+            ). Redeploy so functions reload. Keys exist only in Netlify&apos;s server-side environment for the proxy—never in the browser bundle.
+          </>
+        );
+      case 'origin_blocked': {
+        const origin =
+          typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'your app origin';
+        return (
+          <>
+            Add <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">{origin}</code> to{' '}
+            <strong>Site → Environment variables</strong> as{' '}
+            <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">ALLOWED_ORIGINS</code> (comma-separated full origins). Redeploy, then{' '}
+            <strong>Retry connection check</strong>.
+          </>
+        );
+      }
+      case 'spa_shell':
+        return (
+          <>
+            Load the app from a host that serves Netlify Functions at{' '}
+            <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">/api/gemini-proxy</code>, or set build env{' '}
+            <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">VITE_AI_PROXY_EXTRA_ORIGIN</code> to your deployed site URL (https), rebuild, then Retry.
+          </>
+        );
+      case 'network':
+      default:
+        return (
+          <>
+            The health check could not get a JSON response from the proxy (offline, wrong host, or blocked request). If keys are set in Netlify, confirm you are on the same deployment and use{' '}
+            <strong>Retry connection check</strong>.
+          </>
+        );
+    }
+  })();
 
   const wrap = variant === 'banner' ? 'mb-6' : 'mt-2 text-center';
   const align = variant === 'banner' ? 'text-left' : 'text-center';
