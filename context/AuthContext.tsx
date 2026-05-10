@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { supabase } from '../services/supabaseClient';
+import { registerAiProxyAuth } from '../services/aiProxyAuth';
 import { User, Session, AuthError } from '@supabase/supabase-js';
 
 // Security configuration
@@ -682,6 +683,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
         return () => clearInterval(interval);
     }, [session]);
+
+    useEffect(() => {
+        const client = supabase;
+        if (!client) {
+            registerAiProxyAuth(async () => null);
+            return;
+        }
+        registerAiProxyAuth(async () => {
+            const {
+                data: { session: active },
+            } = await client.auth.getSession();
+            return active?.access_token ?? null;
+        });
+    }, []);
 
     // Extend session function
     const extendSession = useCallback(async () => {

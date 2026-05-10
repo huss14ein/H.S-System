@@ -324,6 +324,13 @@
         overflow-wrap: normal;
         hyphens: none;
     }
+    /* Some metric tiles include helper rows + hover tooltips; don't clip them. */
+    .platform-card .platform-metrics .metric-value.metric-value--multi {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+        overflow-wrap: anywhere;
+    }
     .platform-card .platform-card-body {
         padding: var(--card-pad);
         display: flex;

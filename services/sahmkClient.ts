@@ -3,6 +3,8 @@
  * With plain `vite`, configure a dev proxy to Netlify or run `netlify dev` after setting `SAHMK_API_KEY`.
  */
 
+import { getAiProxyAuthorizationHeader } from './aiProxyAuth';
+
 const PROXY_CANDIDATES = ['/.netlify/functions/sahmk-proxy', '/api/sahmk-proxy'];
 
 /**
@@ -10,11 +12,12 @@ const PROXY_CANDIDATES = ['/.netlify/functions/sahmk-proxy', '/api/sahmk-proxy']
  */
 export async function fetchSahmkQuote(symbolCode: string): Promise<Response> {
   const qs = new URLSearchParams({ s: symbolCode.trim().toUpperCase() });
+  const authHeaders = await getAiProxyAuthorizationHeader();
   let lastError: unknown;
 
   for (const path of PROXY_CANDIDATES) {
     try {
-      const res = await fetch(`${path}?${qs}`);
+      const res = await fetch(`${path}?${qs}`, { headers: { ...authHeaders } });
       if (res.status === 404) continue;
       return res;
     } catch (e) {

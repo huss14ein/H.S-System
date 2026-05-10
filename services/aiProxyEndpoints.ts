@@ -1,3 +1,5 @@
+import { getAiProxyAuthorizationHeader } from './aiProxyAuth';
+
 /**
  * Single source of truth for the Netlify `gemini-proxy` function URLs.
  * Production: `netlify.toml` rewrites `/api/*` → `/.netlify/functions/:splat`.
@@ -23,35 +25,69 @@ export function getGeminiProxyEndpoints(): string[] {
 }
 
 export type GeminiProxyHealthResult = {
-    /** At least one endpoint returned HTTP 200 with valid JSON health payload. */
+    /** At least one endpoint returned HTTP 200 with a parseable health JSON body */
     reachable: boolean;
-    /** Proxy reports `anyProviderConfigured` (GEMINI / Anthropic / OpenAI / Grok env on server). */
+    /** Proxy reports `anyProviderConfigured` (GEMINI / Anthropic / OpenAI / Grok env on server) */
     configured: boolean;
 };
 
+function parseHealthJsonPayload(raw: string): { anyProviderConfigured?: boolean } | null {
+    const trimmed = raw.trim();
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
+    try {
+        return JSON.parse(trimmed) as { anyProviderConfigured?: boolean };
+    } catch {
+        return null;
+    }
+}
+
 /**
  * Shared health probe for AiContext + `probeGeminiProxyHealth`.
- * Rejects HTML/SPA fallbacks: requires `Content-Type` JSON and `anyProviderConfigured` in body.
+ * Retries a few times (dev server / cold function). Accepts JSON bodies even if Content-Type is wrong (SPA fallback is rejected).
  */
 export async function fetchGeminiProxyHealthStatus(signal?: AbortSignal): Promise<GeminiProxyHealthResult> {
     const endpoints = getGeminiProxyEndpoints();
-    for (const endpoint of endpoints) {
-        try {
-            const res = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ health: true }),
-                signal,
-            });
-            if (!res.ok) continue;
-            const ct = res.headers.get('content-type') ?? '';
-            if (!/json/i.test(ct)) continue;
-            const json = (await res.json().catch(() => null)) as { anyProviderConfigured?: boolean } | null;
-            if (!json || typeof json !== 'object' || !('anyProviderConfigured' in json)) continue;
-            const configured = Boolean(json.anyProviderConfigured);
-            return { reachable: true, configured };
-        } catch {
-            continue;
+    const maxRounds = 3;
+
+    for (let round = 0; round < maxRounds; round++) {
+        if (round > 0) {
+            await new Promise((r) => setTimeout(r, 320 * round));
+        }
+        for (const endpoint of endpoints) {
+            try {
+                const authHeaders = await getAiProxyAuthorizationHeader();
+                const res = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...authHeaders },
+                    body: JSON.stringify({ health: true }),
+                    signal,
+                    cache: 'no-store',
+                });
+                const raw = await res.text();
+                if (!res.ok) continue;
+
+                const ct = res.headers.get('content-type') ?? '';
+                let parsed: unknown = null;
+                if (/json/i.test(ct)) {
+                    try {
+                        parsed = JSON.parse(raw);
+                    } catch {
+                        parsed = null;
+                    }
+                }
+                if (parsed === null) {
+                    parsed = parseHealthJsonPayload(raw);
+                }
+                if (!parsed || typeof parsed !== 'object' || parsed === null) {
+                    continue;
+                }
+                if (!('anyProviderConfigured' in parsed)) continue;
+
+                const configured = Boolean((parsed as { anyProviderConfigured?: boolean }).anyProviderConfigured);
+                return { reachable: true, configured };
+            } catch {
+                continue;
+            }
         }
     }
     return { reachable: false, configured: false };

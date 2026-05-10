@@ -17,6 +17,9 @@ export function recoveryOrderDraftToPlannedTrade(
     sarPerUsd: number;
     /** Currency of `draft.limitPrice` (recovery ladder uses portfolio book currency per share). */
     limitPriceCurrency: TradeCurrency;
+    /** When pushing from Recovery Plan, tie the plan to the position’s portfolio / platform. */
+    portfolioId?: string;
+    accountId?: string;
   },
 ): Omit<PlannedTrade, 'id' | 'user_id'> {
   const sym = String(draft.symbol || '').trim().toUpperCase();
@@ -55,6 +58,14 @@ export function recoveryOrderDraftToPlannedTrade(
     `Trigger ${triggerHint} ${targetPriceInstr.toFixed(4)} ${instr}/sh (from ${rawLimit} ${opts.limitPriceCurrency}); est. ${amountPlan.toFixed(2)} ${opts.planCurrency} notional.`,
   ].join(' ');
 
+  const venue =
+    opts.portfolioId || opts.accountId
+      ? {
+          ...(opts.portfolioId ? { portfolioId: opts.portfolioId } : {}),
+          ...(opts.accountId ? { accountId: opts.accountId } : {}),
+        }
+      : {};
+
   return {
     symbol: sym,
     name,
@@ -66,6 +77,7 @@ export function recoveryOrderDraftToPlannedTrade(
     priority,
     status: 'Planned',
     notes: notes.length > 2000 ? `${notes.slice(0, 1997)}...` : notes,
+    ...venue,
   };
 }
 

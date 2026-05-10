@@ -62,7 +62,7 @@ const CurrencyDualDisplay: React.FC<Props> = ({
                 {secondary ? (
                     <span
                         role="tooltip"
-                        className="pointer-events-none absolute left-1/2 bottom-full z-30 mb-2 w-max max-w-[min(18rem,90vw)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-lg opacity-0 transition-opacity group-hover/currency-value:opacity-100"
+                        className="pointer-events-none invisible absolute left-1/2 bottom-full z-30 mb-2 w-max max-w-[min(18rem,90vw)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 shadow-lg opacity-0 transition-opacity group-hover/currency-value:visible group-hover/currency-value:opacity-100"
                     >
                         <span className="font-semibold tabular-nums text-slate-900 block">{secondary}</span>
                     </span>

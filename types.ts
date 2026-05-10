@@ -477,6 +477,10 @@ export interface PlannedTrade {
   priority: 'High' | 'Medium' | 'Low';
   status: 'Planned' | 'Executed';
   notes?: string;
+  /** Optional: buy sizing / execute flows use cash on this portfolio’s linked investment account. */
+  portfolioId?: string | null;
+  /** Optional: buy sizing / execute flows use cash on this investment platform when set (or derived from {@link portfolioId}). */
+  accountId?: string | null;
 }
 
 /** Template for monthly recurring transactions (e.g. salary deposit, rent). */

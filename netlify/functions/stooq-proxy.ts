@@ -1,4 +1,6 @@
 import type { Handler, HandlerEvent } from '@netlify/functions';
+import { accessControlOriginHeader, assertBrowserOriginAllowed } from './corsAllowlist';
+import { assertProxySupabaseJwt } from './proxySupabaseJwt';
 
 /**
  * Server-side fetch to Stooq (CSV). Browsers cannot call Stooq directly from production
@@ -8,11 +10,13 @@ import type { Handler, HandlerEvent } from '@netlify/functions';
  * Only https://stooq.com/* targets are allowed (no open proxy).
  */
 
-const corsHeaders: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-};
+function corsHeaders(event: HandlerEvent): Record<string, string> {
+  return {
+    ...accessControlOriginHeader(event),
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  };
+}
 
 function isAllowedStooqUrl(u: string): boolean {
   try {
@@ -25,13 +29,33 @@ function isAllowedStooqUrl(u: string): boolean {
 
 const handler: Handler = async (event: HandlerEvent) => {
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 204, headers: corsHeaders, body: '' };
+    if (!assertBrowserOriginAllowed(event)) {
+      return { statusCode: 403, headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: 'Forbidden' };
+    }
+    return { statusCode: 204, headers: corsHeaders(event), body: '' };
   }
   if (event.httpMethod !== 'GET') {
     return {
       statusCode: 405,
-      headers: corsHeaders,
+      headers: corsHeaders(event),
       body: 'Method not allowed',
+    };
+  }
+
+  if (!assertBrowserOriginAllowed(event)) {
+    return {
+      statusCode: 403,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      body: 'Origin not allowed',
+    };
+  }
+
+  const jwtGate = await assertProxySupabaseJwt(event);
+  if (!jwtGate.ok) {
+    return {
+      statusCode: jwtGate.statusCode,
+      headers: { ...corsHeaders(event), 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify(jwtGate.body),
     };
   }
 
@@ -39,7 +63,7 @@ const handler: Handler = async (event: HandlerEvent) => {
   if (!raw || !isAllowedStooqUrl(raw)) {
     return {
       statusCode: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'text/plain; charset=utf-8' },
+      headers: { ...corsHeaders(event), 'Content-Type': 'text/plain; charset=utf-8' },
       body: 'Invalid or missing parameter u (must be https://stooq.com/...)',
     };
   }
@@ -52,7 +76,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     return {
       statusCode: res.status,
       headers: {
-        ...corsHeaders,
+        ...corsHeaders(event),
         'Content-Type': res.headers.get('Content-Type') ?? 'text/plain; charset=utf-8',
       },
       body,
@@ -62,7 +86,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     console.error('stooq-proxy fetch failed:', message);
     return {
       statusCode: 502,
-      headers: { ...corsHeaders, 'Content-Type': 'text/plain; charset=utf-8' },
+      headers: { ...corsHeaders(event), 'Content-Type': 'text/plain; charset=utf-8' },
       body: `Upstream error: ${message}`,
     };
   }

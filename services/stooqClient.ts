@@ -3,6 +3,8 @@
  * CSV/history requests go through Netlify `/api/stooq-proxy` which fetches server-side.
  */
 
+import { getAiProxyAuthorizationHeader } from './aiProxyAuth';
+
 /** Prefer direct Netlify function path first (works even if `/api/*` redirect is misconfigured). */
 const PROXY_CANDIDATES = ['/.netlify/functions/stooq-proxy', '/api/stooq-proxy'];
 
@@ -26,10 +28,11 @@ export async function fetchStooq(fullUrl: string): Promise<Response> {
   }
 
   const qs = new URLSearchParams({ u: fullUrl });
+  const authHeaders = await getAiProxyAuthorizationHeader();
   let lastError: unknown;
   for (const path of PROXY_CANDIDATES) {
     try {
-      const res = await fetch(`${path}?${qs}`);
+      const res = await fetch(`${path}?${qs}`, { headers: { ...authHeaders } });
       if (res.status === 404) continue;
       return res;
     } catch (e) {

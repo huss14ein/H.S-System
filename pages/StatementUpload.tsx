@@ -33,6 +33,11 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
   const [isProcessingFile, setIsProcessingFile] = useState(false);
   const [processingError, setProcessingError] = useState<string | null>(null);
   const [processingProgress, setProcessingProgress] = useState<number>(0);
+  /** Prevents double-clicks on Import (review modal) from duplicating `addTransaction` / `recordTrade` rows. */
+  const [isImporting, setIsImporting] = useState(false);
+  const importSubmitLockRef = useRef(false);
+  const smsExtractLockRef = useRef(false);
+  const fileParseLockRef = useRef(false);
   const [duplicateTransactions, setDuplicateTransactions] = useState<Set<number>>(new Set());
   const [selectedTransactions, setSelectedTransactions] = useState<Set<number>>(new Set());
   const [validationWarnings, setValidationWarnings] = useState<string[]>([]);
@@ -213,13 +218,17 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (fileParseLockRef.current) return;
+    fileParseLockRef.current = true;
 
     if (activeTab === 'bank' && !selectedAccount) {
       alert('Please select an account before uploading a bank statement.');
+      fileParseLockRef.current = false;
       return;
     }
     if (activeTab === 'trading' && !selectedAccount) {
       alert('Please select an investment account before uploading a trading statement.');
+      fileParseLockRef.current = false;
       return;
     }
 
@@ -306,6 +315,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       setProcessingError(error instanceof Error ? error.message : 'Failed to process file');
       alert(`Error processing file: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
+      fileParseLockRef.current = false;
       setIsProcessingFile(false);
       setProcessingProgress(0);
     }
@@ -321,6 +331,8 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       alert('Please select an account');
       return;
     }
+    if (smsExtractLockRef.current) return;
+    smsExtractLockRef.current = true;
 
     setProcessingError(null);
     setImportResultMessage(null);
@@ -372,6 +384,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       setProcessingError(error instanceof Error ? error.message : 'Failed to parse SMS');
       alert(`Error parsing SMS: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
+      smsExtractLockRef.current = false;
       setIsProcessingFile(false);
       setProcessingProgress(0);
     }
@@ -439,6 +452,9 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
   };
 
   const handleApproveTransactions = async () => {
+    if (importSubmitLockRef.current) return;
+    importSubmitLockRef.current = true;
+    setIsImporting(true);
     try {
       setImportResultMessage(null);
       const parserParsedCount = extractedInvestmentTransactions.length;
@@ -669,7 +685,20 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
     } catch (error) {
       console.error('Error saving transactions:', error);
       alert(`Failed to save transactions: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      importSubmitLockRef.current = false;
+      setIsImporting(false);
     }
+  };
+
+  const dismissReviewModal = () => {
+    if (importSubmitLockRef.current) return;
+    setIsReviewModalOpen(false);
+    setSelectedTransactions(new Set());
+    setDuplicateTransactions(new Set());
+    setValidationWarnings([]);
+    setValidationErrors([]);
+    setImportResultMessage(null);
   };
 
   const handleSelectAll = () => {
@@ -1046,7 +1075,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         {/* Review Modal */}
         <Modal
           isOpen={isReviewModalOpen}
-          onClose={() => setIsReviewModalOpen(false)}
+          onClose={dismissReviewModal}
           title="Review Extracted Transactions"
           maxWidthClass="max-w-4xl"
         >
@@ -1183,14 +1212,16 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
                 <button
                   type="button"
                   onClick={handleSelectAll}
-                  className="px-3 py-1.5 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50"
+                  disabled={isImporting || (processingProgress > 0 && processingProgress < 100)}
+                  className="px-3 py-1.5 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Select All
                 </button>
                 <button
                   type="button"
                   onClick={handleDeselectAll}
-                  className="px-3 py-1.5 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50"
+                  disabled={isImporting || (processingProgress > 0 && processingProgress < 100)}
+                  className="px-3 py-1.5 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Deselect All
                 </button>
@@ -1455,25 +1486,19 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
             <div className="flex justify-end gap-3 pt-4 border-t">
               <button
                 type="button"
-                onClick={() => {
-                  setIsReviewModalOpen(false);
-                  setSelectedTransactions(new Set());
-                  setDuplicateTransactions(new Set());
-                  setValidationWarnings([]);
-                  setValidationErrors([]);
-                  setImportResultMessage(null);
-                }}
-                className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
+                onClick={dismissReviewModal}
+                disabled={isImporting || (processingProgress > 0 && processingProgress < 100)}
+                className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleApproveTransactions}
-                disabled={selectedTransactions.size === 0 || processingProgress > 0}
+                disabled={selectedTransactions.size === 0 || processingProgress > 0 || isImporting}
                 className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {processingProgress > 0 
+                {processingProgress > 0 || isImporting
                   ? `Importing... ${Math.round(processingProgress)}%`
                   : `Import ${selectedTransactions.size} Selected Transaction(s)`
                 }

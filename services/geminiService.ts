@@ -9,31 +9,97 @@ import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { fetchStooq } from './stooqClient';
 import { extractTadawulCodeForSahmk, getSahmkLivePrices } from './sahmkQuote';
 import { fetchGeminiProxyHealthStatus, getGeminiProxyEndpoints } from './aiProxyEndpoints';
+import { getAiProxyAuthorizationHeader } from './aiProxyAuth';
 import { computeGoalMonthlyAllocation, normalizeGoalAllocationPercent } from './goalAllocation';
 import { computeGoalResolvedAmountsSar, resolvedGoalAmountsFingerprint, formatGoalsProgressForPrompt } from './goalResolvedTotals';
+import { appendSarGroundingNotice, auditSarGrounding, flattenAiContentsForGrounding } from '../utils/aiSarGroundingAudit';
 
 function sarPerUsdForResolvedGoals(data: FinancialData | null | undefined): number {
   const r = resolveSarPerUsd(data, undefined);
   return Number.isFinite(r) && r > 0 ? r : DEFAULT_SAR_PER_USD;
 }
 
+function isSarGroundingAuditEnabled(explicit?: boolean): boolean {
+  if (explicit === false) return false;
+  if (explicit === true) return true;
+  try {
+    const env = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+    const v = env?.VITE_AI_SAR_GROUNDING_AUDIT;
+    if (v === '1' || v === 'true') return true;
+    if (v === '0' || v === 'false') return false;
+    return !!env?.DEV;
+  } catch {
+    return false;
+  }
+}
+
+/** Skip audit when the assistant payload is JSON (feed items, structured exports). */
+function isGroundingAuditSkippableStructuredText(text: string): boolean {
+  const t = text.trim();
+  if (!t.startsWith('{') && !t.startsWith('[')) return false;
+  try {
+    JSON.parse(t);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // --- Model Constants ---
 const FAST_MODEL = 'gemini-3-flash-preview';
 
-/** Expert advisor persona: used so the AI speaks as a senior financial and investment advisor everywhere. */
-const EXPERT_ADVISOR_PERSONA = `You are Finova AI: an expert financial and investment advisor. Wealth management, portfolio construction, budgeting, goal-based planning. Authoritative, clear, insightful—never generic. Direct, actionable guidance with precise numbers and concrete next steps.`;
+/** Expert voice: CFO / senior accountant rigor applied to personal wealth—not motivational fluff. */
+const EXPERT_ADVISOR_PERSONA = `You are Finova AI: a **senior staff accountant–style controller** collaborating with **seasoned personal-investment discipline**—clear, concise, materially honest. Wealth preservation, disciplined compounding, liquidity, diversification, budgeting, capital allocation to goals and investments. Prefer durable wealth outcomes over speculative hype. Speak with institutional clarity; cite what the numbers actually show before interpretation.`;
 
 /** Scope instruction: all data passed to you is the user's personal wealth only. */
 const PERSONAL_WEALTH_SCOPE = `All data is the user's personal wealth only—their accounts, assets, transactions. Analyze only their personal finances.`;
 
-/** Strict response rules: brief, direct, useful. No filler, no hedging, no test phrases. */
-const BRIEF_DIRECT_RULES = `CRITICAL: Be brief. Be direct. Be useful. No filler, no hedging, no generic phrases like "I'd be happy to help" or "Here are some thoughts." Lead with the insight. One sentence per bullet. Use exact numbers. Markdown only: ### headers, - bullets, ** emphasis. No HTML.`;
+/** Accuracy and epistemic guardrails applied to every non-JSON system instruction via invokeAI. */
+const AI_DATA_INTEGRITY_RULES = `DATA INTEGRITY & DECISION SUPPORT (NON-NEGOTIABLE):
+- Build every substantive claim **only** on figures, descriptions, quotes, dates, symbols, tool outputs, or reference text present in **this conversation / prompt**. Do not invent balances, quantities, holdings, FX, market prices, tax/zakat conclusions, dividends, benchmarks, filings, regulatory facts, or “guaranteed” future returns.
+- If a metric is absent, say clearly what you **cannot verify** instead of implying precision. Label clearly when you rely on illustrative assumptions—and keep them proportional.
+- Separate **facts from user data** from **general investment education**. Never present generic principles as if they were the user’s live financial position unless the data or tool output supports it.
+- No performance promises, no certainty about market direction, no personalized buy/sell mandates framed as binding advice. Use scenario-based, risk-aware language.
+- You provide **education and decision-support** for a private individual (often Saudi Arabia, SAR-denominated context)—not statutory audit, legal or tax advice, zakat jurisprudence, or regulated investment advisory services. Direct users to qualified professionals whenever binding filings, compliance, contracts, religious obligations beyond education, or large irreversible reallocations apply.
+- If tools or uploads are stale or partial, acknowledge limits in one terse clause rather than hallucinating specificity.
+
+OUTPUT QUALITY FOR WEALTH BUILDING:
+- Optimize for disciplined long-term posture: runway/liquidity, concentration risk, diversification where data shows it matters, behavioral discipline (overspending, leakage, duplication), alignment with declared goals—in plain language grounded in supplied numbers where possible.
+- Prefer **actionable checkpoints** (“verify X in Finova”, “reconcile dates”, “match category Y”) over generic platitudes.
+- Accuracy beats personality: if uncertain, shorten the conclusion and widen the caveat—never fabricate to sound expert.`;
+
+/** Concise prepend for structured JSON completions (Gemini forbids combining systemInstruction with responseSchema). */
+const AI_JSON_DATA_GOVERNANCE = `Use only facts in this prompt body; never invent monetary amounts, dates, or holdings. If unknown, omit or state "unknown" in short fields.`;
+
+/** Style: brief, direct, useful—without confusing “confident tone” with fabricating facts. */
+const BRIEF_DIRECT_RULES = `STYLE: Be brief, direct, and high-signal. No filler or chatbot pleasantries ("happy to help", "here are some thoughts"). Lead with the highest-impact insight. Prefer one tight sentence per bullet when format allows. When the prompt or tools supply numbers, quote them **exactly**—do not round in ways that change meaning. Markdown only: ### headers, - bullets, ** emphasis. No HTML.
+
+UNCERTAINTY: If critical data is missing, state the gap in one short clause before your best principled guidance—do not invent detail to sound decisive.`;
 
 const DEFAULT_SYSTEM_INSTRUCTION = `${EXPERT_ADVISOR_PERSONA}
 
 ${PERSONAL_WEALTH_SCOPE}
 
+${AI_DATA_INTEGRITY_RULES}
+
 ${BRIEF_DIRECT_RULES}`;
+
+/** Live Advisor chat: same integrity bar as API-wide default, plus tool-use discipline. */
+export function buildLiveAdvisorSystemInstruction(language: 'en' | 'ar'): string {
+    const base = `${EXPERT_ADVISOR_PERSONA}
+
+${PERSONAL_WEALTH_SCOPE}
+
+${AI_DATA_INTEGRITY_RULES}
+
+Live chat discipline: Lead with one decisive sentence, then **2–3** short bullets unless the user asks for depth. Markdown only (###, **). When the question depends on Finova-held data, **call tools** and cite **only** numbers that appear in tool results or prior tool JSON—never invent positions. Prefer sustainable wealth framing (liquidity cushion, concentration, diversification, fee/behavior drag) when data supports it. Educational decision-support only—not legal, tax, or regulated personalized mandates. No HTML; no filler.`;
+    if (language === 'ar') {
+        return `${base}
+
+Language: Respond entirely in Modern Standard Arabic. Preserve numbers, percent signs, ISO dates, and currency tokens (SAR, USD); keep Latin ticker symbols and established proper nouns as users expect.`;
+    }
+    return base;
+}
 
 
 // --- AI Error Formatting (single source for all AI pages) ---
@@ -499,9 +565,10 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
         const timeoutId = setTimeout(() => controller.abort(), 25000);
         try {
             const { signal: _unusedSignal, ...safePayload } = payload;
+            const authHeaders = await getAiProxyAuthorizationHeader();
             const response = await fetch(endpoint, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...authHeaders },
                 body: JSON.stringify(safePayload),
                 signal: controller.signal,
             });
@@ -587,7 +654,16 @@ export async function probeGeminiProxyHealth(): Promise<{
 // Unified AI invocation function. Proxy-only for security (prevents client-bundle key exposure).
 // Do not send systemInstruction with responseMimeType application/json + responseSchema — Gemini returns 400 when both are set.
 // For JSON structured responses, prepend PERSONAL_WEALTH_SCOPE to string prompts so scope is preserved without systemInstruction.
-export async function invokeAI(payload: { model: string, contents: any, config?: any, signal?: AbortSignal }): Promise<any> {
+export async function invokeAI(payload: {
+    model: string;
+    contents: any;
+    config?: any;
+    signal?: AbortSignal;
+    /** Optional extra prompt/tool text merged into the SAR grounding allowlist */
+    groundingAuditExtra?: string;
+    /** Override env default: `false` disables, `true` forces audit for this call */
+    sarGroundingAudit?: boolean;
+}): Promise<any> {
     const rawConfig = payload.config ?? {};
     const isJsonMime = rawConfig.responseMimeType === 'application/json';
     // Strip systemInstruction for JSON responses — Gemini rejects systemInstruction + responseSchema together (400).
@@ -600,17 +676,43 @@ export async function invokeAI(payload: { model: string, contents: any, config?:
           };
 
     let contents = payload.contents;
-    if (isJsonMime && typeof contents === 'string' && PERSONAL_WEALTH_SCOPE) {
-        contents = `[Context — ${PERSONAL_WEALTH_SCOPE}]\n\n${contents}`;
+    if (isJsonMime && typeof contents === 'string') {
+        const scopeLine = PERSONAL_WEALTH_SCOPE ? `[Context — ${PERSONAL_WEALTH_SCOPE}]\n\n` : '';
+        contents = `${scopeLine}[${AI_JSON_DATA_GOVERNANCE}]\n\n${contents}`;
     }
 
-    const mergedPayload = {
-        ...payload,
+    const mergedPayload: { model: string; contents: typeof contents; config: typeof config; signal?: AbortSignal } = {
+        model: payload.model,
         contents,
         config,
     };
+    if (payload.signal) mergedPayload.signal = payload.signal;
 
-    return invokeGeminiProxy(mergedPayload);
+    const res = await invokeGeminiProxy(mergedPayload);
+
+    if (
+        isJsonMime ||
+        !isSarGroundingAuditEnabled(payload.sarGroundingAudit)
+    ) {
+        return res;
+    }
+
+    const rawText = extractProxyResponseText(res) || '';
+    if (!rawText.trim() || isGroundingAuditSkippableStructuredText(rawText)) {
+        return res;
+    }
+
+    const corpus = [flattenAiContentsForGrounding(contents), payload.groundingAuditExtra ?? '']
+        .filter((s) => typeof s === 'string' && s.trim().length > 0)
+        .join('\n---\n');
+
+    if (!corpus.trim()) return res;
+
+    const audit = auditSarGrounding(rawText, corpus);
+    if (audit.clean) return res;
+
+    const nextText = appendSarGroundingNotice(rawText, audit.violations);
+    return { ...res, text: nextText };
 }
 
 /** Readable model text from proxy JSON (`text` or nested candidates). */
@@ -648,6 +750,8 @@ function buildDeterministicStatementImportInsight(transactions: Transaction[], b
 const SALARY_EXPERT_SYSTEM = `${EXPERT_ADVISOR_PERSONA}
 
 ${PERSONAL_WEALTH_SCOPE}
+
+${AI_DATA_INTEGRITY_RULES}
 
 ${BRIEF_DIRECT_RULES}
 

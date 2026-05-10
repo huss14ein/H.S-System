@@ -22,6 +22,7 @@ import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import { getAIExecutiveSummary, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { useAI } from '../context/AiContext';
+import AiProxyUnavailableHint from '../components/AiProxyUnavailableHint';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import { CreditCardIcon } from '../components/icons/CreditCardIcon';
@@ -72,8 +73,7 @@ interface ExtendedBudget extends Budget {
 
 const AIExecutiveSummary: React.FC = () => {
     const { data } = useContext(DataContext)!;
-    const { isAiAvailable, aiHealthChecked, aiActionsEnabled, refreshAiHealth } = useAI();
-    const [aiRecheckBusy, setAiRecheckBusy] = useState(false);
+    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { trackAction } = useSelfLearning();
     const [summary, setSummary] = useState<string>('');
     const [summaryEn, setSummaryEn] = useState<string>('');
@@ -169,21 +169,7 @@ const AIExecutiveSummary: React.FC = () => {
             )}
 
             {aiHealthChecked && !isAiAvailable ? (
-                <div className="text-center p-4 text-slate-600 bg-amber-50/80 border border-amber-200 rounded-md">
-                    <p className="font-semibold text-amber-950">AI Features Disabled</p>
-                    <p className="text-sm mt-1">Configure an AI provider key on the server (e.g. GEMINI_API_KEY). For local dev, use Vite with the Netlify plugin so <code className="text-xs bg-amber-100 px-1 rounded">/api/gemini-proxy</code> works.</p>
-                    <button
-                        type="button"
-                        disabled={aiRecheckBusy}
-                        onClick={() => {
-                            setAiRecheckBusy(true);
-                            void refreshAiHealth().finally(() => setAiRecheckBusy(false));
-                        }}
-                        className="mt-3 px-3 py-1.5 text-sm font-medium rounded-lg bg-amber-100 text-amber-950 hover:bg-amber-200 disabled:opacity-60"
-                    >
-                        {aiRecheckBusy ? 'Checking…' : 'Retry connection check'}
-                    </button>
-                </div>
+                <AiProxyUnavailableHint title="AI summary is off" />
             ) : (
                 !summary && !isLoading && !error && (
                     <div className="text-center p-8 text-slate-500">

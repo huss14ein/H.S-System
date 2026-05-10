@@ -2537,7 +2537,7 @@ const PlatformCard: React.FC<{
                         >
                             Available Cash
                         </dt>
-                        <dd className="metric-value w-full mt-1.5 flex flex-col items-center justify-center text-base sm:text-lg text-slate-900 tabular-nums leading-tight">
+                        <dd className="metric-value metric-value--multi w-full mt-1.5 flex flex-col items-center justify-center text-base sm:text-lg text-slate-900 tabular-nums leading-tight">
                             <div className="flex justify-center">
                                 <CurrencyDualDisplay value={availableCashSAR} inCurrency="SAR" digits={0} size="lg" weight="bold" />
                             </div>
@@ -2550,7 +2550,7 @@ const PlatformCard: React.FC<{
                                 <span>By bucket</span>
                                 <span
                                     role="tooltip"
-                                    className="pointer-events-none absolute left-1/2 bottom-full z-30 mb-2 w-max max-w-[min(18rem,90vw)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700 shadow-lg opacity-0 transition-opacity group-hover/cash-buckets:opacity-100"
+                                    className="pointer-events-none invisible absolute left-1/2 bottom-full z-30 mb-2 w-max max-w-[min(18rem,90vw)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700 shadow-lg opacity-0 transition-opacity group-hover/cash-buckets:visible group-hover/cash-buckets:opacity-100"
                                 >
                                     <span className="font-semibold tabular-nums text-slate-900 block">
                                         {formatCurrencyString(availableCashByCurrency.SAR, { inCurrency: 'SAR', digits: 0 })}
@@ -4980,9 +4980,28 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                     const inv = data?.investments ?? [];
                     const accounts = (data?.accounts ?? []).filter((a: Account) => a.type === 'Investment');
                     const normalizedSymbol = (plan.symbol || '').trim().toUpperCase();
-                    const targetPortfolio = inv.find((p: InvestmentPortfolio) =>
-                        (p.holdings || []).some((h: Holding) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol)
-                    ) || inv.find((p: InvestmentPortfolio) => resolveInvestmentPortfolioCurrency(p) === (plan.tradeCurrency || 'USD')) || inv[0];
+                    const explicitPf = plan.portfolioId
+                        ? inv.find((p: InvestmentPortfolio) => p.id === plan.portfolioId)
+                        : undefined;
+                    let targetPortfolio = explicitPf;
+                    const canonAid = plan.accountId ? resolveCanonicalAccountId(plan.accountId, accounts) : '';
+                    const accountMatch = canonAid ? accounts.find((a) => a.id === canonAid) : undefined;
+                    if (!targetPortfolio && accountMatch) {
+                        targetPortfolio =
+                            inv.find(
+                                (p: InvestmentPortfolio) =>
+                                    portfolioBelongsToAccount(p, accountMatch, accounts) &&
+                                    (p.holdings || []).some((h: Holding) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol),
+                            ) || inv.find((p: InvestmentPortfolio) => portfolioBelongsToAccount(p, accountMatch, accounts));
+                    }
+                    if (!targetPortfolio) {
+                        targetPortfolio =
+                            inv.find((p: InvestmentPortfolio) =>
+                                (p.holdings || []).some((h: Holding) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol),
+                            ) ||
+                            inv.find((p: InvestmentPortfolio) => resolveInvestmentPortfolioCurrency(p) === (plan.tradeCurrency || 'USD')) ||
+                            inv[0];
+                    }
                     setTradeInitialData({
                         symbol: plan.symbol,
                         name: plan.name,

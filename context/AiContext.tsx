@@ -1,13 +1,17 @@
 import React, { createContext, useContext, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchGeminiProxyHealthStatus } from '../services/aiProxyEndpoints';
 
+export type AiUnavailableReason = 'network' | 'no_keys' | null;
+
 interface AiContextType {
-    /** True when Netlify AI proxy reports at least one provider key configured. */
+    /** True when Netlify AI proxy reports at least one provider key configured (and health reached the proxy). */
     isAiAvailable: boolean;
     /** False until the first health check finishes — avoids flashing “unavailable” while status is unknown. */
     aiHealthChecked: boolean;
     /** Use for disabling AI actions until health has resolved (no “unavailable” flash on load). */
     aiActionsEnabled: boolean;
+    /** Why AI is off after a successful check: unreachable proxy vs reachable but no API keys. */
+    aiUnavailableReason: AiUnavailableReason;
     /** Re-run proxy health (e.g. after fixing env or network). */
     refreshAiHealth: () => Promise<void>;
 }
@@ -17,6 +21,7 @@ export const AiContext = createContext<AiContextType | null>(null);
 export const AiProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [isAiAvailable, setIsAiAvailable] = useState<boolean>(false);
     const [aiHealthChecked, setAiHealthChecked] = useState<boolean>(false);
+    const [aiUnavailableReason, setAiUnavailableReason] = useState<AiUnavailableReason>(null);
     const mountedRef = useRef(true);
 
     useEffect(() => {
@@ -30,6 +35,7 @@ export const AiProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         if (typeof fetch === 'undefined') {
             if (mountedRef.current) {
                 setIsAiAvailable(false);
+                setAiUnavailableReason('network');
                 setAiHealthChecked(true);
             }
             return;
@@ -37,11 +43,20 @@ export const AiProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         try {
             const r = await fetchGeminiProxyHealthStatus(signal);
             if (!mountedRef.current) return;
-            setIsAiAvailable(r.configured);
+            const available = r.reachable && r.configured;
+            setIsAiAvailable(available);
+            if (!r.reachable) {
+                setAiUnavailableReason('network');
+            } else if (!r.configured) {
+                setAiUnavailableReason('no_keys');
+            } else {
+                setAiUnavailableReason(null);
+            }
             setAiHealthChecked(true);
         } catch {
             if (!mountedRef.current) return;
             setIsAiAvailable(false);
+            setAiUnavailableReason('network');
             setAiHealthChecked(true);
         }
     }, []);
@@ -52,7 +67,7 @@ export const AiProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
 
     useEffect(() => {
         const controller = new AbortController();
-        const timeoutId = window.setTimeout(() => controller.abort(), 8000);
+        const timeoutId = window.setTimeout(() => controller.abort(), 15000);
         void runHealthOnce(controller.signal).finally(() => {
             clearTimeout(timeoutId);
         });
@@ -73,14 +88,11 @@ export const AiProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         isAiAvailable,
         aiHealthChecked,
         aiActionsEnabled,
+        aiUnavailableReason,
         refreshAiHealth,
     };
 
-    return (
-        <AiContext.Provider value={value}>
-            {children}
-        </AiContext.Provider>
-    );
+    return <AiContext.Provider value={value}>{children}</AiContext.Provider>;
 };
 
 export const useAI = () => {
