@@ -5,6 +5,7 @@ import { getInvestmentTransactionCashAmount } from '../utils/investmentTransacti
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { fromSAR, toSAR } from '../utils/currencyMath';
 import { roundMoney } from '../utils/money';
+import { isUsEquityQuoteSymbol } from './marketQuoteRouting';
 
 const SKIP_SYMBOL = /^(BTC|ETH|BINANCE:|XAU_|XAG_|CASH)$/i;
 
@@ -75,6 +76,7 @@ export function listDividendEligibleHoldings(portfolios: InvestmentPortfolio[]):
     for (const h of p.holdings ?? []) {
       const sym = String(h.symbol ?? '').trim().toUpperCase();
       if (!sym || SKIP_SYMBOL.test(sym)) continue;
+      if (!isUsEquityQuoteSymbol(sym)) continue;
       if ((h.holdingType ?? '') === 'manual_fund') continue;
       const qty = Number(h.quantity) || 0;
       if (!(qty > 0)) continue;

@@ -19,7 +19,7 @@ import {
 } from '../services/quotePriceCache';
 import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd } from '../utils/currencyMath';
-import { holdingUsesLiveQuote } from '../utils/holdingValuation';
+import { getRefreshableHoldingQuoteSymbols, holdingCanUseQuoteRefresh } from '../services/quoteRefreshSymbols';
 
 const MarketSimulator: React.FC = () => {
     const dataContext = useContext(DataContext);
@@ -38,11 +38,14 @@ const MarketSimulator: React.FC = () => {
         if (!data || !marketContext?.bumpPriceRefresh) return;
         const inv = (data as any)?.personalInvestments ?? data?.investments ?? [];
         const holdings = inv.flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []);
+        const refreshableHoldingSymbols = getRefreshableHoldingQuoteSymbols(
+            holdings as { symbol?: string; holdingType?: string; holding_type?: string }[],
+        );
         const watch = data?.watchlist ?? [];
         const planned = data?.plannedTrades ?? [];
         const comm = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
         const hasSymbols =
-            holdings.length > 0 || watch.length > 0 || planned.length > 0 || comm.length > 0;
+            refreshableHoldingSymbols.length > 0 || watch.length > 0 || planned.length > 0 || comm.length > 0;
         if (!hasSymbols || didInitialPricePassRef.current) return;
         didInitialPricePassRef.current = true;
         marketContext.bumpPriceRefresh();
@@ -72,6 +75,9 @@ const MarketSimulator: React.FC = () => {
                 ? allInvestments.filter((p) => p.accountId === platformIdOnly)
                 : allInvestments;
             const allHoldings = portfoliosInScope.flatMap((p) => p.holdings ?? []);
+            const holdingSymbols = getRefreshableHoldingQuoteSymbols(
+                allHoldings as { symbol?: string; holdingType?: string; holding_type?: string }[],
+            );
             const allWatchlistItems = scopeIsPlatform ? [] : (data?.watchlist ?? []);
             const allPlannedTrades = scopeIsPlatform ? [] : (data?.plannedTrades ?? []);
             const allCommodities = scopeIsPlatform
@@ -79,7 +85,7 @@ const MarketSimulator: React.FC = () => {
                 : ((data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? []);
             
             const uniqueSymbols = Array.from(new Set([
-                ...(allHoldings as { symbol?: string }[]).map((h: { symbol?: string }) => h.symbol).filter((s: string | undefined): s is string => s != null && s !== ''),
+                ...holdingSymbols,
                 ...allWatchlistItems.map((w: { symbol?: string }) => w.symbol).filter((s: string | undefined): s is string => s != null && s !== ''),
                 ...allPlannedTrades.map((t: { symbol?: string }) => t.symbol).filter((s: string | undefined): s is string => s != null && s !== '')
             ]));
@@ -261,8 +267,8 @@ const MarketSimulator: React.FC = () => {
 
             // currentValue is stored in portfolio book currency (USD or SAR); live quotes are typically USD notional.
             // Mixed books: display/metrics convert via getSarPerUsd; DB persistence may still hold raw USD notional until normalized.
-            (allHoldings as { id?: string; symbol?: string; quantity?: number; holdingType?: string }[]).forEach((holding) => {
-                if (!holdingUsesLiveQuote(holding as { holdingType?: string; holding_type?: string })) return;
+            (allHoldings as { id?: string; symbol?: string; quantity?: number; holdingType?: string; holding_type?: string }[]).forEach((holding) => {
+                if (!holdingCanUseQuoteRefresh(holding)) return;
                 const sym = holding.symbol;
                 if (sym == null || !holding.id) return;
                 const row = newPrices[sym] ?? newPrices[canonicalQuoteLookupKey(sym)];

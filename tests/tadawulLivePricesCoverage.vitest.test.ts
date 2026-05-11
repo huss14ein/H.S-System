@@ -21,14 +21,15 @@ describe('Tadawul live price coverage', () => {
     expect(resolveQuotePrice({ c: 0, p: 43.25, pc: 42.5, o: 41 })).toBe(43.25);
   });
 
-  it('returns Tadawul aliases and derives missing change values safely', async () => {
+  it('routes Tadawul symbols to SAHMK instead of Finnhub and returns aliases', async () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input));
-      if (url.pathname.endsWith('/quote')) {
+      const url = new URL(String(input), 'https://app.test');
+      expect(url.hostname).not.toBe('finnhub.io');
+      if (url.pathname.endsWith('/sahmk-proxy')) {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ c: 0, pc: 50, o: 49 }),
+          json: async () => ({ price: 50, previous_close: 50 }),
           headers: new Headers(),
         } as Response;
       }

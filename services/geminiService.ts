@@ -7,9 +7,10 @@ import { capitalizeCategoryName } from '../utils/categoryFormat';
 import { DEFAULT_SAR_PER_USD, resolveSarPerUsd } from '../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { fetchStooq } from './stooqClient';
-import { extractTadawulCodeForSahmk, getSahmkLivePrices } from './sahmkQuote';
+import { getSahmkLivePrices } from './sahmkQuote';
 import { fetchGeminiProxyHealthStatus, getGeminiProxyEndpoints } from './aiProxyEndpoints';
 import { getAiProxyAuthorizationHeader } from './aiProxyAuth';
+import { isTadawulQuoteSymbol, isUsEquityQuoteSymbol, uniqueQuoteSymbols } from './marketQuoteRouting';
 import { computeGoalMonthlyAllocation, normalizeGoalAllocationPercent } from './goalAllocation';
 import { computeGoalResolvedAmountsSar, resolvedGoalAmountsFingerprint, formatGoalsProgressForPrompt } from './goalResolvedTotals';
 import { appendSarGroundingNotice, auditSarGrounding, flattenAiContentsForGrounding } from '../utils/aiSarGroundingAudit';
@@ -382,10 +383,12 @@ let warnedFinnhub403InGeminiService = false;
 
 const getFinnhubLivePrices = async (symbols: string[]): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {
     if (symbols.length === 0) return {};
+    const usSymbols = uniqueQuoteSymbols(symbols).filter(isUsEquityQuoteSymbol);
+    if (usSymbols.length === 0) return {};
     const token = getFinnhubApiKey();
     const mapped: { [symbol: string]: { price: number; change: number; changePercent: number } } = {};
 
-    for (const rawSymbol of symbols) {
+    for (const rawSymbol of usSymbols) {
         const candidateSymbols = getFinnhubQuoteCandidates(rawSymbol);
         for (const finnhubSymbol of candidateSymbols) {
             try {
@@ -440,7 +443,7 @@ const getFinnhubCompanyNews = async (symbols: string[]): Promise<Array<{ symbol:
     const fromDate = from.toISOString().split('T')[0];
     const rows: Array<{ symbol: string; headline: string; source: string; url: string; datetime: number }> = [];
 
-    for (const rawSymbol of symbols.slice(0, 6)) {
+    for (const rawSymbol of symbols.filter(isUsEquityQuoteSymbol).slice(0, 6)) {
         const symbol = toFinnhubSymbol(rawSymbol);
         if (symbol.includes(':')) continue;
         try {
@@ -2474,10 +2477,7 @@ export const getAICategorySuggestion = async (description: string, categories: s
 const GRAMS_PER_TROY_OZ = 31.1035;
 const BINANCE_BASE = 'https://api.binance.com/api/v3';
 
-/**
- * Finnhub free plans often return 403 for OANDA forex/metal symbols (XAU/XAG).
- * PAX Gold (~1 troy oz per token) is a practical public spot proxy in USD/oz for the same math as OANDA:XAU_USD.
- */
+/** PAX Gold (~1 troy oz per token) is a practical public spot proxy in USD/oz for gold math. */
 async function getGoldSpotUsdPerTroyOzCoinGecko(): Promise<number | null> {
     try {
         const res = await fetch(
@@ -2493,7 +2493,7 @@ async function getGoldSpotUsdPerTroyOzCoinGecko(): Promise<number | null> {
     }
 }
 
-/** ~1 troy oz silver proxy when OANDA:XAG_USD is 403 (same free-tier limitation as gold). */
+/** ~1 troy oz silver proxy used for silver math without routing metals through Finnhub. */
 async function getSilverSpotUsdPerTroyOzCoinGecko(): Promise<number | null> {
     try {
         const res = await fetch(
@@ -2509,7 +2509,7 @@ async function getSilverSpotUsdPerTroyOzCoinGecko(): Promise<number | null> {
     }
 }
 
-/** Fetch BTC/ETH prices from Binance (no API key). Returns SAR. Used when Finnhub fails or is unavailable. */
+/** Fetch BTC/ETH prices from Binance (no API key). Returns SAR. */
 async function getBinanceCryptoPrices(symbols: string[], sarPerUsd: number = DEFAULT_SAR_PER_USD): Promise<{ symbol: string; price: number }[]> {
     const out: { symbol: string; price: number }[] = [];
     const binancePairs: [string, string][] = []; // [requestSymbol, normalizedSymbol]
@@ -2533,65 +2533,62 @@ async function getBinanceCryptoPrices(symbols: string[], sarPerUsd: number = DEF
     return out;
 }
 
-/** Fetch commodity prices from Finnhub (crypto + metals). Returns unit prices in SAR. `sarPerUsd` should match app FX (e.g. from `resolveSarPerUsd`). */
-export async function getFinnhubCommodityPrices(
+/** Fetch commodity prices from public commodity/crypto feeds (no Finnhub/OANDA calls). Returns unit prices in SAR. */
+export async function getPublicCommodityPrices(
     commodities: Pick<CommodityHolding, 'symbol' | 'name' | 'goldKarat'>[],
     sarPerUsd: number = DEFAULT_SAR_PER_USD,
 ): Promise<{ symbol: string; price: number }[]> {
-    const token = import.meta.env.VITE_FINNHUB_API_KEY;
     const fx = Number.isFinite(sarPerUsd) && sarPerUsd > 0 ? sarPerUsd : DEFAULT_SAR_PER_USD;
     const out: { symbol: string; price: number }[] = [];
     let coinGeckoGoldUsd: number | null | undefined;
     let coinGeckoSilverUsd: number | null | undefined;
     for (const c of commodities) {
         const sym = (c.symbol || '').toUpperCase().trim();
-        let finnhubSym = '';
+        let source: 'crypto' | 'gold' | 'silver' | '' = '';
         let priceMultiplier = fx;
         let normalizedSym = sym;
         const karatFromSymbol = Number(sym.match(/_(24|22|21|18)K$/)?.[1] || 0);
         const normalizedKarat = Number(c.goldKarat ?? (Number.isFinite(karatFromSymbol) && karatFromSymbol > 0 ? karatFromSymbol : 24));
         const karatFactor = sym.startsWith('XAU_') ? Math.min(1, Math.max(0, normalizedKarat / 24)) : 1;
         if (sym === 'BTC_USD' || sym === 'BTC') {
-            finnhubSym = 'BINANCE:BTCUSDT';
+            source = 'crypto';
             normalizedSym = 'BTC';
         } else if (sym === 'ETH_USD' || sym === 'ETH') {
-            finnhubSym = 'BINANCE:ETHUSDT';
+            source = 'crypto';
             normalizedSym = 'ETH';
         } else if (sym.startsWith('XAU_OUNCE')) {
-            finnhubSym = 'OANDA:XAU_USD';
+            source = 'gold';
             priceMultiplier = fx;
             normalizedSym = sym;
         } else if (sym.startsWith('XAU_GRAM') || sym === 'XAU') {
-            finnhubSym = 'OANDA:XAU_USD';
+            source = 'gold';
             priceMultiplier = fx / GRAMS_PER_TROY_OZ;
             normalizedSym = sym === 'XAU' ? 'XAU' : sym;
         } else if (sym.startsWith('XAG_OUNCE')) {
-            finnhubSym = 'OANDA:XAG_USD';
+            source = 'silver';
             priceMultiplier = fx;
             normalizedSym = sym;
         } else if (sym.startsWith('XAG_GRAM') || sym === 'XAG') {
-            finnhubSym = 'OANDA:XAG_USD';
+            source = 'silver';
             priceMultiplier = fx / GRAMS_PER_TROY_OZ;
             normalizedSym = sym === 'XAG' ? 'XAG' : sym;
         }
-        if (!finnhubSym) continue;
+        if (!source) continue;
         try {
             let priceUsd: number | null = null;
-            if (token) {
-                const res = await finnhubFetch(
-                    `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(finnhubSym)}&token=${encodeURIComponent(token)}`,
-                );
-                if (res.ok) {
-                    const row = await res.json();
-                    const v = resolveQuotePrice(row ?? {});
-                    if (Number.isFinite(v) && v > 0) priceUsd = v;
+            if (source === 'crypto') {
+                const crypto = await getBinanceCryptoPrices([normalizedSym], fx);
+                const cryptoSar = crypto.find((p) => p.symbol === normalizedSym)?.price ?? null;
+                if (cryptoSar != null) {
+                    out.push({ symbol: normalizedSym, price: cryptoSar });
+                    continue;
                 }
             }
-            if (priceUsd == null && finnhubSym === 'OANDA:XAU_USD') {
+            if (source === 'gold') {
                 if (coinGeckoGoldUsd === undefined) coinGeckoGoldUsd = await getGoldSpotUsdPerTroyOzCoinGecko();
                 if (coinGeckoGoldUsd != null) priceUsd = coinGeckoGoldUsd;
             }
-            if (priceUsd == null && finnhubSym === 'OANDA:XAG_USD') {
+            if (source === 'silver') {
                 if (coinGeckoSilverUsd === undefined) coinGeckoSilverUsd = await getSilverSpotUsdPerTroyOzCoinGecko();
                 if (coinGeckoSilverUsd != null) priceUsd = coinGeckoSilverUsd;
             }
@@ -2604,6 +2601,9 @@ export async function getFinnhubCommodityPrices(
     return out;
 }
 
+/** @deprecated Use getPublicCommodityPrices. Kept as a compatibility wrapper; it no longer calls Finnhub. */
+export const getFinnhubCommodityPrices = getPublicCommodityPrices;
+
 /** Normalize commodity symbol for matching (e.g. BTC_USD and BTC both match "BTC"). */
 function normalizeCommoditySymbolForMatch(sym: string): string {
     const s = (sym || '').toUpperCase().trim();
@@ -2614,7 +2614,7 @@ function normalizeCommoditySymbolForMatch(sym: string): string {
 
 export type AICommodityPricesOptions = { sarPerUsd?: number };
 
-/** Commodity prices: Finnhub first, then Binance fallback for crypto so metals and crypto are reliably retrieved. */
+/** Commodity prices from public commodity/crypto feeds; never calls Finnhub (Finnhub is reserved for US equities). */
 export const getAICommodityPrices = async (
     commodities: Pick<CommodityHolding, 'symbol' | 'name' | 'goldKarat'>[],
     options?: AICommodityPricesOptions,
@@ -2622,7 +2622,7 @@ export const getAICommodityPrices = async (
     if (commodities.length === 0) return { prices: [], groundingChunks: [] };
     const rawFx = options?.sarPerUsd;
     const sarPerUsd = typeof rawFx === 'number' && Number.isFinite(rawFx) && rawFx > 0 ? rawFx : DEFAULT_SAR_PER_USD;
-    let prices = await getFinnhubCommodityPrices(commodities, sarPerUsd);
+    let prices = await getPublicCommodityPrices(commodities, sarPerUsd);
     const haveSymbol = new Set(prices.map(p => normalizeCommoditySymbolForMatch(p.symbol)));
     const missingCrypto = commodities
         .map(c => (c.symbol || '').toUpperCase().trim())
@@ -2717,11 +2717,14 @@ Return Markdown only (no HTML). Use ### for each section.
 };
 
 export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {
-    if (symbols.length === 0) return {};
+    const requestedSymbols = uniqueQuoteSymbols(symbols);
+    if (requestedSymbols.length === 0) return {};
+    const usSymbols = requestedSymbols.filter(isUsEquityQuoteSymbol);
+    const tadawulSymbols = requestedSymbols.filter(isTadawulQuoteSymbol);
 
     const aiFetch = async () => {
         const prompt = `
-            Fetch the current real-time market prices for the following stock/crypto symbols: ${symbols.join(', ')}.
+            Fetch the current real-time market prices for the following stock/crypto symbols: ${requestedSymbols.join(', ')}.
             For each symbol, provide:
             1. The current price.
             2. The absolute change from the previous close.
@@ -2755,9 +2758,9 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
     };
 
     const provider = (import.meta.env.VITE_LIVE_PRICE_PROVIDER || 'auto').toLowerCase();
-    const tryFinnhub = async () => {
+    const tryFinnhub = async (syms: string[] = usSymbols) => {
         try {
-            return await getFinnhubLivePrices(symbols);
+            return await getFinnhubLivePrices(syms);
         } catch (e) {
             console.warn('Finnhub live batch failed:', e);
             return {};
@@ -2768,9 +2771,19 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
         return Object.keys(stooq).length > 0 ? stooq : {};
     };
 
-    const mergeFinnhubAndStooq = async (): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {
-        const finnhub = await tryFinnhub();
-        const missing = symbols.filter((s) => {
+    const trySahmk = async (syms: string[] = tadawulSymbols) => {
+        if (syms.length === 0) return {};
+        try {
+            return await getSahmkLivePrices(syms);
+        } catch (e) {
+            console.warn('SAHMK live prices skipped:', e);
+            return {};
+        }
+    };
+
+    const mergeFinnhubStooqAndSahmk = async (): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {
+        const [finnhub, sahmk] = await Promise.all([tryFinnhub(usSymbols), trySahmk(tadawulSymbols)]);
+        const missingUs = usSymbols.filter((s) => {
             const u = (s || '').trim().toUpperCase();
             const canon = canonicalQuoteLookupKey(s);
             const has =
@@ -2780,62 +2793,22 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
                 Object.keys(finnhub).some((k) => canonicalQuoteLookupKey(k) === canon);
             return !has;
         });
-        if (missing.length === 0 && Object.keys(finnhub).length > 0) return finnhub;
-        const stooq = await tryStooq(missing.length > 0 ? missing : symbols);
-        let combined: { [symbol: string]: { price: number; change: number; changePercent: number } } = { ...stooq, ...finnhub };
-        const stillMissing = symbols.filter((s) => {
-            const u = (s || '').trim().toUpperCase();
-            const canon = canonicalQuoteLookupKey(s);
-            const has =
-                combined[s] ||
-                combined[u] ||
-                combined[canon] ||
-                Object.keys(combined).some((k) => canonicalQuoteLookupKey(k) === canon);
-            return !has;
-        });
-        const tadStill = stillMissing.filter((s) => extractTadawulCodeForSahmk(s));
-        if (tadStill.length > 0) {
-            try {
-                const sahmk = await getSahmkLivePrices(tadStill);
-                combined = { ...combined, ...sahmk };
-            } catch (e) {
-                console.warn('SAHMK live prices skipped:', e);
-            }
-        }
-        return combined;
+        const stooq = missingUs.length > 0 ? await tryStooq(missingUs) : {};
+        return { ...stooq, ...finnhub, ...sahmk };
     };
 
     try {
         if (provider === 'stooq') {
-            const stooq = await tryStooq(symbols);
-            let combined: { [symbol: string]: { price: number; change: number; changePercent: number } } = { ...stooq };
-            const stillMissing = symbols.filter((s) => {
-                const u = (s || '').trim().toUpperCase();
-                const canon = canonicalQuoteLookupKey(s);
-                const has =
-                    combined[s] ||
-                    combined[u] ||
-                    combined[canon] ||
-                    Object.keys(combined).some((k) => canonicalQuoteLookupKey(k) === canon);
-                return !has;
-            });
-            const tadStill = stillMissing.filter((s) => extractTadawulCodeForSahmk(s));
-            if (tadStill.length > 0) {
-                try {
-                    const sahmk = await getSahmkLivePrices(tadStill);
-                    combined = { ...combined, ...sahmk };
-                } catch (e) {
-                    console.warn('SAHMK live prices skipped:', e);
-                }
-            }
+            const [stooq, sahmk] = await Promise.all([tryStooq(usSymbols), trySahmk(tadawulSymbols)]);
+            const combined: { [symbol: string]: { price: number; change: number; changePercent: number } } = { ...stooq, ...sahmk };
             if (Object.keys(combined).length > 0) return combined;
-            throw new Error('Stooq returned no symbols');
+            throw new Error('No live prices from Stooq (US) or SAHMK (Tadawul)');
         }
         if (provider === 'ai') return await aiFetch();
-        // finnhub | auto | unset: Finnhub first, Stooq fills gaps, SAHMK fills remaining Tadawul (see sahmkQuote.ts)
-        const merged = await mergeFinnhubAndStooq();
+        // finnhub | auto | unset: Finnhub is US-only, SAHMK is Tadawul-only, Stooq only fills missing US quotes.
+        const merged = await mergeFinnhubStooqAndSahmk();
         if (Object.keys(merged).length > 0) return merged;
-        throw new Error('No live prices from Finnhub, Stooq, or SAHMK');
+        throw new Error('No live prices from Finnhub (US), Stooq (US fallback), or SAHMK (Tadawul)');
     } catch (error) {
         console.error("Error fetching live prices:", error);
         throw error;
