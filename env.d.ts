@@ -16,6 +16,8 @@ interface ImportMetaEnv {
   readonly VITE_ALLOW_SIGNUP?: string;
   /** '1' = always use Netlify proxy for Stooq; '0' = never (direct fetch; may fail CORS in browser). */
   readonly VITE_STOOQ_PROXY?: string;
+  /** Optional deployed origin (https://…) prepended for AI proxy health/calls when the SPA is not served with functions. */
+  readonly VITE_AI_PROXY_EXTRA_ORIGIN?: string;
 }
 
 interface ImportMeta {

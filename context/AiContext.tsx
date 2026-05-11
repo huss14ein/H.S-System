@@ -1,7 +1,14 @@
 import React, { createContext, useContext, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchGeminiProxyHealthStatus } from '../services/aiProxyEndpoints';
 
-export type AiUnavailableReason = 'network' | 'no_keys' | null;
+export type AiUnavailableReason =
+    | 'network'
+    | 'no_keys'
+    /** Proxy returned 403 (browser Origin not allowlisted on Netlify). */
+    | 'origin_blocked'
+    /** Got HTML/app shell instead of the function (wrong host or dev server without functions). */
+    | 'spa_shell'
+    | null;
 
 interface AiContextType {
     /** True when Netlify AI proxy reports at least one provider key configured (and health reached the proxy). */
@@ -46,7 +53,13 @@ export const AiProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
             const available = r.reachable && r.configured;
             setIsAiAvailable(available);
             if (!r.reachable) {
-                setAiUnavailableReason('network');
+                if (r.unreachableReason === 'origin_forbidden') {
+                    setAiUnavailableReason('origin_blocked');
+                } else if (r.unreachableReason === 'spa_shell') {
+                    setAiUnavailableReason('spa_shell');
+                } else {
+                    setAiUnavailableReason('network');
+                }
             } else if (!r.configured) {
                 setAiUnavailableReason('no_keys');
             } else {

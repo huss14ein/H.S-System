@@ -1,12 +1,11 @@
 import { getAiProxyAuthorizationHeader } from './aiProxyAuth';
 
 /**
- * Single source of truth for the Netlify `gemini-proxy` function URLs.
- * Production: `netlify.toml` rewrites `/api/*` → `/.netlify/functions/:splat`.
- * Local: `@netlify/vite-plugin` emulates the same routing so `npm run dev` hits the real function.
+ * Single source of truth for Netlify `gemini-proxy` URLs. Provider keys are read only in the function from
+ * Netlify Site → Environment variables (`process.env`), never in the client bundle.
  *
- * Optional: set `VITE_AI_PROXY_EXTRA_ORIGIN` (e.g. `https://your-site.netlify.app`) to try that
- * origin first when the app is served from a host without functions (advanced / debugging).
+ * `netlify.toml` rewrites `/api/*` → `/.netlify/functions/:splat`.
+ * Optional `VITE_AI_PROXY_EXTRA_ORIGIN`: try a deployed origin first (e.g. preview URL) when debugging cross-origin.
  */
 export function getGeminiProxyEndpoints(): string[] {
     const paths = ['/api/gemini-proxy', '/.netlify/functions/gemini-proxy'];
@@ -24,12 +23,23 @@ export function getGeminiProxyEndpoints(): string[] {
     return paths;
 }
 
+/** When `reachable` is false, best-effort reason (403 CORS, HTML shell instead of function, or network/parse). */
+export type GeminiProxyUnreachableReason = 'origin_forbidden' | 'spa_shell' | 'unreachable';
+
 export type GeminiProxyHealthResult = {
     /** At least one endpoint returned HTTP 200 with a parseable health JSON body */
     reachable: boolean;
     /** Proxy reports `anyProviderConfigured` (GEMINI / Anthropic / OpenAI / Grok env on server) */
     configured: boolean;
+    unreachableReason?: GeminiProxyUnreachableReason;
 };
+
+function bodyLooksLikeSpaOrHtmlShell(raw: string): boolean {
+    const t = raw.trimStart();
+    if (!t) return false;
+    const head = t.slice(0, 12).toLowerCase();
+    return head.startsWith('<!doctype h') || head.startsWith('<!') || head.startsWith('<html');
+}
 
 function parseHealthJsonPayload(raw: string): { anyProviderConfigured?: boolean } | null {
     const trimmed = raw.trim();
@@ -48,6 +58,8 @@ function parseHealthJsonPayload(raw: string): { anyProviderConfigured?: boolean 
 export async function fetchGeminiProxyHealthStatus(signal?: AbortSignal): Promise<GeminiProxyHealthResult> {
     const endpoints = getGeminiProxyEndpoints();
     const maxRounds = 3;
+    let saw403 = false;
+    let sawSpaShell = false;
 
     for (let round = 0; round < maxRounds; round++) {
         if (round > 0) {
@@ -64,7 +76,15 @@ export async function fetchGeminiProxyHealthStatus(signal?: AbortSignal): Promis
                     cache: 'no-store',
                 });
                 const raw = await res.text();
-                if (!res.ok) continue;
+                if (!res.ok) {
+                    if (res.status === 403) saw403 = true;
+                    continue;
+                }
+
+                if (bodyLooksLikeSpaOrHtmlShell(raw)) {
+                    sawSpaShell = true;
+                    continue;
+                }
 
                 const ct = res.headers.get('content-type') ?? '';
                 let parsed: unknown = null;
@@ -90,5 +110,12 @@ export async function fetchGeminiProxyHealthStatus(signal?: AbortSignal): Promis
             }
         }
     }
-    return { reachable: false, configured: false };
+
+    const unreachableReason: GeminiProxyUnreachableReason = saw403
+        ? 'origin_forbidden'
+        : sawSpaShell
+          ? 'spa_shell'
+          : 'unreachable';
+
+    return { reachable: false, configured: false, unreachableReason };
 }
