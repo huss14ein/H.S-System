@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getGoalAIPlan } from '../services/geminiService';
-import { FinancialData, Goal, Liability, Page } from '../types';
+import { FinancialData, Goal, Liability, Page, InvestmentPortfolio } from '../types';
 import { RocketLaunchIcon } from '../components/icons/RocketLaunchIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
@@ -25,6 +25,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { computeDashboardKpiSnapshot } from '../services/dashboardKpiSnapshot';
 import { financialMonthRange } from '../utils/financialMonth';
@@ -445,11 +446,12 @@ const GoalCard: React.FC<{
 
             investments.forEach((p: { goalId?: string; name?: string; currency?: string; holdings?: { goalId?: string; symbol?: string; currentValue?: number; name?: string }[] }) => {
                 const holdings = p.holdings ?? [];
+                const book = resolveInvestmentPortfolioCurrency(p as InvestmentPortfolio);
                 let portfolioResidualForGoal = 0;
                 holdings.forEach((h: { goalId?: string; symbol?: string; name?: string; currentValue?: number }) => {
                     const resolvedGoalId = h.goalId || p.goalId;
                     if (resolvedGoalId !== goal.id) return;
-                    const valueSar = toSAR(h.currentValue ?? 0, (p.currency ?? 'USD') as 'USD' | 'SAR', sarPerUsd);
+                    const valueSar = toSAR(h.currentValue ?? 0, book, sarPerUsd);
                     // Holding goal link has priority; otherwise the platform goal applies.
                     if (h.goalId) {
                         linkedItems.push({

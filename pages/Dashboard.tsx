@@ -703,10 +703,10 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         const totalMonthlyDebt = liabilities.reduce((s: number, l: { monthlyPayment?: number }) => s + (l.monthlyPayment ?? 0), 0);
         const grossMonthlyIncome = avgMonthlyIncomeSar6Mo > 0 ? avgMonthlyIncomeSar6Mo : 1;
         const debtResult = debtStressScore(totalMonthlyDebt, grossMonthlyIncome, liquidCashSar);
-        const goalTotalCurrent = goals.reduce((s: number, g: { id?: string; currentAmount?: number }) => {
+        const goalTotalCurrent = goals.reduce((s: number, g: { id?: string }) => {
             const id = (g as { id?: string }).id;
-            const resolved = id ? goalResolved.get(id) : undefined;
-            return s + (typeof resolved === 'number' ? resolved : (g.currentAmount ?? 0));
+            const resolved = id ? goalResolved.get(id) ?? 0 : 0;
+            return s + resolved;
         }, 0);
         const goalProgressScore = goalTotalTarget > 0 ? Math.min(100, (goalTotalCurrent / goalTotalTarget) * 100) : 100;
         const budgetVariance = (kpiSummary as { budgetVariance?: number }).budgetVariance ?? 0;

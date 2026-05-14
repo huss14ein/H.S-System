@@ -69,6 +69,35 @@ describe('goalResolvedTotals', () => {
     expect(m.get('gB')).toBeCloseTo(4000, 5);
   });
 
+  it('infers SAR portfolio book when currency is unset but holdings are Tadawul .SR (no false USD conversion)', () => {
+    const goal: Goal = {
+      id: 'g1',
+      name: 'Saudi savings',
+      targetAmount: 50_000,
+      deadline: '2030-01-01',
+      priority: 'High',
+    };
+    const data = {
+      goals: [goal],
+      assets: [],
+      investments: [
+        {
+          id: 'p1',
+          name: 'Tadawul PF',
+          goalId: 'g1',
+          holdings: [{ id: 'h1', symbol: '1150.SR', quantity: 10, avgCost: 1, currentValue: 4000 }],
+        },
+      ],
+      liabilities: [],
+      transactions: [],
+      accounts: [],
+      budgets: [],
+    } as unknown as FinancialData;
+
+    const m = computeGoalResolvedAmountsSar(data, 3.75);
+    expect(m.get('g1')).toBeCloseTo(4000, 5);
+  });
+
   it('averageRollingMonthlyNetSurplus returns 0 when no transactions', () => {
     expect(averageRollingMonthlyNetSurplus(null)).toBe(0);
   });

@@ -90,8 +90,23 @@ import {
     monthlySuggestionsFromCategoryTotals,
 } from '../services/smartFillBudgetHistory';
 import { annualEnvelopeLimitForCategory } from '../services/budgetEnvelopeMath';
+import {
+    clampDateToFinancialMonthBounds,
+    computeBudgetSpendWindows,
+} from '../services/budgetViewSpendWindows';
 
-
+/** Compare current view spend vs prior period (same calendar length as main range) for card trends. */
+function budgetTrendFromPeriods(previousPeriodSpent: number, currentPeriodSpent: number): {
+    previousPeriodSpent: number;
+    trendDelta: number;
+    trendDirection: 'up' | 'down' | 'flat';
+} {
+    const prev = Number.isFinite(previousPeriodSpent) ? Math.max(0, previousPeriodSpent) : 0;
+    const cur = Number.isFinite(currentPeriodSpent) ? Math.max(0, currentPeriodSpent) : 0;
+    const delta = cur - prev;
+    if (Math.abs(delta) < 0.005) return { previousPeriodSpent: prev, trendDelta: 0, trendDirection: 'flat' };
+    return { previousPeriodSpent: prev, trendDelta: delta, trendDirection: delta > 0 ? 'up' : 'down' };
+}
 
 /** Args for `get_shared_budget_consumed_for_me`: window must match the owner's Budgets cards for the selected view. */
 function sharedBudgetConsumedRpcArgs(
@@ -131,9 +146,10 @@ function sharedBudgetConsumedRpcArgs(
         return { p_year: null, p_month: null, p_range_start: iso(startOfDay(rs)), p_range_end: iso(endOfDay(re)) };
     }
     if (budgetView === 'Weekly') {
-        const day = ref.getDay();
+        const refClamped = clampDateToFinancialMonthBounds(ref, { year: currentYear, month: currentMonth }, monthStartDay);
+        const day = refClamped.getDay();
         const diffToMonday = (day + 6) % 7;
-        const rangeStart = startOfDay(ref);
+        const rangeStart = startOfDay(refClamped);
         rangeStart.setDate(rangeStart.getDate() - diffToMonday);
         const rangeEndDate = new Date(rangeStart);
         rangeEndDate.setDate(rangeStart.getDate() + 6);
@@ -141,8 +157,9 @@ function sharedBudgetConsumedRpcArgs(
         return { p_year: null, p_month: null, p_range_start: iso(rangeStart), p_range_end: iso(rangeEnd) };
     }
     // Daily
-    const rs = startOfDay(ref);
-    const re = endOfDay(ref);
+    const refClamped = clampDateToFinancialMonthBounds(ref, { year: currentYear, month: currentMonth }, monthStartDay);
+    const rs = startOfDay(refClamped);
+    const re = endOfDay(refClamped);
     return { p_year: null, p_month: null, p_range_start: iso(rs), p_range_end: iso(re) };
 }
 
@@ -1007,62 +1024,13 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const previousSpending = new Map<string, number>();
         const ytdSpending = new Map<string, number>();
 
-        const now = new Date();
-        const rangeStart = new Date(now);
-        const rangeEnd = new Date(now);
-        const previousRangeStart = new Date(now);
-        const previousRangeEnd = new Date(now);
-
-        if (budgetView === 'Monthly') {
-            const cur = financialMonthRangeFromKey({ year: currentYear, month: currentMonth }, monthStartDay);
-            rangeStart.setTime(cur.start.getTime());
-            rangeEnd.setTime(cur.end.getTime());
-
-            const prevKey = addMonthsToKey({ year: currentYear, month: currentMonth }, -1);
-            const prev = financialMonthRangeFromKey(prevKey, monthStartDay);
-            previousRangeStart.setTime(prev.start.getTime());
-            previousRangeEnd.setTime(prev.end.getTime());
-        } else if (budgetView === 'Weekly') {
-            const day = now.getDay();
-            const diffToMonday = (day + 6) % 7;
-            rangeStart.setDate(now.getDate() - diffToMonday);
-            rangeStart.setHours(0, 0, 0, 0);
-            rangeEnd.setDate(rangeStart.getDate() + 6);
-            rangeEnd.setHours(23, 59, 59, 999);
-
-            previousRangeStart.setDate(rangeStart.getDate() - 7);
-            previousRangeStart.setHours(0, 0, 0, 0);
-            previousRangeEnd.setDate(rangeStart.getDate() - 1);
-            previousRangeEnd.setHours(23, 59, 59, 999);
-        } else if (budgetView === 'Daily') {
-            rangeStart.setHours(0, 0, 0, 0);
-            rangeEnd.setHours(23, 59, 59, 999);
-
-            previousRangeStart.setDate(now.getDate() - 1);
-            previousRangeStart.setHours(0, 0, 0, 0);
-            previousRangeEnd.setDate(now.getDate() - 1);
-            previousRangeEnd.setHours(23, 59, 59, 999);
-        } else {
-            rangeStart.setFullYear(currentYear, 0, 1);
-            rangeStart.setHours(0, 0, 0, 0);
-            rangeEnd.setFullYear(currentYear, 11, 31);
-            rangeEnd.setHours(23, 59, 59, 999);
-
-            previousRangeStart.setFullYear(currentYear - 1, 0, 1);
-            previousRangeStart.setHours(0, 0, 0, 0);
-            previousRangeEnd.setFullYear(currentYear - 1, 11, 31);
-            previousRangeEnd.setHours(23, 59, 59, 999);
-        }
-
-        const ytdStart =
-            budgetView === 'Monthly'
-                ? (() => {
-                      const d = new Date(currentYear, 0, 1);
-                      d.setHours(0, 0, 0, 0);
-                      return d;
-                  })()
-                : null;
-        const ytdEnd = budgetView === 'Monthly' ? rangeEnd : null;
+        const { rangeStart, rangeEnd, previousRangeStart, previousRangeEnd, ytdStart, ytdEnd } = computeBudgetSpendWindows({
+            budgetView,
+            currentYear,
+            currentMonth,
+            monthStartDay,
+            anchorDate: currentDate,
+        });
 
         ((data as any)?.personalTransactions ?? data?.transactions ?? [])
             .filter((t: { type?: string; status?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && (t.status ?? 'Approved') === 'Approved')
@@ -1096,6 +1064,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             if (ytdStart && ytdEnd && d >= ytdStart && d <= ytdEnd) {
                 ytdSpending.set(cat, (ytdSpending.get(cat) || 0) + amount);
             }
+            if (d >= previousRangeStart && d <= previousRangeEnd) {
+                previousSpending.set(cat, (previousSpending.get(cat) || 0) + amount);
+            }
         });
 
         // Installment projection: counts *due* installments into budgets for their due month (does not hit today's budget).
@@ -1108,6 +1079,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             }
             if (ytdStart && ytdEnd && d >= ytdStart && d <= ytdEnd) {
                 ytdSpending.set(r.budgetCategory, (ytdSpending.get(r.budgetCategory) || 0) + amount);
+            }
+            if (d >= previousRangeStart && d <= previousRangeEnd) {
+                previousSpending.set(r.budgetCategory, (previousSpending.get(r.budgetCategory) || 0) + amount);
             }
         });
 
@@ -1165,7 +1139,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             return Array.from(yearlyLimitByCategory.entries())
                 .map(([category, yearlyLimit]) => {
                     const spent = spending.get(category) || 0;
+                    const prevYear = previousSpending.get(category) || 0;
+                    const trend = budgetTrendFromPeriods(prevYear, spent);
                     const percentage = yearlyLimit > 0 ? (spent / yearlyLimit) * 100 : 0;
+                    const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' =
+                        percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
                     let colorClass = 'bg-primary';
                     if (percentage > 100) colorClass = 'bg-danger';
                     else if (percentage > 90) colorClass = 'bg-warning';
@@ -1180,6 +1158,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         monthlyLimit: yearlyLimit / 12,
                         percentage,
                         colorClass,
+                        previousPeriodSpent: trend.previousPeriodSpent,
+                        trendDelta: trend.trendDelta,
+                        trendDirection: trend.trendDirection,
+                        utilizationLabel,
                     };
                 })
                 .sort((a, b) => b.spent - a.spent);
@@ -1238,6 +1220,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     utilizationLabel = 'Healthy';
                 }
 
+                const prevSpent = previousSpending.get(budget.category) ?? 0;
+                const trend = budgetTrendFromPeriods(prevSpent, spentPeriod);
+
                 return {
                     ...budget,
                     spent: spentPeriod,
@@ -1251,55 +1236,157 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     monthlyLimit: monthlyEquivalent,
                     percentage,
                     colorClass,
-                    previousPeriodSpent: 0,
-                    trendDelta: 0,
-                    trendDirection: 'flat' as const,
+                    previousPeriodSpent: trend.previousPeriodSpent,
+                    trendDelta: trend.trendDelta,
+                    trendDirection: trend.trendDirection,
                     budgetTier: (budget.tier ?? 'Optional') as BudgetTier,
                     utilizationLabel,
                 };
             })
             .sort((a, b) => b.spent - a.spent);
-    }, [data?.transactions, (data as any)?.personalTransactions, data?.budgets, data?.budgetRequests, currentYear, currentMonth, monthStartDay, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id, sarPerUsd, accountCurrencyById, installmentBudgetRows]);
+    }, [data?.transactions, (data as any)?.personalTransactions, data?.budgets, data?.budgetRequests, currentYear, currentMonth, monthStartDay, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id, sarPerUsd, accountCurrencyById, installmentBudgetRows, currentDate]);
 
-    // Admin Approved Budgets Overview: data for the selected month/year (for filters and period display)
+    // Admin Approved Budgets Overview: same SAR splits, YTD envelope, and prior-month trend as main Budgets cards.
     const adminApprovedOverviewRaw = useMemo<BudgetRow[]>(() => {
         const mo = approvedOverviewMonth;
         const yr = approvedOverviewYear;
         const { start: rangeStart, end: rangeEnd } = financialMonthRangeFromKey({ year: yr, month: mo }, monthStartDay);
         const spending = new Map<string, number>();
-        ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach((tx: { date: string; amount?: number; budgetCategory?: string; type?: string; category?: string; splitLines?: { category: string; amount: number }[] }) => {
-            if (!countsAsExpenseForCashflowKpi(tx)) return;
-            const d = new Date(tx.date);
-            if (!(d >= rangeStart && d <= rangeEnd)) return;
-            const allocations = getTransactionBudgetAllocations(tx as any);
-            allocations.forEach((allocation) => {
-                spending.set(allocation.category, (spending.get(allocation.category) || 0) + txAmountSar({ ...tx, amount: allocation.amount }));
-            });
-        });
+        const ytdSpending = new Map<string, number>();
+        const previousSpending = new Map<string, number>();
+
+        const ytdStart = new Date(yr, 0, 1);
+        ytdStart.setHours(0, 0, 0, 0);
+        const prevKey = addMonthsToKey({ year: yr, month: mo }, -1);
+        const { start: pStart, end: pEnd } = financialMonthRangeFromKey(prevKey, monthStartDay);
+
+        const bumpCategory = (category: string, rawAmount: number, tx: any, d: Date) => {
+            const cat = String(category ?? '').trim();
+            if (!cat) return;
+            const amt = txAmountSar({ ...tx, amount: rawAmount });
+            if (d >= rangeStart && d <= rangeEnd) spending.set(cat, (spending.get(cat) || 0) + amt);
+            if (d >= ytdStart && d <= rangeEnd) ytdSpending.set(cat, (ytdSpending.get(cat) || 0) + amt);
+            if (d >= pStart && d <= pEnd) previousSpending.set(cat, (previousSpending.get(cat) || 0) + amt);
+        };
+
+        ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach(
+            (tx: {
+                date: string;
+                amount?: number;
+                budgetCategory?: string;
+                type?: string;
+                category?: string;
+                splitLines?: { category: string; amount: number }[];
+                status?: string;
+            }) => {
+                if (!countsAsExpenseForCashflowKpi(tx)) return;
+                if ((tx.status ?? 'Approved') !== 'Approved') return;
+                const d = new Date(tx.date);
+                const allocations = getTransactionBudgetAllocations(tx as any);
+                allocations.forEach((allocation) => bumpCategory(allocation.category, allocation.amount, tx, d));
+            },
+        );
+
         ownerSharedTransactions
             .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
             .forEach((tx) => {
                 const d = new Date(tx.transaction_date || (tx as any).date);
-                if (!(d >= rangeStart && d <= rangeEnd)) return;
                 const cat = String(tx.budget_category || '').trim();
                 if (!cat) return;
-                spending.set(cat, (spending.get(cat) || 0) + txAmountSar(tx));
+                bumpCategory(cat, Math.abs(Number(tx.amount) || 0), tx, d);
             });
+
+        installmentBudgetRows.forEach((r) => {
+            const d = new Date(String(r.dueDate));
+            const amtSar = toSAR(Math.abs(Number(r.amountMinor) || 0) / 100, r.currency, sarPerUsd);
+            bumpCategory(r.budgetCategory, amtSar, { amount: amtSar, currency: 'SAR' }, d);
+        });
+
+        const allBudgetRows = data?.budgets ?? [];
         const budgetsForMonth = (data?.budgets ?? []).filter(
-            (b) => b.month === mo && b.year === yr || (b.period === 'yearly' && b.year === yr)
+            (b) => (b.month === mo && b.year === yr) || (b.period === 'yearly' && b.year === yr),
         );
+
         const rows: BudgetRow[] = budgetsForMonth.map((budget) => {
-            const monthlyEquivalent = budget.period === 'yearly' ? budget.limit / 12 : budget.period === 'weekly' ? budget.limit * (52 / 12) : budget.period === 'daily' ? budget.limit * (365 / 12) : budget.limit;
-            const spent = spending.get(budget.category) || 0;
-            const percentage = monthlyEquivalent > 0 ? (spent / monthlyEquivalent) * 100 : 0;
-            const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
+            const period = budget.period ?? 'monthly';
+            const monthlyEquivalent =
+                period === 'yearly'
+                    ? budget.limit / 12
+                    : period === 'weekly'
+                      ? budget.limit * (52 / 12)
+                      : period === 'daily'
+                        ? budget.limit * (365 / 12)
+                        : budget.limit;
+            const spentPeriod = spending.get(budget.category) || 0;
+            const spentYtd = ytdSpending.get(budget.category) || 0;
+            const annualEnvelopeLimit =
+                period === 'yearly' ? 0 : annualEnvelopeLimitForCategory(budget.category, yr, allBudgetRows);
+
+            let percentage = 0;
+            let primaryBarValue = spentPeriod;
+            let primaryBarMax = monthlyEquivalent > 0 ? monthlyEquivalent : 1;
+            let secondaryBarValue: number | undefined;
+            let secondaryBarMax: number | undefined;
+
+            if (period === 'yearly') {
+                primaryBarValue = spentYtd;
+                primaryBarMax = budget.limit > 0 ? budget.limit : 1;
+                percentage = budget.limit > 0 ? (spentYtd / budget.limit) * 100 : 0;
+            } else {
+                primaryBarValue = spentYtd;
+                primaryBarMax = annualEnvelopeLimit > 0 ? annualEnvelopeLimit : 1;
+                percentage =
+                    annualEnvelopeLimit > 0
+                        ? (spentYtd / annualEnvelopeLimit) * 100
+                        : monthlyEquivalent > 0
+                          ? (spentPeriod / monthlyEquivalent) * 100
+                          : 0;
+                secondaryBarValue = spentPeriod;
+                secondaryBarMax = monthlyEquivalent > 0 ? monthlyEquivalent : 1;
+            }
+
+            const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' =
+                percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
             let colorClass = 'bg-primary';
             if (percentage > 100) colorClass = 'bg-danger';
             else if (percentage > 90) colorClass = 'bg-warning';
-            return { ...budget, spent, displayLimit: budget.limit, monthlyLimit: monthlyEquivalent, percentage, colorClass, previousPeriodSpent: 0, trendDelta: 0, trendDirection: 'flat' as const, budgetTier: (budget.tier ?? 'Optional') as BudgetTier, utilizationLabel };
+
+            const prevSpent = previousSpending.get(budget.category) ?? 0;
+            const trend = budgetTrendFromPeriods(prevSpent, spentPeriod);
+
+            return {
+                ...budget,
+                spent: spentPeriod,
+                spentYtd,
+                annualEnvelopeLimit: period === 'yearly' ? undefined : annualEnvelopeLimit,
+                primaryBarValue,
+                primaryBarMax,
+                secondaryBarValue,
+                secondaryBarMax,
+                displayLimit: budget.limit,
+                monthlyLimit: monthlyEquivalent,
+                percentage,
+                colorClass,
+                previousPeriodSpent: trend.previousPeriodSpent,
+                trendDelta: trend.trendDelta,
+                trendDirection: trend.trendDirection,
+                budgetTier: (budget.tier ?? 'Optional') as BudgetTier,
+                utilizationLabel,
+            };
         });
         return rows.sort((a, b) => b.spent - a.spent);
-    }, [data?.budgets, data?.transactions, (data as any)?.personalTransactions, approvedOverviewMonth, approvedOverviewYear, ownerSharedTransactions, sarPerUsd, accountCurrencyById, installmentBudgetRows]);
+    }, [
+        data?.budgets,
+        data?.transactions,
+        (data as any)?.personalTransactions,
+        approvedOverviewMonth,
+        approvedOverviewYear,
+        monthStartDay,
+        ownerSharedTransactions,
+        sarPerUsd,
+        accountCurrencyById,
+        installmentBudgetRows,
+    ]);
 
     const adminApprovedOverviewFiltered = useMemo(() => {
         let list = adminApprovedOverviewRaw;
@@ -1458,40 +1545,19 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const sharedBudgetCards = useMemo<BudgetRow[]>(() => {
         const spendingByOwnerCategory = new Map<string, number>();
         const ytdSpendingByOwnerCategory = new Map<string, number>();
-        const now = new Date();
-        const rangeStart = new Date(now);
-        const rangeEnd = new Date(now);
+        const { rangeStart, rangeEnd, previousRangeStart, previousRangeEnd, ytdStart, ytdEnd } = computeBudgetSpendWindows({
+            budgetView,
+            currentYear,
+            currentMonth,
+            monthStartDay,
+            anchorDate: currentDate,
+        });
 
-        if (budgetView === 'Monthly') {
-            const cur = financialMonthRangeFromKey({ year: currentYear, month: currentMonth }, monthStartDay);
-            rangeStart.setTime(cur.start.getTime());
-            rangeEnd.setTime(cur.end.getTime());
-        } else if (budgetView === 'Weekly') {
-            const day = now.getDay();
-            const diffToMonday = (day + 6) % 7;
-            rangeStart.setDate(now.getDate() - diffToMonday);
-            rangeStart.setHours(0, 0, 0, 0);
-            rangeEnd.setDate(rangeStart.getDate() + 6);
-            rangeEnd.setHours(23, 59, 59, 999);
-        } else if (budgetView === 'Daily') {
-            rangeStart.setHours(0, 0, 0, 0);
-            rangeEnd.setHours(23, 59, 59, 999);
-        } else {
-            rangeStart.setFullYear(currentYear, 0, 1);
-            rangeStart.setHours(0, 0, 0, 0);
-            rangeEnd.setFullYear(currentYear, 11, 31);
-            rangeEnd.setHours(23, 59, 59, 999);
-        }
+        const previousSpendingByOwnerCategory = new Map<string, number>();
 
-        const ytdStart =
-            budgetView === 'Monthly'
-                ? (() => {
-                      const d = new Date(currentYear, 0, 1);
-                      d.setHours(0, 0, 0, 0);
-                      return d;
-                  })()
-                : null;
-        const ytdEnd = budgetView === 'Monthly' ? rangeEnd : null;
+        const prevYearStart = budgetView === 'Yearly' ? new Date(currentYear - 1, 0, 1, 0, 0, 0, 0) : null;
+        const prevYearEnd = budgetView === 'Yearly' ? new Date(currentYear - 1, 11, 31, 23, 59, 59, 999) : null;
+        const prevYearSpendingByOwnerCategory = new Map<string, number>();
 
         const bumpYtd = (key: string, amount: number) => {
             ytdSpendingByOwnerCategory.set(key, (ytdSpendingByOwnerCategory.get(key) || 0) + amount);
@@ -1512,6 +1578,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 if (ytdStart && ytdEnd && d >= ytdStart && d <= ytdEnd) {
                     bumpYtd(key, amount);
                 }
+                if (d >= previousRangeStart && d <= previousRangeEnd) {
+                    previousSpendingByOwnerCategory.set(key, (previousSpendingByOwnerCategory.get(key) || 0) + amount);
+                }
+                if (prevYearStart && prevYearEnd && d >= prevYearStart && d <= prevYearEnd) {
+                    prevYearSpendingByOwnerCategory.set(key, (prevYearSpendingByOwnerCategory.get(key) || 0) + amount);
+                }
             });
 
         ownerSharedTransactions
@@ -1528,6 +1600,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 }
                 if (ytdStart && ytdEnd && d >= ytdStart && d <= ytdEnd) {
                     bumpYtd(key, amount);
+                }
+                if (d >= previousRangeStart && d <= previousRangeEnd) {
+                    previousSpendingByOwnerCategory.set(key, (previousSpendingByOwnerCategory.get(key) || 0) + amount);
+                }
+                if (prevYearStart && prevYearEnd && d >= prevYearStart && d <= prevYearEnd) {
+                    prevYearSpendingByOwnerCategory.set(key, (prevYearSpendingByOwnerCategory.get(key) || 0) + amount);
                 }
             });
 
@@ -1556,6 +1634,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 .map((entry) => {
                     const ownerCategoryKey = makeSharedOwnerCategoryKey(entry.ownerKey, entry.category);
                     const spent = sharedConsumedByOwnerCategory.get(ownerCategoryKey) || spendingByOwnerCategory.get(ownerCategoryKey) || 0;
+                    const prevY = prevYearSpendingByOwnerCategory.get(ownerCategoryKey) || 0;
+                    const trend = budgetTrendFromPeriods(prevY, spent);
                     const percentage = entry.yearlyLimit > 0 ? (spent / entry.yearlyLimit) * 100 : 0;
                     const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
                     let colorClass = 'bg-primary';
@@ -1572,9 +1652,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         spent,
                         percentage,
                         colorClass,
-                        previousPeriodSpent: 0,
-                        trendDelta: 0,
-                        trendDirection: 'flat' as const,
+                        previousPeriodSpent: trend.previousPeriodSpent,
+                        trendDelta: trend.trendDelta,
+                        trendDirection: trend.trendDirection,
                         budgetTier: (entry.tier ?? 'Optional') as BudgetTier,
                         utilizationLabel,
                     };
@@ -1648,6 +1728,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     utilizationLabel = 'Healthy';
                 }
 
+                const prevShared = previousSpendingByOwnerCategory.get(ownerCategoryKey) ?? 0;
+                const trend = budgetTrendFromPeriods(prevShared, spentPeriod);
+
                 return {
                     ...b,
                     id: `shared-${ownerKey}-${b.id}`,
@@ -1662,9 +1745,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     colorClass,
                     displayLimit: b.limit,
                     monthlyLimit: monthlyEquivalent,
-                    previousPeriodSpent: 0,
-                    trendDelta: 0,
-                    trendDirection: 'flat' as const,
+                    previousPeriodSpent: trend.previousPeriodSpent,
+                    trendDelta: trend.trendDelta,
+                    trendDirection: trend.trendDirection,
                     budgetTier: (b.tier ?? 'Optional') as BudgetTier,
                     utilizationLabel,
                 };
@@ -1682,6 +1765,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         auth?.user?.id,
         sarPerUsd,
         accountCurrencyById,
+        currentDate,
     ]);
 
     const sharedBudgetOwnerByCardId = useMemo(() => {

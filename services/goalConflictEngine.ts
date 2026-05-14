@@ -37,7 +37,7 @@ export interface GoalConflict {
 }
 
 function resolvedSaved(g: Goal, map?: Map<string, number>): number {
-  if (map?.has(g.id)) return Math.max(0, map.get(g.id) ?? 0);
+  if (map != null) return Math.max(0, map.get(g.id) ?? 0);
   return currentAmount(g);
 }
 

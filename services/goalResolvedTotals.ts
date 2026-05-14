@@ -4,8 +4,9 @@
  * Matches Goals page / GoalCard `calculatedCurrentAmount` logic.
  */
 
-import type { FinancialData, Goal, Liability } from '../types';
+import type { FinancialData, Goal, Liability, InvestmentPortfolio } from '../types';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { personalMonthlyNetByMonthKeySar } from './financeMetrics';
 import { receivableContributionForGoal } from './goalReceivableContribution';
 
@@ -36,12 +37,12 @@ export function computeGoalResolvedAmountsSar(
     (data as { personalInvestments?: typeof data.investments }).personalInvestments ?? data.investments ?? [];
   investments.forEach((p: { goalId?: string; currency?: string; holdings?: { goalId?: string; currentValue?: number }[] }) => {
     const holdings = p.holdings ?? [];
-    const cur = (p.currency ?? 'USD') as 'USD' | 'SAR';
+    const book = resolveInvestmentPortfolioCurrency(p as InvestmentPortfolio);
     // Match Goals card: each lot resolves to `holding.goalId ?? portfolio.goalId` (never assign the whole book to the portfolio goal while ignoring per-lot links).
     holdings.forEach((h: { goalId?: string; currentValue?: number }) => {
       const gid = h.goalId ?? p.goalId;
       if (!gid) return;
-      add(gid, toSAR(h.currentValue ?? 0, cur, sarPerUsd));
+      add(gid, toSAR(h.currentValue ?? 0, book, sarPerUsd));
     });
   });
 

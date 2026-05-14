@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FinancialData, Goal } from '../types';
-import { computeGoalFundingPlan, GOAL_NO_DEADLINE_AMORTIZATION_MONTHS } from '../services/goalFundingRouter';
+import { computeGoalFundingPlan, GOAL_NO_DEADLINE_AMORTIZATION_MONTHS, buildGoalFundingScheduleRows } from '../services/goalFundingRouter';
 import { computeWindfallAllocationPct } from '../services/windfallAllocation';
 
 describe('computeWindfallAllocationPct', () => {
@@ -92,5 +92,30 @@ describe('computeGoalFundingPlan', () => {
     const plan = computeGoalFundingPlan(data, annual, 3.75);
     const sumShare = plan.suggestions.reduce((s, x) => s + (x.priorityShare ?? 0), 0);
     expect(sumShare).toBeCloseTo(1, 5);
+  });
+
+  it('uses resolved linked savings only — ignores stale goal.currentAmount when nothing is linked', () => {
+    const future = new Date();
+    future.setFullYear(future.getFullYear() + 2);
+    const iso = future.toISOString().slice(0, 10);
+    const data = {
+      goals: [
+        baseGoal({
+          id: 'gStale',
+          name: 'Unlinked',
+          targetAmount: 100_000,
+          deadline: iso,
+          currentAmount: 50_000,
+        }),
+      ],
+      accounts: [],
+      transactions: [],
+      investments: [],
+      assets: [],
+      liabilities: [],
+    } as unknown as FinancialData;
+
+    const rows = buildGoalFundingScheduleRows(data, 3.75);
+    expect(rows[0]?.shortfall).toBeCloseTo(100_000, 5);
   });
 });

@@ -31,7 +31,7 @@ export function buildGoalFundingScheduleRows(
 
   return goals.map((g) => {
     const target = Number(g.targetAmount ?? 0);
-    const current = Math.max(0, resolvedByGoal.get(g.id) ?? Number(g.currentAmount ?? 0));
+    const current = Math.max(0, resolvedByGoal.get(g.id) ?? 0);
     const shortfall = Math.max(0, target - current);
     const deadline = g.deadline ? new Date(g.deadline) : null;
     const dlOk = !!(deadline && !Number.isNaN(deadline.getTime()));

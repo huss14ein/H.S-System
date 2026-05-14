@@ -5,7 +5,6 @@ import type { InvestmentPortfolio } from '../types';
 import { MarketDataContext } from '../context/MarketDataContext';
 import { getLivePrices, getAICommodityPrices } from '../services/geminiService';
 import {
-    canonicalQuoteLookupKey,
     expandLiveQuotesForRequestedSymbols,
     lookupLiveQuoteForSymbol,
     type LiveQuoteRow,
@@ -19,7 +18,11 @@ import {
 } from '../services/quotePriceCache';
 import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd } from '../utils/currencyMath';
-import { getRefreshableHoldingQuoteSymbols, holdingCanUseQuoteRefresh } from '../services/quoteRefreshSymbols';
+import { getRefreshableHoldingQuoteSymbols } from '../services/quoteRefreshSymbols';
+import {
+    buildCommodityHoldingValueUpdatesFromTrustedSnapshot,
+    buildEquityHoldingValueUpdatesFromTrustedSnapshot,
+} from '../services/marketSimulatorHoldingPersist';
 
 const MarketSimulator: React.FC = () => {
     const dataContext = useContext(DataContext);
@@ -93,6 +96,8 @@ const MarketSimulator: React.FC = () => {
             const commoditySymbols = (allCommodities as { symbol?: string }[]).map((c: { symbol?: string }) => c.symbol).filter((s: string | undefined): s is string => s != null && s !== '');
 
             let newPrices: Record<string, { price: number; change: number; changePercent: number }> = {};
+            /** Equity + commodity quotes from cache/API only — never RNG `simulateSymbol` fills (those must not mutate stored `currentValue`). */
+            let trustedQuoteSnapshot: Record<string, LiveQuoteRow> = {};
             let liveStatus = false;
 
             const getInitialPrice = (symbol: string) => {
@@ -128,14 +133,35 @@ const MarketSimulator: React.FC = () => {
                             : {};
                     const toFetch = symbolsNeedingLiveFetch(uniqueSymbols, cacheRows);
 
-                    const [rawApi, commodityData] = await Promise.all([
+                    /** Equity and commodities are independent: a thrown/rejected equity batch must not discard commodity quotes. */
+                    const equityFetchPromise: Promise<Record<string, LiveQuoteRow>> =
                         uniqueSymbols.length > 0 && toFetch.length > 0
                             ? getLivePrices(toFetch)
-                            : Promise.resolve({} as Record<string, LiveQuoteRow>),
+                            : Promise.resolve({} as Record<string, LiveQuoteRow>);
+                    const commodityFetchPromise =
                         allCommodities.length > 0
                             ? getAICommodityPrices(allCommodities, { sarPerUsd })
-                            : Promise.resolve({ prices: [], groundingChunks: [] }),
+                            : Promise.resolve({ prices: [], groundingChunks: [] as unknown[] });
+
+                    const [equitySettled, commoditySettled] = await Promise.allSettled([
+                        equityFetchPromise,
+                        commodityFetchPromise,
                     ]);
+
+                    let rawApi: Record<string, LiveQuoteRow> = {};
+                    if (equitySettled.status === 'fulfilled') {
+                        rawApi = equitySettled.value;
+                    } else {
+                        console.error('Equity live price fetch failed:', equitySettled.reason);
+                    }
+
+                    const commodityData =
+                        commoditySettled.status === 'fulfilled'
+                            ? commoditySettled.value
+                            : { prices: [] as { symbol: string; price: number }[], groundingChunks: [] as unknown[] };
+                    if (commoditySettled.status === 'rejected') {
+                        console.error('Commodity price fetch failed:', commoditySettled.reason);
+                    }
 
                     if (uniqueSymbols.length > 0 && toFetch.length > 0) {
                         const raw = rawApi as Record<string, LiveQuoteRow>;
@@ -153,6 +179,8 @@ const MarketSimulator: React.FC = () => {
                         const changePercent = oldPrice > 0 ? (change / oldPrice) * 100 : 0;
                         newPrices[cp.symbol] = { price: cp.price, change, changePercent };
                     });
+
+                    trustedQuoteSnapshot = { ...newPrices };
 
                     const allTickerSymbols = Array.from(new Set([...uniqueSymbols, ...commoditySymbols]));
                     let anyEquitySimulated = false;
@@ -197,6 +225,8 @@ const MarketSimulator: React.FC = () => {
                         console.error('Commodity price fetch failed during fallback:', commodityErr);
                     }
 
+                    trustedQuoteSnapshot = { ...newPrices };
+
                     const allTickerSymbols = Array.from(new Set([...uniqueSymbols, ...commoditySymbols]));
                     let anyEquitySimulated = false;
                     for (const symbol of allTickerSymbols) {
@@ -218,6 +248,7 @@ const MarketSimulator: React.FC = () => {
 
             if (Object.keys(newPrices).length === 0 && (uniqueSymbols.length > 0 || commoditySymbols.length > 0)) {
                 liveStatus = false;
+                trustedQuoteSnapshot = {};
                 Array.from(new Set([...uniqueSymbols, ...commoditySymbols])).forEach((symbol) =>
                     simulateSymbol(symbol),
                 );
@@ -265,30 +296,17 @@ const MarketSimulator: React.FC = () => {
             // Platform-scoped refreshes intentionally update a subset of symbols and must not make the header look fresh.
             if (!scopeIsPlatform && liveStatus && setLastUpdated) setLastUpdated(new Date());
 
-            // currentValue is stored in portfolio book currency (USD or SAR); live quotes are typically USD notional.
-            // Mixed books: display/metrics convert via getSarPerUsd; DB persistence may still hold raw USD notional until normalized.
-            (allHoldings as { id?: string; symbol?: string; quantity?: number; holdingType?: string; holding_type?: string }[]).forEach((holding) => {
-                if (!holdingCanUseQuoteRefresh(holding)) return;
-                const sym = holding.symbol;
-                if (sym == null || !holding.id) return;
-                const row = newPrices[sym] ?? newPrices[canonicalQuoteLookupKey(sym)];
-                if (row) {
-                    holdingUpdates.push({
-                        id: holding.id,
-                        currentValue: row.price * (holding.quantity ?? 0)
-                    });
-                }
-            });
-
-            (allCommodities as { id?: string; symbol?: string; quantity?: number }[]).forEach((commodity: { id?: string; symbol?: string; quantity?: number }) => {
-                const sym = commodity.symbol;
-                if (commodity.id && sym != null && newPrices[sym]) {
-                    commodityUpdates.push({
-                        id: commodity.id,
-                        currentValue: newPrices[sym].price * (commodity.quantity ?? 0)
-                    });
-                }
-            });
+            // Persist market value only from trusted (cache/API) quotes. RNG `simulateSymbol` fills must not
+            // overwrite `currentValue` — that caused inflated/wrong platform totals when live feeds failed.
+            holdingUpdates.push(
+                ...buildEquityHoldingValueUpdatesFromTrustedSnapshot(portfoliosInScope, trustedQuoteSnapshot, sarPerUsd),
+            );
+            commodityUpdates.push(
+                ...buildCommodityHoldingValueUpdatesFromTrustedSnapshot(
+                    allCommodities as { id?: string; symbol?: string; quantity?: number }[],
+                    trustedQuoteSnapshot,
+                ),
+            );
             
             if (holdingUpdates.length > 0) {
                 batchUpdateHoldingValues(holdingUpdates);
