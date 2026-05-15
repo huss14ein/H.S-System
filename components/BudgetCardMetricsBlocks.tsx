@@ -1,6 +1,60 @@
 import React from 'react';
-import ProgressBar from './ProgressBar';
-import { budgetProgressGradient, budgetSecondaryProgressGradient } from '../services/budgetCardVisuals';
+import BudgetSplitProgressBar from './BudgetSplitProgressBar';
+import {
+    budgetConsumedSegmentGradient,
+    budgetMonthlyConsumedSegmentGradient,
+    budgetOverBudgetConsumedGradient,
+    budgetRemainingSegmentClasses,
+} from '../services/budgetCardVisuals';
+
+const BudgetSpentRemainingLegend: React.FC<{
+    spent: number;
+    cap: number;
+    formatCurrencyString: (amount: number, opts?: { digits?: number }) => string;
+    /** Dot + chip styling for “Spent” (matches bar’s consumed segment). */
+    spentDotClass: string;
+    spentChipClass: string;
+}> = ({ spent, cap, formatCurrencyString, spentDotClass, spentChipClass }) => {
+    const over = spent > cap;
+    const left = Math.max(0, cap - spent);
+    return (
+        <div
+            className="mb-2 flex flex-wrap items-stretch gap-2"
+            role="group"
+            aria-label="Spent and remaining budget amounts"
+        >
+            <span
+                className={`inline-flex min-h-[2.25rem] items-center gap-2 rounded-xl px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide ring-1 ${spentChipClass}`}
+            >
+                <span
+                    className={`h-2.5 w-2.5 shrink-0 rounded-full shadow-sm ring-1 ring-black/10 ${spentDotClass}`}
+                    aria-hidden
+                />
+                <span className="text-slate-800">Spent</span>
+                <span className="tabular-nums text-slate-950">{formatCurrencyString(spent, { digits: 0 })}</span>
+            </span>
+            {over ? (
+                <span className="inline-flex min-h-[2.25rem] items-center gap-2 rounded-xl bg-rose-50 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-rose-900 ring-1 ring-rose-300/80">
+                    <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full bg-gradient-to-r from-rose-600 to-red-700 shadow-sm ring-1 ring-black/10"
+                        aria-hidden
+                    />
+                    <span>Over</span>
+                    <span className="tabular-nums">{formatCurrencyString(spent - cap, { digits: 0 })}</span>
+                </span>
+            ) : (
+                <span className="inline-flex min-h-[2.25rem] items-center gap-2 rounded-xl bg-emerald-50 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-emerald-900 ring-1 ring-emerald-300/80">
+                    <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full bg-gradient-to-r from-emerald-500 to-teal-600 shadow-sm ring-1 ring-black/10"
+                        aria-hidden
+                    />
+                    <span>Remaining</span>
+                    <span className="tabular-nums">{formatCurrencyString(left, { digits: 0 })}</span>
+                </span>
+            )}
+        </div>
+    );
+};
 
 export type BudgetCardMetricsModel = {
     period?: string;
@@ -49,6 +103,18 @@ const BudgetCardMetricsBlocks: React.FC<{
     const primaryVal = budget.primaryBarValue ?? budget.spent;
     const primaryRem = primaryMax - primaryVal;
 
+    const consumedSegment = (spent: number, cap: number, util: 'Healthy' | 'Watch' | 'Critical', monthlyStyle: boolean) =>
+        spent > cap
+            ? budgetOverBudgetConsumedGradient()
+            : monthlyStyle
+              ? budgetMonthlyConsumedSegmentGradient()
+              : budgetConsumedSegmentGradient(util);
+
+    const defaultPeriodCap = budgetView === 'Yearly' ? budget.limit ?? 1 : budget.monthlyLimit ?? 1;
+    const defaultPeriodSpent = budget.spent;
+    const defaultPeriodRem =
+        budgetView === 'Yearly' ? (budget.limit ?? 0) - budget.spent : budget.monthlyLimit - budget.spent;
+
     const periodLimitSuffix =
         budgetView === 'Yearly'
             ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)`
@@ -76,17 +142,30 @@ const BudgetCardMetricsBlocks: React.FC<{
                             {periodWindowLabel ? (
                                 <p className="text-[10px] text-violet-800/75 mb-2 tabular-nums">{periodWindowLabel}</p>
                             ) : null}
-                            <ProgressBar
+                            <BudgetSpentRemainingLegend
+                                spent={secondaryVal}
+                                cap={secondaryMax}
+                                formatCurrencyString={formatCurrencyString}
+                                spentDotClass={budgetMonthlyConsumedSegmentGradient()}
+                                spentChipClass="bg-violet-100/90 ring-violet-300/80"
+                            />
+                            <BudgetSplitProgressBar
                                 value={secondaryVal}
                                 max={secondaryMax}
-                                fillClassName={budgetSecondaryProgressGradient()}
-                                color="bg-violet-500"
-                                trackClassName="bg-violet-200/80"
+                                consumedClassName={consumedSegment(secondaryVal, secondaryMax, utilLabel, true)}
+                                remainingClassName={budgetRemainingSegmentClasses()}
                                 heightClass="h-4"
                             />
+                            <p className="mt-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                                <span className="text-violet-700">Consumed</span>
+                                <span className="mx-1 text-slate-400" aria-hidden>
+                                    ·
+                                </span>
+                                <span className="text-emerald-700">Remaining</span>
+                            </p>
                             <p
                                 className={`text-right text-sm mt-2 font-semibold tabular-nums ${
-                                    secondaryMax - secondaryVal >= 0 ? "text-violet-900" : "text-rose-600"
+                                    secondaryMax - secondaryVal >= 0 ? "text-emerald-700" : "text-rose-600"
                                 }`}
                             >
                                 {secondaryMax - secondaryVal >= 0
@@ -105,17 +184,38 @@ const BudgetCardMetricsBlocks: React.FC<{
                                     {formatCurrencyString(budget.annualEnvelopeLimit ?? 0, { digits: 0 })}
                                 </span>
                             </div>
-                            <ProgressBar
+                            <BudgetSpentRemainingLegend
+                                spent={primaryVal}
+                                cap={primaryMax}
+                                formatCurrencyString={formatCurrencyString}
+                                spentDotClass={
+                                    annualUtil === 'Critical'
+                                        ? 'bg-gradient-to-r from-rose-600 to-red-700'
+                                        : 'bg-gradient-to-r from-amber-500 to-orange-600'
+                                }
+                                spentChipClass={
+                                    annualUtil === 'Critical'
+                                        ? 'bg-rose-50 ring-rose-200/80'
+                                        : 'bg-amber-50 ring-amber-200/90'
+                                }
+                            />
+                            <BudgetSplitProgressBar
                                 value={primaryVal}
                                 max={primaryMax}
-                                fillClassName={budgetProgressGradient(annualUtil)}
-                                color={budget.colorClass}
-                                trackClassName="bg-slate-300/70"
-                                heightClass="h-2.5"
+                                consumedClassName={consumedSegment(primaryVal, primaryMax, annualUtil, false)}
+                                remainingClassName={budgetRemainingSegmentClasses()}
+                                heightClass="h-3"
                             />
+                            <p className="mt-1 text-center text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                                <span className="text-amber-800">YTD consumed</span>
+                                <span className="mx-1 text-slate-400" aria-hidden>
+                                    ·
+                                </span>
+                                <span className="text-emerald-700">Annual headroom</span>
+                            </p>
                             <p
                                 className={`text-right text-xs mt-2 font-medium tabular-nums ${
-                                    primaryRem >= 0 ? "text-slate-600" : "text-rose-600"
+                                    primaryRem >= 0 ? "text-emerald-700" : "text-rose-600"
                                 }`}
                             >
                                 {primaryRem >= 0
@@ -136,14 +236,35 @@ const BudgetCardMetricsBlocks: React.FC<{
                                 {formatCurrencyString(budget.displayLimit, { digits: 0 })} / yr
                             </span>
                         </div>
-                        <ProgressBar
+                        <BudgetSpentRemainingLegend
+                            spent={primaryVal}
+                            cap={Math.max(primaryMax, 1)}
+                            formatCurrencyString={formatCurrencyString}
+                            spentDotClass={
+                                utilLabel === 'Critical'
+                                    ? 'bg-gradient-to-r from-rose-600 to-red-700'
+                                    : 'bg-gradient-to-r from-amber-500 to-orange-600'
+                            }
+                            spentChipClass={
+                                utilLabel === 'Critical'
+                                    ? 'bg-rose-50 ring-rose-200/80'
+                                    : 'bg-amber-50 ring-amber-200/90'
+                            }
+                        />
+                        <BudgetSplitProgressBar
                             value={primaryVal}
                             max={Math.max(primaryMax, 1)}
-                            fillClassName={budgetProgressGradient(utilLabel)}
-                            color={budget.colorClass}
-                            trackClassName="bg-slate-300/80"
+                            consumedClassName={consumedSegment(primaryVal, primaryMax, utilLabel, false)}
+                            remainingClassName={budgetRemainingSegmentClasses()}
                             heightClass="h-3.5"
                         />
+                        <p className="mt-1 text-center text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                            <span className="text-teal-700">Consumed (YTD)</span>
+                            <span className="mx-1 text-slate-400" aria-hidden>
+                                ·
+                            </span>
+                            <span className="text-emerald-700">Remaining (year)</span>
+                        </p>
                         <p
                             className={`text-right text-sm font-semibold mt-2 tabular-nums ${
                                 primaryRem >= 0 ? "text-emerald-700" : "text-rose-600"
@@ -166,34 +287,43 @@ const BudgetCardMetricsBlocks: React.FC<{
                         {periodWindowLabel ? (
                             <p className="text-[10px] text-slate-500 mb-2 tabular-nums">{periodWindowLabel}</p>
                         ) : null}
-                        <ProgressBar
-                            value={budget.spent}
-                            max={budgetView === "Yearly" ? (budget.limit ?? 1) : (budget.monthlyLimit ?? 1)}
-                            fillClassName={budgetProgressGradient(utilLabel)}
-                            color={budget.colorClass}
-                            trackClassName="bg-slate-300/80"
+                        <BudgetSpentRemainingLegend
+                            spent={defaultPeriodSpent}
+                            cap={defaultPeriodCap}
+                            formatCurrencyString={formatCurrencyString}
+                            spentDotClass={
+                                utilLabel === 'Critical'
+                                    ? 'bg-gradient-to-r from-rose-600 to-red-700'
+                                    : 'bg-gradient-to-r from-amber-500 to-orange-600'
+                            }
+                            spentChipClass={
+                                utilLabel === 'Critical'
+                                    ? 'bg-rose-50 ring-rose-200/80'
+                                    : 'bg-amber-50 ring-amber-200/90'
+                            }
+                        />
+                        <BudgetSplitProgressBar
+                            value={defaultPeriodSpent}
+                            max={defaultPeriodCap}
+                            consumedClassName={consumedSegment(defaultPeriodSpent, defaultPeriodCap, utilLabel, false)}
+                            remainingClassName={budgetRemainingSegmentClasses()}
                             heightClass="h-3.5"
                         />
+                        <p className="mt-1 text-center text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                            <span className="text-amber-800">Consumed</span>
+                            <span className="mx-1 text-slate-400" aria-hidden>
+                                ·
+                            </span>
+                            <span className="text-emerald-700">Remaining</span>
+                        </p>
                         <p
                             className={`text-right text-sm font-semibold mt-2 tabular-nums ${
-                                (budgetView === "Yearly" ? (budget.limit ?? 0) - budget.spent : budget.monthlyLimit - budget.spent) >= 0
-                                    ? "text-emerald-700"
-                                    : "text-rose-600"
+                                defaultPeriodRem >= 0 ? 'text-emerald-700' : 'text-rose-600'
                             }`}
                         >
-                            {(budgetView === "Yearly" ? (budget.limit ?? 0) - budget.spent : budget.monthlyLimit - budget.spent) >= 0
-                                ? `${formatCurrencyString(
-                                      budgetView === "Yearly" ? (budget.limit ?? 0) - budget.spent : budget.monthlyLimit - budget.spent,
-                                      { digits: 0 },
-                                  )} remaining`
-                                : `${formatCurrencyString(
-                                      Math.abs(
-                                          budgetView === "Yearly"
-                                              ? (budget.limit ?? 0) - budget.spent
-                                              : budget.monthlyLimit - budget.spent,
-                                      ),
-                                      { digits: 0 },
-                                  )} over`}
+                            {defaultPeriodRem >= 0
+                                ? `${formatCurrencyString(defaultPeriodRem, { digits: 0 })} remaining`
+                                : `${formatCurrencyString(Math.abs(defaultPeriodRem), { digits: 0 })} over`}
                         </p>
                     </div>
                 )}
