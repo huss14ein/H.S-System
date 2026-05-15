@@ -1,8 +1,7 @@
 import React, { useMemo, useState, useContext, useEffect, useRef } from 'react';
-import ProgressBar from '../components/ProgressBar';
 import BudgetCardShell from '../components/BudgetCardShell';
+import BudgetCardMetricsBlocks from '../components/BudgetCardMetricsBlocks';
 import BudgetUsageDial from '../components/BudgetUsageDial';
-import { budgetProgressGradient, budgetSecondaryProgressGradient } from '../services/budgetCardVisuals';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';
 import { Budget, Goal, type Page } from '../types';
@@ -89,11 +88,15 @@ import {
     buildSmartFillThreeFinancialMonthSegments,
     monthlySuggestionsFromCategoryTotals,
 } from '../services/smartFillBudgetHistory';
-import { annualEnvelopeLimitForCategory } from '../services/budgetEnvelopeMath';
 import {
     clampDateToFinancialMonthBounds,
     computeBudgetSpendWindows,
+    formatBudgetSpendWindowLabel,
 } from '../services/budgetViewSpendWindows';
+import {
+    annualEnvelopeForBudgetRow,
+    buildBudgetCardVisualMetrics,
+} from '../services/budgetCardMetrics';
 
 /** Compare current view spend vs prior period (same calendar length as main range) for card trends. */
 function budgetTrendFromPeriods(previousPeriodSpent: number, currentPeriodSpent: number): {
@@ -163,6 +166,36 @@ function sharedBudgetConsumedRpcArgs(
     return { p_year: null, p_month: null, p_range_start: iso(rs), p_range_end: iso(re) };
 }
 
+function sharedBudgetConsumedRpcArgsForRange(rangeStart: Date, rangeEnd: Date): {
+    p_year: number | null;
+    p_month: number | null;
+    p_range_start: string;
+    p_range_end: string;
+} {
+    const iso = (d: Date) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    };
+    const startOfDay = (d: Date) => {
+        const x = new Date(d);
+        x.setHours(0, 0, 0, 0);
+        return x;
+    };
+    const endOfDay = (d: Date) => {
+        const x = new Date(d);
+        x.setHours(23, 59, 59, 999);
+        return x;
+    };
+    return {
+        p_year: null,
+        p_month: null,
+        p_range_start: iso(startOfDay(rangeStart)),
+        p_range_end: iso(endOfDay(rangeEnd)),
+    };
+}
+
 /** Lifetime rollup (matches old zero-arg RPC after migrations drop that overload). */
 const LEGACY_SHARED_CONSUMED_RPC = {
     p_year: null as number | null,
@@ -170,6 +203,46 @@ const LEGACY_SHARED_CONSUMED_RPC = {
     p_range_start: null as string | null,
     p_range_end: null as string | null,
 };
+
+async function fetchSharedConsumedMap(
+    client: NonNullable<typeof supabase>,
+    args: Record<string, unknown>,
+): Promise<Map<string, number>> {
+    const map = new Map<string, number>();
+    const ingest = (rows: any[] | null) => {
+        (rows ?? []).forEach((row: any) => {
+            const ownerKey = normalizeSharedOwnerKey(row.owner_user_id || 'owner');
+            const category = normalizeSharedCategoryKey(row.category || '');
+            if (!category) return;
+            map.set(makeSharedOwnerCategoryKey(ownerKey, category), Number(row.consumed_amount) || 0);
+        });
+    };
+    try {
+        let scoped = await client.rpc('get_shared_budget_consumed_for_me', args);
+        if (scoped.error && args.p_range_start != null && args.p_range_end != null) {
+            const narrowed = await client.rpc('get_shared_budget_consumed_for_me', {
+                p_year: args.p_year ?? null,
+                p_month: args.p_month ?? null,
+                p_range_start: null,
+                p_range_end: null,
+            });
+            if (!narrowed.error) scoped = narrowed;
+        }
+        if (!scoped.error) {
+            ingest((scoped.data as any[]) ?? []);
+            return map;
+        }
+        const legacy = await client.rpc('get_shared_budget_consumed_for_me', LEGACY_SHARED_CONSUMED_RPC);
+        if (!legacy.error) ingest((legacy.data as any[]) ?? []);
+    } catch {
+        const legacy = await client.rpc('get_shared_budget_consumed_for_me', LEGACY_SHARED_CONSUMED_RPC).then(
+            (r) => r,
+            () => ({ data: [] as any[] }),
+        );
+        ingest((legacy.data as any[]) ?? []);
+    }
+    return map;
+}
 
 const resolveRecipientUserByEmail = async (email: string) => {
     if (!supabase) return { data: null as { id: string; email: string | null } | null, error: { message: 'Supabase client is unavailable.' } as { message: string } | null };
@@ -373,6 +446,21 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     );
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [budgetView, setBudgetView] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
+    const budgetSpendWindows = useMemo(
+        () =>
+            computeBudgetSpendWindows({
+                budgetView,
+                currentYear,
+                currentMonth,
+                monthStartDay,
+                anchorDate: currentDate,
+            }),
+        [budgetView, currentYear, currentMonth, monthStartDay, currentDate],
+    );
+    const periodWindowLabel = useMemo(
+        () => formatBudgetSpendWindowLabel(budgetView, budgetSpendWindows.rangeStart, budgetSpendWindows.rangeEnd),
+        [budgetView, budgetSpendWindows],
+    );
     const [budgetSubPage, setBudgetSubPage] = useState<'overview' | 'household'>('overview');
     const [budgetToEdit, setBudgetToEdit] = useState<Budget | null>(null);
     const [cardOrder, setCardOrder] = useState<string[]>([]);
@@ -385,6 +473,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const [ownerSharedTransactions, setOwnerSharedTransactions] = useState<any[]>([]);
     const [mySharedBudgetTransactions, setMySharedBudgetTransactions] = useState<any[]>([]);
     const [sharedConsumedByOwnerCategory, setSharedConsumedByOwnerCategory] = useState<Map<string, number>>(new Map());
+    const [sharedConsumedYtdByOwnerCategory, setSharedConsumedYtdByOwnerCategory] = useState<Map<string, number>>(new Map());
+    const [sharedConsumedPreviousByOwnerCategory, setSharedConsumedPreviousByOwnerCategory] = useState<Map<string, number>>(
+        new Map(),
+    );
     const [sharedConsumedSyncedAt, setSharedConsumedSyncedAt] = useState<number | null>(null);
     const [sharedTxMonthFilter, setSharedTxMonthFilter] = useState<string>(`${currentYear}-${String(currentMonth).padStart(2, '0')}`);
     const [sharedTxStatusFilter, setSharedTxStatusFilter] = useState<'All' | 'Approved' | 'Pending' | 'Rejected'>('All');
@@ -614,6 +706,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         primaryBarMax?: number;
         secondaryBarValue?: number;
         secondaryBarMax?: number;
+        annualPercentage?: number;
+        annualUtilizationLabel?: 'Healthy' | 'Watch' | 'Critical';
+        showDualEnvelope?: boolean;
+        periodWindowLabel?: string;
     };
 
     const householdProfileStorageKey = useMemo(() => `household-profile:${auth?.user?.id ?? 'anon'}`, [auth?.user?.id]);
@@ -934,42 +1030,30 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             }
 
 
-            let consumedRows: any[] | null = null;
-            const rpcWindow = sharedBudgetConsumedRpcArgs(budgetView, currentDate, currentYear, currentMonth, monthStartDay);
-            try {
-                let scoped = await supabase.rpc('get_shared_budget_consumed_for_me', rpcWindow as Record<string, unknown>);
-                if (scoped.error && rpcWindow.p_range_start != null && rpcWindow.p_range_end != null) {
-                    const narrowed = await supabase.rpc('get_shared_budget_consumed_for_me', {
-                        p_year: rpcWindow.p_year,
-                        p_month: rpcWindow.p_month,
-                        p_range_start: null,
-                        p_range_end: null,
-                    });
-                    if (!narrowed.error) scoped = narrowed;
-                }
-                if (!scoped.error) {
-                    consumedRows = (scoped.data as any[]) ?? [];
-                } else {
-                    const legacy = await supabase.rpc('get_shared_budget_consumed_for_me', LEGACY_SHARED_CONSUMED_RPC);
-                    consumedRows = !legacy.error ? ((legacy.data as any[]) ?? []) : [];
-                    if (scoped.error && String(scoped.error.message || '').toLowerCase().includes('function')) {
-                        console.warn('Scoped shared consumed RPC unavailable; using legacy rollup.', scoped.error.message);
-                    }
-                }
-            } catch {
-                const legacy = await supabase
-                    .rpc('get_shared_budget_consumed_for_me', LEGACY_SHARED_CONSUMED_RPC)
-                    .then((r) => r, () => ({ data: [] as any[] }));
-                consumedRows = (legacy.data as any[]) ?? [];
-            }
-            const consumedMap = new Map<string, number>();
-            ((consumedRows || []) as any[]).forEach((row: any) => {
-                const ownerKey = normalizeSharedOwnerKey(row.owner_user_id || 'owner');
-                const category = normalizeSharedCategoryKey(row.category || '');
-                if (!category) return;
-                consumedMap.set(makeSharedOwnerCategoryKey(ownerKey, category), Number(row.consumed_amount) || 0);
+            const spendWindows = computeBudgetSpendWindows({
+                budgetView,
+                currentYear,
+                currentMonth,
+                monthStartDay,
+                anchorDate: currentDate,
             });
+            const rpcWindow = sharedBudgetConsumedRpcArgs(budgetView, currentDate, currentYear, currentMonth, monthStartDay);
+            const consumedMap = await fetchSharedConsumedMap(supabase, rpcWindow as Record<string, unknown>);
             setSharedConsumedByOwnerCategory(consumedMap);
+
+            const prevRpc = sharedBudgetConsumedRpcArgsForRange(
+                spendWindows.previousRangeStart,
+                spendWindows.previousRangeEnd,
+            );
+            const prevMap = await fetchSharedConsumedMap(supabase, prevRpc as Record<string, unknown>);
+            setSharedConsumedPreviousByOwnerCategory(prevMap);
+
+            let ytdMap = new Map<string, number>();
+            if (budgetView === 'Monthly' && spendWindows.ytdStart && spendWindows.ytdEnd) {
+                const ytdRpc = sharedBudgetConsumedRpcArgsForRange(spendWindows.ytdStart, spendWindows.ytdEnd);
+                ytdMap = await fetchSharedConsumedMap(supabase, ytdRpc as Record<string, unknown>);
+            }
+            setSharedConsumedYtdByOwnerCategory(ytdMap);
             setSharedConsumedSyncedAt(Date.now());
             const { data: ownerTxRows } = await supabase
                 .from('budget_shared_transactions')
@@ -989,7 +1073,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         };
 
         loadGovernance();
-    }, [auth?.user?.id, dataResetKey, currentYear, currentMonth, budgetView, currentDate]);
+    }, [auth?.user?.id, dataResetKey, currentYear, currentMonth, monthStartDay, budgetView, currentDate]);
 
 
     React.useEffect(() => {
@@ -1141,27 +1225,31 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     const spent = spending.get(category) || 0;
                     const prevYear = previousSpending.get(category) || 0;
                     const trend = budgetTrendFromPeriods(prevYear, spent);
-                    const percentage = yearlyLimit > 0 ? (spent / yearlyLimit) * 100 : 0;
-                    const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' =
-                        percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
-                    let colorClass = 'bg-primary';
-                    if (percentage > 100) colorClass = 'bg-danger';
-                    else if (percentage > 90) colorClass = 'bg-warning';
+                    const visual = buildBudgetCardVisualMetrics({
+                        budgetView: 'Yearly',
+                        period: 'monthly',
+                        limit: yearlyLimit,
+                        spentPeriod: spent,
+                        spentYtd: spent,
+                        annualEnvelopeLimit: 0,
+                    });
                     return {
                         id: `${category}-${currentYear}`,
                         category,
                         month: currentMonth,
                         year: currentYear,
-                        spent,
+                        spent: visual.spent,
                         limit: yearlyLimit,
                         displayLimit: yearlyLimit,
-                        monthlyLimit: yearlyLimit / 12,
-                        percentage,
-                        colorClass,
+                        monthlyLimit: visual.monthlyLimit,
+                        percentage: visual.percentage,
+                        colorClass: visual.colorClass,
                         previousPeriodSpent: trend.previousPeriodSpent,
                         trendDelta: trend.trendDelta,
                         trendDirection: trend.trendDirection,
-                        utilizationLabel,
+                        utilizationLabel: visual.utilizationLabel,
+                        primaryBarValue: visual.primaryBarValue,
+                        primaryBarMax: visual.primaryBarMax,
                     };
                 })
                 .sort((a, b) => b.spent - a.spent);
@@ -1172,75 +1260,47 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         return scopedBudgets
             .map((budget) => {
                 const period = budget.period ?? 'monthly';
-                const monthlyEquivalent =
-                    period === 'yearly'
-                        ? budget.limit / 12
-                        : period === 'weekly'
-                          ? budget.limit * (52 / 12)
-                          : period === 'daily'
-                            ? budget.limit * (365 / 12)
-                            : budget.limit;
                 const spentPeriod = spending.get(budget.category) || 0;
                 const spentYtd =
                     budgetView === 'Monthly' ? ytdSpending.get(budget.category) || 0 : spentPeriod;
-
-                let percentage = 0;
-                let utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = 'Healthy';
-                let colorClass = 'bg-primary';
-                let primaryBarValue = spentPeriod;
-                let primaryBarMax = monthlyEquivalent > 0 ? monthlyEquivalent : 1;
-                let secondaryBarValue: number | undefined;
-                let secondaryBarMax: number | undefined;
-                let annualEnvelopeLimit = 0;
-
-                if (budgetView === 'Monthly') {
-                    if (period === 'yearly') {
-                        primaryBarValue = spentYtd;
-                        primaryBarMax = budget.limit > 0 ? budget.limit : 1;
-                        percentage = budget.limit > 0 ? (spentYtd / budget.limit) * 100 : 0;
-                    } else {
-                        annualEnvelopeLimit = annualEnvelopeLimitForCategory(budget.category, currentYear, allBudgetRows);
-                        primaryBarValue = spentYtd;
-                        primaryBarMax = annualEnvelopeLimit > 0 ? annualEnvelopeLimit : 1;
-                        percentage = annualEnvelopeLimit > 0 ? (spentYtd / annualEnvelopeLimit) * 100 : 0;
-                        secondaryBarValue = spentPeriod;
-                        secondaryBarMax = monthlyEquivalent > 0 ? monthlyEquivalent : 1;
-                    }
-                } else {
-                    percentage = monthlyEquivalent > 0 ? (spentPeriod / monthlyEquivalent) * 100 : 0;
-                }
-
-                if (percentage > 100) {
-                    colorClass = 'bg-danger';
-                    utilizationLabel = 'Critical';
-                } else if (percentage > 90) {
-                    colorClass = 'bg-warning';
-                    utilizationLabel = 'Watch';
-                } else {
-                    utilizationLabel = 'Healthy';
-                }
-
+                const annualEnvelopeLimit = annualEnvelopeForBudgetRow(
+                    budget.category,
+                    currentYear,
+                    allBudgetRows,
+                    period,
+                );
+                const visual = buildBudgetCardVisualMetrics({
+                    budgetView,
+                    period,
+                    limit: budget.limit,
+                    spentPeriod,
+                    spentYtd,
+                    annualEnvelopeLimit,
+                });
                 const prevSpent = previousSpending.get(budget.category) ?? 0;
                 const trend = budgetTrendFromPeriods(prevSpent, spentPeriod);
 
                 return {
                     ...budget,
-                    spent: spentPeriod,
-                    spentYtd,
-                    annualEnvelopeLimit,
-                    primaryBarValue,
-                    primaryBarMax,
-                    secondaryBarValue,
-                    secondaryBarMax,
+                    spent: visual.spent,
+                    spentYtd: visual.spentYtd,
+                    annualEnvelopeLimit: visual.annualEnvelopeLimit || undefined,
+                    primaryBarValue: visual.primaryBarValue,
+                    primaryBarMax: visual.primaryBarMax,
+                    secondaryBarValue: visual.secondaryBarValue,
+                    secondaryBarMax: visual.secondaryBarMax,
                     displayLimit: budget.limit,
-                    monthlyLimit: monthlyEquivalent,
-                    percentage,
-                    colorClass,
+                    monthlyLimit: visual.monthlyLimit,
+                    percentage: visual.percentage,
+                    annualPercentage: visual.annualPercentage,
+                    annualUtilizationLabel: visual.annualUtilizationLabel,
+                    showDualEnvelope: visual.showDualEnvelope,
+                    colorClass: visual.colorClass,
                     previousPeriodSpent: trend.previousPeriodSpent,
                     trendDelta: trend.trendDelta,
                     trendDirection: trend.trendDirection,
                     budgetTier: (budget.tier ?? 'Optional') as BudgetTier,
-                    utilizationLabel,
+                    utilizationLabel: visual.utilizationLabel,
                 };
             })
             .sort((a, b) => b.spent - a.spent);
@@ -1309,69 +1369,41 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
         const rows: BudgetRow[] = budgetsForMonth.map((budget) => {
             const period = budget.period ?? 'monthly';
-            const monthlyEquivalent =
-                period === 'yearly'
-                    ? budget.limit / 12
-                    : period === 'weekly'
-                      ? budget.limit * (52 / 12)
-                      : period === 'daily'
-                        ? budget.limit * (365 / 12)
-                        : budget.limit;
             const spentPeriod = spending.get(budget.category) || 0;
             const spentYtd = ytdSpending.get(budget.category) || 0;
-            const annualEnvelopeLimit =
-                period === 'yearly' ? 0 : annualEnvelopeLimitForCategory(budget.category, yr, allBudgetRows);
-
-            let percentage = 0;
-            let primaryBarValue = spentPeriod;
-            let primaryBarMax = monthlyEquivalent > 0 ? monthlyEquivalent : 1;
-            let secondaryBarValue: number | undefined;
-            let secondaryBarMax: number | undefined;
-
-            if (period === 'yearly') {
-                primaryBarValue = spentYtd;
-                primaryBarMax = budget.limit > 0 ? budget.limit : 1;
-                percentage = budget.limit > 0 ? (spentYtd / budget.limit) * 100 : 0;
-            } else {
-                primaryBarValue = spentYtd;
-                primaryBarMax = annualEnvelopeLimit > 0 ? annualEnvelopeLimit : 1;
-                percentage =
-                    annualEnvelopeLimit > 0
-                        ? (spentYtd / annualEnvelopeLimit) * 100
-                        : monthlyEquivalent > 0
-                          ? (spentPeriod / monthlyEquivalent) * 100
-                          : 0;
-                secondaryBarValue = spentPeriod;
-                secondaryBarMax = monthlyEquivalent > 0 ? monthlyEquivalent : 1;
-            }
-
-            const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' =
-                percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
-            let colorClass = 'bg-primary';
-            if (percentage > 100) colorClass = 'bg-danger';
-            else if (percentage > 90) colorClass = 'bg-warning';
-
+            const annualEnvelopeLimit = annualEnvelopeForBudgetRow(budget.category, yr, allBudgetRows, period);
+            const visual = buildBudgetCardVisualMetrics({
+                budgetView: 'Monthly',
+                period,
+                limit: budget.limit,
+                spentPeriod,
+                spentYtd,
+                annualEnvelopeLimit,
+            });
             const prevSpent = previousSpending.get(budget.category) ?? 0;
             const trend = budgetTrendFromPeriods(prevSpent, spentPeriod);
 
             return {
                 ...budget,
-                spent: spentPeriod,
-                spentYtd,
-                annualEnvelopeLimit: period === 'yearly' ? undefined : annualEnvelopeLimit,
-                primaryBarValue,
-                primaryBarMax,
-                secondaryBarValue,
-                secondaryBarMax,
+                spent: visual.spent,
+                spentYtd: visual.spentYtd,
+                annualEnvelopeLimit: visual.annualEnvelopeLimit || undefined,
+                primaryBarValue: visual.primaryBarValue,
+                primaryBarMax: visual.primaryBarMax,
+                secondaryBarValue: visual.secondaryBarValue,
+                secondaryBarMax: visual.secondaryBarMax,
                 displayLimit: budget.limit,
-                monthlyLimit: monthlyEquivalent,
-                percentage,
-                colorClass,
+                monthlyLimit: visual.monthlyLimit,
+                percentage: visual.percentage,
+                annualPercentage: visual.annualPercentage,
+                annualUtilizationLabel: visual.annualUtilizationLabel,
+                showDualEnvelope: visual.showDualEnvelope,
+                colorClass: visual.colorClass,
                 previousPeriodSpent: trend.previousPeriodSpent,
                 trendDelta: trend.trendDelta,
                 trendDirection: trend.trendDirection,
                 budgetTier: (budget.tier ?? 'Optional') as BudgetTier,
-                utilizationLabel,
+                utilizationLabel: visual.utilizationLabel,
             };
         });
         return rows.sort((a, b) => b.spent - a.spent);
@@ -1633,14 +1665,23 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             return Array.from(yearlyByOwnerCategory.values())
                 .map((entry) => {
                     const ownerCategoryKey = makeSharedOwnerCategoryKey(entry.ownerKey, entry.category);
-                    const spent = sharedConsumedByOwnerCategory.get(ownerCategoryKey) || spendingByOwnerCategory.get(ownerCategoryKey) || 0;
-                    const prevY = prevYearSpendingByOwnerCategory.get(ownerCategoryKey) || 0;
+                    const spent =
+                        sharedConsumedByOwnerCategory.get(ownerCategoryKey) ||
+                        spendingByOwnerCategory.get(ownerCategoryKey) ||
+                        0;
+                    const prevY =
+                        sharedConsumedPreviousByOwnerCategory.get(ownerCategoryKey) ??
+                        prevYearSpendingByOwnerCategory.get(ownerCategoryKey) ??
+                        0;
                     const trend = budgetTrendFromPeriods(prevY, spent);
-                    const percentage = entry.yearlyLimit > 0 ? (spent / entry.yearlyLimit) * 100 : 0;
-                    const utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = percentage > 100 ? 'Critical' : percentage > 90 ? 'Watch' : 'Healthy';
-                    let colorClass = 'bg-primary';
-                    if (percentage > 100) colorClass = 'bg-danger';
-                    else if (percentage > 90) colorClass = 'bg-warning';
+                    const visual = buildBudgetCardVisualMetrics({
+                        budgetView: 'Yearly',
+                        period: entry.period ?? 'monthly',
+                        limit: entry.yearlyLimit,
+                        spentPeriod: spent,
+                        spentYtd: spent,
+                        annualEnvelopeLimit: 0,
+                    });
                     return {
                         ...entry,
                         id: `shared-${entry.ownerKey}-${entry.category}-${currentYear}`,
@@ -1648,15 +1689,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         year: currentYear,
                         limit: entry.yearlyLimit,
                         displayLimit: entry.yearlyLimit,
-                        monthlyLimit: entry.yearlyLimit / 12,
-                        spent,
-                        percentage,
-                        colorClass,
+                        monthlyLimit: visual.monthlyLimit,
+                        spent: visual.spent,
+                        percentage: visual.percentage,
+                        colorClass: visual.colorClass,
+                        primaryBarValue: visual.primaryBarValue,
+                        primaryBarMax: visual.primaryBarMax,
                         previousPeriodSpent: trend.previousPeriodSpent,
                         trendDelta: trend.trendDelta,
                         trendDirection: trend.trendDirection,
                         budgetTier: (entry.tier ?? 'Optional') as BudgetTier,
-                        utilizationLabel,
+                        utilizationLabel: visual.utilizationLabel,
                     };
                 })
                 .sort((a, b) => b.spent - a.spent);
@@ -1670,20 +1713,18 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             })
             .map((b) => {
                 const period = b.period ?? 'monthly';
-                const monthlyEquivalent =
-                    period === 'yearly'
-                        ? b.limit / 12
-                        : period === 'weekly'
-                          ? b.limit * (52 / 12)
-                          : period === 'daily'
-                            ? b.limit * (365 / 12)
-                            : b.limit;
                 const ownerKey = normalizeSharedOwnerKey((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
                 const ownerCategoryKey = makeSharedOwnerCategoryKey(ownerKey, b.category);
                 const spentPeriod =
-                    sharedConsumedByOwnerCategory.get(ownerCategoryKey) || spendingByOwnerCategory.get(ownerCategoryKey) || 0;
+                    sharedConsumedByOwnerCategory.get(ownerCategoryKey) ??
+                    spendingByOwnerCategory.get(ownerCategoryKey) ??
+                    0;
                 const spentYtd =
-                    budgetView === 'Monthly' ? ytdSpendingByOwnerCategory.get(ownerCategoryKey) || 0 : spentPeriod;
+                    budgetView === 'Monthly'
+                        ? sharedConsumedYtdByOwnerCategory.get(ownerCategoryKey) ??
+                          ytdSpendingByOwnerCategory.get(ownerCategoryKey) ??
+                          0
+                        : spentPeriod;
 
                 const ownerEnvelopeRows = rowsForYear.filter((row) => {
                     const ok =
@@ -1692,64 +1733,48 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     return ok && row.category === b.category;
                 });
 
-                let percentage = 0;
-                let utilizationLabel: 'Healthy' | 'Watch' | 'Critical' = 'Healthy';
-                let colorClass = 'bg-primary';
-                let primaryBarValue = spentPeriod;
-                let primaryBarMax = monthlyEquivalent > 0 ? monthlyEquivalent : 1;
-                let secondaryBarValue: number | undefined;
-                let secondaryBarMax: number | undefined;
-                let annualEnvelopeLimit = 0;
-
-                if (budgetView === 'Monthly') {
-                    if (period === 'yearly') {
-                        primaryBarValue = spentYtd;
-                        primaryBarMax = b.limit > 0 ? b.limit : 1;
-                        percentage = b.limit > 0 ? (spentYtd / b.limit) * 100 : 0;
-                    } else {
-                        annualEnvelopeLimit = annualEnvelopeLimitForCategory(b.category, currentYear, ownerEnvelopeRows as Budget[]);
-                        primaryBarValue = spentYtd;
-                        primaryBarMax = annualEnvelopeLimit > 0 ? annualEnvelopeLimit : 1;
-                        percentage = annualEnvelopeLimit > 0 ? (spentYtd / annualEnvelopeLimit) * 100 : 0;
-                        secondaryBarValue = spentPeriod;
-                        secondaryBarMax = monthlyEquivalent > 0 ? monthlyEquivalent : 1;
-                    }
-                } else {
-                    percentage = monthlyEquivalent > 0 ? (spentPeriod / monthlyEquivalent) * 100 : 0;
-                }
-
-                if (percentage > 100) {
-                    colorClass = 'bg-danger';
-                    utilizationLabel = 'Critical';
-                } else if (percentage > 90) {
-                    colorClass = 'bg-warning';
-                    utilizationLabel = 'Watch';
-                } else {
-                    utilizationLabel = 'Healthy';
-                }
-
-                const prevShared = previousSpendingByOwnerCategory.get(ownerCategoryKey) ?? 0;
+                const annualEnvelopeLimit = annualEnvelopeForBudgetRow(
+                    b.category,
+                    currentYear,
+                    ownerEnvelopeRows as Budget[],
+                    period,
+                );
+                const visual = buildBudgetCardVisualMetrics({
+                    budgetView,
+                    period,
+                    limit: b.limit,
+                    spentPeriod,
+                    spentYtd,
+                    annualEnvelopeLimit,
+                });
+                const prevShared =
+                    sharedConsumedPreviousByOwnerCategory.get(ownerCategoryKey) ??
+                    previousSpendingByOwnerCategory.get(ownerCategoryKey) ??
+                    0;
                 const trend = budgetTrendFromPeriods(prevShared, spentPeriod);
 
                 return {
                     ...b,
                     id: `shared-${ownerKey}-${b.id}`,
-                    spent: spentPeriod,
-                    spentYtd,
-                    annualEnvelopeLimit,
-                    primaryBarValue,
-                    primaryBarMax,
-                    secondaryBarValue,
-                    secondaryBarMax,
-                    percentage,
-                    colorClass,
+                    spent: visual.spent,
+                    spentYtd: visual.spentYtd,
+                    annualEnvelopeLimit: visual.annualEnvelopeLimit || undefined,
+                    primaryBarValue: visual.primaryBarValue,
+                    primaryBarMax: visual.primaryBarMax,
+                    secondaryBarValue: visual.secondaryBarValue,
+                    secondaryBarMax: visual.secondaryBarMax,
+                    percentage: visual.percentage,
+                    annualPercentage: visual.annualPercentage,
+                    annualUtilizationLabel: visual.annualUtilizationLabel,
+                    showDualEnvelope: visual.showDualEnvelope,
+                    colorClass: visual.colorClass,
                     displayLimit: b.limit,
-                    monthlyLimit: monthlyEquivalent,
+                    monthlyLimit: visual.monthlyLimit,
                     previousPeriodSpent: trend.previousPeriodSpent,
                     trendDelta: trend.trendDelta,
                     trendDirection: trend.trendDirection,
                     budgetTier: (b.tier ?? 'Optional') as BudgetTier,
-                    utilizationLabel,
+                    utilizationLabel: visual.utilizationLabel,
                 };
             })
             .sort((a, b) => b.spent - a.spent);
@@ -1758,6 +1783,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         mySharedBudgetTransactions,
         ownerSharedTransactions,
         sharedConsumedByOwnerCategory,
+        sharedConsumedYtdByOwnerCategory,
+        sharedConsumedPreviousByOwnerCategory,
         budgetView,
         currentYear,
         currentMonth,
@@ -3727,14 +3754,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
                             {sharedBudgetCards.map((budget) => {
                                 const owner = sharedBudgetOwnerByCardId.get(budget.id) || 'Owner';
-                                const primaryMax =
-                                    budget.primaryBarMax ??
-                                    (budgetView === 'Yearly' ? budget.limit : budget.monthlyLimit) ??
-                                    1;
-                                const primaryVal = budget.primaryBarValue ?? budget.spent;
-                                const primaryRem = primaryMax - primaryVal;
-                                const secondaryMax = budget.secondaryBarMax;
-                                const secondaryVal = budget.secondaryBarValue;
                                 const utilLabel = budget.utilizationLabel ?? 'Healthy';
                                 const periodBadge =
                                     (budget.period ?? 'monthly') === 'yearly'
@@ -3794,108 +3813,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                                 </div>
                                             </div>
 
-                                            <div className="mt-5 flex min-h-0 flex-1 flex-col gap-0">
-                                            <div className="shrink-0 space-y-3">
-                                            {budgetView === 'Monthly' && (budget.period ?? 'monthly') === 'monthly' && secondaryMax != null && secondaryVal != null && (budget.annualEnvelopeLimit ?? 0) > 0 ? (
-                                                <>
-                                                    <div className="rounded-2xl border border-slate-200/90 bg-white/60 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] backdrop-blur-sm">
-                                                        <div className="flex justify-between items-baseline gap-2 mb-2">
-                                                            <span className="text-[11px] font-bold uppercase tracking-wide text-slate-600">Annual envelope</span>
-                                                            <span className="text-xs font-medium text-slate-600 tabular-nums">
-                                                                YTD {formatCurrencyString(budget.spentYtd ?? 0, { digits: 0 })} /{' '}
-                                                                {formatCurrencyString(budget.annualEnvelopeLimit ?? 0, { digits: 0 })}
-                                                            </span>
-                                                        </div>
-                                                        <ProgressBar value={primaryVal} max={primaryMax} fillClassName={budgetProgressGradient(utilLabel)} color={budget.colorClass} trackClassName="bg-slate-300/80" heightClass="h-3.5" />
-                                                        <p className={`text-right text-sm font-semibold mt-2 tabular-nums ${primaryRem >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
-                                                            {primaryRem >= 0
-                                                                ? `${formatCurrencyString(primaryRem, { digits: 0 })} left this year`
-                                                                : `${formatCurrencyString(Math.abs(primaryRem), { digits: 0 })} over annual cap`}
-                                                        </p>
-                                                    </div>
-                                                    <div className="rounded-2xl border border-violet-200/90 bg-gradient-to-br from-violet-50/90 to-fuchsia-50/50 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] backdrop-blur-sm">
-                                                        <div className="flex justify-between items-baseline gap-2 mb-2">
-                                                            <span className="text-[11px] font-bold uppercase tracking-wide text-violet-800">This month</span>
-                                                            <span className="text-xs font-medium text-violet-900/80 tabular-nums">
-                                                                {formatCurrencyString(secondaryVal, { digits: 0 })} / {formatCurrencyString(secondaryMax, { digits: 0 })}
-                                                            </span>
-                                                        </div>
-                                                        <ProgressBar value={secondaryVal} max={secondaryMax} fillClassName={budgetSecondaryProgressGradient()} color="bg-violet-500" trackClassName="bg-violet-200/80" heightClass="h-3" />
-                                                        <p
-                                                            className={`text-right text-xs mt-2 font-medium tabular-nums ${
-                                                                secondaryMax - secondaryVal >= 0 ? 'text-violet-900/80' : 'text-rose-600'
-                                                            }`}
-                                                        >
-                                                            {secondaryMax - secondaryVal >= 0
-                                                                ? `${formatCurrencyString(secondaryMax - secondaryVal, { digits: 0 })} left this period`
-                                                                : `${formatCurrencyString(Math.abs(secondaryMax - secondaryVal), { digits: 0 })} over this month`}
-                                                        </p>
-                                                    </div>
-                                                </>
-                                            ) : budgetView === 'Monthly' && (budget.period ?? 'monthly') === 'yearly' ? (
-                                                <div className="rounded-2xl border border-slate-200/90 bg-white/60 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] backdrop-blur-sm">
-                                                    <div className="flex justify-between items-baseline gap-2 mb-2">
-                                                        <span className="text-[11px] font-bold uppercase tracking-wide text-slate-600">Year to date</span>
-                                                        <span className="text-xs font-medium text-slate-600 tabular-nums">
-                                                            {formatCurrencyString(budget.spentYtd ?? budget.spent, { digits: 0 })} /{' '}
-                                                            {formatCurrencyString(budget.displayLimit, { digits: 0 })} / yr
-                                                        </span>
-                                                    </div>
-                                                    <ProgressBar value={primaryVal} max={Math.max(primaryMax, 1)} fillClassName={budgetProgressGradient(utilLabel)} color={budget.colorClass} trackClassName="bg-slate-300/80" heightClass="h-3.5" />
-                                                    <p className={`text-right text-sm font-semibold mt-2 tabular-nums ${primaryRem >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
-                                                        {primaryRem >= 0
-                                                            ? `${formatCurrencyString(primaryRem, { digits: 0 })} remaining in ${currentYear}`
-                                                            : `${formatCurrencyString(Math.abs(primaryRem), { digits: 0 })} over full-year budget`}
-                                                    </p>
-                                                </div>
-                                            ) : (
-                                                <div className="rounded-2xl border border-slate-200/90 bg-white/60 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] backdrop-blur-sm">
-                                                    <div className="flex justify-between items-baseline gap-2 mb-2">
-                                                        <span className="text-[11px] font-bold uppercase tracking-wide text-slate-600">This period</span>
-                                                        <span className="text-xs font-medium text-slate-600 tabular-nums">
-                                                            {formatCurrencyString(budget.spent, { digits: 0 })} / {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}
-                                                            {budgetView === 'Yearly'
-                                                                ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)`
-                                                                : (budget.period ?? 'monthly') === 'yearly'
-                                                                  ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)`
-                                                                  : (budget.period ?? 'monthly') === 'weekly'
-                                                                    ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/wk)`
-                                                                    : (budget.period ?? 'monthly') === 'daily'
-                                                                      ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/day)`
-                                                                      : ''}
-                                                        </span>
-                                                    </div>
-                                                    <ProgressBar
-                                                        value={budget.spent}
-                                                        max={budgetView === 'Yearly' ? (budget.limit ?? 1) : (budget.monthlyLimit ?? 1)}
-                                                        fillClassName={budgetProgressGradient(utilLabel)}
-                                                        color={budget.colorClass}
-                                                        trackClassName="bg-slate-300/80"
-                                                        heightClass="h-3.5"
-                                                    />
-                                                    <p
-                                                        className={`text-right text-sm font-semibold mt-2 tabular-nums ${
-                                                            (budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent) >= 0
-                                                                ? 'text-emerald-700'
-                                                                : 'text-rose-600'
-                                                        }`}
-                                                    >
-                                                        {(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent) >= 0
-                                                            ? `${formatCurrencyString(
-                                                                  budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent,
-                                                                  { digits: 0 },
-                                                              )} remaining`
-                                                            : `${formatCurrencyString(
-                                                                  Math.abs(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent),
-                                                                  { digits: 0 },
-                                                              )} over`}
-                                                    </p>
-                                                </div>
-                                            )}
-                                            </div>
-                                            <div className="min-h-[1px] flex-1" aria-hidden />
-                                            <p className="mt-auto shrink-0 pt-3 text-[10px] text-center text-slate-400 font-medium uppercase tracking-wider">Read-only · owner&apos;s budget</p>
-                                            </div>
+                                            <BudgetCardMetricsBlocks
+                                                budget={budget}
+                                                budgetView={budgetView}
+                                                currentYear={currentYear}
+                                                formatCurrencyString={formatCurrencyString}
+                                                periodWindowLabel={periodWindowLabel}
+                                            />
+                                            <p className="mt-2 shrink-0 text-[10px] text-center text-slate-400 font-medium uppercase tracking-wider">Read-only · owner&apos;s budget</p>
                                             </div>
                                         </BudgetCardShell>
                                     </div>
@@ -4003,7 +3928,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                     <tbody>
                                         {adminApprovedOverviewFiltered.map((b) => {
                                             const remaining = b.monthlyLimit - b.spent;
-                                            const percentage = b.monthlyLimit > 0 ? (b.spent / b.monthlyLimit) * 100 : 0;
+                                            const percentage = b.percentage ?? (b.monthlyLimit > 0 ? (b.spent / b.monthlyLimit) * 100 : 0);
                                             const periodLabel = (b.period ?? 'monthly') === 'yearly' ? 'Yearly' : (b.period ?? 'monthly') === 'weekly' ? 'Weekly' : (b.period ?? 'monthly') === 'daily' ? 'Daily' : 'Monthly';
                                             const limitWithUnit = (b.period ?? 'monthly') === 'yearly'
                                                 ? `${formatCurrencyString(b.limit, { digits: 0 })}/yr`
@@ -4308,14 +4233,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
                 {orderedBudgetData.map((budget) => {
-                    const primaryMax =
-                        budget.primaryBarMax ??
-                        (budgetView === 'Yearly' ? budget.limit : budget.monthlyLimit) ??
-                        1;
-                    const primaryVal = budget.primaryBarValue ?? budget.spent;
-                    const primaryRem = primaryMax - primaryVal;
-                    const secondaryMax = budget.secondaryBarMax;
-                    const secondaryVal = budget.secondaryBarValue;
                     const utilLabel = budget.utilizationLabel ?? 'Healthy';
                     const periodBadge =
                         (budget.period ?? 'monthly') === 'yearly'
@@ -4383,92 +4300,15 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                             </div>
                         </div>
 
-                        <div className="mt-5 flex min-h-0 flex-1 flex-col gap-0">
-                        <div className="shrink-0 space-y-3">
-                            {budgetView === 'Monthly' && (budget.period ?? 'monthly') === 'monthly' && secondaryMax != null && secondaryVal != null && (budget.annualEnvelopeLimit ?? 0) > 0 ? (
-                                <>
-                                    <div className="rounded-2xl border border-slate-200/90 bg-white/60 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] backdrop-blur-sm">
-                                        <div className="flex justify-between items-baseline gap-2 mb-2">
-                                            <span className="text-[11px] font-bold uppercase tracking-wide text-slate-600">Annual envelope</span>
-                                            <span className="text-xs font-medium text-slate-600 tabular-nums">
-                                                YTD {formatCurrencyString(budget.spentYtd ?? 0, { digits: 0 })} / {formatCurrencyString(budget.annualEnvelopeLimit ?? 0, { digits: 0 })}
-                                            </span>
-                                        </div>
-                                        <ProgressBar value={primaryVal} max={primaryMax} fillClassName={budgetProgressGradient(utilLabel)} color={budget.colorClass} trackClassName="bg-slate-300/80" heightClass="h-3.5" />
-                                        <p className={`text-right text-sm font-semibold mt-2 tabular-nums ${primaryRem >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
-                                            {primaryRem >= 0
-                                                ? `${formatCurrencyString(primaryRem, { digits: 0 })} left this year`
-                                                : `${formatCurrencyString(Math.abs(primaryRem), { digits: 0 })} over annual cap`}
-                                        </p>
-                                    </div>
-                                    <div className="rounded-2xl border border-violet-200/90 bg-gradient-to-br from-violet-50/90 to-fuchsia-50/50 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] backdrop-blur-sm">
-                                        <div className="flex justify-between items-baseline gap-2 mb-2">
-                                            <span className="text-[11px] font-bold uppercase tracking-wide text-violet-800">This month</span>
-                                            <span className="text-xs font-medium text-violet-900/80 tabular-nums">
-                                                {formatCurrencyString(secondaryVal, { digits: 0 })} / {formatCurrencyString(secondaryMax, { digits: 0 })}
-                                            </span>
-                                        </div>
-                                        <ProgressBar value={secondaryVal} max={secondaryMax} fillClassName={budgetSecondaryProgressGradient()} color="bg-violet-500" trackClassName="bg-violet-200/80" heightClass="h-3" />
-                                        <p className={`text-right text-xs mt-2 font-medium tabular-nums ${secondaryMax - secondaryVal >= 0 ? 'text-violet-900/80' : 'text-rose-600'}`}>
-                                            {secondaryMax - secondaryVal >= 0
-                                                ? `${formatCurrencyString(secondaryMax - secondaryVal, { digits: 0 })} left this period`
-                                                : `${formatCurrencyString(Math.abs(secondaryMax - secondaryVal), { digits: 0 })} over this month`}
-                                        </p>
-                                    </div>
-                                </>
-                            ) : budgetView === 'Monthly' && (budget.period ?? 'monthly') === 'yearly' ? (
-                                <div className="rounded-2xl border border-slate-200/90 bg-white/60 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] backdrop-blur-sm">
-                                    <div className="flex justify-between items-baseline gap-2 mb-2">
-                                        <span className="text-[11px] font-bold uppercase tracking-wide text-slate-600">Year to date</span>
-                                        <span className="text-xs font-medium text-slate-600 tabular-nums">
-                                            {formatCurrencyString(budget.spentYtd ?? budget.spent, { digits: 0 })} / {formatCurrencyString(budget.displayLimit, { digits: 0 })} / yr
-                                        </span>
-                                    </div>
-                                    <ProgressBar value={primaryVal} max={Math.max(primaryMax, 1)} fillClassName={budgetProgressGradient(utilLabel)} color={budget.colorClass} trackClassName="bg-slate-300/80" heightClass="h-3.5" />
-                                    <p className={`text-right text-sm font-semibold mt-2 tabular-nums ${primaryRem >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
-                                        {primaryRem >= 0
-                                            ? `${formatCurrencyString(primaryRem, { digits: 0 })} remaining in ${currentYear}`
-                                            : `${formatCurrencyString(Math.abs(primaryRem), { digits: 0 })} over full-year budget`}
-                                    </p>
-                                </div>
-                            ) : (
-                                <div className="rounded-2xl border border-slate-200/90 bg-white/60 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] backdrop-blur-sm">
-                                    <div className="flex justify-between items-baseline gap-2 mb-2">
-                                        <span className="text-[11px] font-bold uppercase tracking-wide text-slate-600">This period</span>
-                                        <span className="text-xs font-medium text-slate-600 tabular-nums">
-                                            {formatCurrencyString(budget.spent, { digits: 0 })} / {formatCurrencyString(budget.monthlyLimit, { digits: 0 })}
-                                            {budgetView === 'Yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : (budget.period ?? 'monthly') === 'yearly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/yr)` : (budget.period ?? 'monthly') === 'weekly' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/wk)` : (budget.period ?? 'monthly') === 'daily' ? ` (${formatCurrencyString(budget.displayLimit, { digits: 0 })}/day)` : ''}
-                                        </span>
-                                    </div>
-                                    <ProgressBar
-                                        value={budget.spent}
-                                        max={budgetView === 'Yearly' ? (budget.limit ?? 1) : (budget.monthlyLimit ?? 1)}
-                                        fillClassName={budgetProgressGradient(utilLabel)}
-                                        color={budget.colorClass}
-                                        trackClassName="bg-slate-300/80"
-                                        heightClass="h-3.5"
-                                    />
-                                    <p className={`text-right text-sm font-semibold mt-2 tabular-nums ${(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent) >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
-                                        {(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent) >= 0
-                                            ? `${formatCurrencyString(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent, { digits: 0 })} remaining`
-                                            : `${formatCurrencyString(Math.abs(budgetView === 'Yearly' ? budget.limit - budget.spent : budget.monthlyLimit - budget.spent), { digits: 0 })} over`}
-                                    </p>
-                                </div>
-                            )}
-                        </div>
+                        <BudgetCardMetricsBlocks
+                            budget={budget}
+                            budgetView={budgetView}
+                            currentYear={currentYear}
+                            formatCurrencyString={formatCurrencyString}
+                            periodWindowLabel={periodWindowLabel}
+                        />
 
-                            <div className="min-h-[1px] flex-1" aria-hidden />
-                            <div className="flex shrink-0 items-center justify-between gap-2 rounded-xl border border-slate-200/70 bg-slate-900/[0.03] px-3 py-2.5 text-[11px] shadow-inner">
-                                <span className="font-medium text-slate-600 tabular-nums">
-                                    <span className="text-slate-400 font-semibold uppercase tracking-wide mr-1">Primary cap</span>
-                                    {budget.percentage.toFixed(0)}%
-                                </span>
-                                <span className={budget.trendDirection === 'up' ? 'text-rose-600 font-semibold' : budget.trendDirection === 'down' ? 'text-emerald-600 font-semibold' : 'text-slate-400'}>
-                                    {budget.trendDirection === 'up' ? '↑' : budget.trendDirection === 'down' ? '↓' : '→'}{' '}
-                                    {formatCurrencyString(Math.abs(budget.trendDelta ?? 0), { digits: 0 })} vs previous
-                                </span>
-                            </div>
-                        </div>
+                        <div className="min-h-[1px] flex-1" aria-hidden />
 
                         <div className="mt-auto flex shrink-0 justify-end items-center gap-1 border-t border-slate-200/50 pt-3">
                             <button type="button" onClick={() => toggleBudgetCardSize(budget.id)} className="p-2 text-slate-400 hover:text-primary rounded-lg hover:bg-white/80" title={expandedCards[budget.id] ? 'Compact card' : 'Expand card'} aria-label={expandedCards[budget.id] ? 'Compact card' : 'Expand card'}>

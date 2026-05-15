@@ -96,3 +96,27 @@ export function computeBudgetSpendWindows(args: {
 
   return { rangeStart, rangeEnd, previousRangeStart, previousRangeEnd, ytdStart, ytdEnd };
 }
+
+/** Human-readable label for the active card spend window (shown under “This month” / “This period”). */
+export function formatBudgetSpendWindowLabel(
+  budgetView: BudgetViewMode,
+  rangeStart: Date,
+  rangeEnd: Date,
+): string {
+  const sameDay =
+    rangeStart.getFullYear() === rangeEnd.getFullYear() &&
+    rangeStart.getMonth() === rangeEnd.getMonth() &&
+    rangeStart.getDate() === rangeEnd.getDate();
+  const fmt = (d: Date, withYear: boolean) =>
+    d.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      ...(withYear ? { year: 'numeric' } : {}),
+    });
+  const withYear =
+    budgetView === 'Yearly' ||
+    rangeStart.getFullYear() !== rangeEnd.getFullYear() ||
+    new Date().getFullYear() !== rangeStart.getFullYear();
+  if (budgetView === 'Daily' || sameDay) return fmt(rangeStart, withYear);
+  return `${fmt(rangeStart, withYear)} – ${fmt(rangeEnd, withYear)}`;
+}

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   clampDateToFinancialMonthBounds,
   computeBudgetSpendWindows,
+  formatBudgetSpendWindowLabel,
 } from '../services/budgetViewSpendWindows';
 import { financialMonthRangeFromKey } from '../utils/financialMonth';
 
@@ -61,5 +62,19 @@ describe('computeBudgetSpendWindows', () => {
     expect(w.rangeStart.getDate()).toBe(22);
     expect(w.rangeEnd.getDate()).toBe(22);
     expect(w.ytdStart).toBeNull();
+  });
+});
+
+describe('formatBudgetSpendWindowLabel', () => {
+  it('formats a date range for monthly view', () => {
+    const w = computeBudgetSpendWindows({
+      budgetView: 'Monthly',
+      currentYear: 2026,
+      currentMonth: 4,
+      monthStartDay: 1,
+      anchorDate: new Date(2026, 3, 15),
+    });
+    const label = formatBudgetSpendWindowLabel('Monthly', w.rangeStart, w.rangeEnd);
+    expect(label).toContain('–');
   });
 });
