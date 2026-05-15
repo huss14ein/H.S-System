@@ -66,15 +66,41 @@ describe('computeBudgetSpendWindows', () => {
 });
 
 describe('formatBudgetSpendWindowLabel', () => {
-  it('formats a date range for monthly view', () => {
-    const w = computeBudgetSpendWindows({
-      budgetView: 'Monthly',
-      currentYear: 2026,
-      currentMonth: 4,
-      monthStartDay: 1,
-      anchorDate: new Date(2026, 3, 15),
+    it('formats a date range for monthly view', () => {
+        const w = computeBudgetSpendWindows({
+            budgetView: 'Monthly',
+            currentYear: 2026,
+            currentMonth: 4,
+            monthStartDay: 1,
+            anchorDate: new Date(2026, 3, 15),
+        });
+        const label = formatBudgetSpendWindowLabel('Monthly', w.rangeStart, w.rangeEnd);
+        expect(label).toContain('–');
     });
-    const label = formatBudgetSpendWindowLabel('Monthly', w.rangeStart, w.rangeEnd);
-    expect(label).toContain('–');
-  });
+
+    it('formats a single day for daily view', () => {
+        const w = computeBudgetSpendWindows({
+            budgetView: 'Daily',
+            currentYear: 2026,
+            currentMonth: 4,
+            monthStartDay: 1,
+            anchorDate: new Date(2026, 3, 22),
+        });
+        const label = formatBudgetSpendWindowLabel('Daily', w.rangeStart, w.rangeEnd);
+        expect(label.length).toBeGreaterThan(0);
+        expect(label).not.toContain('–');
+    });
+
+    it('formats full calendar year span for yearly view', () => {
+        const w = computeBudgetSpendWindows({
+            budgetView: 'Yearly',
+            currentYear: 2026,
+            currentMonth: 6,
+            monthStartDay: 1,
+            anchorDate: new Date(2026, 5, 1),
+        });
+        const label = formatBudgetSpendWindowLabel('Yearly', w.rangeStart, w.rangeEnd);
+        expect(label).toContain('–');
+        expect(label).toMatch(/2026/);
+    });
 });

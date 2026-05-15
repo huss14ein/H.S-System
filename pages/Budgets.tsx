@@ -1820,25 +1820,27 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
     const toggleBudgetCardSize = (id: string) => setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
 
+    const budgetInsightsRows = useMemo<BudgetRow[]>(() => [...budgetData, ...sharedBudgetCards], [budgetData, sharedBudgetCards]);
+
     const budgetInsights = useMemo(() => {
-        const totalLimit = budgetData.reduce((sum, b) => sum + b.monthlyLimit, 0);
-        const totalSpent = budgetData.reduce((sum, b) => sum + b.spent, 0);
+        const totalLimit = budgetInsightsRows.reduce((sum, b) => sum + b.monthlyLimit, 0);
+        const totalSpent = budgetInsightsRows.reduce((sum, b) => sum + b.spent, 0);
         /** Money saved from budget = sum of (limit - spent) for categories where we're under. Same as max(0, totalLimit - totalSpent) when no category is over. */
         const totalSavedFromBudget = Math.max(0, totalLimit - totalSpent);
-        const healthyCount = budgetData.filter((b) => b.utilizationLabel === 'Healthy').length;
-        const watchCount = budgetData.filter((b) => b.utilizationLabel === 'Watch').length;
-        const criticalCount = budgetData.filter((b) => b.utilizationLabel === 'Critical').length;
-        const topChange = [...budgetData].sort((a, b) => Math.abs(b.trendDelta ?? 0) - Math.abs(a.trendDelta ?? 0))[0];
+        const healthyCount = budgetInsightsRows.filter((b) => b.utilizationLabel === 'Healthy').length;
+        const watchCount = budgetInsightsRows.filter((b) => b.utilizationLabel === 'Watch').length;
+        const criticalCount = budgetInsightsRows.filter((b) => b.utilizationLabel === 'Critical').length;
+        const topChange = [...budgetInsightsRows].sort((a, b) => Math.abs(b.trendDelta ?? 0) - Math.abs(a.trendDelta ?? 0))[0];
 
         return { totalLimit, totalSpent, totalSavedFromBudget, healthyCount, watchCount, criticalCount, topChange };
-    }, [budgetData]);
+    }, [budgetInsightsRows]);
 
     const budgetValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
         if (!Number.isFinite(budgetInsights.totalLimit) || !Number.isFinite(budgetInsights.totalSpent)) {
             warnings.push('Budget totals contain invalid values.');
         }
-        if (budgetData.length > 0 && budgetData.every((b) => (b.monthlyLimit ?? 0) <= 0)) {
+        if (budgetInsightsRows.length > 0 && budgetInsightsRows.every((b) => (b.monthlyLimit ?? 0) <= 0)) {
             warnings.push('All visible budgets have zero limits.');
         }
         const uncategorizedExpenses = ((data as any)?.personalTransactions ?? data?.transactions ?? [])
@@ -1854,7 +1856,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             warnings.push('Shared transaction month filter is invalid; defaulting to all months.');
         }
         return warnings;
-    }, [budgetInsights, budgetData, data?.transactions, (data as any)?.personalTransactions, budgetRequests, isAdmin, sharedTxMonthFilter]);
+    }, [budgetInsights, budgetData, budgetInsightsRows, data?.transactions, (data as any)?.personalTransactions, budgetRequests, isAdmin, sharedTxMonthFilter]);
 
     const updateMonthlyOverride = (month: number, patch: Partial<HouseholdMonthlyOverride>) => {
         setHouseholdOverrides((prev) => {
@@ -2445,6 +2447,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             )}
 
             <SectionCard title="Budget Intelligence" collapsible collapsibleSummary="Portfolio, spend, attention" defaultExpanded>
+                <p className="text-xs text-slate-500 mb-2">
+                    {sharedBudgetCards.length > 0
+                        ? `Totals and health counts include your budgets plus ${sharedBudgetCards.length} shared card(s).`
+                        : 'Totals reflect the budgets shown above for the selected view.'}
+                </p>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm min-w-0">
                     <div className="rounded-lg border bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
                         <p className="metric-label text-gray-500 w-full">Portfolio Budget</p>
@@ -3684,15 +3691,27 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             </SectionCard>
             </div>
 
-            {budgetData.length > 0 && (
+            {budgetInsightsRows.length > 0 && (
                 <div className="section-card border-l-4 border-emerald-500/60">
                     <h3 className="section-title text-base">Money saved from budget</h3>
                     <p className="text-2xl font-bold text-emerald-700 tabular-nums">{formatCurrencyString(budgetInsights.totalSavedFromBudget, { digits: 0 })}</p>
                     <p className="text-sm text-slate-600 mt-1">
-                        {budgetView === 'Monthly' && 'This month you stayed under your total budget by this amount. '}
-                        {budgetView === 'Weekly' && 'This week you stayed under your total budget by this amount. '}
-                        {budgetView === 'Daily' && 'Today you stayed under your daily budget by this amount. '}
-                        {budgetView === 'Yearly' && `So far in ${currentYear} you are under your yearly budget by this amount. `}
+                        {budgetView === 'Monthly' &&
+                            (sharedBudgetCards.length > 0
+                                ? 'This month combined visible budgets (yours plus shared) stayed under limits by this amount. '
+                                : 'This month you stayed under your total budget by this amount. ')}
+                        {budgetView === 'Weekly' &&
+                            (sharedBudgetCards.length > 0
+                                ? 'This week combined visible budgets (yours plus shared) stayed under limits by this amount. '
+                                : 'This week you stayed under your total budget by this amount. ')}
+                        {budgetView === 'Daily' &&
+                            (sharedBudgetCards.length > 0
+                                ? 'Today combined visible budgets (yours plus shared) stayed under limits by this amount. '
+                                : 'Today you stayed under your daily budget by this amount. ')}
+                        {budgetView === 'Yearly' &&
+                            (sharedBudgetCards.length > 0
+                                ? `So far in ${currentYear} combined visible budgets (yours plus shared) are under limits by this amount. `
+                                : `So far in ${currentYear} you are under your yearly budget by this amount. `)}
                         This money remains in your accounts; it is part of your actual cash flow and can go toward goals, investments, or savings.
                     </p>
                 </div>
@@ -3701,9 +3720,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             <SectionCard title="Budget sharing" collapsible collapsibleSummary="Shared budgets">
                 <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Sharing audit snapshot</p>
-                    <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+                    <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
                         <div><span className="text-slate-500">Shared budget rows:</span> <span className="font-semibold text-slate-800">{sharedBudgets.length}</span></div>
                         <div><span className="text-slate-500">Consumed scopes:</span> <span className="font-semibold text-slate-800">{sharedConsumedByOwnerCategory.size}</span></div>
+                        <div><span className="text-slate-500">YTD scopes (Monthly):</span> <span className="font-semibold text-slate-800">{sharedConsumedYtdByOwnerCategory.size}</span></div>
+                        <div><span className="text-slate-500">Prior-window scopes:</span> <span className="font-semibold text-slate-800">{sharedConsumedPreviousByOwnerCategory.size}</span></div>
                         <div><span className="text-slate-500">Last consumed sync:</span> <span className="font-semibold text-slate-800">{sharedConsumedSyncedAt ? new Date(sharedConsumedSyncedAt).toLocaleString() : 'Not synced yet'}</span></div>
                     </div>
                     <p className="mt-2 text-xs text-slate-500">Consumed totals include owner approved expenses plus approved collaborator shared transactions within shared category scope.</p>
