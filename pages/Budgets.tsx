@@ -1,6 +1,9 @@
-import React, { useMemo, useState, useContext, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useContext, useEffect, useRef, useCallback } from 'react';
 import BudgetCardShell from '../components/BudgetCardShell';
 import BudgetCardMetricsBlocks from '../components/BudgetCardMetricsBlocks';
+import BudgetCardSkeleton from '../components/BudgetCardSkeleton';
+import HouseholdEngineSkeleton from '../components/HouseholdEngineSkeleton';
+import BudgetOwnPortfolioCard from '../components/BudgetOwnPortfolioCard';
 import BudgetUsageDial from '../components/BudgetUsageDial';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';
@@ -478,6 +481,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         new Map(),
     );
     const [sharedConsumedSyncedAt, setSharedConsumedSyncedAt] = useState<number | null>(null);
+    /** False while permissions + shared-budget RPCs run (avoids empty/wrong cards for non-admin). */
+    const [governanceReady, setGovernanceReady] = useState(() => !auth?.user?.id);
     const [sharedTxMonthFilter, setSharedTxMonthFilter] = useState<string>(`${currentYear}-${String(currentMonth).padStart(2, '0')}`);
     const [sharedTxStatusFilter, setSharedTxStatusFilter] = useState<'All' | 'Approved' | 'Pending' | 'Rejected'>('All');
     const [sharedTxCategoryFilter, setSharedTxCategoryFilter] = useState<string>('All');
@@ -812,6 +817,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         return () => window.clearTimeout(t);
     }, [householdProfileCloudEnabled, auth?.user?.id, householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary, householdProfileCloudLoadedUserId]);
 
+    /** Avoid showing engine tiles keyed off profile until cloud row has merged (after localStorage hydrate). */
+    const householdCloudProfileReady =
+        !householdProfileCloudEnabled ||
+        !auth?.user?.id ||
+        householdProfileCloudLoadedUserId === auth.user.id;
+
     const householdBudgetEngine = useMemo(() => {
         const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
         const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
@@ -837,41 +848,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             }
         );
         const result = buildHouseholdBudgetPlan(input);
-        
-        // Calculate predictive analytics dynamically
-        try {
-            if (result.months.length >= 3) {
-                const forecasts = predictFutureMonths(result.months, 3);
-                setPredictiveForecasts(forecasts);
-                
-                const commonScenarios = generateCommonScenarios(result, input.goals.map((g) => ({ name: g.name, remaining: Math.max(0, (g.targetAmount ?? 0) - Number(g.currentAmount ?? 0)) })));
-                setScenarios(commonScenarios);
-                       const seasonality = detectSeasonality(result.months);
-                       setSeasonalityPatterns(seasonality);
-                   } else {
-                       setPredictiveForecasts([]);
-                       setScenarios([]);
-                       setSeasonalityPatterns([]);
-                   }
-
-            const txRows = (data as any)?.personalTransactions ?? data?.transactions ?? [];
-            const accRows = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-            setAnomalies(
-                detectSpendingAnomaliesFromTransactions({
-                    year: currentYear,
-                    transactions: txRows,
-                    accounts: accRows,
-                    sarPerUsd,
-                }),
-            );
-               } catch (error) {
-                   console.warn('Failed to calculate household budget analytics:', error);
-                   setPredictiveForecasts([]);
-                   setScenarios([]);
-                   setAnomalies([]);
-                   setSeasonalityPatterns([]);
-               }
-        
         return result;
     }, [
         data?.transactions,
@@ -889,6 +865,41 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         engineProfile,
         expectedMonthlySalary,
     ]);
+
+    React.useEffect(() => {
+        const result = householdBudgetEngine;
+        try {
+            if (result.months.length >= 3) {
+                setPredictiveForecasts(predictFutureMonths(result.months, 3));
+                const goalLens = (data?.goals ?? []).map((g: Goal) => ({
+                    name: g.name,
+                    remaining: Math.max(0, (g.targetAmount ?? 0) - Number(g.currentAmount ?? 0)),
+                }));
+                setScenarios(generateCommonScenarios(result, goalLens));
+                setSeasonalityPatterns(detectSeasonality(result.months));
+            } else {
+                setPredictiveForecasts([]);
+                setScenarios([]);
+                setSeasonalityPatterns([]);
+            }
+            const txRows = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+            const accRows = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+            setAnomalies(
+                detectSpendingAnomaliesFromTransactions({
+                    year: currentYear,
+                    transactions: txRows,
+                    accounts: accRows,
+                    sarPerUsd,
+                }),
+            );
+        } catch (error) {
+            console.warn('Failed to calculate household budget analytics:', error);
+            setPredictiveForecasts([]);
+            setScenarios([]);
+            setAnomalies([]);
+            setSeasonalityPatterns([]);
+        }
+    }, [householdBudgetEngine, data?.goals, data, currentYear, sarPerUsd]);
 
     const suggestedMonthlySalary = useMemo(() => {
         if (!data) return 0;
@@ -971,109 +982,128 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             : (request?.request_type ?? 'Request');
 
     React.useEffect(() => {
+        if (!supabase || !auth?.user) {
+            setGovernanceReady(true);
+            return;
+        }
+
+        const sb = supabase;
+        const user = auth.user;
+        let cancelled = false;
+
         const loadGovernance = async () => {
-            if (!supabase || !auth?.user) return;
-            const { data: userRecord } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
-            const admin = inferIsAdmin(auth.user, userRecord?.role ?? null);
-            setIsAdmin(admin);
+            setGovernanceReady(false);
+            try {
+                const { data: userRecord } = await sb.from('users').select('role').eq('id', user.id).maybeSingle();
+                const admin = inferIsAdmin(user, userRecord?.role ?? null);
+                if (cancelled) return;
+                setIsAdmin(admin);
 
-            const { data: categories } = await supabase
-                .from('categories')
-                .select('id, name, monthly_limit')
-                .order('name', { ascending: true });
-            setGovernanceCategories(categories || []);
+                const { data: categories } = await sb
+                    .from('categories')
+                    .select('id, name, monthly_limit')
+                    .order('name', { ascending: true });
+                if (cancelled) return;
+                setGovernanceCategories(categories || []);
 
-            if (!admin) {
-                const { data: permissions } = await supabase
-                    .from('permissions')
-                    .select('categories(name)')
-                    .eq('user_id', auth.user.id);
-                setPermittedCategories((permissions || []).map((p: any) => p.categories?.name).filter(Boolean));
+                if (!admin) {
+                    const { data: permissions } = await sb
+                        .from('permissions')
+                        .select('categories(name)')
+                        .eq('user_id', user.id);
+                    if (cancelled) return;
+                    setPermittedCategories((permissions || []).map((p: any) => p.categories?.name).filter(Boolean));
 
-                const { data: ownRequests } = await supabase
-                    .from('budget_requests')
+                    const { data: ownRequests } = await sb
+                        .from('budget_requests')
+                        .select('*')
+                        .eq('user_id', user.id)
+                        .order('created_at', { ascending: false });
+                    if (cancelled) return;
+                    setBudgetRequests(ownRequests || []);
+                } else {
+                    const { data: requests } = await sb
+                        .from('budget_requests')
+                        .select('*')
+                        .order('created_at', { ascending: false });
+                    if (cancelled) return;
+                    setBudgetRequests(requests || []);
+                }
+
+                const { data: sharedRows, error: sharedRowsError } = await sb
+                    .rpc('get_shared_budgets_for_me')
+                    .then((r) => r, () => ({ data: [] as any[], error: null } as any));
+
+                if (cancelled) return;
+
+                if (sharedRowsError) {
+                    const message = (sharedRowsError.message || '').trim();
+                    const normalized = /get_shared_budgets_for_me|function\s+public\.get_shared_budgets_for_me/i.test(message)
+                        ? 'Shared budgets are unavailable until the latest migration is applied. Run docs/budget_sharing_ready.sql.'
+                        : message || 'Could not load shared budgets right now.';
+                    console.warn(normalized);
+                    setSharedBudgets([]);
+                } else {
+                    const filtered = ((sharedRows || []) as any[]).map((b) => ({
+                        ...b,
+                        period: b.period ?? 'monthly',
+                        month: Number(b.month) || currentMonth,
+                        year: Number(b.year) || currentYear,
+                        tier: b.tier ?? b.budget_tier ?? 'Optional',
+                        ownerEmail: b.owner_email || b.owner_user_id || b.user_id,
+                        owner_user_id: b.owner_user_id || b.user_id,
+                    }));
+                    setSharedBudgets(dedupeSharedBudgetRows(filtered));
+                }
+
+                const rpcWindow = sharedBudgetConsumedRpcArgs(budgetView, currentDate, currentYear, currentMonth, monthStartDay);
+                const consumedMap = await fetchSharedConsumedMap(sb, rpcWindow as Record<string, unknown>);
+                if (cancelled) return;
+                setSharedConsumedByOwnerCategory(consumedMap);
+
+                const prevRpc = sharedBudgetConsumedRpcArgsForRange(
+                    budgetSpendWindows.previousRangeStart,
+                    budgetSpendWindows.previousRangeEnd,
+                );
+                const prevMap = await fetchSharedConsumedMap(sb, prevRpc as Record<string, unknown>);
+                if (cancelled) return;
+                setSharedConsumedPreviousByOwnerCategory(prevMap);
+
+                let ytdMap = new Map<string, number>();
+                if (budgetView === 'Monthly' && budgetSpendWindows.ytdStart && budgetSpendWindows.ytdEnd) {
+                    const ytdRpc = sharedBudgetConsumedRpcArgsForRange(budgetSpendWindows.ytdStart, budgetSpendWindows.ytdEnd);
+                    ytdMap = await fetchSharedConsumedMap(sb, ytdRpc as Record<string, unknown>);
+                }
+                if (cancelled) return;
+                setSharedConsumedYtdByOwnerCategory(ytdMap);
+                setSharedConsumedSyncedAt(Date.now());
+                const { data: ownerTxRows } = await sb
+                    .from('budget_shared_transactions')
                     .select('*')
-                    .eq('user_id', auth.user.id)
-                    .order('created_at', { ascending: false });
-                setBudgetRequests(ownRequests || []);
-            } else {
-                const { data: requests } = await supabase
-                    .from('budget_requests')
+                    .eq('owner_user_id', user.id)
+                    .order('transaction_date', { ascending: false })
+                    .then((r) => r, () => ({ data: [] as any[] } as any));
+                if (cancelled) return;
+                setOwnerSharedTransactions((ownerTxRows || []) as any[]);
+
+                const { data: myTxRows } = await sb
+                    .from('budget_shared_transactions')
                     .select('*')
-                    .order('created_at', { ascending: false });
-                setBudgetRequests(requests || []);
+                    .eq('contributor_user_id', user.id)
+                    .order('transaction_date', { ascending: false })
+                    .then((r) => r, () => ({ data: [] as any[] } as any));
+                if (cancelled) return;
+                setMySharedBudgetTransactions((myTxRows || []) as any[]);
+            } finally {
+                if (!cancelled) setGovernanceReady(true);
             }
-
-            // Shared budgets are fetched through an RPC so recipients only see explicitly shared budget rows.
-            const { data: sharedRows, error: sharedRowsError } = await supabase
-                .rpc('get_shared_budgets_for_me')
-                .then((r) => r, () => ({ data: [] as any[], error: null } as any));
-
-            if (sharedRowsError) {
-                const message = (sharedRowsError.message || '').trim();
-                const normalized = /get_shared_budgets_for_me|function\s+public\.get_shared_budgets_for_me/i.test(message)
-                    ? 'Shared budgets are unavailable until the latest migration is applied. Run docs/budget_sharing_ready.sql.'
-                    : message || 'Could not load shared budgets right now.';
-                console.warn(normalized);
-                setSharedBudgets([]);
-            } else {
-                const filtered = ((sharedRows || []) as any[]).map((b) => ({
-                    ...b,
-                    period: b.period ?? 'monthly',
-                    month: Number(b.month) || currentMonth,
-                    year: Number(b.year) || currentYear,
-                    tier: b.tier ?? b.budget_tier ?? 'Optional',
-                    ownerEmail: b.owner_email || b.owner_user_id || b.user_id,
-                    owner_user_id: b.owner_user_id || b.user_id,
-                }));
-                setSharedBudgets(dedupeSharedBudgetRows(filtered));
-            }
-
-
-            const spendWindows = computeBudgetSpendWindows({
-                budgetView,
-                currentYear,
-                currentMonth,
-                monthStartDay,
-                anchorDate: currentDate,
-            });
-            const rpcWindow = sharedBudgetConsumedRpcArgs(budgetView, currentDate, currentYear, currentMonth, monthStartDay);
-            const consumedMap = await fetchSharedConsumedMap(supabase, rpcWindow as Record<string, unknown>);
-            setSharedConsumedByOwnerCategory(consumedMap);
-
-            const prevRpc = sharedBudgetConsumedRpcArgsForRange(
-                spendWindows.previousRangeStart,
-                spendWindows.previousRangeEnd,
-            );
-            const prevMap = await fetchSharedConsumedMap(supabase, prevRpc as Record<string, unknown>);
-            setSharedConsumedPreviousByOwnerCategory(prevMap);
-
-            let ytdMap = new Map<string, number>();
-            if (budgetView === 'Monthly' && spendWindows.ytdStart && spendWindows.ytdEnd) {
-                const ytdRpc = sharedBudgetConsumedRpcArgsForRange(spendWindows.ytdStart, spendWindows.ytdEnd);
-                ytdMap = await fetchSharedConsumedMap(supabase, ytdRpc as Record<string, unknown>);
-            }
-            setSharedConsumedYtdByOwnerCategory(ytdMap);
-            setSharedConsumedSyncedAt(Date.now());
-            const { data: ownerTxRows } = await supabase
-                .from('budget_shared_transactions')
-                .select('*')
-                .eq('owner_user_id', auth.user.id)
-                .order('transaction_date', { ascending: false })
-                .then((r) => r, () => ({ data: [] as any[] } as any));
-            setOwnerSharedTransactions((ownerTxRows || []) as any[]);
-
-            const { data: myTxRows } = await supabase
-                .from('budget_shared_transactions')
-                .select('*')
-                .eq('contributor_user_id', auth.user.id)
-                .order('transaction_date', { ascending: false })
-                .then((r) => r, () => ({ data: [] as any[] } as any));
-            setMySharedBudgetTransactions((myTxRows || []) as any[]);
         };
 
-        loadGovernance();
-    }, [auth?.user?.id, dataResetKey, currentYear, currentMonth, monthStartDay, budgetView, currentDate]);
+        void loadGovernance();
+        return () => {
+            cancelled = true;
+        };
+    }, [auth?.user?.id, dataResetKey, budgetSpendWindows, budgetView, currentDate, currentYear, currentMonth, monthStartDay]);
 
 
     React.useEffect(() => {
@@ -1108,13 +1138,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const previousSpending = new Map<string, number>();
         const ytdSpending = new Map<string, number>();
 
-        const { rangeStart, rangeEnd, previousRangeStart, previousRangeEnd, ytdStart, ytdEnd } = computeBudgetSpendWindows({
-            budgetView,
-            currentYear,
-            currentMonth,
-            monthStartDay,
-            anchorDate: currentDate,
-        });
+        const { rangeStart, rangeEnd, previousRangeStart, previousRangeEnd, ytdStart, ytdEnd } = budgetSpendWindows;
 
         ((data as any)?.personalTransactions ?? data?.transactions ?? [])
             .filter((t: { type?: string; status?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && (t.status ?? 'Approved') === 'Approved')
@@ -1304,7 +1328,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 };
             })
             .sort((a, b) => b.spent - a.spent);
-    }, [data?.transactions, (data as any)?.personalTransactions, data?.budgets, data?.budgetRequests, currentYear, currentMonth, monthStartDay, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id, sarPerUsd, accountCurrencyById, installmentBudgetRows, currentDate]);
+    }, [data?.transactions, (data as any)?.personalTransactions, data?.budgets, data?.budgetRequests, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id, sarPerUsd, accountCurrencyById, installmentBudgetRows, budgetSpendWindows]);
 
     // Admin Approved Budgets Overview: same SAR splits, YTD envelope, and prior-month trend as main Budgets cards.
     const adminApprovedOverviewRaw = useMemo<BudgetRow[]>(() => {
@@ -1577,13 +1601,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const sharedBudgetCards = useMemo<BudgetRow[]>(() => {
         const spendingByOwnerCategory = new Map<string, number>();
         const ytdSpendingByOwnerCategory = new Map<string, number>();
-        const { rangeStart, rangeEnd, previousRangeStart, previousRangeEnd, ytdStart, ytdEnd } = computeBudgetSpendWindows({
-            budgetView,
-            currentYear,
-            currentMonth,
-            monthStartDay,
-            anchorDate: currentDate,
-        });
+        const { rangeStart, rangeEnd, previousRangeStart, previousRangeEnd, ytdStart, ytdEnd } = budgetSpendWindows;
 
         const previousSpendingByOwnerCategory = new Map<string, number>();
 
@@ -1788,11 +1806,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         budgetView,
         currentYear,
         currentMonth,
-        monthStartDay,
         auth?.user?.id,
         sarPerUsd,
         accountCurrencyById,
-        currentDate,
+        budgetSpendWindows,
     ]);
 
     const sharedBudgetOwnerByCardId = useMemo(() => {
@@ -1806,7 +1823,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
     const availableIncreaseCategories = useMemo(() => {
         const ownCategories = budgetData.map((b) => ({ value: `OWN::${b.category}`, label: b.category, category: b.category, source: 'own' as const }));
-        const sharedCategories = sharedBudgetCards.map((b) => ({
+        const sharedCategories = (governanceReady ? sharedBudgetCards : []).map((b) => ({
             value: `SHARED::${(b as any).owner_user_id || b.user_id || (b as any).ownerEmail || 'owner'}::${b.category}`,
             label: `${b.category} (shared from ${sharedBudgetOwnerByCardId.get(b.id) || 'Owner'})`,
             category: b.category,
@@ -1816,27 +1833,54 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const dedup = new Map<string, typeof merged[number]>();
         merged.forEach((item) => dedup.set(item.value, item));
         return Array.from(dedup.values()).sort((a, b) => a.label.localeCompare(b.label));
-    }, [budgetData, sharedBudgetCards, sharedBudgetOwnerByCardId]);
+    }, [budgetData, sharedBudgetCards, sharedBudgetOwnerByCardId, governanceReady]);
 
-    const toggleBudgetCardSize = (id: string) => setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
+    const toggleBudgetCardSize = useCallback((id: string) => {
+        setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
+    }, []);
+
+    const handleOwnPortfolioNavigate = useCallback(
+        (budget: BudgetRow) => {
+            if (triggerPageAction) {
+                const periodTag = budgetView.toLowerCase();
+                triggerPageAction(
+                    'Transactions',
+                    `filter-by-budget:${budget.category}:${periodTag}:${budget.year || currentYear}:${budget.month || currentMonth}`,
+                );
+            }
+        },
+        [triggerPageAction, budgetView, currentYear, currentMonth],
+    );
+
+    const handleOwnPortfolioDelete = useCallback(
+        (budget: BudgetRow) => {
+            deleteBudget(budget.category, budget.month, budget.year);
+        },
+        [deleteBudget],
+    );
 
     const budgetInsightsRows = useMemo<BudgetRow[]>(() => [...budgetData, ...sharedBudgetCards], [budgetData, sharedBudgetCards]);
 
+    /** Rollups match cards: wait for permissions + shared consumed RPCs before trusting combined rows. */
+    const portfolioInsightsReady = !auth?.user?.id || governanceReady;
+
     const budgetInsights = useMemo(() => {
-        const totalLimit = budgetInsightsRows.reduce((sum, b) => sum + b.monthlyLimit, 0);
-        const totalSpent = budgetInsightsRows.reduce((sum, b) => sum + b.spent, 0);
+        const rows = portfolioInsightsReady ? budgetInsightsRows : [];
+        const totalLimit = rows.reduce((sum, b) => sum + b.monthlyLimit, 0);
+        const totalSpent = rows.reduce((sum, b) => sum + b.spent, 0);
         /** Money saved from budget = sum of (limit - spent) for categories where we're under. Same as max(0, totalLimit - totalSpent) when no category is over. */
         const totalSavedFromBudget = Math.max(0, totalLimit - totalSpent);
-        const healthyCount = budgetInsightsRows.filter((b) => b.utilizationLabel === 'Healthy').length;
-        const watchCount = budgetInsightsRows.filter((b) => b.utilizationLabel === 'Watch').length;
-        const criticalCount = budgetInsightsRows.filter((b) => b.utilizationLabel === 'Critical').length;
-        const topChange = [...budgetInsightsRows].sort((a, b) => Math.abs(b.trendDelta ?? 0) - Math.abs(a.trendDelta ?? 0))[0];
+        const healthyCount = rows.filter((b) => b.utilizationLabel === 'Healthy').length;
+        const watchCount = rows.filter((b) => b.utilizationLabel === 'Watch').length;
+        const criticalCount = rows.filter((b) => b.utilizationLabel === 'Critical').length;
+        const topChange = [...rows].sort((a, b) => Math.abs(b.trendDelta ?? 0) - Math.abs(a.trendDelta ?? 0))[0];
 
         return { totalLimit, totalSpent, totalSavedFromBudget, healthyCount, watchCount, criticalCount, topChange };
-    }, [budgetInsightsRows]);
+    }, [portfolioInsightsReady, budgetInsightsRows]);
 
     const budgetValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
+        if (auth?.user?.id && !governanceReady) return warnings;
         if (!Number.isFinite(budgetInsights.totalLimit) || !Number.isFinite(budgetInsights.totalSpent)) {
             warnings.push('Budget totals contain invalid values.');
         }
@@ -1848,7 +1892,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         if (uncategorizedExpenses > 0) {
             warnings.push(`${uncategorizedExpenses} approved expense transaction(s) are not mapped to budget categories.`);
         }
-        if (isAdmin && budgetRequests.some((r) => r.status === 'Pending') && budgetData.length === 0) {
+        if (isAdmin && governanceReady && budgetRequests.some((r) => r.status === 'Pending') && budgetData.length === 0) {
             warnings.push('Pending requests exist while no budget cards are visible for this filter/month.');
         }
         const [fy, fm] = String(sharedTxMonthFilter || '').split('-').map(Number);
@@ -1856,7 +1900,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             warnings.push('Shared transaction month filter is invalid; defaulting to all months.');
         }
         return warnings;
-    }, [budgetInsights, budgetData, budgetInsightsRows, data?.transactions, (data as any)?.personalTransactions, budgetRequests, isAdmin, sharedTxMonthFilter]);
+    }, [governanceReady, auth?.user?.id, budgetInsights, budgetData, budgetInsightsRows, data?.transactions, (data as any)?.personalTransactions, budgetRequests, isAdmin, sharedTxMonthFilter]);
 
     const updateMonthlyOverride = (month: number, patch: Partial<HouseholdMonthlyOverride>) => {
         setHouseholdOverrides((prev) => {
@@ -1869,11 +1913,18 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
     const criticalValidationCount = useMemo(() => householdBudgetEngine.months.reduce((sum, m) => sum + ((m.validationErrors?.length || 0) > 0 ? 1 : 0), 0), [householdBudgetEngine]);
 
-    const handleOpenModal = (budget: Budget | null = null) => {
+    const handleOpenModal = useCallback((budget: Budget | null = null) => {
         if (!isAdmin) return;
         setBudgetToEdit(budget);
         setIsModalOpen(true);
-    };
+    }, [isAdmin]);
+
+    const handleOwnPortfolioEdit = useCallback(
+        (budget: BudgetRow) => {
+            handleOpenModal({ ...budget, limit: budget.displayLimit });
+        },
+        [handleOpenModal],
+    );
 
     const handleSaveBudget = (budget: Omit<Budget, 'id' | 'user_id'>, isEditing: boolean) => {
         if (isEditing && budgetToEdit) {
@@ -2346,9 +2397,22 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
     if (loading || !data) {
         return (
-            <div className="flex justify-center items-center h-96" aria-busy="true">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading budgets" />
-            </div>
+            <PageLayout title="Budgets" description="Loading your budget data…" action={null}>
+                <div className="space-y-5" aria-busy="true" aria-label="Loading budgets">
+                    <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white/80 px-4 py-3">
+                        <div className="h-10 w-10 shrink-0 rounded-full border-2 border-primary border-t-transparent animate-spin" aria-hidden />
+                        <div>
+                            <p className="text-sm font-semibold text-slate-800">Loading transactions, budgets, and permissions…</p>
+                            <p className="text-xs text-slate-500 mt-0.5">Card totals appear after your workspace data finishes loading.</p>
+                        </div>
+                    </div>
+                    <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
+                        {Array.from({ length: 6 }).map((_, i) => (
+                            <BudgetCardSkeleton key={`budget-sk-${i}`} />
+                        ))}
+                    </div>
+                </div>
+            </PageLayout>
         );
     }
 
@@ -2448,10 +2512,21 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
             <SectionCard title="Budget Intelligence" collapsible collapsibleSummary="Portfolio, spend, attention" defaultExpanded>
                 <p className="text-xs text-slate-500 mb-2">
-                    {sharedBudgetCards.length > 0
-                        ? `Totals and health counts include your budgets plus ${sharedBudgetCards.length} shared card(s).`
-                        : 'Totals reflect the budgets shown above for the selected view.'}
+                    {auth?.user?.id && !governanceReady ? (
+                        <span className="font-medium text-indigo-700">Updating permissions and shared-budget sync—totals refresh in a moment.</span>
+                    ) : sharedBudgetCards.length > 0 ? (
+                        `Totals and health counts include your budgets plus ${sharedBudgetCards.length} shared card(s).`
+                    ) : (
+                        'Totals reflect the budgets shown above for the selected view.'
+                    )}
                 </p>
+                {auth?.user?.id && !governanceReady ? (
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm min-w-0" aria-busy="true">
+                        {Array.from({ length: 4 }).map((_, i) => (
+                            <div key={`insight-sk-${i}`} className="rounded-lg border border-slate-200 bg-slate-100/60 p-3 min-h-[4.5rem] animate-pulse" />
+                        ))}
+                    </div>
+                ) : (
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm min-w-0">
                     <div className="rounded-lg border bg-slate-50 p-3 min-w-0 overflow-hidden flex flex-col">
                         <p className="metric-label text-gray-500 w-full">Portfolio Budget</p>
@@ -2470,7 +2545,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         <p className="metric-value text-lg font-semibold w-full">{budgetInsights.healthyCount}</p>
                     </div>
                 </div>
-                {budgetInsights.topChange && (
+                )}
+                {portfolioInsightsReady && budgetInsights.topChange && (
                     <p className="mt-3 text-xs text-gray-600">
                         Largest movement: <span className="font-semibold">{budgetInsights.topChange.category}</span> ({budgetInsights.topChange.trendDirection === 'up' ? '+' : ''}{formatCurrencyString(budgetInsights.topChange.trendDelta ?? 0, { digits: 0 })} vs previous period).
                     </p>
@@ -2767,7 +2843,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             </div>
 
             <div className={budgetSubPage === 'household' ? '' : 'hidden'}>
-            <div className="rounded-2xl border border-cyan-100 bg-gradient-to-r from-cyan-50/90 to-white px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm text-slate-700 shadow-sm mb-6">
+            <div className="rounded-2xl border border-cyan-100 bg-gradient-to-r from-cyan-50/90 to-white px-4 py-3 shadow-sm mb-6 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm text-slate-700">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <span className="inline-flex items-center rounded-full bg-cyan-100 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-cyan-950">Household engine · SAR</span>
                     <span>
@@ -2783,8 +2860,37 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         <span className="block text-[11px] text-slate-500 mt-0.5">Example: SAR 10,000 ≈ {formatSecondaryEquivalent(10000)}</span>
                     )}
                 </div>
+                </div>
+                <div className="w-full pt-2 border-t border-cyan-200/70 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-600">
+                    <span>
+                        <span className="text-slate-500">Planning year:</span>{' '}
+                        <span className="font-semibold text-slate-800 tabular-nums">{currentYear}</span>
+                    </span>
+                    <span className="hidden sm:inline text-slate-400" aria-hidden>
+                        ·
+                    </span>
+                    <span className="text-slate-600">
+                        Projections use the same approved-transaction cashflow rules and app FX as Budget Overview (SAR-first).
+                    </span>
+                    {auth?.user?.id && householdProfileCloudEnabled && !householdCloudProfileReady && (
+                        <span className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-100/90 px-2 py-1 font-semibold text-cyan-950 ring-1 ring-cyan-200/80">
+                            <span className="h-2 w-2 animate-pulse rounded-full bg-cyan-600" aria-hidden />
+                            Merging saved household profile…
+                        </span>
+                    )}
+                    {auth?.user?.id && !governanceReady && (
+                        <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2 py-1 font-semibold text-amber-900 ring-1 ring-amber-200/80">
+                            <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" aria-hidden />
+                            Budget permissions still syncing — bulk admin tools may update in a moment
+                        </span>
+                    )}
+                </div>
             </div>
 
+            {!householdCloudProfileReady ? (
+                <HouseholdEngineSkeleton />
+            ) : (
+                <>
             {householdEngineValidationWarnings.length > 0 && (
                 <div className="rounded-2xl border-l-4 border-l-amber-500 bg-amber-50/90 border border-amber-100 px-4 py-3 shadow-sm mb-6" role="status">
                     <p className="text-sm font-semibold text-amber-950">Before you rely on these projections</p>
@@ -3689,9 +3795,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     </div>
                 </details>
             </SectionCard>
+                </>
+            )}
             </div>
 
-            {budgetInsightsRows.length > 0 && (
+            {portfolioInsightsReady && budgetInsightsRows.length > 0 && (
                 <div className="section-card border-l-4 border-emerald-500/60">
                     <h3 className="section-title text-base">Money saved from budget</h3>
                     <p className="text-2xl font-bold text-emerald-700 tabular-nums">{formatCurrencyString(budgetInsights.totalSavedFromBudget, { digits: 0 })}</p>
@@ -3763,7 +3871,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     <p className="text-sm text-slate-600">Only Admin can share budgets. Any budgets shared with you are listed below.</p>
                 )}
 
-                {sharedBudgetCards.length > 0 && (
+                {governanceReady && sharedBudgetCards.length > 0 && (
                     <div className="mt-4 space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-indigo-200/70 bg-gradient-to-r from-indigo-600/[0.07] via-violet-600/[0.08] to-fuchsia-600/[0.07] px-5 py-4 shadow-lg shadow-indigo-950/5 backdrop-blur-md ring-1 ring-white/60">
                             <div>
@@ -4252,119 +4360,58 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 </SectionCard>
             )}
 
-            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
-                {orderedBudgetData.map((budget) => {
-                    const utilLabel = budget.utilizationLabel ?? 'Healthy';
-                    const periodBadge =
-                        (budget.period ?? 'monthly') === 'yearly'
-                            ? 'Yearly total'
-                            : (budget.period ?? 'monthly') === 'weekly'
-                              ? 'Weekly'
-                              : (budget.period ?? 'monthly') === 'daily'
-                                ? 'Daily'
-                                : 'Monthly';
-                    return (
-                    <button
-                        key={budget.id}
-                        type="button"
-                        className={`group flex h-full min-h-0 w-full flex-col text-left rounded-3xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-indigo-500/90 transition-transform duration-300 hover:-translate-y-1 active:translate-y-0 active:scale-[0.995] ${expandedCards[budget.id] ? 'md:col-span-2' : ''}`}
-                        onClick={() => {
-                            if (triggerPageAction) {
-                                const periodTag = budgetView.toLowerCase();
-                                triggerPageAction('Transactions', `filter-by-budget:${budget.category}:${periodTag}:${budget.year || currentYear}:${budget.month || currentMonth}`);
-                            }
-                        }}
-                    >
-                        <BudgetCardShell utilizationLabel={utilLabel} budgetTier={budget.budgetTier ?? 'Optional'}>
-                        <div className="flex min-h-0 flex-1 flex-col">
-                        <div className="flex shrink-0 gap-3 sm:gap-4">
-                            <BudgetUsageDial percentage={budget.percentage} utilizationLabel={utilLabel} size={58} />
-                            <div className="min-w-0 flex-1">
-                                <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-2">
-                                    <div className="min-w-0">
-                                        <h3 className="text-lg sm:text-xl font-bold tracking-tight text-slate-900 inline-flex items-center gap-1.5">
-                                            {budget.category}
-                                            <InfoHint text={getCategoryHint(budget.category)} placement="bottom" />
-                                        </h3>
-                                        <span className="mt-2 inline-flex items-center rounded-full border border-slate-200/90 bg-white/80 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-600 shadow-sm backdrop-blur-sm">
-                                            {periodBadge}
-                                        </span>
-                                    </div>
-                                    <div className="flex shrink-0 flex-row flex-wrap items-center justify-end gap-1.5">
-                                        <span
-                                            className={`text-[10px] font-bold px-2.5 py-1 rounded-full border shadow-sm backdrop-blur-sm ${
-                                                budget.budgetTier === 'Core'
-                                                    ? 'bg-indigo-100/90 text-indigo-950 border-indigo-200/80'
-                                                    : budget.budgetTier === 'Supporting'
-                                                      ? 'bg-sky-100/90 text-sky-950 border-sky-200/80'
-                                                      : 'bg-slate-100/90 text-slate-800 border-slate-200/80'
-                                            }`}
-                                        >
-                                            {budget.budgetTier}
-                                        </span>
-                                        <span
-                                            className={`text-[10px] font-bold px-2.5 py-1 rounded-full shadow-md ${
-                                                utilLabel === 'Critical'
-                                                    ? 'bg-gradient-to-r from-rose-600 to-orange-600 text-white'
-                                                    : utilLabel === 'Watch'
-                                                      ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white'
-                                                      : 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white'
-                                            }`}
-                                        >
-                                            {utilLabel}
-                                        </span>
-                                    </div>
-                                </div>
-                                <p className="mt-2 text-[11px] text-slate-500 leading-snug">
-                                    Tap to open matching transactions for this view.
-                                </p>
-                            </div>
-                        </div>
+            <div className="rounded-xl border border-slate-200/90 bg-gradient-to-r from-slate-50/95 via-white/90 to-indigo-50/50 px-4 py-3 text-xs text-slate-700 shadow-sm">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <span className="font-bold uppercase tracking-wide text-slate-800">Data scope</span>
+                    <span>
+                        <span className="text-slate-500">View:</span> <span className="font-semibold text-slate-900">{budgetView}</span>
+                    </span>
+                    <span className="tabular-nums">
+                        <span className="text-slate-500">Window:</span>{' '}
+                        <span className="font-semibold text-slate-900">{periodWindowLabel}</span>
+                    </span>
+                    <span className="tabular-nums">
+                        <span className="text-slate-500">Financial month starts:</span>{' '}
+                        <span className="font-semibold text-slate-900">day {monthStartDay}</span>
+                    </span>
+                    <span>
+                        <span className="text-slate-500">Display currency:</span>{' '}
+                        <span className="font-semibold text-slate-900">{displayCurrency}</span>
+                    </span>
+                    {auth?.user?.id && !governanceReady ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2 py-1 font-semibold text-amber-900 ring-1 ring-amber-200/80">
+                            <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" aria-hidden />
+                            Syncing permissions &amp; shared totals…
+                        </span>
+                    ) : null}
+                    <InfoHint text="Totals use approved expenses only, converted to SAR at your app FX rate (transaction splits respected). Shared-budget cards use the same date window via owner consumed totals when synced. Unpaid installments count on their due dates." />
+                </div>
+            </div>
 
-                        <BudgetCardMetricsBlocks
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
+                {auth?.user?.id && !governanceReady ? (
+                    Array.from({ length: 6 }).map((_, i) => <BudgetCardSkeleton key={`gov-sk-${i}`} />)
+                ) : (
+                    orderedBudgetData.map((budget) => (
+                        <BudgetOwnPortfolioCard
+                            key={budget.id}
                             budget={budget}
                             budgetView={budgetView}
                             currentYear={currentYear}
-                            formatCurrencyString={formatCurrencyString}
                             periodWindowLabel={periodWindowLabel}
+                            expanded={Boolean(expandedCards[budget.id])}
+                            getCategoryHint={getCategoryHint}
+                            formatCurrencyString={formatCurrencyString}
+                            onNavigateToTransactions={handleOwnPortfolioNavigate}
+                            onToggleExpand={toggleBudgetCardSize}
+                            onEdit={handleOwnPortfolioEdit}
+                            onDelete={handleOwnPortfolioDelete}
+                            canDelete={isAdmin}
                         />
-
-                        <div className="min-h-[1px] flex-1" aria-hidden />
-
-                        <div className="mt-auto flex shrink-0 justify-end items-center gap-1 border-t border-slate-200/50 pt-3">
-                            <button type="button" onClick={() => toggleBudgetCardSize(budget.id)} className="p-2 text-slate-400 hover:text-primary rounded-lg hover:bg-white/80" title={expandedCards[budget.id] ? 'Compact card' : 'Expand card'} aria-label={expandedCards[budget.id] ? 'Compact card' : 'Expand card'}>
-                                <ChevronRightIcon className={`h-4 w-4 transition-transform ${expandedCards[budget.id] ? 'rotate-90' : ''}`} />
-                            </button>
-                            <button
-                                type="button"
-                                disabled={budgetView === 'Yearly'}
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleOpenModal({ ...budget, limit: budget.displayLimit });
-                                }}
-                                className="p-2 text-slate-400 hover:text-primary rounded-lg hover:bg-white/80 disabled:opacity-40"
-                            >
-                                <PencilIcon className="h-4 w-4"/>
-                            </button>
-                            <button
-                                type="button"
-                                disabled={!isAdmin || budgetView === 'Yearly'}
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    deleteBudget(budget.category, budget.month, budget.year);
-                                }}
-                                className="p-2 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 disabled:opacity-40"
-                            >
-                                <TrashIcon className="h-4 w-4"/>
-                            </button>
-                        </div>
-                        </div>
-                        </BudgetCardShell>
-                    </button>
-                    );
-                })}
+                    ))
+                )}
             </div>
-             {budgetData.length === 0 && (
+             {governanceReady && budgetData.length === 0 && (
                 <div className="text-center py-14 px-6 rounded-3xl border border-dashed border-slate-300/90 bg-gradient-to-b from-slate-50 via-white to-indigo-50/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
                     <p className="text-slate-600 font-medium">No budgets set for this month.</p>
                     {setActivePage && (
