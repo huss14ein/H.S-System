@@ -12,12 +12,13 @@ import {
 import {
     cacheRowsToSimulatedMap,
     loadQuoteCacheRows,
+    resolveSymbolsToLiveFetch,
     saveQuoteCacheRows,
-    symbolsNeedingLiveFetch,
     upsertCacheFromLiveQuotes,
 } from '../services/quotePriceCache';
 import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd } from '../utils/currencyMath';
+import { portfolioBelongsToAccount, resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
 import { getRefreshableHoldingQuoteSymbols } from '../services/quoteRefreshSymbols';
 import {
     buildCommodityHoldingValueUpdatesFromTrustedSnapshot,
@@ -34,6 +35,7 @@ const MarketSimulator: React.FC = () => {
 
     const previousPricesRef = useRef<Record<string, number>>({});
     const didInitialPricePassRef = useRef(false);
+    const tickInFlightRef = useRef(false);
 
     /** When portfolio data first loads, run one price pass (live if API key present). */
     useEffect(() => {
@@ -57,25 +59,27 @@ const MarketSimulator: React.FC = () => {
     useEffect(() => {
         if (!marketContext) return;
         if (marketContext.refreshTrigger === 0) return;
-        
-        const runSimulationTick = async (isRealFetch: boolean = false) => {
+        if (tickInFlightRef.current) return;
+
+        const runSimulationTick = async (priceScope: NonNullable<ReturnType<typeof marketContext.consumePriceRefreshScope>>) => {
             const { dataContext, marketContext } = contextRef.current;
             if (!dataContext || !marketContext || !dataContext.data) {
-                marketContext?.finishQuotesRefresh();
                 return;
             }
 
-            const priceScope = marketContext.consumePriceRefreshScope();
-            const platformIdOnly = priceScope.kind === 'platform' ? priceScope.platformId : null;
+            const platformIdOnly =
+                priceScope.kind === 'platform' ? resolveCanonicalAccountId(priceScope.platformId, dataContext.data.accounts ?? []) : null;
             const scopeIsPlatform = platformIdOnly != null;
+            const forceFetch = priceScope.forceFetch === true;
 
             const { data, batchUpdateHoldingValues, batchUpdateCommodityHoldingValues, updatePriceAlert } = dataContext;
             const { setSimulatedPrices, simulatedPrices: currentSimulatedPrices, setIsLive, setLastUpdated, touchQuoteTimestamps } = marketContext;
             const sarPerUsd = resolveSarPerUsd(data, contextRef.current.exchangeRate);
 
+            const accounts = data.accounts ?? [];
             const allInvestments = ((data as any)?.personalInvestments ?? data?.investments ?? []) as InvestmentPortfolio[];
             const portfoliosInScope = platformIdOnly
-                ? allInvestments.filter((p) => p.accountId === platformIdOnly)
+                ? allInvestments.filter((p) => portfolioBelongsToAccount(p, { id: platformIdOnly }, accounts))
                 : allInvestments;
             const allHoldings = portfoliosInScope.flatMap((p) => p.holdings ?? []);
             const holdingSymbols = getRefreshableHoldingQuoteSymbols(
@@ -120,7 +124,7 @@ const MarketSimulator: React.FC = () => {
                 newPrices[symbol] = { price: newPrice, change, changePercent };
             };
 
-            if (isRealFetch) {
+            {
                 try {
                     let cacheRows = loadQuoteCacheRows();
                     const cacheSim = cacheRowsToSimulatedMap(cacheRows);
@@ -131,7 +135,7 @@ const MarketSimulator: React.FC = () => {
                                   cacheSim as Record<string, LiveQuoteRow>,
                               )
                             : {};
-                    const toFetch = symbolsNeedingLiveFetch(uniqueSymbols, cacheRows);
+                    const toFetch = resolveSymbolsToLiveFetch(uniqueSymbols, cacheRows, { forceFetch });
 
                     /** Equity and commodities are independent: a thrown/rejected equity batch must not discard commodity quotes. */
                     const equityFetchPromise: Promise<Record<string, LiveQuoteRow>> =
@@ -286,7 +290,7 @@ const MarketSimulator: React.FC = () => {
             });
             
             if (scopeIsPlatform) {
-                setSimulatedPrices({ ...currentSimulatedPrices, ...newPrices });
+                setSimulatedPrices((prev) => ({ ...prev, ...newPrices }));
             } else {
                 setSimulatedPrices(newPrices);
                 setIsLive(liveStatus);
@@ -322,13 +326,27 @@ const MarketSimulator: React.FC = () => {
             }
         };
 
+        tickInFlightRef.current = true;
         void (async () => {
+            const ctx = contextRef.current.marketContext;
             try {
-                await runSimulationTick(true);
-            } catch (e) {
-                console.error('MarketSimulator tick failed:', e);
+                while (ctx) {
+                    const scope = ctx.consumePriceRefreshScope();
+                    if (!scope) break;
+                    try {
+                        await runSimulationTick(scope);
+                    } catch (e) {
+                        console.error('MarketSimulator tick failed:', e);
+                    }
+                }
             } finally {
-                contextRef.current.marketContext?.finishQuotesRefresh();
+                tickInFlightRef.current = false;
+                const after = contextRef.current.marketContext;
+                if (after?.hasQueuedPriceRefresh()) {
+                    after.notifyQueuedPriceRefresh();
+                } else {
+                    after?.finishQuotesRefresh();
+                }
             }
         })();
 

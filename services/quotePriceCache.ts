@@ -54,6 +54,29 @@ export function isQuoteFresh(entry: CachedQuoteRow | undefined, ttlMs: number = 
 /**
  * Symbols that need a live fetch: missing from cache or older than TTL (checked via canonical + aliases).
  */
+/**
+ * Symbols to request from live providers. Manual refresh passes `forceFetch: true` so
+ * user-initiated sync always hits the network even when cache TTL has not expired.
+ */
+export function resolveSymbolsToLiveFetch(
+  requestedSymbols: string[],
+  rows: Record<string, CachedQuoteRow>,
+  options?: { forceFetch?: boolean; ttlMs?: number },
+): string[] {
+  if (options?.forceFetch) {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of requestedSymbols) {
+      const s = (raw || '').trim();
+      if (!s || seen.has(s)) continue;
+      seen.add(s);
+      out.push(s);
+    }
+    return out;
+  }
+  return symbolsNeedingLiveFetch(requestedSymbols, rows, options?.ttlMs ?? QUOTE_CACHE_TTL_MS);
+}
+
 export function symbolsNeedingLiveFetch(
   requestedSymbols: string[],
   rows: Record<string, CachedQuoteRow>,

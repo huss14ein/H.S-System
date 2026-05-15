@@ -10,7 +10,9 @@ interface SimulatedPrices {
 export type SymbolQuoteTimestamps = Record<string, string>;
 
 /** `all` = every tracked symbol (header refresh). `platform` = one investment account’s holdings only (saves API quota). */
-export type PriceRefreshScope = { kind: 'all' } | { kind: 'platform'; platformId: string };
+export type PriceRefreshScope =
+    | { kind: 'all'; forceFetch?: boolean }
+    | { kind: 'platform'; platformId: string; forceFetch?: boolean };
 
 /** Drives spinners: full refresh updates header + every platform card; platform refresh only touches one card + omits header “Updating…”. */
 export type QuotesRefreshUIScope =
@@ -20,7 +22,7 @@ export type QuotesRefreshUIScope =
 
 interface MarketDataContextType {
   simulatedPrices: SimulatedPrices;
-  setSimulatedPrices: (prices: SimulatedPrices) => void;
+  setSimulatedPrices: React.Dispatch<React.SetStateAction<SimulatedPrices>>;
   isRefreshing: boolean;
   setIsRefreshing: (v: boolean) => void;
   /** Which UX surfaces should show busy state while `isRefreshing` is true. */
@@ -32,8 +34,12 @@ interface MarketDataContextType {
   refreshPricesForPlatform: (platformId: string) => Promise<void>;
   /** Increment refresh counter so MarketSimulator runs a live/simulated price pass. */
   bumpPriceRefresh: (scope?: PriceRefreshScope) => void;
-  /** Read and clear the scope for the pending tick (used by MarketSimulator). */
-  consumePriceRefreshScope: () => PriceRefreshScope;
+  /** Dequeue the next refresh scope (FIFO). Returns null when the queue is empty. */
+  consumePriceRefreshScope: () => PriceRefreshScope | null;
+  /** True when more refresh scopes are waiting after the current tick. */
+  hasQueuedPriceRefresh: () => boolean;
+  /** Re-run MarketSimulator when scopes were enqueued during an in-flight tick (does not add a scope). */
+  notifyQueuedPriceRefresh: () => void;
   lastUpdated: Date | null;
   /** Set last updated time (e.g. when live fetch completes). */
   setLastUpdated: (date: Date | null) => void;
@@ -86,16 +92,24 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
     }, []);
 
     const [refreshTrigger, setRefreshTrigger] = useState(0);
-    const pendingScopeRef = useRef<PriceRefreshScope>({ kind: 'all' });
+    const refreshQueueRef = useRef<PriceRefreshScope[]>([]);
 
-    const consumePriceRefreshScope = useCallback((): PriceRefreshScope => {
-        const s = pendingScopeRef.current;
-        pendingScopeRef.current = { kind: 'all' };
-        return s;
+    const consumePriceRefreshScope = useCallback((): PriceRefreshScope | null => {
+        return refreshQueueRef.current.shift() ?? null;
+    }, []);
+
+    const hasQueuedPriceRefresh = useCallback((): boolean => {
+        return refreshQueueRef.current.length > 0;
+    }, []);
+
+    const notifyQueuedPriceRefresh = useCallback(() => {
+        if (refreshQueueRef.current.length > 0) {
+            setRefreshTrigger((prev) => prev + 1);
+        }
     }, []);
 
     const bumpPriceRefresh = useCallback((scope: PriceRefreshScope = { kind: 'all' }) => {
-        pendingScopeRef.current = scope;
+        refreshQueueRef.current.push(scope);
         setRefreshTrigger((prev) => prev + 1);
     }, []);
 
@@ -107,7 +121,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
     const refreshPrices = useCallback(async () => {
         setQuotesRefreshUIScope({ mode: 'all' });
         setIsRefreshing(true);
-        bumpPriceRefresh({ kind: 'all' });
+        bumpPriceRefresh({ kind: 'all', forceFetch: true });
         // MarketSimulator performs fetch + calls finishQuotesRefresh when done
     }, [bumpPriceRefresh]);
 
@@ -117,7 +131,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             const id = platformId.trim();
             setQuotesRefreshUIScope({ mode: 'platform', accountId: id });
             setIsRefreshing(true);
-            bumpPriceRefresh({ kind: 'platform', platformId: id });
+            bumpPriceRefresh({ kind: 'platform', platformId: id, forceFetch: true });
         },
         [bumpPriceRefresh],
     );
@@ -133,6 +147,8 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         refreshPricesForPlatform,
         bumpPriceRefresh,
         consumePriceRefreshScope,
+        hasQueuedPriceRefresh,
+        notifyQueuedPriceRefresh,
         lastUpdated,
         setLastUpdated,
         isLive,
