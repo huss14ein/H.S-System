@@ -53,3 +53,30 @@ export function budgetProgressGradient(util: BudgetUtilizationLabel): string {
 export function budgetSecondaryProgressGradient(): string {
     return 'bg-gradient-to-r from-violet-500 via-fuchsia-500 to-indigo-600';
 }
+
+/** Left segment: amount consumed toward cap (warm / active spend). */
+export function budgetConsumedSegmentGradient(util: BudgetUtilizationLabel): string {
+    switch (util) {
+        case 'Critical':
+            return 'bg-gradient-to-r from-rose-600 via-red-600 to-orange-700';
+        case 'Watch':
+            return 'bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600';
+        default:
+            return 'bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600';
+    }
+}
+
+/** “This month” block: consumed segment (keeps violet family, distinct from green remaining). */
+export function budgetMonthlyConsumedSegmentGradient(): string {
+    return 'bg-gradient-to-r from-violet-600 via-fuchsia-600 to-indigo-600';
+}
+
+/** Right segment: remaining budget headroom (cool / safe). */
+export function budgetRemainingSegmentClasses(): string {
+    return 'bg-gradient-to-r from-emerald-200 via-teal-100 to-cyan-100 ring-1 ring-inset ring-emerald-300/40';
+}
+
+/** When over cap, remaining band collapses — full bar shows critical consumed. */
+export function budgetOverBudgetConsumedGradient(): string {
+    return 'bg-gradient-to-r from-rose-600 via-red-600 to-red-800';
+}

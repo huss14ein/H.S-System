@@ -6,6 +6,7 @@ import {
   loadQuoteCacheRows,
   saveQuoteCacheRows,
   symbolsNeedingLiveFetch,
+  resolveSymbolsToLiveFetch,
   upsertCacheFromLiveQuotes,
   cacheRowsToSimulatedMap,
 } from '../services/quotePriceCache';
@@ -56,6 +57,15 @@ describe('quotePriceCache', () => {
       AAPL: { price: 10, change: 0, changePercent: 0, fetchedAt: now },
     };
     expect(symbolsNeedingLiveFetch(['AAPL'], rows, QUOTE_CACHE_TTL_MS)).toEqual([]);
+  });
+
+  it('resolveSymbolsToLiveFetch forceFetch bypasses fresh cache', () => {
+    const now = Date.now();
+    const rows = {
+      AAPL: { price: 10, change: 0, changePercent: 0, fetchedAt: now },
+    };
+    expect(resolveSymbolsToLiveFetch(['AAPL'], rows, { forceFetch: true })).toEqual(['AAPL']);
+    expect(resolveSymbolsToLiveFetch(['AAPL'], rows)).toEqual([]);
   });
 
   it('symbolsNeedingLiveFetch requests stale symbols', () => {
