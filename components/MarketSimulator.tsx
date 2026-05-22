@@ -20,6 +20,8 @@ import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 import { portfolioBelongsToAccount, resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
 import { getRefreshableHoldingQuoteSymbols } from '../services/quoteRefreshSymbols';
+import { isTadawulQuoteSymbol } from '../services/marketQuoteRouting';
+import { sanitizeLiveQuoteRow } from '../services/tadawulQuoteSanity';
 import {
     buildCommodityHoldingValueUpdatesFromTrustedSnapshot,
     buildEquityHoldingValueUpdatesFromTrustedSnapshot,
@@ -128,12 +130,15 @@ const MarketSimulator: React.FC = () => {
                 try {
                     let cacheRows = loadQuoteCacheRows();
                     const cacheSim = cacheRowsToSimulatedMap(cacheRows);
+                    const cacheForEquity: Record<string, LiveQuoteRow> = {};
+                    for (const [k, row] of Object.entries(cacheSim as Record<string, LiveQuoteRow>)) {
+                        if (!row) continue;
+                        const safe = isTadawulQuoteSymbol(k) ? sanitizeLiveQuoteRow(k, row) : row;
+                        if (safe) cacheForEquity[k] = safe;
+                    }
                     let mergedEquity: Record<string, LiveQuoteRow> =
                         uniqueSymbols.length > 0
-                            ? expandLiveQuotesForRequestedSymbols(
-                                  uniqueSymbols,
-                                  cacheSim as Record<string, LiveQuoteRow>,
-                              )
+                            ? expandLiveQuotesForRequestedSymbols(uniqueSymbols, cacheForEquity)
                             : {};
                     const toFetch = resolveSymbolsToLiveFetch(uniqueSymbols, cacheRows, { forceFetch });
 
@@ -169,9 +174,15 @@ const MarketSimulator: React.FC = () => {
 
                     if (uniqueSymbols.length > 0 && toFetch.length > 0) {
                         const raw = rawApi as Record<string, LiveQuoteRow>;
-                        cacheRows = upsertCacheFromLiveQuotes(cacheRows, toFetch, raw);
+                        const sanitizedApi: Record<string, LiveQuoteRow> = {};
+                        for (const [k, row] of Object.entries(raw)) {
+                            if (!row) continue;
+                            const safe = isTadawulQuoteSymbol(k) ? sanitizeLiveQuoteRow(k, row) : row;
+                            if (safe) sanitizedApi[k] = safe;
+                        }
+                        cacheRows = upsertCacheFromLiveQuotes(cacheRows, toFetch, sanitizedApi);
                         saveQuoteCacheRows(cacheRows);
-                        const apiExpanded = expandLiveQuotesForRequestedSymbols(toFetch, raw);
+                        const apiExpanded = expandLiveQuotesForRequestedSymbols(toFetch, sanitizedApi);
                         mergedEquity = { ...mergedEquity, ...apiExpanded };
                     }
 
@@ -191,6 +202,7 @@ const MarketSimulator: React.FC = () => {
                     for (const symbol of allTickerSymbols) {
                         const row = lookupLiveQuoteForSymbol(newPrices, symbol);
                         if (row && row.price > 0) continue;
+                        if (isTadawulQuoteSymbol(symbol)) continue;
                         simulateSymbol(symbol);
                         if (uniqueSymbols.includes(symbol)) anyEquitySimulated = true;
                     }
@@ -236,6 +248,7 @@ const MarketSimulator: React.FC = () => {
                     for (const symbol of allTickerSymbols) {
                         const row = lookupLiveQuoteForSymbol(newPrices, symbol);
                         if (row && row.price > 0) continue;
+                        if (isTadawulQuoteSymbol(symbol)) continue;
                         simulateSymbol(symbol);
                         if (uniqueSymbols.includes(symbol)) anyEquitySimulated = true;
                     }
@@ -253,9 +266,10 @@ const MarketSimulator: React.FC = () => {
             if (Object.keys(newPrices).length === 0 && (uniqueSymbols.length > 0 || commoditySymbols.length > 0)) {
                 liveStatus = false;
                 trustedQuoteSnapshot = {};
-                Array.from(new Set([...uniqueSymbols, ...commoditySymbols])).forEach((symbol) =>
-                    simulateSymbol(symbol),
-                );
+                Array.from(new Set([...uniqueSymbols, ...commoditySymbols])).forEach((symbol) => {
+                    if (isTadawulQuoteSymbol(symbol)) return;
+                    simulateSymbol(symbol);
+                });
             }
 
             const holdingUpdates: { id: string, currentValue: number }[] = [];

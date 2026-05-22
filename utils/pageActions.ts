@@ -45,6 +45,8 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
       action === 'investment-tab:AI Rebalancer' ||
       action === 'investment-tab:Watchlist' ||
       action === 'focus-investment-plan' ||
+      action === 'focus-dividend-sms' ||
+      /^focus-symbol:.+/.test(action) ||
       action === 'openRiskTradingHub'
     );
   }

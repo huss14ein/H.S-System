@@ -1,5 +1,7 @@
 import React, { useState, useCallback, useContext, useEffect, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
+import { useCurrency } from '../context/CurrencyContext';
+import { useMarketData } from '../context/MarketDataContext';
 import { getAIFeedInsights, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { LightBulbIcon } from './icons/LightBulbIcon';
@@ -38,7 +40,9 @@ const AIFeed: React.FC = () => {
     });
     const [arItems, setArItems] = useState<{ title: string; description: string }[] | null>(null);
     const [translating, setTranslating] = useState(false);
-    const { data } = useContext(DataContext)!;
+    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
+    const { simulatedPrices } = useMarketData();
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const dataRef = useRef(data);
 
@@ -90,14 +94,18 @@ const AIFeed: React.FC = () => {
         setArItems(null);
         setError(null);
         try {
-            const items = await getAIFeedInsights(dataRef.current);
+            const items = await getAIFeedInsights(dataRef.current, {
+                exchangeRate,
+                getAvailableCashForAccount,
+                simulatedPrices,
+            });
             setFeedItems(items);
         } catch (err) {
             console.error("AI Feed generation failed:", err);
             setError(formatAiError(err));
         }
         setIsLoading(false);
-    }, []);
+    }, [exchangeRate, getAvailableCashForAccount, simulatedPrices]);
 
     const handleLangToggle = useCallback(() => {
         if (feedItems.length === 0) return;

@@ -78,6 +78,9 @@ import {
 } from '../services/householdBudgetAnalytics';
 import { detectRecurringBillPatterns, addBenchmarkComparison } from '../services/hybridBudgetCategorization';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
+import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
+import { useFinancialEnhancementInsights } from '../hooks/useFinancialEnhancementInsights';
+import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { learnAndAutoAdjust } from '../services/aiBudgetAutomation';
 import { getPersonalTransactions } from '../utils/wealthScope';
 import { useSelfLearning } from '../context/SelfLearningContext';
@@ -418,6 +421,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const { trackSuggestionFeedback } = useSelfLearning();
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const { exchangeRate, currency: displayCurrency } = useCurrency();
+    const emergencyFund = useEmergencyFund(data);
+    const financialEnhancementInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
     const [isAdmin, setIsAdmin] = useState(false);
     const [permittedCategories, setPermittedCategories] = useState<string[]>([]);
     const [newCategoryName, setNewCategoryName] = useState('');
@@ -2453,6 +2458,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             }
         >
             <div className={budgetSubPage === 'household' ? 'hidden' : 'space-y-6'}>
+            <EnhancementInsightStrip
+                budgetDrift={financialEnhancementInsights.budgetDrift}
+                lifestyleHits={financialEnhancementInsights.lifestyleHits}
+                goalConflicts={financialEnhancementInsights.goalConflicts.slice(0, 1)}
+                compact
+            />
             <div id="budget-requests-center">
             <SectionCard title="Budget requests" collapsible collapsibleSummary="Search & filters" defaultExpanded>
                 <div className="flex flex-wrap gap-3 items-center">

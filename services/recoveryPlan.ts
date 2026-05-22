@@ -184,14 +184,29 @@ export function buildRecoveryLadder(
   totalBudget: number,
   riskTier: WealthUltraRiskTier,
   config: RecoveryGlobalConfig,
-  maxAddShares?: number
+  maxAddShares?: number,
+  skipLevels?: Set<1 | 2 | 3>,
 ): RecoveryLadderLevel[] {
   const prices = buildLadderPrices(currentPrice, riskTier, config);
   const cappedBudget = Math.min(
     totalBudget,
     config.deployableCash * config.recoveryBudgetPct
   );
-  const ladder = allocateLadderQty(cappedBudget, prices, config.ladderWeights);
+  if (!skipLevels || skipLevels.size === 0) {
+    const ladder = allocateLadderQty(cappedBudget, prices, config.ladderWeights);
+    return capLadderByMaxShares(ladder, maxAddShares);
+  }
+  const weights = config.ladderWeights;
+  const activeLevels = ([1, 2, 3] as const).filter((l) => !skipLevels.has(l));
+  if (activeLevels.length === 0) return [];
+  const weightSum = activeLevels.reduce((s, l) => s + (weights[l - 1] ?? 0), 0);
+  if (!(weightSum > 0)) return [];
+  const normWeights: [number, number, number] = [
+    skipLevels.has(1) ? 0 : (weights[0] ?? 0) / weightSum,
+    skipLevels.has(2) ? 0 : (weights[1] ?? 0) / weightSum,
+    skipLevels.has(3) ? 0 : (weights[2] ?? 0) / weightSum,
+  ];
+  const ladder = allocateLadderQty(cappedBudget, prices, normWeights).filter((l) => !skipLevels.has(l.level));
   return capLadderByMaxShares(ladder, maxAddShares);
 }
 
@@ -219,6 +234,70 @@ export function generateExitPlan(
 }
 
 // --- Full RecoveryPlanBuilder: one position → full result ---
+
+/** Rebuild buy ladder after one or more levels fill (uses current shares/avg on holding). */
+export function buildRecoveryPlanAfterFilledLevels(
+  holding: Holding,
+  currentPrice: number,
+  positionConfig: RecoveryPositionConfig,
+  config: RecoveryGlobalConfig,
+  filledLevels: Set<1 | 2 | 3>,
+  exitOverrides?: Partial<RecoveryExitPlan>,
+): RecoveryPlanResult {
+  const totalBudget = Math.min(
+    positionConfig.cashCap,
+    config.deployableCash * config.recoveryBudgetPct,
+    positionConfig.maxAddCost ?? Number.MAX_SAFE_INTEGER,
+  );
+  const ladder = buildRecoveryLadder(
+    currentPrice,
+    totalBudget,
+    positionConfig.riskTier,
+    config,
+    positionConfig.maxAddShares,
+    filledLevels,
+  );
+  const metrics = positionMetrics(holding, currentPrice);
+  const totalPlannedCost = ladder.reduce((sum, l) => sum + l.cost, 0);
+  const { newShares, newAvgCost } = computeNewAverage(
+    holding.quantity,
+    holding.avgCost ?? 0,
+    ladder,
+  );
+  const exitPlan = generateExitPlan(newAvgCost, exitOverrides ?? {}, positionConfig.sleeveType);
+  const eligibility = qualifyRecovery(metrics.plPct, positionConfig, config, totalPlannedCost);
+  const capCheck = violatesCaps(positionConfig, totalPlannedCost, config);
+
+  let state: RecoveryPlanState = 'NORMAL';
+  if (metrics.plPct > 0) state = 'NORMAL';
+  else if (metrics.plPct > -positionConfig.lossTriggerPct) state = 'WATCH';
+  else if (!eligibility.qualified) state = 'FROZEN';
+  else if (filledLevels.size > 0) state = 'PARTIAL_FILL';
+  else state = 'QUALIFIED';
+
+  return {
+    symbol: holding.symbol ?? '',
+    state,
+    qualified: eligibility.qualified,
+    reason: filledLevels.size > 0
+      ? `Ladder levels ${[...filledLevels].sort().join(', ')} filled — remaining steps recomputed`
+      : eligibility.reason,
+    costBasis: metrics.costBasis,
+    marketValue: metrics.marketValue,
+    plUsd: metrics.plUsd,
+    plPct: metrics.plPct,
+    currentPrice,
+    shares: holding.quantity,
+    avgCost: holding.avgCost,
+    ladder,
+    totalPlannedCost,
+    newShares,
+    newAvgCost,
+    exitPlan,
+    budgetImpact: totalPlannedCost,
+    capCheckOk: capCheck.ok,
+  };
+}
 
 export function buildRecoveryPlan(
   holding: Holding,
@@ -317,6 +396,8 @@ export function orderDraftGenerator(
         limitPrice: l.price,
         orderType: 'LIMIT',
         label: `Recovery L${l.level}`,
+        trancheKind: 'ladder_buy',
+        trancheIndex: l.level,
       });
     }
   });

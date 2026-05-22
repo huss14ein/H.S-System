@@ -28,9 +28,14 @@ import { SHOCK_TEMPLATES } from '../services/shockDrillEngine';
 import { computeWealthSummaryReportModel } from '../services/wealthSummaryReportModel';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { usePrivacyMask } from '../context/PrivacyContext';
+import { buildReviewPack, downloadReviewPackMarkdown } from '../services/reviewPack';
+import { sendReviewPackEmail } from '../services/reviewPackEmail';
+import { toast } from '../context/ToastContext';
+import { captureExtendedNetWorthSnapshot } from '../services/netWorthSnapshotExtended';
 import { useMarketData } from '../context/MarketDataContext';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { attributeNetWorthWithFlows } from '../services/portfolioAttribution';
+import DashboardKpiQualityPanel from '../components/DashboardKpiQualityPanel';
 import { personalNetCashflowBetween } from '../services/netWorthPeriodFlows';
 import type { Transaction } from '../types';
 import {
@@ -124,8 +129,11 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     const { exchangeRate, currency: displayCurrency } = useCurrency();
     const { simulatedPrices } = useMarketData();
     const reportModel = useMemo(
-        () => (data ? computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount) : null),
-        [data, exchangeRate, getAvailableCashForAccount]
+        () =>
+            data
+                ? computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount, simulatedPrices)
+                : null,
+        [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]
     );
     const fxBanner = useMemo(() => {
         const w = Number(data?.wealthUltraConfig?.fxRate);
@@ -144,6 +152,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     const [error, setError] = useState<string | null>(null);
     const [isAdmin, setIsAdmin] = useState(false);
     const [isPrintOptionsOpen, setIsPrintOptionsOpen] = useState(false);
+    const [reviewPackEmailSending, setReviewPackEmailSending] = useState(false);
     const [printSections, setPrintSections] = useState({
         includeSnapshot: true,
         includeCashflow: true,
@@ -271,6 +280,43 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         );
     }, [reportModel?.wealthSummaryReportPayload, downloadTextFile]);
 
+    const handleExportReviewPack = useCallback(() => {
+        if (!data) return;
+        const fm = reportModel?.financialMetricsWithEf;
+        const surplus = Math.max(0, (fm?.monthlyIncome ?? 0) - (fm?.monthlyExpenses ?? 0));
+        const pack = buildReviewPack(data, exchangeRate, getAvailableCashForAccount, surplus, simulatedPrices);
+        downloadReviewPackMarkdown(pack.markdown);
+        trackAction('export-review-pack', 'Summary');
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, reportModel?.financialMetricsWithEf, trackAction]);
+
+    const handleEmailReviewPack = useCallback(async () => {
+        if (!data || reviewPackEmailSending) return;
+        const fm = reportModel?.financialMetricsWithEf;
+        const surplus = Math.max(0, (fm?.monthlyIncome ?? 0) - (fm?.monthlyExpenses ?? 0));
+        const pack = buildReviewPack(data, exchangeRate, getAvailableCashForAccount, surplus, simulatedPrices);
+        setReviewPackEmailSending(true);
+        const result = await sendReviewPackEmail(pack.markdown);
+        setReviewPackEmailSending(false);
+        if (result.ok) {
+            toast('Review pack sent to your account email.', 'success');
+            trackAction('email-review-pack', 'Summary');
+        } else {
+            toast(result.error, 'error');
+        }
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, reportModel?.financialMetricsWithEf, reviewPackEmailSending, trackAction]);
+
+    const handleCaptureSnapshot = useCallback(() => {
+        if (!data) return;
+        captureExtendedNetWorthSnapshot(
+            data,
+            exchangeRate,
+            getAvailableCashForAccount,
+            supabase && auth?.user?.id ? { supabase, userId: auth.user.id } : null,
+            simulatedPrices,
+        );
+        trackAction('capture-nw-snapshot', 'Summary');
+    }, [data, exchangeRate, getAvailableCashForAccount, auth?.user?.id, simulatedPrices, trackAction]);
+
     const handleExportWealthSummaryCsv = useCallback(() => {
         const payload = reportModel?.wealthSummaryReportPayload;
         if (!payload) return;
@@ -373,6 +419,13 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                         ariaLabel="Summary quick links"
                         actions={[
                             { value: 'print-wealth-summary', label: 'Print wealth summary', onClick: () => setIsPrintOptionsOpen(true) },
+                            { value: 'capture-snapshot', label: 'Capture net worth snapshot', onClick: handleCaptureSnapshot },
+                            { value: 'export-review-pack', label: 'Export review pack (Markdown)', onClick: handleExportReviewPack },
+                            {
+                                value: 'email-review-pack',
+                                label: reviewPackEmailSending ? 'Sending review pack…' : 'Email review pack',
+                                onClick: () => void handleEmailReviewPack(),
+                            },
                             { value: 'export-wealth-json', label: 'Export wealth summary (JSON)', onClick: handleExportWealthSummaryJson },
                             { value: 'export-wealth-csv', label: 'Export wealth summary (CSV)', onClick: handleExportWealthSummaryCsv },
                             { value: 'wealth-ultra', label: 'Wealth Ultra', onClick: () => setActivePage('Wealth Ultra') },
@@ -447,6 +500,8 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                 </div>
             </div>
 
+            {data && <DashboardKpiQualityPanel />}
+
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     <div
                         role="button"
@@ -492,9 +547,9 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                     </div>
 
                 <div className="lg:col-span-2 cards-grid grid grid-cols-1 sm:grid-cols-2">
-                    <Card title="Money in (this month)" value={formatCurrencyString(financialMetricsWithEf.monthlyIncome)} valueColor="text-success" tooltip="Sum of income-style transactions since the first day of this month (personal accounts only)." />
-                    <Card title="Money out (this month)" value={formatCurrencyString(financialMetricsWithEf.monthlyExpenses)} valueColor="text-danger" tooltip="Sum of spending-style transactions this month. Does not double-count internal transfers when labeled correctly." />
-                    <Card title="Savings rate" value={`${(financialMetricsWithEf.savingsRate * 100).toFixed(1)}%`} valueColor="text-success" tooltip="Share of this month’s income left after expenses. If income is zero, this reads 0%." />
+                    <Card title="Money in (financial month)" value={formatCurrencyString(financialMetricsWithEf.monthlyIncome)} valueColor="text-success" tooltip="Sum of income-style transactions in the current financial month (Settings → month start day). Personal accounts only." />
+                    <Card title="Money out (financial month)" value={formatCurrencyString(financialMetricsWithEf.monthlyExpenses)} valueColor="text-danger" tooltip="Sum of spending-style transactions in the current financial month. Does not double-count internal transfers when labeled correctly." />
+                    <Card title="Savings rate" value={`${(financialMetricsWithEf.savingsRate * 100).toFixed(1)}%`} valueColor="text-success" tooltip="Share of this financial month’s income left after expenses. If income is zero, this reads 0%." />
                     <Card 
                         title="Emergency Fund" 
                         value={`${financialMetricsWithEf.emergencyFundMonths.toFixed(1)} months`}

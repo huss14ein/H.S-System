@@ -127,12 +127,31 @@ Grounding notes: [`AI_GROUNDING.md`](./AI_GROUNDING.md).
 | Decision scoring | `services/decisionScoringEngine.ts` | personalFinanceHealthScore, investmentCompositeScore, tradingSetupScore (personalFinanceHealthScore wired on **Dashboard**) |
 | Debt intelligence | `services/debtEngines.ts` | debtPayoffPlan, debtStressScore (wired on **Liabilities** page) |
 
+## 2.1.1.0 enhancement services (E2E wiring)
+
+| Service | UI / data |
+|---------|-----------|
+| `capitalDeploymentOrchestrator` | Dashboard, Plan, Wealth Ultra, Live Advisor, buy-score |
+| `goalConflictDetection` | Goals, Plan, Budgets, Notifications |
+| `budgetDrift` | Analysis, Budgets, Notifications |
+| `lifestyleGuardrails` | Budgets (`useFinancialEnhancementInsights`) |
+| `incomeStability` / `incomeTaxonomy` | Analysis, Transactions |
+| `buyScore` | Investment Plan (AI create plan) |
+| `portfolioPerformance` | Risk & Trading hub (TWRR line) |
+| `holdingsDividendReconciliation` | System Health |
+| `netWorthSnapshotExtended` / `reviewPack` | Summary actions, Command palette |
+| `investmentThesisStore` + migration | Financial Journal (sync when tables exist) |
+| `watchlistDb` + `updateWatchlistItem` | Watchlist research modal |
+| `plannedTradeDb` tranche fields | Execution History, DataContext load/save |
+| Liability enrichment columns | Liabilities modal + DataContext |
+| `accounts.account_role` / `bucket_type` | Accounts modal + DataContext |
+
 ## Automated tests
 
 | What | How |
 |------|-----|
 | Lint + TypeScript | `npm run test` (first stages) |
-| Vitest unit tests | `npm run test` → `vitest run`; `tests/**/*.vitest.test.ts` (e.g. `normalizeFinnhubMarketSession`) |
+| Vitest unit tests | `npm run test` → `vitest run`; includes `financialMonthLookback`, `holdingsDividendReconciliation`, `incomeTaxonomy` |
 | Engine integration (manual script) | `npx tsx tests/engineIntegration.test.ts` |
 
 ---

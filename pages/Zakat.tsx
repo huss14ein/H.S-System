@@ -23,6 +23,7 @@ import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestmen
 import AIAdvisor from '../components/AIAdvisor';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
+import { sortByNewestFirst } from '../utils/sortRecency';
 
 const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => void }> = ({ isOpen, onClose, onSave }) => {
     const [amount, setAmount] = useState('');
@@ -173,6 +174,10 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
     const isNisabMet = useMemo(() => netZakatableWealth >= nisab, [netZakatableWealth, nisab]);
     const zakatDue = useMemo(() => isNisabMet ? netZakatableWealth * 0.025 : 0, [isNisabMet, netZakatableWealth]);
     const totalPaid = useMemo(() => (data?.zakatPayments ?? []).reduce((sum, p) => sum + p.amount, 0), [data?.zakatPayments]);
+    const zakatPaymentsNewestFirst = useMemo(
+        () => sortByNewestFirst(data?.zakatPayments ?? []),
+        [data?.zakatPayments],
+    );
     const outstandingZakat = useMemo(() => Math.max(0, zakatDue - totalPaid), [zakatDue, totalPaid]);
     const overpaidZakat = useMemo(() => Math.max(0, totalPaid - zakatDue), [totalPaid, zakatDue]);
     const zakatValidationWarnings = useMemo(() => {
@@ -524,7 +529,7 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                     </div>
                     
                     <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
-                        {(data?.zakatPayments ?? []).map(p => (
+                        {zakatPaymentsNewestFirst.map(p => (
                              <div key={p.id} className="flex justify-between items-center text-sm p-3 bg-gray-50 rounded-lg border">
                                 <div className="flex items-center gap-3">
                                     <BanknotesIcon className="h-6 w-6 text-green-500 flex-shrink-0" />
@@ -536,29 +541,27 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                                 {p.notes && <p className="text-xs text-gray-600 italic text-right clamp-2-lines break-words max-w-[220px]" title={p.notes}>{p.notes}</p>}
                             </div>
                         ))}
-                        {(data?.zakatPayments ?? []).length === 0 && <p className="empty-state py-4">No payments recorded yet.</p>}
+                        {zakatPaymentsNewestFirst.length === 0 && <p className="empty-state py-4">No payments recorded yet.</p>}
                     </div>
                 </div>
             </div>
 
             <AIAdvisor
-                pageContext="analysis"
+                pageContext="zakat"
                 contextData={{
-                    spendingData: [
-                        { category: 'Zakatable Assets', value: zakatableAssets.total },
-                        { category: 'Deductible Liabilities', value: deductibleLiabilities.total },
-                        { category: 'Net Zakatable Wealth', value: netZakatableWealth },
-                        { category: 'Outstanding Zakat', value: outstandingZakat },
-                    ],
-                    trendData: (data?.zakatPayments ?? [])
-                        .slice()
-                        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-                        .map((p) => ({ month: String(p.date).slice(0, 7), value: Number(p.amount) || 0 })),
-                    compositionData: [
+                    zakatableTotal: zakatableAssets.total,
+                    deductibleLiabilities: deductibleLiabilities.total,
+                    netZakatable: netZakatableWealth,
+                    outstandingZakat,
+                    composition: [
                         { name: 'Cash', value: zakatableAssets.cash },
                         { name: 'Investments', value: zakatableAssets.investments },
                         { name: 'Commodities', value: zakatableAssets.commodities },
                     ],
+                    paymentTrend: (data?.zakatPayments ?? [])
+                        .slice()
+                        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                        .map((p) => ({ month: String(p.date).slice(0, 7), value: Number(p.amount) || 0 })),
                 }}
                 title="Zakat AI Advisor"
                 subtitle="Nisab readiness, payment planning, and Zakat composition insights."

@@ -10,7 +10,7 @@
 import type { FinancialData, TradeCurrency } from '../types';
 import { computeEmergencyFundMetrics, type EmergencyFundMetrics } from '../hooks/useEmergencyFund';
 import { getAllInvestmentsValueInSAR, resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
-import { getPersonalAssets, getPersonalWealthData } from '../utils/wealthScope';
+import { getPersonalAssets, getPersonalInvestments, getPersonalWealthData } from '../utils/wealthScope';
 import { buildHouseholdBudgetPlan, buildHouseholdEngineInputFromData } from './householdBudgetEngine';
 import { deriveCashflowStressSummary } from './householdBudgetStress';
 import { computeDisciplineScore, type DisciplineScoreSummary } from './disciplineScoreEngine';
@@ -22,7 +22,11 @@ import { runShockDrill, type ShockDrillResult } from './shockDrillEngine';
 import { computeLiquidNetWorth } from './liquidNetWorth';
 import { computeHeadlinePersonalInvestmentRoiDecimal } from './investmentKpiCore';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
-import { financialMonthNetCashflowSar } from './dashboardKpiSnapshot';
+import {
+  computeImpliedFinancialMonthNetWorthTrendPct,
+  financialMonthNetCashflowSar,
+} from './dashboardKpiSnapshot';
+import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 
 export type GetAvailableCashFn = (accountId: string) => { SAR: number; USD: number };
 
@@ -115,40 +119,32 @@ export function computeMonthlyReportFinancialKpis(
   return { budgetVariance, roi };
 }
 
-export function computeWealthSummaryReportModel(
+const cur = (c: string | undefined): TradeCurrency => (c === 'SAR' || c === 'USD' ? c : 'USD');
+
+/** Holdings + Sukuk rows for treemap / exports — uses live quotes when provided (Investments hub parity). */
+export function buildPersonalInvestmentTreemapRows(
   data: FinancialData,
-  uiExchangeRate: number,
-  getAvailableCashForAccount: GetAvailableCashFn
-): WealthSummaryReportModel {
-  const nwOpts = { getAvailableCashForAccount };
-  const headlineNw = computePersonalHeadlineNetWorthSar(data, uiExchangeRate, nwOpts);
-  const sarPerUsd = headlineNw.sarPerUsd;
-  const cf = financialMonthNetCashflowSar(data, uiExchangeRate);
-  const monthlyIncome = cf.monthlyIncomeSar;
-  const monthlyExpenses = cf.monthlyExpensesSar;
-  const savingsRate = monthlyIncome > 0 ? (monthlyIncome - monthlyExpenses) / monthlyIncome : 0;
-  const monthlyPnL = cf.monthlyPnLSar;
-
-  const investments = (data as { personalInvestments?: typeof data.investments }).personalInvestments ?? data.investments ?? [];
-  const netWorth = headlineNw.netWorth;
-  const { totalAssets, totalDebt, totalReceivable } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd, nwOpts);
-  const grossAssets = totalAssets + totalReceivable;
-  const debtToAssetRatio = grossAssets > 0 ? totalDebt / grossAssets : 0;
-
-  const netWorthPrevMonth = netWorth - monthlyPnL;
-  const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / Math.abs(netWorthPrevMonth)) * 100 : 0;
-
-  const cur = (c: string | undefined): TradeCurrency => (c === 'SAR' || c === 'USD' ? c : 'USD');
-
+  sarPerUsd: number,
+  simulatedPrices: SimulatedPriceMap = {},
+): InvestmentTreemapRow[] {
+  const investments = getPersonalInvestments(data);
   const allHoldings = investments.flatMap((p) =>
-    (p.holdings || []).map((h) => ({ ...h, portfolioCurrency: p.currency }))
+    (p.holdings || []).map((h) => ({ ...h, portfolioCurrency: p.currency })),
   );
   const holdingRows: InvestmentTreemapRow[] = allHoldings.map((h) => {
+    const book = cur(h.portfolioCurrency);
+    const valueBook = effectiveHoldingValueInBookCurrency(h, book, simulatedPrices, sarPerUsd);
+    const currentValueSar = toSAR(valueBook, book, sarPerUsd);
     const totalCost = (h.avgCost ?? 0) * (h.quantity ?? 0);
-    const gainLoss = (h.currentValue ?? 0) - totalCost;
+    const gainLoss = valueBook - totalCost;
     const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
-    const currentValueSar = toSAR(Number(h.currentValue ?? 0), cur(h.portfolioCurrency), sarPerUsd);
-    return { ...h, gainLoss, gainLossPercent, currentValueSar };
+    return {
+      ...h,
+      currentValue: valueBook,
+      gainLoss,
+      gainLossPercent,
+      currentValueSar,
+    };
   });
   const sukukRows: InvestmentTreemapRow[] = getPersonalAssets(data).flatMap((a) => {
     if (a.type !== 'Sukuk') return [];
@@ -173,8 +169,33 @@ export function computeWealthSummaryReportModel(
       },
     ];
   });
-  const investmentTreemapData: InvestmentTreemapRow[] = [...holdingRows, ...sukukRows];
-  const totalInvestments = investmentTreemapData.reduce((sum, h) => sum + toSAR(h.currentValue ?? 0, cur(h.portfolioCurrency), sarPerUsd), 0);
+  return [...holdingRows, ...sukukRows];
+}
+
+export function computeWealthSummaryReportModel(
+  data: FinancialData,
+  uiExchangeRate: number,
+  getAvailableCashForAccount: GetAvailableCashFn,
+  simulatedPrices: SimulatedPriceMap = {},
+): WealthSummaryReportModel {
+  const nwOpts = { getAvailableCashForAccount, simulatedPrices };
+  const headlineNw = computePersonalHeadlineNetWorthSar(data, uiExchangeRate, nwOpts);
+  const sarPerUsd = headlineNw.sarPerUsd;
+  const cf = financialMonthNetCashflowSar(data, uiExchangeRate);
+  const monthlyIncome = cf.monthlyIncomeSar;
+  const monthlyExpenses = cf.monthlyExpensesSar;
+  const savingsRate = monthlyIncome > 0 ? (monthlyIncome - monthlyExpenses) / monthlyIncome : 0;
+  const monthlyPnL = cf.monthlyPnLSar;
+
+  const netWorth = headlineNw.netWorth;
+  const { totalAssets, totalDebt, totalReceivable } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd, nwOpts);
+  const grossAssets = totalAssets + totalReceivable;
+  const debtToAssetRatio = grossAssets > 0 ? totalDebt / grossAssets : 0;
+
+  const netWorthTrend = computeImpliedFinancialMonthNetWorthTrendPct(netWorth, monthlyPnL);
+
+  const investmentTreemapData = buildPersonalInvestmentTreemapRows(data, sarPerUsd, simulatedPrices);
+  const totalInvestments = investmentTreemapData.reduce((sum, h) => sum + Number(h.currentValueSar ?? 0), 0);
   const individualStocksValue = investmentTreemapData
     .filter(
       (h) =>
@@ -350,7 +371,7 @@ export function computeWealthSummaryReportModel(
       gainLoss: Number(h.gainLoss ?? 0),
       gainLossPct: Number(h.gainLossPercent ?? 0),
       currency: String(h.portfolioCurrency ?? 'USD'),
-      currentValueSar: toSAR(Number(h.currentValue ?? 0), cur(h.portfolioCurrency), sarPerUsd),
+      currentValueSar: Number(h.currentValueSar ?? 0),
     })),
     assets: (personalAssets ?? []).map((a: { name?: string; type?: string; value?: number }) => ({
       name: String(a.name ?? ''),
@@ -384,9 +405,14 @@ export function computeWealthSummaryReportModel(
           cashTotalSar: tradableCashBucketToSAR(cash, sarPerUsd),
         };
       }),
-    portfolios: personalInvestments.map((p: { name?: string; accountId?: string; currency?: string; holdings?: { currentValue?: number }[] }) => {
+    portfolios: personalInvestments.map((p: { name?: string; accountId?: string; currency?: string; holdings?: import('../types').Holding[] }) => {
       const holdings = p.holdings ?? [];
-      const valueSar = holdings.reduce((sum: number, h: { currentValue?: number }) => sum + toSAR(Number(h.currentValue ?? 0), cur(p.currency), sarPerUsd), 0);
+      const book = cur(p.currency);
+      const valueSar = holdings.reduce(
+        (sum: number, h) =>
+          sum + toSAR(effectiveHoldingValueInBookCurrency(h, book, simulatedPrices, sarPerUsd), book, sarPerUsd),
+        0,
+      );
       const platform = personalAccounts.find((a: { id: string }) => a.id === p.accountId);
       return {
         name: String(p.name ?? ''),

@@ -40,18 +40,33 @@ import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolio
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { investmentTransactionCashAmountSarDated } from '../utils/investmentTransactionSar';
 import InfoHint from '../components/InfoHint';
+import DividendSmsImportPanel, { DIVIDEND_SMS_IMPORT_SECTION_ID } from '../components/DividendSmsImportPanel';
 import {
     syncFinnhubDividendsForHoldings,
     defaultDividendSyncWindow,
     listDividendEligibleHoldings,
 } from '../services/dividendFinnhubSync';
+import { buildPortfolioPerformanceSnapshot } from '../services/portfolioPerformance';
+import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
+import {
+    financialMonthKeysEndingAt,
+    financialMonthIsoKey,
+    financialMonthColumnHeaderLabel,
+    financialMonthRangeFromKey,
+    financialMonthKey,
+    resolveMonthStartDayFromData,
+} from '../utils/financialMonth';
 
 const DIVIDEND_AI_LANG_KEY = 'finova_default_ai_lang_v1';
 const FINNHUB_DIV_SYNC_KEY = 'finova_dividend_finnhub_last_sync_v1';
 /** Auto background sync at most this often unless we have no TTM dividends but do have eligible holdings (fill the ledger). */
 const AUTO_DIVIDEND_SYNC_COOLDOWN_MS = 60 * 60 * 1000;
 
-const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage: _setActivePage }) => {
+const DividendTrackerView: React.FC<{
+  setActivePage?: (page: Page) => void;
+  pageAction?: string | null;
+  clearPageAction?: () => void;
+}> = ({ setActivePage: _setActivePage, pageAction, clearPageAction }) => {
     const { data, loading, recordTrade, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
@@ -140,12 +155,10 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 );
             }, 0);
 
-        const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
-        const monthKeys: string[] = [];
-        for (let i = 11; i >= 0; i--) {
-            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-            monthKeys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-        }
+        const monthStartDay = resolveMonthStartDayFromData(data);
+        const finKeys12 = financialMonthKeysEndingAt(now, 12, monthStartDay);
+        const twelveMonthsAgo = financialMonthRangeFromKey(finKeys12[0], monthStartDay).start;
+        const monthKeys = finKeys12.map((k) => financialMonthIsoKey(k));
 
         const personalAccountIdSet = new Set(personalAccounts.map((a) => a.id));
         const platformKey = (accountId: string) => `pf_${accountId.replace(/[^a-zA-Z0-9]/g, '_')}`;
@@ -156,7 +169,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
         for (const t of dividendTransactions) {
             const txDate = new Date(t.date);
             if (isNaN(txDate.getTime()) || txDate < twelveMonthsAgo) continue;
-            const monthKey = t.date.slice(0, 7);
+            const monthKey = financialMonthIsoKey(financialMonthKey(txDate, monthStartDay));
             const sar = investmentTransactionCashAmountSarDated({
                 tx: t,
                 accounts: accountsFull,
@@ -195,7 +208,11 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
         ];
 
         const monthlyDividendsChartData = monthKeys.map((mk) => {
-            const name = new Date(mk + '-02').toLocaleString('default', { month: 'short', year: '2-digit' });
+            const [y, m] = mk.split('-').map(Number);
+            const name =
+                monthStartDay === 1
+                    ? new Date(mk + '-02').toLocaleString('default', { month: 'short', year: '2-digit' })
+                    : financialMonthColumnHeaderLabel(y, m, monthStartDay);
             const row: Record<string, string | number> = { name, monthKey: mk };
             let total = 0;
             if (platformStackKeys.length === 0) {
@@ -408,6 +425,19 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
     );
     const { names: dividendCompanyNames } = useCompanyNames(dividendSymbolBatch);
 
+    const portfolioPerf = useMemo(() => {
+        if (!data) return null;
+        const endVal = personalInvestmentTerminalValueSAR({
+            portfolios: personalInvestments,
+            investmentAccountIds: personalInvestmentAccountIds,
+            exchangeRate: sarPerUsd,
+            getAvailableCashForAccount,
+        });
+        const snaps = listNetWorthSnapshots();
+        const priorVal = snaps.length >= 2 ? Math.max(0, snaps[1].netWorth * 0.35) : endVal * 0.9;
+        return buildPortfolioPerformanceSnapshot(data, endVal, priorVal, 12);
+    }, [data, personalInvestments, personalInvestmentAccountIds, sarPerUsd, getAvailableCashForAccount]);
+
     const handleGetAnalysis = useCallback(async () => {
         setIsLoading(true);
         setAiError(null);
@@ -506,6 +536,15 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
     );
 
     useEffect(() => {
+        if (pageAction === 'focus-dividend-sms') {
+            window.setTimeout(() => {
+                document.getElementById(DIVIDEND_SMS_IMPORT_SECTION_ID)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 80);
+            clearPageAction?.();
+        }
+    }, [pageAction, clearPageAction]);
+
+    useEffect(() => {
         if (loading || !data || autoSyncStarted.current) return;
         autoSyncStarted.current = true;
         let cancelled = false;
@@ -517,7 +556,9 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
                 const dividendTx = invTxPersonal.filter((t) => t.type === 'dividend');
                 const now = new Date();
-                const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+                const monthStartDay = resolveMonthStartDayFromData(data);
+                const finKeys12 = financialMonthKeysEndingAt(now, 12, monthStartDay);
+                const twelveMonthsAgo = financialMonthRangeFromKey(finKeys12[0], monthStartDay).start;
                 const hasTtmDividends = dividendTx.some((t) => {
                     const d = new Date(t.date);
                     return !isNaN(d.getTime()) && d >= twelveMonthsAgo;
@@ -568,6 +609,20 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
     return (
         <div className="page-container space-y-6">
+            {portfolioPerf && (
+                <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 flex flex-wrap gap-4">
+                    <span>
+                        <strong>Portfolio return (12 mo):</strong>{' '}
+                        {portfolioPerf.mwrrPct != null ? `${portfolioPerf.mwrrPct.toFixed(1)}% MWRR` : '—'}
+                    </span>
+                    <span>
+                        TWRR approx: {portfolioPerf.twrrApproxPct != null ? `${portfolioPerf.twrrApproxPct.toFixed(1)}%` : '—'}
+                    </span>
+                    {portfolioPerf.benchmarkExcessPct != null && (
+                        <span>vs benchmark: {portfolioPerf.benchmarkExcessPct >= 0 ? '+' : ''}{portfolioPerf.benchmarkExcessPct.toFixed(1)}%</span>
+                    )}
+                </div>
+            )}
             <div className="section-card p-6 sm:p-8">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
                     <div className="flex items-center gap-4">
@@ -599,6 +654,8 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     <InfoHint text="Finnhub reports historical per-share payments; we multiply by your recorded quantity and book in each portfolio’s currency (USD or SAR), then show SAR using your FX setting." />
                 </p>
             </div>
+
+            <DividendSmsImportPanel />
 
             <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
                 <div className="section-card">
@@ -855,7 +912,7 @@ const DividendTrackerView: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         <div className="text-center py-8">
                             <p className="text-slate-500 font-medium">No dividend transactions yet</p>
                             <p className="text-sm text-slate-500 mt-2">
-                                With Finnhub configured, dividends sync into this ledger automatically. You can also add them via Record Trade or statement upload.
+                                With Finnhub configured, dividends sync into this ledger automatically. You can also paste broker dividend SMS above, use Record Trade, or trading statement upload.
                             </p>
                         </div>
                     )}

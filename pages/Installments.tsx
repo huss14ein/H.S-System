@@ -7,6 +7,7 @@ import { supabase } from '../services/supabaseClient';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { buildInstallmentSchedule } from '../services/installments/installmentMath';
 import { encodeInstallmentPaymentNote } from '../services/installments/installmentLinkNote';
+import { financialMonthRange, financialMonthLabel, resolveMonthStartDayFromData } from '../utils/financialMonth';
 
 type InstallmentPlanRow = {
   id: string;
@@ -113,6 +114,20 @@ const InstallmentsPage: React.FC<{ setActivePage?: (p: any) => void }> = () => {
     const d = meta && typeof meta === 'object' ? String(meta.description ?? '').trim() : '';
     return d || 'Installment purchase';
   }, [selectedPlan]);
+
+  const financialMonthWindow = useMemo(() => {
+    const msd = resolveMonthStartDayFromData(data);
+    const range = financialMonthRange(new Date(), msd);
+    return { ...range, label: financialMonthLabel(range.key, msd), monthStartDay: msd };
+  }, [data]);
+
+  const dueThisFinancialMonth = useMemo(() => {
+    return installments.filter((inst) => {
+      if (String(inst.status).toUpperCase() === 'PAID') return false;
+      const d = new Date(inst.due_date);
+      return !Number.isNaN(d.getTime()) && d >= financialMonthWindow.start && d <= financialMonthWindow.end;
+    });
+  }, [installments, financialMonthWindow]);
 
   const eligibleAccounts = useMemo(() => {
     const cur = selectedPlan?.currency === 'USD' ? 'USD' : 'SAR';
@@ -265,6 +280,25 @@ const InstallmentsPage: React.FC<{ setActivePage?: (p: any) => void }> = () => {
         )}
 
         {err && <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">{err}</div>}
+
+        {selectedPlan && (
+          <div className="rounded-xl border border-sky-100 bg-sky-50/80 px-4 py-3 text-sm text-slate-800">
+            <span className="font-semibold text-sky-900">Financial month window:</span>{' '}
+            {financialMonthWindow.label}
+            {dueThisFinancialMonth.length > 0 ? (
+              <span className="ml-2">
+                · {dueThisFinancialMonth.length} installment(s) due this window (
+                {formatCurrencyString(
+                  dueThisFinancialMonth.reduce((s, i) => s + (Number(i.amount_minor) || 0) / 100, 0),
+                  { inCurrency: selectedPlan.currency === 'USD' ? 'USD' : 'SAR', digits: 0 },
+                )}
+                )
+              </span>
+            ) : (
+              <span className="ml-2 text-slate-600">· No unpaid installments due in this window for the selected plan.</span>
+            )}
+          </div>
+        )}
 
         <SectionCard
           title="Record an installment purchase (budget-safe)"

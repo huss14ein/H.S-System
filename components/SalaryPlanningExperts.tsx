@@ -22,12 +22,20 @@ import { DocumentDuplicateIcon } from './icons/DocumentDuplicateIcon';
 import { CheckIcon } from './icons/CheckIcon';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { lookupHintForTitle } from '../content/sectionInfoHints';
-import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
-import { computePersonalHeadlineNetWorthSar } from '../services/personalNetWorth';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { getPersonalAccounts, getPersonalLiabilities, getPersonalTransactions, getPersonalInvestments } from '../utils/wealthScope';
+import {
+    financialMonthKey,
+    financialMonthRange,
+    financialMonthKeysEndingAt,
+    financialMonthIsoKey,
+    financialMonthRangeFromKey,
+    financialMonthColumnIndexForDate,
+    resolveMonthStartDayFromData,
+} from '../utils/financialMonth';
 
 const DEFAULT_EXPERT_RESULT_HINT =
     'Markdown from the AI for this expert. Review numbers and assumptions; tables are illustrative. Not financial advice.';
@@ -75,8 +83,7 @@ function initialExpertsExpanded(): Record<string, boolean> {
 }
 
 const SalaryPlanningExperts: React.FC = () => {
-    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-    const { exchangeRate } = useCurrency();
+    const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>(initialExpertsExpanded);
@@ -89,11 +96,7 @@ const SalaryPlanningExperts: React.FC = () => {
     const [translatingResult, setTranslatingResult] = useState(false);
     const [translateError, setTranslateError] = useState<string | null>(null);
 
-    const headlineNw = React.useMemo(
-        () => computePersonalHeadlineNetWorthSar(data ?? null, exchangeRate, { getAvailableCashForAccount }),
-        [data, exchangeRate, getAvailableCashForAccount],
-    );
-    const sarPerUsd = headlineNw.sarPerUsd;
+    const { sarPerUsd, netWorth: liveNetWorthSAR } = useCanonicalFinancialMetrics();
     const personalAccounts = React.useMemo(() => getPersonalAccounts(data ?? null), [data]);
     const personalTransactions = React.useMemo(() => getPersonalTransactions(data ?? null), [data]);
     const personalLiabilities = React.useMemo(() => getPersonalLiabilities(data ?? null), [data]);
@@ -113,16 +116,20 @@ const SalaryPlanningExperts: React.FC = () => {
         [accountCurrencyById, sarPerUsd],
     );
 
+    const monthStartDay = React.useMemo(() => resolveMonthStartDayFromData(data), [data]);
+
     const suggestedSalary = React.useMemo(() => {
+        const planYear = new Date().getFullYear();
         const incomeByMonth = Array(12).fill(0);
         personalTransactions.forEach((t) => {
-            const d = new Date(t.date);
-            if (d.getFullYear() !== new Date().getFullYear() || t.type !== 'income') return;
-            incomeByMonth[d.getMonth()] += Math.max(0, amountToSar(Number(t.amount) || 0, t.accountId));
+            if (t.type !== 'income') return;
+            const col = financialMonthColumnIndexForDate(t.date, planYear, monthStartDay);
+            if (col == null) return;
+            incomeByMonth[col] += Math.max(0, amountToSar(Number(t.amount) || 0, t.accountId));
         });
         const withData = incomeByMonth.filter((v) => v > 0);
         return withData.length > 0 ? Math.round(withData.reduce((a, b) => a + b, 0) / withData.length) : 0;
-    }, [personalTransactions, amountToSar]);
+    }, [personalTransactions, amountToSar, monthStartDay]);
 
     const suggestedSavings = React.useMemo(() => {
         const cash = personalAccounts
@@ -131,46 +138,43 @@ const SalaryPlanningExperts: React.FC = () => {
         return cash;
     }, [personalAccounts, sarPerUsd]);
 
-    /** Same headline as Dashboard / Summary (balance sheet NW + headline FX path). */
-    const liveNetWorthSAR = headlineNw.netWorth;
-
     // Fixed expenses: from Budgets (sum limits current month) or Transactions (fixed expenses, last 3 months avg)
     const { suggestedFixedExpenses, suggestedFixedExpensesSource } = React.useMemo(() => {
         const now = new Date();
-        const year = now.getFullYear();
-        const month = now.getMonth() + 1;
+        const { key: finKey } = financialMonthRange(now, monthStartDay);
         const budgets = (data?.budgets ?? []) as { category?: string; limit?: number; month?: number; year?: number }[];
         const budgetSum = budgets
-            .filter((b) => (b.year == null || b.year === year) && (b.month == null || b.month === month))
+            .filter((b) => (b.year == null || b.year === finKey.year) && (b.month == null || b.month === finKey.month))
             .reduce((s, b) => s + Math.max(0, Number(b.limit) ?? 0), 0);
         if (budgetSum > 0) return { suggestedFixedExpenses: Math.round(budgetSum), suggestedFixedExpensesSource: 'Budgets' };
 
-        const threeMonthsAgo = new Date();
-        threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+        const lookback3 = financialMonthKeysEndingAt(now, 3, monthStartDay);
+        const threeMonthsStart = financialMonthRangeFromKey(lookback3[0], monthStartDay).start;
         const fixedExpenses = personalTransactions.filter(
-            (t) => countsAsExpenseForCashflowKpi(t) && t.transactionNature === 'Fixed' && new Date(t.date) >= threeMonthsAgo
+            (t) => countsAsExpenseForCashflowKpi(t) && t.transactionNature === 'Fixed' && new Date(t.date) >= threeMonthsStart
         );
         const total = fixedExpenses.reduce((s, t) => s + Math.abs(amountToSar(Number(t.amount) || 0, t.accountId)), 0);
-        const monthsWithData = new Set(fixedExpenses.map((t) => `${new Date(t.date).getFullYear()}-${new Date(t.date).getMonth()}`)).size;
+        const monthsWithData = new Set(
+            fixedExpenses.map((t) => financialMonthIsoKey(financialMonthKey(new Date(t.date), monthStartDay))),
+        ).size;
         const avg = monthsWithData > 0 ? total / monthsWithData : 0;
         if (avg > 0) return { suggestedFixedExpenses: Math.round(avg), suggestedFixedExpensesSource: 'Transactions (fixed)' };
         return { suggestedFixedExpenses: 0, suggestedFixedExpensesSource: '' };
-    }, [data?.budgets, personalTransactions, amountToSar]);
+    }, [data?.budgets, personalTransactions, amountToSar, monthStartDay]);
 
     // Expense breakdown: from Budgets (category: limit) or Transactions grouped by category
     const { suggestedExpenseBreakdown, suggestedExpenseBreakdownSource } = React.useMemo(() => {
         const now = new Date();
-        const year = now.getFullYear();
-        const month = now.getMonth() + 1;
+        const { key: finKey } = financialMonthRange(now, monthStartDay);
         const budgets = (data?.budgets ?? []) as { category?: string; limit?: number; month?: number; year?: number }[];
-        const forMonth = budgets.filter((b) => (b.year == null || b.year === year) && (b.month == null || b.month === month));
+        const forMonth = budgets.filter((b) => (b.year == null || b.year === finKey.year) && (b.month == null || b.month === finKey.month));
         if (forMonth.length > 0) {
             const lines = forMonth.map((b) => `${b.category || 'Other'}: ${Math.round(Number(b.limit) || 0)}`).join(', ');
             return { suggestedExpenseBreakdown: lines, suggestedExpenseBreakdownSource: 'Budgets' };
         }
-        const sixMonthsAgo = new Date();
-        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-        const expenses = personalTransactions.filter((t) => countsAsExpenseForCashflowKpi(t) && new Date(t.date) >= sixMonthsAgo);
+        const lookback6b = financialMonthKeysEndingAt(now, 6, monthStartDay);
+        const sixMonthsStartB = financialMonthRangeFromKey(lookback6b[0], monthStartDay).start;
+        const expenses = personalTransactions.filter((t) => countsAsExpenseForCashflowKpi(t) && new Date(t.date) >= sixMonthsStartB);
         const byCategory = new Map<string, number>();
         expenses.forEach((t) => {
             const cat = (t.budgetCategory || t.category || 'Other').trim() || 'Other';
@@ -186,7 +190,7 @@ const SalaryPlanningExperts: React.FC = () => {
             return { suggestedExpenseBreakdown: lines, suggestedExpenseBreakdownSource: 'Transactions (avg/month)' };
         }
         return { suggestedExpenseBreakdown: '', suggestedExpenseBreakdownSource: '' };
-    }, [data?.budgets, personalTransactions, amountToSar]);
+    }, [data?.budgets, personalTransactions, amountToSar, monthStartDay]);
 
     // Monthly investment: from Investment Plan or from investment transactions (avg monthly buy, personal accounts only)
     const { suggestedMonthlyInvestment, suggestedMonthlyInvestmentSource } = React.useMemo(() => {
@@ -199,9 +203,9 @@ const SalaryPlanningExperts: React.FC = () => {
         const txns = allTxns.filter((t) => personalAccountIds.has(t.accountId ?? ''));
         const buys = txns.filter((t) => t.type === 'buy');
         if (buys.length === 0) return { suggestedMonthlyInvestment: 0, suggestedMonthlyInvestmentSource: '' };
-        const sixMonthsAgo = new Date();
-        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-        const recent = buys.filter((t) => new Date(t.date) >= sixMonthsAgo);
+        const lookback6 = financialMonthKeysEndingAt(new Date(), 6, monthStartDay);
+        const sixMonthsStart = financialMonthRangeFromKey(lookback6[0], monthStartDay).start;
+        const recent = buys.filter((t) => new Date(t.date) >= sixMonthsStart);
         const total = recent.reduce((s, t) => {
             const rawTotal = t.total;
             const n = (rawTotal != null && Number.isFinite(Number(rawTotal)))
@@ -210,7 +214,9 @@ const SalaryPlanningExperts: React.FC = () => {
             const currency = inferInvestmentTransactionCurrency(t as any, personalAccounts, personalInvestments);
             return s + Math.max(0, Number.isFinite(n) ? toSAR(n, currency, sarPerUsd) : 0);
         }, 0);
-        const byMonth = new Set(recent.map((t) => `${new Date(t.date).getFullYear()}-${new Date(t.date).getMonth()}`)).size;
+        const byMonth = new Set(
+            recent.map((t) => financialMonthIsoKey(financialMonthKey(new Date(t.date), monthStartDay))),
+        ).size;
         const avg = byMonth > 0 ? total / byMonth : 0;
         if (avg > 0) return { suggestedMonthlyInvestment: Math.round(avg), suggestedMonthlyInvestmentSource: 'Investment transactions' };
         if (suggestedSalary > 0) {
@@ -218,7 +224,7 @@ const SalaryPlanningExperts: React.FC = () => {
             return { suggestedMonthlyInvestment: v, suggestedMonthlyInvestmentSource: '10% of salary (suggested)' };
         }
         return { suggestedMonthlyInvestment: 0, suggestedMonthlyInvestmentSource: '' };
-    }, [data?.investmentPlan, data?.investmentTransactions, personalAccounts, personalInvestments, suggestedSalary, sarPerUsd]);
+    }, [data?.investmentPlan, data?.investmentTransactions, personalAccounts, personalInvestments, suggestedSalary, sarPerUsd, monthStartDay]);
 
     /** Finova: amount < 0 = debt you owe; amount > 0 = receivable (owed to you). */
     const { suggestedDebtList, suggestedDebtListSource, suggestedReceivableList, suggestedReceivableListSource } = React.useMemo(() => {
@@ -257,18 +263,20 @@ const SalaryPlanningExperts: React.FC = () => {
 
     // Monthly / current expenses: from Transactions (expense total, last 6 months avg)
     const { suggestedMonthlyExpenses, suggestedCurrentExpenses, suggestedCurrentExpensesSource } = React.useMemo(() => {
-        const sixMonthsAgo = new Date();
-        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-        const expenses = personalTransactions.filter((t) => countsAsExpenseForCashflowKpi(t) && new Date(t.date) >= sixMonthsAgo);
+        const lookback6 = financialMonthKeysEndingAt(new Date(), 6, monthStartDay);
+        const sixMonthsStart = financialMonthRangeFromKey(lookback6[0], monthStartDay).start;
+        const expenses = personalTransactions.filter((t) => countsAsExpenseForCashflowKpi(t) && new Date(t.date) >= sixMonthsStart);
         const total = expenses.reduce((s, t) => s + Math.abs(amountToSar(Number(t.amount) || 0, t.accountId)), 0);
-        const months = new Set(expenses.map((t) => `${new Date(t.date).getFullYear()}-${new Date(t.date).getMonth()}`)).size;
+        const months = new Set(
+            expenses.map((t) => financialMonthIsoKey(financialMonthKey(new Date(t.date), monthStartDay))),
+        ).size;
         const avg = months > 0 ? Math.round(total / months) : 0;
         return {
             suggestedMonthlyExpenses: avg,
             suggestedCurrentExpenses: avg,
             suggestedCurrentExpensesSource: avg > 0 ? 'Transactions (avg/month)' : '',
         };
-    }, [personalTransactions, amountToSar]);
+    }, [personalTransactions, amountToSar, monthStartDay]);
 
     const suggestedCurrentPortfolioSource = 'Live (same as Summary / Dashboard)';
 

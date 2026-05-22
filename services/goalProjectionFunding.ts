@@ -1,6 +1,5 @@
 import type { Budget, FinancialData, Goal } from '../types';
 import { toSAR } from '../utils/currencyMath';
-import { computeGoalMonthlyAllocation } from './goalAllocation';
 import { averageRollingMonthlyNetSurplus, GOAL_NET_CASHFLOW_LOOKBACK_MONTHS } from './goalResolvedTotals';
 
 /** Monthly SAR equivalent of a budget row limit (matches Budgets page cards). */
@@ -15,10 +14,10 @@ export function budgetMonthlyEquivalentSar(b: Budget): number {
 
 /**
  * Monthly funding envelope for goal projections:
- * - Goal-linked budgets + rolling average of goal-linked investment deposits (same window as surplus),
- * - Plus allocation slice of **remaining** rolling surplus after subtracting other goals' linked budget envelopes.
+ * - Goal-linked budgets + linked investment plan or deposit run-rate only (explicit mapping).
+ * - Rolling surplus after goal-linked budgets is **not** allocated to goals — it funds the emergency buffer.
  */
-/** Rolling surplus minus all envelopes explicitly tagged with any goal (shared “what’s left” for %-allocation math). */
+/** Rolling surplus minus all budgets tagged to any goal — monthly capacity for emergency fund top-up. */
 export function rollingSurplusAfterAllGoalBudgetReservations(
   data: FinancialData | null | undefined,
   /** CurrencyContext SAR/USD rate — keeps rolling net aligned with mixed-currency accounts. */
@@ -32,6 +31,24 @@ export function rollingSurplusAfterAllGoalBudgetReservations(
     reserved += budgetMonthlyEquivalentSar(b);
   });
   return Math.max(0, rolling - reserved);
+}
+
+/** Alias: unallocated rolling surplus after goal budget reservations → emergency fund funding. */
+export const monthlySurplusForEmergencyFund = rollingSurplusAfterAllGoalBudgetReservations;
+
+/** Sum of per-goal monthly envelopes (mapped budgets + linked investments only). */
+export function sumAllGoalMonthlyFundingEnvelopesSar(
+  data: FinancialData | null | undefined,
+  sarPerUsd?: number,
+): number {
+  const goals = data?.goals ?? [];
+  if (goals.length === 0) return 0;
+  const rate = Number(sarPerUsd);
+  const fx = Number.isFinite(rate) && rate > 0 ? rate : 3.75;
+  return goals.reduce(
+    (sum, g) => sum + computeGoalMonthlyFundingEnvelopeSar({ goal: g, data, sarPerUsd: fx }).envelopeMonthly,
+    0,
+  );
 }
 
 type GoalSharesByPortfolio = {
@@ -139,23 +156,6 @@ function buildGoalSharesByPortfolio(data: FinancialData | null | undefined): Goa
   return { sharesByPortfolioId, linkedGoalIds, portfolioWeightById };
 }
 
-function goalAllocationFallbackShare(goalId: string, data: FinancialData | null | undefined): number {
-  const gid = String(goalId ?? '').trim();
-  const goals = data?.goals ?? [];
-  if (!gid || goals.length === 0) return 0;
-
-  const rows = goals.map((g) => ({
-    id: String(g.id ?? '').trim(),
-    pct: Math.max(0, Number(g.savingsAllocationPercent ?? 0)),
-  })).filter((g) => g.id);
-  const me = rows.find((g) => g.id === gid);
-  if (!me) return 0;
-  const totalPct = rows.reduce((sum, g) => sum + g.pct, 0);
-  if (totalPct > 0) return me.pct / totalPct;
-  if (rows.length === 1) return 1;
-  return 1 / rows.length;
-}
-
 /**
  * Rolling average (same window as surplus) of cash deposits into portfolios/holdings linked to the goal — SAR.
  */
@@ -254,9 +254,7 @@ export function goalMonthlyInvestmentPlanContributionSar(
     });
   }
   if (slicesTotalMonthly > 0) {
-    const unmappedMonthly = Math.max(0, slicesTotalMonthly - mappedAllGoalsMonthly);
-    const fallback = unmappedMonthly * goalAllocationFallbackShare(gid, data);
-    return Math.max(0, toSAR(mappedForGoalMonthly + fallback, planCurrency, sarPerUsd));
+    return Math.max(0, toSAR(mappedForGoalMonthly, planCurrency, sarPerUsd));
   }
   if (hasSlices) return 0;
 
@@ -281,9 +279,7 @@ export function goalMonthlyInvestmentPlanContributionSar(
     }
   }
 
-  // No explicit goal links in investments: infer mapping from saved goal allocation strategy.
-  const fallbackShare = goalAllocationFallbackShare(gid, data);
-  return Math.max(0, toSAR(rootMonthly * fallbackShare, planCurrency, sarPerUsd));
+  return 0;
 }
 
 export function computeGoalMonthlyFundingEnvelopeSar(args: {
@@ -330,9 +326,8 @@ export function computeGoalMonthlyFundingEnvelopeSar(args: {
         ? 'plan'
         : 'deposits';
   const assignedEnvelopeMonthly = assignedBudgetMonthly + assignedInvestmentMonthly;
-
-  const surplusAfterReserved = Math.max(0, rollingSurplusMonthly - reservedByOtherGoalBudgets);
-  const allocationSliceMonthly = computeGoalMonthlyAllocation(surplusAfterReserved, goal.savingsAllocationPercent ?? 0);
+  /** Legacy field — always 0; surplus after goal budgets funds emergency, not goals. */
+  const allocationSliceMonthly = 0;
 
   return {
     assignedBudgetMonthly,
@@ -341,7 +336,7 @@ export function computeGoalMonthlyFundingEnvelopeSar(args: {
     assignedInvestmentMonthly,
     assignedInvestmentSource,
     allocationSliceMonthly,
-    envelopeMonthly: assignedEnvelopeMonthly + allocationSliceMonthly,
+    envelopeMonthly: assignedEnvelopeMonthly,
     rollingSurplusMonthly,
     reservedByOtherGoalBudgets,
   };

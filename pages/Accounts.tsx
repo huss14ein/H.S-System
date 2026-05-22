@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useContext, useEffect, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
-import { Account, Page } from '../types';
+import { Account, AccountRole, Page } from '../types';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 
@@ -30,13 +30,8 @@ import OwnerBadge from '../components/OwnerBadge';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 
-/** Local calendar month YYYY-MM (avoid UTC drift from `toISOString()` on month boundaries). */
-function calendarMonthIso(date = new Date()) {
-    const y = date.getFullYear();
-    const m = date.getMonth() + 1;
-    return `${y}-${String(m).padStart(2, '0')}`;
-}
 import { useCurrency } from '../context/CurrencyContext';
+import { currentFinancialMonthIso, financialMonthRangeFromIsoKey, resolveMonthStartDayFromData } from '../utils/financialMonth';
 import { tradableCashBucketToSAR, resolveSarPerUsd, toSAR, fromSAR } from '../utils/currencyMath';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import { accountBookCurrency } from '../utils/cashAccountDisplay';
@@ -86,6 +81,7 @@ const AccountModal: React.FC<{
     const [linkedAccountIds, setLinkedAccountIds] = useState<string[]>([]);
     const [balanceStr, setBalanceStr] = useState('');
     const [cashCurrency, setCashCurrency] = useState<'SAR' | 'USD'>('SAR');
+    const [accountRole, setAccountRole] = useState<AccountRole | ''>('');
 
     const planDefaultCash: 'SAR' | 'USD' =
         String((data?.investmentPlan as { budgetCurrency?: string } | undefined)?.budgetCurrency ?? '').toUpperCase() === 'USD'
@@ -104,6 +100,7 @@ const AccountModal: React.FC<{
                     ? ''
                     : String(accountToEdit.balance ?? '')
             );
+            setAccountRole((accountToEdit.accountRole as AccountRole) ?? '');
         } else {
             const learnedType = getLearnedDefault('account-add', 'type') as Account['type'] | undefined;
             const validTypes: Account['type'][] = ['Checking', 'Savings', 'Credit', 'Investment'];
@@ -113,6 +110,7 @@ const AccountModal: React.FC<{
             setLinkedAccountIds([]);
             setCashCurrency(planDefaultCash);
             setBalanceStr('');
+            setAccountRole('');
         }
     }, [accountToEdit, isOpen, getLearnedDefault, planDefaultCash]);
 
@@ -128,6 +126,7 @@ const AccountModal: React.FC<{
             ...(type === 'Investment' ? { linkedAccountIds: linkedAccountIds || [] } : {}),
             ...(type !== 'Investment' ? { balance: parsedBalance } : {}),
             ...(type === 'Checking' || type === 'Savings' || type === 'Credit' ? { currency: cashCurrency } : {}),
+            ...(accountRole ? { accountRole } : {}),
         };
 
         try {
@@ -172,6 +171,22 @@ const AccountModal: React.FC<{
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father, Spouse for managed wealth (excluded from your net worth)." /></label>
                     <input type="text" placeholder="Owner (e.g., Father, Spouse) or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="input-base" />
                 </div>
+                {type !== 'Investment' && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Cash role (optional)</label>
+                        <select value={accountRole} onChange={(e) => setAccountRole(e.target.value as AccountRole | '')} className="select-base">
+                            <option value="">— Not set —</option>
+                            <option value="operating_cash">Operating cash</option>
+                            <option value="salary_receiving">Salary receiving</option>
+                            <option value="bills_payment">Bills payment</option>
+                            <option value="emergency_reserve">Emergency reserve</option>
+                            <option value="investment_funding">Investment funding</option>
+                            <option value="long_term_savings">Long-term savings</option>
+                            <option value="goal_reserve">Goal reserve</option>
+                            <option value="debt_servicing">Debt servicing</option>
+                        </select>
+                    </div>
+                )}
                 {(type === 'Checking' || type === 'Savings' || type === 'Credit') && (
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
@@ -361,7 +376,13 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const [transferSubview, setTransferSubview] = useState<'scheduled' | 'history'>('scheduled');
     const [transferHistoryFilterFrom, setTransferHistoryFilterFrom] = useState<string>('all');
     const [transferHistoryFilterTo, setTransferHistoryFilterTo] = useState<string>('all');
-    const [transferHistoryMonth, setTransferHistoryMonth] = useState(() => calendarMonthIso());
+    const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data]);
+    const [transferHistoryMonth, setTransferHistoryMonth] = useState(() =>
+        currentFinancialMonthIso(new Date(), resolveMonthStartDayFromData(null)),
+    );
+    useEffect(() => {
+        setTransferHistoryMonth(currentFinancialMonthIso(new Date(), monthStartDay));
+    }, [monthStartDay]);
     const [reschedulePair, setReschedulePair] = useState<ScheduledTransferPair | null>(null);
     const [rescheduleDay, setRescheduleDay] = useState('1');
     const [rescheduleAmount, setRescheduleAmount] = useState('');
@@ -603,12 +624,10 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     }, [data?.transactions, (data as any)?.personalTransactions, data?.investmentTransactions, (data as any)?.personalInvestmentTransactions]);
 
     const filteredTransferHistory = useMemo(() => {
-        const [hy, hm] = transferHistoryMonth.split('-').map(Number);
-        const monthStart =
-            Number.isFinite(hy) && Number.isFinite(hm)
-                ? new Date(hy, hm - 1, 1)
-                : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-        const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0, 23, 59, 59, 999);
+        const { start: monthStart, end: monthEnd } = financialMonthRangeFromIsoKey(
+            transferHistoryMonth,
+            monthStartDay,
+        );
         return transferHistory.filter((p) => {
             const d = new Date(p.date);
             if (Number.isNaN(d.getTime()) || d < monthStart || d > monthEnd) return false;
@@ -616,7 +635,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             if (transferHistoryFilterTo !== 'all' && p.toAccountId !== transferHistoryFilterTo) return false;
             return true;
         });
-    }, [transferHistory, transferHistoryMonth, transferHistoryFilterFrom, transferHistoryFilterTo]);
+    }, [transferHistory, transferHistoryMonth, transferHistoryFilterFrom, transferHistoryFilterTo, monthStartDay]);
 
     const handleOpenAccountModal = (account: Account | null = null) => { setAccountToEdit(account); setIsAccountModalOpen(true); };
 
@@ -1121,13 +1140,13 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             ))}
                         </select>
                     </div>
-                    {(transferHistoryFilterFrom !== 'all' || transferHistoryFilterTo !== 'all' || transferHistoryMonth !== calendarMonthIso()) && (
+                    {(transferHistoryFilterFrom !== 'all' || transferHistoryFilterTo !== 'all' || transferHistoryMonth !== currentFinancialMonthIso(new Date(), monthStartDay)) && (
                         <button
                             type="button"
                             onClick={() => {
                                 setTransferHistoryFilterFrom('all');
                                 setTransferHistoryFilterTo('all');
-                                setTransferHistoryMonth(calendarMonthIso());
+                                setTransferHistoryMonth(currentFinancialMonthIso(new Date(), monthStartDay));
                             }}
                             className="text-xs font-medium text-slate-500 hover:text-slate-700 flex items-center gap-1"
                         >

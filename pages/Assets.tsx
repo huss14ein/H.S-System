@@ -29,6 +29,7 @@ import { parseMoneyInput, roundMoney, roundQuantity } from '../utils/money';
 import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
 import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd } from '../utils/currencyMath';
+import { financialMonthIsoKey, financialMonthKey, resolveMonthStartDayFromData } from '../utils/financialMonth';
 import AIAdvisor from '../components/AIAdvisor';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
@@ -1030,7 +1031,8 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     }, [sarPerUsd, data?.goals, assetsList, commodityList, totalAssetValue]);
     const assetsAiContext = useMemo(() => {
         const now = new Date();
-        const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const monthStartDay = resolveMonthStartDayFromData(data);
+        const month = financialMonthIsoKey(financialMonthKey(now, monthStartDay));
         const byType = new Map<string, number>();
         for (const a of assetsList as Asset[]) {
             const key = a.type || 'Other';
@@ -1051,7 +1053,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             trendData: [{ month, value: totalAssetValue }],
             compositionData: compositionData.length > 0 ? compositionData : [{ name: 'No Assets', value: 0 }],
         };
-    }, [assetsList, commodityList, totalPhysicalAssetValue, totalCommodityValue, totalRentalIncome, totalAssetValue]);
+    }, [assetsList, commodityList, totalPhysicalAssetValue, totalCommodityValue, totalRentalIncome, totalAssetValue, data]);
 
     if (loading || !data) {
         return (
@@ -1231,7 +1233,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             </SectionCard>
 
             <AIAdvisor
-                pageContext="analysis"
+                pageContext="assets"
                 contextData={assetsAiContext}
                 title="Assets AI Advisor"
                 subtitle="Allocation clarity, valuation signals, and asset-quality insights."

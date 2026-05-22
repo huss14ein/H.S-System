@@ -20,6 +20,8 @@ import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestmen
 import { useTodosOptional } from './TodosContext';
 import { computeTaskCounts } from '../services/todoModel';
 import { isSupportedPageAction } from '../utils/pageActions';
+import { detectGoalConflictsFromData } from '../services/goalConflictDetection';
+import { detectBudgetDrift } from '../services/budgetDrift';
 
 const READ_STORAGE_KEY = 'h.s.notifications.read';
 
@@ -356,16 +358,26 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       const staleSyms = getStaleQuoteSymbols(tracked, symbolQuoteUpdatedAt, isLive, {
         countMissingTimestampAsStale: !globalFresh,
       });
-      if (isLive && staleSyms.length > 0) {
+      const priceTriggeredPlans = (data.plannedTrades ?? []).filter(
+        (p) => p.status !== 'Executed' && p.conditionType === 'price' && (p.symbol ?? '').trim(),
+      );
+      const stalePlanSymbols = staleSyms.filter((s) =>
+        priceTriggeredPlans.some((p) => (p.symbol ?? '').toUpperCase() === s),
+      );
+      if (staleSyms.length > 0) {
         push({
           id: 'market-symbols-stale',
           category: 'System',
-          message: `Some symbols need a fresh quote: ${staleSyms.slice(0, 6).join(', ')}${staleSyms.length > 6 ? '…' : ''}.`,
+          message: `Stale quotes (${isLive ? 'live' : 'sim'} mode): ${staleSyms.slice(0, 6).join(', ')}${staleSyms.length > 6 ? '…' : ''}${
+            stalePlanSymbols.length > 0
+              ? ` — affects ${stalePlanSymbols.length} price-triggered plan(s).`
+              : ''
+          }`,
           date: now.toISOString(),
           isRead: false,
-          pageLink: 'Watchlist',
+          pageLink: stalePlanSymbols.length > 0 ? 'Investments' : 'Watchlist',
           severity: 'warning',
-          actionHint: 'Refresh prices in the header; failed symbols may need a different data provider.',
+          actionHint: 'Use Refresh prices in the header. Investment Plan triggers may be wrong until quotes update.',
         });
       }
     }
@@ -491,6 +503,53 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           actionHint: 'Complete, snooze, or reschedule from My tasks.',
         });
       }
+    }
+
+    for (const c of detectGoalConflictsFromData(data, exchangeRate)) {
+      push({
+        id: `goal-conflict-${c.id}`,
+        category: 'Goal',
+        message: c.message,
+        date: now.toISOString(),
+        isRead: false,
+        pageLink: 'Goals',
+        severity: c.severity === 'critical' ? 'urgent' : 'warning',
+        actionHint: 'Review goal deadlines and linked budgets or investments on Goals.',
+      });
+    }
+    for (const d of detectBudgetDrift(data, exchangeRate).slice(0, 2)) {
+      push({
+        id: `budget-drift-${d.category}`,
+        category: 'Budget',
+        message: `${d.category} spend is ${d.driftPct > 0 ? '+' : ''}${d.driftPct.toFixed(0)}% vs your 3-month baseline.`,
+        date: now.toISOString(),
+        isRead: false,
+        pageLink: 'Budgets',
+        severity: Math.abs(d.driftPct) >= 30 ? 'warning' : 'info',
+        actionHint: 'Open Budgets or Analysis to adjust limits or investigate the category.',
+      });
+    }
+
+    const execLogs = (data.executionLogs ?? []) as { created_at?: string; date?: string }[];
+    const lastExecMs = execLogs.reduce((max, log) => {
+      const raw = log.created_at ?? log.date;
+      const t = raw ? new Date(raw).getTime() : 0;
+      return Number.isFinite(t) ? Math.max(max, t) : max;
+    }, 0);
+    const daysSinceExec = lastExecMs > 0 ? (Date.now() - lastExecMs) / 86400000 : 999;
+    const planBudget = Number((data.investmentPlan as { monthlyBudget?: number } | undefined)?.monthlyBudget ?? 0);
+    if (planBudget > 0 && daysSinceExec > 35 && hasMarketExposure) {
+      push({
+        id: 'plan-run-stale',
+        category: 'Plan',
+        message: 'No investment plan execution logged in over 5 weeks — review planned trades or run the monthly plan.',
+        date: now.toISOString(),
+        isRead: false,
+        pageLink: 'Investments',
+        pageAction: safePageAction('Investments', 'investment-tab:Execution History'),
+        severity: 'info',
+        actionHint: 'Open Execution History or Investment Plan to execute or refresh targets.',
+      });
     }
 
     // Prioritize smarter, keep feed concise

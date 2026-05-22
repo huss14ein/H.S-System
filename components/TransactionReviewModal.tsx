@@ -50,7 +50,12 @@ const TransactionReviewModal: React.FC<TransactionReviewModalProps> = ({ isOpen,
         if (!currentTransaction || !aiActionsEnabled) return;
         setIsSuggesting(true);
         try {
-            const suggestion = await getAICategorySuggestion(currentTransaction.description, budgetCategories);
+            const suggestion = await getAICategorySuggestion(currentTransaction.description, budgetCategories, {
+                data: dataContext?.data ?? null,
+                amount: Math.abs(Number(currentTransaction.amount) || 0),
+                date: currentTransaction.date,
+                type: currentTransaction.type,
+            });
             if (suggestion && budgetCategories.includes(suggestion)) {
                 setSelectedCategory(suggestion);
             }

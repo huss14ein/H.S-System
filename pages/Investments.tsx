@@ -59,6 +59,14 @@ import ExecutionHistoryView from './ExecutionHistoryView';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { loadTradingPolicy, evaluateBuyAgainstPolicy } from '../services/tradingPolicy';
 import { EXECUTE_PLAN_STORAGE_KEY } from '../content/plainLanguage';
+import HoldingSymbolSelect from '../components/HoldingSymbolSelect';
+import {
+    buildHoldingSymbolOptions,
+    buildExecutePlanPayloadFromHoldingOption,
+    resolveHoldingOptionKeyFromSymbol,
+    holdingSymbolIsOwned,
+    type HoldingSymbolOption,
+} from '../services/holdingSymbolOptions';
 import { sellScore } from '../services/decisionEngine';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import type { Transaction } from '../types';
@@ -96,6 +104,16 @@ import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { engineSleeveKeyToTickerStatus, inferEngineSleeveKeyFromHolding } from '../services/inferHoldingUniverseClassification';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { parseMoneyInput, roundAvgCostPerUnit, roundMoney } from '../utils/money';
+import { sortByNewestFirst } from '../utils/sortRecency';
+import {
+    financialMonthRange,
+    financialMonthKeysEndingAt,
+    financialMonthIsoKey,
+    financialMonthKey,
+    financialMonthRangeFromKey,
+    resolveMonthStartDayFromData,
+    dateInRange,
+} from '../utils/financialMonth';
 
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
@@ -187,8 +205,8 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
             return amount;
         };
 
-        const currentMonth = new Date().getMonth();
-        const currentYear = new Date().getFullYear();
+        const monthStartDay = resolveMonthStartDayFromData(data);
+        const { start: finStart, end: finEnd } = financialMonthRange(new Date(), monthStartDay);
         const plan = data?.investmentPlan;
         const planCurrency: TradeCurrency = (plan?.budgetCurrency as TradeCurrency) || 'SAR';
         const personalAccountIds = new Set(getPersonalAccounts(data).map((a) => a.id));
@@ -203,8 +221,7 @@ const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
                     investments,
                 );
                 if (!aid || !personalAccountIds.has(aid)) return false;
-                const d = new Date(t.date);
-                return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy';
+                return dateInRange(t.date, finStart, finEnd) && t.type === 'buy';
             })
             .reduce((sum, t) => {
                 const txCurrency = inferInvestmentTransactionCurrency(t, accounts, investments);
@@ -523,7 +540,6 @@ const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGo
                                         <span className="font-semibold tabular-nums">{formatCurrencyString(tl.requiredMonthlyContribution, { inCurrency: 'SAR', digits: 0 })}/mo</span>
                                         {' · '}Alloc{' '}
                                         <span className="font-semibold tabular-nums">{formatCurrencyString(projectedMonthly, { inCurrency: 'SAR', digits: 0 })}/mo</span>
-                                        <span className="text-slate-500"> ({Number((g as Goal).savingsAllocationPercent ?? 0).toFixed(0)}% of surplus)</span>
                                     </p>
                                 </div>
                             </dl>
@@ -593,6 +609,7 @@ const RecordTradeModal: React.FC<{
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [companyNameLookupLoading, setCompanyNameLookupLoading] = useState(false);
+    const [holdingOptionKey, setHoldingOptionKey] = useState('');
 
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const efRunway = useEmergencyFund(data ?? null);
@@ -630,7 +647,24 @@ const RecordTradeModal: React.FC<{
     );
 
     const portfoliosForAccount = useMemo(() => accountId ? portfolios.filter(p => p.accountId === accountId) : [], [accountId, portfolios]);
-    
+
+    const holdingSymbolOptions = useMemo(() => buildHoldingSymbolOptions(portfolios), [portfolios]);
+    const requiresHoldingPick = type === 'sell' || type === 'dividend';
+
+    const applyHoldingOption = useCallback((opt: HoldingSymbolOption | null) => {
+        if (!opt) {
+            setHoldingOptionKey('');
+            setSymbol('');
+            setHoldingName('');
+            return;
+        }
+        setHoldingOptionKey(opt.optionKey);
+        setSymbol(opt.symbol);
+        setHoldingName(opt.name);
+        setPortfolioId(opt.portfolioId);
+        if (opt.accountId) setAccountId(opt.accountId);
+    }, []);
+
     const isNewHolding = useMemo(() => {
         if (type === 'buy' && portfolioId && symbol) {
             const portfolio = portfolios.find(p => p.id === portfolioId);
@@ -655,6 +689,7 @@ const RecordTradeModal: React.FC<{
     
     const resetForm = () => {
         setType('buy'); setSymbol(''); setQuantity(''); setPrice('');
+        setHoldingOptionKey('');
         setDividendAmount('');
         setDate(new Date().toISOString().split('T')[0]);
         setHoldingName('');
@@ -702,6 +737,17 @@ const RecordTradeModal: React.FC<{
                 if (initialData.amount && !initialData.quantity && !initialData.price) {
                     setPrice('');
                     setQuantity('');
+                }
+                const tradeKind = initialData.tradeType || 'buy';
+                if (tradeKind === 'sell' || tradeKind === 'dividend') {
+                    const key = resolveHoldingOptionKeyFromSymbol(
+                        buildHoldingSymbolOptions(portfolios),
+                        initialData.symbol || '',
+                        initialData.portfolioId,
+                    );
+                    setHoldingOptionKey(key);
+                } else {
+                    setHoldingOptionKey('');
                 }
             } else {
                 resetForm();
@@ -1031,7 +1077,10 @@ const RecordTradeModal: React.FC<{
         if (!portfolioId) return 'Please select a portfolio.';
         const parsedQuantity = parseFloat(quantity);
         const parsedPrice = parseFloat(price);
-        if (!symbol.trim()) return 'Symbol is required.';
+        if (!symbol.trim()) return requiresHoldingPick ? 'Select a holding from your portfolios.' : 'Symbol is required.';
+        if (requiresHoldingPick && !holdingSymbolIsOwned(holdingSymbolOptions, symbol, portfolioId)) {
+            return 'Select a holding you currently own in the chosen portfolio.';
+        }
         if (type === 'dividend') {
             const parsedDividendAmount = parseFloat(dividendAmount);
             if (!Number.isFinite(parsedDividendAmount) || parsedDividendAmount <= 0) return 'Dividend amount must be greater than 0.';
@@ -1068,7 +1117,7 @@ const RecordTradeModal: React.FC<{
             }
         }
         return null;
-    }, [portfolioId, quantity, price, dividendAmount, symbol, type, isNewHolding, holdingName, manualValuation, manualCurrentValue, isManualExisting, tradeCurrency, portfolios, availableCashInLedgerCurrency, availableCashByCurrency.SAR, availableCashByCurrency.USD, sarPerUsd, formatCurrencyString, feeAmount]);
+    }, [portfolioId, quantity, price, dividendAmount, symbol, type, isNewHolding, holdingName, manualValuation, manualCurrentValue, isManualExisting, tradeCurrency, portfolios, availableCashInLedgerCurrency, availableCashByCurrency.SAR, availableCashByCurrency.USD, sarPerUsd, formatCurrencyString, feeAmount, requiresHoldingPick, holdingSymbolOptions]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -1237,8 +1286,8 @@ const RecordTradeModal: React.FC<{
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex flex-wrap gap-x-4 gap-y-1">
                         <label className="flex items-center"><input type="radio" value="buy" checked={type === 'buy'} onChange={() => setType('buy')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Buy</span></label>
-                        <label className="flex items-center"><input type="radio" value="sell" checked={type === 'sell'} onChange={() => setType('sell')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Sell</span></label>
-                        <label className="flex items-center"><input type="radio" value="dividend" checked={type === 'dividend'} onChange={() => setType('dividend')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Dividend</span></label>
+                        <label className="flex items-center"><input type="radio" value="sell" checked={type === 'sell'} onChange={() => { setType('sell'); const key = resolveHoldingOptionKeyFromSymbol(holdingSymbolOptions, symbol, portfolioId); if (key) { const opt = holdingSymbolOptions.find((o) => o.optionKey === key); if (opt) applyHoldingOption(opt); } else { applyHoldingOption(null); } }} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Sell</span></label>
+                        <label className="flex items-center"><input type="radio" value="dividend" checked={type === 'dividend'} onChange={() => { setType('dividend'); const key = resolveHoldingOptionKeyFromSymbol(holdingSymbolOptions, symbol, portfolioId); if (key) { const opt = holdingSymbolOptions.find((o) => o.optionKey === key); if (opt) applyHoldingOption(opt); } else { applyHoldingOption(null); } }} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Dividend</span></label>
                     </div>
                     <div className="flex items-center gap-2">
                         <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Currency</span>
@@ -1278,10 +1327,28 @@ const RecordTradeModal: React.FC<{
                 
                 <>
                  <div>
-                    <label htmlFor="symbol" className="block text-sm font-medium text-gray-700">Symbol</label>
-                    <input type="text" id="symbol" value={symbol} onChange={e => setSymbol(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" placeholder={manualValuation ? 'e.g. MASHORA1 (your unique code for this plan)' : undefined} />
-                    {manualValuation && (
-                        <p className="mt-1 text-xs text-slate-500">Pick a short unique code you will reuse for buys/sells to this plan (not a stock ticker).</p>
+                    <label htmlFor={requiresHoldingPick ? 'holding-symbol-select' : 'symbol'} className="block text-sm font-medium text-gray-700">
+                        {requiresHoldingPick ? (type === 'sell' ? 'Holding to sell' : 'Holding (dividend)') : 'Symbol'}
+                    </label>
+                    {requiresHoldingPick ? (
+                        <div className="mt-1">
+                            <HoldingSymbolSelect
+                                id="holding-symbol-select"
+                                options={holdingSymbolOptions}
+                                value={holdingOptionKey}
+                                onChange={applyHoldingOption}
+                                className="w-full p-2 border border-gray-300 rounded-md"
+                                emptyLabel="Select from your portfolios…"
+                            />
+                            <p className="mt-1 text-xs text-slate-500">Symbol and portfolio are filled from your holdings — no manual ticker entry.</p>
+                        </div>
+                    ) : (
+                        <>
+                            <input type="text" id="symbol" value={symbol} onChange={e => setSymbol(e.target.value)} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" placeholder={manualValuation ? 'e.g. MASHORA1 (your unique code for this plan)' : undefined} />
+                            {manualValuation && (
+                                <p className="mt-1 text-xs text-slate-500">Pick a short unique code you will reuse for buys/sells to this plan (not a stock ticker).</p>
+                            )}
+                        </>
                     )}
                 </div>
                 {isNewHolding && type !== 'dividend' && (
@@ -1513,7 +1580,13 @@ const RecordTradeModal: React.FC<{
 // #region Portfolio View Components
 const STOCK_ANALYST_LANG_KEY = 'finova_default_ai_lang_v1';
 
-const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holding: (Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number }) | null; portfolio: InvestmentPortfolio | null }> = ({ isOpen, onClose, holding, portfolio }) => {
+const HoldingDetailModal: React.FC<{
+    isOpen: boolean;
+    onClose: () => void;
+    holding: (Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number }) | null;
+    portfolio: InvestmentPortfolio | null;
+    onRecordSell?: () => void;
+}> = ({ isOpen, onClose, holding, portfolio, onRecordSell }) => {
     const { data } = useContext(DataContext)!;
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
@@ -1982,6 +2055,17 @@ const HoldingDetailModal: React.FC<{ isOpen: boolean; onClose: () => void; holdi
                         </div>
                     )}
                 </div>
+                {onRecordSell && holding && portfolio && (
+                    <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-200">
+                        <button
+                            type="button"
+                            onClick={onRecordSell}
+                            className="px-4 py-2 text-sm font-semibold rounded-lg bg-rose-600 text-white hover:bg-rose-700 transition-colors"
+                        >
+                            Record sell for {holding.symbol}
+                        </button>
+                    </div>
+                )}
             </div>
         </Modal>
     );
@@ -2285,6 +2369,10 @@ export const PortfolioModal: React.FC<{
 
 const TransactionHistoryModal: React.FC<{ isOpen: boolean, onClose: () => void, transactions: InvestmentTransaction[], platformName: string }> = ({ isOpen, onClose, transactions, platformName }) => {
     const { formatCurrencyString } = useFormatCurrency();
+    const sortedTransactions = useMemo(
+        () => sortByNewestFirst(transactions),
+        [transactions],
+    );
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Transaction History: ${platformName}`}>
             <div className="max-h-[60vh] overflow-y-auto">
@@ -2299,7 +2387,7 @@ const TransactionHistoryModal: React.FC<{ isOpen: boolean, onClose: () => void, 
                         </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                        {transactions.map(t => {
+                        {sortedTransactions.map(t => {
                             const cur = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
                             return (
                                 <tr key={t.id} className="hover:bg-gray-50">
@@ -3031,21 +3119,21 @@ const PlatformView: React.FC<{
                     if (!txAccountId) return false;
                     const canon = resolveCanonicalAccountId(txAccountId, accList);
                     return canon === account.id || txAccountId === account.id;
-                })
-                .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+                });
+            const accountTxSorted = sortByNewestFirst(accountTx);
 
             const hasMixedOwnership = portfoliosAll.length > portfoliosPersonal.length;
             const personalPortfolioIds = new Set(portfoliosPersonal.map((p) => p.id).filter(Boolean));
             const canSafelyIncludeUnassignedFlows = hasMixedOwnership && personalPortfolioIds.size === 1;
             const transactionsForMetrics = hasMixedOwnership
-                ? accountTx.filter((t) => {
+                ? accountTxSorted.filter((t) => {
                     const pid = t.portfolioId ?? (t as { portfolio_id?: string }).portfolio_id ?? '';
                     if (pid) return personalPortfolioIds.has(pid);
                     // Many legacy deposit/withdraw/dividend rows are account-level (no portfolioId).
                     // When there is only one personal portfolio under this account, include them to avoid dropping real cash.
                     return canSafelyIncludeUnassignedFlows;
                 })
-                : accountTx;
+                : accountTxSorted;
 
             const metricsAvailableCashByCurrency = hasMixedOwnership
                 ? (() => {
@@ -3070,7 +3158,7 @@ const PlatformView: React.FC<{
                 account,
                 portfoliosAll,
                 portfoliosPersonal,
-                transactions: accountTx,
+                transactions: accountTxSorted,
                 transactionsForMetrics,
                 availableCashByCurrency: metricsAvailableCashByCurrency,
             };
@@ -3455,14 +3543,14 @@ const InvestmentPlan: React.FC<{
             };
         }
 
+        const monthStartDay = resolveMonthStartDayFromData(data);
+        const finKeys6 = financialMonthKeysEndingAt(new Date(), 6, monthStartDay);
+        const earliestBuy = financialMonthRangeFromKey(finKeys6[0], monthStartDay).start;
         const buys = (data?.investmentTransactions ?? []).filter(t => t.type === 'buy');
-        const sixMonthsAgo = new Date();
-        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-        const recent = buys.filter(t => new Date(t.date) >= sixMonthsAgo);
+        const recent = buys.filter(t => new Date(t.date) >= earliestBuy);
         const byMonth = new Map<string, number>();
         recent.forEach(t => {
-            const d = new Date(t.date);
-            const key = `${d.getFullYear()}-${d.getMonth()}`;
+            const key = financialMonthIsoKey(financialMonthKey(new Date(t.date), monthStartDay));
             const txnCurrency = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
             const rawAmount = getInvestmentTransactionCashAmount(t as any);
             const convertedAmount = convertAmount(rawAmount, txnCurrency, budgetCurrency);
@@ -5034,6 +5122,11 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         setActiveTab('Investment Plan');
         clearPageAction?.();
     }
+    if (pageAction === 'focus-dividend-sms') {
+        setActiveTab('Dividend Tracker');
+        // DividendTrackerView scrolls to the SMS panel and clears the action.
+        return;
+    }
     if (pageAction?.startsWith('investment-tab:')) {
         const raw = pageAction.slice('investment-tab:'.length);
         const allowed = new Set<InvestmentSubPage>([
@@ -5051,7 +5144,28 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     if (pageAction === 'openRiskTradingHub') {
         triggerPageAction?.('Engines & Tools', 'openRiskTradingHub');
     }
-  }, [pageAction, clearPageAction, data?.investments, setActiveTab, triggerPageAction]);
+    if (pageAction?.startsWith('focus-symbol:')) {
+        const sym = pageAction.slice('focus-symbol:'.length).trim().toUpperCase();
+        const inv = getPersonalInvestments(data ?? null);
+        const opts = buildHoldingSymbolOptions(inv);
+        const key = resolveHoldingOptionKeyFromSymbol(opts, sym);
+        if (key) {
+            const opt = opts.find((o) => o.optionKey === key);
+            if (opt) {
+                setTradeInitialData({
+                    symbol: opt.symbol,
+                    name: opt.name,
+                    tradeType: 'sell',
+                    portfolioId: opt.portfolioId,
+                    accountId: opt.accountId || undefined,
+                    tradeCurrency: opt.bookCurrency,
+                });
+                setIsTradeModalOpen(true);
+            }
+        }
+        clearPageAction?.();
+    }
+  }, [pageAction, clearPageAction, data, setActiveTab, triggerPageAction]);
 
   const investmentAccounts = useMemo(
     () => getPersonalAccounts(data).filter((acc) => acc.type === 'Investment'),
@@ -5134,6 +5248,30 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
       setTradeInitialData(null);
   };
 
+  const openRecordSellForHolding = useCallback(
+      (holding: Holding, portfolio: InvestmentPortfolio) => {
+          const opts = buildHoldingSymbolOptions(portfoliosForTrade);
+          const key = resolveHoldingOptionKeyFromSymbol(opts, holding.symbol, portfolio.id);
+          const opt = key ? opts.find((o) => o.optionKey === key) : undefined;
+          const payload = opt
+              ? buildExecutePlanPayloadFromHoldingOption(opt)
+              : {
+                    symbol: (holding.symbol || '').trim().toUpperCase(),
+                    name: holding.name,
+                    tradeType: 'sell' as const,
+                    portfolioId: portfolio.id,
+                    accountId: portfolio.accountId,
+                    quantity: holding.quantity,
+                };
+          setIsHoldingModalOpen(false);
+          setSelectedHolding(null);
+          setSelectedPortfolio(null);
+          setTradeInitialData(payload);
+          setIsTradeModalOpen(true);
+      },
+      [portfoliosForTrade],
+  );
+
   const renderContent = () => {
     switch (activeTab) {
       case 'Overview': return <InvestmentOverview setActiveTab={setActiveTab} />;
@@ -5200,10 +5338,39 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                     </section>
                 </div>
             );
-      case 'Dividend Tracker': return <DividendTrackerView setActivePage={setActivePage} />;
-      case 'Recovery Plan': return <RecoveryPlanView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
+      case 'Dividend Tracker':
+        return (
+          <DividendTrackerView
+            setActivePage={setActivePage}
+            pageAction={pageAction}
+            clearPageAction={clearPageAction}
+          />
+        );
+      case 'Recovery Plan': return (
+                <RecoveryPlanView
+                    onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)}
+                    onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined}
+                    setActivePage={setActivePage}
+                    triggerPageAction={triggerPageAction}
+                />
+            );
       case 'AI Rebalancer': return <AIRebalancerView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;
-      case 'Watchlist': return <WatchlistView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} />;
+      case 'Watchlist':
+        return (
+          <WatchlistView
+            onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)}
+            onCreatePlanFromWatchlist={(p) => {
+              setStagedAddOnToPlan((prev) => ({
+                key: (prev?.key ?? 0) + 1,
+                symbol: p.symbol,
+                name: p.name,
+                targetPrice: p.targetPrice,
+                tradeType: p.tradeType ?? 'buy',
+                notes: p.notes,
+              }));
+            }}
+          />
+        );
       case 'Execution History': return <ExecutionHistoryView />;
       default: return null;
     }
@@ -5385,7 +5552,17 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         />
       )}
 
-      <HoldingDetailModal isOpen={isHoldingModalOpen} onClose={() => { setIsHoldingModalOpen(false); setSelectedHolding(null); setSelectedPortfolio(null); }} holding={selectedHolding} portfolio={selectedPortfolio} />
+      <HoldingDetailModal
+          isOpen={isHoldingModalOpen}
+          onClose={() => { setIsHoldingModalOpen(false); setSelectedHolding(null); setSelectedPortfolio(null); }}
+          holding={selectedHolding}
+          portfolio={selectedPortfolio}
+          onRecordSell={
+              selectedHolding && selectedPortfolio
+                  ? () => openRecordSellForHolding(selectedHolding, selectedPortfolio)
+                  : undefined
+          }
+      />
       <HoldingEditModal isOpen={isHoldingEditModalOpen} onClose={() => setIsHoldingEditModalOpen(false)} onSave={handleSaveHolding} holding={holdingToEdit} />
       <PlatformModal isOpen={isPlatformModalOpen} onClose={() => setIsPlatformModalOpen(false)} onSave={handleSavePlatform} platformToEdit={platformToEdit} />
       <PortfolioModal 

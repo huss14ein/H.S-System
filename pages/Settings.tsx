@@ -13,6 +13,7 @@ import { rankCapitalUses, buyScoreBreakdown } from '../services/decisionEngine';
 import { computeDecisionPreviewVerdict } from '../services/decisionPreviewVerdict';
 import DecisionPreviewPanel from '../components/DecisionPreviewPanel';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { loadTradingPolicy, saveTradingPolicy, type TradingPolicy, DEFAULT_TRADING_POLICY, TRADING_POLICY_PRESETS } from '../services/tradingPolicy';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import {
@@ -46,6 +47,7 @@ import { computeWealthSummaryReportModel, computeMonthlyReportFinancialKpis } fr
 import { computeMaxAbsSleeveDriftPercent } from '../services/settingsDecisionPreview';
 import type { FinancialData } from '../types';
 import { financialMonthRange } from '../utils/financialMonth';
+import { isAutoNetWorthSnapshotEnabled, setAutoNetWorthSnapshotEnabled } from '../services/scheduledNetWorthSnapshot';
 
 /** Largest single holding as % of total managed holdings value (personal scope). */
 function computeLargestHoldingWeightPercent(data: FinancialData | null): number {
@@ -94,21 +96,13 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         includeLiabilities: true,
     });
     const [tradingPolicyLocal, setTradingPolicyLocal] = useState<TradingPolicy>(() => loadTradingPolicy());
+    const [autoNwSnapshot, setAutoNwSnapshot] = useState(() => isAutoNetWorthSnapshotEnabled(auth?.user?.id));
     const ef = useEmergencyFund(data ?? null);
     const { maskSensitive, setMaskSensitive, playNotificationSound, setPlayNotificationSound } = usePrivacyMask();
 
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
 
-    const liquidCashSar = useMemo(() => {
-        const accounts = getPersonalAccounts(data);
-        return accounts
-            .filter((a) => a.type === 'Checking' || a.type === 'Savings')
-            .reduce((s, a) => {
-                const bal = Math.max(0, Number(a.balance) || 0);
-                const cur = a.currency === 'USD' ? 'USD' : 'SAR';
-                return s + toSAR(bal, cur, sarPerUsd);
-            }, 0);
-    }, [data, sarPerUsd]);
+    const { liquidCashSar } = useCanonicalFinancialMetrics();
 
     const sleeveDriftPct = useMemo(() => computeMaxAbsSleeveDriftPercent(data), [data]);
 
@@ -275,8 +269,9 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
 
     const wealthSummaryPayload = useMemo((): WealthSummaryReportInput | null => {
         if (!data) return null;
-        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount).wealthSummaryReportPayload;
-    }, [data, exchangeRate, getAvailableCashForAccount]);
+        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount, simulatedPrices)
+            .wealthSummaryReportPayload;
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
 
     const [isAdmin, setIsAdmin] = useState(false);
     const [pendingUsers, setPendingUsers] = useState<{ id: string; name: string | null; email: string | null; created_at: string }[]>([]);
@@ -545,6 +540,21 @@ const hasData = accountsForEmptyCheck.length > 0;
                         hint="In-app feed size from Notifications engine. Email = weekly summary toggle below. Sound = in-app beep only (not OS push)."
                     />
                 </div>
+                <label className="mt-4 flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3 cursor-pointer">
+                    <input
+                        type="checkbox"
+                        checked={autoNwSnapshot}
+                        onChange={(e) => {
+                            const on = e.target.checked;
+                            setAutoNwSnapshot(on);
+                            if (auth.user?.id) setAutoNetWorthSnapshotEnabled(auth.user.id, on);
+                        }}
+                        className="mt-1 h-4 w-4 rounded border-slate-300 text-primary"
+                    />
+                    <span className="text-sm text-slate-700">
+                        <strong className="text-slate-900">Auto-capture net worth snapshot</strong> once per calendar month on login (extended fields: runway, goals, allocation). Manual capture remains on Summary and Command palette.
+                    </span>
+                </label>
             </SectionCard>
 
             <SectionCard id="user-profile" title="User Profile" collapsible collapsibleSummary="Email, user ID">

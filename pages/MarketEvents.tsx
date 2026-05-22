@@ -16,6 +16,7 @@ import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolio
 import { resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { getAIMarketEventInsight, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
 import { useAI } from '../context/AiContext';
+import { financialMonthLabel, financialMonthRange, resolveMonthStartDayFromData } from '../utils/financialMonth';
 
 type Impact = 'High' | 'Medium' | 'Low';
 type EventCategory = 'Macro' | 'Earnings' | 'Portfolio' | 'Holiday';
@@ -316,6 +317,11 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
 
 const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
   const { data, loading } = useContext(DataContext)!;
+  const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data]);
+  const financialMonthBanner = useMemo(() => {
+    const { start, end, key } = financialMonthRange(new Date(), monthStartDay);
+    return { label: financialMonthLabel(key, monthStartDay), start, end };
+  }, [monthStartDay]);
   const { exchangeRate } = useCurrency();
   const { aiActionsEnabled } = useAI();
   const [categoryFilter, setCategoryFilter] = useState<'All' | EventCategory>('All');
@@ -924,6 +930,14 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       description="A practical radar for upcoming market catalysts and your portfolio’s key dates. (Dividend cash is tracked in Dividend Tracker and your investment ledger — not duplicated here.)"
     >
       <div className="space-y-6">
+        <div className="rounded-xl border border-sky-100 bg-sky-50/90 px-4 py-3 text-sm text-slate-700">
+          <span className="font-semibold text-sky-900">Financial month: </span>
+          {financialMonthBanner.label}
+          <span className="text-slate-500">
+            {' '}
+            ({financialMonthBanner.start.toLocaleDateString()} – {financialMonthBanner.end.toLocaleDateString()})
+          </span>
+        </div>
         {/* Filters bar */}
         <div className="section-card">
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-4">Filters</p>

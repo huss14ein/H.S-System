@@ -6,6 +6,8 @@ import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolio
 import { effectiveHoldingUnitPriceInBookCurrency, effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { lookupLiveQuoteForSymbol, lookupQuoteUpdatedAtIso } from './finnhubService';
 import { buildRecoveryPlan, DEFAULT_RECOVERY_GLOBAL_CONFIG } from './recoveryPlan';
+import { buildRecyclingPlanForHolding, summarizeRecyclingPlan, type RecyclingPlanSummary } from './positionRecyclingIntegration';
+import { resolveSyncedRecoveryConviction } from './recoveryConvictionSync';
 import { tickerToRiskTier, tickerToSleeve } from '../wealth-ultra/position';
 
 export type SimulatedPricesLike = Record<string, { price?: number; change?: number } | undefined>;
@@ -94,6 +96,8 @@ export type CanonicalPlanningSnapshot = {
     deployableCashSar: number;
     positions: CanonicalRecoveryPosition[];
     qualified: CanonicalRecoveryPosition[];
+    /** No-new-cash sell/rebuy summaries for underwater holdings. */
+    recyclingSummaries: RecyclingPlanSummary[];
   };
   aiBalancer: {
     portfolios: CanonicalBalancerPortfolioSnapshot[];
@@ -405,6 +409,7 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
   }
   const sleeveInput = { coreTickers: [...coreTickers], upsideTickers: [...upsideTickers], specTickers: [...specTickers] };
   const recoveryPositions: CanonicalRecoveryPosition[] = [];
+  const recyclingSummaries: RecyclingPlanSummary[] = [];
   for (const p of personalPortfolios) {
     const bookCurrency = (resolveInvestmentPortfolioCurrency(p) as TradeCurrency) || 'USD';
     for (const h of p.holdings ?? []) {
@@ -447,6 +452,20 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
         plan,
         priceProvenance,
       });
+
+      if (plan.plPct < 0 && currentUnitPriceBook > 0) {
+        const synced = resolveSyncedRecoveryConviction({
+          symbol: sym,
+          plPct: plan.plPct,
+          riskTier: positionConfig.riskTier,
+          universe,
+        });
+        const recyclingPlan = buildRecyclingPlanForHolding(h, currentUnitPriceBook, positionConfig as any, {
+          convictionGrade: synced.convictionGrade,
+          stockQualityStatus: synced.stockQualityStatus,
+        });
+        recyclingSummaries.push(summarizeRecyclingPlan(recyclingPlan));
+      }
     }
   }
 
@@ -478,7 +497,7 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
   return {
     sarPerUsd,
     investmentPlan: { rows: planRows, prioritizedPricePlans },
-    recoveryPlan: { deployableCashSar, positions: recoveryPositions, qualified },
+    recoveryPlan: { deployableCashSar, positions: recoveryPositions, qualified, recyclingSummaries },
     aiBalancer: { portfolios: balancerPortfolios },
     dataQuality: { staleQuoteThresholdMinutes },
   };

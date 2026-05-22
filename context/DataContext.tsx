@@ -1,4 +1,5 @@
 import React, { createContext, useState, ReactNode, useEffect, useContext, useRef, useMemo, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
 import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, HOLDING_ASSET_CLASS_OPTIONS, type HoldingAssetClass, type TradeCurrency, type SukukPayoutSchedule, type SukukPayoutEvent } from '../types';
@@ -37,6 +38,16 @@ import { decodeInstallmentPaymentNote } from '../services/installments/installme
 import { brokerCashBucketsFromInvestmentAccount } from '../services/investmentCashLedger';
 import { findCreditCardLiabilityForAccount } from '../services/creditCardLinking';
 import { normalizePlannedTradeRow, plannedTradeToDbInsert, plannedTradeToDbUpdate } from '../utils/plannedTradeDb';
+import {
+    dateInRange,
+    effectiveMonthStartDate,
+    financialMonthRange,
+    financialMonthRangeFromKey,
+    resolveMonthStartDayFromData,
+} from '../utils/financialMonth';
+import { sortByNewestFirst, sortPlannedTradesNewestFirst } from '../utils/sortRecency';
+import { normalizeWatchlistRow, watchlistToDbRow } from '../utils/watchlistDb';
+import { recomputeTrancheAfterFill } from '../services/plannedTradeTranches';
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
@@ -128,6 +139,7 @@ interface DataContextType {
     positionDelta: number;
   }>;
   addWatchlistItem: (item: WatchlistItem) => Promise<void>;
+  updateWatchlistItem: (item: WatchlistItem) => Promise<void>;
   deleteWatchlistItem: (symbol: string) => Promise<void>;
   addZakatPayment: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => Promise<void>;
   addPriceAlert: (alert: Omit<PriceAlert, 'id' | 'user_id' | 'status' | 'createdAt'>) => Promise<void>;
@@ -319,6 +331,8 @@ function normalizeAccount(raw: any): Account {
         owner: raw.owner,
         linkedAccountIds: Array.isArray(linkedAccountIds) ? linkedAccountIds.filter((id: any): id is string => typeof id === 'string') : undefined,
         platformDetails: raw.platformDetails ?? raw.platform_details,
+        accountRole: raw.account_role ?? raw.accountRole,
+        bucketType: raw.bucket_type ?? raw.bucketType,
     };
 }
 
@@ -345,6 +359,8 @@ function buildAccountInsertPayload(platform: Omit<Account, 'id' | 'user_id' | 'b
     if (platform.currency === 'SAR' || platform.currency === 'USD') {
         payload.currency = platform.currency;
     }
+    if (platform.accountRole) payload.account_role = platform.accountRole;
+    if (platform.bucketType) payload.bucket_type = platform.bucketType;
     return payload;
 }
 
@@ -607,6 +623,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const duplicateHoldingsLastSignatureRef = useRef<string>('');
     const transactionsRef = useRef<FinancialData['transactions']>(data?.transactions ?? []);
     transactionsRef.current = data?.transactions ?? [];
+    const dataRef = useRef(data);
+    dataRef.current = data;
     const updatePlatformRef = useRef<((platform: Account, opts?: { fromTransactionDelta?: boolean }) => Promise<void>) | null>(null);
     /** Accumulator for cash account deltas during recurring-apply loops; avoids stale balance when multiple txs hit the same account. */
     const cashBalanceAccumulatorRef = useRef<Record<string, number>>({});
@@ -700,6 +718,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             amount: roundMoney(amount),
             goalId: raw.goalId ?? raw.goal_id,
             accountId,
+            apr: raw.apr != null ? Number(raw.apr) : undefined,
+            minPayment: raw.min_payment != null ? Number(raw.min_payment) : raw.minPayment != null ? Number(raw.minPayment) : undefined,
+            maturityDate: raw.maturity_date != null ? String(raw.maturity_date).slice(0, 10) : raw.maturityDate != null ? String(raw.maturityDate).slice(0, 10) : undefined,
+            payoffPriority: raw.payoff_priority != null ? Number(raw.payoff_priority) : raw.payoffPriority != null ? Number(raw.payoffPriority) : undefined,
         };
     };
 
@@ -714,10 +736,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const goal = liability.goalId != null && String(liability.goalId).trim() !== '' ? liability.goalId : null;
         const accountLink =
             liability.accountId != null && String(liability.accountId).trim() !== '' ? liability.accountId : null;
+        const enrich = {
+            apr: liability.apr ?? null,
+            min_payment: liability.minPayment ?? null,
+            maturity_date: liability.maturityDate ?? null,
+            payoff_priority: liability.payoffPriority ?? null,
+        };
         const snake = { ...common, goal_id: goal, account_id: accountLink };
+        const snakeEnriched = { ...snake, ...enrich };
         const camel = { ...common, goalId: goal, accountId: accountLink };
         const snakeLegacy = { ...common, goal_id: goal };
-        return [snake, snakeLegacy, camel, common];
+        return [snakeEnriched, snake, snakeLegacy, camel, common];
     };
 
     const normalizeTransaction = (transaction: any): Transaction => {
@@ -1016,9 +1045,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setData({
                 accounts: ownedAccounts,
                 assets: filterOwnedRows(assets.data as any[]).map(normalizeAssetRow),
-                liabilities: filterOwnedRows(((liabilities.data as any[]) || []).map(normalizeLiability)),
-                goals: filterOwnedRows(goals.data as any[]).map(normalizeGoalRow),
-                transactions: filterOwnedRows(transactions.data as any[]).map(normalizeTransaction),
+                liabilities: [...filterOwnedRows(((liabilities.data as any[]) || []).map(normalizeLiability))].sort(
+                    (a, b) => b.id.localeCompare(a.id),
+                ),
+                goals: [...filterOwnedRows(goals.data as any[]).map(normalizeGoalRow)].sort((a, b) =>
+                    b.id.localeCompare(a.id),
+                ),
+                transactions: sortByNewestFirst(
+                    filterOwnedRows(transactions.data as any[]).map(normalizeTransaction),
+                ),
                 // Portfolios: API uses goal_id / account_id; app + Portfolio modal use goalId / accountId (do not drop on refresh).
                 investments: filterOwnedRows((investments.data as any) || []).map((portfolio: any) => {
                     const rawAccountId = portfolio.accountId || portfolio.account_id;
@@ -1033,7 +1068,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         holdings,
                     };
                 }),
-                investmentTransactions: appendedInvestmentTx.length ? [...normalizedInvestmentTransactions, ...appendedInvestmentTx] : normalizedInvestmentTransactions,
+                investmentTransactions: sortByNewestFirst(
+                    appendedInvestmentTx.length
+                        ? [...normalizedInvestmentTransactions, ...appendedInvestmentTx]
+                        : normalizedInvestmentTransactions,
+                ),
                 sukukPayoutSchedules: normalizedSukukSchedules,
                 sukukPayoutEvents: postedEventIds.size
                     ? normalizedSukukEvents.map((e) => (postedEventIds.has(e.id) ? { ...e, posted: true } : e))
@@ -1047,31 +1086,45 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     limit: roundMoney(Number(b.limit ?? 0)),
                 })),
                 commodityHoldings: filterOwnedRows(commodityHoldings.data as any[]).map(normalizeCommodityHolding),
-                watchlist: filterOwnedRows(watchlist.data as any[]),
+                watchlist: filterOwnedRows(watchlist.data as any[])
+                    .map((w: any) => normalizeWatchlistRow(w))
+                    .sort((a, b) => String(b.symbol).localeCompare(String(a.symbol))),
                 settings: normalizeSettings((settings as any).data ?? initialData.settings),
-                zakatPayments: filterOwnedRows(zakatPayments.data as any[]),
+                zakatPayments: sortByNewestFirst(filterOwnedRows(zakatPayments.data as any[])),
                 priceAlerts: filterOwnedRows(priceAlerts.data as any[]).map(normalizePriceAlert),
-                plannedTrades: filterOwnedRows(plannedTrades.data as any[]).map(normalizePlannedTradeRow),
+                plannedTrades: sortPlannedTradesNewestFirst(
+                    filterOwnedRows(plannedTrades.data as any[]).map(normalizePlannedTradeRow),
+                ),
                 notifications: [],
                 investmentPlan: normalizeInvestmentPlan((investmentPlan as any).data),
                 wealthUltraConfig,
                 portfolioUniverse: filterOwnedRows((portfolioUniverse as any).data || []).map(normalizeUniverseTicker),
-                statusChangeLog: filterOwnedRows((statusChangeLog as any).data || []),
-                executionLogs: filterOwnedRows((executionLogs as any).data || []).map(normalizeExecutionLog),
-                recurringTransactions: (recurringTransactions as any).error ? [] : filterOwnedRows((recurringTransactions as any).data || []).map((r: any) =>
-                    normalizeRecurringTransaction(r, resolveAccountId(r.account_id ?? r.accountId, normalizedAccounts) ?? undefined)
+                statusChangeLog: sortByNewestFirst(filterOwnedRows((statusChangeLog as any).data || [])),
+                executionLogs: sortByNewestFirst(
+                    filterOwnedRows((executionLogs as any).data || []).map(normalizeExecutionLog),
                 ),
-                budgetRequests: ((budgetRequests as any).data || []).map((r: any) => ({
-                    id: r.id,
-                    userId: r.user_id ?? r.userId,
-                    requestType: (r.request_type ?? r.requestType) === 'IncreaseLimit' ? 'IncreaseLimit' : 'NewCategory',
-                    categoryId: r.category_id ?? r.categoryId,
-                    categoryName: r.category_name ?? r.categoryName,
-                    amount: roundMoney(Number(r.amount ?? 0)),
-                    note: r.note ?? r.request_note,
-                    status: r.status === 'Finalized' ? 'Finalized' : r.status === 'Rejected' ? 'Rejected' : 'Pending',
-                })),
-                allTransactions: allTransactionsData.map(normalizeTransaction),
+                recurringTransactions: (recurringTransactions as any).error
+                    ? []
+                    : [...filterOwnedRows((recurringTransactions as any).data || []).map((r: any) =>
+                          normalizeRecurringTransaction(
+                              r,
+                              resolveAccountId(r.account_id ?? r.accountId, normalizedAccounts) ?? undefined,
+                          ),
+                      )].sort((a, b) => b.id.localeCompare(a.id)),
+                budgetRequests: sortByNewestFirst(
+                    ((budgetRequests as any).data || []).map((r: any) => ({
+                        id: r.id,
+                        userId: r.user_id ?? r.userId,
+                        requestType: (r.request_type ?? r.requestType) === 'IncreaseLimit' ? 'IncreaseLimit' : 'NewCategory',
+                        categoryId: r.category_id ?? r.categoryId,
+                        categoryName: r.category_name ?? r.categoryName,
+                        amount: roundMoney(Number(r.amount ?? 0)),
+                        note: r.note ?? r.request_note,
+                        status: r.status === 'Finalized' ? 'Finalized' : r.status === 'Rejected' ? 'Rejected' : 'Pending',
+                        created_at: r.created_at,
+                    })),
+                ),
+                allTransactions: sortByNewestFirst(allTransactionsData.map(normalizeTransaction)),
                 allBudgets: allBudgetsData,
             });
 
@@ -2264,19 +2317,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (rule.addManually === true) return { applied: false, skipped: true, skipReason: 'manual' };
         if (!supabase || !auth?.user) return { applied: false, skipped: true };
 
-        const monthStr = String(month).padStart(2, '0');
-        const dayStr = (d: number) => String(d).padStart(2, '0');
-        const date = `${year}-${monthStr}-${dayStr(rule.dayOfMonth)}`;
-        const monthPrefix = `${year}-${monthStr}-`;
+        const monthStartDay = resolveMonthStartDayFromData(data);
+        const postDate = effectiveMonthStartDate(year, month, rule.dayOfMonth);
+        const date = postDate.toISOString().slice(0, 10);
+        const { start, end } = financialMonthRangeFromKey({ year, month }, monthStartDay);
         const already = (data?.transactions ?? []).some((t) => {
             const rid = t.recurringId ?? (t as any).recurring_id;
             if (rid !== rule.id) return false;
-            if (!t.date.startsWith(monthPrefix)) return false;
-            if (rule.dayOfMonth === 28) {
-                const day = parseInt(t.date.slice(8, 10), 10);
-                if (day >= 28) return true;
-            }
-            return t.date.startsWith(date);
+            return dateInRange(t.date, start, end);
         });
         if (already) return { applied: false, skipped: true, skipReason: 'already' };
 
@@ -2320,8 +2368,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
      * dayOfMonth is stored clamped to 1–28, so on the 29th/30th/31st we treat dayOfMonth 28 as due (end-of-month); we use effectiveDateStr 28th so duplicates are detected by applyRecurringForMonth. */
     const applyRecurringDueToday = useCallback(async (): Promise<number> => {
         if (!supabase || !auth?.user) return 0;
+        const snapshot = dataRef.current;
+        if (!snapshot) return 0;
         cashBalanceAccumulatorRef.current = {};
         const today = new Date();
+        const monthStartDay = resolveMonthStartDayFromData(snapshot);
+        const { start: fmStart, end: fmEnd } = financialMonthRange(today, monthStartDay);
         const year = today.getFullYear();
         const month = today.getMonth() + 1;
         const day = today.getDate();
@@ -2330,7 +2382,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // dayOfMonth is clamped to 1–28, so (dayOfMonth > lastDayOfMonth) is never true; only exact match and EOM-28 apply
         const isDueToday = (r: { dayOfMonth: number }) =>
             r.dayOfMonth === day || (day >= 28 && r.dayOfMonth === 28);
-        const toApply = data.recurringTransactions.filter(
+        const toApply = (snapshot.recurringTransactions ?? []).filter(
             r => r.enabled && !(r.addManually === true) && isDueToday(r)
         );
         let applied = 0;
@@ -2343,10 +2395,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 : todayStr;
             const key = `${rule.id}:${effectiveDateStr}`;
             if (appliedThisRun.has(key)) continue;
-            const already = (transactionsRef.current ?? []).some(
-                t => (t.recurringId ?? (t as any).recurring_id) === rule.id &&
-                    t.date.startsWith(effectiveDateStr)
-            );
+            const already = (transactionsRef.current ?? []).some((t) => {
+                if ((t.recurringId ?? (t as any).recurring_id) !== rule.id) return false;
+                return dateInRange(t.date, fmStart, fmEnd);
+            });
             if (already) continue;
             const amount = rule.type === 'income' ? rule.amount : -rule.amount;
             try {
@@ -2369,10 +2421,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         cashBalanceAccumulatorRef.current = {};
         return applied;
-    }, [data.recurringTransactions, addTransaction, supabase, auth?.user?.id]);
+    }, [data, addTransaction, supabase, auth?.user?.id]);
 
     // Auto-apply recurring transactions due today (dayOfMonth === today, addManually === false), once per calendar day.
-    // Intentionally omit data.transactions so the effect does not re-run when we add transactions (avoids effect loop); duplicate check uses transactionsRef.
+    // Intentionally omit data.transactions from this effect so it does not re-run on every new tx (avoids loop); duplicate check uses transactionsRef.
+    // applyRecurringDueToday reads settings/rules via dataRef at invoke time and lists `data` in its deps when rules/settings change.
     useEffect(() => {
         if (loading || !auth?.user || !data.recurringTransactions?.length) return;
         const todayStr = new Date().toDateString();
@@ -2453,6 +2506,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (platform.platformDetails) {
             payload.platform_details = platform.platformDetails;
         }
+        if (platform.accountRole) payload.account_role = platform.accountRole;
+        if (platform.bucketType) payload.bucket_type = platform.bucketType;
         
         let { error } = await db.from('accounts').update(payload).match({ id: platform.id, user_id: auth.user.id });
         if (error && isAccountsCurrencyColumnMissing(error) && 'currency' in payload) {
@@ -2799,6 +2854,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (linkedCashAccountId) {
             tradePayload.linked_cash_account_id = linkedCashAccountId;
         }
+        if (portfolio?.id) {
+            tradePayload.portfolio_id = portfolio.id;
+            tradePayload.portfolioId = portfolio.id;
+        }
         if (isCashFlow && !(tradePayload.currency === 'SAR' || tradePayload.currency === 'USD')) {
             const cashAcc = linkedCashAccountId
                 ? (data?.accounts ?? []).find((a: Account) => a.id === linkedCashAccountId)
@@ -3055,7 +3114,60 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (executedPlanId) {
             const plan = (data?.plannedTrades ?? []).find(p => p.id === executedPlanId);
             if (plan) {
-                await updatePlannedTrade({ ...plan, status: 'Executed' });
+                const filledQty = Math.abs(Number(tradeData.quantity) || 0);
+                const executedPatch: PlannedTrade = {
+                    ...plan,
+                    status: 'Executed',
+                    filledQty: Math.max(plan.filledQty ?? 0, filledQty),
+                };
+                const { error: pe } = await supabase
+                    .from('planned_trades')
+                    .update(plannedTradeToDbUpdate(executedPatch))
+                    .match({ id: plan.id, user_id: auth.user.id });
+                if (pe) console.error('Error updating executed plan:', pe);
+                const applyTrancheRecompute = (plannedTrades: PlannedTrade[]) => {
+                    let trades = plannedTrades.map((p) => (p.id === plan.id ? executedPatch : p));
+                    if (plan.trancheGroupId && filledQty > 0) {
+                        trades = recomputeTrancheAfterFill(trades, plan.id, filledQty);
+                    }
+                    return trades;
+                };
+                let refreshedTrades: PlannedTrade[] = [];
+                flushSync(() => {
+                    setData((prev) => {
+                        refreshedTrades = applyTrancheRecompute(prev.plannedTrades);
+                        return { ...prev, plannedTrades: refreshedTrades };
+                    });
+                });
+                if (plan.trancheGroupId && filledQty > 0) {
+                    const trancheUpdateErrors: string[] = [];
+                    const siblingsToPersist = refreshedTrades.filter(
+                        (t) =>
+                            t.trancheGroupId === plan.trancheGroupId &&
+                            t.id !== plan.id &&
+                            t.status === 'Planned',
+                    );
+                    for (const t of siblingsToPersist) {
+                        const { error: te } = await supabase
+                            .from('planned_trades')
+                            .update(plannedTradeToDbUpdate(t))
+                            .match({ id: t.id, user_id: auth.user.id });
+                        if (te) {
+                            console.error('Error updating tranche planned trade:', te, {
+                                id: t.id,
+                                symbol: t.symbol,
+                                trancheIndex: t.trancheIndex,
+                            });
+                            trancheUpdateErrors.push(t.symbol || t.id);
+                        }
+                    }
+                    if (trancheUpdateErrors.length > 0) {
+                        toast(
+                            `Trade recorded, but ${trancheUpdateErrors.length} tranche row(s) failed to save (${trancheUpdateErrors.slice(0, 3).join(', ')}). Refresh and update remaining tranches in Execution History.`,
+                            'warning',
+                        );
+                    }
+                }
             }
         }
         return {
@@ -3087,7 +3199,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return false; }
         const { error } = await supabase.from('planned_trades').update(plannedTradeToDbUpdate(plan)).match({ id: plan.id, user_id: auth.user.id });
         if (error) { console.error(error); return false; }
-        setData(prev => ({ ...prev, plannedTrades: prev.plannedTrades.map(p => p.id === plan.id ? plan : p) }));
+        setData((prev) => {
+            let trades = prev.plannedTrades.map((p) => (p.id === plan.id ? plan : p));
+            if (plan.status === 'Executed' && plan.trancheGroupId && (plan.filledQty ?? 0) > 0) {
+                trades = recomputeTrancheAfterFill(trades, plan.id, plan.filledQty ?? 0);
+            }
+            return { ...prev, plannedTrades: trades };
+        });
         return true;
     };
     const deletePlannedTrade = async (planId: string) => {
@@ -3177,7 +3295,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             toast(`${symbol} is already in your watchlist.`, 'info');
             return;
         }
-        const row = withUser({ ...item, symbol, name: String(item.name || symbol).trim() || symbol });
+        const row = watchlistToDbRow({ ...item, symbol, name: String(item.name || symbol).trim() || symbol }, auth.user.id);
         const { data: inserted, error } = await db.from('watchlist').upsert(row, { onConflict: 'user_id,symbol' }).select().single();
         if (error) {
             console.error('Error adding watchlist item:', error);
@@ -3185,17 +3303,46 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         if (inserted) {
-            const normalized: WatchlistItem = {
-                user_id: inserted.user_id ?? auth.user.id,
-                symbol: String(inserted.symbol ?? symbol).toUpperCase(),
-                name: String(inserted.name ?? item.name ?? '').trim() || String(inserted.symbol ?? symbol).toUpperCase(),
-            };
+            const normalized = normalizeWatchlistRow(inserted as Record<string, unknown>);
             setData(prev => ({
                 ...prev,
                 watchlist: prev.watchlist.some((w) => String(w.symbol || '').toUpperCase() === normalized.symbol)
                     ? prev.watchlist.map((w) => (String(w.symbol || '').toUpperCase() === normalized.symbol ? normalized : w))
                     : [...prev.watchlist, normalized],
             }));
+        }
+    };
+    const updateWatchlistItem = async (item: WatchlistItem) => {
+        if (!supabase || !auth?.user) {
+            toast('You must be logged in to update your watchlist.', 'error');
+            return;
+        }
+        const symbol = String(item.symbol || '').trim().toUpperCase();
+        const row = watchlistToDbRow(item, auth.user.id);
+        let lastErr: unknown = null;
+        for (const payload of [row, { user_id: auth.user.id, symbol, name: row.name }]) {
+            const { data: updated, error } = await supabase
+                .from('watchlist')
+                .update(payload)
+                .match({ user_id: auth.user.id, symbol })
+                .select()
+                .single();
+            lastErr = error;
+            if (!error && updated) {
+                const normalized = normalizeWatchlistRow(updated as Record<string, unknown>);
+                setData((prev) => ({
+                    ...prev,
+                    watchlist: prev.watchlist.map((w) =>
+                        String(w.symbol || '').toUpperCase() === symbol ? normalized : w,
+                    ),
+                }));
+                return;
+            }
+            if (error && !isMissingColumnError(error)) break;
+        }
+        if (lastErr) {
+            console.error('Error updating watchlist item:', lastErr);
+            toast(`Failed to update ${symbol} on watchlist.`, 'error');
         }
     };
     const deleteWatchlistItem = async (symbol: string) => {
@@ -3506,7 +3653,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         })();
     }, [loading, auth?.user?.id, data.investments]);
 
-    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, updateWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

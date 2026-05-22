@@ -5,12 +5,10 @@ import { AuthContext } from '../context/AuthContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
-import { computeMonthlyReportFinancialKpis, computeWealthSummaryReportModel } from '../services/wealthSummaryReportModel';
+import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { reconcileDashboardVsSummaryKpis } from '../services/kpiReconciliation';
-import {
-    computeDashboardKpiSnapshot,
-    computeDashboardValidationWarnings,
-} from '../services/dashboardKpiSnapshot';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { computeDashboardValidationWarnings } from '../services/dashboardKpiSnapshot';
 import { listRecentKpiReconciliationDrift, type KpiDriftEvent } from '../services/kpiDriftTelemetry';
 import { useDashboardReconciliationPrefs } from '../hooks/useDashboardReconciliationPrefs';
 import { useMarketData } from '../context/MarketDataContext';
@@ -28,20 +26,12 @@ const DashboardKpiQualityPanel: React.FC = () => {
     const { strictReconciliationMode, setStrictReconciliationMode, hardBlockOnMismatch, setHardBlockOnMismatch } =
         useDashboardReconciliationPrefs(auth?.user?.id);
 
-    const kpiSnapshot = useMemo(
-        () => computeDashboardKpiSnapshot(data, exchangeRate, getAvailableCashForAccount, simulatedPrices),
-        [data, exchangeRate, getAvailableCashForAccount, simulatedPrices],
-    );
+    const { kpiSnapshot, wealthSummary: summaryModelForReconciliation } = useCanonicalFinancialMetrics();
 
     const dashboardValidationWarnings = useMemo(
         () => computeDashboardValidationWarnings(data, kpiSnapshot),
         [data, kpiSnapshot],
     );
-
-    const summaryModelForReconciliation = useMemo(() => {
-        if (!data) return null;
-        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount);
-    }, [data, exchangeRate, getAvailableCashForAccount]);
 
     const summaryMonthlyKpisForReconciliation = useMemo(() => {
         if (!data) return null;

@@ -2,6 +2,8 @@ import type { Holding, TradeCurrency } from '../types';
 import { convertBetweenTradeCurrencies, inferInstrumentCurrencyFromSymbol, quoteNotionalInBookCurrency } from './currencyMath';
 import { AVG_COST_DECIMALS } from './money';
 import { lookupLiveQuoteForSymbol } from '../services/finnhubService';
+import { isTadawulQuoteSymbol } from '../services/marketQuoteRouting';
+import { sanitizeLiveQuoteRow } from '../services/tadawulQuoteSanity';
 
 /** Decimal places for per-share / per-unit amounts (avg. cost, price per share, pullback prices). */
 export const HOLDING_PER_UNIT_DECIMALS = AVG_COST_DECIMALS;
@@ -29,7 +31,17 @@ export function effectiveHoldingValueInBookCurrency(
     const avgCost = Number(h.avgCost || 0);
     const symRaw = (h.symbol || '').trim();
     const sym = symRaw.toUpperCase();
-    const priceInfo = holdingUsesLiveQuote(h) ? lookupLiveQuoteForSymbol(simulatedPrices, symRaw || sym) : undefined;
+    const rawQuote = holdingUsesLiveQuote(h) ? lookupLiveQuoteForSymbol(simulatedPrices, symRaw || sym) : undefined;
+    const priceInfo =
+        rawQuote && isTadawulQuoteSymbol(sym)
+            ? sanitizeLiveQuoteRow(sym, rawQuote, {
+                  avgCostPerShare: Number.isFinite(avgCost) && avgCost > 0 ? avgCost : undefined,
+                  storedPricePerShare:
+                      qty > 0 && Number.isFinite(Number(h.currentValue)) && Number(h.currentValue) > 0
+                          ? Number(h.currentValue) / qty
+                          : undefined,
+              })
+            : rawQuote;
     if (priceInfo && Number.isFinite(priceInfo.price) && qty > 0) {
         return quoteNotionalInBookCurrency(priceInfo.price as number, qty, sym, bookCurrency, sarPerUsd);
     }
@@ -58,7 +70,17 @@ export function effectiveHoldingUnitPriceInBookCurrency(
     const symRaw = (h.symbol || '').trim();
     const sym = symRaw.toUpperCase();
 
-    const priceInfo = holdingUsesLiveQuote(h) ? lookupLiveQuoteForSymbol(simulatedPrices, symRaw || sym) : undefined;
+    const rawQuote = holdingUsesLiveQuote(h) ? lookupLiveQuoteForSymbol(simulatedPrices, symRaw || sym) : undefined;
+    const priceInfo =
+        rawQuote && isTadawulQuoteSymbol(sym)
+            ? sanitizeLiveQuoteRow(sym, rawQuote, {
+                  avgCostPerShare: Number.isFinite(avgCost) && avgCost > 0 ? avgCost : undefined,
+                  storedPricePerShare:
+                      qty > 0 && Number.isFinite(Number(h.currentValue)) && Number(h.currentValue) > 0
+                          ? Number(h.currentValue) / qty
+                          : undefined,
+              })
+            : rawQuote;
     if (priceInfo && Number.isFinite(priceInfo.price) && (priceInfo.price as number) > 0) {
         // Quote is in instrument currency; convert to book currency for per-unit comparison.
         return convertBetweenTradeCurrencies(priceInfo.price as number, inferInstrumentCurrencyFromSymbol(symRaw || sym), bookCurrency, sarPerUsd);

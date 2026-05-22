@@ -18,6 +18,11 @@ import { inferInvestmentTransactionCurrency, resolveInvestmentTransactionAccount
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { toSAR } from '../utils/currencyMath';
+import {
+  financialMonthColumnIndexForDate,
+  resolveMonthStartDayFromData,
+  transactionDateInFinancialPlanYear,
+} from '../utils/financialMonth';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi, isInternalTransferTransaction } from './transactionFilters';
 import type { HouseholdMonthlyOverride } from './householdBudgetEngine';
 
@@ -126,6 +131,8 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
     householdOverrides,
   } = input;
 
+  const monthStartDay = resolveMonthStartDayFromData(data);
+
   const accountsById = new Map<string, Account>((accounts ?? []).map((a) => [String(a.id ?? ''), a]));
   const txAmountSar = (t: { amount?: number; accountId?: string }) => {
     const acc = accountsById.get(String(t.accountId ?? ''));
@@ -133,13 +140,14 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
     return toSAR(Number(t.amount) || 0, cur, sarPerUsd);
   };
 
-  const yearTx = transactions.filter((t) => new Date(t.date).getFullYear() === year);
+  const yearTx = transactions.filter((t) => transactionDateInFinancialPlanYear(t.date, year, monthStartDay));
 
   const planYearIncomeByMonth = Array(12).fill(0);
   yearTx.forEach((t) => {
     if (!countsAsIncomeForCashflowKpi(t)) return;
-    const d = new Date((t as { date: string }).date);
-    planYearIncomeByMonth[d.getMonth()] += Math.max(0, txAmountSar(t));
+    const col = financialMonthColumnIndexForDate((t as { date: string }).date, year, monthStartDay);
+    if (col == null) return;
+    planYearIncomeByMonth[col] += Math.max(0, txAmountSar(t));
   });
   const planYearWithData = planYearIncomeByMonth.filter((v) => v > 0);
   let suggestedMonthlySalary =
@@ -148,8 +156,9 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
     const anyYearIncome = Array(12).fill(0);
     transactions.forEach((t) => {
       if (!countsAsIncomeForCashflowKpi(t)) return;
-      const d = new Date(t.date);
-      anyYearIncome[d.getMonth()] += Math.max(0, txAmountSar(t));
+      const col = financialMonthColumnIndexForDate(t.date, year, monthStartDay);
+      if (col == null) return;
+      anyYearIncome[col] += Math.max(0, txAmountSar(t));
     });
     const anyWithData = anyYearIncome.filter((v) => v > 0);
     suggestedMonthlySalary =
@@ -159,7 +168,8 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
   const incomeActuals = Array(12).fill(0);
   yearTx.forEach((t) => {
     if (countsAsIncomeForCashflowKpi(t)) {
-      const monthIndex = new Date(t.date).getMonth();
+      const monthIndex = financialMonthColumnIndexForDate(t.date, year, monthStartDay);
+      if (monthIndex == null) return;
       incomeActuals[monthIndex] += Math.max(0, txAmountSar(t));
     }
   });
@@ -247,7 +257,8 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
 
   yearTx.forEach((t) => {
     if (!countsAsExpenseForCashflowKpi(t)) return;
-    const monthIndex = new Date(t.date).getMonth();
+    const monthIndex = financialMonthColumnIndexForDate(t.date, year, monthStartDay);
+    if (monthIndex == null) return;
     const raw = (t.budgetCategory || t.category || 'Other').trim() || 'Other';
     const category = normalizeCategory(raw);
     if (!byCategory.has(category)) {
@@ -294,8 +305,8 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
   });
 
   invTxFiltered.forEach((tx) => {
-    const date = new Date(tx.date);
-    if (date.getFullYear() === year && isInvestmentTransactionType(tx.type, 'buy')) {
+    const monthIndex = financialMonthColumnIndexForDate(tx.date, year, monthStartDay);
+    if (monthIndex != null && isInvestmentTransactionType(tx.type, 'buy')) {
       const cur = inferInvestmentTransactionCurrency(
         {
           accountId: tx.accountId,
@@ -309,7 +320,7 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
       );
       const day = (tx.date ?? '').slice(0, 10);
       const dayRate = data && day.length === 10 ? getSarPerUsdForCalendarDay(day, data, exchangeRate) : sarPerUsd;
-      investmentActuals[date.getMonth()] += toSAR(getInvestmentTransactionCashAmount(tx as any), cur, dayRate);
+      investmentActuals[monthIndex] += toSAR(getInvestmentTransactionCashAmount(tx as any), cur, dayRate);
     }
   });
 

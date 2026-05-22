@@ -14,12 +14,14 @@ import { findDuplicateTransactions } from '../services/dataQuality';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import AIAdvisor from '../components/AIAdvisor';
 import { resolveBudgetCategoryForImportedExpense } from '../services/budgetCategoryResolve';
+import { sortByNewestFirst } from '../utils/sortRecency';
 
 interface StatementUploadProps {
   setActivePage?: (page: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
 }
 
-const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
+const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, triggerPageAction }) => {
   const { data, loading, addTransaction, recordTrade, addBudget } = useContext(DataContext)!;
   const { commitParsedStatementFromUpload } = useStatementProcessing();
   const { formatCurrencyString } = useFormatCurrency();
@@ -261,7 +263,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       if (activeTab === 'trading') {
         const result = await parseTradingStatement(file, selectedAccount);
         investmentTransactions = result.transactions;
-        setExtractedInvestmentTransactions(investmentTransactions);
+        setExtractedInvestmentTransactions(sortByNewestFirst(investmentTransactions));
         if (result.warnings) setValidationWarnings(result.warnings);
         if (result.errors) setValidationErrors(result.errors);
         setParseStats(result.validation?.statistics ?? null);
@@ -270,7 +272,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
         const result = await parseBankStatement(file, selectedAccount);
         transactions = enrichTransactionsWithBudgetMapping(result.transactions);
         await ensureBudgetsForMappedTransactions(transactions);
-        setExtractedTransactions(transactions);
+        setExtractedTransactions(sortByNewestFirst(transactions));
         if (result.warnings) setValidationWarnings(result.warnings);
         if (result.errors) setValidationErrors(result.errors);
         setParseStats(result.validation?.statistics ?? null);
@@ -346,7 +348,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       const result = await parseSMSTransactions(smsText, selectedAccount);
       const mapped = enrichTransactionsWithBudgetMapping(result.transactions);
       await ensureBudgetsForMappedTransactions(mapped);
-      setExtractedTransactions(mapped);
+      setExtractedTransactions(sortByNewestFirst(mapped));
       setValidationWarnings(result.warnings ?? []);
       setValidationErrors(result.errors ?? []);
       setParseStats(result.validation?.statistics ?? null);
@@ -773,6 +775,18 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
       }
     >
       <div className="space-y-6">
+        {setActivePage && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 flex flex-wrap items-center justify-between gap-2">
+            <span>After import, reconcile cash balances and holdings in System Health.</span>
+            <button
+              type="button"
+              className="text-primary font-medium hover:underline"
+              onClick={() => setActivePage('System & APIs Health')}
+            >
+              Open data reconciliation →
+            </button>
+          </div>
+        )}
         {setupValidationWarnings.length > 0 && (
           <SectionCard title="Statement upload validation checks" collapsible collapsibleSummary="Setup and parser checks" defaultExpanded>
             <ul className="space-y-1 text-sm text-amber-800">
@@ -936,6 +950,27 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage }) => {
             }
           >
             <div className="space-y-4">
+              <p className="text-sm text-indigo-900 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
+                Broker <strong>dividend</strong> SMS (cash dividend / توزيع) should not go here — they book to your investment ledger on{' '}
+                {setActivePage || triggerPageAction ? (
+                  <button
+                    type="button"
+                    className="font-semibold underline underline-offset-2"
+                    onClick={() => {
+                      if (triggerPageAction) {
+                        triggerPageAction('Investments', 'focus-dividend-sms');
+                      } else {
+                        setActivePage?.('Dividend Tracker');
+                      }
+                    }}
+                  >
+                    Dividend Tracker → Import from SMS
+                  </button>
+                ) : (
+                  <strong>Dividend Tracker → Import from SMS</strong>
+                )}
+                .
+              </p>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2" htmlFor="sms-account-select">
                   Select Account

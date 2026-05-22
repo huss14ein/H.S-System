@@ -1,6 +1,6 @@
 
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useContext } from 'react';
 import Header from './Header';
 import { Page } from '../types';
 import QuickActionsSidebar from './QuickActionsSidebar';
@@ -9,6 +9,12 @@ import LiveAdvisorModal from './LiveAdvisorModal';
 import { useTrackPageVisit } from '../context/SelfLearningContext';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import CrossEngineAlertsBanner from './CrossEngineAlertsBanner';
+import { DataContext } from '../context/DataContext';
+import { AuthContext } from '../context/AuthContext';
+import { useCurrency } from '../context/CurrencyContext';
+import { useMarketData } from '../context/MarketDataContext';
+import { supabase } from '../services/supabaseClient';
+import { runAutoNetWorthSnapshotIfDue } from '../services/scheduledNetWorthSnapshot';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -30,6 +36,10 @@ const Layout: React.FC<LayoutProps> = ({
   contentMaxClass = 'max-w-7xl',
 }) => {
   useTrackPageVisit(activePage);
+  const dataCtx = useContext(DataContext);
+  const auth = useContext(AuthContext);
+  const { exchangeRate } = useCurrency();
+  const { simulatedPrices } = useMarketData();
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isLiveAdvisorOpen, setIsLiveAdvisorOpen] = useState(false);
   const mainContentRef = useRef<HTMLElement>(null);
@@ -39,6 +49,20 @@ const Layout: React.FC<LayoutProps> = ({
     mainContentRef.current?.focus();
     mainContentRef.current?.scrollIntoView({ block: 'start' });
   };
+
+  useEffect(() => {
+    const uid = auth?.user?.id;
+    const data = dataCtx?.data;
+    if (!uid || !data || dataCtx?.loading || !dataCtx.getAvailableCashForAccount) return;
+    void runAutoNetWorthSnapshotIfDue({
+      userId: uid,
+      data,
+      exchangeRate,
+      getAvailableCashForAccount: dataCtx.getAvailableCashForAccount,
+      simulatedPrices,
+      supabase,
+    });
+  }, [auth?.user?.id, dataCtx?.loading, dataCtx?.data, exchangeRate, simulatedPrices, dataCtx?.getAvailableCashForAccount]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

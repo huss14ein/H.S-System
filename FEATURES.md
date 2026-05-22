@@ -2,6 +2,8 @@
 
 This document reflects features and functionalities implemented in the codebase. It serves as the single source of truth for what the platform delivers.
 
+**2.1.1.0 rollout:** Grounded AI on Liabilities/Forecast/Zakat/Assets/Watchlist; financial-month on Liabilities/Summary/Accounts/Installments; holdings/dividend reconciliation (System Health); capital deployment + goal conflicts + budget drift + lifestyle guardrails on Dashboard, Plan, Budgets, Wealth Ultra, Notifications; buy-score gate on Investment Plan; watchlist research CRUD; liability APR/min payment/maturity; account cash roles; planned-trade tranche panel (Execution History); income taxonomy (Transactions/Analysis); thesis/journal Supabase sync (Financial Journal); strict KPI panel on Summary; Live Advisor liabilities/capital tools; migration `supabase/migrations/20260522120000_enhancement_rollout.sql` (apply on Supabase before using new columns).
+
 ---
 
 ## Investment Management
@@ -24,9 +26,10 @@ This document reflects features and functionalities implemented in the codebase.
 - Ladder generation and performance tracking
 
 ### Dividend Tracker
-- **Location:** `pages/DividendTrackerView.tsx`
+- **Location:** `pages/DividendTrackerView.tsx`, `components/DividendSmsImportPanel.tsx`, `services/dividendSmsParser.ts`
 - YTD dividend income, monthly dividend charts, projected annual income
 - Top payers ranking, AI dividend analysis (Gemini), concentration/diversification
+- **Import from SMS:** paste broker dividend notifications (EN/AR); maps symbol to portfolio holdings when present, otherwise **manual holding dropdown** (all positions across portfolios); converts to book currency, dedupes against ledger, books `dividend` via `recordTrade` (same path as Finnhub sync). Command palette / Statement Upload link → `focus-dividend-sms` scrolls to the import panel.
 
 ### Investment Plan
 - **Location:** `pages/InvestmentPlanView.tsx`

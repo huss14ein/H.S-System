@@ -6,6 +6,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.91.1";
 import { buildFinancialDataForWeeklyDigest } from "../../../services/digestFinancialData.ts";
 import { computeWeeklyDigestPersonalNetWorthSar } from "../../../services/weeklyDigestNetWorthSar.ts";
+import { financialMonthRange, resolveMonthStartDayFromData } from "../../../utils/financialMonth.ts";
 
 declare const Deno: {
   env: {
@@ -112,18 +113,25 @@ async function calculateBudgetSummary(supabase: any, userId: string, periodEnd: 
   percentUsed: number;
   overCategories: string[];
 }> {
-  const year = periodEnd.getFullYear();
-  const month = periodEnd.getMonth() + 1;
-  const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
+  const { data: settingsRow } = await supabase
+    .from('settings')
+    .select('month_start_day')
+    .eq('user_id', userId)
+    .maybeSingle();
+  const monthStartDay = resolveMonthStartDayFromData({
+    settings: { month_start_day: settingsRow?.month_start_day },
+  });
+  const { key, start } = financialMonthRange(periodEnd, monthStartDay);
+  const monthStart = start.toISOString().split('T')[0];
   const monthEnd = periodEnd.toISOString().split('T')[0];
 
-  // Get budgets for current month
+  // Get budgets for current financial month (aligned with Budgets page keys)
   const { data: budgets } = await supabase
     .from('budgets')
     .select('*')
     .eq('user_id', userId)
-    .eq('year', year)
-    .eq('month', month);
+    .eq('year', key.year)
+    .eq('month', key.month);
 
   // Get transactions for month-to-date (same period as budget limits)
   const { data: transactions } = await supabase

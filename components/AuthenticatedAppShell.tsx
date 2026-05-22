@@ -165,7 +165,7 @@ const AuthenticatedAppShell: React.FC = () => {
       case 'Plan': return <Plan setActivePage={setActivePage} />;
       case 'Assets': return <Assets {...actionProps} setActivePage={setActivePage} />;
       case 'Commodities': return <Assets {...actionProps} setActivePage={setActivePage} />;
-      case 'Statement Upload': return <StatementUpload setActivePage={setActivePage} />;
+      case 'Statement Upload': return <StatementUpload setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Statement History': return <StatementHistoryView setActivePage={setActivePage} />;
       case 'Market Events': return <MarketEvents setActivePage={setActivePage} />;
       case 'System & APIs Health': return <SystemHealth setActivePage={setActivePage} />;

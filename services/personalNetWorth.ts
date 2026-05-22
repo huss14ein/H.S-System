@@ -3,10 +3,20 @@ import { getAllInvestmentsValueInSAR, resolveSarPerUsd, toSAR, tradableCashBucke
 import { getPersonalAccounts, getPersonalAssets, getPersonalLiabilities, getPersonalCommodityHoldings, getPersonalInvestments } from '../utils/wealthScope';
 import { getCreditCardLinkedAccountIds } from './creditCardLinking';
 import { hydrateSarPerUsdDailySeries } from './fxDailySeries';
+import {
+  computePersonalCommoditiesContributionSAR,
+  computePersonalPlatformsRollupSAR,
+  type SimulatedPriceMap,
+} from './investmentPlatformCardMetrics';
 
 export type PersonalNetWorthOptions = {
   /** When set, cash sitting in investment accounts (ledger) is included in assets — matches Dashboard ROI / deployable cash. */
   getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number };
+  /**
+   * Live quotes from `useMarketData()` — aligns holdings/commodities with Investments hub and Dashboard ROI.
+   * Use with `getAvailableCashForAccount` so platform rollup replaces stale stored `currentValue`.
+   */
+  simulatedPrices?: SimulatedPriceMap;
 };
 
 export type PersonalNetWorthBreakdownSAR = {
@@ -130,7 +140,7 @@ function accumulatePersonalBalanceSheet(
   exchangeRate: number,
   options?: PersonalNetWorthOptions
 ) {
-  return accumulateBalanceSheetSlices(
+  const base = accumulateBalanceSheetSlices(
     {
       accounts: getPersonalAccounts(data),
       assets: getPersonalAssets(data),
@@ -141,6 +151,19 @@ function accumulatePersonalBalanceSheet(
     exchangeRate,
     options
   );
+  if (!options?.getAvailableCashForAccount) return base;
+
+  const prices = options.simulatedPrices ?? {};
+  const getCash = options.getAvailableCashForAccount;
+  const platform = computePersonalPlatformsRollupSAR(data, exchangeRate, prices, getCash);
+  const commodities = computePersonalCommoditiesContributionSAR(data, exchangeRate, prices);
+  return {
+    ...base,
+    /** Holdings + tradable platform cash (same as Investments cards / headline ROI). */
+    totalInvestmentsValue: platform.subtotalSAR,
+    brokerageCashSAR: 0,
+    totalCommodities: commodities.valueSAR,
+  };
 }
 
 /**
@@ -243,8 +266,8 @@ export type PersonalHeadlineNetWorthResult = {
 
 /**
  * **Single source of truth** for personal-scope headline net worth (SAR) and stacked buckets.
- * Always pass the **same** `data` (DataContext) and **CurrencyContext `exchangeRate`** everywhere
- * so Dashboard, Summary, Net worth cockpit, and exports match.
+ * Always pass the **same** `data` (DataContext), **CurrencyContext `exchangeRate`**, and
+ * **`simulatedPrices` from `useMarketData()`** everywhere so Dashboard, Summary, cockpit, and exports match.
  *
  * Uses one consistent FX path (`hydrateSarPerUsdDailySeries` + `resolveSarPerUsd`) — do **not**
  * substitute a calendar-day spot for headline NW (that caused cockpit vs KPI drift).

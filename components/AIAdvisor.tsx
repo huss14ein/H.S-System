@@ -1,13 +1,17 @@
 import React, { useState, useCallback, useContext, useMemo, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import {
-    getAIAnalysis,
+    getAIDashboardInsight,
     getInvestmentAIAnalysis,
     getAIPlanAnalysis,
     getAIHouseholdEngineAnalysis,
     getAITransactionAnalysis,
     getAIGoalStrategyAnalysis,
     getAIAnalysisPageInsights,
+    getAILiabilitiesInsight,
+    getAIForecastInsight,
+    type LiabilitiesInsightMetrics,
+    type ForecastInsightInput,
     getAILogicEnginesInsight,
     getAINotificationsDigest,
     getAISettingsGuidance,
@@ -33,9 +37,9 @@ import { FinancialData, type Holding } from '../types';
 import { useAI } from '../context/AiContext';
 import AiProxyUnavailableHint from './AiProxyUnavailableHint';
 import { useCurrency } from '../context/CurrencyContext';
-import { getAllInvestmentsValueInSAR, resolveSarPerUsd, tradableCashBucketToSAR } from '../utils/currencyMath';
-import { computePersonalNetWorthBreakdownSAR } from '../services/personalNetWorth';
-import { computeLiquidNetWorth } from '../services/liquidNetWorth';
+import { useMarketData } from '../context/MarketDataContext';
+import { resolveSarPerUsd } from '../utils/currencyMath';
+import type { AiInsightOptions } from '../services/geminiService';
 
 type AIContext =
     | 'dashboard'
@@ -46,6 +50,9 @@ type AIContext =
     | 'goals'
     | 'analysis'
     | 'forecast'
+    | 'liabilities'
+    | 'zakat'
+    | 'assets'
     | 'engines'
     | 'notifications'
     | 'settings'
@@ -110,38 +117,40 @@ const sectionLabel: Record<InsightSectionVariant, string> = {
     neutral: 'Note',
 };
 
-// This is a simplified router for demonstration. A real app might have more complex logic.
+function normalizeAnalysisRows(
+    rows: Array<{ name?: string; category?: string; value: number }>,
+): { name: string; value: number }[] {
+    return (rows ?? []).map((r) => ({
+        name: String(r.name ?? r.category ?? '—'),
+        value: Number(r.value) || 0,
+    }));
+}
+
+function normalizeTrendRows(
+    rows: Array<{ name?: string; month?: string; value?: number; income?: number; expenses?: number }>,
+): { name: string; income: number; expenses: number }[] {
+    return (rows ?? []).map((r) => ({
+        name: String(r.name ?? r.month ?? '—'),
+        income: Number(r.income ?? r.value) || 0,
+        expenses: Number(r.expenses) || 0,
+    }));
+}
+
 const getAnalysisForPage = (
     context: AIContext,
     data: FinancialData,
     contextData: any,
     sarPerUsd: number,
-    getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number }
+    getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number },
+    insightOpts: AiInsightOptions,
 ): Promise<string> => {
-    const nwOpts = { getAvailableCashForAccount };
     switch (context) {
-        case 'dashboard': {
-            const { netWorth, totalDebt } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd, nwOpts);
-            const { liquidNetWorth } = computeLiquidNetWorth(data, { getAvailableCashForAccount, exchangeRate: sarPerUsd });
-            const d = data as any;
-            const accounts = d?.personalAccounts ?? data?.accounts ?? [];
-            const personalAccountIds = new Set(accounts.map((a: { id: string }) => a.id));
-            const investments = d?.personalInvestments ?? data?.investments ?? [];
-            let totalInvestmentsValue = getAllInvestmentsValueInSAR(investments, sarPerUsd);
-            accounts.forEach((acc: { id: string; type?: string }) => {
-                if (acc.type === 'Investment') {
-                    totalInvestmentsValue += tradableCashBucketToSAR(getAvailableCashForAccount(acc.id), sarPerUsd);
-                }
+        case 'dashboard':
+            return getAIDashboardInsight(data, {
+                exchangeRate: sarPerUsd,
+                getAvailableCashForAccount,
+                simulatedPrices: insightOpts.simulatedPrices ?? contextData?.simulatedPrices,
             });
-            const invTx = (data?.investmentTransactions ?? []).filter((t: { accountId?: string }) => personalAccountIds.has(t.accountId ?? ''));
-            const totalInvested = invTx.filter((t: { type?: string }) => t.type === 'buy').reduce((sum: number, t: { total?: number }) => sum + (t.total ?? 0), 0);
-            const totalWithdrawn = Math.abs(invTx.filter((t: { type?: string }) => t.type === 'sell').reduce((sum: number, t: { total?: number }) => sum + (t.total ?? 0), 0));
-            const netCapital = totalInvested - totalWithdrawn;
-            const totalGainLoss = totalInvestmentsValue - netCapital;
-            const roi = netCapital > 0 ? (totalGainLoss / netCapital) : 0;
-            const summary = { netWorth, roi, assetMix: [], liquidNetWorth, liabilitiesCoverage: totalDebt, monthlyIncome: 0, monthlyExpenses: 0, monthlyPnL: 0, budgetVariance: 0 };
-            return getAIAnalysis(summary);
-        }
         case 'investments': {
             const holdings = ((data as any)?.personalInvestments ?? data?.investments ?? []).flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []) as Holding[];
             const meta = contextData as InvestmentHubAiMeta | undefined;
@@ -181,26 +190,68 @@ const getAnalysisForPage = (
             return Promise.resolve("Not enough data for goal strategy analysis.");
         case 'analysis':
             if (contextData?.spendingData && contextData?.trendData && contextData?.compositionData) {
-                return getAIAnalysisPageInsights(contextData.spendingData, contextData.trendData, contextData.compositionData);
+                const spending = normalizeAnalysisRows(contextData.spendingData);
+                const trend = normalizeTrendRows(contextData.trendData);
+                const composition = normalizeAnalysisRows(contextData.compositionData);
+                return getAIAnalysisPageInsights(spending, trend, composition, data, insightOpts);
             }
             return Promise.resolve("Not enough data for a full analysis.");
-        case 'forecast':
-            if (
-                contextData?.baselineNetWorth != null &&
-                contextData?.projectedNetWorth != null &&
-                Array.isArray(contextData?.forecastTrendSample)
-            ) {
-                return getAIAnalysisPageInsights(
-                    [{ name: 'Monthly savings (model)', value: Number(contextData.monthlySavings) || 0 }],
-                    contextData.forecastTrendSample,
-                    [
-                        { name: 'Net worth (today)', value: Number(contextData.baselineNetWorth) || 0 },
-                        { name: 'Investments (today)', value: Number(contextData.baselineInvestments) || 0 },
-                        { name: 'Net worth (projected end)', value: Number(contextData.projectedNetWorth) || 0 },
-                    ],
-                );
+        case 'liabilities': {
+            const metrics = (contextData?.metrics ?? contextData) as LiabilitiesInsightMetrics | undefined;
+            if (!metrics || typeof metrics.totalDebtSar !== 'number') {
+                return Promise.resolve('Not enough liabilities context. Reload the page and try again.');
+            }
+            return getAILiabilitiesInsight(metrics, data, insightOpts);
+        }
+        case 'zakat':
+            if (contextData?.zakatableTotal != null) {
+                const spending = [
+                    { name: 'Zakatable assets', value: Number(contextData.zakatableTotal) || 0 },
+                    { name: 'Deductible liabilities', value: Number(contextData.deductibleLiabilities) || 0 },
+                    { name: 'Net zakatable wealth', value: Number(contextData.netZakatable) || 0 },
+                    { name: 'Outstanding zakat', value: Number(contextData.outstandingZakat) || 0 },
+                ];
+                const composition = (contextData.composition ?? []).map((r: { name: string; value: number }) => ({
+                    name: r.name,
+                    value: Number(r.value) || 0,
+                }));
+                const trend = (contextData.paymentTrend ?? []).map((r: { month: string; value: number }) => ({
+                    name: r.month,
+                    income: Number(r.value) || 0,
+                    expenses: 0,
+                }));
+                return getAIAnalysisPageInsights(spending, trend, composition, data, insightOpts);
+            }
+            return Promise.resolve('Not enough Zakat context. Complete the calculator first.');
+        case 'assets':
+            if (contextData?.spendingData && contextData?.compositionData) {
+                const spending = normalizeAnalysisRows(contextData.spendingData);
+                const trend = normalizeTrendRows(contextData.trendData ?? []);
+                const composition = normalizeAnalysisRows(contextData.compositionData);
+                return getAIAnalysisPageInsights(spending, trend, composition, data, insightOpts);
+            }
+            return Promise.resolve('Not enough assets context. Add assets or commodities first.');
+        case 'forecast': {
+            const raw = (contextData?.forecast ?? contextData) as Record<string, unknown> | undefined;
+            if (raw && (raw.baselineNetWorthSar != null || raw.baselineNetWorth != null) && (raw.projectedNetWorthSar != null || raw.projectedNetWorth != null)) {
+                const input: ForecastInsightInput = {
+                    baselineNetWorthSar: Number(raw.baselineNetWorthSar ?? raw.baselineNetWorth) || 0,
+                    baselineInvestmentsSar: Number(raw.baselineInvestmentsSar ?? raw.baselineInvestments) || 0,
+                    projectedNetWorthSar: Number(raw.projectedNetWorthSar ?? raw.projectedNetWorth) || 0,
+                    projectedInvestmentsSar: Number(raw.projectedInvestmentsSar) || undefined,
+                    monthlySavingsSar: Number(raw.monthlySavingsSar ?? raw.monthlySavings) || 0,
+                    horizonYears: Number(raw.horizonYears) || 10,
+                    investmentGrowthAnnualPct: Number(raw.investmentGrowthAnnualPct ?? raw.investmentGrowth) || 7,
+                    savingsGrowthAnnualPct: Number(raw.savingsGrowthAnnualPct ?? raw.incomeGrowth) || 3,
+                    scenarioPresets: raw.scenarioPresets as ForecastInsightInput['scenarioPresets'],
+                    confidenceLowSar: Number(raw.confidenceLowSar) || undefined,
+                    confidenceHighSar: Number(raw.confidenceHighSar) || undefined,
+                    trendSample: (raw.trendSample ?? contextData?.forecastTrendSample) as ForecastInsightInput['trendSample'],
+                };
+                return getAIForecastInsight(input, data, insightOpts);
             }
             return Promise.resolve('Projections are still loading. Adjust sliders or check your data.');
+        }
         case 'engines': {
             const ctx = contextData as LogicEnginesAiContext | undefined;
             if (!ctx || typeof ctx.netWorthSar !== 'number') {
@@ -261,6 +312,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
     const [translateError, setTranslateError] = useState<string | null>(null);
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
+    const { simulatedPrices } = useMarketData();
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
 
     const insightSource = useMemo(() => {
@@ -314,14 +366,27 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
         setDisplayLang('en');
         try {
             const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
-            const result = await getAnalysisForPage(pageContext, data, contextData, sarPerUsd, getAvailableCashForAccount);
+            const insightOpts: AiInsightOptions = {
+                exchangeRate: sarPerUsd,
+                getAvailableCashForAccount,
+                simulatedPrices,
+            };
+            const mergedContext = { ...contextData, simulatedPrices };
+            const result = await getAnalysisForPage(
+                pageContext,
+                data,
+                mergedContext,
+                sarPerUsd,
+                getAvailableCashForAccount,
+                insightOpts,
+            );
             setInsightEn(result);
         } catch (error) {
             console.error("AI analysis failed:", error);
             setInsightEn(formatAiError(error));
         }
         setIsLoading(false);
-    }, [pageContext, data, contextData, exchangeRate, getAvailableCashForAccount]);
+    }, [pageContext, data, contextData, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
 
     const handleLangChange = (lang: 'en' | 'ar') => {
         setDisplayLang(lang);

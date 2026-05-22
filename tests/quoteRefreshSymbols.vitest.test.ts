@@ -26,17 +26,17 @@ describe('quote refresh symbols', () => {
     expect(holdingCanUseQuoteRefresh({ symbol: 'MSFT' })).toBe(true);
   });
 
-  it('only allows Tadawul holdings when the symbol ends in .SR', () => {
+  it('allows Tadawul aliases (normalized to .SR for fetch)', () => {
     expect(isRefreshableHoldingQuoteSymbol('2222.SR')).toBe(true);
     expect(isRefreshableHoldingQuoteSymbol('REITF.SR')).toBe(true);
-    expect(isRefreshableHoldingQuoteSymbol('2222.SA')).toBe(false);
+    expect(isRefreshableHoldingQuoteSymbol('2222.SA')).toBe(true);
+    expect(isRefreshableHoldingQuoteSymbol('2222.SE')).toBe(true);
+    expect(isRefreshableHoldingQuoteSymbol('2222')).toBe(true);
+    expect(isRefreshableHoldingQuoteSymbol('TADAWUL:2222')).toBe(true);
     expect(isRefreshableHoldingQuoteSymbol('2222.SC')).toBe(false);
-    expect(isRefreshableHoldingQuoteSymbol('2222.SE')).toBe(false);
-    expect(isRefreshableHoldingQuoteSymbol('2222')).toBe(false);
-    expect(isRefreshableHoldingQuoteSymbol('TADAWUL:2222')).toBe(false);
   });
 
-  it('returns only API-refreshable holding symbols', () => {
+  it('returns fetch-canonical holding symbols', () => {
     expect(
       getRefreshableHoldingQuoteSymbols([
         { symbol: 'AAPL', holdingType: 'ticker' },
@@ -45,6 +45,6 @@ describe('quote refresh symbols', () => {
         { symbol: 'MSFT', holdingType: 'manual_fund' },
         { symbol: 'TADAWUL:1120', holdingType: 'ticker' },
       ]),
-    ).toEqual(['AAPL', '2222.SR']);
+    ).toEqual(['AAPL', '2222.SR', '1120.SR']);
   });
 });

@@ -18,6 +18,10 @@ import { DataContext } from '../context/DataContext';
 import TodoListPanel from '../components/TodoListPanel';
 import { useToast } from '../context/ToastContext';
 import { isSupportedPageAction } from '../utils/pageActions';
+import { sortByNewestFirst } from '../utils/sortRecency';
+import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
+import { useFinancialEnhancementInsights } from '../hooks/useFinancialEnhancementInsights';
+import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import {
   notificationRowSurface,
   notificationSeverityLabel,
@@ -60,6 +64,8 @@ const Notifications: React.FC<{
 }> = ({ setActivePage, pageAction, clearPageAction, triggerPageAction }) => {
   const ctx = useNotifications();
   const dataCtx = useContext(DataContext);
+  const emergencyFund = useEmergencyFund(dataCtx?.data ?? null);
+  const enhancementInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
   const { showToast } = useToast();
   const todosApi = useTodos();
   const [mainTab, setMainTab] = useState<MainTab>(() => {
@@ -104,7 +110,7 @@ const Notifications: React.FC<{
     }
     const q = query.trim().toLowerCase();
     if (q) list = list.filter((n) => `${n.message} ${n.actionHint || ''} ${n.symbol || ''}`.toLowerCase().includes(q));
-    return list;
+    return sortByNewestFirst(list);
   }, [ctx, filter, categoryFilter, query]);
 
   const groupedByCategory = useMemo(() => {
@@ -192,6 +198,12 @@ const Notifications: React.FC<{
             </div>
           </div>
         </div>
+
+        <EnhancementInsightStrip
+          goalConflicts={enhancementInsights.goalConflicts}
+          budgetDrift={enhancementInsights.budgetDrift.slice(0, 2)}
+          compact
+        />
 
         <div className="mt-6 flex flex-wrap gap-2 border-b border-slate-200 pb-4">
           {(['tasks', 'alerts'] as MainTab[]).map((tab) => (

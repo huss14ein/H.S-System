@@ -5,6 +5,13 @@ import {
   financialMonthRangeFromKey,
   addMonthsToKey,
   effectiveMonthStartDay,
+  currentFinancialMonthColumnEndIndex,
+  financialMonthColumnIndexForDate,
+  financialMonthColumnHeadersForPlanYear,
+  financialMonthKeysEndingAt,
+  financialMonthIsoKey,
+  dateInRange,
+  parseCalendarDateLocal,
 } from '../utils/financialMonth';
 
 describe('financialMonthRangeFromKey vs calendar reference', () => {
@@ -48,5 +55,47 @@ describe('financialMonthRangeFromKey vs calendar reference', () => {
     expect(beforeStart).toEqual({ year: 2026, month: 1 });
     const onStart = financialMonthKey(new Date(2026, 1, 28), 31);
     expect(onStart).toEqual({ year: 2026, month: 2 });
+  });
+
+  it('currentFinancialMonthColumnEndIndex uses financial month, not calendar', () => {
+    const monthStartDay = 15;
+    const ref = new Date('2026-05-10T12:00:00');
+    expect(financialMonthKey(ref, monthStartDay)).toEqual({ year: 2026, month: 4 });
+    expect(currentFinancialMonthColumnEndIndex(2026, ref, monthStartDay)).toBe(3);
+    expect(financialMonthColumnIndexForDate('2026-05-10', 2026, monthStartDay)).toBe(3);
+  });
+
+  it('financialMonthColumnHeadersForPlanYear uses range labels when day > 1', () => {
+    const headers = financialMonthColumnHeadersForPlanYear(2026, 15);
+    expect(headers[0]).not.toBe('Jan');
+    expect(headers[0]).toContain('–');
+    expect(financialMonthKeysEndingAt(new Date('2026-05-10'), 3, 15)).toHaveLength(3);
+    expect(financialMonthIsoKey({ year: 2026, month: 5 })).toBe('2026-05');
+  });
+});
+
+describe('parseCalendarDateLocal and dateInRange', () => {
+  it('parses ISO date-only strings as local calendar midnight', () => {
+    const d = parseCalendarDateLocal('2026-05-15');
+    expect(d.getFullYear()).toBe(2026);
+    expect(d.getMonth()).toBe(4);
+    expect(d.getDate()).toBe(15);
+    expect(d.getHours()).toBe(0);
+  });
+
+  it('dateInRange matches financial month for boundary ISO dates (not UTC shift)', () => {
+    const monthStartDay = 15;
+    const { start, end } = financialMonthRangeFromKey({ year: 2026, month: 5 }, monthStartDay);
+    expect(dateInRange('2026-05-15', start, end)).toBe(true);
+    expect(dateInRange('2026-05-14', start, end)).toBe(false);
+    expect(dateInRange('2026-06-14', start, end)).toBe(true);
+    expect(dateInRange('2026-06-15', start, end)).toBe(false);
+  });
+
+  it('financialMonthColumnIndexForDate agrees with dateInRange for ISO strings', () => {
+    const monthStartDay = 15;
+    const { start, end } = financialMonthRangeFromKey({ year: 2026, month: 5 }, monthStartDay);
+    expect(financialMonthColumnIndexForDate('2026-05-15', 2026, monthStartDay)).toBe(4);
+    expect(dateInRange('2026-05-15', start, end)).toBe(true);
   });
 });

@@ -6,6 +6,11 @@
 import { Transaction, Budget } from '../types';
 import { invokeAI } from './geminiService';
 import { countsAsExpenseForCashflowKpi } from './transactionFilters';
+import {
+    financialMonthRangeFromKey,
+    financialMonthKey,
+    addMonthsToKey,
+} from '../utils/financialMonth';
 import { EXPENSE_CATEGORIES } from './hybridBudgetCategorization';
 import { capitalizeCategoryName } from '../utils/categoryFormat';
 import {
@@ -245,14 +250,15 @@ export async function generateBudgetRecommendations(
   transactions: Transaction[],
   budgets: Budget[],
   currentMonth: number,
-  currentYear: number
+  currentYear: number,
+  monthStartDay: unknown = 1,
 ): Promise<BudgetRecommendation[]> {
-  const expenses = transactions.filter(t => 
-    countsAsExpenseForCashflowKpi(t) && 
-    t.budgetCategory &&
-    new Date(t.date).getMonth() + 1 === currentMonth &&
-    new Date(t.date).getFullYear() === currentYear
-  );
+  const { start, end } = financialMonthRangeFromKey({ year: currentYear, month: currentMonth }, monthStartDay);
+  const expenses = transactions.filter((t) => {
+    if (!countsAsExpenseForCashflowKpi(t) || !t.budgetCategory) return false;
+    const d = new Date(t.date);
+    return !Number.isNaN(d.getTime()) && d >= start && d <= end;
+  });
 
   const categorySpending = new Map<string, number>();
   expenses.forEach(t => {
@@ -269,12 +275,13 @@ export async function generateBudgetRecommendations(
     const limit = budget.period === 'yearly' ? budget.limit / 12 : budget.limit;
     const utilization = limit > 0 ? (spent / limit) * 100 : 0;
 
-    // Analyze historical spending for this category
-    const historical = transactions.filter(t =>
-      countsAsExpenseForCashflowKpi(t) &&
-      t.budgetCategory === budget.category &&
-      new Date(t.date).getFullYear() === currentYear
-    );
+    const { start: yearStart } = financialMonthRangeFromKey({ year: currentYear, month: 1 }, monthStartDay);
+    const { end: yearEnd } = financialMonthRangeFromKey({ year: currentYear, month: 12 }, monthStartDay);
+    const historical = transactions.filter((t) => {
+      if (!countsAsExpenseForCashflowKpi(t) || t.budgetCategory !== budget.category) return false;
+      const d = new Date(t.date);
+      return !Number.isNaN(d.getTime()) && d >= yearStart && d <= yearEnd;
+    });
     const historicalAvg = historical.length > 0
       ? historical.reduce((sum, t) => sum + Math.abs(t.amount), 0) / historical.length
       : 0;
@@ -372,7 +379,8 @@ Respond with JSON array of refined recommendations with enhanced reasoning.`;
 export async function predictFutureExpenses(
   transactions: Transaction[],
   _budgets: Budget[],
-  monthsAhead: number = 3
+  monthsAhead: number = 3,
+  monthStartDay: unknown = 1,
 ): Promise<PredictiveInsight[]> {
   const insights: PredictiveInsight[] = [];
   const now = new Date();
@@ -387,18 +395,20 @@ export async function predictFutureExpenses(
     categoryData.get(cat)!.push(t);
   });
 
+  const currentKey = financialMonthKey(now, monthStartDay);
+
   for (let monthOffset = 1; monthOffset <= monthsAhead; monthOffset++) {
-    const targetMonth = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+    const targetKey = addMonthsToKey(currentKey, monthOffset);
     
     for (const [category, txs] of categoryData.entries()) {
       if (txs.length < 3) continue; // Need at least 3 transactions for prediction
 
-      // Calculate trend
-      const monthlyTotals = new Map<number, number>();
+      // Calculate trend (financial month buckets)
+      const monthlyTotals = new Map<string, number>();
       txs.forEach(t => {
-        const date = new Date(t.date);
-        const monthKey = date.getFullYear() * 12 + date.getMonth();
-        monthlyTotals.set(monthKey, (monthlyTotals.get(monthKey) || 0) + Math.abs(t.amount));
+        const fk = financialMonthKey(new Date(t.date), monthStartDay);
+        const label = `${fk.year}-${fk.month}`;
+        monthlyTotals.set(label, (monthlyTotals.get(label) || 0) + Math.abs(t.amount));
       });
 
       const totals = Array.from(monthlyTotals.values());
@@ -416,7 +426,7 @@ export async function predictFutureExpenses(
 
       // Apply seasonal adjustments (summer utilities, etc.)
       let seasonalMultiplier = 1;
-      const targetMonthNum = targetMonth.getMonth() + 1;
+      const targetMonthNum = targetKey.month;
       if (category.toLowerCase().includes('utilit') && (targetMonthNum >= 6 && targetMonthNum <= 8)) {
         seasonalMultiplier = 1.5; // Summer spike
       }

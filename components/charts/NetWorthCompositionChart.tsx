@@ -5,8 +5,9 @@ import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from './chartTheme';
 import ChartContainer from './ChartContainer';
 import { useCurrency } from '../../context/CurrencyContext';
-import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from '../../services/fxDailySeries';
-import { computePersonalNetWorthChartBucketsSAR } from '../../services/personalNetWorth';
+import { hydrateSarPerUsdDailySeries } from '../../services/fxDailySeries';
+import { computePersonalHeadlineNetWorthSar } from '../../services/personalNetWorth';
+import { useMarketData } from '../../context/MarketDataContext';
 import {
     listNetWorthSnapshots,
     NW_BUCKETS_SCHEMA_LEGACY,
@@ -183,6 +184,7 @@ const LEGACY_SCHEMA_BANNER_KEY = 'finova_nw_legacy_schema_banner_dismissed';
 const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => void }> = ({ title, onOpenSummary }) => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
+    const { simulatedPrices } = useMarketData();
     const { formatCurrencyString } = useFormatCurrency();
     const [timePeriod, setTimePeriod] = useState<TimePeriod>('All');
     /** When snapshots are sparse, optionally build a 12‑month line from ledger cashflow (can diverge from true balance‑sheet NW). */
@@ -209,9 +211,10 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
             horizonDays: 4000,
             earliestCalendarDay: oldestDay,
         });
-        const todayKey = new Date().toISOString().slice(0, 10);
-        const fxToday = getSarPerUsdForCalendarDay(todayKey, data, exchangeRate);
-        const buckets = computePersonalNetWorthChartBucketsSAR(data, fxToday, { getAvailableCashForAccount });
+        const buckets = computePersonalHeadlineNetWorthSar(data, exchangeRate, {
+            getAvailableCashForAccount,
+            simulatedPrices,
+        }).buckets;
         const byLocalDay = new Map<string, {
             date: string;
             netWorth: number;
@@ -309,15 +312,15 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
         }
 
         return filterRowsByTimePeriod(finalData, timePeriod);
-    }, [data, timePeriod, exchangeRate, getAvailableCashForAccount, useLedgerEstimateWhenSparse]);
+    }, [data, timePeriod, exchangeRate, getAvailableCashForAccount, simulatedPrices, useLedgerEstimateWhenSparse]);
 
     const liveBuckets = useMemo(() => {
         if (!data) return null;
-        hydrateSarPerUsdDailySeries(data, exchangeRate, { horizonDays: 4000 });
-        const todayKey = new Date().toISOString().slice(0, 10);
-        const fxToday = getSarPerUsdForCalendarDay(todayKey, data, exchangeRate);
-        return computePersonalNetWorthChartBucketsSAR(data, fxToday, { getAvailableCashForAccount });
-    }, [data, exchangeRate, getAvailableCashForAccount]);
+        return computePersonalHeadlineNetWorthSar(data, exchangeRate, {
+            getAvailableCashForAccount,
+            simulatedPrices,
+        }).buckets;
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
 
     const snapshotSchemaMix = useMemo(() => {
         const snaps = listNetWorthSnapshots();

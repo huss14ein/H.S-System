@@ -18,8 +18,11 @@ import { DataContext } from '../../context/DataContext';
 import { useCurrency } from '../../context/CurrencyContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../../utils/currencyMath';
+import { effectiveHoldingValueInBookCurrency } from '../../utils/holdingValuation';
+import { resolveInvestmentPortfolioCurrency } from '../../utils/investmentPortfolioCurrency';
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from '../../services/fxDailySeries';
 import { computePersonalHeadlineNetWorthSar } from '../../services/personalNetWorth';
+import { useMarketData } from '../../context/MarketDataContext';
 import { listNetWorthSnapshots } from '../../services/netWorthSnapshot';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../../utils/wealthScope';
 import type { Account, Transaction } from '../../types';
@@ -188,6 +191,7 @@ export default function NetWorthCockpit(props: {
   const { title = 'Net worth', onOpenSummary, onOpenInvestments, onOpenAccounts, onOpenAssets, onOpenDataReconciliation } = props;
   const { data, getAvailableCashForAccount } = useContext(DataContext)!;
   const { exchangeRate } = useCurrency();
+  const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
   const [period, setPeriod] = useState<TimePeriod>('6M');
 
@@ -218,7 +222,10 @@ export default function NetWorthCockpit(props: {
     }
 
     hydrateSarPerUsdDailySeries(data, exchangeRate, { horizonDays: 4000 });
-    const headline = computePersonalHeadlineNetWorthSar(data, exchangeRate, { getAvailableCashForAccount });
+    const headline = computePersonalHeadlineNetWorthSar(data, exchangeRate, {
+      getAvailableCashForAccount,
+      simulatedPrices,
+    });
     const live = headline.buckets;
     const sarPerUsd = headline.sarPerUsd;
 
@@ -364,11 +371,11 @@ export default function NetWorthCockpit(props: {
 
     const movers = portfolios
       .flatMap((p) => {
-        const book: 'USD' | 'SAR' = (p.currency as any) === 'USD' ? 'USD' : 'SAR';
+        const book = resolveInvestmentPortfolioCurrency(p);
         return (p.holdings ?? []).map((h) => {
           const qty = Math.max(0, Number(h.quantity) || 0);
           const avg = Math.max(0, Number(h.avgCost) || 0);
-          const curVal = Math.max(0, Number(h.currentValue) || 0);
+          const curVal = effectiveHoldingValueInBookCurrency(h, book, simulatedPrices, sarPerUsd);
           const cost = avg * qty;
           const gainLoss = curVal - cost;
           const gainLossPct = cost > 0 ? (gainLoss / cost) * 100 : 0;
@@ -399,7 +406,7 @@ export default function NetWorthCockpit(props: {
       lastSnapshotAttribution,
       movers,
     };
-  }, [data, exchangeRate, getAvailableCashForAccount, period]);
+  }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, period]);
 
   const live = computed.live;
   const isEmpty = !computed.series.length || !live;

@@ -5,9 +5,9 @@ alwaysApply: true
 
 # Single source of truth for financial KPIs
 
-- **Headline personal net worth (SAR)** and stacked buckets: use `computePersonalHeadlineNetWorthSar(data, uiExchangeRate, { getAvailableCashForAccount })` from `services/personalNetWorth.ts`. Pass **CurrencyContext `exchangeRate`** and **DataContext `data`** — never invent a separate FX path for the same headline (e.g. do not use a calendar-day spot for NW while KPI uses `resolveSarPerUsd`).
+- **Headline personal net worth (SAR)** and stacked buckets: use `computePersonalHeadlineNetWorthSar(data, uiExchangeRate, { getAvailableCashForAccount, simulatedPrices })` from `services/personalNetWorth.ts`. Pass **CurrencyContext `exchangeRate`**, **DataContext `data`**, and **`simulatedPrices` from `useMarketData()`** so holdings match Investments hub live quotes — never invent a separate FX path for the same headline (e.g. do not use a calendar-day spot for NW while KPI uses `resolveSarPerUsd`).
 - **Dashboard KPI row** (`netWorth`, `monthlyPnL`, trends, liquid cash SAR, ROI): use `computeDashboardKpiSnapshot` from `services/dashboardKpiSnapshot.ts` only — pass **`simulatedPrices`** from `useMarketData()` so **Investment ROI** matches the Investments hub (`computeHeadlinePersonalInvestmentRoiDecimal`: platform rollup + commodities + Sukuk).
-- **Wealth Summary / exports / reconciliation**: `computeWealthSummaryReportModel(data, uiExchangeRate, getAvailableCashForAccount)` — second argument is **UI exchange rate**, not a pre-resolved SAR/USD number.
+- **Wealth Summary / exports / reconciliation**: `computeWealthSummaryReportModel(data, uiExchangeRate, getAvailableCashForAccount, simulatedPrices)` — second argument is **UI exchange rate**, not a pre-resolved SAR/USD number; fourth is live quotes (same as headline NW).
 - **Weekly email digest (Edge)**: build rows with `buildFinancialDataForWeeklyDigest` then `computeWeeklyDigestPersonalNetWorthSar` from `services/weeklyDigestNetWorthSar.ts` — same balance sheet + **Investment account cash balances** as personal NW (not ad-hoc SQL sums).
 - **Transaction-dated FX** (historical TX conversion): `getSarPerUsdForCalendarDay` remains valid **inside** cashflow and ledger paths — not for replacing headline balance-sheet NW.
 

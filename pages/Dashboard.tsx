@@ -48,7 +48,7 @@ import { useTodosOptional } from '../context/TodosContext';
 import { computeTaskCounts, compareActionableTodos, isTaskSnoozed, todayIsoDate } from '../services/todoModel';
 import type { TodoItem } from '../types';
 import { usePrivacyMask } from '../context/PrivacyContext';
-import { savingsRateSar } from '../services/financeMetrics';
+import { savingsRateSarFinancialMonth } from '../services/financeMetrics';
 import { debtStressScore } from '../services/debtEngines';
 import { cashflowMomentumFromPnlTrend, personalFinanceHealthScore } from '../services/decisionScoringEngine';
 import { computeDashboardKpiSnapshot, averageSavingsRateSarRolling } from '../services/dashboardKpiSnapshot';
@@ -56,14 +56,30 @@ import type { InvestmentCapitalSource } from '../services/investmentKpiCore';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
 import { computePersonalHeadlineNetWorthSar, sumPersonalSukukAssetsSar } from '../services/personalNetWorth';
-import { financialMonthRange } from '../utils/financialMonth';
-import { computeMonthlyReportFinancialKpis, computeWealthSummaryReportModel } from '../services/wealthSummaryReportModel';
+import {
+    financialMonthRange,
+    financialMonthKeysEndingAt,
+    financialMonthIsoKey,
+    financialMonthColumnHeaderLabel,
+    financialMonthRangeFromKey,
+    resolveMonthStartDayFromData,
+    dateInRange,
+} from '../utils/financialMonth';
+import {
+    buildPersonalInvestmentTreemapRows,
+    computeMonthlyReportFinancialKpis,
+    computeWealthSummaryReportModel,
+} from '../services/wealthSummaryReportModel';
 import { reconcileDashboardVsSummaryKpis } from '../services/kpiReconciliation';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { logKpiReconciliationDrift } from '../services/kpiDriftTelemetry';
 import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { useMarketData } from '../context/MarketDataContext';
+import { computeCapitalDeployment } from '../services/capitalDeploymentOrchestrator';
+import { useDashboardReconciliationPrefs } from '../hooks/useDashboardReconciliationPrefs';
+import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
+import { useFinancialEnhancementInsights } from '../hooks/useFinancialEnhancementInsights';
 
 interface ExtendedBudget extends Budget {
     spent: number;
@@ -72,7 +88,9 @@ interface ExtendedBudget extends Budget {
 }
 
 const AIExecutiveSummary: React.FC = () => {
-    const { data } = useContext(DataContext)!;
+    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { exchangeRate } = useCurrency();
+    const { simulatedPrices } = useMarketData();
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { trackAction } = useSelfLearning();
     const [summary, setSummary] = useState<string>('');
@@ -97,7 +115,11 @@ const AIExecutiveSummary: React.FC = () => {
         setSummary('');
         setSummaryEn('');
         try {
-            const result = await getAIExecutiveSummary(data);
+            const result = await getAIExecutiveSummary(data, {
+                exchangeRate,
+                getAvailableCashForAccount,
+                simulatedPrices,
+            });
             const normalized = result ?? '';
             setSummaryEn(normalized);
             if (preferredLang === 'ar') {
@@ -112,7 +134,7 @@ const AIExecutiveSummary: React.FC = () => {
             setError(formatAiError(err));
         }
         setIsLoading(false);
-    }, [data, trackAction, summaryLanguage]);
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, trackAction, summaryLanguage]);
 
     const handleTranslateToArabic = useCallback(async () => {
         if (!summaryEn.trim()) return;
@@ -448,16 +470,15 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         const planCurrency = (plan.budgetCurrency === 'SAR' || plan.budgetCurrency === 'USD' ? plan.budgetCurrency : 'SAR') as 'SAR' | 'USD';
         hydrateSarPerUsdDailySeries(data, exchangeRate);
         const spotRate = resolveSarPerUsd(data, exchangeRate);
-        const currentMonth = new Date().getMonth();
-        const currentYear = new Date().getFullYear();
+        const monthStartDay = resolveMonthStartDayFromData(data);
+        const { start: finStart, end: finEnd } = financialMonthRange(new Date(), monthStartDay);
         const accounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []) as Account[];
         const investments = ((data as any)?.personalInvestments ?? data?.investments ?? []) as any[];
         const personalAccountIds = new Set(accounts.map((a: { id: string }) => a.id));
         const monthlyInvested = (data?.investmentTransactions ?? [])
             .filter((t: { date: string; type?: string; accountId?: string; account_id?: string; portfolioId?: string; portfolio_id?: string }) => {
-                const d = new Date(t.date);
                 const aid = resolveInvestmentTransactionAccountId(t as any, accounts as any, investments as any);
-                return d.getMonth() === currentMonth && d.getFullYear() === currentYear && t.type === 'buy' && personalAccountIds.has(aid);
+                return dateInRange(t.date, finStart, finEnd) && t.type === 'buy' && personalAccountIds.has(aid);
             })
             .reduce((sum, t) => {
                 const txCurrency = inferInvestmentTransactionCurrency(t as any, accounts as any, investments as any);
@@ -485,7 +506,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
 
             const now = new Date();
-            const monthStartDay = (data as any)?.settings?.monthStartDay ?? 1;
+            const monthStartDay = resolveMonthStartDayFromData(data);
             const currentFinMonth = financialMonthRange(now, monthStartDay);
             const d = data as any;
             const rawTransactions = d?.personalTransactions ?? data?.transactions ?? [];
@@ -495,7 +516,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 budgetCategory: t.budgetCategory ?? t.budget_category ?? '',
             }));
             const accounts = d?.personalAccounts ?? data?.accounts ?? [];
-            const investments = d?.personalInvestments ?? data?.investments ?? [];
             const accountsById = new Map(accounts.map((a: Account) => [a.id, a]));
             const txCashflowSar = (t: { accountId?: string; amount?: number; date: string }) => {
                 const acc = accountsById.get(t.accountId ?? '') as Account | undefined;
@@ -532,14 +552,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 investmentCapitalSource,
             } = snap;
 
-            // Investment data (personal portfolios only)
-            const allHoldings = investments.flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []);
-            const investmentTreemapData = allHoldings.map((h: { avgCost?: number; quantity?: number; currentValue?: number; [k: string]: unknown }) => {
-                 const totalCost = (h.avgCost ?? 0) * (h.quantity ?? 0);
-                 const gainLoss = (h.currentValue ?? 0) - totalCost;
-                 const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
-                 return { ...h, gainLoss, gainLossPercent };
-            });
+            const investmentTreemapData = buildPersonalInvestmentTreemapRows(data, sarPerUsd, simulatedPrices);
             const monthlySpending = new Map<string, number>();
             monthlyTransactions
                 .filter((t: { type?: string }) => countsAsExpenseForCashflowKpi(t))
@@ -564,17 +577,32 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 })
                 .sort((a, b) => b.percentage - a.percentage);
             
-            // Cashflow Chart Data (personal only)
-            const monthlyCashflowMap = new Map<string, { income: number, expenses: number }>();
-            const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
-            transactions.filter((t: { date: string }) => new Date(t.date) >= twelveMonthsAgo).forEach((t: Transaction) => {
-                const monthKey = t.date.slice(0, 7);
-                const current = monthlyCashflowMap.get(monthKey) || { income: 0, expenses: 0 };
-                if (countsAsIncomeForCashflowKpi(t)) current.income += txCashflowSar(t);
-                if (countsAsExpenseForCashflowKpi(t)) current.expenses += txCashflowSar(t);
-                monthlyCashflowMap.set(monthKey, current);
+            // Cashflow Chart Data (personal only) — last 12 financial months
+            const finMonthKeys12 = financialMonthKeysEndingAt(now, 12, monthStartDay);
+            const earliestCashflow = financialMonthRangeFromKey(finMonthKeys12[0], monthStartDay).start;
+            const monthlyCashflowMap = new Map<string, { income: number; expenses: number }>();
+            finMonthKeys12.forEach((k) => monthlyCashflowMap.set(financialMonthIsoKey(k), { income: 0, expenses: 0 }));
+            transactions
+                .filter((t: { date: string }) => {
+                    const d0 = new Date(t.date);
+                    return !Number.isNaN(d0.getTime()) && d0 >= earliestCashflow;
+                })
+                .forEach((t: Transaction) => {
+                    const monthKey = financialMonthIsoKey(financialMonthRange(new Date(t.date), monthStartDay).key);
+                    if (!monthlyCashflowMap.has(monthKey)) return;
+                    const current = monthlyCashflowMap.get(monthKey)!;
+                    if (countsAsIncomeForCashflowKpi(t)) current.income += txCashflowSar(t);
+                    if (countsAsExpenseForCashflowKpi(t)) current.expenses += txCashflowSar(t);
+                });
+            const monthlyCashflowData = finMonthKeys12.map((k) => {
+                const key = financialMonthIsoKey(k);
+                const value = monthlyCashflowMap.get(key) ?? { income: 0, expenses: 0 };
+                const name =
+                    monthStartDay === 1
+                        ? new Date(k.year, k.month - 1, 15).toLocaleString('default', { month: 'short' })
+                        : financialMonthColumnHeaderLabel(k.year, k.month, monthStartDay);
+                return { name, ...value };
             });
-            const monthlyCashflowData = Array.from(monthlyCashflowMap.entries()).sort((a,b) => a[0].localeCompare(b[0])).map(([key, value]) => ({ name: new Date(key + '-02').toLocaleString('default', { month: 'short' }), ...value }));
 
             const uncategorizedTransactions = transactions.filter((t: Transaction) => {
                 if (!countsAsExpenseForCashflowKpi(t)) return false;
@@ -590,11 +618,14 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 getAvailableCashForAccount as (id: string) => { SAR: number; USD: number },
                 sarPerUsd,
             );
-            const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
-            const recentTx = transactions.filter((t: { date: string }) => new Date(t.date) >= sixMonthsAgo);
+            const finMonthKeys6 = financialMonthKeysEndingAt(now, 6, monthStartDay);
+            const earliestProj = financialMonthRangeFromKey(finMonthKeys6[0], monthStartDay).start;
+            const recentTx = transactions.filter((t: { date: string }) => new Date(t.date) >= earliestProj);
             const monthlyNets = new Map<string, number>();
+            finMonthKeys6.forEach((k) => monthlyNets.set(financialMonthIsoKey(k), 0));
             recentTx.forEach((t: Transaction) => {
-                const key = t.date.slice(0, 7);
+                const key = financialMonthIsoKey(financialMonthRange(new Date(t.date), monthStartDay).key);
+                if (!monthlyNets.has(key)) return;
                 let delta = 0;
                 if (countsAsIncomeForCashflowKpi(t)) delta += txCashflowSar(t);
                 else if (countsAsExpenseForCashflowKpi(t)) delta -= txCashflowSar(t);
@@ -633,7 +664,10 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
 
     useEffect(() => {
         if (!auth?.user || !data) return;
-        const headline = computePersonalHeadlineNetWorthSar(data, exchangeRate, { getAvailableCashForAccount });
+        const headline = computePersonalHeadlineNetWorthSar(data, exchangeRate, {
+            getAvailableCashForAccount,
+            simulatedPrices,
+        });
         const b = headline.buckets;
         const nw = typeof headline.netWorth === 'number' && Number.isFinite(headline.netWorth) ? headline.netWorth : (kpiSummary as { netWorth?: number }).netWorth;
         if (typeof nw === 'number' && Number.isFinite(nw)) {
@@ -652,7 +686,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 supabase && auth.user?.id ? { supabase, userId: auth.user.id } : null,
             );
         }
-    }, [auth?.user, kpiSummary, data, exchangeRate, getAvailableCashForAccount]);
+    }, [auth?.user, kpiSummary, data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
 
     const subsIntel = useMemo(() => {
         if (!data) return { monthlyEstimate: 0, count: 0 };
@@ -662,6 +696,21 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
         return subscriptionSpendMonthlySar(txs, accounts, sarPerUsd, 3);
     }, [data, exchangeRate]);
+
+    const { strictReconciliationMode } = useDashboardReconciliationPrefs(auth?.user?.id);
+
+    const capitalDeployment = useMemo(() => {
+        if (!data) return null;
+        return computeCapitalDeployment(
+            data,
+            exchangeRate,
+            getAvailableCashForAccount,
+            emergencyFund.monthsCovered,
+            EMERGENCY_FUND_TARGET_MONTHS,
+        );
+    }, [data, exchangeRate, getAvailableCashForAccount, emergencyFund.monthsCovered]);
+
+    const enhancementInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
 
     const nextBestActions = useMemo(() => {
         const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
@@ -697,7 +746,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
         const goalResolved = computeGoalResolvedAmountsSar(data, sarPerUsd);
         const now = new Date();
-        const savingsThisMonth = savingsRateSar(txs, accounts, now, sarPerUsd);
+        const savingsThisMonth = savingsRateSarFinancialMonth(txs, accounts, now, data, exchangeRate);
         const savingsRolling = averageSavingsRateSarRolling(txs, accounts, data, exchangeRate, 3);
         const savingsRatePct = (savingsThisMonth + savingsRolling) / 2;
         const totalMonthlyDebt = liabilities.reduce((s: number, l: { monthlyPayment?: number }) => s + (l.monthlyPayment ?? 0), 0);
@@ -734,8 +783,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
 
     const summaryModelForReconciliation = useMemo(() => {
         if (!data) return null;
-        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount);
-    }, [data, exchangeRate, getAvailableCashForAccount]);
+        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
 
     const summaryMonthlyKpisForReconciliation = useMemo(() => {
         if (!data) return null;
@@ -907,6 +956,48 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                     </span>
                     <button type="button" onClick={() => setActivePage('Analysis')} className="text-primary font-medium hover:underline text-sm">
                         Details in Analysis →
+                    </button>
+                </div>
+            )}
+
+            {capitalDeployment && (
+                <div className={`mb-4 p-4 rounded-xl border text-sm ${capitalDeployment.canInvest ? 'bg-emerald-50/80 border-emerald-200' : 'bg-amber-50/80 border-amber-200'}`}>
+                    <h3 className="text-sm font-semibold text-slate-900 mb-1">Can I invest?</h3>
+                    <p className="text-slate-800">
+                        Investable surplus: <strong>{formatCurrencyString(capitalDeployment.investableSurplusSar, { digits: 0 })}</strong>
+                        {' · '}Runway: {capitalDeployment.runwayMonths.toFixed(1)} mo
+                        {' · '}Free cash flow (model): {formatCurrencyString(capitalDeployment.monthlyFreeCashFlowSar, { digits: 0 })}
+                    </p>
+                    {capitalDeployment.reasons.length > 0 && (
+                        <ul className="mt-2 text-xs text-slate-700 list-disc pl-4 space-y-0.5">
+                            {capitalDeployment.reasons.map((r, i) => (
+                                <li key={`cap-${i}`}>{r}</li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            <EnhancementInsightStrip
+                capitalDeployment={enhancementInsights.capitalDeployment}
+                goalConflicts={enhancementInsights.goalConflicts}
+                budgetDrift={enhancementInsights.budgetDrift.slice(0, 2)}
+                lifestyleHits={enhancementInsights.lifestyleHits}
+                compact
+            />
+
+            {strictReconciliationMode && kpiReconciliation && !kpiReconciliation.ok && (
+                <div className="mb-4 p-4 rounded-xl border border-rose-200 bg-rose-50 text-sm" role="alert">
+                    <p className="font-semibold text-rose-950">KPI mismatch (strict mode)</p>
+                    <ul className="mt-2 space-y-1 text-rose-900 list-disc pl-4">
+                        {kpiReconciliation.rows.filter((r) => !r.withinThreshold).map((r) => (
+                            <li key={r.key}>
+                                {r.label}: Dashboard {r.dashboardValue.toFixed(2)} vs Summary {r.summaryValue.toFixed(2)} (Δ {r.deltaAbs.toFixed(2)})
+                            </li>
+                        ))}
+                    </ul>
+                    <button type="button" className="mt-2 text-xs font-semibold text-primary underline" onClick={() => setActivePage('System & APIs Health')}>
+                        Open System Health diagnostics →
                     </button>
                 </div>
             )}

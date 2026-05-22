@@ -20,6 +20,9 @@ import {
 import { calculatePortfolioRisk } from '../services/advancedRiskScoring';
 import { valueAtRiskHistorical, getPDTStatus, getMarketHoursGuardrail, volatilityAdjustedWeights } from '../services/riskCompliance';
 import type { WealthUltraSleeve, WealthUltraPosition, WealthUltraRiskTier } from '../types';
+import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
+import { useFinancialEnhancementInsights } from '../hooks/useFinancialEnhancementInsights';
+import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import type { Page } from '../types';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
@@ -71,6 +74,8 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
   const { isAiAvailable, aiHealthChecked } = useAI();
 
   const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
+  const emergencyFund = useEmergencyFund(data);
+  const ultraInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
 
   /** Engine outputs (positions, orders, deployable cash from config) are interpreted as USD for display consistency. */
   const fmtEngineUsd = useCallback(
@@ -495,7 +500,11 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     try {
       const raw = window.localStorage.getItem('wealth-ultra-exception-history');
       const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed.slice(0, 25) : [];
+      const rows = Array.isArray(parsed) ? parsed : [];
+      return rows
+        .slice()
+        .sort((a: { at?: string }, b: { at?: string }) => String(b.at ?? '').localeCompare(String(a.at ?? '')))
+        .slice(0, 25);
     } catch {
       return [];
     }
@@ -1370,6 +1379,11 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       }
     >
       <div className="space-y-8 md:space-y-10 lg:space-y-12">
+        <EnhancementInsightStrip
+          capitalDeployment={ultraInsights.capitalDeployment}
+          goalConflicts={ultraInsights.goalConflicts}
+          compact
+        />
         {engineWarning && (
           <div className="rounded-xl border-2 border-amber-400 bg-amber-50 p-4 text-sm text-amber-950 shadow-sm" role="alert">
             <p className="font-semibold flex items-center gap-2">

@@ -2,6 +2,7 @@ import type { FinancialData, Goal } from '../types';
 import { computeGoalResolvedAmountsSar } from './goalResolvedTotals';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 import { monthsRemainingToDeadline } from './goalMetrics';
+import { computeGoalMonthlyFundingEnvelopeSar } from './goalProjectionFunding';
 
 /** When a goal has no deadline, amortize required monthly amount over this horizon (months). */
 export const GOAL_NO_DEADLINE_AMORTIZATION_MONTHS = 60;
@@ -88,45 +89,32 @@ export function computeGoalFundingPlan(
   sarPerUsdUi?: number,
 ): GoalFundingPlan {
   const monthlySurplus = projectedAnnualSurplus / 12;
+  const sarPerUsd = resolveSarPerUsd(data ?? null, sarPerUsdUi);
   const rows = buildGoalFundingScheduleRows(data, sarPerUsdUi);
 
   const monthlyActive = rows.filter((e) => e.shortfall > 0 && e.requiredPerMonth > 0);
   const totalRequired = monthlyActive.reduce((sum, e) => sum + e.requiredPerMonth, 0);
 
+  const envelopeForGoal = (goal: Goal) =>
+    computeGoalMonthlyFundingEnvelopeSar({ goal, data, sarPerUsd }).envelopeMonthly;
+
   let monthlySuggestions: GoalFundingSuggestion[] = [];
 
-  if (monthlySurplus <= 0 || monthlyActive.length === 0) {
-    monthlySuggestions = monthlyActive.map((e) => ({
-      goalId: e.goal?.id ?? '',
-      name: e.goal?.name ?? '—',
-      requiredPerMonth: e.requiredPerMonth,
-      suggestedPerMonth: 0,
-      priorityShare: 0,
-      status: 'need_more' as const,
-      monthsToDeadline: e.monthsToDeadline,
-    }));
-  } else if (monthlySurplus >= totalRequired) {
-    monthlySuggestions = monthlyActive.map((e) => ({
-      goalId: e.goal?.id ?? '',
-      name: e.goal?.name ?? '—',
-      requiredPerMonth: e.requiredPerMonth,
-      suggestedPerMonth: e.requiredPerMonth,
-      priorityShare: totalRequired > 0 ? e.requiredPerMonth / totalRequired : 0,
-      status: 'on_track' as const,
-      monthsToDeadline: e.monthsToDeadline,
-    }));
+  if (monthlyActive.length === 0) {
+    monthlySuggestions = [];
   } else {
-    const totalWeight = monthlyActive.reduce((sum, e) => sum + e.priorityWeight, 0) || 1;
     monthlySuggestions = monthlyActive.map((e) => {
-      const share = e.priorityWeight / totalWeight;
-      const suggested = monthlySurplus * share;
-      const ok = suggested >= e.requiredPerMonth * 0.9;
+      const goal = e.goal;
+      const requiredPerMonth = e.requiredPerMonth;
+      const envelopeMonthly = goal ? envelopeForGoal(goal) : 0;
+      const suggestedPerMonth = Math.min(requiredPerMonth, Math.max(0, envelopeMonthly));
+      const ok = suggestedPerMonth >= requiredPerMonth * 0.9;
       return {
-        goalId: e.goal?.id ?? '',
-        name: e.goal?.name ?? '—',
-        requiredPerMonth: e.requiredPerMonth,
-        suggestedPerMonth: suggested,
-        priorityShare: share,
+        goalId: goal?.id ?? '',
+        name: goal?.name ?? '—',
+        requiredPerMonth,
+        suggestedPerMonth,
+        priorityShare: totalRequired > 0 ? requiredPerMonth / totalRequired : 0,
         status: ok ? ('on_track' as const) : ('need_more' as const),
         monthsToDeadline: e.monthsToDeadline,
       };
