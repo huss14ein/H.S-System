@@ -34,6 +34,16 @@ const PendingApprovalPage: React.FC = () => {
             </>
           )}
         </p>
+        {!rejected && (
+          <p className="text-xs text-slate-500 mb-4 text-left">
+            Project owner? In Supabase SQL editor run{' '}
+            <code className="bg-slate-100 px-1 rounded text-[11px]">
+              update public.users set role = &apos;Admin&apos;, approved = true where email = &apos;you@example.com&apos;;
+            </code>{' '}
+            or apply migration{' '}
+            <code className="bg-slate-100 px-1 rounded text-[11px]">20260523120000_ensure_user_profile_bootstrap.sql</code>.
+          </p>
+        )}
         <div className="space-y-3">
           <button
             type="button"

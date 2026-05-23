@@ -633,6 +633,21 @@ interface AuthContextType {
 
 export const AuthContext = createContext<AuthContextType | null>(null);
 
+/** Map `public.users` row → app access flags. Legacy DB without `approved` → allow access. */
+function approvalFlagsFromUserRow(data: Record<string, unknown> | null): {
+  approved: boolean;
+  signupRejected: boolean;
+} | null {
+  if (data == null) return null;
+  const hasApprovedKey = Object.prototype.hasOwnProperty.call(data, 'approved');
+  const raw = data.approved;
+  const approved =
+    !hasApprovedKey ? true : raw === null || raw === undefined ? true : Boolean(raw);
+  const hasRejKey = Object.prototype.hasOwnProperty.call(data, 'signup_rejected');
+  const signupRejected = approved ? false : hasRejKey && Boolean(data.signup_rejected);
+  return { approved, signupRejected };
+}
+
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [user, setUser] = useState<User | null>(null);
     const [session, setSession] = useState<Session | null>(null);
@@ -727,6 +742,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
     }, [supabase, session, user]);
 
+    const applyApprovalRow = useCallback((row: Record<string, unknown> | null) => {
+        const flags = approvalFlagsFromUserRow(row);
+        if (!flags) {
+            setIsApproved(false);
+            setIsSignupRejected(false);
+            return;
+        }
+        setIsApproved(flags.approved);
+        setIsSignupRejected(flags.signupRejected);
+    }, []);
+
     /** Never block auth init: if the query hangs or Netlify/RLS blocks REST, we time out and fail open (approved). */
     const fetchApprovalStatus = useCallback(async (userId: string) => {
         if (!supabase) {
@@ -734,11 +760,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setIsSignupRejected(false);
             return;
         }
+        const client = supabase;
         const APPROVAL_FETCH_MS = 8000;
         try {
             // Use select() without a column list so Postgres returns all existing columns.
             // If `approved` was never migrated, .select('approved') errors with 42703.
-            const query = supabase
+            const query = client
                 .from('users')
                 .select()
                 .eq('id', userId)
@@ -760,28 +787,40 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 setIsSignupRejected(false);
                 return;
             }
-            // No public.users row: do not grant access (signup trigger missing or race before insert completes).
+
+            const tryEnsureProfile = async (): Promise<Record<string, unknown> | null> => {
+                const { data: ensured, error: ensureErr } = await client.rpc('ensure_own_user_profile').maybeSingle();
+                if (!ensureErr && ensured) return ensured as Record<string, unknown>;
+                const { data: retry } = await client.from('users').select().eq('id', userId).maybeSingle();
+                return (retry as Record<string, unknown> | null) ?? null;
+            };
+
             if (data == null) {
+                const row = await tryEnsureProfile();
+                if (row) {
+                    applyApprovalRow(row);
+                    return;
+                }
                 setIsApproved(false);
                 setIsSignupRejected(false);
                 return;
             }
-            // Legacy DB without `approved` column: field absent → treat as approved.
-            const raw = data.approved;
-            const hasApprovedKey = Object.prototype.hasOwnProperty.call(data, 'approved');
-            const approvedVal = !hasApprovedKey ? true : Boolean(raw);
-            setIsApproved(approvedVal);
-            if (approvedVal) {
-                setIsSignupRejected(false);
-            } else {
-                const hasRejKey = Object.prototype.hasOwnProperty.call(data, 'signup_rejected');
-                setIsSignupRejected(hasRejKey && Boolean(data.signup_rejected));
+
+            const initial = approvalFlagsFromUserRow(data);
+            if (initial && !initial.approved && !initial.signupRejected) {
+                const row = await tryEnsureProfile();
+                if (row) {
+                    applyApprovalRow(row);
+                    return;
+                }
             }
+
+            applyApprovalRow(data);
         } catch {
             setIsApproved(true);
             setIsSignupRejected(false);
         }
-    }, []);
+    }, [applyApprovalRow]);
 
     useEffect(() => {
         const currentSupabase = supabase;
