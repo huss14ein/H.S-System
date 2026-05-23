@@ -7,7 +7,7 @@
  * (transaction-dated FX for USD lines).
  */
 
-import type { FinancialData, TradeCurrency } from '../types';
+import type { Account, FinancialData, TradeCurrency, Transaction } from '../types';
 import { computeEmergencyFundMetrics, type EmergencyFundMetrics } from '../hooks/useEmergencyFund';
 import { getAllInvestmentsValueInSAR, resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { getPersonalAssets, getPersonalInvestments, getPersonalWealthData } from '../utils/wealthScope';
@@ -26,6 +26,10 @@ import {
   computeImpliedFinancialMonthNetWorthTrendPct,
   financialMonthNetCashflowSar,
 } from './dashboardKpiSnapshot';
+import { countsAsExpenseForCashflowKpi } from './transactionFilters';
+import { dateInRange } from '../utils/financialMonth';
+import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
+import { getSarPerUsdForCalendarDay } from './fxDailySeries';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 
 export type GetAvailableCashFn = (accountId: string) => { SAR: number; USD: number };
@@ -104,17 +108,58 @@ export function computeMonthlyReportFinancialKpis(
   getAvailableCashForAccount: GetAvailableCashFn,
   simulatedPrices: SimulatedPriceMap = {},
 ): { budgetVariance: number; roi: number } {
-  const { monthlyExpensesSar, currentRange } = financialMonthNetCashflowSar(data, uiExchangeRate);
+  const cashflow = financialMonthNetCashflowSar(data, uiExchangeRate);
+  const { currentRange } = cashflow;
   const currentMonth = currentRange.key.month;
   const currentYear = currentRange.key.year;
 
-  const totalBudget = (data.budgets ?? [])
-    .filter((b) => b.month === currentMonth && b.year === currentYear)
-    .reduce((sum, b) => sum + budgetToMonthly(b), 0);
-  const budgetVariance = totalBudget - monthlyExpensesSar;
+  const monthlyBudgets = (data.budgets ?? []).filter(
+    (b) => b.month === currentMonth && b.year === currentYear,
+  );
 
+  const d = data as FinancialData & { personalTransactions?: Transaction[]; personalAccounts?: Account[] };
+  const transactions = (d.personalTransactions ?? getPersonalTransactions(data)) as Transaction[];
+  const accounts = (d.personalAccounts ?? getPersonalAccounts(data)) as Account[];
+  const accountsById = new Map(accounts.map((a) => [a.id, a]));
   const sarPerUsd = resolveSarPerUsd(data, uiExchangeRate);
-  const { roi } = computeHeadlinePersonalInvestmentRoiDecimal(data, sarPerUsd, getAvailableCashForAccount, simulatedPrices);
+
+  const txExpenseSar = (t: Transaction) => {
+    const acc = accountsById.get(t.accountId ?? '') as Account | undefined;
+    const c = acc?.currency === 'USD' ? 'USD' : 'SAR';
+    const raw = Math.abs(Number(t.amount) || 0);
+    if (c === 'SAR') return raw;
+    const day = String(t.date ?? '').slice(0, 10);
+    const r = getSarPerUsdForCalendarDay(day, data, uiExchangeRate);
+    return toSAR(raw, 'USD', r);
+  };
+
+  const actualByCategory = new Map<string, number>();
+  for (const t of transactions) {
+    if (!dateInRange(t.date, currentRange.start, currentRange.end)) continue;
+    if (!countsAsExpenseForCashflowKpi(t)) continue;
+    const cat = String(
+      (t as Transaction & { budgetCategory?: string }).budgetCategory ?? t.category ?? '',
+    ).trim() || 'Uncategorized';
+    actualByCategory.set(cat, (actualByCategory.get(cat) ?? 0) + txExpenseSar(t));
+  }
+
+  /** Per budget row: positive budget limits vs positive actual spend (expense lines normalised). */
+  const monthlyTotals = monthlyBudgets.map((b) => ({
+    budgeted: budgetToMonthly(b),
+    actual: actualByCategory.get(b.category) ?? 0,
+  }));
+
+  const budgetedTotal = monthlyTotals.reduce((sum, { budgeted }) => sum + Math.abs(budgeted), 0);
+  /** Include all financial-month spend (budgeted categories + unbudgeted). */
+  const actualTotal = Math.abs(cashflow.monthlyExpensesSar);
+  const budgetVariance = budgetedTotal - actualTotal;
+
+  const { roi } = computeHeadlinePersonalInvestmentRoiDecimal(
+    data,
+    sarPerUsd,
+    getAvailableCashForAccount,
+    simulatedPrices,
+  );
 
   return { budgetVariance, roi };
 }

@@ -9,6 +9,7 @@ import {
 } from '../services/reportingEngine';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import type { FinancialData } from '../types';
+import { financialMonthRange } from '../utils/financialMonth';
 
 const sampleInput: WealthSummaryReportInput = {
   generatedAtIso: '2026-03-19T10:00:00.000Z',
@@ -175,16 +176,16 @@ describe('monthly report and portfolio review export', () => {
 
   it('computeMonthlyReportFinancialKpis returns budget variance and roi', () => {
     const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = `${y}-${m}-15`;
+    const { key, start } = financialMonthRange(now, 1);
+    const txDay = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 5);
+    const d = `${txDay.getFullYear()}-${String(txDay.getMonth() + 1).padStart(2, '0')}-${String(txDay.getDate()).padStart(2, '0')}`;
     const data = {
-      budgets: [{ category: 'Food', limit: 3000, period: 'monthly', month: now.getMonth() + 1, year: now.getFullYear() }],
-      transactions: [{ date: d, type: 'expense', category: 'Food', amount: -1000 }],
+      settings: { monthStartDay: 1 },
+      budgets: [{ category: 'Food', limit: 3000, period: 'monthly', month: key.month, year: key.year }],
+      transactions: [{ date: d, type: 'expense', category: 'Food', amount: -1000, accountId: 'a1' }],
       accounts: [{ id: 'a1', type: 'Checking', balance: 5000 }],
       investments: [],
       investmentTransactions: [],
-      settings: {},
     } as unknown as FinancialData;
     const k = computeMonthlyReportFinancialKpis(data, 3.75, () => ({ SAR: 0, USD: 0 }));
     expect(k.budgetVariance).toBe(2000);
