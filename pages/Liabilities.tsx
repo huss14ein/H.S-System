@@ -13,6 +13,8 @@ import { PencilIcon } from '../components/icons/PencilIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import InfoHint from '../components/InfoHint';
+import { useConfirmAction } from '../hooks/useConfirmAction';
+import { summarizeLiabilityForConfirm } from '../utils/recordConfirmMessages';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import AIAdvisor from '../components/AIAdvisor';
@@ -50,6 +52,7 @@ const LiabilityModal: React.FC<{
     creditAccounts: Account[];
 }> = ({ isOpen, onClose, onSave, liabilityToEdit, goals, creditAccounts }) => {
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
+    const confirmAction = useConfirmAction();
     const [name, setName] = useState('');
     const [type, setType] = useState<Liability['type']>('Personal Loan');
     const [amount, setAmount] = useState('');
@@ -92,9 +95,18 @@ const LiabilityModal: React.FC<{
         }
     }, [liabilityToEdit, isOpen, getLearnedDefault]);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const value = Math.abs(parseFloat(amount) || 0);
+        const ok = await confirmAction(
+            summarizeLiabilityForConfirm({
+                name,
+                type,
+                amount: value,
+                isEdit: !!liabilityToEdit,
+            }),
+        );
+        if (!ok) return;
         const newLiability: Liability = {
             id: liabilityToEdit ? liabilityToEdit.id : `liab${Date.now()}`,
             name,
@@ -524,7 +536,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
             setLiabilityToEdit(null);
             return;
         } else {
-            addLiability(liability);
+            addLiability(liability, { confirmed: true });
         }
     };
 

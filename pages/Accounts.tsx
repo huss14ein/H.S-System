@@ -28,6 +28,8 @@ import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import AddButton from '../components/AddButton';
 import InfoHint from '../components/InfoHint';
 import OwnerBadge from '../components/OwnerBadge';
+import { useConfirmAction } from '../hooks/useConfirmAction';
+import { summarizeTransferForConfirm } from '../utils/recordConfirmMessages';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 
@@ -41,9 +43,13 @@ import { findCreditCardLiabilityForAccount } from '../services/creditCardLinking
 import { aggregateCreditCardStatementActivity, estimateMinimumCardPaymentDue } from '../services/creditCardLedger';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import AIAdvisor from '../components/AIAdvisor';
+import { getPersonalAccounts } from '../utils/wealthScope';
+import { brokerCashBucketsFromInvestmentAccount, sumTradableCashSarFromInvestmentAccounts } from '../services/investmentCashLedger';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 
 type SharedAccountRow = Account & { ownerEmail?: string; owner_user_id?: string; account_id?: string; show_balance?: boolean };
+
+type ShareableUser = { id: string; email: string };
 
 /** A past transfer from transactions (expense + income legs paired). */
 interface TransferHistoryItem {
@@ -341,10 +347,11 @@ const AccountCardComponent: React.FC<{
 };
 
 const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
-    const { data, loading, addPlatform, updatePlatform, deletePlatform, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, loading, addPlatform, updatePlatform, deletePlatform, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
+    const confirmAction = useConfirmAction();
     const emergencyFund = useEmergencyFund(data);
     const { maskBalance } = usePrivacyMask();
 
@@ -358,6 +365,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const [shareError, setShareError] = useState<string | null>(null);
     const [shareSuccess, setShareSuccess] = useState<string | null>(null);
     const [sharedAccounts, setSharedAccounts] = useState<SharedAccountRow[]>([]);
+    const [shareableUsers, setShareableUsers] = useState<ShareableUser[]>([]);
     const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
     const [transferFromAccount, setTransferFromAccount] = useState('');
     const [transferToAccount, setTransferToAccount] = useState('');
@@ -401,6 +409,22 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                     console.warn('get_shared_accounts_for_me failed:', sharedRpcError.message);
                 }
             }
+
+            const { data: shareableUsersRows, error: shareableUsersError } = await supabase.rpc('list_shareable_users');
+            if (shareableUsersError) {
+                if (process.env.NODE_ENV === 'development') {
+                    // eslint-disable-next-line no-console
+                    console.warn('list_shareable_users failed:', shareableUsersError.message);
+                }
+                setShareableUsers([]);
+            } else {
+                setShareableUsers(
+                    ((shareableUsersRows || []) as Array<{ id?: string; email?: string }>)
+                        .filter((u) => u?.id && u?.email)
+                        .map((u) => ({ id: String(u.id), email: String(u.email).toLowerCase() })),
+                );
+            }
+
             const rows = (sharedRows || []) as any[];
             setSharedAccounts(rows.map((r) => ({
                 id: String(r.account_id ?? r.id ?? ''),
@@ -420,7 +444,8 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
 
     const { cashAccounts, creditAccounts, investmentAccounts, totalCash, totalCredit, totalInvestmentTradableCash } = useMemo(() => {
-        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const accounts = getPersonalAccounts(data);
+        const allAccounts = data?.accounts ?? [];
         const cash = accounts.filter((a: { type?: string }) => ['Checking', 'Savings'].includes(a.type ?? ''));
         const credit = accounts.filter((a: { type?: string }) => a.type === 'Credit');
         const investmentAccountsList = accounts.filter((a: { type?: string }) => a.type === 'Investment');
@@ -434,24 +459,25 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             return sum + toSAR(Number(acc.balance) || 0, cur, sarPerUsd);
         }, 0);
 
-        const totalInvestmentTradableCash = investmentAccountsList.reduce((sum: number, acc: { id: string }) => {
-            const bucket = getAvailableCashForAccount(acc.id);
-            return sum + tradableCashBucketToSAR(bucket, sarPerUsd);
-        }, 0);
+        const totalInvestmentTradableCash = sumTradableCashSarFromInvestmentAccounts(
+            investmentAccountsList as Account[],
+            allAccounts,
+            sarPerUsd,
+        );
 
         return { cashAccounts: cash, creditAccounts: credit, investmentAccounts: investmentAccountsList, totalCash, totalCredit, totalInvestmentTradableCash };
-    }, [data?.accounts, (data as any)?.personalAccounts, sarPerUsd, getAvailableCashForAccount]);
+    }, [data, sarPerUsd]);
 
     const spendableBalanceSar = useCallback(
         (acc: Account | undefined): number => {
             if (!acc) return 0;
             if (acc.type === 'Investment') {
-                return tradableCashBucketToSAR(getAvailableCashForAccount(acc.id), sarPerUsd);
+                return tradableCashBucketToSAR(brokerCashBucketsFromInvestmentAccount(acc), sarPerUsd);
             }
             const cur = acc.currency === 'USD' ? 'USD' : 'SAR';
             return Math.max(0, toSAR(acc.balance ?? 0, cur, sarPerUsd));
         },
-        [sarPerUsd, getAvailableCashForAccount],
+        [sarPerUsd],
     );
 
     const orderedCashAccounts = useMemo(() => [...cashAccounts].sort((a, b) => a.name.localeCompare(b.name)), [cashAccounts]);
@@ -464,7 +490,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         const negativeCash = cashAccounts.filter((a: Account) => Number(a.balance) < 0);
         if (negativeCash.length > 0) warnings.push(`${negativeCash.length} cash account(s) have negative balances.`);
         const orphanPlatforms = orderedInvestmentAccounts.filter((a) => (a.linkedAccountIds ?? []).length === 0);
-        if (orphanPlatforms.length > 0) warnings.push(`${orphanPlatforms.length} investment platform(s) have no linked cash accounts.`);
+        if (orphanPlatforms.length > 0) warnings.push(`${orphanPlatforms.length} investment platform(s) have no linked cash accounts (each platform's tradable cash balance still counts in the KPI above).`);
         if (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0) warnings.push('Invalid SAR/USD rate detected; fallback rate may be in use.');
         return warnings;
     }, [cashAccounts, orderedInvestmentAccounts, sarPerUsd]);
@@ -713,17 +739,23 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         const convertedForDestination = fromCurrency === toCurrency
             ? amount
             : fromSAR(toSAR(amount, fromCurrency, sarPerUsd), toCurrency, sarPerUsd);
-        const feeNote = feeAmount > 0 ? `\nTransfer fee: ${formatCurrencyString(feeAmount, { inCurrency: fromCurrency })}\nTotal debit from source: ${formatCurrencyString(totalDebit, { inCurrency: fromCurrency })}` : '';
-        const conversionNote = fromCurrency === toCurrency
-            ? ''
-            : `\nConverted amount to destination: ${formatCurrencyString(convertedForDestination, { inCurrency: toCurrency })}`;
-        if (!window.confirm(`Transfer ${formatCurrencyString(amount, { inCurrency: fromCurrency })} from ${fromAccount.name} to ${toAccount.name}?${feeNote}${conversionNote}`)) {
-            return;
-        }
+        const transferOk = await confirmAction(
+            summarizeTransferForConfirm({
+                amount,
+                fromName: fromAccount.name,
+                toName: toAccount.name,
+                fromCurrency,
+                feeAmount: feeAmount > 0 ? feeAmount : undefined,
+                convertedAmount: fromCurrency !== toCurrency ? convertedForDestination : undefined,
+                toCurrency: fromCurrency !== toCurrency ? toCurrency : undefined,
+                note: transferDescription.trim() || undefined,
+            }),
+        );
+        if (!transferOk) return;
         try {
             const note = transferDescription.trim() || undefined;
             const today = new Date().toISOString().split('T')[0];
-            await addTransfer(transferFromAccount, transferToAccount, amount, today, note, feeAmount);
+            await addTransfer(transferFromAccount, transferToAccount, amount, today, note, feeAmount, { confirmed: true });
 
             alert('Transfer completed successfully.');
             setIsTransferModalOpen(false);
@@ -757,6 +789,16 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             return;
         }
         const description = `Auto transfer to ${toAcc.name}`;
+        const recurringOk = await confirmAction({
+            title: 'Schedule recurring transfer?',
+            message: `Create monthly auto transfer from ${fromAcc.name} to ${toAcc.name}?`,
+            confirmLabel: 'Create schedule',
+            details: [
+                `Amount: ${formatCurrencyString(amount, { inCurrency: accountBookCurrency(fromAcc), showSecondary: true })}`,
+                `Day ${day} of each month`,
+            ],
+        });
+        if (!recurringOk) return;
         try {
             await addRecurringTransaction({
                 description: `${description} (from ${fromAcc.name})`,
@@ -767,7 +809,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 budgetCategory: 'Transfers',
                 dayOfMonth: day,
                 enabled: true,
-            });
+            }, { confirmed: true });
             await addRecurringTransaction({
                 description: `${description} (to ${toAcc.name})`,
                 amount,
@@ -777,7 +819,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 budgetCategory: 'Transfers',
                 dayOfMonth: day,
                 enabled: true,
-            });
+            }, { confirmed: true });
             alert(`Recurring transfer set: ${formatCurrencyString(amount, { inCurrency: accountBookCurrency(fromAcc), showSecondary: true })} from ${fromAcc.name} to ${toAcc.name} on day ${day} of each month. You can edit or disable it under Transactions → Recurring.`);
             setIsRecurringTransferModalOpen(false);
             setRecurringFromId('');
@@ -915,12 +957,20 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                                 <label className="block text-sm font-medium text-slate-700 mb-1.5">User email</label>
                                 <input
                                     type="email"
+                                    list="accounts-shareable-users"
                                     value={shareTargetEmail}
                                     onChange={(e) => setShareTargetEmail(e.target.value)}
                                     placeholder="user@example.com"
                                     className="input-base w-full"
                                     autoComplete="email"
                                 />
+                                {shareableUsers.length > 0 && (
+                                    <datalist id="accounts-shareable-users">
+                                        {shareableUsers.map((u) => (
+                                            <option key={u.id} value={u.email} />
+                                        ))}
+                                    </datalist>
+                                )}
                             </div>
                         </div>
                         <div className="flex items-center gap-3 pt-1">
@@ -1307,7 +1357,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             {orderedInvestmentAccounts.map((acc) => {
                         const linkedCount = (data?.investments ?? []).filter((p: { accountId?: string; account_id?: string }) => (p.accountId ?? (p as any).account_id) === acc.id).length;
                         return (
-                            <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={linkedCount} balanceMetricLabel="Current Balance" />
+                            <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={linkedCount} balanceMetricLabel="Tradable cash" />
                         );
                     })}
                 </div>

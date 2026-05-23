@@ -9,6 +9,8 @@ import {
   parseDividendSmsText,
   resolveDividendSmsRows,
   importResolvedDividendSmsRows,
+  isImportableDividendSmsRow,
+  countWillImportDividendSmsRows,
   selectableDividendSmsIndices,
   dividendSmsRowNeedsHoldingPick,
   type ParsedDividendSmsRow,
@@ -18,6 +20,7 @@ import { buildHoldingSymbolOptions } from '../services/holdingSymbolOptions';
 import { ResolvedSymbolLabel } from './SymbolWithCompanyName';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { useConfirmAction } from '../hooks/useConfirmAction';
 
 export const DIVIDEND_SMS_IMPORT_SECTION_ID = 'dividend-sms-import';
 
@@ -26,6 +29,7 @@ const DividendSmsImportPanel: React.FC = () => {
   const { exchangeRate } = useCurrency();
   const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
   const { showToast } = useToast();
+  const confirmAction = useConfirmAction();
   const { formatCurrencyString } = useFormatCurrency();
   const importLockRef = useRef(false);
 
@@ -99,8 +103,14 @@ const DividendSmsImportPanel: React.FC = () => {
   const { names: companyNames } = useCompanyNames(symbolBatch);
 
   const readyCount = useMemo(
-    () => resolvedRows.filter((r, i) => selected.has(i) && !r.resolveError && !r.duplicate).length,
-    [resolvedRows, selected],
+    () =>
+      countWillImportDividendSmsRows({
+        rows: resolvedRows,
+        selectedIndices: selected,
+        investmentTransactions: data?.investmentTransactions ?? [],
+        accounts: data?.accounts ?? [],
+      }),
+    [resolvedRows, selected, data?.investmentTransactions, data?.accounts],
   );
 
   const handleParse = useCallback(() => {
@@ -131,13 +141,30 @@ const DividendSmsImportPanel: React.FC = () => {
 
   const handleImport = useCallback(async () => {
     if (importLockRef.current) return;
+    if (readyCount <= 0) {
+      showToast('Nothing selected to import.', 'warning');
+      return;
+    }
+    const ok = await confirmAction({
+      title: 'Import dividends?',
+      message: `Book ${readyCount} dividend row(s) to your investment ledger? Duplicates will be skipped.`,
+      confirmLabel: `Import ${readyCount}`,
+      details: resolvedRows
+        .filter((r, i) => selected.has(i) && isImportableDividendSmsRow(r))
+        .slice(0, 5)
+        .map((r) => `${r.symbol} · ${r.date} · ${formatCurrencyString(r.total, { inCurrency: r.currency })}`),
+    });
+    if (!ok) return;
     importLockRef.current = true;
     setImporting(true);
     try {
       const result = await importResolvedDividendSmsRows({
         rows: resolvedRows,
         selectedIndices: selected,
+        investmentTransactions: data?.investmentTransactions ?? [],
+        accounts: data?.accounts ?? [],
         recordTrade,
+        recordTradeOpts: { confirmed: true },
       });
       if (result.imported > 0) {
         showToast(`Imported ${result.imported} dividend(s) into your investment ledger.`, 'success');
@@ -154,6 +181,9 @@ const DividendSmsImportPanel: React.FC = () => {
         showToast(result.failed.slice(0, 2).join(' · '), 'error');
         reresolve(parsedRows, portfolioOverrideByIndex, holdingOverrideByIndex);
       }
+      if ((result.skippedDuplicates ?? 0) > 0) {
+        showToast(`Skipped ${result.skippedDuplicates} duplicate(s) already in your ledger.`, 'info');
+      }
       if (result.imported === 0 && result.failed.length === 0) {
         showToast('Nothing to import — check selection and row status.', 'warning');
       }
@@ -161,7 +191,7 @@ const DividendSmsImportPanel: React.FC = () => {
       setImporting(false);
       importLockRef.current = false;
     }
-  }, [resolvedRows, selected, recordTrade, showToast, parsedRows, portfolioOverrideByIndex, holdingOverrideByIndex, reresolve]);
+  }, [resolvedRows, selected, recordTrade, data, showToast, parsedRows, portfolioOverrideByIndex, holdingOverrideByIndex, reresolve, readyCount, confirmAction, formatCurrencyString]);
 
   const toggleRow = (idx: number) => {
     setSelected((prev) => {
@@ -403,7 +433,9 @@ const DividendSmsImportPanel: React.FC = () => {
                       {row.resolveError ? (
                         <span className="text-rose-800">{row.resolveError}</span>
                       ) : row.duplicate ? (
-                        <span className="text-amber-800">Already in ledger</span>
+                        <span className="text-amber-800">
+                          {row.batchDuplicate ? 'Duplicate in paste' : 'Already in ledger'}
+                        </span>
                       ) : (
                         <span className="text-emerald-800">Ready</span>
                       )}

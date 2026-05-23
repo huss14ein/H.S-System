@@ -3,6 +3,8 @@ import Modal from './Modal';
 import { PriceAlert, PriceAlertCurrency } from '../types';
 import { TrashIcon } from './icons/TrashIcon';
 import { getExchangeAndCurrencyForSymbol } from '../services/finnhubService';
+import { useConfirmAction } from '../hooks/useConfirmAction';
+import { summarizePriceAlertForConfirm } from '../utils/recordConfirmMessages';
 
 const CURRENCY_OPTIONS: { value: PriceAlertCurrency; label: string }[] = [
     { value: 'USD', label: 'USD' },
@@ -22,6 +24,7 @@ const formatInCurrency = (value: number, currency: 'USD' | 'SAR') =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 
 const PriceAlertModal: React.FC<PriceAlertModalProps> = ({ isOpen, onClose, onSave, onDeleteAlert, stock, existingAlerts }) => {
+    const confirmAction = useConfirmAction();
     const [targetPrice, setTargetPrice] = useState('');
     const [currency, setCurrency] = useState<PriceAlertCurrency>('USD');
     const market = stock ? getExchangeAndCurrencyForSymbol(stock.symbol) : null;
@@ -43,10 +46,12 @@ const PriceAlertModal: React.FC<PriceAlertModalProps> = ({ isOpen, onClose, onSa
         return `${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${curr}`;
     };
 
-    const handleAddAlert = (e: React.FormEvent) => {
+    const handleAddAlert = async (e: React.FormEvent) => {
         e.preventDefault();
         const price = parseFloat(targetPrice.replace(/,/g, ''));
         if (Number.isFinite(price) && price > 0) {
+            const ok = await confirmAction(summarizePriceAlertForConfirm({ symbol: stock.symbol, targetPrice: price, currency }));
+            if (!ok) return;
             onSave(stock.symbol, price, currency);
             setTargetPrice('');
         }

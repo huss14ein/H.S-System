@@ -2995,27 +2995,27 @@ export const getAIDividendAnalysis = async (
     ytdIncome: number,
     projectedAnnual: number,
     trailing12mActual: number,
-    topPayers: { name: string; symbol: string; projected: number }[],
+    topEarners: { name: string; symbol: string; receivedSar: number; paymentCount?: number }[],
 ): Promise<string> => {
     try {
-        const payerLines =
-            topPayers.length > 0
-                ? topPayers
+        const earnerLines =
+            topEarners.length > 0
+                ? topEarners
                       .map(
                           (p) =>
-                              `${(p.symbol || '—').trim()} — ${(p.name || '').trim()} — ${Math.round(p.projected).toLocaleString()} SAR/yr (forward model estimate)`,
+                              `${(p.symbol || '—').trim()} — ${(p.name || '').trim()} — ${Math.round(p.receivedSar).toLocaleString()} SAR received (last 12 mo, ledger)${p.paymentCount != null ? ` · ${p.paymentCount} payment(s)` : ''}`,
                       )
                       .join('\n')
-                : '(none — no forward estimates available)';
+                : '(none — record dividends manually or import SMS / Finnhub sync)';
         const prompt = `You are a dividend analyst for a personal finance app. Use ONLY the figures below. Do not invent amounts, symbols, yields, or company facts not stated here.
 
 Figures (SAR, display currency):
 - YTD dividend income (actual, from ledger): ${Math.round(ytdIncome).toLocaleString()}
 - Trailing 12 months dividend income (actual, from ledger): ${Math.round(trailing12mActual).toLocaleString()}
-- Projected annual dividend income (forward-looking model from holdings + fundamentals, not broker-reported): ${Math.round(projectedAnnual).toLocaleString()}
+- Projected annual dividend income (optional market estimate — may differ from cash received): ${Math.round(projectedAnnual).toLocaleString()}
 
-Top contributors by projected annual income (forward model):
-${payerLines}
+Top symbols by cash received (ledger, last 12 months):
+${earnerLines}
 
 Rules:
 - If YTD and trailing 12m are both zero, say recorded dividend history is empty and do not speculate about portfolio performance or future dividends.

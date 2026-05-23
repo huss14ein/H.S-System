@@ -40,6 +40,8 @@ import {
   executionProgressLabel,
   type RecoveryTrancheExecutionState,
 } from './recoveryExecutionTracker';
+import type { RecoveryPathMode } from './recoveryPathMode';
+import { suggestDefaultRecoveryPathMode } from './recoveryPathSummaries';
 
 export type UnifiedRecoveryStrategy =
   | 'recycling_only'
@@ -58,6 +60,8 @@ export interface UnifiedRecoveryPlanInput {
   recyclingOpts?: BuildRecyclingInputOptions;
   watchlistScores?: WatchlistScoreInput[];
   includeExitDraft?: boolean;
+  /** User picks one path — recycling OR buy ladder (not hybrid). */
+  userPathMode?: RecoveryPathMode;
 }
 
 export interface UnifiedRecoveryPlan {
@@ -77,47 +81,10 @@ export interface UnifiedRecoveryPlan {
   pendingDrafts: RecoveryOrderDraft[];
   executionProgress: string;
   recommendedNextAction: string;
-}
-
-function selectStrategy(args: {
-  recyclingAvailable: boolean;
-  cashQualified: boolean;
-  deployableCash: number;
-  plPct: number;
-}): { strategy: UnifiedRecoveryStrategy; reason: string } {
-  const { recyclingAvailable, cashQualified, deployableCash, plPct } = args;
-  const loss = Math.abs(plPct);
-
-  if (recyclingAvailable && cashQualified) {
-    if (deployableCash >= 3000 && loss < 28) {
-      return {
-        strategy: 'hybrid_parallel',
-        reason:
-          'Loss is moderate and deployable cash is available — run recycling tranches and buy ladder together.',
-      };
-    }
-    return {
-      strategy: 'hybrid_recycling_first',
-      reason:
-        'Deep loss or limited cash — prioritize no-cash recycling, then deploy buy ladder on remaining dips.',
-    };
-  }
-  if (recyclingAvailable) {
-    return {
-      strategy: 'recycling_only',
-      reason: 'Buy ladder blocked by guardrails — use sell/rebuy recycling only (no new deposits).',
-    };
-  }
-  if (cashQualified) {
-    return {
-      strategy: 'cash_ladder_only',
-      reason: 'Recycling unavailable — deploy staged buy ladder from deployable cash.',
-    };
-  }
-  return {
-    strategy: 'recycling_only',
-    reason: 'Default to recycling review; adjust conviction or quality if blocked.',
-  };
+  activePathMode: RecoveryPathMode;
+  suggestedPathMode: RecoveryPathMode;
+  recyclingReady: boolean;
+  ladderReady: boolean;
 }
 
 export function buildUnifiedRecoveryPlan(input: UnifiedRecoveryPlanInput): UnifiedRecoveryPlan {
@@ -132,6 +99,7 @@ export function buildUnifiedRecoveryPlan(input: UnifiedRecoveryPlanInput): Unifi
     recyclingOpts = {},
     watchlistScores,
     includeExitDraft = false,
+    userPathMode,
   } = input;
 
   const sym = String(holding.symbol ?? '').trim().toUpperCase();
@@ -174,13 +142,6 @@ export function buildUnifiedRecoveryPlan(input: UnifiedRecoveryPlanInput): Unifi
     cashLadder = buildRecoveryPlan(holding, currentPrice, positionConfig, globalConfig);
   }
 
-  const { strategy, reason: strategyReason } = selectStrategy({
-    recyclingAvailable: Boolean(recycling?.planAvailable),
-    cashQualified: Boolean(cashLadder?.qualified),
-    deployableCash: globalConfig.deployableCash,
-    plPct: metricsPlPct,
-  });
-
   const baseRecyclingDrafts = recycling?.planAvailable ? recyclingPlanToOrderDrafts(recycling) : [];
   const baseLadderDrafts =
     cashLadder?.qualified ? orderDraftGenerator(cashLadder, includeExitDraft) : [];
@@ -222,34 +183,75 @@ export function buildUnifiedRecoveryPlan(input: UnifiedRecoveryPlanInput): Unifi
     ? orderDraftGenerator(cashLadderActive, includeExitDraft)
     : [];
 
-  const activeAllDrafts = [...activeRecyclingDrafts, ...activeLadderDrafts];
-  const activeStates = buildTrancheExecutionStates(sym, activeAllDrafts, plannedTrades);
-  const pendingDrafts = pendingDraftsOnly(activeAllDrafts, activeStates);
+  const recyclingReady = Boolean(recyclingActive?.planAvailable);
+  const ladderReady = Boolean(cashLadderActive?.qualified);
 
-  let recommendedNextAction = 'Review unified plan and push pending limits to Investment Plan.';
+  const suggestedPathMode = suggestDefaultRecoveryPathMode({
+    recyclingReady,
+    ladderReady,
+    plPct: metricsPlPct,
+  });
+
+  const activePathMode: RecoveryPathMode =
+    userPathMode === 'recycling' || userPathMode === 'recovery_ladder'
+      ? userPathMode
+      : suggestedPathMode;
+
+  let pathRecyclingActive = recyclingActive;
+  let pathCashLadderActive = cashLadderActive;
+  let pathAllDrafts = [...activeRecyclingDrafts, ...activeLadderDrafts];
+
+  if (activePathMode === 'recycling') {
+    pathCashLadderActive = null;
+    pathAllDrafts = activeRecyclingDrafts;
+  } else {
+    pathRecyclingActive = null;
+    pathAllDrafts = activeLadderDrafts;
+  }
+
+  const activeStates = buildTrancheExecutionStates(sym, pathAllDrafts, plannedTrades);
+  const pendingDrafts = pendingDraftsOnly(pathAllDrafts, activeStates);
+
+  let recommendedNextAction =
+    activePathMode === 'recycling'
+      ? 'Review recycling steps and push sell/rebuy limits to Investment Plan.'
+      : 'Review buy ladder and push limit buys to Investment Plan.';
   const nextPending = activeStates.find((s) => s.status === 'pending');
   if (nextPending) {
     recommendedNextAction = `Next: ${nextPending.label} @ ${nextPending.limitPrice.toFixed(2)} (${nextPending.side} ${nextPending.qty} sh).`;
   } else if (activeStates.some((s) => s.status === 'filled')) {
     recommendedNextAction = 'All tracked tranches filled or recomputed — refresh position or export updated plan.';
-  } else if (!recycling?.planAvailable && !cashLadder?.qualified) {
-    recommendedNextAction = 'Adjust conviction, quality, or deployable cash to unlock a recovery path.';
+  } else if (activePathMode === 'recycling' && !recyclingReady) {
+    recommendedNextAction = 'Recycling blocked — check conviction/quality or try the buy ladder tab.';
+  } else if (activePathMode === 'recovery_ladder' && !ladderReady) {
+    recommendedNextAction = 'Buy ladder blocked — check loss trigger, deployable cash, or try recycling.';
   }
+
+  const pathStrategy: UnifiedRecoveryStrategy =
+    activePathMode === 'recycling' ? 'recycling_only' : 'cash_ladder_only';
+  const pathStrategyReason =
+    activePathMode === 'recycling'
+      ? 'You chose position recycling — sell/rebuy using sale proceeds only (no new deposits).'
+      : 'You chose recovery buy ladder — staged limit buys from deployable cash.';
 
   return {
     symbol: sym,
-    strategy,
-    strategyReason,
+    strategy: pathStrategy,
+    strategyReason: pathStrategyReason,
     conviction,
     recycling,
     recyclingSummary,
     cashLadder,
-    recyclingActive,
-    cashLadderActive,
+    recyclingActive: pathRecyclingActive,
+    cashLadderActive: pathCashLadderActive,
     trancheStates: activeStates,
-    allDrafts: activeAllDrafts,
+    allDrafts: pathAllDrafts,
     pendingDrafts,
     executionProgress: executionProgressLabel(activeStates),
     recommendedNextAction,
+    activePathMode,
+    suggestedPathMode,
+    recyclingReady,
+    ladderReady,
   };
 }

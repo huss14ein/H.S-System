@@ -52,6 +52,9 @@ import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangle
 import type { HoldingFundamentals } from '../services/finnhubService';
 import { getHoldingFundamentals, lookupLiveQuoteForSymbol } from '../services/finnhubService';
 import { dollarToShareQuantity } from '../services/portfolioConstruction';
+import { dividendAlreadyRecorded } from '../services/dividendLedgerGuards';
+import { useConfirmAction } from '../hooks/useConfirmAction';
+import { summarizeInvestmentTradeForConfirm } from '../utils/recordConfirmMessages';
 import { checkExtendedHoursGuardrail, getTIFLabel, getNBBOStub, getSORStub, getVWAPSlices, type TIF } from '../services/tradingExecution';
 import { getSettlementDate, isSettled } from '../services/riskCompliance';
 import { ClockIcon } from '../components/icons/ClockIcon';
@@ -579,6 +582,7 @@ const RecordTradeModal: React.FC<{
         reason?: string;
     }> | null;
 }> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, simulatedPrices = {}, initialData }) => {
+    const confirmAction = useConfirmAction();
     const { formatCurrencyString } = useFormatCurrency();
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
     const { currency: appCurrency, exchangeRate } = useCurrency();
@@ -1084,6 +1088,27 @@ const RecordTradeModal: React.FC<{
         if (type === 'dividend') {
             const parsedDividendAmount = parseFloat(dividendAmount);
             if (!Number.isFinite(parsedDividendAmount) || parsedDividendAmount <= 0) return 'Dividend amount must be greater than 0.';
+            if (!date || String(date).trim().length < 10) return 'Payment date is required.';
+            const sym = symbol.toUpperCase().trim();
+            const portfolio = portfolios.find((p) => p.id === portfolioId);
+            const book = portfolio ? resolveInvestmentPortfolioCurrency(portfolio) : tradeCurrency;
+            if (
+                portfolio &&
+                accountId &&
+                sym &&
+                dividendAlreadyRecorded({
+                    transactions: data?.investmentTransactions ?? [],
+                    accounts: data?.accounts ?? investmentAccounts,
+                    accountId,
+                    symbol: sym,
+                    payDate: date,
+                    totalBook: parsedDividendAmount,
+                    bookCurrency: book,
+                    portfolioId,
+                })
+            ) {
+                return 'This dividend is already recorded for this date and amount on this portfolio.';
+            }
             return null;
         }
         if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) return 'Quantity must be greater than 0.';
@@ -1117,7 +1142,7 @@ const RecordTradeModal: React.FC<{
             }
         }
         return null;
-    }, [portfolioId, quantity, price, dividendAmount, symbol, type, isNewHolding, holdingName, manualValuation, manualCurrentValue, isManualExisting, tradeCurrency, portfolios, availableCashInLedgerCurrency, availableCashByCurrency.SAR, availableCashByCurrency.USD, sarPerUsd, formatCurrencyString, feeAmount, requiresHoldingPick, holdingSymbolOptions]);
+    }, [portfolioId, quantity, price, dividendAmount, symbol, type, isNewHolding, holdingName, manualValuation, manualCurrentValue, isManualExisting, tradeCurrency, portfolios, availableCashInLedgerCurrency, availableCashByCurrency.SAR, availableCashByCurrency.USD, sarPerUsd, formatCurrencyString, feeAmount, requiresHoldingPick, holdingSymbolOptions, data, date, accountId, investmentAccounts]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -1165,8 +1190,12 @@ const RecordTradeModal: React.FC<{
             }
             const useManualFund = type === 'buy' && ((isNewHolding && manualValuation) || isManualExisting);
             const parsedDividendAmount = parseFloat(dividendAmount);
-            await onSave({
-                accountId, portfolioId, type,
+            const portfolio = portfolios.find((p) => p.id === portfolioId);
+            const account = investmentAccounts.find((a) => a.id === accountId);
+            const tradePayload = {
+                accountId,
+                portfolioId,
+                type,
                 symbol: symbol.toUpperCase().trim(),
                 name: isNewHolding ? holdingName : undefined,
                 quantity: type === 'dividend' ? 0 : (parseFloat(quantity) || 0),
@@ -1174,6 +1203,18 @@ const RecordTradeModal: React.FC<{
                 ...(type === 'dividend' ? { total: parsedDividendAmount || 0 } : {}),
                 date,
                 currency: tradeCurrency,
+            };
+            const confirmPayload = summarizeInvestmentTradeForConfirm(tradePayload, {
+                portfolioName: portfolio?.name,
+                accountName: account?.name,
+            });
+            const confirmed = await confirmAction(confirmPayload);
+            if (!confirmed) {
+                setIsSubmitting(false);
+                return;
+            }
+            await onSave({
+                ...tradePayload,
                 ...((type === 'buy' || type === 'sell') && feeAmount > 0 ? { fees: feeAmount } : {}),
                 ...(goalId && { goalId }),
                 ...(type === 'buy' && isNewHolding ? { assetClass: holdingAssetClass } : {}),
@@ -2469,6 +2510,7 @@ const PlatformCard: React.FC<{
                 availableCashByCurrency,
                 simulatedPrices,
                 platformCurrency,
+                unrealizedPnLBasis: portfoliosForMetrics.length === 1 ? 'holdings_cost' : 'net_capital',
             }),
         [portfoliosForMetrics, transactions, metricsTransactions, simulatedPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx?.accounts, investmentsForInfer],
     );
@@ -2781,7 +2823,7 @@ const PlatformCard: React.FC<{
                                         {' — '}
                                         {sortedPortfolios.length === 1 ? (
                                           <>
-                                            Single portfolio on this account — <strong>Invested</strong>, <strong>Withdrawn</strong>, and <strong>ROI</strong> match the platform strip (full ledger + pooled cash, net-capital basis).
+                                            Single portfolio on this account — <strong>Unrealized P/L</strong> and <strong>ROI</strong> use position cost (qty × avg) like the holdings table; <strong>Invested</strong> / <strong>Withdrawn</strong> are cash flows from the ledger (full list + pooled cash).
                                           </>
                                         ) : (
                                           <>
@@ -4955,6 +4997,11 @@ interface InvestmentsProps {
 
 const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
   const { data, loading, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, getAvailableCashForAccount } = useContext(DataContext)!;
+  const recordTradeConfirmed = useCallback(
+    (trade: Parameters<typeof recordTrade>[0], executedPlanId?: string) =>
+      recordTrade(trade, executedPlanId, { confirmed: true }),
+    [recordTrade],
+  );
   const { isAiAvailable, aiHealthChecked } = useAI();
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
@@ -5342,6 +5389,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
         return (
           <DividendTrackerView
             setActivePage={setActivePage}
+            triggerPageAction={triggerPageAction}
             pageAction={pageAction}
             clearPageAction={clearPageAction}
           />
@@ -5578,7 +5626,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
       <RecordTradeModal 
         isOpen={isTradeModalOpen} 
         onClose={handleCloseTradeModal} 
-        onSave={recordTrade} 
+        onSave={recordTradeConfirmed} 
         investmentAccounts={investmentAccounts} 
         portfolios={portfoliosForTrade}
         simulatedPrices={simulatedPrices}

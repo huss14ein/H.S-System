@@ -268,6 +268,11 @@ export interface Holding {
   realizedPnL: number;
   dividendDistribution?: 'Reinvest' | 'Payout';
   dividendYield?: number;
+  /** Expected annual dividend (SAR) — persisted on holding. */
+  expectedAnnualDividendSar?: number;
+  dividendPayoutCadence?: 'none' | 'monthly' | 'quarterly' | 'annual' | 'reinvest';
+  /** Calendar months 1–12 when cash dividends usually arrive. */
+  typicalPayoutMonths?: number[];
   /** DB/schema: 'ticker' | 'manual_fund' etc. Used when persisting to backend. */
   holdingType?: string;
   /** ISO date (YYYY-MM-DD). Zakat lunar hawl (~354d) from this lot’s start; if unset, app infers earliest buy. */

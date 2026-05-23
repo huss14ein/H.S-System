@@ -10,11 +10,20 @@ import { StatementIcons } from '../constants/statementIcons';
 import { parseBankStatement, parseSMSTransactions, parseTradingStatement, validateFile, type TradingParseDebug } from '../services/statementParser';
 import { Transaction, InvestmentTransaction, Page } from '../types';
 import InfoHint from '../components/InfoHint';
-import { findDuplicateTransactions } from '../services/dataQuality';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import AIAdvisor from '../components/AIAdvisor';
 import { resolveBudgetCategoryForImportedExpense } from '../services/budgetCategoryResolve';
 import { sortByNewestFirst } from '../utils/sortRecency';
+import { buildDividendDedupeKey, normalizeDividendForDedupe } from '../services/dividendLedgerGuards';
+import {
+  computeStatementReviewDuplicates,
+  planStatementImport,
+  type StatementImportContext,
+} from '../services/statementImportPrepare';
+import { useCurrency } from '../context/CurrencyContext';
+import { resolveSarPerUsd } from '../utils/currencyMath';
+import { useConfirmAction } from '../hooks/useConfirmAction';
+import { summarizeStatementImportForConfirm } from '../utils/recordConfirmMessages';
 
 interface StatementUploadProps {
   setActivePage?: (page: Page) => void;
@@ -23,8 +32,11 @@ interface StatementUploadProps {
 
 const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, triggerPageAction }) => {
   const { data, loading, addTransaction, recordTrade, addBudget } = useContext(DataContext)!;
+  const confirmAction = useConfirmAction();
   const { commitParsedStatementFromUpload } = useStatementProcessing();
   const { formatCurrencyString } = useFormatCurrency();
+  const { exchangeRate } = useCurrency();
+  const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
   const [activeTab, setActiveTab] = useState<'bank' | 'sms' | 'trading'>('bank');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [smsText, setSmsText] = useState('');
@@ -38,6 +50,8 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
   /** Prevents double-clicks on Import (review modal) from duplicating `addTransaction` / `recordTrade` rows. */
   const [isImporting, setIsImporting] = useState(false);
   const importSubmitLockRef = useRef(false);
+  /** Blocks duplicate import clicks while the confirm modal is open (before `importSubmitLockRef` is set). */
+  const importConfirmPendingRef = useRef(false);
   const smsExtractLockRef = useRef(false);
   const fileParseLockRef = useRef(false);
   const [duplicateTransactions, setDuplicateTransactions] = useState<Set<number>>(new Set());
@@ -392,91 +406,130 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
     }
   };
 
-  // Check for duplicate transactions
-  const checkForDuplicates = (transactions: Transaction[], investmentTransactions: InvestmentTransaction[]) => {
-    const existingTransactions = data?.transactions || [];
-    const existingInvestmentTransactions = data?.investmentTransactions || [];
-    const duplicates = new Set<number>();
+  const statementImportCtx = useMemo((): StatementImportContext => ({
+    accounts: data?.accounts ?? [],
+    portfolios: data?.investments ?? [],
+    existingBankTransactions: data?.transactions ?? [],
+    existingInvestmentTransactions: data?.investmentTransactions ?? [],
+    sarPerUsd,
+    preferredAccountId: selectedAccount || undefined,
+  }), [data, sarPerUsd, selectedAccount]);
 
-    // Check regular transactions (shared heuristic: services/dataQuality)
-    transactions.forEach((tx, index) => {
-      const matches = findDuplicateTransactions(
-        {
-          date: tx.date,
-          amount: tx.amount,
-          description: tx.description,
-          accountId: tx.accountId || '',
-          type: tx.type,
-        },
-        existingTransactions,
-        { dateToleranceDays: 3, requireSameAccount: false }
-      );
-      if (matches.length > 0) duplicates.add(index);
-    });
-
-    // Check investment transactions
-    investmentTransactions.forEach((tx, index) => {
-      const txDate = new Date(tx.date);
-      const txSymbol = tx.symbol?.toUpperCase();
-      const txQuantity = Math.abs(tx.quantity);
-      const txPrice = tx.price;
-
-      const isDuplicate = existingInvestmentTransactions.some(existing => {
-        const existingDate = new Date(existing.date);
-        const existingSymbol = existing.symbol?.toUpperCase();
-        const existingQuantity = Math.abs(existing.quantity);
-        const existingPrice = existing.price;
-
-        const dateDiff = Math.abs(txDate.getTime() - existingDate.getTime());
-        const daysDiff = dateDiff / (1000 * 60 * 60 * 24);
-
-        return daysDiff <= 3 && 
-               txSymbol === existingSymbol && 
-               Math.abs(txQuantity - existingQuantity) <= 0.01 &&
-               Math.abs(txPrice - existingPrice) <= 0.01;
-      });
-
-      if (isDuplicate) {
-        duplicates.add(transactions.length + index);
-      }
-    });
-
+  const applyReviewDuplicateFlags = useCallback((
+    transactions: Transaction[],
+    investmentTransactions: InvestmentTransaction[],
+    options?: { resetSelection?: boolean },
+  ) => {
+    const duplicates = computeStatementReviewDuplicates(
+      transactions,
+      investmentTransactions,
+      statementImportCtx,
+    );
     setDuplicateTransactions(duplicates);
-    // Auto-select non-duplicates
-    const allCount = transactions.length + investmentTransactions.length;
-    const nonDuplicates = new Set<number>();
-    for (let i = 0; i < allCount; i++) {
-      if (!duplicates.has(i)) {
-        nonDuplicates.add(i);
+    if (options?.resetSelection !== false) {
+      const allCount = transactions.length + investmentTransactions.length;
+      const nonDuplicates = new Set<number>();
+      for (let i = 0; i < allCount; i++) {
+        if (!duplicates.has(i)) nonDuplicates.add(i);
       }
+      setSelectedTransactions(nonDuplicates);
+    } else {
+      setSelectedTransactions((prev) => {
+        const next = new Set(prev);
+        for (const d of duplicates) next.delete(d);
+        return next;
+      });
     }
-    setSelectedTransactions(nonDuplicates);
-  };
+  }, [statementImportCtx]);
+
+  const checkForDuplicates = useCallback((
+    transactions: Transaction[],
+    investmentTransactions: InvestmentTransaction[],
+  ) => {
+    applyReviewDuplicateFlags(transactions, investmentTransactions, { resetSelection: true });
+  }, [applyReviewDuplicateFlags]);
+
+  useEffect(() => {
+    if (!isReviewModalOpen) return;
+    if (extractedTransactions.length === 0 && extractedInvestmentTransactions.length === 0) return;
+    applyReviewDuplicateFlags(extractedTransactions, extractedInvestmentTransactions, {
+      resetSelection: false,
+    });
+  }, [
+    extractedTransactions,
+    extractedInvestmentTransactions,
+    isReviewModalOpen,
+    applyReviewDuplicateFlags,
+    data?.investmentTransactions,
+    data?.transactions,
+  ]);
+
+  const selectedImportPlan = useMemo(() => {
+    if (!isReviewModalOpen) return null;
+    return planStatementImport({
+      bankTransactions: extractedTransactions,
+      investmentTransactions: extractedInvestmentTransactions,
+      selectedIndices: selectedTransactions,
+      duplicateIndices: duplicateTransactions,
+      ctx: statementImportCtx,
+    });
+  }, [
+    isReviewModalOpen,
+    extractedTransactions,
+    extractedInvestmentTransactions,
+    selectedTransactions,
+    duplicateTransactions,
+    statementImportCtx,
+  ]);
 
   const handleApproveTransactions = async () => {
-    if (importSubmitLockRef.current) return;
-    importSubmitLockRef.current = true;
-    setIsImporting(true);
+    if (importSubmitLockRef.current || importConfirmPendingRef.current) return;
     try {
       setImportResultMessage(null);
       const parserParsedCount = extractedInvestmentTransactions.length;
-      const selectedBankRows = extractedTransactions
-        .map((tx, idx) => ({ tx, idx }))
-        .filter(({ idx }) => selectedTransactions.has(idx));
-      const selectedInvestmentRows = extractedInvestmentTransactions
-        .map((tx, idx) => ({ tx, idx, absoluteIdx: extractedTransactions.length + idx }))
-        .filter(({ absoluteIdx }) => selectedTransactions.has(absoluteIdx));
 
-      if (selectedBankRows.length === 0 && selectedInvestmentRows.length === 0) {
+      if (selectedTransactions.size === 0) {
         alert('Please select at least one transaction to import.');
         return;
       }
 
+      const plan = planStatementImport({
+        bankTransactions: extractedTransactions,
+        investmentTransactions: extractedInvestmentTransactions,
+        selectedIndices: selectedTransactions,
+        duplicateIndices: duplicateTransactions,
+        ctx: statementImportCtx,
+      });
+
+      if (plan.importableCount === 0) {
+        const hint = plan.validationMessages.slice(0, 3).join(' | ');
+        alert(
+          hint
+            ? `Nothing to import. ${hint}`
+            : 'Nothing to import. Selected rows are duplicates or failed validation.',
+        );
+        return;
+      }
+
+      importConfirmPendingRef.current = true;
+      const importOk = await confirmAction(
+        summarizeStatementImportForConfirm({
+          bankCount: plan.importableBankRows.length,
+          investmentCount: plan.importableInvestmentRows.length,
+          skippedDuplicates: plan.skippedDuplicates,
+          skippedValidation: plan.skippedValidation,
+        }),
+      );
+      importConfirmPendingRef.current = false;
+      if (!importOk) return;
+
+      importSubmitLockRef.current = true;
+      setIsImporting(true);
       setProcessingProgress(0);
       let processed = 0;
 
       const importErrors: string[] = [];
-      const rejectionReasons: string[] = [];
+      const rejectionReasons = [...plan.validationMessages];
       const succeededIndices = new Set<number>();
       const failedIndices = new Set<number>();
       let insertedTradeTransactions = 0;
@@ -485,66 +538,9 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       let finalCashDelta = 0;
       let finalPositionDelta = 0;
 
-      const normalizedInvestmentRows = selectedInvestmentRows.map(({ tx, idx, absoluteIdx }) => ({
-        absoluteIdx,
-        displayIdx: idx + 1,
-        tx: {
-          ...tx,
-          date: String(tx.date || '').slice(0, 10),
-          symbol: String(tx.symbol || '').trim().toUpperCase(),
-          quantity: Number(tx.quantity) || 0,
-          price: Number(tx.price) || 0,
-          total: Number(tx.total) || 0,
-          currency: tx.currency === 'USD' ? 'USD' : 'SAR',
-        } as InvestmentTransaction,
-      }));
-      const duplicateInvestmentCount = normalizedInvestmentRows.filter(({ absoluteIdx }) => duplicateTransactions.has(absoluteIdx)).length;
-      const rejectedInvestmentRows = normalizedInvestmentRows.filter(({ tx, displayIdx }) => {
-        const reasons: string[] = [];
-        if (!tx.date) reasons.push('missing date');
-        if (!tx.symbol) reasons.push('missing symbol');
-        if (!(tx.total > 0)) reasons.push('total must be > 0');
-        if ((tx.type === 'buy' || tx.type === 'sell') && !(tx.quantity > 0)) reasons.push('quantity must be > 0 for buy/sell');
-        if ((tx.type === 'buy' || tx.type === 'sell') && !(tx.price > 0)) reasons.push('price must be > 0 for buy/sell');
-        if (!['buy', 'sell', 'deposit', 'withdrawal', 'dividend', 'fee', 'vat'].includes(String(tx.type))) reasons.push('unsupported type');
-        if (reasons.length > 0) {
-          rejectionReasons.push(`Investment row #${displayIdx}: ${reasons.join(', ')}`);
-          return true;
-        }
-        return false;
-      });
-      const validatedInvestmentRows = normalizedInvestmentRows.filter((row) => !rejectedInvestmentRows.some((r) => r.absoluteIdx === row.absoluteIdx));
-
-      const normalizedBankRows = selectedBankRows.map(({ tx, idx }, displayIdx) => ({
-        idx,
-        displayIdx: displayIdx + 1,
-        tx: {
-          ...tx,
-          date: String(tx.date || '').slice(0, 10),
-          description: String(tx.description || '').trim(),
-          category: String(tx.category || '').trim(),
-          budgetCategory: String(tx.budgetCategory || '').trim() || undefined,
-          amount: Number(tx.amount) || 0,
-          type: tx.type === 'income' ? 'income' : 'expense',
-        } as Transaction,
-      }));
-      const rejectedBankRows = normalizedBankRows.filter(({ tx, displayIdx }) => {
-        const reasons: string[] = [];
-        if (!tx.date) reasons.push('missing date');
-        if (!tx.description) reasons.push('missing description');
-        if (!Number.isFinite(Number(tx.amount)) || Number(tx.amount) === 0) reasons.push('amount must be non-zero');
-        if (tx.type === 'expense' && !String(tx.budgetCategory || '').trim()) reasons.push('missing budget mapping');
-        if (reasons.length > 0) {
-          rejectionReasons.push(`Bank row #${displayIdx}: ${reasons.join(', ')}`);
-          return true;
-        }
-        return false;
-      });
-      const validatedBankRows = normalizedBankRows.filter((row) => !rejectedBankRows.some((r) => r.idx === row.idx));
+      const validatedInvestmentRows = plan.importableInvestmentRows;
+      const validatedBankRows = plan.importableBankRows;
       const total = validatedBankRows.length + validatedInvestmentRows.length;
-      if (total === 0) {
-        throw new Error(`Import failed: all selected rows were dropped during validation. ${rejectionReasons.slice(0, 3).join(' | ') || 'No valid rows after validation.'}`);
-      }
 
       const bankTasks: Array<() => Promise<void>> = [
         ...validatedBankRows.map(({ tx, idx, displayIdx }) => async () => {
@@ -564,7 +560,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                   expenseType: tx.expenseType,
                   status: tx.status || 'Approved',
                   statementId: currentStatementId || undefined,
-                });
+                }, { system: true });
                 succeededIndices.add(idx);
                 failedIndices.delete(idx);
                 return;
@@ -581,12 +577,14 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
           }
         }),
       ];
+      const importPendingKeys = new Set<string>();
       const investmentTasks: Array<() => Promise<void>> = [
         ...validatedInvestmentRows.map(({ tx, absoluteIdx, displayIdx }, taskIdx) => async () => {
           try {
             for (let attempt = 0; attempt < 2; attempt++) {
               try {
                 const result = await recordTrade({
+                  portfolioId: tx.portfolioId,
                   accountId: tx.accountId,
                   date: tx.date,
                   type: tx.type,
@@ -595,7 +593,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                   price: tx.price,
                   total: tx.total,
                   currency: tx.currency,
-                });
+                }, undefined, { system: true });
                 insertedTradeTransactions += Number(result?.insertedTradeTransactions || 0);
                 insertedCashLedgerRows += Number(result?.insertedCashLedgerRows || 0);
                 if (result?.recomputed) recomputeExecuted = true;
@@ -603,6 +601,28 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                 finalPositionDelta += Number(result?.positionDelta || 0);
                 succeededIndices.add(absoluteIdx);
                 failedIndices.delete(absoluteIdx);
+                if (String(tx.type).toLowerCase() === 'dividend') {
+                  const norm = normalizeDividendForDedupe(
+                    tx,
+                    data?.investments ?? [],
+                    sarPerUsd,
+                  );
+                  if (norm) {
+                    importPendingKeys.add(
+                      buildDividendDedupeKey(
+                        {
+                          portfolioId: tx.portfolioId,
+                          accountId: tx.accountId,
+                          symbol: tx.symbol,
+                          payDate: tx.date,
+                          totalBook: norm.totalBook,
+                          bookCurrency: norm.bookCurrency,
+                        },
+                        data?.accounts ?? [],
+                      ),
+                    );
+                  }
+                }
                 return;
               } catch (inner) {
                 if (attempt >= 1) throw inner;
@@ -628,9 +648,9 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
 
       const importSummary = {
         parsed: parserParsedCount,
-        normalized: normalizedInvestmentRows.length,
-        rejected: rejectedInvestmentRows.length,
-        duplicate: duplicateInvestmentCount,
+        normalized: validatedInvestmentRows.length,
+        rejected: plan.skippedValidation,
+        duplicate: plan.skippedDuplicates,
         validated: validatedInvestmentRows.length,
         imported: insertedTradeTransactions,
         cashLedgerInserted: insertedCashLedgerRows,
@@ -638,18 +658,14 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
         finalCashDelta,
         finalPositionDelta,
       };
-      const selectedInvestmentCount = selectedInvestmentRows.length;
-      if (selectedInvestmentCount > 0 && validatedInvestmentRows.length > 0 && insertedTradeTransactions === 0) {
-        throw new Error(`Import failed: selected ${selectedInvestmentCount} investment rows and validated ${validatedInvestmentRows.length}, but inserted 0 trades. ${[...rejectionReasons, ...importErrors].slice(0, 3).join(' | ') || 'All rows were dropped/failed.'}`);
+      const selectedInvestmentCount = validatedInvestmentRows.length;
+      if (selectedInvestmentCount > 0 && insertedTradeTransactions === 0) {
+        throw new Error(`Import failed: ${selectedInvestmentCount} investment row(s) validated but 0 trades inserted. ${[...rejectionReasons, ...importErrors].slice(0, 3).join(' | ') || 'All rows failed.'}`);
       }
       const validatedCashImpact = validatedInvestmentRows.filter(({ tx }) => ['buy', 'sell', 'deposit', 'withdrawal', 'dividend', 'fee', 'vat'].includes(tx.type)).length;
       if (validatedCashImpact > 0 && insertedCashLedgerRows === 0) {
         throw new Error('Import failed: cash-impact rows were validated but 0 cash-ledger rows were inserted.');
       }
-      if (selectedInvestmentCount > 0 && normalizedInvestmentRows.length > 0 && validatedInvestmentRows.length === 0) {
-        throw new Error(`Import failed: all parsed rows were dropped during validation. ${rejectionReasons.slice(0, 3).join(' | ')}`);
-      }
-
       const importedCount = succeededIndices.size;
       const failedCount = failedIndices.size;
 
@@ -688,13 +704,14 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       console.error('Error saving transactions:', error);
       alert(`Failed to save transactions: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
+      importConfirmPendingRef.current = false;
       importSubmitLockRef.current = false;
       setIsImporting(false);
     }
   };
 
   const dismissReviewModal = () => {
-    if (importSubmitLockRef.current) return;
+    if (importSubmitLockRef.current || importConfirmPendingRef.current) return;
     setIsReviewModalOpen(false);
     setSelectedTransactions(new Set());
     setDuplicateTransactions(new Set());
@@ -1535,7 +1552,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
               >
                 {processingProgress > 0 || isImporting
                   ? `Importing... ${Math.round(processingProgress)}%`
-                  : `Import ${selectedTransactions.size} Selected Transaction(s)`
+                  : `Import ${selectedImportPlan?.importableCount ?? selectedTransactions.size} Transaction(s)`
                 }
               </button>
             </div>

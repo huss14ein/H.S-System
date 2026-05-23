@@ -1,7 +1,12 @@
 import type { Account, InvestmentPortfolio, InvestmentTransaction, TradeCurrency } from '../types';
+import { tradableCashBucketToSAR } from '../utils/currencyMath';
 import { deltaForInvestmentTrade } from './investmentBalanceDelta';
 import { inferInvestmentTransactionCurrency, resolveCanonicalAccountId, resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
+
+function bucketCashScore(bucket: { SAR: number; USD: number }): number {
+  return Math.abs(Number(bucket.SAR) || 0) + Math.abs(Number(bucket.USD) || 0);
+}
 
 /**
  * Platform cash from the **Investment** row in Accounts (`balance` + `currency`).
@@ -25,9 +30,68 @@ export function computeBrokerCashByAccountMap(accounts: Account[]): Record<strin
     if (acc.type !== 'Investment') continue;
     const id = resolveCanonicalAccountId(acc.id, accounts) ?? acc.id;
     if (!id) continue;
-    map[id] = brokerCashBucketsFromInvestmentAccount(acc);
+    const next = brokerCashBucketsFromInvestmentAccount(acc);
+    const prev = map[id];
+    if (!prev || bucketCashScore(next) > bucketCashScore(prev)) {
+      map[id] = next;
+    }
   }
   return map;
+}
+
+/**
+ * Resolve the Investment account row whose `balance` should drive tradable cash.
+ * Prefers a direct id match (same row as Accounts cards) before canonical alias resolution.
+ */
+export function resolveInvestmentAccountForCashLookup(
+  accountId: string | undefined,
+  accounts: Account[],
+): Account | undefined {
+  const trimmed = (accountId ?? '').trim();
+  if (!trimmed) return undefined;
+  const direct = accounts.find((a) => a.id === trimmed && a.type === 'Investment');
+  if (direct) return direct;
+  const canonical = resolveCanonicalAccountId(trimmed, accounts);
+  if (!canonical) return undefined;
+  return accounts.find((a) => a.id === canonical && a.type === 'Investment');
+}
+
+/** Tradable cash buckets for one platform — uses each account row's stored `balance`. */
+export function getTradableCashBucketsForAccount(
+  accountId: string,
+  accounts: Account[],
+): { SAR: number; USD: number } {
+  return brokerCashBucketsFromInvestmentAccount(resolveInvestmentAccountForCashLookup(accountId, accounts));
+}
+
+/**
+ * Sum tradable cash (SAR eq.) for every Investment account in `scopeAccounts`.
+ * Each platform's stored balance counts once (canonical dedupe via `allAccounts`).
+ */
+export function sumTradableCashSarFromInvestmentAccounts(
+  scopeAccounts: Account[],
+  allAccounts: Account[],
+  sarPerUsd: number,
+): number {
+  const allForCanon = allAccounts.length ? allAccounts : scopeAccounts;
+  const merged = new Map<string, { SAR: number; USD: number }>();
+  for (const acc of scopeAccounts) {
+    if (acc.type !== 'Investment') continue;
+    /** Prefer the live row from `allAccounts` (same id) so deployable cash tracks balance updates. */
+    const row = allForCanon.find((a) => a.id === acc.id) ?? acc;
+    const id = resolveCanonicalAccountId(row.id, allForCanon) ?? row.id;
+    if (!id) continue;
+    const next = brokerCashBucketsFromInvestmentAccount(row);
+    const prev = merged.get(id);
+    if (!prev || bucketCashScore(next) > bucketCashScore(prev)) {
+      merged.set(id, next);
+    }
+  }
+  let sum = 0;
+  for (const bucket of merged.values()) {
+    sum += tradableCashBucketToSAR(bucket, sarPerUsd);
+  }
+  return sum;
 }
 
 /** Replay of investment transactions into SAR/USD buckets (reconciliation / audits — not primary available cash). */

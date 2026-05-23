@@ -12,6 +12,8 @@ import {
   financialMonthIsoKey,
   dateInRange,
   parseCalendarDateLocal,
+  resolveMonthStartDayFromData,
+  DEFAULT_FINANCIAL_MONTH_START_DAY,
 } from '../utils/financialMonth';
 
 describe('financialMonthRangeFromKey vs calendar reference', () => {
@@ -97,5 +99,17 @@ describe('parseCalendarDateLocal and dateInRange', () => {
     const { start, end } = financialMonthRangeFromKey({ year: 2026, month: 5 }, monthStartDay);
     expect(financialMonthColumnIndexForDate('2026-05-15', 2026, monthStartDay)).toBe(4);
     expect(dateInRange('2026-05-15', start, end)).toBe(true);
+  });
+});
+
+describe('resolveMonthStartDayFromData', () => {
+  it('defaults to day 28 when settings omit month start day', () => {
+    expect(resolveMonthStartDayFromData(null)).toBe(DEFAULT_FINANCIAL_MONTH_START_DAY);
+    expect(resolveMonthStartDayFromData({ settings: {} })).toBe(DEFAULT_FINANCIAL_MONTH_START_DAY);
+  });
+
+  it('reads camelCase and snake_case stored values', () => {
+    expect(resolveMonthStartDayFromData({ settings: { monthStartDay: 1 } })).toBe(1);
+    expect(resolveMonthStartDayFromData({ settings: { month_start_day: 25 } })).toBe(25);
   });
 });

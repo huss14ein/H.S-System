@@ -41,9 +41,9 @@ export const SECTION_HINT_KEYS: Record<string, string> = {
   'key.forecast.scenarioComparison':
     'Run Conservative, Base, and Aggressive presets (adjust assumptions first) so each row fills in. Active preset is highlighted.',
   'key.recovery.holdingDetail':
-    'Recovery actions and ladders for this holding—export or use as a checklist with your broker.',
+    'Choose one path per holding: position recycling (no new cash) or recovery buy ladder (deployable cash)—then export limits to Investment Plan.',
   'key.recovery.positionRecycling':
-    'Reduce economic break-even without new cash: keep core shares, sell recycle tranches on rebounds, rebuy lower with proceeds only.',
+    'Pick recycling OR buy ladder (not both). Recycling: core shares stay, sell/rebuy tranches on rebounds with sale proceeds only.',
 };
 
 /**
@@ -259,7 +259,7 @@ const HINTS_BY_TITLE: Record<string, string> = {
   'admin: approved budgets & shared account tracking': 'Admin view of approved requests and shared account links.',
   'shared budget transactions': 'Mirror of spend against shared categories—filter by month and status.',
   'recovery plan performance statistics': 'Track recovery ladder and performance for qualifying positions.',
-  'positions in loss': 'Holdings underwater—open a row for position recycling (all losers) or recovery buy ladder (when eligible).',
+  'positions in loss': 'Holdings underwater—open a row, compare ♻ recycling vs $ buy ladder, then choose one approach.',
   'position recycling (average reduction)':
     'Sell/rebuy ladder on the recycle pool only; core shares stay. Pushes limit orders to Investment Plan.',
   'draft orders (export to broker)': 'Suggested orders from recovery/draft flows—export JSON; not sent to a broker.',

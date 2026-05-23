@@ -34,10 +34,13 @@ import AIAdvisor from '../components/AIAdvisor';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
 import { materializeSukukPayoutEvents } from '../services/sukuk/sukukPayoutEngine';
+import { useConfirmAction } from '../hooks/useConfirmAction';
+import { summarizeCommodityForConfirm } from '../utils/recordConfirmMessages';
 
 // --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; preferredType?: AssetType; }> = ({ isOpen, onClose, onSave, assetToEdit, preferredType = 'Property' }) => {
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
+    const confirmAction = useConfirmAction();
     const [name, setName] = useState('');
     const [type, setType] = useState<AssetType>('Property');
     const [value, setValue] = useState('');
@@ -79,7 +82,7 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
         setFormError(null);
     }, [assetToEdit, isOpen, preferredType, getLearnedDefault]);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setFormError(null);
         const parsedValue = parseMoneyInput(value);
@@ -128,12 +131,17 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
             maturityDate: type === 'Sukuk' && maturityDate.trim() !== '' ? maturityDate.trim().slice(0, 10) : undefined,
             notes: notes.trim() !== '' ? notes.trim() : undefined,
         };
+        const ok = await confirmAction({
+            title: assetToEdit ? 'Save asset?' : 'Add asset?',
+            message: assetToEdit ? 'Update this physical asset on your balance sheet?' : 'Add this physical asset to your balance sheet?',
+            confirmLabel: assetToEdit ? 'Save' : 'Add',
+            details: [`${newAsset.name} (${newAsset.type})`, `Value: ${newAsset.value} SAR`],
+        });
+        if (!ok) return;
         onSave(newAsset);
         if (!assetToEdit) trackFormDefault('asset-add', 'type', type);
         onClose();
     };
-
-
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={assetToEdit ? 'Edit Physical Asset' : 'Add Physical Asset'}>
@@ -536,6 +544,7 @@ const AssetCardComponent: React.FC<{
 // --- Commodity Components ---
 const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => Promise<void>; holdingToEdit: CommodityHolding | null; goals: Goal[]; sarPerUsd: number; }> = ({ isOpen, onClose, onSave, holdingToEdit, goals, sarPerUsd }) => {
     const { formatCurrencyString } = useFormatCurrency();
+    const confirmAction = useConfirmAction();
     const [name, setName] = useState<CommodityHolding['name']>('Gold');
     const [quantity, setQuantity] = useState('');
     const [unit, setUnit] = useState<CommodityHolding['unit']>('gram');
@@ -662,6 +671,16 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
             }
 
             const holdingData = { ...holdingDataBase, currentValue: parsedCurrentValue };
+            const ok = await confirmAction(
+                summarizeCommodityForConfirm({
+                    name,
+                    quantity: parsedQuantity,
+                    unit,
+                    purchaseValue: parsedPurchaseValue,
+                    isEdit: !!holdingToEdit,
+                }),
+            );
+            if (!ok) return;
             if (holdingToEdit) await onSave({ ...holdingToEdit, ...holdingData });
             else await onSave(holdingData);
             onClose();
@@ -921,7 +940,10 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
 
     // Physical Asset Handlers
     const handleOpenAssetModal = (asset: Asset | null = null, preferredType: AssetType = 'Property') => { setAssetToEdit(asset); setPreferredAssetType(preferredType); setIsAssetModalOpen(true); };
-    const handleSaveAsset = (asset: Asset) => { if (assetsList.some((a: Asset) => a.id === asset.id)) updateAsset(asset); else addAsset(asset); };
+    const handleSaveAsset = (asset: Asset) => {
+        if (assetsList.some((a: Asset) => a.id === asset.id)) updateAsset(asset);
+        else void addAsset(asset, { confirmed: true });
+    };
     const handleLinkGoal = (assetId: string, goalId: string) => { const asset = assetsList.find((a: Asset) => a.id === assetId); if (asset) updateAsset({ ...asset, goalId: goalId === 'none' ? undefined : goalId }); };
     const handleLinkCommodityGoal = (holdingId: string, goalId: string) => {
         const holding = commodityList.find((h: CommodityHolding) => h.id === holdingId);
@@ -932,7 +954,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const handleOpenCommodityModal = (holding: CommodityHolding | null = null) => { setCommodityToEdit(holding); setIsCommodityModalOpen(true); };
     const handleSaveCommodity = async (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => {
         if ('id' in holding) await updateCommodityHolding(holding);
-        else await addCommodityHolding(holding);
+        else await addCommodityHolding(holding, { confirmed: true });
     };
 
     // Generic Delete Handlers

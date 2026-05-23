@@ -1,10 +1,29 @@
 import type { Account, InvestmentPortfolio, InvestmentTransaction } from '../types';
-import { toSAR, fromSAR } from '../utils/currencyMath';
-import { roundMoney } from '../utils/money';
 import { resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
-import { dividendAlreadyRecorded } from './dividendFinnhubSync';
+import {
+  dividendAlreadyRecorded,
+  dividendAmountInBookCurrency,
+  flagBatchDuplicateDividendRows,
+  buildDividendDedupeKey,
+} from './dividendLedgerGuards';
+
+export { dividendAmountInBookCurrency } from './dividendLedgerGuards';
 import { findHoldingOptionByKey, type HoldingSymbolOption } from './holdingSymbolOptions';
+import type { RecordWriteOptions } from './recordConfirmBridge';
+
+/** Trade payload passed to `recordTrade` when booking SMS import rows. */
+export type DividendSmsRecordTradeInput = {
+  portfolioId?: string;
+  accountId: string;
+  date: string;
+  type: 'dividend';
+  symbol: string;
+  quantity: number;
+  price: number;
+  total: number;
+  currency?: 'USD' | 'SAR';
+};
 
 export type ParsedDividendSmsRow = {
   date: string;
@@ -36,6 +55,8 @@ export type ResolvedDividendSmsRow = ParsedDividendSmsRow & {
   /** When the symbol exists on multiple portfolios. */
   portfolioOptions?: DividendSmsPortfolioOption[];
   duplicate?: boolean;
+  /** Duplicate of another row in the same SMS paste (not yet in ledger). */
+  batchDuplicate?: boolean;
   resolveError?: string;
   /** Parsed SMS currency (before book conversion). */
   parsedCurrency?: 'USD' | 'SAR';
@@ -43,24 +64,10 @@ export type ResolvedDividendSmsRow = ParsedDividendSmsRow & {
 };
 
 export type DividendSmsImportResult = {
+  skippedDuplicates?: number;
   imported: number;
   failed: string[];
 };
-
-/** Convert parsed SMS amount into the portfolio ledger currency. */
-export function dividendAmountInBookCurrency(
-  amount: number,
-  from: 'USD' | 'SAR',
-  book: 'USD' | 'SAR',
-  sarPerUsd: number,
-): number {
-  const n = Number(amount);
-  if (!Number.isFinite(n) || n <= 0) return 0;
-  const rate = Number.isFinite(sarPerUsd) && sarPerUsd > 0 ? sarPerUsd : 3.75;
-  if (from === book) return roundMoney(n);
-  if (from === 'USD' && book === 'SAR') return roundMoney(toSAR(n, 'USD', rate));
-  return roundMoney(fromSAR(n, 'USD', rate));
-}
 
 const DIVIDEND_HINT =
   /(dividend|dividends|div\.?|cash\s+div|distribution|coupon\s+paid|coupon\s+payment|profit\s+share|توزيع|توزيعات|توزيعة|أرباح|ارباح|عائد|إيداع\s+توزيع|ايداع\s+توزيع|نقدي\s+توزيع|توزيع\s+نقدي)/i;
@@ -421,7 +428,7 @@ export function resolveDividendSmsRows(args: {
   const sarPerUsd = Number(args.sarPerUsd);
   const fx = Number.isFinite(sarPerUsd) && sarPerUsd > 0 ? sarPerUsd : 3.75;
 
-  return args.rows.map((row, index) => {
+  const mapped = args.rows.map((row, index) => {
     const holdingKey = args.holdingOverrideByIndex?.get(index);
     const holdingPick =
       holdingKey && args.holdingOptions?.length
@@ -455,6 +462,9 @@ export function resolveDividendSmsRows(args: {
         payDate: row.date,
         totalBook,
         bookCurrency: book,
+        portfolioId: holdingPick.portfolioId,
+        portfolios: args.portfolios,
+        sarPerUsd: fx,
       });
 
       return {
@@ -507,6 +517,9 @@ export function resolveDividendSmsRows(args: {
       payDate: row.date,
       totalBook,
       bookCurrency: book,
+      portfolioId: resolved.portfolioId,
+      portfolios: args.portfolios,
+      sarPerUsd: fx,
     });
 
     return {
@@ -523,34 +536,54 @@ export function resolveDividendSmsRows(args: {
       duplicate,
     };
   });
+
+  return flagBatchDuplicateDividendRows(mapped, args.accounts);
 }
 
 /** Book selected rows via `recordTrade` (same path as Finnhub sync and statement import). */
 export async function importResolvedDividendSmsRows(args: {
   rows: ResolvedDividendSmsRow[];
   selectedIndices: Iterable<number>;
-  recordTrade: (trade: {
-    portfolioId?: string;
-    accountId: string;
-    date: string;
-    type: 'dividend';
-    symbol: string;
-    quantity: number;
-    price: number;
-    total: number;
-    currency?: 'USD' | 'SAR';
-  }) => Promise<unknown>;
+  investmentTransactions: InvestmentTransaction[];
+  accounts: Account[];
+  recordTrade: (
+    trade: DividendSmsRecordTradeInput,
+    executedPlanId?: string,
+    opts?: RecordWriteOptions,
+  ) => Promise<unknown>;
+  /** Applied to each row (e.g. `{ confirmed: true }` after batch confirm, or `{ system: true }` for automation). */
+  recordTradeOpts?: RecordWriteOptions;
 }): Promise<DividendSmsImportResult> {
   const selected = new Set(args.selectedIndices);
   let imported = 0;
+  let skippedDuplicates = 0;
   const failed: string[] = [];
+  const pendingKeys = new Set<string>();
 
   for (let i = 0; i < args.rows.length; i++) {
     if (!selected.has(i)) continue;
     const row = args.rows[i];
-    if (row.resolveError || row.duplicate || !row.portfolioId || !row.accountId) continue;
+    if (!isImportableDividendSmsRow(row)) continue;
+
+    if (
+      dividendAlreadyRecorded({
+        transactions: args.investmentTransactions,
+        accounts: args.accounts,
+        accountId: row.accountId,
+        symbol: row.symbol,
+        payDate: row.date,
+        totalBook: row.total,
+        bookCurrency: row.currency,
+        portfolioId: row.portfolioId,
+        pendingKeys,
+      })
+    ) {
+      skippedDuplicates += 1;
+      continue;
+    }
+
     try {
-      await args.recordTrade({
+      const trade: DividendSmsRecordTradeInput = {
         type: 'dividend',
         portfolioId: row.portfolioId,
         accountId: row.accountId,
@@ -560,22 +593,102 @@ export async function importResolvedDividendSmsRows(args: {
         price: 0,
         total: row.total,
         currency: row.currency,
-      });
+      };
+      await args.recordTrade(trade, undefined, args.recordTradeOpts);
       imported += 1;
+      pendingKeys.add(
+        buildDividendDedupeKey(
+          {
+            portfolioId: row.portfolioId,
+            accountId: row.accountId,
+            symbol: row.symbol,
+            payDate: row.date,
+            totalBook: row.total,
+            bookCurrency: row.currency,
+          },
+          args.accounts,
+        ),
+      );
     } catch (e) {
-      failed.push(`${row.symbol}: ${e instanceof Error ? e.message : String(e)}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.toLowerCase().includes('already recorded')) {
+        skippedDuplicates += 1;
+      } else {
+        failed.push(`${row.symbol}: ${msg}`);
+      }
     }
   }
 
-  return { imported, failed };
+  return { imported, failed, skippedDuplicates };
+}
+
+/** Matches `importResolvedDividendSmsRows` row eligibility (excludes batch/ledger duplicates). */
+export function isImportableDividendSmsRow(
+  row: ResolvedDividendSmsRow,
+): row is ResolvedDividendSmsRow & { portfolioId: string; accountId: string; symbol: string } {
+  return (
+    !row.resolveError &&
+    !row.duplicate &&
+    !row.batchDuplicate &&
+    !!row.portfolioId &&
+    !!row.accountId &&
+    !!row.symbol.trim()
+  );
 }
 
 export function selectableDividendSmsIndices(rows: ResolvedDividendSmsRow[]): Set<number> {
   const out = new Set<number>();
   rows.forEach((r, i) => {
-    if (!r.resolveError && !r.duplicate && r.portfolioId && r.symbol.trim()) out.add(i);
+    if (isImportableDividendSmsRow(r)) out.add(i);
   });
   return out;
+}
+
+/** Count rows that `importResolvedDividendSmsRows` would book (ledger + batch dedupe). */
+export function countWillImportDividendSmsRows(args: {
+  rows: ResolvedDividendSmsRow[];
+  selectedIndices: Iterable<number>;
+  investmentTransactions: InvestmentTransaction[];
+  accounts: Account[];
+}): number {
+  const selected = new Set(args.selectedIndices);
+  const pendingKeys = new Set<string>();
+  let count = 0;
+  for (let i = 0; i < args.rows.length; i++) {
+    if (!selected.has(i)) continue;
+    const row = args.rows[i];
+    if (!isImportableDividendSmsRow(row)) continue;
+    if (
+      dividendAlreadyRecorded({
+        transactions: args.investmentTransactions,
+        accounts: args.accounts,
+        accountId: row.accountId,
+        symbol: row.symbol,
+        payDate: row.date,
+        totalBook: row.total,
+        bookCurrency: row.currency,
+        portfolioId: row.portfolioId,
+        pendingKeys,
+      })
+    ) {
+      continue;
+    }
+    count += 1;
+    pendingKeys.add(
+      buildDividendDedupeKey(
+        {
+          portfolioId: row.portfolioId,
+          accountId: row.accountId,
+          symbol: row.symbol,
+          payDate: row.date,
+          totalBook: row.total,
+          bookCurrency: row.currency,
+        },
+        args.accounts,
+      ),
+    );
+  }
+  return count;
 }
 
 /** Row needs manual holding selection in the import table. */

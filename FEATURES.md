@@ -21,14 +21,20 @@ This document reflects features and functionalities implemented in the codebase.
 - Allocation visualization and risk education
 
 ### Investment Recovery Plan
-- **Location:** `pages/RecoveryPlanView.tsx`, `services/recoveryPlan.ts`, `services/recoveryPlanPerformance.ts`
-- Loss qualification and recovery strategies
-- Ladder generation and performance tracking
+- **Location:** `pages/RecoveryPlanView.tsx`, `services/recoveryPlan.ts`, `services/unifiedRecoveryPlan.ts`, `services/recoveryPathSummaries.ts`, `services/positionRecyclingIntegration.ts`
+- **Two paths (pick one per symbol):** position recycling (sell/rebuy with sale proceeds, no new cash) or recovery buy ladder (staged limit buys from deployable cash)
+- Plain-language readiness badges (Ready / Blocked / Not available), per-symbol path preference saved in browser
+- Draft limits export to Investment Plan; tranche fills recompute remaining steps
+- Ladder performance tracking (`recoveryPlanPerformance.ts`) and recycling plan history (local persistence)
 
 ### Dividend Tracker
-- **Location:** `pages/DividendTrackerView.tsx`, `components/DividendSmsImportPanel.tsx`, `services/dividendSmsParser.ts`
-- YTD dividend income, monthly dividend charts, projected annual income
-- Top payers ranking, AI dividend analysis (Gemini), concentration/diversification
+- **Location:** `pages/DividendTrackerView.tsx`, `components/DividendTrackerWorkspace.tsx`, `components/DividendSmsImportPanel.tsx`, `services/dividendTrackerModel.ts`, `services/dividendSmsParser.ts`
+- **Two layers:** received cash (ledger) vs expected annual plan (holding yield %, manual SAR override, optional Finnhub hint)
+- YTD / 12mo received, pace vs prorated plan, **quarterly YTD progress**, **upcoming expected payouts** (estimate), holdings plan table (cadence, Q est., clear manual plan), chart (received + plan line)
+- **Dedupes everywhere:** Record Trade, SMS import, statement import, Finnhub sync (`services/dividendLedgerGuards.ts`)
+- **Record cash:** Investments → Record Trade → Dividend (no duplicate form on tracker); SMS import + Finnhub sync on Import tab
+- Top earners ranking from **ledger cash received** (last 12 months—not Finnhub projections); optional projected income KPI labeled as estimate
+- AI dividend analysis (Gemini) grounded on received + plan, not market guesses as income
 - **Import from SMS:** paste broker dividend notifications (EN/AR); maps symbol to portfolio holdings when present, otherwise **manual holding dropdown** (all positions across portfolios); converts to book currency, dedupes against ledger, books `dividend` via `recordTrade` (same path as Finnhub sync). Command palette / Statement Upload link → `focus-dividend-sms` scrolls to the import panel.
 
 ### Investment Plan

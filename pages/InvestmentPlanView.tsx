@@ -45,6 +45,7 @@ import { computeCanonicalPlanningSnapshot } from '../services/canonicalPlanningE
 import { computeBuyScore } from '../services/buyScore';
 import { buildTranchePlansFromParent } from '../services/plannedTradeTranches';
 import { TrancheStatusChip } from '../components/TrancheStatusChip';
+import { useConfirmAction } from '../hooks/useConfirmAction';
 
 export type PlanSavePayload =
     | (Omit<PlannedTrade, 'id' | 'user_id'> & { trancheBatch?: never })
@@ -81,6 +82,7 @@ const PlanTradeModal: React.FC<{
     newPlanFieldInjection?: { key: number; symbol: string; name?: string; targetPrice?: number; amount?: number; quantity?: number; tradeType?: 'buy' | 'sell'; notes?: string } | null;
     onNewPlanFieldInjectionConsumed?: () => void;
 }> = ({ isOpen, onClose, onSave, planToEdit, universe = [], simulatedPrices = {}, monthlyBudget, coreAllocation, budgetCurrency, newPlanFieldInjection, onNewPlanFieldInjectionConsumed }) => {
+    const confirmAction = useConfirmAction();
     const [symbol, setSymbol] = useState('');
     const [name, setName] = useState('');
     const [tradeType, setTradeType] = useState<'buy' | 'sell'>('buy');
@@ -358,6 +360,22 @@ const PlanTradeModal: React.FC<{
         };
         
         const nTranches = planToEdit ? 1 : Math.max(1, Math.min(5, parseInt(trancheCount, 10) || 1));
+        const planOk = await confirmAction({
+            title: planToEdit ? 'Save investment plan?' : 'Create investment plan?',
+            message: planToEdit
+                ? 'Update this planned trade? Recording execution still happens on Investments → Record Trade.'
+                : nTranches > 1
+                  ? `Create ${nTranches} tranche plan(s) for ${planData.symbol}?`
+                  : `Create planned ${planData.tradeType} for ${planData.symbol}?`,
+            confirmLabel: planToEdit ? 'Save' : 'Create',
+            details: [
+                `${planData.tradeType.toUpperCase()} · ${planData.symbol}`,
+                conditionType === 'price' ? `Trigger price: ${planData.targetValue}` : `Trigger date`,
+                planData.amount != null ? `Amount: ${planData.amount}` : '',
+                planData.quantity != null ? `Qty: ${planData.quantity}` : '',
+            ].filter(Boolean),
+        });
+        if (!planOk) return;
         const saveResult = planToEdit
             ? await onSave({ ...planToEdit, ...planData })
             : nTranches > 1
@@ -964,11 +982,11 @@ const InvestmentPlanView: React.FC<{
         }
         if ('trancheBatch' in planData && Array.isArray(planData.trancheBatch)) {
             for (const p of planData.trancheBatch) {
-                if (!(await addPlannedTrade(p))) return false;
+                if (!(await addPlannedTrade(p, { confirmed: true }))) return false;
             }
             return true;
         }
-        return (await addPlannedTrade(planData as Omit<PlannedTrade, 'id' | 'user_id'>)) === true;
+        return (await addPlannedTrade(planData as Omit<PlannedTrade, 'id' | 'user_id'>, { confirmed: true })) === true;
     };
 
     const handleOpenPlanModal = (plan: PlannedTrade | null) => {

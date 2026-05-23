@@ -4,6 +4,8 @@ import {
   brokerCashBucketsFromInvestmentAccount,
   computeAvailableCashByAccountMap,
   computeBrokerCashByAccountMap,
+  getTradableCashBucketsForAccount,
+  sumTradableCashSarFromInvestmentAccounts,
 } from '../services/investmentCashLedger';
 
 function invAccount(overrides: Partial<Account> = {}): Account {
@@ -49,6 +51,49 @@ describe('brokerCashBucketsFromInvestmentAccount', () => {
       invAccount({ id: 'inv-1', balance: 100, currency: 'SAR' as any }),
     ]);
     expect(map['inv-1']).toEqual({ SAR: 100, USD: 0 });
+  });
+
+  it('computeBrokerCashByAccountMap keeps the row with more cash when two rows share a canonical id', () => {
+    const accounts = [
+      invAccount({ id: 'inv-1', balance: 0, currency: 'SAR' as any, account_id: 'legacy-ext' } as Account),
+      invAccount({ id: 'legacy-ext', balance: 5000, currency: 'SAR' as any }),
+    ];
+    const map = computeBrokerCashByAccountMap(accounts);
+    expect(map['legacy-ext']).toEqual({ SAR: 5000, USD: 0 });
+    expect(map['inv-1']).toEqual({ SAR: 0, USD: 0 });
+  });
+});
+
+describe('getTradableCashBucketsForAccount', () => {
+  it('prefers direct investment row id over canonical alias with zero balance', () => {
+    const accounts = [
+      invAccount({ id: 'legacy-ext', balance: 5000, currency: 'SAR' as any }),
+      invAccount({ id: 'inv-1', balance: 0, currency: 'SAR' as any, account_id: 'legacy-ext' } as Account),
+    ];
+    expect(getTradableCashBucketsForAccount('legacy-ext', accounts)).toEqual({ SAR: 5000, USD: 0 });
+    expect(getTradableCashBucketsForAccount('inv-1', accounts)).toEqual({ SAR: 0, USD: 0 });
+  });
+});
+
+describe('sumTradableCashSarFromInvestmentAccounts', () => {
+  it('sums every investment platform balance in scope once (SAR eq.)', () => {
+    const accounts = [
+      invAccount({ id: 'a', balance: 1000, currency: 'SAR' as any }),
+      invAccount({ id: 'b', balance: 200, currency: 'USD' as const }),
+    ];
+    expect(sumTradableCashSarFromInvestmentAccounts(accounts, accounts, 3.75)).toBeCloseTo(1000 + 200 * 3.75, 6);
+  });
+
+  it('uses each scope row balance even when that id is not in allAccounts', () => {
+    const allAccounts = [invAccount({ id: 'inv-1', balance: 0, currency: 'SAR' as any, account_id: 'legacy-ext' } as Account)];
+    const scope = [invAccount({ id: 'legacy-ext', balance: 5000, currency: 'SAR' as any })];
+    expect(sumTradableCashSarFromInvestmentAccounts(scope, allAccounts, 3.75)).toBe(5000);
+  });
+
+  it('prefers fresh balance from allAccounts when scope row is stale', () => {
+    const fresh = invAccount({ id: 'a', balance: 9000, currency: 'SAR' as any });
+    const stale = invAccount({ id: 'a', balance: 1000, currency: 'SAR' as any });
+    expect(sumTradableCashSarFromInvestmentAccounts([stale], [fresh], 3.75)).toBe(9000);
   });
 });
 

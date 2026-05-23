@@ -20,6 +20,11 @@ import { supabase } from '../services/supabaseClient';
 import { encodeInstallmentPaymentNote } from '../services/installments/installmentLinkNote';
 import { AuthContext } from '../context/AuthContext';
 import { useSelfLearning } from '../context/SelfLearningContext';
+import { useConfirmAction } from '../hooks/useConfirmAction';
+import {
+  summarizeApplyRecurringForConfirm,
+  summarizeRecurringForConfirm,
+} from '../utils/recordConfirmMessages';
 import { inferIsAdmin } from '../utils/role';
 import {
     validateTransactionRequiredFields,
@@ -101,6 +106,7 @@ const TransactionModal: React.FC<{
     monthStartDay: number;
 }> = ({ isOpen, onClose, onSave, onSaveAndTrade, transactionToEdit, budgetCategories, budgets, allCategories, accounts, existingTransactions, sarPerUsd, monthStartDay }) => {
     const { data } = useContext(DataContext)!;
+    const confirmAction = useConfirmAction();
     const { aiActionsEnabled } = useAI();
     const { formatCurrencyString } = useFormatCurrency();
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
@@ -498,17 +504,36 @@ const TransactionModal: React.FC<{
         if (dups.length > 0) {
             const sample = dups[0];
             const sampleDate = new Date(sample.date).toLocaleDateString();
-            const msg =
-                `Possible duplicate transaction detected:\n` +
-                `• Existing: ${sampleDate} · ${sample.description.slice(0, 60)}${sample.description.length > 60 ? '…' : ''}\n` +
-                `• Same account, similar amount & description within ${dupOpts.dateToleranceDays} days.\n\n` +
-                `Save anyway?`;
-            if (!window.confirm(msg)) return;
+            const dupOk = await confirmAction({
+                title: 'Possible duplicate',
+                message:
+                    `A similar transaction already exists (${sampleDate} · ${sample.description.slice(0, 60)}). Save anyway?`,
+                confirmLabel: 'Save anyway',
+                variant: 'danger',
+            });
+            if (!dupOk) return;
         }
         if (type === 'expense' && useSplitExpense && splitCoverageError) {
             window.alert(splitCoverageError);
             return;
         }
+
+        const acc = accounts.find((a) => a.id === accountId);
+        const confirmOk = await confirmAction({
+            title: transactionToEdit ? 'Save transaction?' : 'Add transaction?',
+            message: transactionToEdit
+                ? 'Update this transaction in your ledger?'
+                : 'Add this transaction to your ledger?',
+            confirmLabel: transactionToEdit ? 'Save' : 'Add',
+            details: [
+                `Date: ${transactionData.date}`,
+                `Description: ${transactionData.description}`,
+                `Amount: ${transactionData.amount} (${transactionData.type})`,
+                acc ? `Account: ${acc.name}` : '',
+                transactionData.budgetCategory ? `Budget: ${transactionData.budgetCategory}` : '',
+            ].filter(Boolean),
+        });
+        if (!confirmOk) return;
 
         try {
             if (type === 'expense' && budgetCategory === 'Savings & Investments') {
@@ -968,6 +993,7 @@ const RecurringModal: React.FC<{
     accounts: Account[];
     budgetCategories: string[];
 }> = ({ isOpen, onClose, onSave, recurring, accounts, budgetCategories }) => {
+    const confirmAction = useConfirmAction();
     const incomeCategoryOptions = React.useMemo(() => [...new Set([...INCOME_CATEGORIES, ...(recurring?.type === 'income' && recurring?.category && !INCOME_CATEGORIES.includes(recurring.category) ? [recurring.category] : [])])], [recurring]);
     const [description, setDescription] = useState('');
     const [amount, setAmount] = useState('');
@@ -1003,7 +1029,7 @@ const RecurringModal: React.FC<{
         }
     }, [recurring, isOpen, accounts, budgetCategories, incomeCategoryOptions]);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const num = parseFloat(amount);
         const day = Math.min(28, Math.max(1, parseInt(dayOfMonth, 10) || 1));
@@ -1015,6 +1041,18 @@ const RecurringModal: React.FC<{
             alert('Please select a budget category for expenses.');
             return;
         }
+        const acc = accounts.find((a) => a.id === accountId);
+        const ok = await confirmAction(
+            summarizeRecurringForConfirm({
+                description: description.trim(),
+                amount: num,
+                type,
+                dayOfMonth: day,
+                accountName: acc?.name,
+                isEdit: !!recurring,
+            }),
+        );
+        if (!ok) return;
         onSave({
             description: description.trim(),
             amount: num,
@@ -1106,6 +1144,7 @@ const RecurringModal: React.FC<{
 
 const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
     const { data, loading, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth } = useContext(DataContext)!;
+    const confirmAction = useConfirmAction();
     const { exchangeRate } = useCurrency();
     const recurringList = data?.recurringTransactions ?? [];
     const auth = useContext(AuthContext);
@@ -1521,10 +1560,10 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         }
 
         if ('id' in transaction) {
-            updateTransaction(transaction);
+            updateTransaction(transaction, { confirmed: true });
         } else {
             const nextStatus = userRole === 'Restricted' ? 'Pending' : 'Approved';
-            addTransaction({ ...transaction, status: nextStatus });
+            addTransaction({ ...transaction, status: nextStatus }, { confirmed: true });
         }
     };
     
@@ -1535,7 +1574,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             return;
         }
         const nextStatus = userRole === 'Restricted' ? 'Pending' : 'Approved';
-        addTransaction({ ...transaction, status: nextStatus }); // This is async but we don't need to wait
+        addTransaction({ ...transaction, status: nextStatus }, { confirmed: true });
         triggerPageAction('Dashboard', `open-trade-modal:with-amount:${Math.abs(transaction.amount)}`);
     };
     
@@ -1550,13 +1589,17 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             updateRecurringTransaction({ ...recurringToEdit, ...r });
             setRecurringToEdit(null);
         } else {
-            addRecurringTransaction(r);
+            addRecurringTransaction(r, { confirmed: true });
         }
         setIsRecurringModalOpen(false);
     };
 
     const handleApplyRecurringForMonth = async () => {
         const [year, month] = filters.month.split('-').map(Number);
+        const activeRules = recurringList.filter((r) => r.enabled && !r.addManually).length;
+        const monthLabel = filters.month;
+        const ok = await confirmAction(summarizeApplyRecurringForConfirm(monthLabel, activeRules));
+        if (!ok) return;
         setApplyingRecurring(true);
         try {
             const { applied, skipped } = await applyRecurringForMonth(year, month);
@@ -1572,6 +1615,16 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
     const handleApplyOneRecurringForMonth = async (ruleId: string) => {
         const [year, month] = filters.month.split('-').map(Number);
+        const rule = recurringList.find((r) => r.id === ruleId);
+        const ok = await confirmAction({
+            title: 'Apply this recurring rule?',
+            message: `Create one transaction from "${rule?.description ?? 'this rule'}" for ${filters.month}?`,
+            confirmLabel: 'Apply',
+            details: rule
+                ? [`${rule.type} · ${rule.amount}`, `Day ${rule.dayOfMonth} of month`]
+                : [],
+        });
+        if (!ok) return;
         setApplyingRecurringRuleId(ruleId);
         try {
             const res = await applyRecurringRuleForMonth(ruleId, year, month);

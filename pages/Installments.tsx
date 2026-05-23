@@ -8,6 +8,8 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { buildInstallmentSchedule } from '../services/installments/installmentMath';
 import { encodeInstallmentPaymentNote } from '../services/installments/installmentLinkNote';
 import { financialMonthRange, financialMonthLabel, resolveMonthStartDayFromData } from '../utils/financialMonth';
+import { useConfirmAction } from '../hooks/useConfirmAction';
+import { summarizeInstallmentPaymentForConfirm } from '../utils/recordConfirmMessages';
 
 type InstallmentPlanRow = {
   id: string;
@@ -37,6 +39,7 @@ const InstallmentsPage: React.FC<{ setActivePage?: (p: any) => void }> = () => {
   const { data, addTransaction } = useContext(DataContext)!;
   const auth = useContext(AuthContext);
   const { formatCurrencyString } = useFormatCurrency();
+  const confirmAction = useConfirmAction();
   const [plans, setPlans] = useState<InstallmentPlanRow[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [installments, setInstallments] = useState<InstallmentRow[]>([]);
@@ -151,6 +154,16 @@ const InstallmentsPage: React.FC<{ setActivePage?: (p: any) => void }> = () => {
     if (!inst) return;
     if (!payForm.accountId) return;
     const amount = (Number(inst.amount_minor) || 0) / 100;
+    const acc = eligibleAccounts.find((a) => a.id === payForm.accountId);
+    const payOk = await confirmAction(
+      summarizeInstallmentPaymentForConfirm({
+        description: payForm.description.trim() || `${selectedPlanDescription} installment`,
+        amount: Math.abs(amount),
+        date: payForm.date,
+        accountName: acc?.name,
+      }),
+    );
+    if (!payOk) return;
     const note = encodeInstallmentPaymentNote(undefined, inst.id);
     await addTransaction({
       date: payForm.date,
@@ -163,7 +176,7 @@ const InstallmentsPage: React.FC<{ setActivePage?: (p: any) => void }> = () => {
       note,
       transactionNature: 'Fixed',
       expenseType: 'Core',
-    } as any);
+    } as any, { confirmed: true });
     setPayingId(null);
     // Reload installment rows so UI reflects PAID status (Budgets updates automatically via status filter).
     if (supabase && selectedPlanId) {
@@ -193,23 +206,65 @@ const InstallmentsPage: React.FC<{ setActivePage?: (p: any) => void }> = () => {
 
   const createBudgetOnlyInstallmentPlan = async () => {
     if (!supabase || !userId) return;
+    const total = Number(createForm.totalAmount);
+    const count = Math.trunc(Number(createForm.installmentCount));
+    if (!Number.isFinite(total) || total <= 0) {
+      setErr('Total amount must be a positive number.');
+      return;
+    }
+    if (!Number.isFinite(count) || count < 1 || count > 48) {
+      setErr('Installment count must be between 1 and 48.');
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(createForm.firstDueDate)) {
+      setErr('First due date must be YYYY-MM-DD.');
+      return;
+    }
+    if (
+      createForm.firstInstallmentAmount.trim() &&
+      (!Number.isFinite(Number(createForm.firstInstallmentAmount)) ||
+        Number(createForm.firstInstallmentAmount) <= 0)
+    ) {
+      setErr('First installment amount must be a positive number.');
+      return;
+    }
+    if (count > 1 && createForm.firstInstallmentAmount.trim()) {
+      const firstAmt = Number(createForm.firstInstallmentAmount);
+      if (firstAmt >= total) {
+        setErr('First installment must be less than the total when you have more than one payment.');
+        return;
+      }
+    }
     setErr(null);
+    const ok = await confirmAction({
+      title: 'Create installment plan?',
+      message: 'Save this installment schedule for budget tracking? No bank charge is recorded automatically.',
+      confirmLabel: 'Create plan',
+      details: [
+        createForm.description.trim() || 'Installment purchase',
+        `Total: ${total} ${createForm.currency}`,
+        `${count} installment(s), first due ${createForm.firstDueDate}`,
+      ],
+    });
+    if (!ok) return;
+
+    const totalMinor = BigInt(Math.round(total * 100));
+    const first = createForm.firstInstallmentAmount.trim()
+      ? BigInt(Math.round(Number(createForm.firstInstallmentAmount) * 100))
+      : null;
+    try {
+      buildInstallmentSchedule({
+        totalAmountMinor: totalMinor,
+        installmentCount: count,
+        firstInstallmentAmountMinor: first,
+      });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Invalid installment schedule.');
+      return;
+    }
+
     setCreating(true);
     try {
-      const total = Number(createForm.totalAmount);
-      if (!Number.isFinite(total) || total <= 0) throw new Error('Total amount must be a positive number.');
-      const count = Math.trunc(Number(createForm.installmentCount));
-      if (!Number.isFinite(count) || count < 1 || count > 48) throw new Error('Installment count must be between 1 and 48.');
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(createForm.firstDueDate)) throw new Error('First due date must be YYYY-MM-DD.');
-
-      const totalMinor = BigInt(Math.round(total * 100));
-      const first = createForm.firstInstallmentAmount.trim()
-        ? BigInt(Math.round(Number(createForm.firstInstallmentAmount) * 100))
-        : null;
-      if (createForm.firstInstallmentAmount.trim() && (!Number.isFinite(Number(createForm.firstInstallmentAmount)) || Number(createForm.firstInstallmentAmount) <= 0)) {
-        throw new Error('First installment amount must be a positive number.');
-      }
-
       const sched = buildInstallmentSchedule({
         totalAmountMinor: totalMinor,
         installmentCount: count,

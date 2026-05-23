@@ -23,6 +23,8 @@ import Combobox from '../components/Combobox';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import { resolveRecipientUserByEmail } from '../utils/shareRecipientLookup';
+import { useConfirmAction } from '../hooks/useConfirmAction';
+import { summarizeBudgetForConfirm } from '../utils/recordConfirmMessages';
 import { AuthContext } from '../context/AuthContext';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
@@ -86,7 +88,7 @@ import { learnAndAutoAdjust } from '../services/aiBudgetAutomation';
 import { getPersonalTransactions } from '../utils/wealthScope';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
-import { addMonthsToKey, financialMonthKey, financialMonthRangeFromKey } from '../utils/financialMonth';
+import { addMonthsToKey, financialMonthKey, financialMonthRangeFromKey, resolveMonthStartDayFromData } from '../utils/financialMonth';
 import AIAdvisor from '../components/AIAdvisor';
 import { dedupeSharedBudgetRows, makeSharedOwnerCategoryKey, normalizeSharedCategoryKey, normalizeSharedOwnerKey } from '../services/sharedBudgetKeys';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
@@ -263,6 +265,7 @@ interface BudgetModalProps {
 const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budgetToEdit, currentMonth, currentYear }) => {
     const { data } = useContext(DataContext)!;
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
+    const confirmAction = useConfirmAction();
     const [category, setCategory] = useState('');
     const [limit, setLimit] = useState('');
     const [limitPeriod, setLimitPeriod] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
@@ -298,13 +301,24 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         }
     }, [budgetToEdit, isOpen, getLearnedDefault]);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const rawLimit = parseFloat(limit) || 0;
         const isYearly = limitPeriod === 'Yearly';
         const period = isYearly ? 'yearly' : limitPeriod === 'Weekly' ? 'weekly' : limitPeriod === 'Daily' ? 'daily' : 'monthly';
         const month = budgetToEdit ? budgetToEdit.month : (isYearly ? 1 : currentMonth);
         const year = budgetToEdit ? budgetToEdit.year : currentYear;
+
+        const ok = await confirmAction(
+            summarizeBudgetForConfirm({
+                category,
+                limit: rawLimit,
+                month,
+                year,
+                isEdit: !!budgetToEdit,
+            }),
+        );
+        if (!ok) return;
 
         onSave({
             category,
@@ -426,11 +440,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const [historyCollapsed, setHistoryCollapsed] = useState(false);
     const HISTORY_PAGE_SIZE = 15;
 
-    const monthStartDay = useMemo(() => {
-        const raw = Number((data?.settings as any)?.monthStartDay ?? (data?.settings as any)?.month_start_day ?? 1);
-        if (!Number.isFinite(raw)) return 1;
-        return Math.min(31, Math.max(1, Math.round(raw)));
-    }, [data?.settings]);
+    const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data?.settings]);
 
     const [currentDate, setCurrentDate] = useState(new Date());
     const { year: currentYear, month: currentMonth } = useMemo(
@@ -460,6 +470,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
     const [sharedBudgets, setSharedBudgets] = useState<Array<Budget & { ownerEmail?: string }>>([]);
     const [shareTargetEmail, setShareTargetEmail] = useState('');
+    const [shareableUsers, setShareableUsers] = useState<Array<{ id: string; email: string }>>([]);
     const [shareCategory, setShareCategory] = useState('ALL');
     const [ownerSharedTransactions, setOwnerSharedTransactions] = useState<any[]>([]);
     const [mySharedBudgetTransactions, setMySharedBudgetTransactions] = useState<any[]>([]);
@@ -1022,6 +1033,20 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 const { data: sharedRows, error: sharedRowsError } = await sb
                     .rpc('get_shared_budgets_for_me')
                     .then((r) => r, () => ({ data: [] as any[], error: null } as any));
+
+                const { data: shareableUsersRows, error: shareableUsersError } = await sb.rpc('list_shareable_users');
+                if (shareableUsersError) {
+                    if (process.env.NODE_ENV === 'development') {
+                        console.warn('list_shareable_users failed:', shareableUsersError.message);
+                    }
+                    if (!cancelled) setShareableUsers([]);
+                } else if (!cancelled) {
+                    setShareableUsers(
+                        ((shareableUsersRows || []) as Array<{ id?: string; email?: string }>)
+                            .filter((u) => u?.id && u?.email)
+                            .map((u) => ({ id: String(u.id), email: String(u.email).toLowerCase() })),
+                    );
+                }
 
                 if (cancelled) return;
 
@@ -1892,7 +1917,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         if (isEditing && budgetToEdit) {
             updateBudget({ ...budgetToEdit, ...budget });
         } else {
-            addBudget(budget);
+            addBudget(budget, { confirmed: true });
         }
     };
 
@@ -3811,12 +3836,21 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Share with user email</label>
                                 <input
+                                    type="email"
+                                    list="budgets-shareable-users"
                                     value={shareTargetEmail}
                                     onChange={(e) => setShareTargetEmail(e.target.value)}
                                     placeholder="user@example.com"
                                     className="input-base"
                                     autoComplete="email"
                                 />
+                                {shareableUsers.length > 0 && (
+                                    <datalist id="budgets-shareable-users">
+                                        {shareableUsers.map((u) => (
+                                            <option key={u.id} value={u.email} />
+                                        ))}
+                                    </datalist>
+                                )}
                                 <p className="text-xs text-slate-500 mt-1">Enter the recipient&apos;s login email. They must already have a Finova account.</p>
                             </div>
                             <div>

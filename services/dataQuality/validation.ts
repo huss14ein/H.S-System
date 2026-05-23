@@ -175,7 +175,9 @@ export function validateTrade(input: {
     if (Number.isNaN(total) || total <= 0) errors.push('Dividend cash amount must be a positive number.');
     const sym = String(input.symbol ?? '').trim().toUpperCase();
     if (!sym || sym === 'CASH') errors.push('Symbol is required for dividend entries.');
-    if (input.date && String(input.date).trim() !== '' && !isValidYearRange(input.date)) {
+    const dateStr = String(input.date ?? '').trim();
+    if (!dateStr || dateStr.length < 10) errors.push('Dividend payment date is required.');
+    else if (!isValidYearRange(input.date)) {
       errors.push('Dividend date year must be between 1990 and 2100.');
     }
   } else {

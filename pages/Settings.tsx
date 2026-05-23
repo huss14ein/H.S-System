@@ -2,7 +2,7 @@ import React, { useContext, useState, useEffect, useMemo, useCallback, useRef } 
 import { DataContext } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { AuthContext } from '../context/AuthContext';
-import { RiskProfile, Page } from '../types';
+import { RiskProfile, Page, type Settings as AppSettings } from '../types';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import InfoHint from '../components/InfoHint';
@@ -46,7 +46,7 @@ import {
 import { computeWealthSummaryReportModel, computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { computeMaxAbsSleeveDriftPercent } from '../services/settingsDecisionPreview';
 import type { FinancialData } from '../types';
-import { financialMonthRange } from '../utils/financialMonth';
+import { financialMonthRange, resolveMonthStartDayFromData } from '../utils/financialMonth';
 import { isAutoNetWorthSnapshotEnabled, setAutoNetWorthSnapshotEnabled } from '../services/scheduledNetWorthSnapshot';
 
 /** Largest single holding as % of total managed holdings value (personal scope). */
@@ -119,8 +119,8 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         [localSettings?.driftThreshold]
     );
     const monthStartDaySetting = useMemo(
-        () => Math.min(31, Math.max(1, Math.round(Number((localSettings as any)?.monthStartDay ?? 1)))),
-        [(localSettings as any)?.monthStartDay]
+        () => resolveMonthStartDayFromData({ settings: localSettings as AppSettings }),
+        [localSettings]
     );
 
     const financialMonthPreview = useMemo(() => {

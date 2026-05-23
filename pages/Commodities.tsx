@@ -21,6 +21,8 @@ import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
 import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 import AIAdvisor from '../components/AIAdvisor';
+import { useConfirmAction } from '../hooks/useConfirmAction';
+import { summarizeCommodityForConfirm } from '../utils/recordConfirmMessages';
 
 const CommodityHoldingModal: React.FC<{
     isOpen: boolean;
@@ -30,6 +32,7 @@ const CommodityHoldingModal: React.FC<{
     sarPerUsd: number;
 }> = ({ isOpen, onClose, onSave, holdingToEdit, sarPerUsd }) => {
     const { formatCurrencyString } = useFormatCurrency();
+    const confirmAction = useConfirmAction();
     const [name, setName] = useState<CommodityHolding['name']>('Gold');
     const [quantity, setQuantity] = useState('');
     const [unit, setUnit] = useState<CommodityHolding['unit']>('gram');
@@ -151,6 +154,16 @@ const CommodityHoldingModal: React.FC<{
                 }
             }
             const holdingData = { ...holdingDataBase, currentValue: parsedCurrentValue };
+            const ok = await confirmAction(
+                summarizeCommodityForConfirm({
+                    name,
+                    quantity: parsedQuantity,
+                    unit,
+                    purchaseValue: parsedPurchaseValue,
+                    isEdit: !!holdingToEdit,
+                }),
+            );
+            if (!ok) return;
             if (holdingToEdit) await onSave({ ...holdingToEdit, ...holdingData });
             else await onSave(holdingData);
             onClose();
@@ -300,7 +313,7 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
         if ('id' in holding) {
             await updateCommodityHolding(holding);
         } else {
-            await addCommodityHolding(holding);
+            await addCommodityHolding(holding, { confirmed: true });
         }
     };
     const handleOpenCommodityDeleteModal = (holding: CommodityHolding) => { setCommodityToDelete(holding); };

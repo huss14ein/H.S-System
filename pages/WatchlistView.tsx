@@ -1136,7 +1136,9 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
             setAiWatchlistLoading(false);
         }
     }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
-    const handleSaveAlert = (symbol: string, targetPrice: number, currency: 'USD' | 'SAR') => { addPriceAlert({ symbol, targetPrice, currency }); };
+    const handleSaveAlert = (symbol: string, targetPrice: number, currency: 'USD' | 'SAR') => {
+        void addPriceAlert({ symbol, targetPrice, currency }, { confirmed: true });
+    };
     const handleDeleteAlert = (alertId: string) => { deletePriceAlert(alertId); };
 
     const handleCreateBucket = () => {
@@ -1510,7 +1512,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
             </div>
             </div>
 
-            <AddWatchlistItemModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onAdd={handleAddWatchlistItemWithBucket} onAddAlert={(sym, targetPrice, currency) => addPriceAlert({ symbol: sym, targetPrice, currency: currency ?? 'USD' })} />
+            <AddWatchlistItemModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onAdd={handleAddWatchlistItemWithBucket} onAddAlert={(sym, targetPrice, currency) => void addPriceAlert({ symbol: sym, targetPrice, currency: currency ?? 'USD' }, { confirmed: true })} />
             <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
             <PriceAlertModal isOpen={isAlertModalOpen} onClose={() => setIsAlertModalOpen(false)} onSave={handleSaveAlert} onDeleteAlert={handleDeleteAlert} stock={stockForAlert} existingAlerts={stockForAlert ? (data?.priceAlerts ?? []).filter(a => (a.symbol || '').toUpperCase() === (stockForAlert.symbol || '').toUpperCase()) : []} />
             <WatchlistResearchModal

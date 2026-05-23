@@ -24,13 +24,16 @@ import AIAdvisor from '../components/AIAdvisor';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 import { sortByNewestFirst } from '../utils/sortRecency';
+import { useConfirmAction } from '../hooks/useConfirmAction';
+import { summarizeZakatPaymentForConfirm } from '../utils/recordConfirmMessages';
 
 const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => void }> = ({ isOpen, onClose, onSave }) => {
+    const confirmAction = useConfirmAction();
     const [amount, setAmount] = useState('');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [notes, setNotes] = useState('');
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const amt = parseFloat(amount);
         if (!Number.isFinite(amt) || amt <= 0) {
@@ -41,6 +44,8 @@ const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave
             alert('Please provide a valid payment date.');
             return;
         }
+        const ok = await confirmAction(summarizeZakatPaymentForConfirm({ amount: amt, date, notes: notes.trim() }));
+        if (!ok) return;
         onSave({ amount: amt, date, notes: notes.trim() });
         setAmount('');
         setDate(new Date().toISOString().split('T')[0]);
@@ -568,7 +573,11 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                 buttonLabel="Get AI Zakat Insights"
             />
 
-            <ZakatPaymentModal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} onSave={addZakatPayment} />
+            <ZakatPaymentModal
+                isOpen={isPaymentModalOpen}
+                onClose={() => setIsPaymentModalOpen(false)}
+                onSave={(p) => void addZakatPayment(p, { confirmed: true })}
+            />
         </PageLayout>
     );
 };

@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, ReactNode 
 import { supabase } from '../services/supabaseClient';
 import { registerAiProxyAuth } from '../services/aiProxyAuth';
 import { approvalFlagsFromUserRow } from '../utils/userApproval';
+import { inferIsAdmin } from '../utils/role';
 import { User, Session, AuthError } from '@supabase/supabase-js';
 
 // Security configuration
@@ -630,6 +631,9 @@ interface AuthContextType {
   isSessionExpiring: boolean;
   timeUntilExpiry: number;
   refetchApprovalStatus: () => Promise<void>;
+  /** From `public.users.role` after profile sync (Settings governance, sharing). */
+  userRole: string | null;
+  isAdmin: boolean;
 }
 
 export const AuthContext = createContext<AuthContextType | null>(null);
@@ -640,6 +644,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [loading, setLoading] = useState(true);
     const [isApproved, setIsApproved] = useState<boolean | null>(null);
     const [isSignupRejected, setIsSignupRejected] = useState(false);
+    const [userRole, setUserRole] = useState<string | null>(null);
+    const [isAdmin, setIsAdmin] = useState(false);
     const [isEmailVerified, setIsEmailVerified] = useState(false);
     const [is2FAEnabled, setIs2FAEnabled] = useState(false);
     const [twoFactorMethod, setTwoFactorMethod] = useState<'email' | 'sms' | 'totp' | null>(null);
@@ -728,22 +734,29 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
     }, [supabase, session, user]);
 
-    const applyApprovalRow = useCallback((row: Record<string, unknown> | null) => {
+    const applyUserProfileRow = useCallback((row: Record<string, unknown> | null, authUser: User | null) => {
         const flags = approvalFlagsFromUserRow(row);
         if (!flags) {
             setIsApproved(false);
             setIsSignupRejected(false);
+            setUserRole(null);
+            setIsAdmin(false);
             return;
         }
         setIsApproved(flags.approved);
         setIsSignupRejected(flags.signupRejected);
+        const role = row ? String(row.role ?? '').trim() : '';
+        setUserRole(role || null);
+        setIsAdmin(inferIsAdmin(authUser, role || null));
     }, []);
 
     /** Never block auth init: if the query hangs or Netlify/RLS blocks REST, we time out and fail open (approved). */
-    const fetchApprovalStatus = useCallback(async (userId: string) => {
+    const fetchApprovalStatus = useCallback(async (userId: string, authUser: User | null) => {
         if (!supabase) {
             setIsApproved(true);
             setIsSignupRejected(false);
+            setUserRole('Admin');
+            setIsAdmin(true);
             return;
         }
         const client = supabase;
@@ -765,14 +778,26 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
             const result = await Promise.race([query, timeout]);
             if (result === null) {
-                setIsApproved(true);
-                setIsSignupRejected(false);
+                const row = await client.rpc('ensure_own_user_profile').maybeSingle();
+                if (row.data) {
+                    applyUserProfileRow(row.data as Record<string, unknown>, authUser);
+                } else {
+                    setIsApproved(true);
+                    setIsSignupRejected(false);
+                    setIsAdmin(inferIsAdmin(authUser, null));
+                }
                 return;
             }
             const { data, error } = result as { data: Record<string, unknown> | null; error: { message?: string } | null };
             if (error) {
-                setIsApproved(true);
-                setIsSignupRejected(false);
+                const row = await client.rpc('ensure_own_user_profile').maybeSingle();
+                if (row.data) {
+                    applyUserProfileRow(row.data as Record<string, unknown>, authUser);
+                } else {
+                    setIsApproved(true);
+                    setIsSignupRejected(false);
+                    setIsAdmin(inferIsAdmin(authUser, null));
+                }
                 return;
             }
 
@@ -786,11 +811,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             if (data == null) {
                 const row = await tryEnsureProfile();
                 if (row) {
-                    applyApprovalRow(row);
+                    applyUserProfileRow(row, authUser);
                     return;
                 }
                 setIsApproved(false);
                 setIsSignupRejected(false);
+                setUserRole(null);
+                setIsAdmin(false);
                 return;
             }
 
@@ -798,17 +825,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             if (initial && !initial.approved && !initial.signupRejected) {
                 const row = await tryEnsureProfile();
                 if (row) {
-                    applyApprovalRow(row);
+                    applyUserProfileRow(row, authUser);
                     return;
                 }
             }
 
-            applyApprovalRow(data);
+            applyUserProfileRow(data, authUser);
         } catch {
             setIsApproved(true);
             setIsSignupRejected(false);
+            setIsAdmin(inferIsAdmin(authUser, null));
         }
-    }, [applyApprovalRow]);
+    }, [applyUserProfileRow]);
 
     useEffect(() => {
         const currentSupabase = supabase;
@@ -820,6 +848,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setLoading(false);
             setIsApproved(true);
             setIsSignupRejected(false);
+            setUserRole('Admin');
+            setIsAdmin(true);
             return;
         }
     
@@ -830,16 +860,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 setUser(session?.user ?? null);
                 setIsEmailVerified(session?.user?.email_confirmed_at ? true : false);
                 if (session?.user?.id) {
-                    void fetchApprovalStatus(session.user.id);
+                    void fetchApprovalStatus(session.user.id, session.user);
                 } else {
                     setIsApproved(null);
                     setIsSignupRejected(false);
+                    setUserRole(null);
+                    setIsAdmin(false);
                 }
             } catch {
                 setSession(null);
                 setUser(null);
                 setIsApproved(null);
                 setIsSignupRejected(false);
+                setUserRole(null);
+                setIsAdmin(false);
             } finally {
                 setLoading(false);
             }
@@ -852,9 +886,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setUser(session?.user ?? null);
             setIsEmailVerified(session?.user?.email_confirmed_at ? true : false);
             if (session?.user?.id) {
-                void fetchApprovalStatus(session.user.id);
+                void fetchApprovalStatus(session.user.id, session.user);
             } else {
                 setIsApproved(null);
+                setUserRole(null);
+                setIsAdmin(false);
             }
             setLoading(false);
         });
@@ -1183,13 +1219,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
 
     const refetchApprovalStatus = useCallback(async () => {
-        if (user?.id) await fetchApprovalStatus(user.id);
-    }, [user?.id, fetchApprovalStatus]);
+        if (user?.id) await fetchApprovalStatus(user.id, user);
+    }, [user, fetchApprovalStatus]);
 
     const value = {
         isAuthenticated: !!user,
         isApproved,
         isSignupRejected,
+        userRole,
+        isAdmin,
         user,
         session,
         login,

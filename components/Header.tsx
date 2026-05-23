@@ -22,7 +22,7 @@ import { usePrivacyMask } from '../context/PrivacyContext';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
-import { financialMonthRange, financialMonthLabel, resolveMonthStartDayFromData, dateInRange } from '../utils/financialMonth';
+import { financialMonthRange, resolveMonthStartDayFromData, dateInRange } from '../utils/financialMonth';
 import { isSupportedPageAction } from '../utils/pageActions';
 import type { AppNotification } from '../context/NotificationsContext';
 import {
@@ -193,12 +193,6 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
     { name: 'System', items: ['Notifications', 'Settings', 'System & APIs Health'] }
   ], []);
 
-  const financialMonthLabelText = useMemo(() => {
-    if (!data) return '';
-    const msd = resolveMonthStartDayFromData(data);
-    return financialMonthLabel(financialMonthRange(new Date(), msd).key, msd);
-  }, [data]);
-
   const investmentProgress = useMemo(() => {
     if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0 };
     const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
@@ -308,8 +302,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
               title={investmentProgress.target > 0 ? `Invested ${investmentProgress.amount.toLocaleString()} of ${investmentProgress.target.toLocaleString()} this month` : 'Set monthly budget in Investments → Monthly Plan'}
             >
               <div className="flex items-center space-x-2 mb-1">
-                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest" title={financialMonthLabelText}>
-                  Monthly Plan · {financialMonthLabelText}
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                  Monthly Plan
                 </span>
                 <span className="text-xs font-bold text-primary">
                   {investmentProgress.target > 0 ? `${investmentProgress.percent.toFixed(0)}%` : '—'}

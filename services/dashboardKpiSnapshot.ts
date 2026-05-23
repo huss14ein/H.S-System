@@ -48,7 +48,7 @@ export function financialMonthNetCashflowSar(
 ): FinancialMonthCashflowSar {
   hydrateSarPerUsdDailySeries(data, uiExchangeRate);
   const now = new Date();
-  const monthStartDay = (data as any)?.settings?.monthStartDay ?? 1;
+  const monthStartDay = resolveMonthStartDayFromData(data);
   const currentRange = financialMonthRange(now, monthStartDay);
   const d = data as FinancialData & { personalTransactions?: Transaction[]; personalAccounts?: Account[] };
   const transactions = (d.personalTransactions ?? data.transactions ?? []) as Transaction[];
@@ -117,7 +117,7 @@ export function computeDashboardKpiSnapshot(
 
     const cf = financialMonthNetCashflowSar(data, exchangeRate);
     const { monthlyExpensesSar: monthlyExpenses, monthlyPnLSar: monthlyPnL, currentRange } = cf;
-    const monthStartDay = (data as any)?.settings?.monthStartDay ?? 1;
+    const monthStartDay = resolveMonthStartDayFromData(data);
     const prevKey: FinancialMonthKey = addMonthsToKey(currentRange.key, -1);
     /** Use `financialMonthRangeFromKey` — do not derive the period via `financialMonthRange(midCalendarDay)`; when `monthStartDay > 15`, a mid-month reference falls before the period start and maps to the wrong financial month. */
     const prevRange = financialMonthRangeFromKey(prevKey, monthStartDay);
@@ -237,7 +237,7 @@ export function computeDashboardValidationWarnings(
   const budgets = data.budgets ?? [];
   const accounts = (d.personalAccounts ?? data.accounts ?? []) as Account[];
   const now = new Date();
-  const monthStartDay = (data as any)?.settings?.monthStartDay ?? 1;
+  const monthStartDay = resolveMonthStartDayFromData(data);
   const { key } = financialMonthRange(now, monthStartDay);
   const month = key.month;
   const year = key.year;

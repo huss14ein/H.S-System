@@ -12,7 +12,7 @@ import {
   getPersonalLiabilities,
   getPersonalTransactions,
 } from '../utils/wealthScope';
-import { tradableCashBucketToSAR, resolveSarPerUsd, toSAR, fromSAR, availableTradableCashInLedgerCurrency, DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
+import { resolveSarPerUsd, toSAR, fromSAR, availableTradableCashInLedgerCurrency, DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
 import {
     inferInvestmentTransactionCurrency,
     ledgerCurrencyCashToInvestment,
@@ -24,6 +24,14 @@ import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolio
 import { auditChangeLog } from '../services/auditLog';
 import { toast } from './ToastContext';
 import { validateAccount, validateGoal, validateHolding, validateTrade, validateTransactionCore, validateSettings, validateBackup, validateLiability, validateCommodityHolding, validateBudget, validateAsset, validatePlannedTrade, validateUniverseTicker, validatePortfolio, validateRecurringTransaction, validatePriceAlert, validateZakatPayment, validateWatchlistItem, validateGoalAllocation, validateTickerStatus, validateInvestmentPlan, validateExecutionLog } from '../services/dataQuality/validation';
+import { assertDividendNotDuplicate, validateDividendRecordInput } from '../services/dividendLedgerGuards';
+import {
+    assertDividendUpdateNotDuplicate,
+    computeInvestmentTxCashDelta,
+    investmentTransactionToRow,
+    netBalanceDeltaForInvestmentTxUpdate,
+    validateDividendTransactionUpdate,
+} from '../services/investmentTransactionLedger';
 import { canPostTransactionToAccount } from '../services/dataQuality/accountPostingPolicy';
 import { parseSplitsFromNote } from '../services/transactionSplitNote';
 import { applyBuyToHolding, consolidateHoldingsBySymbol } from '../services/holdingMath';
@@ -35,7 +43,7 @@ import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
 import { deltaForInvestmentTrade } from '../services/investmentBalanceDelta';
 import { buildTransactionPayloadVariants } from '../services/transactionPayloadVariants';
 import { decodeInstallmentPaymentNote } from '../services/installments/installmentLinkNote';
-import { brokerCashBucketsFromInvestmentAccount } from '../services/investmentCashLedger';
+import { getTradableCashBucketsForAccount, sumTradableCashSarFromInvestmentAccounts } from '../services/investmentCashLedger';
 import { findCreditCardLiabilityForAccount } from '../services/creditCardLinking';
 import { normalizePlannedTradeRow, plannedTradeToDbInsert, plannedTradeToDbUpdate } from '../utils/plannedTradeDb';
 import {
@@ -48,13 +56,30 @@ import {
 import { sortByNewestFirst, sortPlannedTradesNewestFirst } from '../utils/sortRecency';
 import { normalizeWatchlistRow, watchlistToDbRow } from '../utils/watchlistDb';
 import { recomputeTrancheAfterFill } from '../services/plannedTradeTranches';
+import { guardRecordWrite, type RecordWriteOptions } from '../services/recordConfirmBridge';
+import {
+    summarizeBudgetForConfirm,
+    summarizeCommodityForConfirm,
+    summarizeGoalForConfirm,
+    summarizeInvestmentTradeForConfirm,
+    summarizeLiabilityForConfirm,
+    summarizePriceAlertForConfirm,
+    summarizeRecurringForConfirm,
+    summarizeTransactionForConfirm,
+    summarizeTransferForConfirm,
+    summarizeUpdateTransactionForConfirm,
+    summarizeWatchlistForConfirm,
+    summarizeZakatPaymentForConfirm,
+} from '../utils/recordConfirmMessages';
+
+export type { RecordWriteOptions };
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
     accounts: [], assets: [], liabilities: [], goals: [], transactions: [], recurringTransactions: [],
     investments: [], investmentTransactions: [], budgets: [], commodityHoldings: [], watchlist: [],
     sukukPayoutSchedules: [], sukukPayoutEvents: [],
-    settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275, monthStartDay: 1 },
+    settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275, monthStartDay: 28 },
     zakatPayments: [], priceAlerts: [], plannedTrades: [], notifications: [],
     investmentPlan: {
         monthlyBudget: 0, budgetCurrency: 'SAR', executionCurrency: 'USD', fxRateSource: 'GoogleFinance:CURRENCY:SARUSD',
@@ -89,26 +114,26 @@ interface DataContextType {
   loading: boolean;
   /** Force a reload from the backend (non-destructive). */
   refreshData: () => Promise<void>;
-  addAsset: (asset: Asset) => Promise<void>;
+  addAsset: (asset: Asset, opts?: RecordWriteOptions) => Promise<void>;
   updateAsset: (asset: Asset) => Promise<void>;
   deleteAsset: (assetId: string) => Promise<void>;
-  addGoal: (goal: Goal) => Promise<void>;
+  addGoal: (goal: Goal, opts?: RecordWriteOptions) => Promise<void>;
   updateGoal: (goal: Goal) => Promise<void>;
   deleteGoal: (goalId: string) => Promise<void>;
   updateGoalAllocations: (allocations: { id: string, savingsAllocationPercent: number }[]) => Promise<void>;
-  addLiability: (liability: Liability) => Promise<void>;
+  addLiability: (liability: Liability, opts?: RecordWriteOptions) => Promise<void>;
   updateLiability: (liability: Liability) => Promise<void>;
   deleteLiability: (liabilityId: string) => Promise<void>;
-  addBudget: (budget: Omit<Budget, 'id' | 'user_id'>) => Promise<void>;
+  addBudget: (budget: Omit<Budget, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<void>;
   updateBudget: (budget: Budget) => Promise<void>;
   deleteBudget: (category: string, month: number, year: number) => Promise<void>;
   copyBudgetsFromPreviousMonth: (targetYear: number, targetMonth: number) => Promise<void>;
-  addTransaction: (transaction: Omit<Transaction, 'id' | 'user_id'>) => Promise<void>;
-  updateTransaction: (transaction: Transaction) => Promise<void>;
+  addTransaction: (transaction: Omit<Transaction, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<void>;
+  updateTransaction: (transaction: Transaction, opts?: RecordWriteOptions) => Promise<void>;
   deleteTransaction: (transactionId: string) => Promise<void>;
   /** Create a transfer between two accounts (two transactions: out from fromAccountId, in to toAccountId). */
-  addTransfer: (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string, feeAmount?: number) => Promise<void>;
-  addRecurringTransaction: (recurring: Omit<RecurringTransaction, 'id' | 'user_id'>) => Promise<void>;
+  addTransfer: (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string, feeAmount?: number, opts?: RecordWriteOptions) => Promise<void>;
+  addRecurringTransaction: (recurring: Omit<RecurringTransaction, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<void>;
   updateRecurringTransaction: (recurring: RecurringTransaction) => Promise<void>;
   deleteRecurringTransaction: (id: string) => Promise<void>;
   /** `skipped` counts any rule where `applyRecurringRuleForMonth` returns `skipped: true` (not only duplicate-in-month). */
@@ -130,7 +155,7 @@ interface DataContextType {
   addHolding: (holding: Omit<Holding, 'id' | 'user_id'>) => Promise<void>;
   updateHolding: (holding: Holding) => Promise<void>;
   batchUpdateHoldingValues: (updates: { id: string; currentValue: number }[]) => void;
-  recordTrade: (trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number }, executedPlanId?: string) => Promise<{
+  recordTrade: (trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number }, executedPlanId?: string, opts?: RecordWriteOptions) => Promise<{
     insertedInvestmentTransactionId: string | null;
     insertedTradeTransactions: number;
     insertedCashLedgerRows: number;
@@ -138,21 +163,23 @@ interface DataContextType {
     cashDelta: number;
     positionDelta: number;
   }>;
-  addWatchlistItem: (item: WatchlistItem) => Promise<void>;
+  updateInvestmentTransaction: (tx: InvestmentTransaction, opts?: RecordWriteOptions) => Promise<void>;
+  deleteInvestmentTransaction: (transactionId: string, opts?: RecordWriteOptions) => Promise<void>;
+  addWatchlistItem: (item: WatchlistItem, opts?: RecordWriteOptions) => Promise<void>;
   updateWatchlistItem: (item: WatchlistItem) => Promise<void>;
   deleteWatchlistItem: (symbol: string) => Promise<void>;
-  addZakatPayment: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => Promise<void>;
-  addPriceAlert: (alert: Omit<PriceAlert, 'id' | 'user_id' | 'status' | 'createdAt'>) => Promise<void>;
+  addZakatPayment: (payment: Omit<ZakatPayment, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<void>;
+  addPriceAlert: (alert: Omit<PriceAlert, 'id' | 'user_id' | 'status' | 'createdAt'>, opts?: RecordWriteOptions) => Promise<void>;
   updatePriceAlert: (alert: PriceAlert) => Promise<void>;
   deletePriceAlert: (alertId: string) => Promise<void>;
-  addPlannedTrade: (plan: Omit<PlannedTrade, 'id' | 'user_id'>) => Promise<boolean>;
+  addPlannedTrade: (plan: Omit<PlannedTrade, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<boolean>;
   updatePlannedTrade: (plan: PlannedTrade) => Promise<boolean>;
   deletePlannedTrade: (planId: string) => Promise<void>;
   saveInvestmentPlan: (plan: InvestmentPlanSettings, portfolioId?: string) => Promise<void>;
   addUniverseTicker: (ticker: Omit<UniverseTicker, 'id' | 'user_id'>) => Promise<void>;
   updateUniverseTickerStatus: (tickerId: string, status: TickerStatus, updates?: Partial<UniverseTicker>) => Promise<void>;
   deleteUniverseTicker: (tickerId: string) => Promise<void>;
-  addCommodityHolding: (holding: Omit<CommodityHolding, 'id' | 'user_id'>) => Promise<void>;
+  addCommodityHolding: (holding: Omit<CommodityHolding, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<void>;
   updateCommodityHolding: (holding: CommodityHolding) => Promise<void>;
   deleteCommodityHolding: (holdingId: string) => Promise<void>;
   batchUpdateCommodityHoldingValues: (updates: { id: string; currentValue: number }[]) => Promise<void>;
@@ -184,7 +211,11 @@ function normalizeSettings(raw: any): Settings {
         driftThreshold: Number(raw.drift_threshold ?? raw.driftThreshold ?? initialData.settings.driftThreshold),
         enableEmails: Boolean(raw.enable_emails ?? raw.enableEmails ?? initialData.settings.enableEmails),
         goldPrice: Number(raw.gold_price ?? raw.goldPrice ?? initialData.settings.goldPrice),
-        monthStartDay: raw.month_start_day != null || raw.monthStartDay != null ? Number(raw.month_start_day ?? raw.monthStartDay) : (initialData.settings as any).monthStartDay,
+        monthStartDay: (() => {
+            const n = Number(raw.month_start_day ?? raw.monthStartDay ?? initialData.settings.monthStartDay);
+            if (!Number.isFinite(n)) return initialData.settings.monthStartDay ?? 28;
+            return Math.min(31, Math.max(1, Math.round(n)));
+        })(),
         nisabAmount: raw.nisab_amount != null || raw.nisabAmount != null ? Number(raw.nisab_amount ?? raw.nisabAmount) : undefined,
     };
 }
@@ -514,6 +545,23 @@ function holdingToRow(holding: Partial<Holding> & { quantity: number }): Record<
     } else {
         row.acquisition_date = null;
     }
+    if (holding.dividendYield != null && Number.isFinite(Number(holding.dividendYield))) {
+        row.dividend_yield = Number(holding.dividendYield);
+    }
+    if (holding.dividendDistribution === 'Reinvest' || holding.dividendDistribution === 'Payout') {
+        row.dividend_distribution = holding.dividendDistribution;
+    }
+    if (holding.expectedAnnualDividendSar != null && Number.isFinite(Number(holding.expectedAnnualDividendSar))) {
+        row.expected_annual_dividend_sar = roundMoney(Math.max(0, Number(holding.expectedAnnualDividendSar)));
+    } else if ((holding as any).expected_annual_dividend_sar === null) {
+        row.expected_annual_dividend_sar = null;
+    }
+    const cadence = holding.dividendPayoutCadence ?? (holding as any).dividend_payout_cadence;
+    if (cadence) row.dividend_payout_cadence = cadence;
+    const months = holding.typicalPayoutMonths ?? (holding as any).typical_payout_months;
+    if (Array.isArray(months) && months.length > 0) {
+        row.typical_payout_months = months.filter((m: number) => m >= 1 && m <= 12);
+    }
     return row;
 }
 
@@ -533,6 +581,12 @@ function normalizeHoldingFromRow(row: any): Holding {
         assetClass: row.asset_class ?? row.assetClass,
         goalId: row.goal_id ?? row.goalId,
         acquisitionDate: row.acquisition_date ?? row.acquisitionDate ?? undefined,
+        dividendDistribution: row.dividend_distribution ?? row.dividendDistribution,
+        dividendYield: row.dividend_yield != null ? Number(row.dividend_yield) : row.dividendYield,
+        expectedAnnualDividendSar:
+            row.expected_annual_dividend_sar != null ? Number(row.expected_annual_dividend_sar) : row.expectedAnnualDividendSar,
+        dividendPayoutCadence: row.dividend_payout_cadence ?? row.dividendPayoutCadence,
+        typicalPayoutMonths: Array.isArray(row.typical_payout_months) ? row.typical_payout_months : row.typicalPayoutMonths,
     };
 }
 
@@ -644,6 +698,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             realizedPnL: roundMoney(Number(holding.realizedPnL ?? holding.realized_pnl ?? 0)),
             dividendDistribution: holding.dividendDistribution ?? holding.dividend_distribution,
             dividendYield: holding.dividendYield ?? holding.dividend_yield,
+            expectedAnnualDividendSar:
+                holding.expectedAnnualDividendSar ?? holding.expected_annual_dividend_sar ?? undefined,
+            dividendPayoutCadence: holding.dividendPayoutCadence ?? holding.dividend_payout_cadence ?? undefined,
+            typicalPayoutMonths: Array.isArray(holding.typicalPayoutMonths)
+                ? holding.typicalPayoutMonths
+                : Array.isArray(holding.typical_payout_months)
+                  ? holding.typical_payout_months
+                  : undefined,
             zakahClass: holding.zakahClass ?? holding.zakah_class ?? 'Zakatable',
             acquisitionDate: holding.acquisitionDate ?? holding.acquisition_date,
         };
@@ -1258,7 +1320,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
 
     // --- Assets ---
-    const addAsset = async (asset: Asset) => {
+    const addAsset = async (asset: Asset, opts?: RecordWriteOptions) => {
         if(!supabase || !auth?.user) {
             toast("You must be logged in to add an asset.", 'error');
             return;
@@ -1272,6 +1334,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             maturityDate: sanitized.maturityDate,
         });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        const assetOk = await guardRecordWrite(opts, {
+            title: 'Add asset?',
+            message: 'Add this physical asset to your balance sheet?',
+            confirmLabel: 'Add',
+            details: [`${sanitized.name} (${sanitized.type})`, `Value: ${sanitized.value} SAR`],
+        });
+        if (!assetOk) return;
         const db = supabase;
         const { id: _omitId, user_id: _omitUid, issueDate, maturityDate, notes: notesForDb, ...insertRest } = sanitized;
         const dates = assetDatesForDb(sanitized);
@@ -1322,7 +1391,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Goals ---
-    const addGoal = async (goal: Goal) => {
+    const addGoal = async (goal: Goal, opts?: RecordWriteOptions) => {
         if(!supabase || !auth?.user) {
             toast("You must be logged in to add a goal.", 'error');
             return;
@@ -1332,6 +1401,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             toast(v.errors.join('\n'), 'error');
             return;
         }
+        const goalOk = await guardRecordWrite(opts, summarizeGoalForConfirm({
+            name: goal.name,
+            targetAmount: goal.targetAmount,
+            deadline: goal.deadline,
+        }));
+        if (!goalOk) return;
         const db = supabase;
         let newGoal: any = null;
         let error: any = null;
@@ -1411,10 +1486,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Liabilities ---
-    const addLiability = async (liability: Liability) => {
+    const addLiability = async (liability: Liability, opts?: RecordWriteOptions) => {
       if(!supabase || !auth?.user) return;
       const v = validateLiability({ name: liability.name, type: liability.type, amount: liability.amount, status: liability.status });
       if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+      const liabOk = await guardRecordWrite(opts, summarizeLiabilityForConfirm({
+        name: liability.name,
+        type: liability.type,
+        amount: Math.abs(liability.amount),
+      }));
+      if (!liabOk) return;
       const db = supabase;
       let newLiability: any = null;
       let lastErr: any = null;
@@ -1495,10 +1576,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Budgets ---
-    const addBudget = async (budget: Omit<Budget, 'id' | 'user_id'>) => {
+    const addBudget = async (budget: Omit<Budget, 'id' | 'user_id'>, opts?: RecordWriteOptions) => {
       if(!supabase) return;
       const v = validateBudget({ category: budget.category, month: budget.month, year: budget.year, limit: budget.limit, period: (budget as Budget).period });
       if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+      const budgetOk = await guardRecordWrite(opts, summarizeBudgetForConfirm({
+        category: budget.category,
+        limit: budget.limit,
+        month: budget.month,
+        year: budget.year,
+      }));
+      if (!budgetOk) return;
       const db = supabase;
       const payload: Record<string, unknown> = { ...withUser(budget) as Record<string, unknown> };
       if (budget.destinationAccountId != null) payload.destination_account_id = budget.destinationAccountId;
@@ -1747,7 +1835,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await up({ ...acc, balance: newBalance }, { fromTransactionDelta: true });
     };
 
-    const addTransaction = async (transaction: Omit<Transaction, 'id' | 'user_id'>) => {
+    const addTransaction = async (transaction: Omit<Transaction, 'id' | 'user_id'>, opts?: RecordWriteOptions) => {
         if(!supabase || !auth?.user) {
             toast("You must be logged in to add a transaction.", 'error');
             return;
@@ -1771,6 +1859,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             toast(postingPolicy.reason ?? 'Transaction blocked by account posting policy.', 'error');
             return;
         }
+        const txConfirm = summarizeTransactionForConfirm(
+            { ...transaction, id: 'new' } as Transaction,
+            postingAccount?.name,
+        );
+        const txOk = await guardRecordWrite(opts, txConfirm);
+        if (!txOk) return;
         const db = supabase;
         let newTx: any = null;
         let error: any = null;
@@ -1854,7 +1948,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
         }
     };
-    const addTransfer = async (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string, feeAmount?: number) => {
+    const addTransfer = async (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string, feeAmount?: number, opts?: RecordWriteOptions) => {
         if (!supabase || !auth?.user) return;
         const absAmount = Math.abs(Number(amount));
         const fee = Math.max(0, Number(feeAmount) || 0);
@@ -1886,6 +1980,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const fromName = fromAcc?.name ?? fromAccountId;
         const toName = toAcc?.name ?? toAccountId;
         const dateStr = date ?? new Date().toISOString().split('T')[0];
+        const fromCur = fromAcc?.currency === 'USD' ? 'USD' : 'SAR';
+        const transferOk = await guardRecordWrite(
+            opts,
+            summarizeTransferForConfirm({
+                amount: absAmount,
+                fromName,
+                toName,
+                fromCurrency: fromCur,
+                feeAmount: fee > 0 ? fee : undefined,
+                note: note?.trim() || undefined,
+            }),
+        );
+        if (!transferOk) return;
         const feeTag = fee > 0 ? ` (fee ${fee.toFixed(2)})` : '';
         const descOut = note ? `Transfer to ${toName}: ${note}${feeTag}` : `Transfer to ${toName}${feeTag}`;
         const descIn = note ? `Transfer from ${fromName}: ${note}` : `Transfer from ${fromName}`;
@@ -1916,7 +2023,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     price: 0,
                     linkedCashAccountId,
                     transferGroupId,
-                } as Parameters<typeof recordTrade>[0]);
+                } as Parameters<typeof recordTrade>[0], undefined, { system: true });
             } catch (e: unknown) {
                 const msg = e instanceof Error ? e.message : 'Transfer failed.';
                 toast(msg, 'error');
@@ -1932,7 +2039,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     category: 'Transfer',
                     transferGroupId,
                     transferRole: 'principal_out',
-                });
+                }, { system: true });
             }
             if (fee > 0) {
                 await addTransaction({
@@ -1944,7 +2051,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     category: 'Fee',
                     transferGroupId,
                     transferRole: 'fee',
-                });
+                }, { system: true });
             }
             return;
         }
@@ -1972,7 +2079,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     price: 0,
                     linkedCashAccountId,
                     transferGroupId,
-                } as Parameters<typeof recordTrade>[0]);
+                } as Parameters<typeof recordTrade>[0], undefined, { system: true });
             } catch (e: unknown) {
                 const msg = e instanceof Error ? e.message : 'Transfer failed.';
                 toast(msg, 'error');
@@ -1988,7 +2095,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     category: 'Transfer',
                     transferGroupId,
                     transferRole: 'principal_in',
-                });
+                }, { system: true });
             }
             if (fee > 0) {
                 const feeAccountId = linkedCashAccountId ?? fromAccountId;
@@ -2001,13 +2108,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     category: 'Fee',
                     transferGroupId,
                     transferRole: 'fee',
-                });
+                }, { system: true });
             }
             return;
         }
 
         const rate = resolveSarPerUsd(data ?? null, (data as any)?.investmentPlan?.fxRate);
-        const fromCur = fromAcc?.currency === 'USD' ? 'USD' : 'SAR';
         const toCur = toAcc?.currency === 'USD' ? 'USD' : 'SAR';
         const inboundAmount = fromCur === toCur ? absAmount : fromSAR(toSAR(absAmount, fromCur, rate), toCur, rate);
         const rpcPayload = {
@@ -2064,7 +2170,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             category: 'Transfer',
             transferGroupId,
             transferRole: 'principal_out',
-        });
+        }, { system: true });
         if (fee > 0) {
             await addTransaction({
                 date: dateStr,
@@ -2075,7 +2181,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 category: 'Fee',
                 transferGroupId,
                 transferRole: 'fee',
-            });
+            }, { system: true });
         }
         await addTransaction({
             date: dateStr,
@@ -2086,12 +2192,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             category: 'Transfer',
             transferGroupId,
             transferRole: 'principal_in',
-        });
+        }, { system: true });
     };
-    const updateTransaction = async (transaction: Transaction) => {
+    const updateTransaction = async (transaction: Transaction, opts?: RecordWriteOptions) => {
         if(!supabase || !auth?.user) return;
         const core = validateTransactionCore({ date: transaction.date, amount: transaction.amount, accountId: transaction.accountId, description: transaction.description });
         if (!core.valid) { toast(core.errors.join('\n'), 'error'); return; }
+        const postingAccount = (data?.accounts ?? []).find((a) => a.id === transaction.accountId);
+        const updateOk = await guardRecordWrite(opts, summarizeUpdateTransactionForConfirm(transaction, postingAccount?.name));
+        if (!updateOk) return;
         const db = supabase;
         let error: any = null;
         let savedWithoutNote = false;
@@ -2223,10 +2332,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Recurring transactions ---
-    const addRecurringTransaction = async (recurring: Omit<RecurringTransaction, 'id' | 'user_id'>) => {
+    const addRecurringTransaction = async (recurring: Omit<RecurringTransaction, 'id' | 'user_id'>, opts?: RecordWriteOptions) => {
         if (!supabase || !auth?.user) return;
         const v = validateRecurringTransaction({ description: recurring.description, amount: recurring.amount, type: recurring.type, accountId: recurring.accountId, category: recurring.category, dayOfMonth: recurring.dayOfMonth });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        const acc = (data?.accounts ?? []).find((a) => a.id === recurring.accountId);
+        const recOk = await guardRecordWrite(opts, summarizeRecurringForConfirm({
+            description: recurring.description,
+            amount: recurring.amount,
+            type: recurring.type,
+            dayOfMonth: recurring.dayOfMonth,
+            accountName: acc?.name,
+        }));
+        if (!recOk) return;
         const db = supabase;
         const row = {
             description: recurring.description,
@@ -2319,7 +2437,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 budgetCategory: rule.type === 'expense' ? rule.budgetCategory : undefined,
                 type: rule.type,
                 recurringId: rule.id,
-            });
+            }, { system: true });
             cashBalanceAccumulatorRef.current = {};
             return { applied: true, skipped: false };
         } catch (_) {
@@ -2390,7 +2508,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     budgetCategory: rule.type === 'expense' ? rule.budgetCategory : undefined,
                     type: rule.type,
                     recurringId: rule.id,
-                });
+                }, { system: true });
                 appliedThisRun.add(key);
                 applied++;
             } catch (err) {
@@ -2661,6 +2779,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const recordTrade = async (
         trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string, transferGroupId?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number },
         executedPlanId?: string,
+        opts?: RecordWriteOptions,
     ) => {
         if (!supabase || !auth?.user) {
             return {
@@ -2686,6 +2805,26 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
         if (!tradeVal.valid) {
             throw new Error(tradeVal.errors.join('\n'));
+        }
+
+        const portfolioForConfirm = (data?.investments ?? []).find((p) => p.id === trade.portfolioId);
+        const accountForConfirm = (data?.accounts ?? []).find((a) => a.id === trade.accountId);
+        const tradeOk = await guardRecordWrite(
+            opts,
+            summarizeInvestmentTradeForConfirm(trade, {
+                portfolioName: portfolioForConfirm?.name,
+                accountName: accountForConfirm?.name,
+            }),
+        );
+        if (!tradeOk) {
+            return {
+                insertedInvestmentTransactionId: null,
+                insertedTradeTransactions: 0,
+                insertedCashLedgerRows: 0,
+                recomputed: false,
+                cashDelta: 0,
+                positionDelta: 0,
+            };
         }
 
         tradeSubmissionInFlightRef.current = true;
@@ -2805,6 +2944,28 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         if (tradeData.type === 'dividend' && tradeTotal <= 0) {
             throw new Error('Dividend amount must be greater than zero.');
+        }
+        if (tradeData.type === 'dividend') {
+            const divExtra = validateDividendRecordInput({
+                symbol: normalizedSymbol,
+                date: trade.date,
+                total: tradeTotal,
+                portfolioId: portfolio?.id,
+                accountId: accountIdForInsert,
+            });
+            if (!divExtra.valid) {
+                throw new Error(divExtra.errors.join('\n'));
+            }
+            assertDividendNotDuplicate({
+                transactions: data?.investmentTransactions ?? [],
+                accounts: data?.accounts ?? [],
+                accountId: accountIdForInsert,
+                symbol: normalizedSymbol,
+                payDate: trade.date,
+                totalBook: tradeTotal,
+                bookCurrency: txCurrency,
+                portfolioId: portfolio?.id,
+            });
         }
         if ((tradeData.type === 'withdrawal' || tradeData.type === 'fee' || tradeData.type === 'vat') && tradeTotal > availableInTxCurrency + 1e-9) {
             throw new Error(
@@ -3162,11 +3323,108 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
+    const updateInvestmentTransaction = async (tx: InvestmentTransaction, opts?: RecordWriteOptions) => {
+        if (!supabase || !auth?.user) return;
+        const editOk = await guardRecordWrite(opts, {
+            title: 'Save dividend changes?',
+            message: 'Update this dividend in your investment ledger?',
+            confirmLabel: 'Save changes',
+            details: [`Symbol: ${tx.symbol}`, `Date: ${tx.date}`, `Amount: ${tx.total}`],
+        });
+        if (!editOk) return;
+        const existing = (data?.investmentTransactions ?? []).find((t) => t.id === tx.id);
+        if (!existing) throw new Error('Transaction not found.');
+        if (existing.type !== 'dividend' || tx.type !== 'dividend') {
+            throw new Error('Only dividend rows can be edited here. For buys/sells, adjust via Record Trade or holdings.');
+        }
+        const total = roundMoney(Math.max(0, Number(tx.total) || 0));
+        const book: 'USD' | 'SAR' = tx.currency === 'SAR' ? 'SAR' : 'USD';
+        const v = validateDividendTransactionUpdate({
+            symbol: tx.symbol,
+            date: tx.date,
+            total,
+            portfolioId: tx.portfolioId,
+            accountId: tx.accountId,
+        });
+        if (!v.valid) throw new Error(v.errors.join('\n'));
+        assertDividendUpdateNotDuplicate({
+            existingId: tx.id,
+            transactions: data?.investmentTransactions ?? [],
+            accounts: data?.accounts ?? [],
+            accountId: tx.accountId,
+            portfolioId: tx.portfolioId,
+            symbol: tx.symbol,
+            payDate: tx.date,
+            totalBook: total,
+            bookCurrency: book,
+        });
+        const row = investmentTransactionToRow({ ...tx, total, currency: book }, data ?? null);
+        const { error } = await supabase
+            .from('investment_transactions')
+            .update(row)
+            .match({ id: tx.id, user_id: auth.user.id });
+        if (error) {
+            console.error(error);
+            throw error;
+        }
+        const normalized: InvestmentTransaction = normalizeInvestmentTransaction({ ...existing, ...tx, total, currency: book });
+        const netDelta = netBalanceDeltaForInvestmentTxUpdate(existing, normalized);
+        setData((prev) => ({
+            ...prev,
+            investmentTransactions: prev.investmentTransactions.map((t) => (t.id === tx.id ? normalized : t)),
+        }));
+        const accountId = resolveCanonicalAccountId(tx.accountId, data?.accounts ?? []);
+        if (netDelta !== 0) {
+            await applyInvestmentAccountDeltaForTrade(accountId, netDelta);
+        }
+    };
+
+    const deleteInvestmentTransaction = async (transactionId: string, opts?: RecordWriteOptions) => {
+        if (!supabase || !auth?.user) return;
+        const existing = (data?.investmentTransactions ?? []).find((t) => t.id === transactionId);
+        const delOk = await guardRecordWrite(opts, {
+            title: 'Delete dividend?',
+            message: 'Remove this dividend from your ledger and reverse its cash impact?',
+            confirmLabel: 'Delete',
+            variant: 'danger',
+            details: existing ? [`Symbol: ${existing.symbol}`, `Date: ${existing.date}`] : [],
+        });
+        if (!delOk) return;
+        if (!existing) throw new Error('Transaction not found.');
+        if (existing.type !== 'dividend') {
+            throw new Error('Only dividend rows can be deleted here to protect buy/sell history. Contact support if you need to remove other trade types.');
+        }
+        const { error } = await supabase
+            .from('investment_transactions')
+            .delete()
+            .match({ id: transactionId, user_id: auth.user.id });
+        if (error) {
+            console.error(error);
+            throw error;
+        }
+        const reverseDelta = -computeInvestmentTxCashDelta(existing);
+        setData((prev) => ({
+            ...prev,
+            investmentTransactions: prev.investmentTransactions.filter((t) => t.id !== transactionId),
+        }));
+        const accountId = resolveCanonicalAccountId(existing.accountId, data?.accounts ?? []);
+        if (reverseDelta !== 0) {
+            await applyInvestmentAccountDeltaForTrade(accountId, reverseDelta);
+        }
+    };
+
     // --- Planned Trades ---
-    const addPlannedTrade = async (plan: Omit<PlannedTrade, 'id' | 'user_id'>): Promise<boolean> => {
+    const addPlannedTrade = async (plan: Omit<PlannedTrade, 'id' | 'user_id'>, opts?: RecordWriteOptions): Promise<boolean> => {
         if(!supabase) return false;
         const v = validatePlannedTrade({ symbol: plan.symbol, name: plan.name, tradeType: plan.tradeType, conditionType: plan.conditionType, targetValue: plan.targetValue, quantity: plan.quantity, amount: plan.amount, priority: plan.priority });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return false; }
+        const planOk = await guardRecordWrite(opts, {
+            title: 'Create investment plan?',
+            message: `Create planned ${plan.tradeType} for ${plan.symbol}? Execution still happens via Record Trade.`,
+            confirmLabel: 'Create',
+            details: [`${plan.tradeType.toUpperCase()} · ${plan.symbol}`, plan.amount != null ? `Amount: ${plan.amount}` : ''].filter(Boolean),
+        });
+        if (!planOk) return false;
         const { data: newPlan, error } = await supabase.from('planned_trades').insert(withUser(plannedTradeToDbInsert(plan))).select().single();
         if (error) { console.error(error); return false; }
         if (newPlan) { setData(prev => ({ ...prev, plannedTrades: [...prev.plannedTrades, normalizePlannedTradeRow(newPlan)] })); return true; }
@@ -3195,10 +3453,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Commodities --- (snake_case: purchase_value, current_value, zakah_class; name required)
-    const addCommodityHolding = async (holding: Omit<CommodityHolding, 'id' | 'user_id'>) => {
+    const addCommodityHolding = async (holding: Omit<CommodityHolding, 'id' | 'user_id'>, opts?: RecordWriteOptions) => {
         if (!supabase) return;
         const v = validateCommodityHolding({ name: holding.name, quantity: holding.quantity, purchaseValue: holding.purchaseValue, currentValue: holding.currentValue, symbol: holding.symbol });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        const commodityOk = await guardRecordWrite(opts, summarizeCommodityForConfirm({
+            name: holding.name,
+            quantity: holding.quantity,
+            unit: holding.unit,
+            purchaseValue: holding.purchaseValue,
+        }));
+        if (!commodityOk) return;
         const row = commodityHoldingToRow(holding);
         const { data: newHolding, error } = await supabase.from('commodity_holdings').insert(withUser(row)).select().single();
         if (error) {
@@ -3260,7 +3525,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
 
     // --- Watchlist, Alerts, Zakat, Settings ---
-    const addWatchlistItem = async (item: WatchlistItem) => {
+    const addWatchlistItem = async (item: WatchlistItem, opts?: RecordWriteOptions) => {
         if (!supabase || !auth?.user) {
             console.error('Supabase client not available or user not authenticated');
             toast('You must be logged in to manage your watchlist.', 'error');
@@ -3268,6 +3533,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         const v = validateWatchlistItem({ symbol: item.symbol });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        const watchOk = await guardRecordWrite(opts, summarizeWatchlistForConfirm({ symbol: item.symbol, name: item.name }));
+        if (!watchOk) return;
         const db = supabase;
         const symbol = String(item.symbol || '').trim().toUpperCase();
         if ((data?.watchlist ?? []).some((w) => String(w.symbol || '').trim().toUpperCase() === symbol)) {
@@ -3330,10 +3597,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await db.from('watchlist').delete().match({ user_id: auth.user.id, symbol });
         setData(prev => ({ ...prev, watchlist: prev.watchlist.filter(i => i.symbol !== symbol) }));
     };
-    const addPriceAlert = async (alert: Omit<PriceAlert, 'id' | 'status' | 'createdAt'>) => {
+    const addPriceAlert = async (alert: Omit<PriceAlert, 'id' | 'status' | 'createdAt'>, opts?: RecordWriteOptions) => {
         if(!supabase) return;
         const v = validatePriceAlert({ symbol: alert.symbol, targetPrice: alert.targetPrice });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        const alertOk = await guardRecordWrite(opts, summarizePriceAlertForConfirm({
+            symbol: alert.symbol,
+            targetPrice: alert.targetPrice,
+            currency: alert.currency ?? 'USD',
+        }));
+        if (!alertOk) return;
         const db = supabase;
         const createdAt = new Date().toISOString();
         const targetPrice = typeof alert.targetPrice === 'number' && Number.isFinite(alert.targetPrice) ? alert.targetPrice : parseFloat(String(alert.targetPrice)) || 0;
@@ -3362,10 +3635,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await db.from('price_alerts').delete().match({ id: alertId, user_id: auth.user.id });
         setData(prev => ({ ...prev, priceAlerts: prev.priceAlerts.filter(a => a.id !== alertId) }));
     };
-    const addZakatPayment = async (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => {
+    const addZakatPayment = async (payment: Omit<ZakatPayment, 'id' | 'user_id'>, opts?: RecordWriteOptions) => {
         if(!supabase) return;
         const v = validateZakatPayment({ date: payment.date, amount: payment.amount });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        const zakatOk = await guardRecordWrite(opts, summarizeZakatPaymentForConfirm({
+            amount: payment.amount,
+            date: payment.date,
+            notes: payment.notes,
+        }));
+        if (!zakatOk) return;
         const db = supabase;
         const { data: newPayment, error } = await db.from('zakat_payments').insert(withUser(payment)).select().single();
         if(error) console.error(error);
@@ -3390,7 +3669,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const row: Record<string, unknown> = { ...overrides, user_id: auth.user.id };
         /** Always persist when the user changes this field — `settingsOverridesToRow` omits values equal to app defaults, which would leave a stale DB value (e.g. reverting 25 → 1). */
         if ('monthStartDay' in settingsUpdate) {
-          const d = Math.min(31, Math.max(1, Math.round(Number(merged.monthStartDay ?? 1))));
+          const d = Math.min(31, Math.max(1, Math.round(Number(merged.monthStartDay ?? initialData.settings.monthStartDay ?? 28))));
           row.month_start_day = d;
           merged = { ...merged, monthStartDay: d };
         }
@@ -3550,10 +3829,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const getAvailableCashForAccount = useCallback((accountId: string): { SAR: number; USD: number } => {
-        const canonical = resolveCanonicalAccountId(accountId, data?.accounts ?? []) ?? accountId;
-        const acc = (data?.accounts ?? []).find((a) => a.id === canonical);
-        if (!acc || acc.type !== 'Investment') return { SAR: 0, USD: 0 };
-        return brokerCashBucketsFromInvestmentAccount(acc);
+        return getTradableCashBucketsForAccount(accountId, data?.accounts ?? []);
     }, [data?.accounts]);
 
     /**
@@ -3579,14 +3855,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return (d.personalAccounts ?? d.accounts ?? EMPTY_ACCOUNTS_FOR_DEPLOY) as Account[];
     }, [dataWithPersonal]);
 
+    /** Full account list for canonical ids + fresh Investment balances (scope may hold older object refs). */
+    const allAccountsForDeployableCanon = useMemo(
+        (): Account[] => (data?.accounts ?? EMPTY_ACCOUNTS_FOR_DEPLOY) as Account[],
+        [data?.accounts],
+    );
+
     const totalDeployableCash = useMemo(() => {
+        if (!data) return 0;
         const sarPerUsd = resolveSarPerUsd(data as FinancialData);
-        const platformCash = accountsForDeployable.filter((a: Account) => a.type === 'Investment').reduce((s: number, a: Account) => {
-            const cash = getAvailableCashForAccount(a.id);
-            return s + tradableCashBucketToSAR(cash, sarPerUsd);
-        }, 0);
-        return platformCash;
-    }, [accountsForDeployable, getAvailableCashForAccount, data]);
+        return sumTradableCashSarFromInvestmentAccounts(
+            accountsForDeployable.filter((a: Account) => a.type === 'Investment'),
+            allAccountsForDeployableCanon,
+            sarPerUsd,
+        );
+    }, [accountsForDeployable, allAccountsForDeployableCanon, data]);
 
     // Auto-heal legacy duplicate holdings (same portfolio + symbol) once per unique snapshot.
     useEffect(() => {
@@ -3632,7 +3915,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         })();
     }, [loading, auth?.user?.id, data.investments]);
 
-    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, updateWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, updateInvestmentTransaction, deleteInvestmentTransaction, addWatchlistItem, updateWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

@@ -36,7 +36,6 @@ import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, tradableCashBucketToSAR, resolveSarPerUsd, totalLiquidCashSARFromAccounts } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
 import { supabase } from '../services/supabaseClient';
-import { inferIsAdmin } from '../utils/role';
 import { pushNetWorthSnapshot, listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { subscriptionSpendMonthlySar } from '../services/transactionIntelligence';
 import InfoHint from '../components/InfoHint';
@@ -424,7 +423,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
     const emergencyFund = useEmergencyFund(data);
     const { maskBalance } = usePrivacyMask();
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
-    const [isAdmin, setIsAdmin] = useState(false);
     const lastTelemetrySignatureRef = React.useRef<string>('');
     const kpiDensity = 'compact' as const;
     const todosOpt = useTodosOptional();
@@ -451,18 +449,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             return acc;
         });
     }, [data, exchangeRate, getAvailableCashForAccount]);
-
-    useEffect(() => {
-        const loadRole = async () => {
-            if (!auth?.user || !supabase) {
-                setIsAdmin(false);
-                return;
-            }
-            const { data: userRecord } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
-            setIsAdmin(inferIsAdmin(auth.user, userRecord?.role ?? null));
-        };
-        loadRole();
-    }, [auth?.user?.id]);
 
     const investmentProgress = useMemo(() => {
         if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0, planCurrency: 'SAR' as const };
@@ -807,7 +793,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
     }, [summaryModelForReconciliation, summaryMonthlyKpisForReconciliation, kpiSummary, emergencyFund.monthsCovered]);
 
     const getTrendString = (trend: number = 0) => trend.toFixed(1) + '%';
-    const visibleKpiOrder: KpiCardKey[] = isAdmin ? KPI_CARD_ORDER : KPI_CARD_ORDER.filter((k) => k !== 'netWorth');
+    const visibleKpiOrder: KpiCardKey[] = KPI_CARD_ORDER;
     useEffect(() => {
         if (!kpiReconciliation || kpiReconciliation.ok) return;
         const day = new Date().toISOString().slice(0, 10);
@@ -1148,29 +1134,22 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             <AIFeed />
             
             
-            {isAdmin ? (
-                <div className="cards-grid grid grid-cols-1 lg:grid-cols-3 gap-4">
-                    <div className="lg:col-span-3 section-card flex flex-col min-h-[420px] overflow-hidden">
-                        <div className="flex-1 min-h-0">
-                            <NetWorthCockpit
-                                title="Net worth"
-                                onOpenSummary={() => setActivePage('Summary')}
-                                onOpenInvestments={() => setActivePage('Investments')}
-                                onOpenAccounts={() => setActivePage('Accounts')}
-                                onOpenAssets={() => setActivePage('Assets')}
-                                onOpenDataReconciliation={() => {
-                                    window.location.hash = 'data-reconciliation';
-                                }}
-                            />
-                        </div>
+            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div className="lg:col-span-3 section-card flex flex-col min-h-[420px] overflow-hidden">
+                    <div className="flex-1 min-h-0">
+                        <NetWorthCockpit
+                            title="Net worth"
+                            onOpenSummary={() => setActivePage('Summary')}
+                            onOpenInvestments={() => setActivePage('Investments')}
+                            onOpenAccounts={() => setActivePage('Accounts')}
+                            onOpenAssets={() => setActivePage('Assets')}
+                            onOpenDataReconciliation={() => {
+                                window.location.hash = 'data-reconciliation';
+                            }}
+                        />
                     </div>
                 </div>
-            ) : (
-                <div className="section-card border-l-4 border-amber-400">
-                    <h3 className="section-title text-base">Admin-only metric</h3>
-                    <p className="text-sm text-slate-600">Net worth visibility is restricted to Admin accounts. Your own budgets, transactions, and goals remain fully available.</p>
-                </div>
-            )}
+            </div>
 
             <div className="cards-grid grid grid-cols-1 gap-4">
                  <div className="section-card-hover flex flex-col min-h-[300px]" onClick={() => setActivePage('Transactions')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Transactions')}>

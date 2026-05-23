@@ -1,8 +1,10 @@
 import type { Account, InvestmentPortfolio, InvestmentTransaction } from '../types';
 import { fetchStockDividendHistory, type StockDividendPayment, getExchangeAndCurrencyForSymbol } from './finnhubService';
 import { resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
-import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
+import { buildDividendDedupeKey, dividendAlreadyRecorded } from './dividendLedgerGuards';
+
+export { dividendAlreadyRecorded } from './dividendLedgerGuards';
 import { fromSAR, toSAR } from '../utils/currencyMath';
 import { roundMoney } from '../utils/money';
 import { isUsEquityQuoteSymbol } from './marketQuoteRouting';
@@ -28,32 +30,6 @@ function toPortfolioBookAmount(
   const r = typeof sarPerUsdForDay === 'function' && dayKey ? sarPerUsdForDay(dayKey) : sarPerUsd;
   if (from === 'USD' && book === 'SAR') return roundMoney(toSAR(amount, 'USD', r));
   return roundMoney(fromSAR(amount, 'USD', r));
-}
-
-export function dividendAlreadyRecorded(args: {
-  transactions: InvestmentTransaction[];
-  accounts: Account[];
-  accountId: string;
-  symbol: string;
-  payDate: string;
-  totalBook: number;
-  bookCurrency: 'USD' | 'SAR';
-}): boolean {
-  const canon = resolveCanonicalAccountId(args.accountId, args.accounts);
-  const day = payDateKey(args.payDate);
-  const sym = args.symbol.trim().toUpperCase();
-  for (const t of args.transactions) {
-    if (t.type !== 'dividend') continue;
-    if ((t.symbol || '').trim().toUpperCase() !== sym) continue;
-    if (payDateKey(t.date) !== day) continue;
-    const tac = resolveCanonicalAccountId(t.accountId, args.accounts);
-    if (tac !== canon) continue;
-    const cur = t.currency === 'SAR' || t.currency === 'USD' ? t.currency : args.bookCurrency;
-    const a = getInvestmentTransactionCashAmount(t as any);
-    const b = args.totalBook;
-    if (cur === args.bookCurrency && Math.abs(a - b) < 0.05) return true;
-  }
-  return false;
 }
 
 function payDateKey(iso: string): string {
@@ -153,7 +129,17 @@ export async function syncFinnhubDividendsForHoldings(
         if (!(totalBook > 0)) continue;
 
         const canonAcc = resolveCanonicalAccountId(pos.accountId, params.accounts);
-        const runKey = `${canonAcc}|${symbol}|${payDateKey(pay.payDate)}|${book}|${totalBook.toFixed(4)}`;
+        const runKey = buildDividendDedupeKey(
+          {
+            portfolioId: pos.portfolioId,
+            accountId: pos.accountId,
+            symbol,
+            payDate: pay.payDate,
+            totalBook,
+            bookCurrency: book,
+          },
+          params.accounts,
+        );
         if (insertedThisRun.has(runKey)) {
           skipped += 1;
           continue;
@@ -167,6 +153,8 @@ export async function syncFinnhubDividendsForHoldings(
             payDate: pay.payDate,
             totalBook,
             bookCurrency: book,
+            portfolioId: pos.portfolioId,
+            pendingKeys: insertedThisRun,
           })
         ) {
           skipped += 1;
@@ -176,7 +164,7 @@ export async function syncFinnhubDividendsForHoldings(
         try {
           await params.recordDividend({
             portfolioId: pos.portfolioId,
-            accountId: pos.accountId,
+            accountId: canonAcc,
             symbol,
             date: pay.payDate,
             total: totalBook,

@@ -17,6 +17,7 @@ import { ReconciliationProvider } from '../context/ReconciliationContext';
 import { MultiBankProvider } from '../context/MultiBankContext';
 import { PrivacyProvider } from '../context/PrivacyContext';
 import { ToastProvider } from '../context/ToastContext';
+import { ConfirmActionProvider } from '../hooks/useConfirmAction';
 import { SelfLearningProvider } from '../context/SelfLearningContext';
 import { PAGE_DISPLAY_NAMES, INVESTMENT_SUB_NAV_PAGE_NAMES } from '../constants';
 /** Eager: avoids a second dynamic chunk fetch (often 404 after deploy when index.html is cached but hashed assets changed). */
@@ -178,6 +179,7 @@ const AuthenticatedAppShell: React.FC = () => {
 
   return (
     <ToastProvider>
+      <ConfirmActionProvider>
       <SelfLearningProvider>
         <AiProvider>
           <DataProvider>
@@ -219,6 +221,7 @@ const AuthenticatedAppShell: React.FC = () => {
           </DataProvider>
         </AiProvider>
       </SelfLearningProvider>
+      </ConfirmActionProvider>
     </ToastProvider>
   );
 };

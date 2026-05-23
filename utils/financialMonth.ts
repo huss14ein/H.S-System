@@ -1,5 +1,8 @@
 export type FinancialMonthKey = { year: number; month: number }; // month: 1-12
 
+/** App default when settings have no stored month start day (salary-cycle style). */
+export const DEFAULT_FINANCIAL_MONTH_START_DAY = 28;
+
 const ISO_DATE_PREFIX = /^(\d{4})-(\d{2})-(\d{2})/;
 
 /** Parse `YYYY-MM-DD` (or ISO datetime prefix) as local calendar midnight — not UTC. */
@@ -91,12 +94,14 @@ export function financialMonthRangeFromKey(key: FinancialMonthKey, monthStartDay
   return { start, end };
 }
 
-/** Read `monthStartDay` from settings (DB may use snake_case). */
+/** Read `monthStartDay` from settings (DB may use snake_case). Falls back to {@link DEFAULT_FINANCIAL_MONTH_START_DAY}. */
 export function resolveMonthStartDayFromData(
   data: { settings?: { monthStartDay?: number; month_start_day?: number } } | null | undefined,
 ): number {
-  const raw = Number(data?.settings?.monthStartDay ?? (data?.settings as { month_start_day?: number })?.month_start_day ?? 1);
-  return clampMonthStartDay(raw, 1);
+  const settings = data?.settings;
+  const stored = settings?.monthStartDay ?? (settings as { month_start_day?: number })?.month_start_day;
+  if (stored == null) return DEFAULT_FINANCIAL_MONTH_START_DAY;
+  return clampMonthStartDay(stored, DEFAULT_FINANCIAL_MONTH_START_DAY);
 }
 
 /** Plan / annual grid column index (0–11) for a transaction date within `planYear`. */

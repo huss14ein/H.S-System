@@ -359,7 +359,8 @@ function transactionsAttributedToPortfolioForKpis(args: {
  * Per-portfolio KPIs for one platform row: same ledger rules as {@link computePlatformCardMetrics}.
  *
  * - **Single portfolio** on the account: use the **full** platform transaction list + **pooled** tradable cash and
- *   **`net_capital`** basis so Invested / Withdrawn / ROI match the platform header (one book).
+ *   **`holdings_cost`** for unrealized P/L and ROI (matches each holdings row). **Invested** / **Withdrawn** still
+ *   come from the ledger; when deposits are sparse vs qty×avg cost, that is intentional.
  * - **Multiple portfolios**: rows use **positions-only cash** (`0` in metrics) but **split** account-level deposits &
  *   withdrawals without `portfolioId` across siblings by **holdings market value** weights; ROI/P&amp;L stay
  *   `holdings_cost` (per holdings table).
@@ -407,7 +408,7 @@ export function computePortfolioMetricsBundle(args: {
         availableCashByCurrency: accountAvailableCashByCurrency,
         simulatedPrices,
         platformCurrency: pc,
-        unrealizedPnLBasis: 'net_capital',
+        unrealizedPnLBasis: 'holdings_cost',
       }),
     );
     return { metricsByPortfolioId, allocatedCashByPortfolioId };
