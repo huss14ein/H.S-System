@@ -1255,7 +1255,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
     useEffect(() => {
         const loadPendingTransactions = async () => {
-            if (!supabase || userRole !== 'Admin') {
+            const userId = auth?.user?.id;
+            if (!supabase || !userId || userRole !== 'Admin') {
                 setAdminPendingTransactions([]);
                 setPendingLoadError(null);
                 return;
@@ -1267,6 +1268,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 return db
                     .from('transactions')
                     .select(selectClause)
+                    .eq('user_id', userId)
                     .in('status', ['Pending', 'pending'])
                     .order('date', { ascending: false });
             };
@@ -1598,21 +1600,29 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
 
     const ensurePendingStatusCleared = async (transactionId: string, nextStatus: 'Approved' | 'Rejected', rejectionReason?: string) => {
-        if (!supabase) return;
+        if (!supabase || !auth?.user?.id) return;
+        const uid = auth.user.id;
         const { data: verifyRow } = await supabase
             .from('transactions')
             .select('id, status')
             .eq('id', transactionId)
+            .eq('user_id', uid)
             .maybeSingle();
         const status = String((verifyRow as any)?.status || '').toLowerCase();
         if (status && status !== 'pending') return;
         const patch: Record<string, unknown> = { status: nextStatus };
         if (nextStatus === 'Rejected') patch.rejection_reason = rejectionReason || null;
-        await supabase.from('transactions').update(patch).eq('id', transactionId).in('status', ['Pending', 'pending']);
+        await supabase
+            .from('transactions')
+            .update(patch)
+            .eq('id', transactionId)
+            .eq('user_id', uid)
+            .in('status', ['Pending', 'pending']);
     };
 
     const persistPendingBudgetCategory = async (transactionId: string, budgetCategory: string | undefined) => {
-        if (!supabase) return;
+        if (!supabase || !auth?.user?.id) return;
+        const uid = auth.user.id;
         const normalizedBudget = String(budgetCategory ?? '').trim();
         const payloads = [{ budget_category: normalizedBudget || null }, { budgetCategory: normalizedBudget || null }];
         for (const payload of payloads) {
@@ -1620,6 +1630,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 .from('transactions')
                 .update(payload as any)
                 .eq('id', transactionId)
+                .eq('user_id', uid)
                 .in('status', ['Pending', 'pending']);
             if (!error) break;
         }
@@ -1629,7 +1640,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     };
 
     const reviewPendingTransaction = async (transactionId: string, status: 'Approved' | 'Rejected') => {
-        if (!supabase) return;
+        if (!supabase || !auth?.user?.id) return;
+        const uid = auth.user.id;
         const pendingRow = adminPendingTransactions.find((t) => String(t.id) === String(transactionId));
         const selectedBudget = String(pendingBudgetEdits[transactionId] ?? pendingRow?.budgetCategory ?? '').trim();
         if (status === 'Approved') {
@@ -1655,7 +1667,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
             if (approveError) {
                 // Backward-compatible fallback for environments where the new RPC isn't deployed yet.
-                const { error: statusError } = await supabase.from('transactions').update({ status }).eq('id', transactionId);
+                const { error: statusError } = await supabase
+                    .from('transactions')
+                    .update({ status })
+                    .eq('id', transactionId)
+                    .eq('user_id', uid);
                 if (statusError) {
                     // If transaction doesn't exist, remove from UI instead of showing error
                     if (statusError.message?.includes('not found') || statusError.code === 'PGRST116') {
@@ -1686,6 +1702,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 .from('transactions')
                 .select('*')
                 .eq('id', transactionId)
+                .eq('user_id', uid)
                 .maybeSingle();
             
             if (updatedTx) {
@@ -1748,7 +1765,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
             if (rejectError) {
                 // Backward-compatible fallback for environments where the new RPC isn't deployed yet
-                const { error: updateError } = await supabase.from('transactions').update({ status: 'Rejected', rejection_reason: rejectionReason || null }).eq('id', transactionId);
+                const { error: updateError } = await supabase
+                    .from('transactions')
+                    .update({ status: 'Rejected', rejection_reason: rejectionReason || null })
+                    .eq('id', transactionId)
+                    .eq('user_id', uid);
                 if (updateError) {
                     // If transaction doesn't exist, remove from UI instead of showing error
                     if (updateError.message?.includes('not found') || updateError.code === 'PGRST116') {

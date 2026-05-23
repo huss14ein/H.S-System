@@ -994,27 +994,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     console.warn('Sukuk auto-post skipped:', e);
                 }
             }
-            // Check if user is admin (has special email or role)
-            const isAdmin = auth.user.email?.toLowerCase().includes('admin') || 
-                           auth.user.email?.toLowerCase().includes('hussein') ||
-                           (auth.user.user_metadata?.role === 'admin');
-
-            // Admin: fetch only Pending transactions (for approval UI) and own budgets. Never fetch other users' investment_plan or planned_trades.
-            let allTransactionsData: any[] = [];
-            let allBudgetsData: any[] = [];
-            if (isAdmin && supabase) {
-                try {
-                    const [allTxResult, allBudgetsResult] = await Promise.allSettled([
-                        supabase.from('transactions').select('*').eq('status', 'Pending'),
-                        supabase.from('budgets').select('*')
-                    ]);
-                    allTransactionsData = (allTxResult.status === 'fulfilled' ? (allTxResult.value.data || []) : []) as any[];
-                    allBudgetsData = (allBudgetsResult.status === 'fulfilled' ? (allBudgetsResult.value.data || []) : []) as any[];
-                } catch (e) {
-                    console.error('Error fetching admin data:', e);
-                }
-            }
-
             const wuBase = getDefaultWealthUltraSystemConfig();
             let wealthUltraConfig = wuBase;
             if (supabase && auth.user) {
@@ -1124,8 +1103,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         created_at: r.created_at,
                     })),
                 ),
-                allTransactions: sortByNewestFirst(allTransactionsData.map(normalizeTransaction)),
-                allBudgets: allBudgetsData,
+                allTransactions: [],
+                allBudgets: [],
             });
 
         } catch (error) {

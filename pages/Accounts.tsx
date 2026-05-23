@@ -4,6 +4,7 @@ import { AuthContext } from '../context/AuthContext';
 import { Account, AccountRole, Page } from '../types';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
+import { resolveRecipientUserByEmail } from '../utils/shareRecipientLookup';
 
 interface AccountsProps {
     setActivePage?: (page: Page) => void;
@@ -351,7 +352,6 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const [accountToEdit, setAccountToEdit] = useState<Account | null>(null);
     const [itemToDelete, setItemToDelete] = useState<Account | null>(null);
     const [isAdmin, setIsAdmin] = useState(false);
-    const [shareableUsers, setShareableUsers] = useState<Array<{ id: string; email: string }>>([]);
     const [shareTargetEmail, setShareTargetEmail] = useState('');
     const [shareAccountId, setShareAccountId] = useState('');
     const [shareShowBalance, setShareShowBalance] = useState(true);
@@ -413,15 +413,6 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 show_balance: r.show_balance !== undefined ? r.show_balance : true,
             })).filter((r) => !!r.id));
 
-            if (admin) {
-                const { data: users, error } = await supabase.rpc('list_shareable_users');
-                if (!error) {
-                    const options = (Array.isArray(users) ? users : [])
-                        .filter((u: any) => u?.id && u?.email && u.id !== auth.user?.id)
-                        .map((u: any) => ({ id: String(u.id), email: String(u.email).toLowerCase() }));
-                    setShareableUsers(options);
-                }
-            }
         };
         loadSharingState();
     }, [auth?.user?.id, data?.accounts?.length]);
@@ -660,9 +651,9 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
 
     const handleShareAccount = async () => {
         if (!supabase || !auth?.user?.id || !shareAccountId || !shareTargetEmail) return;
-        const target = shareableUsers.find((u) => u.email === shareTargetEmail.toLowerCase());
-        if (!target) {
-            setShareError('Select a valid user to share with.');
+        const { data: target, error: lookupErr } = await resolveRecipientUserByEmail(shareTargetEmail);
+        if (lookupErr || !target) {
+            setShareError(lookupErr?.message ?? 'Enter a valid recipient email.');
             setShareSuccess(null);
             return;
         }
@@ -922,10 +913,14 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 mb-1.5">User email</label>
-                                <select value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} className="select-base w-full">
-                                    <option value="">Select user</option>
-                                    {shareableUsers.map((u) => <option key={u.id} value={u.email}>{u.email}</option>)}
-                                </select>
+                                <input
+                                    type="email"
+                                    value={shareTargetEmail}
+                                    onChange={(e) => setShareTargetEmail(e.target.value)}
+                                    placeholder="user@example.com"
+                                    className="input-base w-full"
+                                    autoComplete="email"
+                                />
                             </div>
                         </div>
                         <div className="flex items-center gap-3 pt-1">

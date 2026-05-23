@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { registerAiProxyAuth } from '../services/aiProxyAuth';
+import { approvalFlagsFromUserRow } from '../utils/userApproval';
 import { User, Session, AuthError } from '@supabase/supabase-js';
 
 // Security configuration
@@ -633,21 +634,6 @@ interface AuthContextType {
 
 export const AuthContext = createContext<AuthContextType | null>(null);
 
-/** Map `public.users` row → app access flags. Legacy DB without `approved` → allow access. */
-function approvalFlagsFromUserRow(data: Record<string, unknown> | null): {
-  approved: boolean;
-  signupRejected: boolean;
-} | null {
-  if (data == null) return null;
-  const hasApprovedKey = Object.prototype.hasOwnProperty.call(data, 'approved');
-  const raw = data.approved;
-  const approved =
-    !hasApprovedKey ? true : raw === null || raw === undefined ? true : Boolean(raw);
-  const hasRejKey = Object.prototype.hasOwnProperty.call(data, 'signup_rejected');
-  const signupRejected = approved ? false : hasRejKey && Boolean(data.signup_rejected);
-  return { approved, signupRejected };
-}
-
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [user, setUser] = useState<User | null>(null);
     const [session, setSession] = useState<Session | null>(null);
@@ -763,6 +749,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         const client = supabase;
         const APPROVAL_FETCH_MS = 8000;
         try {
+            await client.rpc('ensure_own_user_profile').maybeSingle();
+
             // Use select() without a column list so Postgres returns all existing columns.
             // If `approved` was never migrated, .select('approved') errors with 42703.
             const query = client

@@ -22,6 +22,7 @@ import { LinkIcon } from '../components/icons/LinkIcon';
 import Combobox from '../components/Combobox';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
+import { resolveRecipientUserByEmail } from '../utils/shareRecipientLookup';
 import { AuthContext } from '../context/AuthContext';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
@@ -250,22 +251,6 @@ async function fetchSharedConsumedMap(
     return map;
 }
 
-const resolveRecipientUserByEmail = async (email: string) => {
-    if (!supabase) return { data: null as { id: string; email: string | null } | null, error: { message: 'Supabase client is unavailable.' } as { message: string } | null };
-
-    const rpcLookup = await supabase.rpc('find_user_by_email', { target_email: email });
-    const rpcRow = Array.isArray(rpcLookup.data) ? rpcLookup.data[0] : rpcLookup.data;
-    if (rpcRow?.id) {
-        return { data: { id: rpcRow.id as string, email: (rpcRow.email as string | null) ?? email }, error: null };
-    }
-
-    const baseMessage = rpcLookup.error?.message || 'Recipient user not found.';
-    const normalizedMessage = /column\s+users\.email\s+does not exist/i.test(baseMessage)
-        ? 'Recipient lookup is using an outdated SQL helper. Re-run docs/budget_sharing_ready.sql to install the latest find_user_by_email function.'
-        : baseMessage;
-
-    return { data: null, error: { message: normalizedMessage } };
-};
 interface BudgetModalProps {
     isOpen: boolean;
     onClose: () => void;
@@ -475,8 +460,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
     const [sharedBudgets, setSharedBudgets] = useState<Array<Budget & { ownerEmail?: string }>>([]);
     const [shareTargetEmail, setShareTargetEmail] = useState('');
-    const [shareableUsers, setShareableUsers] = useState<Array<{ id: string; email: string }>>([]);
-    const [shareUsersLoadError, setShareUsersLoadError] = useState<string | null>(null);
     const [shareCategory, setShareCategory] = useState('ALL');
     const [ownerSharedTransactions, setOwnerSharedTransactions] = useState<any[]>([]);
     const [mySharedBudgetTransactions, setMySharedBudgetTransactions] = useState<any[]>([]);
@@ -1030,6 +1013,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     const { data: requests } = await sb
                         .from('budget_requests')
                         .select('*')
+                        .eq('user_id', user.id)
                         .order('created_at', { ascending: false });
                     if (cancelled) return;
                     setBudgetRequests(requests || []);
@@ -1110,33 +1094,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         };
     }, [auth?.user?.id, dataResetKey, budgetSpendWindows, budgetView, currentDate, currentYear, currentMonth, monthStartDay]);
 
-
-    React.useEffect(() => {
-        const loadShareableUsers = async () => {
-        if (!supabase || !auth?.user?.id || !isAdmin) {
-            setShareableUsers([]);
-            setShareUsersLoadError(null);
-            return;
-            }
-
-            const { data: users, error } = await supabase.rpc('list_shareable_users');
-            if (error) {
-                const message = (error.message || '').trim();
-                const normalized = /list_shareable_users|function\s+public\.list_shareable_users/i.test(message)
-                    ? 'Shareable users list is unavailable. Run docs/budget_sharing_ready.sql to install list_shareable_users (Admin-only).'
-                    : message || 'Unable to load users list.';
-                setShareUsersLoadError(normalized);
-                setShareableUsers([]);
-                return;
-            }
-
-            const rows = (Array.isArray(users) ? users : []).filter((row: any) => row?.id && row?.email);
-            setShareableUsers(rows.map((row: any) => ({ id: String(row.id), email: String(row.email).toLowerCase() })));
-            setShareUsersLoadError(null);
-        };
-
-        loadShareableUsers();
-    }, [auth?.user?.id, isAdmin]);
 
     const budgetData = useMemo<BudgetRow[]>(() => {
         const spending = new Map<string, number>();
@@ -3853,15 +3810,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Share with user email</label>
-                                <select value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} className="select-base">
-                                    <option value="">Select a signed-up user…</option>
-                                    {shareableUsers.map((u) => (
-                                        <option key={u.id} value={u.email}>{u.email}</option>
-                                    ))}
-                                </select>
-                                <p className="text-xs text-slate-500 mt-1">Or type manually if a user is not listed.</p>
-                                <input value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} placeholder="user@example.com" className="input-base mt-2" />
-                                {shareUsersLoadError && <p className="text-xs text-amber-700 mt-1">{shareUsersLoadError}</p>}
+                                <input
+                                    value={shareTargetEmail}
+                                    onChange={(e) => setShareTargetEmail(e.target.value)}
+                                    placeholder="user@example.com"
+                                    className="input-base"
+                                    autoComplete="email"
+                                />
+                                <p className="text-xs text-slate-500 mt-1">Enter the recipient&apos;s login email. They must already have a Finova account.</p>
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Category scope</label>

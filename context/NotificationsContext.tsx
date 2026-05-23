@@ -110,12 +110,19 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       const { data: userRow } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
       const adminStatus = String((userRow as any)?.role || '').toLowerCase() === 'admin';
       if (alive) setIsAdmin(adminStatus);
-      let query = supabase.from('budget_requests').select('id', { count: 'exact', head: true }).eq('status', 'Pending');
-      if (!adminStatus) query = query.eq('user_id', auth.user.id);
+      const query = supabase
+        .from('budget_requests')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'Pending')
+        .eq('user_id', auth.user.id);
       const { count } = await query;
       if (alive) setPendingBudgetRequestCount(Number(count || 0));
       if (adminStatus) {
-        const txRes = await supabase.from('budget_shared_transactions').select('id', { count: 'exact', head: true }).eq('status', 'Pending');
+        const txRes = await supabase
+          .from('budget_shared_transactions')
+          .select('id', { count: 'exact', head: true })
+          .eq('owner_user_id', auth.user.id)
+          .eq('status', 'Pending');
         if (alive) setPendingTransactionApprovalCount(Number((txRes as any).count ?? 0));
       } else if (alive) setPendingTransactionApprovalCount(0);
     };

@@ -42,7 +42,7 @@ set role = 'Admin', approved = true
 where email = 'your-admin@example.com';
 ```
 
-Run **`migrations/20260523120000_ensure_user_profile_bootstrap.sql`** if you see **Account Pending Approval** after login but you are the project owner (missing `public.users` row, `approved` is NULL, or no approved Admin exists yet). It backfills auth users, fixes NULL `approved`, and adds **`ensure_own_user_profile()`** (the app calls this on login when needed).
+Run **`migrations/20260523140000_strict_user_data_isolation.sql`** so each user only reads their own financial rows (shared budgets/accounts still use the share RPCs). Run **`migrations/20260523120000_ensure_user_profile_bootstrap.sql`** if you see **Account Pending Approval** after login but you are the project owner (missing `public.users` row, `approved` is NULL, or no approved Admin exists yet). It backfills auth users, fixes NULL `approved`, and adds **`ensure_own_user_profile()`** (the app calls this on login when needed).
 
 Optionally run **`migrations/add_users_approved_metadata.sql`** afterward for a column comment and a partial index on pending rows.
 
@@ -71,6 +71,7 @@ Optionally run **`migrations/add_users_approved_metadata.sql`** afterward for a 
 | `migrations/add_owner_column_wealth_segmentation.sql` | `owner` on accounts, assets, liabilities, commodities, portfolios. |
 | `migrations/add_user_approval.sql` | See **[Approve signups](#approve-signups-settings--admin-pending-users)** above. |
 | `migrations/20260523120000_ensure_user_profile_bootstrap.sql` | Backfill `public.users` from `auth.users`; bootstrap first Admin when none approved. |
+| `migrations/20260523140000_strict_user_data_isolation.sql` | Scope admin pending-tx RPCs to `auth.uid()`; RLS on journal/thesis/snapshots; own-row `budget_requests`. |
 | `migrations/add_users_approved_metadata.sql` | Comment + index for `users.approved` (after `add_user_approval.sql`). |
 | `migrations/add_assets_sukuk_dates.sql` | `assets.issue_date`, `assets.maturity_date` for Sukuk. |
 | `add_timestamps_all_tables.sql` | Add `created_at` and `updated_at` to all app tables; backfill existing rows. |
