@@ -94,6 +94,43 @@ export function sumTradableCashSarFromInvestmentAccounts(
   return sum;
 }
 
+export type InvestableCashBarRow = { accountId: string; label: string; sar: number };
+
+/**
+ * Per-platform investable cash bars (Dashboard cockpit, Accounts) — same dedupe + balance lookup as
+ * {@link sumTradableCashSarFromInvestmentAccounts}.
+ */
+export function buildInvestableCashBarsFromInvestmentAccounts(
+  scopeAccounts: Account[],
+  allAccounts: Account[],
+  sarPerUsd: number,
+  options?: { maxBars?: number; labelMaxLen?: number },
+): InvestableCashBarRow[] {
+  const allForCanon = allAccounts.length ? allAccounts : scopeAccounts;
+  const merged = new Map<string, InvestableCashBarRow>();
+  const labelMaxLen = options?.labelMaxLen ?? 14;
+
+  for (const acc of scopeAccounts) {
+    if (acc.type !== 'Investment') continue;
+    const row = allForCanon.find((a) => a.id === acc.id) ?? acc;
+    const id = resolveCanonicalAccountId(row.id, allForCanon) ?? row.id;
+    if (!id) continue;
+    const sar = Math.max(0, tradableCashBucketToSAR(brokerCashBucketsFromInvestmentAccount(row), sarPerUsd));
+    const next: InvestableCashBarRow = {
+      accountId: id,
+      label: (row.name || 'Platform').slice(0, labelMaxLen),
+      sar,
+    };
+    const prev = merged.get(id);
+    if (!prev || next.sar > prev.sar) merged.set(id, next);
+  }
+
+  return [...merged.values()]
+    .filter((r) => r.sar > 0.5)
+    .sort((a, b) => b.sar - a.sar)
+    .slice(0, options?.maxBars ?? 8);
+}
+
 /** Replay of investment transactions into SAR/USD buckets (reconciliation / audits — not primary available cash). */
 export function computeAvailableCashByAccountMap(args: {
   accounts: Account[];

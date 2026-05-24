@@ -602,12 +602,10 @@ export function computePersonalPlatformCardRow(
   });
 }
 
-export function computePersonalCommoditiesContributionSAR(
-  data: FinancialData,
-  _sarPerUsd: number,
+export function computeCommodityHoldingsContributionSAR(
+  commodities: Array<{ symbol?: string; quantity?: number; currentValue?: number }>,
   simulatedPrices: SimulatedPriceMap,
 ): { valueSAR: number; dailyDeltaSAR: number } {
-  const commodities = getPersonalCommodityHoldings(data);
   let valueSAR = 0;
   let dailyDeltaSAR = 0;
   for (const ch of commodities) {
@@ -627,14 +625,21 @@ export function computePersonalCommoditiesContributionSAR(
   return { valueSAR, dailyDeltaSAR };
 }
 
-/** Sum of all personal investment platforms (holdings + tradable cash per platform). Excludes commodities. */
-export function computePersonalPlatformsRollupSAR(
+export function computePersonalCommoditiesContributionSAR(
   data: FinancialData,
+  _sarPerUsd: number,
+  simulatedPrices: SimulatedPriceMap,
+): { valueSAR: number; dailyDeltaSAR: number } {
+  return computeCommodityHoldingsContributionSAR(getPersonalCommodityHoldings(data), simulatedPrices);
+}
+
+function rollupPlatformsSAR(
+  data: FinancialData,
+  invAccounts: Account[],
   sarPerUsd: number,
   simulatedPrices: SimulatedPriceMap,
   getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number },
 ): { subtotalSAR: number; dailyPnLSAR: number } {
-  const invAccounts = getPersonalAccounts(data).filter((a) => a.type === 'Investment');
   let subtotalSAR = 0;
   let dailyPnLSAR = 0;
   for (const account of invAccounts) {
@@ -647,4 +652,36 @@ export function computePersonalPlatformsRollupSAR(
     dailyPnLSAR += m.dailyPnLSAR;
   }
   return { subtotalSAR, dailyPnLSAR };
+}
+
+/** Sum of all personal investment platforms (holdings + tradable cash per platform). Excludes commodities. */
+export function computePersonalPlatformsRollupSAR(
+  data: FinancialData,
+  sarPerUsd: number,
+  simulatedPrices: SimulatedPriceMap,
+  getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number },
+): { subtotalSAR: number; dailyPnLSAR: number } {
+  return rollupPlatformsSAR(
+    data,
+    getPersonalAccounts(data).filter((a) => a.type === 'Investment'),
+    sarPerUsd,
+    simulatedPrices,
+    getAvailableCashForAccount,
+  );
+}
+
+/** Household-inclusive platform rollup (Analysis full-ledger charts). */
+export function computeAllPlatformsRollupSAR(
+  data: FinancialData,
+  sarPerUsd: number,
+  simulatedPrices: SimulatedPriceMap,
+  getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number },
+): { subtotalSAR: number; dailyPnLSAR: number } {
+  return rollupPlatformsSAR(
+    data,
+    (data.accounts ?? []).filter((a) => a.type === 'Investment'),
+    sarPerUsd,
+    simulatedPrices,
+    getAvailableCashForAccount,
+  );
 }

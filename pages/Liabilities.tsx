@@ -24,6 +24,7 @@ import { countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { debtPayoffPlan, debtStressScore } from '../services/debtEngines';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { useCurrency } from '../context/CurrencyContext';
+import { useMarketData } from '../context/MarketDataContext';
 import { computePersonalNetWorthBreakdownSAR } from '../services/personalNetWorth';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import { getCreditCardLinkedAccountIds } from '../services/creditCardLinking';
@@ -325,6 +326,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     const { data, loading, addLiability, updateLiability, getAvailableCashForAccount } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { exchangeRate } = useCurrency();
+    const { simulatedPrices } = useMarketData();
     const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [liabilityToEdit, setLiabilityToEdit] = useState<Liability | null>(null);
@@ -401,11 +403,14 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
         const activeReceivables = personalReceivables.filter((l: { status?: string }) => (l.status ?? 'Active') === 'Active');
         const totalDebt = activeDebts.reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0);
         const totalReceivable = activeReceivables.reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0);
-        const { totalAssets } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd, { getAvailableCashForAccount });
+        const { totalAssets } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd, {
+            getAvailableCashForAccount,
+            simulatedPrices,
+        });
         const debtToAssetRatio = totalAssets > 0 ? (totalDebt / totalAssets) * 100 : 0;
         const netPosition = totalReceivable - totalDebt;
         return { totalDebt, totalReceivable, debtToAssetRatio, netPosition };
-    }, [data, sarPerUsd, getAvailableCashForAccount]);
+    }, [data, sarPerUsd, getAvailableCashForAccount, simulatedPrices]);
 
     const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data]);
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { Account, InvestmentPortfolio, InvestmentTransaction } from '../types';
 import {
   brokerCashBucketsFromInvestmentAccount,
+  buildInvestableCashBarsFromInvestmentAccounts,
   computeAvailableCashByAccountMap,
   computeBrokerCashByAccountMap,
   getTradableCashBucketsForAccount,
@@ -94,6 +95,18 @@ describe('sumTradableCashSarFromInvestmentAccounts', () => {
     const fresh = invAccount({ id: 'a', balance: 9000, currency: 'SAR' as any });
     const stale = invAccount({ id: 'a', balance: 1000, currency: 'SAR' as any });
     expect(sumTradableCashSarFromInvestmentAccounts([stale], [fresh], 3.75)).toBe(9000);
+  });
+});
+
+describe('buildInvestableCashBarsFromInvestmentAccounts', () => {
+  it('bar SAR total matches sumTradableCashSarFromInvestmentAccounts', () => {
+    const accounts = [
+      invAccount({ id: 'a', name: 'Al-Riyadh', balance: 1000, currency: 'SAR' as any }),
+      invAccount({ id: 'b', name: 'Awaed', balance: 200, currency: 'USD' as const }),
+    ];
+    const bars = buildInvestableCashBarsFromInvestmentAccounts(accounts, accounts, 3.75);
+    const barTotal = bars.reduce((s, r) => s + r.sar, 0);
+    expect(barTotal).toBeCloseTo(sumTradableCashSarFromInvestmentAccounts(accounts, accounts, 3.75), 6);
   });
 });
 

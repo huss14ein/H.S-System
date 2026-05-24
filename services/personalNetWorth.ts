@@ -4,6 +4,8 @@ import { getPersonalAccounts, getPersonalAssets, getPersonalLiabilities, getPers
 import { getCreditCardLinkedAccountIds } from './creditCardLinking';
 import { hydrateSarPerUsdDailySeries } from './fxDailySeries';
 import {
+  computeAllPlatformsRollupSAR,
+  computeCommodityHoldingsContributionSAR,
   computePersonalCommoditiesContributionSAR,
   computePersonalPlatformsRollupSAR,
   type SimulatedPriceMap,
@@ -166,8 +168,39 @@ function accumulatePersonalBalanceSheet(
   };
 }
 
+function accumulateAllBalanceSheet(
+  data: FinancialData,
+  exchangeRate: number,
+  options?: PersonalNetWorthOptions,
+) {
+  const base = accumulateBalanceSheetSlices(
+    {
+      accounts: data.accounts ?? [],
+      assets: data.assets ?? [],
+      liabilities: data.liabilities ?? [],
+      commodityHoldings: data.commodityHoldings ?? [],
+      investments: data.investments ?? [],
+    },
+    exchangeRate,
+    options,
+  );
+  if (!options?.getAvailableCashForAccount) return base;
+
+  const prices = options.simulatedPrices ?? {};
+  const getCash = options.getAvailableCashForAccount;
+  const platform = computeAllPlatformsRollupSAR(data, exchangeRate, prices, getCash);
+  const commodities = computeCommodityHoldingsContributionSAR(data.commodityHoldings ?? [], prices);
+  return {
+    ...base,
+    totalInvestmentsValue: platform.subtotalSAR,
+    brokerageCashSAR: 0,
+    totalCommodities: commodities.valueSAR,
+  };
+}
+
 /**
  * Balance-sheet buckets for **all** accounts/assets (household-inclusive). Use for Analysis / full-ledger views.
+ * Pass `simulatedPrices` + `getAvailableCashForAccount` for live holdings (same valuation path as headline NW).
  */
 export function computeAllNetWorthChartBucketsSAR(
   data: FinancialData | null | undefined,
@@ -177,17 +210,7 @@ export function computeAllNetWorthChartBucketsSAR(
   if (!data) {
     return { cash: 0, investments: 0, physicalAndCommodities: 0, receivables: 0, liabilities: 0, netWorth: 0 };
   }
-  const b = accumulateBalanceSheetSlices(
-    {
-      accounts: data.accounts ?? [],
-      assets: data.assets ?? [],
-      liabilities: data.liabilities ?? [],
-      commodityHoldings: data.commodityHoldings ?? [],
-      investments: data.investments ?? [],
-    },
-    exchangeRate,
-    options
-  );
+  const b = accumulateAllBalanceSheet(data, exchangeRate, options);
   const cash = b.cashAndSavingsPositive;
   const investments = b.totalInvestmentsValue + b.brokerageCashSAR + b.sukukAssetsSar;
   const physicalAndCommodities = b.physicalAssetsSar + b.totalCommodities;
@@ -263,6 +286,41 @@ export type PersonalHeadlineNetWorthResult = {
   /** Resolved SAR/USD after hydrate — reuse for any follow-on SAR conversions in the same render. */
   sarPerUsd: number;
 };
+
+/** Today snapshot rows (Dashboard cockpit) — derived from headline NW + breakdown only. */
+export type TodayBalanceSheetSnapshotSAR = {
+  netWorth: number;
+  /** Gross assets incl. receivables (before subtracting debt). */
+  assetsSar: number;
+  totalDebtSar: number;
+  cashSar: number;
+  investmentsSar: number;
+  physicalAndCommoditiesSar: number;
+  receivablesSar: number;
+};
+
+/**
+ * Single path for “Today snapshot” on Dashboard / Net worth cockpit.
+ * Uses {@link computePersonalHeadlineNetWorthSar} buckets + matching breakdown (same options).
+ */
+export function computeTodayBalanceSheetSnapshotSar(
+  data: FinancialData | null | undefined,
+  uiExchangeRate: number,
+  options?: PersonalNetWorthOptions,
+): TodayBalanceSheetSnapshotSAR {
+  const headline = computePersonalHeadlineNetWorthSar(data, uiExchangeRate, options);
+  const breakdown = computePersonalNetWorthBreakdownSAR(data, headline.sarPerUsd, options);
+  const b = headline.buckets;
+  return {
+    netWorth: headline.netWorth,
+    assetsSar: breakdown.totalAssets + breakdown.totalReceivable,
+    totalDebtSar: breakdown.totalDebt,
+    cashSar: b.cash,
+    investmentsSar: b.investments,
+    physicalAndCommoditiesSar: b.physicalAndCommodities,
+    receivablesSar: b.receivables,
+  };
+}
 
 /**
  * **Single source of truth** for personal-scope headline net worth (SAR) and stacked buckets.

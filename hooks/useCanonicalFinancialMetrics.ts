@@ -4,11 +4,18 @@ import { useCurrency } from '../context/CurrencyContext';
 import { useMarketData } from '../context/MarketDataContext';
 import {
   computePersonalHeadlineNetWorthSar,
+  computeTodayBalanceSheetSnapshotSar,
   type PersonalHeadlineNetWorthResult,
   type PersonalNetWorthOptions,
+  type TodayBalanceSheetSnapshotSAR,
 } from '../services/personalNetWorth';
 import { computeDashboardKpiSnapshot, type DashboardKpiSnapshot } from '../services/dashboardKpiSnapshot';
 import { computeWealthSummaryReportModel } from '../services/wealthSummaryReportModel';
+import {
+  buildInvestableCashBarsFromInvestmentAccounts,
+  type InvestableCashBarRow,
+} from '../services/investmentCashLedger';
+import { getPersonalAccounts } from '../utils/wealthScope';
 
 /** Canonical personal NW + Dashboard KPI inputs (UI exchange rate + live quotes). */
 export function useCanonicalFinancialMetrics() {
@@ -40,6 +47,17 @@ export function useCanonicalFinancialMetrics() {
     return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
   }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
 
+  const todaySnapshot = useMemo((): TodayBalanceSheetSnapshotSAR => {
+    return computeTodayBalanceSheetSnapshotSar(data, exchangeRate, nwOptions);
+  }, [data, exchangeRate, nwOptions]);
+
+  const investableCashBars = useMemo((): InvestableCashBarRow[] => {
+    if (!data) return [];
+    const scope = getPersonalAccounts(data);
+    const allAccounts = data.accounts ?? scope;
+    return buildInvestableCashBarsFromInvestmentAccounts(scope, allAccounts, headline.sarPerUsd);
+  }, [data, headline.sarPerUsd]);
+
   return {
     data,
     exchangeRate,
@@ -49,6 +67,8 @@ export function useCanonicalFinancialMetrics() {
     headline,
     kpiSnapshot,
     wealthSummary,
+    todaySnapshot,
+    investableCashBars,
     sarPerUsd: headline.sarPerUsd,
     netWorth: headline.netWorth,
     buckets: headline.buckets,

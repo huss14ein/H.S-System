@@ -15,14 +15,12 @@ import {
   YAxis,
 } from 'recharts';
 import { DataContext } from '../../context/DataContext';
-import { useCurrency } from '../../context/CurrencyContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
-import { resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../../hooks/useCanonicalFinancialMetrics';
+import { resolveSarPerUsd, toSAR } from '../../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency } from '../../utils/holdingValuation';
 import { resolveInvestmentPortfolioCurrency } from '../../utils/investmentPortfolioCurrency';
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from '../../services/fxDailySeries';
-import { computePersonalHeadlineNetWorthSar } from '../../services/personalNetWorth';
-import { useMarketData } from '../../context/MarketDataContext';
 import { listNetWorthSnapshots } from '../../services/netWorthSnapshot';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../../utils/wealthScope';
 import type { Account, Transaction } from '../../types';
@@ -189,17 +187,16 @@ export default function NetWorthCockpit(props: {
   onOpenDataReconciliation?: () => void;
 }) {
   const { title = 'Net worth', onOpenSummary, onOpenInvestments, onOpenAccounts, onOpenAssets, onOpenDataReconciliation } = props;
-  const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-  const { exchangeRate } = useCurrency();
-  const { simulatedPrices } = useMarketData();
+  const { data } = useContext(DataContext)!;
+  const { headline, todaySnapshot, investableCashBars, sarPerUsd, simulatedPrices } = useCanonicalFinancialMetrics();
   const { formatCurrencyString } = useFormatCurrency();
   const [period, setPeriod] = useState<TimePeriod>('6M');
+  const live = headline.buckets;
+  const investCashBars = investableCashBars;
 
   const computed = useMemo(() => {
     if (!data) {
       return {
-        sarPerUsd: 3.75,
-        live: null as null | ReturnType<typeof computePersonalHeadlineNetWorthSar>['buckets'],
         series: [] as Array<{ dayKey: string; name: string; netWorth: number; deltaFromPrev: number }>,
         nwYAxisDomain: undefined as [number, number] | undefined,
         nwTrendInChart: null as null | {
@@ -210,7 +207,6 @@ export default function NetWorthCockpit(props: {
           points: number;
         },
         accounts: [] as Account[],
-        investCashBars: [] as Array<{ label: string; sar: number }>,
         net30d: { income: 0, expenses: 0, net: 0 },
         weeklyNet8: [] as Array<{ name: string; net: number; weekStartKey: string; dayKey: string }>,
         compositionPieData: [] as Array<{ name: string; value: number; fill: string }>,
@@ -221,13 +217,7 @@ export default function NetWorthCockpit(props: {
       };
     }
 
-    hydrateSarPerUsdDailySeries(data, exchangeRate, { horizonDays: 4000 });
-    const headline = computePersonalHeadlineNetWorthSar(data, exchangeRate, {
-      getAvailableCashForAccount,
-      simulatedPrices,
-    });
-    const live = headline.buckets;
-    const sarPerUsd = headline.sarPerUsd;
+    hydrateSarPerUsdDailySeries(data, sarPerUsd, { horizonDays: 4000 });
 
     const snaps = listNetWorthSnapshots();
     const cutoff = cutoffFor(period);
@@ -289,16 +279,6 @@ export default function NetWorthCockpit(props: {
     const accounts = getPersonalAccounts(data) as Account[];
     const transactions = getPersonalTransactions(data) as Transaction[];
     const portfolios = getPersonalInvestments(data);
-    const investmentAccounts = accounts.filter((a) => a.type === 'Investment');
-    const investCashBars = investmentAccounts
-      .map((acc) => {
-        const cash = getAvailableCashForAccount?.(acc.id);
-        const sar = tradableCashBucketToSAR({ SAR: cash?.SAR ?? 0, USD: cash?.USD ?? 0 }, sarPerUsd);
-        return { label: (acc.name || 'Platform').slice(0, 14), sar: Math.max(0, sar) };
-      })
-      .filter((r) => r.sar > 0.5)
-      .sort((a, b) => b.sar - a.sar)
-      .slice(0, 8);
 
     const now = new Date();
     const start30d = new Date(now);
@@ -391,13 +371,10 @@ export default function NetWorthCockpit(props: {
       .slice(0, 6);
 
     return {
-      sarPerUsd,
-      live,
       series,
       nwYAxisDomain,
       nwTrendInChart,
       accounts,
-      investCashBars,
       net30d,
       weeklyNet8,
       compositionStrip,
@@ -406,13 +383,11 @@ export default function NetWorthCockpit(props: {
       lastSnapshotAttribution,
       movers,
     };
-  }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, period]);
+  }, [data, live, sarPerUsd, period, simulatedPrices]);
 
-  const live = computed.live;
-  const isEmpty = !computed.series.length || !live;
-
-  const assetsSar = live ? Math.max(0, live.cash) + Math.max(0, live.investments) + Math.max(0, live.physicalAndCommodities) + Math.max(0, live.receivables) : 0;
-  const liabilitiesSar = live ? Math.max(0, live.liabilities) : 0;
+  const isEmpty = !computed.series.length || !data;
+  const assetsSar = todaySnapshot.assetsSar;
+  const liabilitiesSar = todaySnapshot.totalDebtSar;
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
@@ -426,7 +401,7 @@ export default function NetWorthCockpit(props: {
                 text="A cockpit view: net worth over time + what it’s made of today. Everything is calculated in SAR for consistency; USD holdings convert using your FX reference rate."
               />
               <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700 tabular-nums">
-                1 USD = {computed.sarPerUsd.toFixed(2)} SAR
+                1 USD = {sarPerUsd.toFixed(2)} SAR
               </span>
             </div>
             {live && (
@@ -509,19 +484,19 @@ export default function NetWorthCockpit(props: {
                 <li className="h-px bg-slate-200 my-1" />
                 <li className="flex items-center justify-between gap-2">
                   <span className="text-slate-600">Cash</span>
-                  <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(live.cash, { digits: 0 })}</span>
+                  <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(todaySnapshot.cashSar, { digits: 0 })}</span>
                 </li>
                 <li className="flex items-center justify-between gap-2">
                   <span className="text-slate-600">Investments</span>
-                  <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(live.investments, { digits: 0 })}</span>
+                  <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(todaySnapshot.investmentsSar, { digits: 0 })}</span>
                 </li>
                 <li className="flex items-center justify-between gap-2">
                   <span className="text-slate-600">Physical</span>
-                  <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(live.physicalAndCommodities, { digits: 0 })}</span>
+                  <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(todaySnapshot.physicalAndCommoditiesSar, { digits: 0 })}</span>
                 </li>
                 <li className="flex items-center justify-between gap-2">
                   <span className="text-slate-600">Receivables</span>
-                  <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(live.receivables, { digits: 0 })}</span>
+                  <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(todaySnapshot.receivablesSar, { digits: 0 })}</span>
                 </li>
               </ul>
             ) : (
@@ -759,9 +734,9 @@ export default function NetWorthCockpit(props: {
             <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Investable cash</p>
             <p className="text-xs text-slate-600 mt-0.5">Cash sitting inside investment platforms (ready for trades).</p>
             <div className="h-[170px] mt-2">
-              {computed.investCashBars.length ? (
+              {investCashBars.length ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={computed.investCashBars} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <BarChart data={investCashBars} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
                     <XAxis dataKey="label" tickLine={false} axisLine={{ stroke: '#CBD5E1' }} fontSize={10} interval={0} angle={-20} height={40} />
                     <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} tickLine={false} axisLine={{ stroke: '#CBD5E1' }} fontSize={10} width={42} />

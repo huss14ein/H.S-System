@@ -1,9 +1,9 @@
-import { useMemo } from 'react';
+import { useMemo, useContext } from 'react';
 import type { FinancialData, Account, Transaction, Budget } from '../types';
+import { DataContext } from '../context/DataContext';
 import { getPersonalWealthData } from '../utils/wealthScope';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
-import { resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
-import { brokerCashBucketsFromInvestmentAccount } from '../services/investmentCashLedger';
+import { resolveSarPerUsd, toSAR, totalLiquidCashSARFromAccounts } from '../utils/currencyMath';
 import { getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
 import { useCurrency } from '../context/CurrencyContext';
 
@@ -81,7 +81,11 @@ function txExpenseSar(
  */
 export function computeEmergencyFundMetrics(
     data: FinancialData | null | undefined,
-    opts?: { sarPerUsd?: number; exchangeRate?: number }
+    opts?: {
+        sarPerUsd?: number;
+        exchangeRate?: number;
+        getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number };
+    }
 ): EmergencyFundMetrics {
     const defaultResult: EmergencyFundMetrics = {
         emergencyCash: 0,
@@ -112,18 +116,14 @@ export function computeEmergencyFundMetrics(
 
     const accById = new Map(accounts.map((a) => [a.id, a]));
 
-    const bankCashSar = accounts
-        .filter((a) => a.type === 'Checking' || a.type === 'Savings')
-        .reduce((sum, a) => {
-            const cur = a.currency === 'USD' ? 'USD' : 'SAR';
-            return sum + toSAR(Math.max(0, a.balance ?? 0), cur, spotSarPerUsd);
-        }, 0);
-    let platformCashSar = 0;
-    for (const a of accounts) {
-        if (a.type !== 'Investment') continue;
-        platformCashSar += tradableCashBucketToSAR(brokerCashBucketsFromInvestmentAccount(a), spotSarPerUsd);
-    }
-    const emergencyCash = bankCashSar + platformCashSar;
+    const emergencyCash = opts?.getAvailableCashForAccount
+        ? totalLiquidCashSARFromAccounts(accounts, opts.getAvailableCashForAccount, spotSarPerUsd)
+        : accounts
+              .filter((a) => a.type === 'Checking' || a.type === 'Savings')
+              .reduce((sum, a) => {
+                  const cur = a.currency === 'USD' ? 'USD' : 'SAR';
+                  return sum + toSAR(Math.max(0, a.balance ?? 0), cur, spotSarPerUsd);
+              }, 0);
 
     const now = new Date();
     const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
@@ -220,8 +220,9 @@ export function emergencyFundCoverage(data: FinancialData | null | undefined): n
  */
 export function useEmergencyFund(data: FinancialData | null | undefined): EmergencyFundMetrics {
     const { exchangeRate } = useCurrency();
+    const { getAvailableCashForAccount } = useContext(DataContext)!;
     return useMemo(
-        () => computeEmergencyFundMetrics(data, { exchangeRate }),
-        [data, exchangeRate]
+        () => computeEmergencyFundMetrics(data, { exchangeRate, getAvailableCashForAccount }),
+        [data, exchangeRate, getAvailableCashForAccount]
     );
 }
