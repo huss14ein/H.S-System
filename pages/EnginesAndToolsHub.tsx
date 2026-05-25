@@ -111,7 +111,7 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
   const [dataTick, setDataTick] = useState(0);
   const engines = useFinancialEnginesIntegration();
   const { trackAction } = useSelfLearning();
-  const { data, showBlockingLoader } = useContext(DataContext)!;
+  const { data } = useContext(DataContext)!;
   const emergencyFund = useEmergencyFund(data ?? null);
   const enhancementInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
   const { exchangeRate, currency: displayCurrency } = useCurrency();
@@ -240,10 +240,6 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
 
   const tabIds = useMemo(() => Object.keys(TOOL_VISUAL) as EnginesSubTab[], []);
   const activeVisual = TOOL_VISUAL[activeTab];
-
-  if (showBlockingLoader) {
-    return <LoadingSpinner className="min-h-[24rem]" ariaLabel="Loading money tools" />;
-  }
 
   return (
     <div className="space-y-8">

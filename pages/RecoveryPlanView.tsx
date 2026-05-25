@@ -100,7 +100,7 @@ const deriveDynamicPositionConfig = (
 };
 function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActivePage, triggerPageAction }: RecoveryPlanViewProps) {
   const ctx = useContext(DataContext)!;
-  const { data, showBlockingLoader, getAvailableCashForAccount, addPlannedTrade } = ctx;
+  const { data, getAvailableCashForAccount, addPlannedTrade } = ctx;
   const { exchangeRate } = useCurrency();
   const { trackAction } = useSelfLearning();
   const { simulatedPrices, symbolQuoteUpdatedAt } = useMarketData();
@@ -977,14 +977,6 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     handleGenerateUnifiedDrafts,
     handleGenerateRecoveryPlan,
   ]);
-
-  if (showBlockingLoader) {
-    return (
-      <div className="page-container flex justify-center items-center min-h-[24rem]" aria-busy="true">
-        <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading recovery plan" />
-      </div>
-    );
-  }
 
   return (
     <div className="page-container min-h-[40rem] space-y-8 sm:space-y-10">

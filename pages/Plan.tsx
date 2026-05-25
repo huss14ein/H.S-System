@@ -64,7 +64,7 @@ const SCENARIO_PRESETS = [
 ];
 
 const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
-    const { data, showBlockingLoader } = useContext(DataContext)!;
+    const { data } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const { exchangeRate, currency: displayCurrency } = useCurrency();
@@ -645,14 +645,6 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 <span className={`w-2.5 h-2.5 shrink-0 rounded-full ${statusColor}`} title={`Status: ${percentage.toFixed(0)}% of plan`} />
                 <span className="tabular-nums">{formatCurrencyString(value, { digits: 0 })}</span>
              </div>
-        );
-    }
-
-    if (showBlockingLoader) {
-        return (
-            <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
-                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading plan" />
-            </div>
         );
     }
 

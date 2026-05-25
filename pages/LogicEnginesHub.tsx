@@ -123,7 +123,7 @@ interface LogicEnginesHubProps {
 }
 
 const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, triggerPageAction, dataTick = 0 }) => {
-  const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
+  const { data, getAvailableCashForAccount } = useContext(DataContext)!;
   const { trackAction } = useSelfLearning();
   const engines = useFinancialEnginesIntegration();
   const ef = useEmergencyFund(data ?? null);
@@ -625,18 +625,6 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
           { value: 'settings', label: 'Settings', onClick: () => { trackAction('logic-nav-settings', 'Engines & Tools'); setActivePage('Settings'); } },
         ]
       : [];
-
-  if (showBlockingLoader) {
-    return (
-      <PageLayout
-        title="Behind the numbers"
-        description="Plain-language view of how your numbers are calculated."
-        action={pageNavActions.length > 0 ? <PageActionsDropdown label="Go to" placeholder="Open related page…" ariaLabel="Navigate from Logic & Engines" actions={pageNavActions} /> : undefined}
-      >
-        <p className="text-gray-500">Loading…</p>
-      </PageLayout>
-    );
-  }
 
   return (
     <PageLayout

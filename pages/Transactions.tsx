@@ -1144,7 +1144,7 @@ const RecurringModal: React.FC<{
 };
 
 const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
-    const { data, showBlockingLoader, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth } = useContext(DataContext)!;
+    const { data, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth } = useContext(DataContext)!;
     const confirmAction = useConfirmAction();
     const { exchangeRate } = useCurrency();
     const { sarPerUsd } = useCanonicalFinancialMetrics();
@@ -1862,14 +1862,6 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         }
         setIsBulkReviewing(false);
     };
-
-    if (showBlockingLoader) {
-        return (
-            <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
-                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading transactions" />
-            </div>
-        );
-    }
 
     return (
         <PageLayout

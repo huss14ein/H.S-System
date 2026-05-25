@@ -321,7 +321,7 @@ const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) =>
 
 interface LiabilitiesProps { setActivePage?: (page: Page) => void; }
 const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
-    const { data, showBlockingLoader, addLiability, updateLiability } = useContext(DataContext)!;
+    const { data, addLiability, updateLiability } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { breakdown, sarPerUsd } = useCanonicalFinancialMetrics();
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -543,14 +543,6 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
             updateLiability({ ...liability, status: 'Paid' });
         }
     };
-
-    if (showBlockingLoader) {
-        return (
-            <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
-                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading liabilities" />
-            </div>
-        );
-    }
 
     return (
         <PageLayout

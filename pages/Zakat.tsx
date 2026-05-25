@@ -79,7 +79,7 @@ interface ZakatProps {
 }
 
 const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
-    const { data, showBlockingLoader, addZakatPayment, updateSettings } = useContext(DataContext)!;
+    const { data, addZakatPayment, updateSettings } = useContext(DataContext)!;
     const { sarPerUsd } = useCanonicalFinancialMetrics();
     const { formatCurrencyString } = useFormatCurrency();
     
@@ -216,14 +216,6 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
             setIsFetchingGold(false);
         }
     };
-
-    if (showBlockingLoader) {
-        return (
-            <div className="flex justify-center items-center h-96" aria-busy="true">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading Zakat" />
-            </div>
-        );
-    }
 
     return (
         <PageLayout

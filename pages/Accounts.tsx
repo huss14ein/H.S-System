@@ -347,7 +347,7 @@ const AccountCardComponent: React.FC<{
 };
 
 const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
-    const { data, showBlockingLoader, addPlatform, updatePlatform, deletePlatform, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction } = useContext(DataContext)!;
+    const { data, addPlatform, updatePlatform, deletePlatform, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
     const confirmAction = useConfirmAction();
@@ -891,14 +891,6 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             alert(`Failed to reschedule: ${err instanceof Error ? err.message : 'Unknown error'}`);
         }
     };
-
-    if (showBlockingLoader) {
-        return (
-            <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
-                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading accounts" />
-            </div>
-        );
-    }
 
     return (
         <PageLayout

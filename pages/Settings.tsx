@@ -73,7 +73,7 @@ const FINANCIAL_PREFERENCE_PRESETS: Record<string, { riskProfile: RiskProfile; b
 };
 
 const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
-    const { data, showBlockingLoader, updateSettings, restoreFromBackup, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, updateSettings, restoreFromBackup, getAvailableCashForAccount } = useContext(DataContext)!;
     const { showToast } = useToast();
     const auth = useContext(AuthContext)!;
     const { exchangeRate, currency, setCurrency } = useCurrency();
@@ -439,14 +439,6 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     const accountsForEmptyCheck = (data as any)?.personalAccounts ?? data?.accounts ?? [];
 const hasData = accountsForEmptyCheck.length > 0;
     const defaultWealthUltra = useMemo(() => ({ ...getDefaultWealthUltraConfig(), ...(data?.wealthUltraConfig || {}) }), [data?.wealthUltraConfig]);
-
-    if (showBlockingLoader) {
-        return (
-            <div className="page-container flex justify-center items-center min-h-[24rem]" aria-busy="true">
-                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading settings" />
-            </div>
-        );
-    }
 
     return (
         <div className="page-container relative">
