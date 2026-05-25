@@ -1,53 +1,92 @@
-import React, { useContext } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { HSLogo } from '../components/icons/HSLogo';
+import { supabase } from '../services/supabaseClient';
 
 const PendingApprovalPage: React.FC = () => {
   const auth = useContext(AuthContext);
   const rejected = auth?.isSignupRejected === true;
+  const [checking, setChecking] = useState(false);
+  const [profileHint, setProfileHint] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!supabase || !auth?.user?.id) return;
+      const { data } = await supabase.from('users').select('role, approved, email').eq('id', auth.user.id).maybeSingle();
+      if (!alive || !data) return;
+      const role = String((data as { role?: string }).role ?? '').trim();
+      const approved = Boolean((data as { approved?: boolean }).approved);
+      if (role.toLowerCase() === 'admin' && !approved) {
+        setProfileHint('Your account is Admin but not marked approved yet. Use Check status below or ask another admin to approve you in Settings.');
+      } else if (!approved) {
+        setProfileHint('An administrator must approve your signup before you can use Finova.');
+      }
+    })();
+    return () => { alive = false; };
+  }, [auth?.user?.id]);
 
   const handleLogout = async () => {
     await auth?.logout();
     window.location.hash = '';
   };
 
+  const handleRecheck = async () => {
+    setChecking(true);
+    try {
+      await auth?.refetchApprovalStatus();
+    } finally {
+      setChecking(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center items-center p-4">
-      <div className="max-w-md w-full bg-white p-8 rounded-lg shadow-md text-center">
+    <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center p-4">
+      <div className="max-w-md w-full bg-white p-8 rounded-xl shadow-lg border border-slate-200/80">
         <div className="flex justify-center mb-6">
           <HSLogo className="h-12 w-12 text-primary" />
         </div>
-        <h2 className="text-2xl font-bold text-slate-800 mb-2">
-          {rejected ? 'Signup Not Approved' : 'Account Pending Approval'}
+        <h2 className="text-2xl font-bold text-slate-900 mb-2 text-center">
+          {rejected ? 'Signup not approved' : 'Account pending approval'}
         </h2>
-        <p className="text-slate-600 mb-6">
+        <p className="text-slate-600 mb-4 text-center text-sm leading-relaxed">
           {rejected ? (
             <>
-              An administrator has not approved access for this account. You will not be able to use the platform with
-              this login. Contact your administrator if you believe this is a mistake, or sign out and use a different
-              account.
+              An administrator declined this signup. Sign out and use a different account, or contact support if this
+              was a mistake.
             </>
           ) : (
             <>
-              Your account has been created successfully. Access to the platform requires approval from an administrator.
-              You will be able to sign in once your account has been approved.
+              You are signed in, but full access is not enabled yet. Once an administrator approves your account, you
+              can use the dashboard and your private data.
             </>
           )}
         </p>
+        {auth?.user?.email && (
+          <p className="text-xs text-slate-500 text-center mb-4">
+            Signed in as <span className="font-medium text-slate-700">{auth.user.email}</span>
+          </p>
+        )}
+        {profileHint && !rejected && (
+          <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4" role="status">
+            {profileHint}
+          </p>
+        )}
         <div className="space-y-3">
           <button
             type="button"
-            onClick={handleLogout}
-            className="w-full flex justify-center py-2 px-4 border border-slate-300 rounded-md shadow-sm text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
+            disabled={checking}
+            onClick={() => void handleRecheck()}
+            className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-lg shadow-sm text-sm font-semibold text-white bg-primary hover:bg-secondary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:opacity-60"
           >
-            Sign out
+            {checking ? 'Checking…' : 'Check approval status'}
           </button>
           <button
             type="button"
-            onClick={() => auth?.refetchApprovalStatus()}
-            className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-secondary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
+            onClick={() => void handleLogout()}
+            className="w-full flex justify-center py-2.5 px-4 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
           >
-            Check approval status
+            Sign out
           </button>
         </div>
       </div>

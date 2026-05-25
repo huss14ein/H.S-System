@@ -4,7 +4,7 @@ import { AuthContext } from './AuthContext';
 import { Page, Transaction } from '../types';
 import { DataContext } from './DataContext';
 import { useMarketData } from './MarketDataContext';
-import { useCurrency } from './CurrencyContext';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import {
   reconcileCashAccountBalance,
   detectStaleMarketData,
@@ -15,11 +15,13 @@ import {
 import { normalizedMonthlyExpenseSar, cashRunwayMonths } from '../services/financeMetrics';
 import { salaryToExpenseCoverageSar } from '../services/salaryExpenseCoverage';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
-import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { toSAR } from '../utils/currencyMath';
 import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import { useTodosOptional } from './TodosContext';
 import { computeTaskCounts } from '../services/todoModel';
 import { isSupportedPageAction } from '../utils/pageActions';
+import { detectGoalConflictsFromData } from '../services/goalConflictDetection';
+import { detectBudgetDrift } from '../services/budgetDrift';
 
 const READ_STORAGE_KEY = 'h.s.notifications.read';
 
@@ -86,10 +88,10 @@ const severityScore: Record<'info' | 'warning' | 'urgent', number> = {
 };
 
 export function NotificationsProvider({ children }: { children: React.ReactNode }) {
-  const { data } = useContext(DataContext) ?? {};
+  const { data, showBlockingLoader } = useContext(DataContext) ?? {};
   const auth = useContext(AuthContext);
   const todosOpt = useTodosOptional();
-  const { exchangeRate } = useCurrency();
+  const sarPerUsd = useCanonicalSpotFx();
   const { simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt } = useMarketData();
   const [readIds, setReadIds] = useState<Set<string>>(loadReadIds);
   const [pendingBudgetRequestCount, setPendingBudgetRequestCount] = useState(0);
@@ -108,12 +110,19 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       const { data: userRow } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
       const adminStatus = String((userRow as any)?.role || '').toLowerCase() === 'admin';
       if (alive) setIsAdmin(adminStatus);
-      let query = supabase.from('budget_requests').select('id', { count: 'exact', head: true }).eq('status', 'Pending');
-      if (!adminStatus) query = query.eq('user_id', auth.user.id);
+      const query = supabase
+        .from('budget_requests')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'Pending')
+        .eq('user_id', auth.user.id);
       const { count } = await query;
       if (alive) setPendingBudgetRequestCount(Number(count || 0));
       if (adminStatus) {
-        const txRes = await supabase.from('budget_shared_transactions').select('id', { count: 'exact', head: true }).eq('status', 'Pending');
+        const txRes = await supabase
+          .from('budget_shared_transactions')
+          .select('id', { count: 'exact', head: true })
+          .eq('owner_user_id', auth.user.id)
+          .eq('status', 'Pending');
         if (alive) setPendingTransactionApprovalCount(Number((txRes as any).count ?? 0));
       } else if (alive) setPendingTransactionApprovalCount(0);
     };
@@ -125,7 +134,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
 
   const notifications = useMemo<AppNotification[]>(() => {
     const list: AppNotification[] = [];
-    if (!data) return list;
+    if (!data || showBlockingLoader) return list;
     const now = new Date();
 
     const push = (n: AppNotification) => {
@@ -267,7 +276,6 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     // Cash runway — personal checking/savings in SAR vs SAR-normalized avg monthly expense
     const accountsForRunway = getPersonalAccounts(data);
     const transactionsForRunway = getPersonalTransactions(data);
-    const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
     const liquidCashSar = accountsForRunway
       .filter((a) => a.type === 'Checking' || a.type === 'Savings')
       .reduce((sum, a) => {
@@ -356,16 +364,26 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       const staleSyms = getStaleQuoteSymbols(tracked, symbolQuoteUpdatedAt, isLive, {
         countMissingTimestampAsStale: !globalFresh,
       });
-      if (isLive && staleSyms.length > 0) {
+      const priceTriggeredPlans = (data.plannedTrades ?? []).filter(
+        (p) => p.status !== 'Executed' && p.conditionType === 'price' && (p.symbol ?? '').trim(),
+      );
+      const stalePlanSymbols = staleSyms.filter((s) =>
+        priceTriggeredPlans.some((p) => (p.symbol ?? '').toUpperCase() === s),
+      );
+      if (staleSyms.length > 0) {
         push({
           id: 'market-symbols-stale',
           category: 'System',
-          message: `Some symbols need a fresh quote: ${staleSyms.slice(0, 6).join(', ')}${staleSyms.length > 6 ? '…' : ''}.`,
+          message: `Stale quotes (${isLive ? 'live' : 'sim'} mode): ${staleSyms.slice(0, 6).join(', ')}${staleSyms.length > 6 ? '…' : ''}${
+            stalePlanSymbols.length > 0
+              ? ` — affects ${stalePlanSymbols.length} price-triggered plan(s).`
+              : ''
+          }`,
           date: now.toISOString(),
           isRead: false,
-          pageLink: 'Watchlist',
+          pageLink: stalePlanSymbols.length > 0 ? 'Investments' : 'Watchlist',
           severity: 'warning',
-          actionHint: 'Refresh prices in the header; failed symbols may need a different data provider.',
+          actionHint: 'Use Refresh prices in the header. Investment Plan triggers may be wrong until quotes update.',
         });
       }
     }
@@ -493,11 +511,58 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       }
     }
 
+    for (const c of detectGoalConflictsFromData(data, sarPerUsd)) {
+      push({
+        id: `goal-conflict-${c.id}`,
+        category: 'Goal',
+        message: c.message,
+        date: now.toISOString(),
+        isRead: false,
+        pageLink: 'Goals',
+        severity: c.severity === 'critical' ? 'urgent' : 'warning',
+        actionHint: 'Review goal deadlines and linked budgets or investments on Goals.',
+      });
+    }
+    for (const d of detectBudgetDrift(data, sarPerUsd).slice(0, 2)) {
+      push({
+        id: `budget-drift-${d.category}`,
+        category: 'Budget',
+        message: `${d.category} spend is ${d.driftPct > 0 ? '+' : ''}${d.driftPct.toFixed(0)}% vs your 3-month baseline.`,
+        date: now.toISOString(),
+        isRead: false,
+        pageLink: 'Budgets',
+        severity: Math.abs(d.driftPct) >= 30 ? 'warning' : 'info',
+        actionHint: 'Open Budgets or Analysis to adjust limits or investigate the category.',
+      });
+    }
+
+    const execLogs = (data.executionLogs ?? []) as { created_at?: string; date?: string }[];
+    const lastExecMs = execLogs.reduce((max, log) => {
+      const raw = log.created_at ?? log.date;
+      const t = raw ? new Date(raw).getTime() : 0;
+      return Number.isFinite(t) ? Math.max(max, t) : max;
+    }, 0);
+    const daysSinceExec = lastExecMs > 0 ? (Date.now() - lastExecMs) / 86400000 : 999;
+    const planBudget = Number((data.investmentPlan as { monthlyBudget?: number } | undefined)?.monthlyBudget ?? 0);
+    if (planBudget > 0 && daysSinceExec > 35 && hasMarketExposure) {
+      push({
+        id: 'plan-run-stale',
+        category: 'Plan',
+        message: 'No investment plan execution logged in over 5 weeks — review planned trades or run the monthly plan.',
+        date: now.toISOString(),
+        isRead: false,
+        pageLink: 'Investments',
+        pageAction: safePageAction('Investments', 'investment-tab:Execution History'),
+        severity: 'info',
+        actionHint: 'Open Execution History or Investment Plan to execute or refresh targets.',
+      });
+    }
+
     // Prioritize smarter, keep feed concise
     return list
       .sort((a, b) => (b.score || 0) - (a.score || 0) || new Date(b.date).getTime() - new Date(a.date).getTime())
       .slice(0, 40);
-  }, [data, simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt, exchangeRate, pendingBudgetRequestCount, pendingTransactionApprovalCount, isAdmin, auth?.user?.id, todosOpt?.todos]);
+  }, [data, showBlockingLoader, simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt, sarPerUsd, pendingBudgetRequestCount, pendingTransactionApprovalCount, isAdmin, auth?.user?.id, todosOpt?.todos]);
 
   const notificationsWithRead = useMemo(
     () => notifications.map((n) => ({ ...n, isRead: readIds.has(n.id) })),

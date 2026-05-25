@@ -90,7 +90,7 @@ export function monthsRemainingToDeadline(goal: Goal, fromDate: Date = new Date(
 
 /**
  * **Single source** for goal timeline health (Goals page cards, funding cockpit badge, Investments hub):
- * compares the goal’s **funding envelope** (budgets + investment deposits + savings % of surplus) to
+ * compares the goal’s **funding envelope** (linked budgets + linked investment plan/deposits only) to
  * the equal-payment requirement (gap ÷ months to deadline). If `projectedMonthlyContribution` is 0 with
  * a remaining gap, status is **Needs Attention** (not on track).
  */
@@ -98,7 +98,7 @@ export function computeGoalTimelineStatus(args: {
   goal: Goal;
   /** Resolved saved amount (assets + investments + receivables), same as Goals page. */
   resolvedCurrentAmountSar: number;
-  /** monthlySavings × (savingsAllocationPercent / 100) */
+  /** Mapped monthly envelope from `computeGoalMonthlyFundingEnvelopeSar`. */
   projectedMonthlyContribution: number;
   fromDate?: Date;
 }): {

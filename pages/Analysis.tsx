@@ -20,36 +20,45 @@ import {
 } from '../services/transactionIntelligence';
 import { salaryToExpenseCoverageSar } from '../services/salaryExpenseCoverage';
 import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { toSAR } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { computeAllNetWorthChartBucketsSAR } from '../services/personalNetWorth';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { useMarketData } from '../context/MarketDataContext';
+import { detectBudgetDrift } from '../services/budgetDrift';
+import { computeIncomeStability } from '../services/incomeStability';
+import {
+    financialMonthKeysEndingAt,
+    financialMonthIsoKey,
+    financialMonthRange,
+    financialMonthColumnHeaderLabel,
+    financialMonthRangeFromKey,
+    resolveMonthStartDayFromData,
+} from '../utils/financialMonth';
 
 const TOOLTIP_STYLE = { backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' };
 
-const getMonthKey = (input: string | Date) => {
-    const d = new Date(input);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-};
-const monthLabel = (monthKey: string) => {
-    const [y, m] = monthKey.split('-').map(Number);
-    return new Date(y, (m || 1) - 1, 1).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
-};
-
-/** Income vs expense months — amounts normalized to SAR using each account's currency. */
-function buildTrendDataSar(transactions: Transaction[], accounts: Account[], sarPerUsd: number, months = 6) {
+/** Income vs expense — last N financial months, amounts in SAR. */
+function buildTrendDataSar(
+    transactions: Transaction[],
+    accounts: Account[],
+    sarPerUsd: number,
+    monthStartDay: number,
+    months = 6,
+) {
     const accById = new Map(accounts.map((a) => [a.id, a]));
-    const monthMap = new Map<string, { income: number; expenses: number }>();
     const now = new Date();
-    for (let i = months - 1; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        monthMap.set(getMonthKey(d), { income: 0, expenses: 0 });
-    }
+    const finKeys = financialMonthKeysEndingAt(now, months, monthStartDay);
+    const monthMap = new Map<string, { income: number; expenses: number }>();
+    finKeys.forEach((k) => monthMap.set(financialMonthIsoKey(k), { income: 0, expenses: 0 }));
 
+    const earliest = financialMonthRangeFromKey(finKeys[0], monthStartDay).start;
     transactions.forEach((t) => {
-        const key = getMonthKey(t.date);
+        const d = new Date(t.date);
+        if (Number.isNaN(d.getTime()) || d < earliest) return;
+        const key = financialMonthIsoKey(financialMonthRange(d, monthStartDay).key);
         if (!monthMap.has(key)) return;
         const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
         const amtSar = toSAR(Math.abs(Number(t.amount) ?? 0), cur, sarPerUsd);
@@ -59,23 +68,25 @@ function buildTrendDataSar(transactions: Transaction[], accounts: Account[], sar
         monthMap.set(key, current);
     });
 
-    return Array.from(monthMap.entries()).map(([key, value]) => ({
-        monthKey: key,
-        name: monthLabel(key),
-        ...value,
-    }));
+    return finKeys.map((k) => {
+        const key = financialMonthIsoKey(k);
+        const name =
+            monthStartDay === 1
+                ? new Date(key + '-02').toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
+                : financialMonthColumnHeaderLabel(k.year, k.month, monthStartDay);
+        return { monthKey: key, name, ...(monthMap.get(key) || { income: 0, expenses: 0 }) };
+    });
 }
 
 const SpendingByCategoryChart: React.FC = () => {
     const { data } = useContext(DataContext)!;
-    const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
+    const { sarPerUsd: fx } = useCanonicalFinancialMetrics();
     const chartData = useMemo(() => {
         const txs = data?.transactions ?? [];
         const accounts = data?.accounts ?? [];
-        const fx = resolveSarPerUsd(data, exchangeRate);
         return expenseTotalsByBudgetCategorySar(txs as Transaction[], accounts, fx);
-    }, [data?.transactions, data?.accounts, data, exchangeRate]);
+    }, [data?.transactions, data?.accounts, data, fx]);
     const isEmpty = !chartData.length;
 
     return (
@@ -95,12 +106,12 @@ const SpendingByCategoryChart: React.FC = () => {
 
 const IncomeExpenseTrendChart: React.FC = () => {
     const { data } = useContext(DataContext)!;
-    const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
+    const { sarPerUsd: fx } = useCanonicalFinancialMetrics();
     const chartData = useMemo(() => {
-        const fx = resolveSarPerUsd(data, exchangeRate);
-        return buildTrendDataSar(data?.transactions ?? [], data?.accounts ?? [], fx, 6);
-    }, [data?.transactions, data?.accounts, data, exchangeRate]);
+        const monthStartDay = resolveMonthStartDayFromData(data);
+        return buildTrendDataSar(data?.transactions ?? [], data?.accounts ?? [], fx, monthStartDay, 6);
+    }, [data?.transactions, data?.accounts, data, fx]);
     const hasSignal = chartData.some((x) => x.income > 0 || x.expenses > 0);
     const isEmpty = !hasSignal;
 
@@ -123,24 +134,24 @@ const IncomeExpenseTrendChart: React.FC = () => {
 
 const AssetLiabilityChart: React.FC = () => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-    const { exchangeRate } = useCurrency();
+    const { simulatedPrices } = useMarketData();
     const { formatCurrencyString } = useFormatCurrency();
     const toFiniteMoney = (value: unknown): number => {
         const n = Number(value);
         return Number.isFinite(n) ? Math.max(0, n) : 0;
     };
+    const { exchangeRate } = useCurrency();
     const chartData = useMemo(() => {
-        const fx = resolveSarPerUsd(data, exchangeRate);
-        const buckets = computeAllNetWorthChartBucketsSAR(data, fx, { getAvailableCashForAccount });
+        const buckets = computeAllNetWorthChartBucketsSAR(data, exchangeRate, { getAvailableCashForAccount, simulatedPrices });
 
         return [
-            { name: 'Investments (incl. Sukuk)', value: toFiniteMoney(buckets.investments) },
+            { name: 'Investments (platforms + commodities + Sukuk)', value: toFiniteMoney(buckets.investments) },
             { name: 'Cash', value: toFiniteMoney(buckets.cash) },
-            { name: 'Physical & commodities', value: toFiniteMoney(buckets.physicalAndCommodities) },
+            { name: 'Physical assets', value: toFiniteMoney(buckets.physicalAndCommodities) },
             { name: 'Receivables', value: toFiniteMoney(buckets.receivables) },
             { name: 'Debt', value: toFiniteMoney(Math.abs(buckets.liabilities)) },
         ];
-    }, [data, exchangeRate, getAvailableCashForAccount]);
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
 
     const hasSignal = chartData.some((x) => Number.isFinite(x.value) && x.value > 0);
     const isEmpty = !hasSignal;
@@ -149,7 +160,7 @@ const AssetLiabilityChart: React.FC = () => {
     return (
         <div className="space-y-3">
             <p className="text-xs text-slate-600 max-w-prose">
-                Uses your <strong>full</strong> account list (household-inclusive). <strong>Investments</strong> includes brokerage cash, portfolios, and Sukuk recorded under Assets — all converted to SAR with the same rate as the rest of the app.
+                Uses your <strong>full</strong> account list (household-inclusive). <strong>Investments</strong> uses the same bucket taxonomy as Dashboard (platforms, commodities, Sukuk); commodities are not double-counted under Physical.
             </p>
             <ChartContainer height={300} isEmpty={isEmpty} emptyMessage="Add accounts, holdings, or assets to see your position.">
                 <ResponsiveContainer width="100%" height="100%">
@@ -180,37 +191,44 @@ const AssetLiabilityChart: React.FC = () => {
 
 const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { aiHealthChecked, isAiAvailable } = useAI();
-    const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate, currency: displayCurrency } = useCurrency();
     const { simulatedPrices } = useMarketData();
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
+    const {
+        sarPerUsd: headlineFx,
+        netWorth: personalNetWorth,
+        investmentsTotalSar,
+        buckets: personalBuckets,
+        kpiSnapshot,
+    } = useCanonicalFinancialMetrics();
 
     const contextData = useMemo(() => {
         const transactions = data?.transactions ?? [];
         const accounts = data?.accounts ?? [];
 
         hydrateSarPerUsdDailySeries(data, exchangeRate);
-        const fx = resolveSarPerUsd(data, exchangeRate);
 
-        const spendingData = expenseTotalsByBudgetCategorySar(transactions as Transaction[], accounts, fx);
+        const spendingData = expenseTotalsByBudgetCategorySar(transactions as Transaction[], accounts, headlineFx);
 
-        const trendData = buildTrendDataSar(transactions as Transaction[], accounts, fx, 6);
+        const monthStartDay = resolveMonthStartDayFromData(data);
+        const trendData = buildTrendDataSar(transactions as Transaction[], accounts, headlineFx, monthStartDay, 6);
 
-        const nwBuckets = computeAllNetWorthChartBucketsSAR(data, fx, { getAvailableCashForAccount });
+        const nwBuckets = computeAllNetWorthChartBucketsSAR(data, exchangeRate, { getAvailableCashForAccount, simulatedPrices });
         const compositionData = [
-            { name: 'Investments (incl. Sukuk)', value: nwBuckets.investments },
+            { name: 'Investments (platforms + commodities + Sukuk)', value: nwBuckets.investments },
             { name: 'Cash', value: nwBuckets.cash },
-            { name: 'Physical & commodities', value: nwBuckets.physicalAndCommodities },
+            { name: 'Physical assets', value: nwBuckets.physicalAndCommodities },
             { name: 'Receivables', value: nwBuckets.receivables },
             { name: 'Debt', value: Math.abs(nwBuckets.liabilities) },
         ];
 
-        const merchants = spendByMerchantSar(transactions as Transaction[], accounts, fx, { months: 6 });
-        const salary = detectSalaryIncomeSar(transactions as Transaction[], accounts, fx, 6);
-        const subs = subscriptionSpendMonthlySar(transactions as Transaction[], accounts, fx, 3);
-        const bnpl = detectBnplMentionsSar(transactions as Transaction[], accounts, fx);
-        const refundPairs = findRefundPairsSar(transactions as Transaction[], accounts, fx, 14);
-        const salaryCoverage = salaryToExpenseCoverageSar(transactions as Transaction[], accounts, fx, 6);
+        const merchants = spendByMerchantSar(transactions as Transaction[], accounts, headlineFx, { months: 6 });
+        const salary = detectSalaryIncomeSar(transactions as Transaction[], accounts, headlineFx, 6);
+        const subs = subscriptionSpendMonthlySar(transactions as Transaction[], accounts, headlineFx, 3);
+        const bnpl = detectBnplMentionsSar(transactions as Transaction[], accounts, headlineFx);
+        const refundPairs = findRefundPairsSar(transactions as Transaction[], accounts, headlineFx, 14);
+        const salaryCoverage = salaryToExpenseCoverageSar(transactions as Transaction[], accounts, headlineFx, 6);
 
         return {
             spendingData,
@@ -222,14 +240,19 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             bnpl,
             refundPairs,
             salaryCoverage,
-            sarPerUsd: fx,
+            sarPerUsd: headlineFx,
         };
-    }, [data, exchangeRate, getAvailableCashForAccount]);
+    }, [data, exchangeRate, getAvailableCashForAccount, headlineFx, simulatedPrices]);
 
     const analysisValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
-        const fx = resolveSarPerUsd(data, exchangeRate);
-        const monthlyKpis = computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
+        const fx = headlineFx;
+        const monthlyKpis = kpiSnapshot
+            ? {
+                budgetVariance: kpiSnapshot.budgetVariance,
+                roi: kpiSnapshot.roi,
+            }
+            : computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
         if (!Number.isFinite(fx) || fx <= 0) warnings.push('Exchange rate is invalid — USD transactions may not convert correctly.');
         if (!Number.isFinite(monthlyKpis.budgetVariance)) warnings.push('Budget variance could not be computed.');
         if (!Number.isFinite(monthlyKpis.roi)) warnings.push('Investment ROI could not be computed.');
@@ -240,7 +263,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         const debtMag = Number(debtRow?.value) || 0;
         const assetsSum = rows.filter((x) => x.name !== 'Debt').reduce((s, x) => s + (Number(x.value) || 0), 0);
         const reconstructedNw = assetsSum - debtMag;
-        const nwFromBuckets = computeAllNetWorthChartBucketsSAR(data, fx, { getAvailableCashForAccount }).netWorth;
+        const nwFromBuckets = computeAllNetWorthChartBucketsSAR(data, exchangeRate, { getAvailableCashForAccount, simulatedPrices }).netWorth;
         if (Math.abs(reconstructedNw - nwFromBuckets) > 2) {
             warnings.push('Position bars do not reconcile to net worth — check accounts, liabilities, and FX (System & APIs Health → Data reconciliation).');
         }
@@ -252,10 +275,19 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         }
         const hasUsd = (data?.accounts ?? []).some((a) => a.currency === 'USD');
         if (hasUsd && (!Number.isFinite(fx) || fx <= 0)) warnings.push('USD accounts exist — set a valid SAR-per-USD rate in the header or Wealth Ultra.');
+        if (Math.abs(personalNetWorth - personalBuckets.netWorth) > 2) {
+            warnings.push('Personal headline net worth does not match chart buckets — open System & APIs Health.');
+        }
+        if (Math.abs(investmentsTotalSar - personalBuckets.investments) > 2) {
+            warnings.push('Personal investment total does not match net worth investments band.');
+        }
         return warnings;
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, contextData]);
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, contextData, headlineFx, kpiSnapshot, personalNetWorth, personalBuckets, investmentsTotalSar]);
 
-    if (loading || !data) {
+    const budgetDriftRows = useMemo(() => detectBudgetDrift(data!, exchangeRate), [data, exchangeRate]);
+    const incomeStability = useMemo(() => computeIncomeStability(data!), [data]);
+
+    if (showBlockingLoader) {
         return (
             <div className="flex justify-center items-center h-96" aria-busy="true">
                 <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading analysis" />
@@ -307,11 +339,57 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 </div>
             </div>
 
+            <div className="mb-4 rounded-2xl border border-violet-200 bg-violet-50/50 px-4 py-3 shadow-sm">
+                <p className="text-xs font-bold uppercase tracking-wide text-violet-900 mb-2">Personal headline (Dashboard / Summary / Investments)</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                    <div>
+                        <p className="text-slate-600">Net worth</p>
+                        <p className="font-bold text-slate-900 tabular-nums">{formatCurrencyString(personalNetWorth, { digits: 0 })}</p>
+                    </div>
+                    <div>
+                        <p className="text-slate-600">Investments</p>
+                        <p className="font-bold text-slate-900 tabular-nums">{formatCurrencyString(investmentsTotalSar, { digits: 0 })}</p>
+                    </div>
+                    <div>
+                        <p className="text-slate-600">Cash</p>
+                        <p className="font-bold text-slate-900 tabular-nums">{formatCurrencyString(personalBuckets.cash, { digits: 0 })}</p>
+                    </div>
+                    <div>
+                        <p className="text-slate-600">Investment ROI (headline)</p>
+                        <p className="font-bold text-slate-900 tabular-nums">{kpiSnapshot ? `${(kpiSnapshot.roi * 100).toFixed(1)}%` : '—'}</p>
+                    </div>
+                </div>
+            </div>
+
             {aiHealthChecked && !isAiAvailable && (
                 <AiProxyUnavailableHint className="mb-4" variant="banner" title="Spend insights coach needs the AI proxy" />
             )}
 
             <AIAdvisor pageContext="analysis" contextData={contextData} />
+
+            <div className="mb-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <p className="font-semibold text-slate-900">Income stability</p>
+                    <p className="mt-1 text-slate-700">
+                        Score <strong>{incomeStability.score}</strong> / 100 ({incomeStability.label}) · CV {incomeStability.cvPct.toFixed(0)}%
+                    </p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <p className="font-semibold text-slate-900">Budget drift (vs 3-mo avg)</p>
+                    {budgetDriftRows.length === 0 ? (
+                        <p className="mt-1 text-slate-600">No categories drifted ≥15% this financial month.</p>
+                    ) : (
+                        <ul className="mt-1 text-slate-700 space-y-0.5 list-disc pl-4">
+                            {budgetDriftRows.slice(0, 4).map((r) => (
+                                <li key={r.category}>
+                                    {r.category}: {r.driftPct >= 0 ? '+' : ''}
+                                    {r.driftPct.toFixed(0)}%
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            </div>
 
             {analysisValidationWarnings.length > 0 && (
                 <div className="mb-4 rounded-2xl border-l-4 border-l-amber-500 bg-amber-50/90 border border-amber-100 px-4 py-3 shadow-sm" role="status">

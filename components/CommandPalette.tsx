@@ -2,6 +2,15 @@ import React, { useState, useEffect, useMemo, useContext } from 'react';
 import { NAVIGATION_ITEMS, PAGE_DISPLAY_NAMES, INVESTMENT_SUB_NAV_ITEMS } from '../constants';
 import { Page } from '../types';
 import { DataContext } from '../context/DataContext';
+import { AuthContext } from '../context/AuthContext';
+import { useCurrency } from '../context/CurrencyContext';
+import { useMarketData } from '../context/MarketDataContext';
+import { supabase } from '../services/supabaseClient';
+import { captureExtendedNetWorthSnapshot } from '../services/netWorthSnapshotExtended';
+import { buildReviewPack, downloadReviewPackMarkdown } from '../services/reviewPack';
+import { sendReviewPackEmail } from '../services/reviewPackEmail';
+import { toast } from '../context/ToastContext';
+import { computeCanonicalFinancialMetrics } from '../services/canonicalFinancialMetrics';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { MagnifyingGlassIcon } from './icons/MagnifyingGlassIcon';
 import { HeadsetIcon } from './icons/HeadsetIcon';
@@ -18,7 +27,10 @@ interface CommandPaletteProps {
 const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setActivePage, triggerPageAction, onOpenLiveAdvisor }) => {
     const [query, setQuery] = useState('');
     const [selectedIndex, setSelectedIndex] = useState(0);
-    const { data } = useContext(DataContext)!;
+    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
+    const auth = useContext(AuthContext);
+    const { exchangeRate } = useCurrency();
+    const { simulatedPrices } = useMarketData();
     const { getTopPages, trackAction } = useSelfLearning();
     const topPages = getTopPages(5);
 
@@ -68,11 +80,86 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
                     icon: item.icon,
                 });
             });
+            subPages.push({
+                name: 'Import dividends from broker SMS',
+                action: () => {
+                    trackAction('focus-dividend-sms', 'Investments');
+                    triggerPageAction('Investments', 'focus-dividend-sms');
+                    setIsOpen(false);
+                },
+                icon: INVESTMENT_SUB_NAV_ITEMS.find((i) => i.name === 'Dividend Tracker')!.icon,
+            });
         }
         const quick: { name: string; action: () => void; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [];
         if (onOpenLiveAdvisor) {
             quick.push({ name: 'Open AI Advisor', action: () => { trackAction('open-advisor', 'Dashboard'); onOpenLiveAdvisor(); setIsOpen(false); }, icon: HeadsetIcon });
         }
+        quick.push({
+            name: 'Capture net worth snapshot',
+            action: () => {
+                if (!data) return;
+                captureExtendedNetWorthSnapshot(
+                    data,
+                    exchangeRate,
+                    getAvailableCashForAccount,
+                    supabase && auth?.user?.id ? { supabase, userId: auth.user.id } : null,
+                    simulatedPrices,
+                );
+                trackAction('capture-nw-snapshot', 'CommandPalette');
+                setIsOpen(false);
+            },
+            icon: ArrowDownTrayIcon,
+        });
+        quick.push({
+            name: 'Export review pack (Markdown)',
+            action: () => {
+                if (!data) return;
+                const model = computeCanonicalFinancialMetrics({
+                    data,
+                    exchangeRate,
+                    getAvailableCashForAccount,
+                    simulatedPrices,
+                }).wealthSummary;
+                const fm = model?.financialMetricsWithEf;
+                const surplus = Math.max(0, (fm?.monthlyIncome ?? 0) - (fm?.monthlyExpenses ?? 0));
+                const pack = buildReviewPack(data, exchangeRate, getAvailableCashForAccount, surplus, simulatedPrices);
+                downloadReviewPackMarkdown(pack.markdown);
+                trackAction('export-review-pack', 'CommandPalette');
+                setIsOpen(false);
+            },
+            icon: ArrowDownTrayIcon,
+        });
+        quick.push({
+            name: 'Email review pack',
+            action: () => {
+                if (!data) return;
+                const model = computeCanonicalFinancialMetrics({
+                    data,
+                    exchangeRate,
+                    getAvailableCashForAccount,
+                    simulatedPrices,
+                }).wealthSummary;
+                const fm = model?.financialMetricsWithEf;
+                const surplus = Math.max(0, (fm?.monthlyIncome ?? 0) - (fm?.monthlyExpenses ?? 0));
+                const pack = buildReviewPack(data, exchangeRate, getAvailableCashForAccount, surplus, simulatedPrices);
+                void sendReviewPackEmail(pack.markdown).then((r) => {
+                    if (r.ok) toast('Review pack emailed.', 'success');
+                    else toast(r.error, 'error');
+                });
+                trackAction('email-review-pack', 'CommandPalette');
+                setIsOpen(false);
+            },
+            icon: ArrowDownTrayIcon,
+        });
+        quick.push({
+            name: 'Open data reconciliation (System Health)',
+            action: () => {
+                trackAction('open-reconciliation', 'System Health');
+                setActivePage('System & APIs Health');
+                setIsOpen(false);
+            },
+            icon: NAVIGATION_ITEMS.find((i) => i.name === 'System & APIs Health')!.icon,
+        });
         quick.push({
             name: 'Export my data (backup)',
             action: () => {
@@ -89,7 +176,19 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
             icon: ArrowDownTrayIcon,
         });
         return [...quick, ...subPages, ...nav];
-    }, [setActivePage, setIsOpen, triggerPageAction, onOpenLiveAdvisor, data, topPages, trackAction]);
+    }, [
+        setActivePage,
+        setIsOpen,
+        triggerPageAction,
+        onOpenLiveAdvisor,
+        data,
+        topPages,
+        trackAction,
+        exchangeRate,
+        getAvailableCashForAccount,
+        auth?.user?.id,
+        simulatedPrices,
+    ]);
 
     const filteredCommands = useMemo(() => {
         if (!query) return commands;

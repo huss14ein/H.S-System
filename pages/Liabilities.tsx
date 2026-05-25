@@ -13,6 +13,8 @@ import { PencilIcon } from '../components/icons/PencilIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import InfoHint from '../components/InfoHint';
+import { useConfirmAction } from '../hooks/useConfirmAction';
+import { summarizeLiabilityForConfirm } from '../utils/recordConfirmMessages';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import AIAdvisor from '../components/AIAdvisor';
@@ -21,10 +23,15 @@ import { liquidityRatio, debtServiceRatio } from '../services/liabilityMetrics';
 import { countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { debtPayoffPlan, debtStressScore } from '../services/debtEngines';
 import { useSelfLearning } from '../context/SelfLearningContext';
-import { useCurrency } from '../context/CurrencyContext';
-import { computePersonalNetWorthBreakdownSAR } from '../services/personalNetWorth';
-import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { toSAR } from '../utils/currencyMath';
 import { getCreditCardLinkedAccountIds } from '../services/creditCardLinking';
+import {
+    financialMonthKey,
+    financialMonthIsoKey,
+    financialMonthLookbackStart,
+    resolveMonthStartDayFromData,
+} from '../utils/financialMonth';
 
 type StatusFilter = 'active' | 'paid' | 'all';
 
@@ -44,6 +51,7 @@ const LiabilityModal: React.FC<{
     creditAccounts: Account[];
 }> = ({ isOpen, onClose, onSave, liabilityToEdit, goals, creditAccounts }) => {
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
+    const confirmAction = useConfirmAction();
     const [name, setName] = useState('');
     const [type, setType] = useState<Liability['type']>('Personal Loan');
     const [amount, setAmount] = useState('');
@@ -51,6 +59,10 @@ const LiabilityModal: React.FC<{
     const [owner, setOwner] = useState('');
     const [goalId, setGoalId] = useState('');
     const [accountId, setAccountId] = useState('');
+    const [apr, setApr] = useState('');
+    const [minPayment, setMinPayment] = useState('');
+    const [maturityDate, setMaturityDate] = useState('');
+    const [payoffPriority, setPayoffPriority] = useState('');
 
     React.useEffect(() => {
         if (liabilityToEdit) {
@@ -61,6 +73,10 @@ const LiabilityModal: React.FC<{
             setOwner(liabilityToEdit.owner ?? '');
             setGoalId(liabilityToEdit.goalId ?? '');
             setAccountId(liabilityToEdit.accountId ?? '');
+            setApr(liabilityToEdit.apr != null ? String(liabilityToEdit.apr) : '');
+            setMinPayment(liabilityToEdit.minPayment != null ? String(liabilityToEdit.minPayment) : '');
+            setMaturityDate(liabilityToEdit.maturityDate ?? '');
+            setPayoffPriority(liabilityToEdit.payoffPriority != null ? String(liabilityToEdit.payoffPriority) : '');
         } else {
             const learnedType = getLearnedDefault('liability-add', 'type') as Liability['type'] | undefined;
             const validTypes: Liability['type'][] = ['Credit Card', 'Loan', 'Personal Loan', 'Mortgage', 'Receivable'];
@@ -71,12 +87,25 @@ const LiabilityModal: React.FC<{
             setOwner('');
             setGoalId('');
             setAccountId('');
+            setApr('');
+            setMinPayment('');
+            setMaturityDate('');
+            setPayoffPriority('');
         }
     }, [liabilityToEdit, isOpen, getLearnedDefault]);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const value = Math.abs(parseFloat(amount) || 0);
+        const ok = await confirmAction(
+            summarizeLiabilityForConfirm({
+                name,
+                type,
+                amount: value,
+                isEdit: !!liabilityToEdit,
+            }),
+        );
+        if (!ok) return;
         const newLiability: Liability = {
             id: liabilityToEdit ? liabilityToEdit.id : `liab${Date.now()}`,
             name,
@@ -86,6 +115,10 @@ const LiabilityModal: React.FC<{
             goalId: goalId || undefined,
             owner: owner.trim() || undefined,
             ...(type === 'Credit Card' && accountId.trim() !== '' ? { accountId: accountId.trim() } : {}),
+            ...(apr.trim() !== '' ? { apr: Number(apr) } : {}),
+            ...(minPayment.trim() !== '' ? { minPayment: Number(minPayment) } : {}),
+            ...(maturityDate.trim() !== '' ? { maturityDate: maturityDate.trim() } : {}),
+            ...(payoffPriority.trim() !== '' ? { payoffPriority: Number(payoffPriority) } : {}),
         };
         onSave(newLiability);
         if (!liabilityToEdit) trackFormDefault('liability-add', 'type', type);
@@ -139,6 +172,26 @@ const LiabilityModal: React.FC<{
                         ))}
                     </select>
                 </div>
+                {!isReceivable && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">APR % (optional)</label>
+                            <input type="number" step="0.01" min="0" value={apr} onChange={(e) => setApr(e.target.value)} className="input-base" placeholder="e.g. 18" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Min payment (optional)</label>
+                            <input type="number" step="any" min="0" value={minPayment} onChange={(e) => setMinPayment(e.target.value)} className="input-base" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Maturity date</label>
+                            <input type="date" value={maturityDate} onChange={(e) => setMaturityDate(e.target.value)} className="input-base" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Payoff priority (1=highest)</label>
+                            <input type="number" min="1" max="99" value={payoffPriority} onChange={(e) => setPayoffPriority(e.target.value)} className="input-base" />
+                        </div>
+                    </div>
+                )}
                 {type === 'Credit Card' && (
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
@@ -218,6 +271,18 @@ const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void;
                 <p className="text-sm text-gray-500">{isPaid ? 'Balance when paid (reference)' : 'Amount owed'}</p>
                 <p className={`text-2xl font-semibold ${isPaid ? 'text-slate-600' : 'text-danger'}`}>{formatCurrencyString(Math.abs(liability.amount), { inCurrency: 'SAR', digits: 2 })}</p>
             </div>
+            {(liability.apr != null || liability.minPayment != null || liability.maturityDate || liability.payoffPriority != null) && (
+                <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-600">
+                    {liability.apr != null && <span>APR: <strong className="text-slate-800">{liability.apr}%</strong></span>}
+                    {liability.minPayment != null && (
+                        <span>Min payment: <strong className="text-slate-800">{formatCurrencyString(liability.minPayment, { digits: 0 })}</strong></span>
+                    )}
+                    {liability.maturityDate && <span>Maturity: <strong className="text-slate-800">{liability.maturityDate}</strong></span>}
+                    {liability.payoffPriority != null && (
+                        <span>Payoff priority: <strong className="text-slate-800">#{liability.payoffPriority}</strong></span>
+                    )}
+                </div>
+            )}
         </div>
     );
 };
@@ -256,10 +321,9 @@ const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) =>
 
 interface LiabilitiesProps { setActivePage?: (page: Page) => void; }
 const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
-    const { data, loading, addLiability, updateLiability, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, showBlockingLoader, addLiability, updateLiability } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const { exchangeRate } = useCurrency();
-    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+    const { breakdown, sarPerUsd } = useCanonicalFinancialMetrics();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [liabilityToEdit, setLiabilityToEdit] = useState<Liability | null>(null);
     const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
@@ -335,25 +399,26 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
         const activeReceivables = personalReceivables.filter((l: { status?: string }) => (l.status ?? 'Active') === 'Active');
         const totalDebt = activeDebts.reduce((sum: number, liab: { amount?: number }) => sum + Math.abs(liab.amount ?? 0), 0);
         const totalReceivable = activeReceivables.reduce((sum: number, liab: { amount?: number }) => sum + (liab.amount ?? 0), 0);
-        const { totalAssets } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd, { getAvailableCashForAccount });
+        const totalAssets = breakdown.totalAssets;
         const debtToAssetRatio = totalAssets > 0 ? (totalDebt / totalAssets) * 100 : 0;
         const netPosition = totalReceivable - totalDebt;
         return { totalDebt, totalReceivable, debtToAssetRatio, netPosition };
-    }, [data, sarPerUsd, getAvailableCashForAccount]);
+    }, [data, breakdown]);
+
+    const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data]);
 
     const { liquidityRatioVal, debtServicePct } = useMemo(() => {
         const liq = liquidityRatio(liquidCheckingSavingsSar, totalDebt);
         const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
         const now = new Date();
-        const start = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+        const start = financialMonthLookbackStart(now, 6, monthStartDay);
         const incomes = txs.filter(
             (t: { date: string; type?: string; category?: string; amount?: number }) =>
                 countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= start
         );
         const byM = new Map<string, number>();
         incomes.forEach((t: { date: string; amount?: number }) => {
-            const d = new Date(t.date);
-            const k = `${d.getFullYear()}-${d.getMonth()}`;
+            const k = financialMonthIsoKey(financialMonthKey(new Date(t.date), monthStartDay));
             byM.set(k, (byM.get(k) ?? 0) + (Number(t.amount) || 0));
         });
         const avgMonthlyIncome =
@@ -366,7 +431,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
             dsr = debtServiceRatio(annualDebtGuess, avgMonthlyIncome) * 100;
         }
         return { liquidityRatioVal: liq, debtServicePct: dsr };
-    }, [data, totalDebt, liquidCheckingSavingsSar]);
+    }, [data, totalDebt, liquidCheckingSavingsSar, monthStartDay]);
 
     const debtPayoffOrder = useMemo(() => {
         const active = allDebts.filter((l) => (l.status ?? 'Active') === 'Active');
@@ -384,20 +449,19 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
         const avgMonthlyIncome =
             (data as any)?.personalTransactions ?? data?.transactions ?? [];
         const now = new Date();
-        const start = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+        const start = financialMonthLookbackStart(now, 6, monthStartDay);
         const txs = (avgMonthlyIncome as { date: string; type?: string; category?: string; amount?: number }[]).filter(
             (t) => countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= start
         );
         const byM = new Map<string, number>();
         txs.forEach((t: { date: string; amount?: number }) => {
-            const d = new Date(t.date);
-            const k = `${d.getFullYear()}-${d.getMonth()}`;
+            const k = financialMonthIsoKey(financialMonthKey(new Date(t.date), monthStartDay));
             byM.set(k, (byM.get(k) ?? 0) + (Number(t.amount) || 0));
         });
         const grossMonthly = byM.size > 0 ? Array.from(byM.values()).reduce((a, b) => a + b, 0) / byM.size : 0;
         const monthlyPaymentsEst = totalDebt * 0.02;
         return debtStressScore(monthlyPaymentsEst, grossMonthly, liquidCheckingSavingsSar);
-    }, [data, totalDebt, liquidCheckingSavingsSar]);
+    }, [data, totalDebt, liquidCheckingSavingsSar, monthStartDay]);
 
     const liabilityValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
@@ -421,29 +485,41 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     }, [sarPerUsd, data?.goals, data?.liabilities, data?.accounts, (data as any)?.personalAccounts, totalDebt, debtServicePct]);
 
     const liabilitiesAiContext = useMemo(() => {
-        const now = new Date();
-        const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
         const activeDebtsOnly = allDebts.filter((l) => (l.status ?? 'Active') === 'Active' && (l.amount ?? 0) < 0);
         const byType = new Map<string, number>();
         for (const l of activeDebtsOnly) {
             const k = l.type || 'Other';
             byType.set(k, (byType.get(k) ?? 0) + Math.abs(Number(l.amount) || 0));
         }
-        const compositionData =
+        const debtByType =
             byType.size > 0
                 ? Array.from(byType.entries()).map(([name, value]) => ({ name, value }))
                 : [{ name: 'No active debt', value: 0 }];
         return {
-            spendingData: [
-                { category: 'Total Debt', value: totalDebt },
-                { category: 'Receivables', value: totalReceivable },
-                { category: 'Net (Recv − Debt)', value: netPosition },
-                { category: 'Debt stress score', value: debtStress.score },
-            ],
-            trendData: [{ month, value: totalDebt }],
-            compositionData,
+            metrics: {
+                totalDebtSar: totalDebt,
+                totalReceivableSar: totalReceivable,
+                netPositionSar: netPosition,
+                debtToAssetPct: debtToAssetRatio,
+                liquidCashSar: liquidCheckingSavingsSar,
+                liquidityRatio: liquidityRatioVal,
+                debtServicePct: debtServicePct,
+                debtStressScore: debtStress.score,
+                debtByType,
+                activeDebtCount: activeDebtsOnly.length,
+            },
         };
-    }, [allDebts, totalDebt, totalReceivable, netPosition, debtStress.score]);
+    }, [
+        allDebts,
+        totalDebt,
+        totalReceivable,
+        netPosition,
+        debtToAssetRatio,
+        liquidCheckingSavingsSar,
+        liquidityRatioVal,
+        debtServicePct,
+        debtStress.score,
+    ]);
 
     const handleOpenModal = (liability: Liability | null = null) => {
         setLiabilityToEdit(liability);
@@ -458,7 +534,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
             setLiabilityToEdit(null);
             return;
         } else {
-            addLiability(liability);
+            addLiability(liability, { confirmed: true });
         }
     };
 
@@ -468,7 +544,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
         }
     };
 
-    if (loading || !data) {
+    if (showBlockingLoader) {
         return (
             <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
                 <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading liabilities" />
@@ -654,7 +730,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
             </SectionCard>
 
             <AIAdvisor
-                pageContext="analysis"
+                pageContext="liabilities"
                 contextData={liabilitiesAiContext}
                 title="Liabilities AI Advisor"
                 subtitle="Debt load, receivables, and payoff context. After insights load, use English / العربية to read in Arabic."

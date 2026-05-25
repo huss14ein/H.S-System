@@ -10,12 +10,13 @@ import { CalendarDaysIcon } from '../components/icons/CalendarDaysIcon';
 import { Bars3Icon } from '../components/icons/Bars3Icon';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
-import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { toSAR } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { getAIMarketEventInsight, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
 import { useAI } from '../context/AiContext';
+import { financialMonthLabel, financialMonthRange, resolveMonthStartDayFromData } from '../utils/financialMonth';
 
 type Impact = 'High' | 'Medium' | 'Low';
 type EventCategory = 'Macro' | 'Earnings' | 'Portfolio' | 'Holiday';
@@ -315,8 +316,12 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
 }
 
 const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
-  const { data, loading } = useContext(DataContext)!;
-  const { exchangeRate } = useCurrency();
+  const { data, showBlockingLoader } = useContext(DataContext)!;
+  const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data]);
+  const financialMonthBanner = useMemo(() => {
+    const { start, end, key } = financialMonthRange(new Date(), monthStartDay);
+    return { label: financialMonthLabel(key, monthStartDay), start, end };
+  }, [monthStartDay]);
   const { aiActionsEnabled } = useAI();
   const [categoryFilter, setCategoryFilter] = useState<'All' | EventCategory>('All');
   const [impactFilter, setImpactFilter] = useState<'All' | Impact>('All');
@@ -337,7 +342,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiTranslateError, setAiTranslateError] = useState<string | null>(null);
 
-  const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+  const { sarPerUsd } = useCanonicalFinancialMetrics();
   const investmentAccounts = useMemo(() => (data?.accounts ?? []).filter((a) => a.type === 'Investment'), [data]);
   const investmentAccountIds = useMemo(() => new Set(investmentAccounts.map((a) => a.id)), [investmentAccounts]);
   const investmentPortfolios = useMemo(() => (data?.investments ?? []) as any[], [data]);
@@ -914,7 +919,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     URL.revokeObjectURL(href);
   };
 
-  if (loading || !data) {
+  if (showBlockingLoader) {
     return <PageLoading ariaLabel="Loading market events" message="Loading…" />;
   }
 
@@ -924,6 +929,14 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       description="A practical radar for upcoming market catalysts and your portfolio’s key dates. (Dividend cash is tracked in Dividend Tracker and your investment ledger — not duplicated here.)"
     >
       <div className="space-y-6">
+        <div className="rounded-xl border border-sky-100 bg-sky-50/90 px-4 py-3 text-sm text-slate-700">
+          <span className="font-semibold text-sky-900">Financial month: </span>
+          {financialMonthBanner.label}
+          <span className="text-slate-500">
+            {' '}
+            ({financialMonthBanner.start.toLocaleDateString()} – {financialMonthBanner.end.toLocaleDateString()})
+          </span>
+        </div>
         {/* Filters bar */}
         <div className="section-card">
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-4">Filters</p>

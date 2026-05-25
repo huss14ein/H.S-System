@@ -7,22 +7,34 @@
  * (transaction-dated FX for USD lines).
  */
 
-import type { FinancialData, TradeCurrency } from '../types';
+import type { Account, FinancialData, TradeCurrency, Transaction } from '../types';
 import { computeEmergencyFundMetrics, type EmergencyFundMetrics } from '../hooks/useEmergencyFund';
-import { getAllInvestmentsValueInSAR, resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
-import { getPersonalAssets, getPersonalWealthData } from '../utils/wealthScope';
+import { toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
+import { getPersonalAssets, getPersonalInvestments, getPersonalWealthData } from '../utils/wealthScope';
 import { buildHouseholdBudgetPlan, buildHouseholdEngineInputFromData } from './householdBudgetEngine';
 import { deriveCashflowStressSummary } from './householdBudgetStress';
 import { computeDisciplineScore, type DisciplineScoreSummary } from './disciplineScoreEngine';
 import { computeLiquidityRunwayFromData, type LiquidityRunwaySummary } from './liquidityRunwayEngine';
-import { computePersonalHeadlineNetWorthSar, computePersonalNetWorthBreakdownSAR } from './personalNetWorth';
+import {
+  computeAllNetWorthChartBucketsSAR,
+  computePersonalHeadlineNetWorthSar,
+  computePersonalNetWorthBreakdownSAR,
+} from './personalNetWorth';
 import type { WealthSummaryReportInput } from './reportingEngine';
 import { computeRiskLaneFromData, type RiskLaneContext } from './riskLaneEngine';
 import { runShockDrill, type ShockDrillResult } from './shockDrillEngine';
 import { computeLiquidNetWorth } from './liquidNetWorth';
 import { computeHeadlinePersonalInvestmentRoiDecimal } from './investmentKpiCore';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
-import { financialMonthNetCashflowSar } from './dashboardKpiSnapshot';
+import {
+  computeImpliedFinancialMonthNetWorthTrendPct,
+  financialMonthNetCashflowSar,
+} from './dashboardKpiSnapshot';
+import { countsAsExpenseForCashflowKpi } from './transactionFilters';
+import { dateInRange } from '../utils/financialMonth';
+import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
+import { getSarPerUsdForCalendarDay } from './fxDailySeries';
+import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 
 export type GetAvailableCashFn = (accountId: string) => { SAR: number; USD: number };
 
@@ -100,55 +112,92 @@ export function computeMonthlyReportFinancialKpis(
   getAvailableCashForAccount: GetAvailableCashFn,
   simulatedPrices: SimulatedPriceMap = {},
 ): { budgetVariance: number; roi: number } {
-  const { monthlyExpensesSar, currentRange } = financialMonthNetCashflowSar(data, uiExchangeRate);
+  const cashflow = financialMonthNetCashflowSar(data, uiExchangeRate);
+  const { currentRange } = cashflow;
   const currentMonth = currentRange.key.month;
   const currentYear = currentRange.key.year;
 
-  const totalBudget = (data.budgets ?? [])
-    .filter((b) => b.month === currentMonth && b.year === currentYear)
-    .reduce((sum, b) => sum + budgetToMonthly(b), 0);
-  const budgetVariance = totalBudget - monthlyExpensesSar;
+  const monthlyBudgets = (data.budgets ?? []).filter(
+    (b) => b.month === currentMonth && b.year === currentYear,
+  );
 
-  const sarPerUsd = resolveSarPerUsd(data, uiExchangeRate);
-  const { roi } = computeHeadlinePersonalInvestmentRoiDecimal(data, sarPerUsd, getAvailableCashForAccount, simulatedPrices);
+  const d = data as FinancialData & { personalTransactions?: Transaction[]; personalAccounts?: Account[] };
+  const transactions = (d.personalTransactions ?? getPersonalTransactions(data)) as Transaction[];
+  const accounts = (d.personalAccounts ?? getPersonalAccounts(data)) as Account[];
+  const accountsById = new Map(accounts.map((a) => [a.id, a]));
+  const headlineForFx = computePersonalHeadlineNetWorthSar(data, uiExchangeRate, {
+    getAvailableCashForAccount,
+    simulatedPrices,
+  });
+  const sarPerUsd = headlineForFx.sarPerUsd;
+
+  const txExpenseSar = (t: Transaction) => {
+    const acc = accountsById.get(t.accountId ?? '') as Account | undefined;
+    const c = acc?.currency === 'USD' ? 'USD' : 'SAR';
+    const raw = Math.abs(Number(t.amount) || 0);
+    if (c === 'SAR') return raw;
+    const day = String(t.date ?? '').slice(0, 10);
+    const r = getSarPerUsdForCalendarDay(day, data, uiExchangeRate);
+    return toSAR(raw, 'USD', r);
+  };
+
+  const actualByCategory = new Map<string, number>();
+  for (const t of transactions) {
+    if (!dateInRange(t.date, currentRange.start, currentRange.end)) continue;
+    if (!countsAsExpenseForCashflowKpi(t)) continue;
+    const cat = String(
+      (t as Transaction & { budgetCategory?: string }).budgetCategory ?? t.category ?? '',
+    ).trim() || 'Uncategorized';
+    actualByCategory.set(cat, (actualByCategory.get(cat) ?? 0) + txExpenseSar(t));
+  }
+
+  /** Per budget row: positive budget limits vs positive actual spend (expense lines normalised). */
+  const monthlyTotals = monthlyBudgets.map((b) => ({
+    budgeted: budgetToMonthly(b),
+    actual: actualByCategory.get(b.category) ?? 0,
+  }));
+
+  const budgetedTotal = monthlyTotals.reduce((sum, { budgeted }) => sum + Math.abs(budgeted), 0);
+  /** Include all financial-month spend (budgeted categories + unbudgeted). */
+  const actualTotal = Math.abs(cashflow.monthlyExpensesSar);
+  const budgetVariance = budgetedTotal - actualTotal;
+
+  const { roi } = computeHeadlinePersonalInvestmentRoiDecimal(
+    data,
+    sarPerUsd,
+    getAvailableCashForAccount,
+    simulatedPrices,
+  );
 
   return { budgetVariance, roi };
 }
 
-export function computeWealthSummaryReportModel(
+const cur = (c: string | undefined): TradeCurrency => (c === 'SAR' || c === 'USD' ? c : 'USD');
+
+/** Holdings + Sukuk rows for treemap / exports — uses live quotes when provided (Investments hub parity). */
+export function buildPersonalInvestmentTreemapRows(
   data: FinancialData,
-  uiExchangeRate: number,
-  getAvailableCashForAccount: GetAvailableCashFn
-): WealthSummaryReportModel {
-  const nwOpts = { getAvailableCashForAccount };
-  const headlineNw = computePersonalHeadlineNetWorthSar(data, uiExchangeRate, nwOpts);
-  const sarPerUsd = headlineNw.sarPerUsd;
-  const cf = financialMonthNetCashflowSar(data, uiExchangeRate);
-  const monthlyIncome = cf.monthlyIncomeSar;
-  const monthlyExpenses = cf.monthlyExpensesSar;
-  const savingsRate = monthlyIncome > 0 ? (monthlyIncome - monthlyExpenses) / monthlyIncome : 0;
-  const monthlyPnL = cf.monthlyPnLSar;
-
-  const investments = (data as { personalInvestments?: typeof data.investments }).personalInvestments ?? data.investments ?? [];
-  const netWorth = headlineNw.netWorth;
-  const { totalAssets, totalDebt, totalReceivable } = computePersonalNetWorthBreakdownSAR(data, sarPerUsd, nwOpts);
-  const grossAssets = totalAssets + totalReceivable;
-  const debtToAssetRatio = grossAssets > 0 ? totalDebt / grossAssets : 0;
-
-  const netWorthPrevMonth = netWorth - monthlyPnL;
-  const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / Math.abs(netWorthPrevMonth)) * 100 : 0;
-
-  const cur = (c: string | undefined): TradeCurrency => (c === 'SAR' || c === 'USD' ? c : 'USD');
-
+  sarPerUsd: number,
+  simulatedPrices: SimulatedPriceMap = {},
+): InvestmentTreemapRow[] {
+  const investments = getPersonalInvestments(data);
   const allHoldings = investments.flatMap((p) =>
-    (p.holdings || []).map((h) => ({ ...h, portfolioCurrency: p.currency }))
+    (p.holdings || []).map((h) => ({ ...h, portfolioCurrency: p.currency })),
   );
   const holdingRows: InvestmentTreemapRow[] = allHoldings.map((h) => {
+    const book = cur(h.portfolioCurrency);
+    const valueBook = effectiveHoldingValueInBookCurrency(h, book, simulatedPrices, sarPerUsd);
+    const currentValueSar = toSAR(valueBook, book, sarPerUsd);
     const totalCost = (h.avgCost ?? 0) * (h.quantity ?? 0);
-    const gainLoss = (h.currentValue ?? 0) - totalCost;
+    const gainLoss = valueBook - totalCost;
     const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
-    const currentValueSar = toSAR(Number(h.currentValue ?? 0), cur(h.portfolioCurrency), sarPerUsd);
-    return { ...h, gainLoss, gainLossPercent, currentValueSar };
+    return {
+      ...h,
+      currentValue: valueBook,
+      gainLoss,
+      gainLossPercent,
+      currentValueSar,
+    };
   });
   const sukukRows: InvestmentTreemapRow[] = getPersonalAssets(data).flatMap((a) => {
     if (a.type !== 'Sukuk') return [];
@@ -173,8 +222,40 @@ export function computeWealthSummaryReportModel(
       },
     ];
   });
-  const investmentTreemapData: InvestmentTreemapRow[] = [...holdingRows, ...sukukRows];
-  const totalInvestments = investmentTreemapData.reduce((sum, h) => sum + toSAR(h.currentValue ?? 0, cur(h.portfolioCurrency), sarPerUsd), 0);
+  return [...holdingRows, ...sukukRows];
+}
+
+export function computeWealthSummaryReportModel(
+  data: FinancialData,
+  uiExchangeRate: number,
+  getAvailableCashForAccount: GetAvailableCashFn,
+  simulatedPrices: SimulatedPriceMap = {},
+): WealthSummaryReportModel {
+  const nwOpts = { getAvailableCashForAccount, simulatedPrices };
+  const headlineNw = computePersonalHeadlineNetWorthSar(data, uiExchangeRate, nwOpts);
+  const sarPerUsd = headlineNw.sarPerUsd;
+  const cf = financialMonthNetCashflowSar(data, uiExchangeRate);
+  const monthlyIncome = cf.monthlyIncomeSar;
+  const monthlyExpenses = cf.monthlyExpensesSar;
+  const savingsRate = monthlyIncome > 0 ? (monthlyIncome - monthlyExpenses) / monthlyIncome : 0;
+  const monthlyPnL = cf.monthlyPnLSar;
+
+  const netWorth = headlineNw.netWorth;
+  const { totalAssets, totalDebt, totalReceivable } = computePersonalNetWorthBreakdownSAR(data, uiExchangeRate, nwOpts);
+  const grossAssets = totalAssets + totalReceivable;
+  const debtToAssetRatio = grossAssets > 0 ? totalDebt / grossAssets : 0;
+
+  const netWorthTrend = computeImpliedFinancialMonthNetWorthTrendPct(netWorth, monthlyPnL);
+
+  const headlineInv = computeHeadlinePersonalInvestmentRoiDecimal(
+    data,
+    sarPerUsd,
+    getAvailableCashForAccount,
+    simulatedPrices,
+  );
+  const investmentTreemapData = buildPersonalInvestmentTreemapRows(data, sarPerUsd, simulatedPrices);
+  /** Same total as Investments hub headline — not treemap tile sum (excludes idle broker cash). */
+  const totalInvestments = headlineInv.totalExposureSar;
   const individualStocksValue = investmentTreemapData
     .filter(
       (h) =>
@@ -202,57 +283,19 @@ export function computeWealthSummaryReportModel(
     personalAssets,
     personalLiabilities,
     personalInvestments,
-    personalCommodityHoldings: personalCommodities,
+    personalCommodityHoldings: _personalCommodities,
   } = getPersonalWealthData(data);
-  const fullAccounts = data.accounts ?? [];
-  const fullAssets = data.assets ?? [];
-  const fullLiabilities = data.liabilities ?? [];
-  const fullInvestments = data.investments ?? [];
-  const fullCommodities = data.commodityHoldings ?? [];
 
-  const cash = (acc: { type?: string; balance?: number }[]) =>
-    acc.filter((a) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: { balance?: number }) => s + Math.max(0, a.balance ?? 0), 0);
-  const cashNegative = (acc: { type?: string; balance?: number }[]) =>
-    acc
-      .filter((a) => a.type === 'Checking' || a.type === 'Savings')
-      .reduce((s: number, a: { balance?: number }) => s + Math.abs(Math.min(0, a.balance ?? 0)), 0);
-  const debt = (
-    acc: { type?: string; balance?: number }[],
-    liab: { amount?: number }[]
-  ) =>
-    liab
-      .filter((l: { amount?: number }) => (l.amount ?? 0) < 0)
-      .reduce((s: number, l: { amount?: number }) => s + Math.abs(l.amount ?? 0), 0) +
-    acc
-      .filter((a: { type?: string; balance?: number }) => a.type === 'Credit' && (a.balance ?? 0) < 0)
-      .reduce((s: number, a: { balance?: number }) => s + Math.abs(a.balance ?? 0), 0) +
-    cashNegative(acc);
-  const rec = (liab: { amount?: number }[]) =>
-    liab.filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((s: number, l: { amount?: number }) => s + (l.amount ?? 0), 0);
-
-  const fullCash = cash(fullAccounts);
-  const fullDebt = debt(fullAccounts, fullLiabilities);
-  const fullRec = rec(fullLiabilities);
-  const fullAst =
-    fullAssets.reduce((s: number, a: { value?: number }) => s + (a.value ?? 0), 0) +
-    fullCash +
-    fullCommodities.reduce((s: number, c: { currentValue?: number }) => s + (c.currentValue ?? 0), 0) +
-    getAllInvestmentsValueInSAR(fullInvestments, sarPerUsd);
-
-  const personalCash = cash(personalAccounts);
-  const personalDebt = debt(personalAccounts, personalLiabilities);
-  const personalRec = rec(personalLiabilities);
-  const personalAst =
-    personalAssets.reduce((s: number, a: { value?: number }) => s + (a.value ?? 0), 0) +
-    personalCash +
-    personalCommodities.reduce((s: number, c: { currentValue?: number }) => s + (c.currentValue ?? 0), 0) +
-    getAllInvestmentsValueInSAR(personalInvestments, sarPerUsd);
-
-  const fullNW = fullAst - fullDebt + fullRec;
-  const personalNW = personalAst - personalDebt + personalRec;
+  /** Household vs personal split — use same headline FX + live quotes as personal NW. */
+  const personalNW = netWorth;
+  const fullNW = computeAllNetWorthChartBucketsSAR(data, uiExchangeRate, nwOpts).netWorth;
   const managedWealthTotal = Math.round(fullNW - personalNW);
 
-  const emergencyFund = computeEmergencyFundMetrics(data, { exchangeRate: sarPerUsd });
+  const emergencyFund = computeEmergencyFundMetrics(data, {
+    sarPerUsd,
+    exchangeRate: uiExchangeRate,
+    getAvailableCashForAccount,
+  });
   const efStatus: 'green' | 'yellow' | 'red' =
     emergencyFund.status === 'healthy' || emergencyFund.status === 'adequate'
       ? 'green'
@@ -301,10 +344,17 @@ export function computeWealthSummaryReportModel(
   const householdStress = deriveCashflowStressSummary(householdPlan) as CashflowStressSummary;
 
   const riskLane = computeRiskLaneFromData(data, emergencyFund.monthsCovered);
-  const liquidityRunway = computeLiquidityRunwayFromData(data, { exchangeRate: sarPerUsd, getAvailableCashForAccount });
+  const liquidityRunway = computeLiquidityRunwayFromData(data, {
+    exchangeRate: uiExchangeRate,
+    getAvailableCashForAccount,
+  });
   const discipline = computeDisciplineScore(data);
   const shockDrill = runShockDrill(data, 'job_loss');
-  const liquidNw = computeLiquidNetWorth(data, { getAvailableCashForAccount, exchangeRate: sarPerUsd });
+  const liquidNw = computeLiquidNetWorth(data, {
+    getAvailableCashForAccount,
+    exchangeRate: uiExchangeRate,
+    simulatedPrices,
+  });
 
   const wealthSummaryReportPayload: WealthSummaryReportInput = {
     generatedAtIso: new Date().toISOString(),
@@ -350,7 +400,7 @@ export function computeWealthSummaryReportModel(
       gainLoss: Number(h.gainLoss ?? 0),
       gainLossPct: Number(h.gainLossPercent ?? 0),
       currency: String(h.portfolioCurrency ?? 'USD'),
-      currentValueSar: toSAR(Number(h.currentValue ?? 0), cur(h.portfolioCurrency), sarPerUsd),
+      currentValueSar: Number(h.currentValueSar ?? 0),
     })),
     assets: (personalAssets ?? []).map((a: { name?: string; type?: string; value?: number }) => ({
       name: String(a.name ?? ''),
@@ -384,9 +434,14 @@ export function computeWealthSummaryReportModel(
           cashTotalSar: tradableCashBucketToSAR(cash, sarPerUsd),
         };
       }),
-    portfolios: personalInvestments.map((p: { name?: string; accountId?: string; currency?: string; holdings?: { currentValue?: number }[] }) => {
+    portfolios: personalInvestments.map((p: { name?: string; accountId?: string; currency?: string; holdings?: import('../types').Holding[] }) => {
       const holdings = p.holdings ?? [];
-      const valueSar = holdings.reduce((sum: number, h: { currentValue?: number }) => sum + toSAR(Number(h.currentValue ?? 0), cur(p.currency), sarPerUsd), 0);
+      const book = cur(p.currency);
+      const valueSar = holdings.reduce(
+        (sum: number, h) =>
+          sum + toSAR(effectiveHoldingValueInBookCurrency(h, book, simulatedPrices, sarPerUsd), book, sarPerUsd),
+        0,
+      );
       const platform = personalAccounts.find((a: { id: string }) => a.id === p.accountId);
       return {
         name: String(p.name ?? ''),

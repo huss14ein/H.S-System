@@ -18,15 +18,15 @@
 
 | Feature | Exists (files / notes) | Missing work |
 |---------|------------------------|--------------|
-| Income types (salary, bonus, side, dividends, rental, one-off) | `pages/Transactions.tsx`, recurring tx, `pages/DividendTrackerView.tsx` | Structured income taxonomy; recurring vs one-off; expected vs actual; **income stability score** |
+| Income types (salary, bonus, side, dividends, rental, one-off) | `pages/Transactions.tsx` (taxonomy card), `pages/Analysis.tsx` (stability), recurring tx, `pages/DividendTrackerView.tsx` | Expected vs actual schedules; deeper recurring classification |
 | Expense taxonomy (fixed/variable/annual, debt, subs, lifestyle, travel) | `pages/Budgets.tsx`, `services/enhancedBudgetEngine.ts`, `services/hybridBudgetCategorization.ts` | BNPL/family support/installments as first-class; unified **expense drift** + unusual spend |
 | Needs / wants / obligations | Core/Discretionary on transactions & hybrid categories | Obligation vs want across all spend reports |
 | Normalized monthly expense | `hooks/useEmergencyFund.ts`, `services/householdBudgetEngine.ts` | Single exported `normalizedMonthlyExpense()` used app-wide |
-| Budget variance | `context/NotificationsContext.tsx` | Central variance API + baseline drift |
+| Budget variance | `context/NotificationsContext.tsx`, `pages/Budgets.tsx`, `pages/Analysis.tsx`, `pages/Dashboard.tsx` | Central variance API polish |
 | Net / free cash flow | `pages/Dashboard.tsx`, `pages/Summary.tsx`, `pages/Plan.tsx` | `services/cashFlowEngine.ts`: `netCashFlow()`, `freeCashFlow()` |
 | Cash runway | `context/NotificationsContext.tsx`, `services/liquidityRunwayEngine.ts` | Dedupe formulas; `cashRunwayMonths()`; mandatory outflow forecast; **deficit months** |
 | Salary-to-expense coverage | Implicit in summaries | Explicit ratio + alerts |
-| “Can I invest?” / untouchable cash | `wealth-ultra/`, `hooks/useEmergencyFund.ts`, household buckets | One orchestrated **capital deployment** answer |
+| “Can I invest?” / untouchable cash | `services/capitalDeploymentOrchestrator.ts` — Dashboard, Plan, Wealth Ultra, Live Advisor, buy-score gate | Policy engine UI for travel caps |
 | Liquidity pressure score | Runway + EF metrics | Unified score + dashboard |
 
 ---
@@ -66,7 +66,7 @@
 | Break-even | — | `breakEvenPrice()` |
 | Drift / rebalance | `services/sleeveAllocation.ts`, `wealth-ultra/`, `pages/AIRebalancerView.tsx` | Unified `allocationDrift()`, `rebalanceSuggestion()` |
 | Exposure | Watchlist, Ultra, dividends | `exposureBySector()`, `exposureByCurrency()`, `concentrationScore()` |
-| Entry engine (buy score) | `pages/WatchlistView.tsx`, AI | Rule `buyScore()` + gates (EF, cash, concentration) |
+| Entry engine (buy score) | `services/buyScore.ts` — Watchlist badges, Investment Plan AI create | Full replace-holding gate on all entry paths |
 | Exit engine | `wealth-ultra/alertEngine.ts` | Structured sell reasons + `sellScore()` |
 | Position playbook | `services/tradingExecution.ts`, `services/riskCompliance.ts` | Scaling, trailing, cool-off; `canAverageDown()` |
 
@@ -114,7 +114,7 @@
 |---------|--------|--------------|
 | Recurring tx | `context/DataContext.tsx` | Annual expense auto-post to monthly |
 | Prices / FX | `context/MarketDataContext.tsx` | Stale data job + alerts |
-| Snapshots | — | Monthly NW snapshot job |
+| Snapshots | `services/netWorthSnapshotExtended.ts`, `services/scheduledNetWorthSnapshot.ts`, Summary, Settings toggle, Layout | Server-side cron optional |
 | Review narrative | — | Weekly/monthly AI+rules summary |
 | Audit | Export, `execution_logs` | Full CRUD audit |
 | Dashboards | Many pages | Dedicated **Risk** + **Trading** pages |
@@ -134,9 +134,9 @@
 | Feature | Exists | Missing work |
 |---------|--------|--------------|
 | Cooldown / max trades | — | Behavioral engine |
-| Thesis per holding | AI copy | DB + `logInvestmentThesis()`, `reviewPastDecisionQuality()` |
+| Thesis per holding | `investment_thesis` + `investment_journal_entries`, `pages/FinancialJournal.tsx` sync | `reviewPastDecisionQuality()` automation |
 | Capital source | — | Tag flows |
-| Account purpose | Types only | Roles: salary/bill/EF/funding/trading |
+| Account purpose | `pages/Accounts.tsx` (`account_role`, `bucket_type`), migration `20260522120000` | Sweep automation |
 | Tax | `pages/Zakat.tsx` | Fees/withholding beyond Zakat |
 
 ---

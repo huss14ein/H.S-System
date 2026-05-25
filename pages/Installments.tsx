@@ -7,6 +7,9 @@ import { supabase } from '../services/supabaseClient';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { buildInstallmentSchedule } from '../services/installments/installmentMath';
 import { encodeInstallmentPaymentNote } from '../services/installments/installmentLinkNote';
+import { financialMonthRange, financialMonthLabel, resolveMonthStartDayFromData } from '../utils/financialMonth';
+import { useConfirmAction } from '../hooks/useConfirmAction';
+import { summarizeInstallmentPaymentForConfirm } from '../utils/recordConfirmMessages';
 
 type InstallmentPlanRow = {
   id: string;
@@ -36,6 +39,7 @@ const InstallmentsPage: React.FC<{ setActivePage?: (p: any) => void }> = () => {
   const { data, addTransaction } = useContext(DataContext)!;
   const auth = useContext(AuthContext);
   const { formatCurrencyString } = useFormatCurrency();
+  const confirmAction = useConfirmAction();
   const [plans, setPlans] = useState<InstallmentPlanRow[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [installments, setInstallments] = useState<InstallmentRow[]>([]);
@@ -114,6 +118,20 @@ const InstallmentsPage: React.FC<{ setActivePage?: (p: any) => void }> = () => {
     return d || 'Installment purchase';
   }, [selectedPlan]);
 
+  const financialMonthWindow = useMemo(() => {
+    const msd = resolveMonthStartDayFromData(data);
+    const range = financialMonthRange(new Date(), msd);
+    return { ...range, label: financialMonthLabel(range.key, msd), monthStartDay: msd };
+  }, [data]);
+
+  const dueThisFinancialMonth = useMemo(() => {
+    return installments.filter((inst) => {
+      if (String(inst.status).toUpperCase() === 'PAID') return false;
+      const d = new Date(inst.due_date);
+      return !Number.isNaN(d.getTime()) && d >= financialMonthWindow.start && d <= financialMonthWindow.end;
+    });
+  }, [installments, financialMonthWindow]);
+
   const eligibleAccounts = useMemo(() => {
     const cur = selectedPlan?.currency === 'USD' ? 'USD' : 'SAR';
     return (data?.accounts ?? []).filter((a) => a.type !== 'Investment' && (a.currency === 'USD' ? 'USD' : 'SAR') === cur);
@@ -136,6 +154,16 @@ const InstallmentsPage: React.FC<{ setActivePage?: (p: any) => void }> = () => {
     if (!inst) return;
     if (!payForm.accountId) return;
     const amount = (Number(inst.amount_minor) || 0) / 100;
+    const acc = eligibleAccounts.find((a) => a.id === payForm.accountId);
+    const payOk = await confirmAction(
+      summarizeInstallmentPaymentForConfirm({
+        description: payForm.description.trim() || `${selectedPlanDescription} installment`,
+        amount: Math.abs(amount),
+        date: payForm.date,
+        accountName: acc?.name,
+      }),
+    );
+    if (!payOk) return;
     const note = encodeInstallmentPaymentNote(undefined, inst.id);
     await addTransaction({
       date: payForm.date,
@@ -148,7 +176,7 @@ const InstallmentsPage: React.FC<{ setActivePage?: (p: any) => void }> = () => {
       note,
       transactionNature: 'Fixed',
       expenseType: 'Core',
-    } as any);
+    } as any, { confirmed: true });
     setPayingId(null);
     // Reload installment rows so UI reflects PAID status (Budgets updates automatically via status filter).
     if (supabase && selectedPlanId) {
@@ -178,23 +206,65 @@ const InstallmentsPage: React.FC<{ setActivePage?: (p: any) => void }> = () => {
 
   const createBudgetOnlyInstallmentPlan = async () => {
     if (!supabase || !userId) return;
+    const total = Number(createForm.totalAmount);
+    const count = Math.trunc(Number(createForm.installmentCount));
+    if (!Number.isFinite(total) || total <= 0) {
+      setErr('Total amount must be a positive number.');
+      return;
+    }
+    if (!Number.isFinite(count) || count < 1 || count > 48) {
+      setErr('Installment count must be between 1 and 48.');
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(createForm.firstDueDate)) {
+      setErr('First due date must be YYYY-MM-DD.');
+      return;
+    }
+    if (
+      createForm.firstInstallmentAmount.trim() &&
+      (!Number.isFinite(Number(createForm.firstInstallmentAmount)) ||
+        Number(createForm.firstInstallmentAmount) <= 0)
+    ) {
+      setErr('First installment amount must be a positive number.');
+      return;
+    }
+    if (count > 1 && createForm.firstInstallmentAmount.trim()) {
+      const firstAmt = Number(createForm.firstInstallmentAmount);
+      if (firstAmt >= total) {
+        setErr('First installment must be less than the total when you have more than one payment.');
+        return;
+      }
+    }
     setErr(null);
+    const ok = await confirmAction({
+      title: 'Create installment plan?',
+      message: 'Save this installment schedule for budget tracking? No bank charge is recorded automatically.',
+      confirmLabel: 'Create plan',
+      details: [
+        createForm.description.trim() || 'Installment purchase',
+        `Total: ${total} ${createForm.currency}`,
+        `${count} installment(s), first due ${createForm.firstDueDate}`,
+      ],
+    });
+    if (!ok) return;
+
+    const totalMinor = BigInt(Math.round(total * 100));
+    const first = createForm.firstInstallmentAmount.trim()
+      ? BigInt(Math.round(Number(createForm.firstInstallmentAmount) * 100))
+      : null;
+    try {
+      buildInstallmentSchedule({
+        totalAmountMinor: totalMinor,
+        installmentCount: count,
+        firstInstallmentAmountMinor: first,
+      });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Invalid installment schedule.');
+      return;
+    }
+
     setCreating(true);
     try {
-      const total = Number(createForm.totalAmount);
-      if (!Number.isFinite(total) || total <= 0) throw new Error('Total amount must be a positive number.');
-      const count = Math.trunc(Number(createForm.installmentCount));
-      if (!Number.isFinite(count) || count < 1 || count > 48) throw new Error('Installment count must be between 1 and 48.');
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(createForm.firstDueDate)) throw new Error('First due date must be YYYY-MM-DD.');
-
-      const totalMinor = BigInt(Math.round(total * 100));
-      const first = createForm.firstInstallmentAmount.trim()
-        ? BigInt(Math.round(Number(createForm.firstInstallmentAmount) * 100))
-        : null;
-      if (createForm.firstInstallmentAmount.trim() && (!Number.isFinite(Number(createForm.firstInstallmentAmount)) || Number(createForm.firstInstallmentAmount) <= 0)) {
-        throw new Error('First installment amount must be a positive number.');
-      }
-
       const sched = buildInstallmentSchedule({
         totalAmountMinor: totalMinor,
         installmentCount: count,
@@ -265,6 +335,25 @@ const InstallmentsPage: React.FC<{ setActivePage?: (p: any) => void }> = () => {
         )}
 
         {err && <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">{err}</div>}
+
+        {selectedPlan && (
+          <div className="rounded-xl border border-sky-100 bg-sky-50/80 px-4 py-3 text-sm text-slate-800">
+            <span className="font-semibold text-sky-900">Financial month window:</span>{' '}
+            {financialMonthWindow.label}
+            {dueThisFinancialMonth.length > 0 ? (
+              <span className="ml-2">
+                · {dueThisFinancialMonth.length} installment(s) due this window (
+                {formatCurrencyString(
+                  dueThisFinancialMonth.reduce((s, i) => s + (Number(i.amount_minor) || 0) / 100, 0),
+                  { inCurrency: selectedPlan.currency === 'USD' ? 'USD' : 'SAR', digits: 0 },
+                )}
+                )
+              </span>
+            ) : (
+              <span className="ml-2 text-slate-600">· No unpaid installments due in this window for the selected plan.</span>
+            )}
+          </div>
+        )}
 
         <SectionCard
           title="Record an installment purchase (budget-safe)"

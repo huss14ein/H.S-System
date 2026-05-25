@@ -18,9 +18,10 @@ import { getAICommodityPrices, formatAiError } from '../services/geminiService';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { parseMoneyInput, roundQuantity } from '../utils/money';
 import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
-import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import AIAdvisor from '../components/AIAdvisor';
+import { useConfirmAction } from '../hooks/useConfirmAction';
+import { summarizeCommodityForConfirm } from '../utils/recordConfirmMessages';
 
 const CommodityHoldingModal: React.FC<{
     isOpen: boolean;
@@ -30,6 +31,7 @@ const CommodityHoldingModal: React.FC<{
     sarPerUsd: number;
 }> = ({ isOpen, onClose, onSave, holdingToEdit, sarPerUsd }) => {
     const { formatCurrencyString } = useFormatCurrency();
+    const confirmAction = useConfirmAction();
     const [name, setName] = useState<CommodityHolding['name']>('Gold');
     const [quantity, setQuantity] = useState('');
     const [unit, setUnit] = useState<CommodityHolding['unit']>('gram');
@@ -151,6 +153,16 @@ const CommodityHoldingModal: React.FC<{
                 }
             }
             const holdingData = { ...holdingDataBase, currentValue: parsedCurrentValue };
+            const ok = await confirmAction(
+                summarizeCommodityForConfirm({
+                    name,
+                    quantity: parsedQuantity,
+                    unit,
+                    purchaseValue: parsedPurchaseValue,
+                    isEdit: !!holdingToEdit,
+                }),
+            );
+            if (!ok) return;
             if (holdingToEdit) await onSave({ ...holdingToEdit, ...holdingData });
             else await onSave(holdingData);
             onClose();
@@ -257,11 +269,10 @@ interface CommoditiesProps {
 }
 
 const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
-    const { data, loading, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
+    const { data, showBlockingLoader, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const { formatCurrencyString } = useFormatCurrency();
-    const { exchangeRate } = useCurrency();
-    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+    const { sarPerUsd, commoditiesValueSar, investmentsTotalSar } = useCanonicalFinancialMetrics();
     
     const [isCommodityModalOpen, setIsCommodityModalOpen] = useState(false);
     const [commodityToEdit, setCommodityToEdit] = useState<CommodityHolding | null>(null);
@@ -273,9 +284,8 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
         [data, (data as any)?.personalCommodityHoldings, data?.commodityHoldings]
     );
 
-    const totalCommodityValue = useMemo(() => {
-        return commodityRows.reduce((sum: number, h: { currentValue?: number }) => sum + (h.currentValue ?? 0), 0);
-    }, [commodityRows]);
+    /** Live headline commodity slice (matches Investments hub / Dashboard investments band). */
+    const totalCommodityValue = commoditiesValueSar;
 
     const commoditiesAiContext = useMemo(
         () => ({
@@ -289,10 +299,11 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
                 owner: h.owner,
             })),
             totalValueSar: totalCommodityValue,
+            investmentsHeadlineSar: investmentsTotalSar,
             sarPerUsd,
             holdingCount: commodityRows.length,
         }),
-        [commodityRows, totalCommodityValue, sarPerUsd],
+        [commodityRows, totalCommodityValue, investmentsTotalSar, sarPerUsd],
     );
 
     const handleOpenCommodityModal = (holding: CommodityHolding | null = null) => { setCommodityToEdit(holding); setIsCommodityModalOpen(true); };
@@ -300,7 +311,7 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
         if ('id' in holding) {
             await updateCommodityHolding(holding);
         } else {
-            await addCommodityHolding(holding);
+            await addCommodityHolding(holding, { confirmed: true });
         }
     };
     const handleOpenCommodityDeleteModal = (holding: CommodityHolding) => { setCommodityToDelete(holding); };
@@ -353,7 +364,7 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
                 </div>
             }
         >
-        {(loading || !data) ? (
+        {showBlockingLoader ? (
             <div className="flex justify-center items-center min-h-[20rem]" aria-busy="true">
                 <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading commodities" />
             </div>

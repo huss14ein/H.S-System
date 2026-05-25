@@ -4,6 +4,8 @@
  */
 
 import { canonicalQuoteLookupKey, expandLiveQuotesForRequestedSymbols, type LiveQuoteRow } from './finnhubService';
+import { isTadawulQuoteSymbol } from './marketQuoteRouting';
+import { sanitizeLiveQuoteRow } from './tadawulQuoteSanity';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 
 export const QUOTE_CACHE_STORAGE_KEY = 'finova-quote-cache-v1';
@@ -41,7 +43,10 @@ export function cacheRowsToSimulatedMap(rows: Record<string, CachedQuoteRow>): S
   const out: SimulatedPriceMap = {};
   for (const [k, v] of Object.entries(rows)) {
     if (!Number.isFinite(v.price) || v.price <= 0) continue;
-    out[k] = { price: v.price, change: v.change ?? 0, changePercent: v.changePercent ?? 0 };
+    const row = { price: v.price, change: v.change ?? 0, changePercent: v.changePercent ?? 0 };
+    const safe = isTadawulQuoteSymbol(k) ? sanitizeLiveQuoteRow(k, row) : row;
+    if (!safe) continue;
+    out[k] = { price: safe.price, change: safe.change ?? 0, changePercent: safe.changePercent ?? 0 };
   }
   return out;
 }
@@ -115,10 +120,12 @@ export function upsertCacheFromLiveQuotes(
   const next = { ...prior };
   for (const [k, row] of Object.entries(expanded)) {
     if (!row || !Number.isFinite(row.price) || row.price <= 0) continue;
+    const safe = isTadawulQuoteSymbol(k) ? sanitizeLiveQuoteRow(k, row) : row;
+    if (!safe) continue;
     next[k] = {
-      price: row.price,
-      change: row.change ?? 0,
-      changePercent: row.changePercent ?? 0,
+      price: safe.price,
+      change: safe.change ?? 0,
+      changePercent: safe.changePercent ?? 0,
       fetchedAt: now,
     };
   }

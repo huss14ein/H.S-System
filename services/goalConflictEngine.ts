@@ -6,6 +6,7 @@
 import type { FinancialData, Goal } from '../types';
 import { buildGoalFundingScheduleRows } from './goalFundingRouter';
 import { monthsRemainingToDeadline } from './goalMetrics';
+import { computeGoalMonthlyFundingEnvelopeSar } from './goalProjectionFunding';
 
 function targetAmount(g: Goal): number {
   return Number(g.targetAmount ?? (g as { target_amount?: number }).target_amount ?? 0);
@@ -74,8 +75,9 @@ export function detectGoalConflict(args: {
 }): GoalConflict[] {
   const conflicts: GoalConflict[] = [];
   const goals = args.goals ?? [];
-  const surplus = Math.max(0, args.monthlySurplusForGoals ?? 0);
+  const emergencySurplus = Math.max(0, args.monthlySurplusForGoals ?? 0);
   const resolvedMap = args.resolvedCurrentByGoalId;
+  const sarPerUsd = args.sarPerUsdUi;
 
   const requiredByGoalId =
     args.data != null
@@ -88,28 +90,52 @@ export function detectGoalConflict(args: {
           })()
       : requiredMonthlyFallback(goals, resolvedMap);
 
-  const requiredTotal = [...requiredByGoalId.values()].reduce((s, v) => s + v, 0);
+  const envelopeByGoalId = new Map<string, number>();
+  if (args.data != null) {
+    goals.forEach((g) => {
+      envelopeByGoalId.set(
+        g.id,
+        computeGoalMonthlyFundingEnvelopeSar({ goal: g, data: args.data, sarPerUsd }).envelopeMonthly,
+      );
+    });
+  }
 
-  if (surplus > 0 && requiredTotal > surplus * 1.2) {
+  const requiredTotal = [...requiredByGoalId.values()].reduce((s, v) => s + v, 0);
+  const totalEnvelope =
+    envelopeByGoalId.size > 0
+      ? [...envelopeByGoalId.values()].reduce((s, v) => s + v, 0)
+      : emergencySurplus;
+
+  if (totalEnvelope > 0 && requiredTotal > totalEnvelope * 1.2) {
     conflicts.push({
       goalIds: goals.filter((g) => targetAmount(g) > resolvedSaved(g, resolvedMap)).map((g) => g.id),
       reason: 'same_cash_source',
-      message: `Total required monthly (${Math.round(requiredTotal)}) exceeds available surplus (${Math.round(surplus)}). Same cash is funding too many goals.`,
+      message: `Total required monthly (${Math.round(requiredTotal)}) exceeds mapped goal funding (${Math.round(totalEnvelope)}/mo from linked budgets and investments). Link budgets or investments on the Budgets and Investments pages.`,
       requiredMonthlyTotal: requiredTotal,
-      surplusMonthly: surplus,
+      surplusMonthly: totalEnvelope,
     });
   }
 
   goals.forEach((g) => {
     const needed = requiredByGoalId.get(g.id);
     if (!(typeof needed === 'number' && needed > 0)) return;
-    if (surplus > 0 && needed > surplus) {
+    const envelope = envelopeByGoalId.get(g.id) ?? emergencySurplus;
+    if (envelope > 0 && needed > envelope) {
       conflicts.push({
         goalIds: [g.id],
         reason: 'impossible_date',
-        message: `Target date for "${g.name}" is not achievable with current surplus (need ${Math.round(needed)}/mo, have ${Math.round(surplus)}).`,
+        message: `Target date for "${g.name}" is not achievable with current mapped funding (need ${Math.round(needed)}/mo, envelope ${Math.round(envelope)}/mo).`,
         neededPerMonth: needed,
-        surplusMonthly: surplus,
+        surplusMonthly: envelope,
+        goalName: g.name,
+      });
+    } else if (envelope <= 0 && needed > 0) {
+      conflicts.push({
+        goalIds: [g.id],
+        reason: 'impossible_date',
+        message: `Target date for "${g.name}" has no mapped monthly funding — link a budget or investment to this goal.`,
+        neededPerMonth: needed,
+        surplusMonthly: 0,
         goalName: g.name,
       });
     }

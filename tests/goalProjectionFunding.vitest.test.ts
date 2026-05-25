@@ -6,6 +6,8 @@ import {
   goalMonthlyInvestmentContributionSar,
   goalMonthlyInvestmentPlanContributionSar,
   rollingSurplusAfterAllGoalBudgetReservations,
+  monthlySurplusForEmergencyFund,
+  sumAllGoalMonthlyFundingEnvelopesSar,
 } from '../services/goalProjectionFunding';
 import type { FinancialData, Goal, Budget, InvestmentTransaction, InvestmentPortfolio } from '../types';
 
@@ -19,7 +21,7 @@ describe('goalProjectionFunding', () => {
     expect(budgetMonthlyEquivalentSar(b)).toBeCloseTo(1000, 5);
   });
 
-  it('adds assigned budget and allocation slice using surplus after other goal budgets', () => {
+  it('envelope is assigned budget + linked investments only (no surplus slice)', () => {
     vi.spyOn(goalResolvedTotals, 'averageRollingMonthlyNetSurplus').mockReturnValue(5000);
 
     const g1: Goal = {
@@ -49,8 +51,8 @@ describe('goalProjectionFunding', () => {
     expect(env.assignedInvestmentMonthly).toBeCloseTo(0, 5);
     /** Only budgets linked to *other* goals reduce the slice base. */
     expect(env.reservedByOtherGoalBudgets).toBeCloseTo(0, 5);
-    expect(env.allocationSliceMonthly).toBeCloseTo(5000 * 0.4, 5);
-    expect(env.envelopeMonthly).toBeCloseTo(2000 + 5000 * 0.4, 5);
+    expect(env.allocationSliceMonthly).toBe(0);
+    expect(env.envelopeMonthly).toBeCloseTo(2000, 5);
   });
 
   it('includes rolling average of goal-linked investment deposits in assigned envelope', () => {
@@ -113,7 +115,8 @@ describe('goalProjectionFunding', () => {
     const env = computeGoalMonthlyFundingEnvelopeSar({ goal: g1, data, sarPerUsd: 3.75 });
     expect(env.assignedInvestmentMonthly).toBeGreaterThan(0);
     expect(env.assignedInvestmentSource).toBe('deposits');
-    expect(env.envelopeMonthly).toBeCloseTo(env.assignedInvestmentMonthly + env.allocationSliceMonthly, 5);
+    expect(env.envelopeMonthly).toBeCloseTo(env.assignedInvestmentMonthly, 5);
+    expect(env.allocationSliceMonthly).toBe(0);
   });
 
   it('uses per-portfolio investment plan budget for goal projection when mapped', () => {
@@ -297,7 +300,42 @@ describe('goalProjectionFunding', () => {
     const env = computeGoalMonthlyFundingEnvelopeSar({ goal: g1, data });
     expect(env.reservedByOtherGoalBudgets).toBeCloseTo(1000, 5);
     expect(env.assignedBudgetMonthly).toBeCloseTo(500, 5);
-    expect(env.allocationSliceMonthly).toBeCloseTo((5000 - 1000) * 0.5, 5);
+    expect(env.allocationSliceMonthly).toBe(0);
+    expect(env.envelopeMonthly).toBeCloseTo(500, 5);
+  });
+
+  it('monthlySurplusForEmergencyFund matches rolling surplus after goal budgets', () => {
+    vi.spyOn(goalResolvedTotals, 'averageRollingMonthlyNetSurplus').mockReturnValue(10000);
+    const data = {
+      budgets: [
+        { id: 'b1', category: 'A', limit: 1000, month: 1, year: 2026, goalId: 'g1' },
+      ],
+    } as unknown as FinancialData;
+    expect(monthlySurplusForEmergencyFund(data)).toBeCloseTo(9000, 5);
+  });
+
+  it('does not allocate unmapped investment plan slices via savings %', () => {
+    const g1: Goal = {
+      id: 'g1',
+      name: 'Solo',
+      targetAmount: 10000,
+      currentAmount: 0,
+      deadline: '2030-01-01',
+      priority: 'High',
+      savingsAllocationPercent: 100,
+    };
+    const data = {
+      goals: [g1],
+      investments: [],
+      investmentPlan: {
+        monthlyBudget: 5000,
+        budgetCurrency: 'SAR',
+        plansByPortfolioId: {
+          orphan: { monthlyBudget: 2000, budgetCurrency: 'SAR' },
+        },
+      },
+    } as unknown as FinancialData;
+    expect(goalMonthlyInvestmentPlanContributionSar('g1', data, 3.75)).toBe(0);
   });
 
   it('rollingSurplusAfterAllGoalBudgetReservations subtracts all goal-tagged budgets', () => {

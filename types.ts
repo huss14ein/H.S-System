@@ -136,6 +136,9 @@ export interface Account {
     assetTypes: string[];
     fees: string;
   };
+  /** Cash allocation role (persisted when DB column exists). */
+  accountRole?: AccountRole;
+  bucketType?: AccountBucketType;
 }
 
 export type AssetType =
@@ -178,6 +181,10 @@ export interface Liability {
   type: 'Mortgage' | 'Loan' | 'Credit Card' | 'Personal Loan' | 'Receivable';
   amount: number;
   status: 'Active' | 'Paid';
+  apr?: number;
+  minPayment?: number;
+  maturityDate?: string;
+  payoffPriority?: number;
   /** When type is Credit Card: links to the `Account` of type Credit used for card transactions (NW uses liability amount as source of truth). */
   accountId?: string;
   goalId?: string;
@@ -261,6 +268,11 @@ export interface Holding {
   realizedPnL: number;
   dividendDistribution?: 'Reinvest' | 'Payout';
   dividendYield?: number;
+  /** Expected annual dividend (SAR) — persisted on holding. */
+  expectedAnnualDividendSar?: number;
+  dividendPayoutCadence?: 'none' | 'monthly' | 'quarterly' | 'annual' | 'reinvest';
+  /** Calendar months 1–12 when cash dividends usually arrive. */
+  typicalPayoutMonths?: number[];
   /** DB/schema: 'ticker' | 'manual_fund' etc. Used when persisting to backend. */
   holdingType?: string;
   /** ISO date (YYYY-MM-DD). Zakat lunar hawl (~354d) from this lot’s start; if unset, app infers earliest buy. */
@@ -387,6 +399,7 @@ export interface BudgetRequest {
   amount: number;
   note?: string;
   status: 'Pending' | 'Finalized' | 'Rejected';
+  created_at?: string;
 }
 
 export interface CommodityHolding {
@@ -413,6 +426,14 @@ export interface WatchlistItem {
     user_id?: string;
     symbol: string;
     name: string;
+    targetBuyLow?: number;
+    targetBuyHigh?: number;
+    fairValue?: number;
+    qualityScore?: number;
+    valuationScore?: number;
+    catalyst?: string;
+    thesisStatus?: string;
+    researchNotes?: string;
 }
 
 export type RiskProfile = 'Conservative' | 'Moderate' | 'Aggressive';
@@ -477,6 +498,10 @@ export interface PlannedTrade {
   priority: 'High' | 'Medium' | 'Low';
   status: 'Planned' | 'Executed';
   notes?: string;
+  trancheIndex?: number;
+  trancheGroupId?: string;
+  filledQty?: number;
+  targetQty?: number;
   /** Optional: buy sizing / execute flows use cash on this portfolio’s linked investment account. */
   portfolioId?: string | null;
   /** Optional: buy sizing / execute flows use cash on this investment platform when set (or derived from {@link portfolioId}). */
@@ -935,4 +960,7 @@ export interface RecoveryOrderDraft {
   target2Price?: number;
   trailingStopPrice?: number;
   label?: string;
+  /** Links draft to execution tracker (recycling vs buy ladder). */
+  trancheKind?: 'recycle_sell' | 'recycle_rebuy' | 'ladder_buy';
+  trancheIndex?: 1 | 2 | 3;
 }

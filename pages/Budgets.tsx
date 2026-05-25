@@ -22,6 +22,9 @@ import { LinkIcon } from '../components/icons/LinkIcon';
 import Combobox from '../components/Combobox';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
+import { resolveRecipientUserByEmail } from '../utils/shareRecipientLookup';
+import { useConfirmAction } from '../hooks/useConfirmAction';
+import { summarizeBudgetForConfirm } from '../utils/recordConfirmMessages';
 import { AuthContext } from '../context/AuthContext';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
@@ -78,11 +81,15 @@ import {
 } from '../services/householdBudgetAnalytics';
 import { detectRecurringBillPatterns, addBenchmarkComparison } from '../services/hybridBudgetCategorization';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
+import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
+import { useFinancialEnhancementInsights } from '../hooks/useFinancialEnhancementInsights';
+import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { learnAndAutoAdjust } from '../services/aiBudgetAutomation';
 import { getPersonalTransactions } from '../utils/wealthScope';
 import { useSelfLearning } from '../context/SelfLearningContext';
-import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
-import { addMonthsToKey, financialMonthKey, financialMonthRangeFromKey } from '../utils/financialMonth';
+import { toSAR } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { addMonthsToKey, financialMonthKey, financialMonthRangeFromKey, resolveMonthStartDayFromData } from '../utils/financialMonth';
 import AIAdvisor from '../components/AIAdvisor';
 import { dedupeSharedBudgetRows, makeSharedOwnerCategoryKey, normalizeSharedCategoryKey, normalizeSharedOwnerKey } from '../services/sharedBudgetKeys';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
@@ -247,22 +254,6 @@ async function fetchSharedConsumedMap(
     return map;
 }
 
-const resolveRecipientUserByEmail = async (email: string) => {
-    if (!supabase) return { data: null as { id: string; email: string | null } | null, error: { message: 'Supabase client is unavailable.' } as { message: string } | null };
-
-    const rpcLookup = await supabase.rpc('find_user_by_email', { target_email: email });
-    const rpcRow = Array.isArray(rpcLookup.data) ? rpcLookup.data[0] : rpcLookup.data;
-    if (rpcRow?.id) {
-        return { data: { id: rpcRow.id as string, email: (rpcRow.email as string | null) ?? email }, error: null };
-    }
-
-    const baseMessage = rpcLookup.error?.message || 'Recipient user not found.';
-    const normalizedMessage = /column\s+users\.email\s+does not exist/i.test(baseMessage)
-        ? 'Recipient lookup is using an outdated SQL helper. Re-run docs/budget_sharing_ready.sql to install the latest find_user_by_email function.'
-        : baseMessage;
-
-    return { data: null, error: { message: normalizedMessage } };
-};
 interface BudgetModalProps {
     isOpen: boolean;
     onClose: () => void;
@@ -275,6 +266,7 @@ interface BudgetModalProps {
 const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budgetToEdit, currentMonth, currentYear }) => {
     const { data } = useContext(DataContext)!;
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
+    const confirmAction = useConfirmAction();
     const [category, setCategory] = useState('');
     const [limit, setLimit] = useState('');
     const [limitPeriod, setLimitPeriod] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
@@ -310,13 +302,24 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         }
     }, [budgetToEdit, isOpen, getLearnedDefault]);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const rawLimit = parseFloat(limit) || 0;
         const isYearly = limitPeriod === 'Yearly';
         const period = isYearly ? 'yearly' : limitPeriod === 'Weekly' ? 'weekly' : limitPeriod === 'Daily' ? 'daily' : 'monthly';
         const month = budgetToEdit ? budgetToEdit.month : (isYearly ? 1 : currentMonth);
         const year = budgetToEdit ? budgetToEdit.year : currentYear;
+
+        const ok = await confirmAction(
+            summarizeBudgetForConfirm({
+                category,
+                limit: rawLimit,
+                month,
+                year,
+                isEdit: !!budgetToEdit,
+            }),
+        );
+        if (!ok) return;
 
         onSave({
             category,
@@ -413,11 +416,13 @@ interface BudgetsProps {
 }
 
 const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pageAction, clearPageAction }) => {
-    const { data, loading, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
+    const { data, showBlockingLoader, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { trackSuggestionFeedback } = useSelfLearning();
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const { exchangeRate, currency: displayCurrency } = useCurrency();
+    const emergencyFund = useEmergencyFund(data);
+    const financialEnhancementInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
     const [isAdmin, setIsAdmin] = useState(false);
     const [permittedCategories, setPermittedCategories] = useState<string[]>([]);
     const [newCategoryName, setNewCategoryName] = useState('');
@@ -436,11 +441,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const [historyCollapsed, setHistoryCollapsed] = useState(false);
     const HISTORY_PAGE_SIZE = 15;
 
-    const monthStartDay = useMemo(() => {
-        const raw = Number((data?.settings as any)?.monthStartDay ?? (data?.settings as any)?.month_start_day ?? 1);
-        if (!Number.isFinite(raw)) return 1;
-        return Math.min(31, Math.max(1, Math.round(raw)));
-    }, [data?.settings]);
+    const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data?.settings]);
 
     const [currentDate, setCurrentDate] = useState(new Date());
     const { year: currentYear, month: currentMonth } = useMemo(
@@ -471,7 +472,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const [sharedBudgets, setSharedBudgets] = useState<Array<Budget & { ownerEmail?: string }>>([]);
     const [shareTargetEmail, setShareTargetEmail] = useState('');
     const [shareableUsers, setShareableUsers] = useState<Array<{ id: string; email: string }>>([]);
-    const [shareUsersLoadError, setShareUsersLoadError] = useState<string | null>(null);
     const [shareCategory, setShareCategory] = useState('ALL');
     const [ownerSharedTransactions, setOwnerSharedTransactions] = useState<any[]>([]);
     const [mySharedBudgetTransactions, setMySharedBudgetTransactions] = useState<any[]>([]);
@@ -489,7 +489,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const [showKsaExpenseRef, setShowKsaExpenseRef] = useState(false);
     const [suggestedAdjustments, setSuggestedAdjustments] = useState<Array<{ orig: Budget; proposed: Budget }> | null>(null);
     const [installmentBudgetRows, setInstallmentBudgetRows] = useState<Array<{ dueDate: string; amountMinor: string; currency: 'SAR' | 'USD'; budgetCategory: string }>>([]);
-    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+    const { sarPerUsd } = useCanonicalFinancialMetrics();
     const accountCurrencyById = useMemo(() => {
         const map = new Map<string, 'SAR' | 'USD'>();
         (((data as any)?.personalAccounts ?? data?.accounts ?? []) as Array<{ id: string; currency?: string }>).forEach((a) => {
@@ -1025,6 +1025,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     const { data: requests } = await sb
                         .from('budget_requests')
                         .select('*')
+                        .eq('user_id', user.id)
                         .order('created_at', { ascending: false });
                     if (cancelled) return;
                     setBudgetRequests(requests || []);
@@ -1033,6 +1034,20 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 const { data: sharedRows, error: sharedRowsError } = await sb
                     .rpc('get_shared_budgets_for_me')
                     .then((r) => r, () => ({ data: [] as any[], error: null } as any));
+
+                const { data: shareableUsersRows, error: shareableUsersError } = await sb.rpc('list_shareable_users');
+                if (shareableUsersError) {
+                    if (process.env.NODE_ENV === 'development') {
+                        console.warn('list_shareable_users failed:', shareableUsersError.message);
+                    }
+                    if (!cancelled) setShareableUsers([]);
+                } else if (!cancelled) {
+                    setShareableUsers(
+                        ((shareableUsersRows || []) as Array<{ id?: string; email?: string }>)
+                            .filter((u) => u?.id && u?.email)
+                            .map((u) => ({ id: String(u.id), email: String(u.email).toLowerCase() })),
+                    );
+                }
 
                 if (cancelled) return;
 
@@ -1105,33 +1120,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         };
     }, [auth?.user?.id, dataResetKey, budgetSpendWindows, budgetView, currentDate, currentYear, currentMonth, monthStartDay]);
 
-
-    React.useEffect(() => {
-        const loadShareableUsers = async () => {
-        if (!supabase || !auth?.user?.id || !isAdmin) {
-            setShareableUsers([]);
-            setShareUsersLoadError(null);
-            return;
-            }
-
-            const { data: users, error } = await supabase.rpc('list_shareable_users');
-            if (error) {
-                const message = (error.message || '').trim();
-                const normalized = /list_shareable_users|function\s+public\.list_shareable_users/i.test(message)
-                    ? 'Shareable users list is unavailable. Run docs/budget_sharing_ready.sql to install list_shareable_users (Admin-only).'
-                    : message || 'Unable to load users list.';
-                setShareUsersLoadError(normalized);
-                setShareableUsers([]);
-                return;
-            }
-
-            const rows = (Array.isArray(users) ? users : []).filter((row: any) => row?.id && row?.email);
-            setShareableUsers(rows.map((row: any) => ({ id: String(row.id), email: String(row.email).toLowerCase() })));
-            setShareUsersLoadError(null);
-        };
-
-        loadShareableUsers();
-    }, [auth?.user?.id, isAdmin]);
 
     const budgetData = useMemo<BudgetRow[]>(() => {
         const spending = new Map<string, number>();
@@ -1930,7 +1918,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         if (isEditing && budgetToEdit) {
             updateBudget({ ...budgetToEdit, ...budget });
         } else {
-            addBudget(budget);
+            addBudget(budget, { confirmed: true });
         }
     };
 
@@ -2395,7 +2383,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const visibleHistoryRequests = useMemo(() => allRespondedRequests.slice(0, historyItemsToShow), [allRespondedRequests, historyItemsToShow]);
     const hasMoreHistory = historyItemsToShow < allRespondedRequests.length;
 
-    if (loading || !data) {
+    if (showBlockingLoader) {
         return (
             <PageLayout title="Budgets" description="Loading your budget data…" action={null}>
                 <div className="space-y-5" aria-busy="true" aria-label="Loading budgets">
@@ -2453,6 +2441,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             }
         >
             <div className={budgetSubPage === 'household' ? 'hidden' : 'space-y-6'}>
+            <EnhancementInsightStrip
+                budgetDrift={financialEnhancementInsights.budgetDrift}
+                lifestyleHits={financialEnhancementInsights.lifestyleHits}
+                goalConflicts={financialEnhancementInsights.goalConflicts.slice(0, 1)}
+                compact
+            />
             <div id="budget-requests-center">
             <SectionCard title="Budget requests" collapsible collapsibleSummary="Search & filters" defaultExpanded>
                 <div className="flex flex-wrap gap-3 items-center">
@@ -3842,15 +3836,23 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Share with user email</label>
-                                <select value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} className="select-base">
-                                    <option value="">Select a signed-up user…</option>
-                                    {shareableUsers.map((u) => (
-                                        <option key={u.id} value={u.email}>{u.email}</option>
-                                    ))}
-                                </select>
-                                <p className="text-xs text-slate-500 mt-1">Or type manually if a user is not listed.</p>
-                                <input value={shareTargetEmail} onChange={(e) => setShareTargetEmail(e.target.value)} placeholder="user@example.com" className="input-base mt-2" />
-                                {shareUsersLoadError && <p className="text-xs text-amber-700 mt-1">{shareUsersLoadError}</p>}
+                                <input
+                                    type="email"
+                                    list="budgets-shareable-users"
+                                    value={shareTargetEmail}
+                                    onChange={(e) => setShareTargetEmail(e.target.value)}
+                                    placeholder="user@example.com"
+                                    className="input-base"
+                                    autoComplete="email"
+                                />
+                                {shareableUsers.length > 0 && (
+                                    <datalist id="budgets-shareable-users">
+                                        {shareableUsers.map((u) => (
+                                            <option key={u.id} value={u.email} />
+                                        ))}
+                                    </datalist>
+                                )}
+                                <p className="text-xs text-slate-500 mt-1">Enter the recipient&apos;s login email. They must already have a Finova account.</p>
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Category scope</label>

@@ -260,7 +260,7 @@ Cards and engines consume **`data`** (personal investments, plan, config), **`we
 | Area | Notes |
 |------|--------|
 | **Login / Signup / PendingApproval** | Auth only; no `FinancialData` |
-| **Financial Journal** (notes) | **localStorage** + `thesisJournalEngine`; not Supabase |
+| **Financial Journal** (notes) | **localStorage** + Supabase `investment_journal_entries` / `investment_thesis` when migration applied |
 
 **Shared `components/` (charts, modals, cards):** Wiring is **through the page** that renders them (props + context). The doc does not duplicate every prop for every chart.
 
@@ -282,7 +282,10 @@ Services are **imported by pages/contexts**, not registered in `App.tsx`. Key cl
 | Engines / drills | `shockDrillEngine.ts`, `scenarioTimelineEngine.ts`, `nextBestActionEngine.ts` | Forecast, Logic hub, Dashboard |
 | Market | `finnhubService.ts` | MarketDataContext, Market Events, Watchlist |
 | AI | `geminiService.ts` | AiContext, Transactions (suggest), statement parser |
-| Thesis / journal | `thesisJournalEngine.ts` | Financial Journal (localStorage + engines) |
+| Thesis / journal | `thesisJournalEngine.ts`, `investmentThesisStore.ts` | Financial Journal |
+| Enhancement rollout | `capitalDeploymentOrchestrator`, `goalConflictDetection`, `budgetDrift`, `lifestyleGuardrails`, `buyScore`, `portfolioPerformance`, `holdingsDividendReconciliation`, `netWorthSnapshotExtended`, `reviewPack`, `scheduledNetWorthSnapshot` | See `docs/IMPLEMENTATION_COVERAGE.md` §2.1.1.0 |
+| Watchlist research | `utils/watchlistDb.ts`, `updateWatchlistItem` | WatchlistView modal |
+| Planned tranches | `plannedTradeTranches.ts`, `utils/plannedTradeDb.ts` | Investment Plan modal, Execution History, `recordTrade` |
 
 ---
 

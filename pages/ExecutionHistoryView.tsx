@@ -1,6 +1,7 @@
 import React, { useMemo, useContext, useState } from 'react';
 import { DataContext } from '../context/DataContext';
 import SectionCard from '../components/SectionCard';
+import { TrancheStatusChip } from '../components/TrancheStatusChip';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { ClockIcon } from '../components/icons/ClockIcon';
 import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
@@ -8,7 +9,8 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import InfoHint from '../components/InfoHint';
-import type { TradeCurrency } from '../types';
+import type { PlannedTrade, TradeCurrency } from '../types';
+import { sortPlannedTradesNewestFirst } from '../utils/sortRecency';
 
 /** Align localStorage / API rows with the same numeric fields as DataContext.normalizeExecutionLog */
 function normalizeExecutionRow(raw: any): any {
@@ -64,11 +66,34 @@ function plainLanguageExecutionNote(logDetails: string): { headline: string; tec
 }
 
 const ExecutionHistoryView: React.FC = () => {
-  const { data, loading } = useContext(DataContext)!;
+  const { data, showBlockingLoader } = useContext(DataContext)!;
   const { formatCurrencyString } = useFormatCurrency();
   const [filterStatus, setFilterStatus] = useState<'All' | 'success' | 'failure'>('All');
 
   const planCurrency: TradeCurrency = (data?.investmentPlan?.budgetCurrency as TradeCurrency) || 'SAR';
+
+  const plannedTrancheGroups = useMemo(() => {
+    const trades = sortPlannedTradesNewestFirst(data?.plannedTrades ?? []);
+    const grouped = new Map<string, PlannedTrade[]>();
+    for (const t of trades) {
+      if (!t.trancheGroupId) continue;
+      const arr = grouped.get(t.trancheGroupId) ?? [];
+      arr.push(t);
+      grouped.set(t.trancheGroupId, arr);
+    }
+    return [...grouped.entries()].map(([groupId, items]) => ({
+      groupId,
+      items: items.sort((a, b) => (a.trancheIndex ?? 1) - (b.trancheIndex ?? 1)),
+    }));
+  }, [data?.plannedTrades]);
+
+  const standaloneTranchePlans = useMemo(
+    () =>
+      sortPlannedTradesNewestFirst(data?.plannedTrades ?? []).filter(
+        (t) => (t.trancheIndex ?? 1) > 1 || t.targetQty != null || (t.filledQty ?? 0) > 0,
+      ),
+    [data?.plannedTrades],
+  );
 
   const { allExecutionLogs, executionLogs } = useMemo(() => {
     let logs: any[] = [];
@@ -141,7 +166,7 @@ const ExecutionHistoryView: React.FC = () => {
     return { total: allExecutionLogs.length, success, failure };
   }, [allExecutionLogs]);
 
-  if (loading || !data) {
+  if (showBlockingLoader) {
     return (
       <div className="page-container flex items-center justify-center min-h-[24rem]" aria-busy="true">
         <div className="flex items-center gap-3">
@@ -417,6 +442,49 @@ const ExecutionHistoryView: React.FC = () => {
           )}
         </div>
       </section>
+
+      {(plannedTrancheGroups.length > 0 || standaloneTranchePlans.length > 0) && (
+        <SectionCard title="Planned trade tranches" collapsible collapsibleSummary="Multi-tranche plans" defaultExpanded>
+          {plannedTrancheGroups.length > 0 ? (
+            <ul className="space-y-3 text-sm">
+              {plannedTrancheGroups.map((g) => {
+                const totalTarget = g.items.reduce((s, t) => s + (Number(t.targetQty) || 0), 0);
+                const totalFilled = g.items.reduce((s, t) => s + (Number(t.filledQty) || 0), 0);
+                const pct = totalTarget > 0 ? Math.min(100, Math.round((totalFilled / totalTarget) * 100)) : 0;
+                return (
+                  <li key={g.groupId} className="rounded-lg border border-indigo-100 bg-indigo-50/30 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                      <p className="font-semibold text-slate-800">{g.items[0]?.symbol} — {g.items.length} tranches</p>
+                      {totalTarget > 0 && (
+                        <span className="text-xs font-medium text-indigo-800 tabular-nums">
+                          Group fill {totalFilled}/{totalTarget} ({pct}%)
+                        </span>
+                      )}
+                    </div>
+                    <ul className="space-y-2">
+                      {g.items.map((t) => (
+                        <li key={t.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-white/80 border border-slate-100 px-2 py-1.5">
+                          <TrancheStatusChip plan={t} />
+                          {t.notes ? <span className="text-[11px] text-slate-500 truncate max-w-[200px]" title={t.notes}>{t.notes}</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <ul className="text-sm space-y-1 text-slate-700">
+              {standaloneTranchePlans.slice(0, 12).map((t) => (
+                <li key={t.id} className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium text-slate-800">{t.symbol}</span>
+                  <TrancheStatusChip plan={t} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </SectionCard>
+      )}
 
       <SectionCard title="Runs" className="border-slate-200" collapsible collapsibleSummary="Execution log entries" defaultExpanded>
         <p className="text-sm text-slate-600 mb-4">

@@ -2,8 +2,11 @@ import { describe, it, expect } from 'vitest';
 import type { Account, InvestmentPortfolio, InvestmentTransaction } from '../types';
 import {
   brokerCashBucketsFromInvestmentAccount,
+  buildInvestableCashBarsFromInvestmentAccounts,
   computeAvailableCashByAccountMap,
   computeBrokerCashByAccountMap,
+  getTradableCashBucketsForAccount,
+  sumTradableCashSarFromInvestmentAccounts,
 } from '../services/investmentCashLedger';
 
 function invAccount(overrides: Partial<Account> = {}): Account {
@@ -45,10 +48,104 @@ describe('brokerCashBucketsFromInvestmentAccount', () => {
   });
 
   it('computeBrokerCashByAccountMap keys by canonical investment id', () => {
-    const map = computeBrokerCashByAccountMap([
-      invAccount({ id: 'inv-1', balance: 100, currency: 'SAR' as any }),
-    ]);
+    const map = computeBrokerCashByAccountMap(
+      [invAccount({ id: 'inv-1', balance: 100, currency: 'SAR' as any })],
+      3.75,
+    );
     expect(map['inv-1']).toEqual({ SAR: 100, USD: 0 });
+  });
+
+  it('computeBrokerCashByAccountMap dedupes alias rows and picks SAR-equivalent winner', () => {
+    const accounts = [
+      invAccount({ id: 'legacy-ext', name: 'Primary', balance: 400, currency: 'SAR' as any }),
+      invAccount({
+        id: 'inv-1',
+        name: 'Alias USD',
+        balance: 150,
+        currency: 'USD' as const,
+        account_id: 'legacy-ext',
+      } as Account),
+    ];
+    const fx = 3.75;
+    const map = computeBrokerCashByAccountMap(accounts, fx);
+    expect(Object.keys(map)).toEqual(['legacy-ext']);
+    expect(map['legacy-ext']).toEqual({ SAR: 0, USD: 150 });
+    expect(sumTradableCashSarFromInvestmentAccounts(accounts, accounts, fx)).toBeCloseTo(150 * fx, 6);
+  });
+
+  it('computeBrokerCashByAccountMap keeps the row with more cash when two rows share a canonical id', () => {
+    const accounts = [
+      invAccount({ id: 'inv-1', balance: 0, currency: 'SAR' as any, account_id: 'legacy-ext' } as Account),
+      invAccount({ id: 'legacy-ext', balance: 5000, currency: 'SAR' as any }),
+    ];
+    const map = computeBrokerCashByAccountMap(accounts, 3.75);
+    expect(map['legacy-ext']).toEqual({ SAR: 5000, USD: 0 });
+    expect(map['inv-1']).toBeUndefined();
+  });
+});
+
+describe('getTradableCashBucketsForAccount', () => {
+  it('prefers direct investment row id over canonical alias with zero balance', () => {
+    const accounts = [
+      invAccount({ id: 'legacy-ext', balance: 5000, currency: 'SAR' as any }),
+      invAccount({ id: 'inv-1', balance: 0, currency: 'SAR' as any, account_id: 'legacy-ext' } as Account),
+    ];
+    expect(getTradableCashBucketsForAccount('legacy-ext', accounts)).toEqual({ SAR: 5000, USD: 0 });
+    expect(getTradableCashBucketsForAccount('inv-1', accounts)).toEqual({ SAR: 0, USD: 0 });
+  });
+});
+
+describe('sumTradableCashSarFromInvestmentAccounts', () => {
+  it('sums every investment platform balance in scope once (SAR eq.)', () => {
+    const accounts = [
+      invAccount({ id: 'a', balance: 1000, currency: 'SAR' as any }),
+      invAccount({ id: 'b', balance: 200, currency: 'USD' as const }),
+    ];
+    expect(sumTradableCashSarFromInvestmentAccounts(accounts, accounts, 3.75)).toBeCloseTo(1000 + 200 * 3.75, 6);
+  });
+
+  it('uses each scope row balance even when that id is not in allAccounts', () => {
+    const allAccounts = [invAccount({ id: 'inv-1', balance: 0, currency: 'SAR' as any, account_id: 'legacy-ext' } as Account)];
+    const scope = [invAccount({ id: 'legacy-ext', balance: 5000, currency: 'SAR' as any })];
+    expect(sumTradableCashSarFromInvestmentAccounts(scope, allAccounts, 3.75)).toBe(5000);
+  });
+
+  it('prefers fresh balance from allAccounts when scope row is stale', () => {
+    const fresh = invAccount({ id: 'a', balance: 9000, currency: 'SAR' as any });
+    const stale = invAccount({ id: 'a', balance: 1000, currency: 'SAR' as any });
+    expect(sumTradableCashSarFromInvestmentAccounts([stale], [fresh], 3.75)).toBe(9000);
+  });
+});
+
+describe('buildInvestableCashBarsFromInvestmentAccounts', () => {
+  it('canonical dedupe picks the same platform row as sum (SAR-equivalent, not raw SAR+USD)', () => {
+    const accounts = [
+      invAccount({ id: 'legacy-ext', name: 'Primary', balance: 400, currency: 'SAR' as any }),
+      invAccount({
+        id: 'inv-1',
+        name: 'Alias USD',
+        balance: 150,
+        currency: 'USD' as const,
+        account_id: 'legacy-ext',
+      } as Account),
+    ];
+    const fx = 3.75;
+    const expected = 150 * fx;
+    expect(sumTradableCashSarFromInvestmentAccounts(accounts, accounts, fx)).toBeCloseTo(expected, 6);
+    const bars = buildInvestableCashBarsFromInvestmentAccounts(accounts, accounts, fx);
+    expect(bars.reduce((s, r) => s + r.sar, 0)).toBeCloseTo(expected, 6);
+    expect(bars).toHaveLength(1);
+    expect(bars[0]?.label).toBe('Alias USD');
+  });
+
+  it('bar SAR total matches sumTradableCashSarFromInvestmentAccounts', () => {
+    const accounts = [
+      invAccount({ id: 'a', name: 'Al-Riyadh', balance: 1000, currency: 'SAR' as any }),
+      invAccount({ id: 'b', name: 'Awaed', balance: 200, currency: 'USD' as const }),
+    ];
+    const bars = buildInvestableCashBarsFromInvestmentAccounts(accounts, accounts, 3.75);
+    const barTotal = bars.reduce((s, r) => s + r.sar, 0);
+    expect(barTotal).toBeCloseTo(sumTradableCashSarFromInvestmentAccounts(accounts, accounts, 3.75), 6);
   });
 });
 

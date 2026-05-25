@@ -20,6 +20,8 @@ describe('isSupportedPageAction', () => {
     expect(isSupportedPageAction('Investments', 'investment-tab:Dividend Tracker')).toBe(true);
     expect(isSupportedPageAction('Investments', 'open-trade-modal')).toBe(true);
     expect(isSupportedPageAction('Investments', 'open-trade-modal:from-plan')).toBe(true);
+    expect(isSupportedPageAction('Investments', 'focus-symbol:AAPL')).toBe(true);
+    expect(isSupportedPageAction('Investments', 'focus-dividend-sms')).toBe(true);
     expect(isSupportedPageAction('Engines & Tools', 'openLogic')).toBe(true);
     expect(isSupportedPageAction('Budgets', 'budgets-focus-admin-pending')).toBe(true);
     expect(isSupportedPageAction('Budgets', 'budgets-open-request-form')).toBe(true);

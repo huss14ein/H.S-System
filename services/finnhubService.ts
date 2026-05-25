@@ -6,6 +6,8 @@
  */
 
 import { fetchStooq } from './stooqClient';
+import { isTadawulQuoteSymbol } from './marketQuoteRouting';
+import { normalizeTadawulUnitPriceSAR } from './tadawulQuoteSanity';
 
 const BASE = 'https://finnhub.io/api/v1';
 
@@ -610,10 +612,17 @@ export async function getQuote(symbol: string): Promise<QuoteWith52W | null> {
     try {
       const data = await get<QuoteWith52W & { p?: number }>('/quote', { symbol: candidate });
       if (!data) continue;
-      const price = resolveQuotePrice(data);
+      let price = resolveQuotePrice(data);
       if (!Number.isFinite(price) || price <= 0) continue;
       const prevClose = Number(data.pc);
       const safePrevClose = Number.isFinite(prevClose) && prevClose > 0 ? prevClose : price;
+      if (isTadawulQuoteSymbol(symbol)) {
+        const normalized = normalizeTadawulUnitPriceSAR(price, {
+          storedPricePerShare: Number.isFinite(safePrevClose) && safePrevClose > 0 ? safePrevClose : undefined,
+        });
+        if (normalized == null) continue;
+        price = normalized;
+      }
       const rawDelta = Number(data.d);
       const delta = Number.isFinite(rawDelta) ? rawDelta : price - safePrevClose;
       const rawDeltaPct = Number(data.dp);

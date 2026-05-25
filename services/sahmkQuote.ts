@@ -4,6 +4,7 @@
  */
 
 import { fetchSahmkQuote } from './sahmkClient';
+import { normalizeTadawulUnitPriceSAR } from './tadawulQuoteSanity';
 
 export type SahmkQuoteTick = { price: number; change: number; changePercent: number };
 
@@ -18,8 +19,13 @@ export function extractTadawulCodeForSahmk(symbol: string): string | null {
 }
 
 function parseSahmkQuoteJson(raw: Record<string, unknown>): SahmkQuoteTick | null {
-  const price = Number(raw.price);
-  if (!Number.isFinite(price) || price <= 0) return null;
+  const rawPrice = Number(raw.price);
+  if (!Number.isFinite(rawPrice) || rawPrice <= 0) return null;
+  const prevCloseRaw = Number(raw.previous_close ?? raw.previousClose);
+  const ref =
+    Number.isFinite(prevCloseRaw) && prevCloseRaw > 0 ? prevCloseRaw : undefined;
+  const price = normalizeTadawulUnitPriceSAR(rawPrice, { storedPricePerShare: ref });
+  if (price == null) return null;
 
   let change = Number(raw.change);
   const changePercent = Number(raw.change_percent ?? raw.changePercent);

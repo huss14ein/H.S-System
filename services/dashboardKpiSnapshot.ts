@@ -1,7 +1,8 @@
 import type { Account, FinancialData, Transaction } from '../types';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
-import { savingsRateSar } from './financeMetrics';
-import { toSAR, resolveSarPerUsd, totalLiquidCashSARFromAccounts } from '../utils/currencyMath';
+import { savingsRateSarFinancialMonth } from './financeMetrics';
+import { resolveMonthStartDayFromData } from '../utils/financialMonth';
+import { toSAR, totalLiquidCashSARFromAccounts } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from './fxDailySeries';
 import { computePersonalHeadlineNetWorthSar } from './personalNetWorth';
 import {
@@ -16,6 +17,19 @@ import {
   financialMonthRangeFromKey,
   type FinancialMonthKey,
 } from '../utils/financialMonth';
+
+/**
+ * Net worth trend on Dashboard / Summary cards: this month's P&L vs implied net worth at financial month start.
+ * Shared so both surfaces show the same percent (not portfolio TWR).
+ */
+export function computeImpliedFinancialMonthNetWorthTrendPct(
+  netWorthSar: number,
+  monthlyPnLSar: number,
+): number {
+  const impliedMonthStart = netWorthSar - monthlyPnLSar;
+  if (!Number.isFinite(impliedMonthStart) || Math.abs(impliedMonthStart) < 1e-9) return 0;
+  return (monthlyPnLSar / Math.abs(impliedMonthStart)) * 100;
+}
 
 export type FinancialMonthCashflowSar = {
   monthlyIncomeSar: number;
@@ -34,7 +48,7 @@ export function financialMonthNetCashflowSar(
 ): FinancialMonthCashflowSar {
   hydrateSarPerUsdDailySeries(data, uiExchangeRate);
   const now = new Date();
-  const monthStartDay = (data as any)?.settings?.monthStartDay ?? 1;
+  const monthStartDay = resolveMonthStartDayFromData(data);
   const currentRange = financialMonthRange(now, monthStartDay);
   const d = data as FinancialData & { personalTransactions?: Transaction[]; personalAccounts?: Account[] };
   const transactions = (d.personalTransactions ?? data.transactions ?? []) as Transaction[];
@@ -97,12 +111,13 @@ export function computeDashboardKpiSnapshot(
     hydrateSarPerUsdDailySeries(data, exchangeRate);
     const headline = computePersonalHeadlineNetWorthSar(data, exchangeRate, {
       getAvailableCashForAccount: getAvailableCashForAccount as (id: string) => { SAR: number; USD: number },
+      simulatedPrices,
     });
     const sarPerUsd = headline.sarPerUsd;
 
     const cf = financialMonthNetCashflowSar(data, exchangeRate);
     const { monthlyExpensesSar: monthlyExpenses, monthlyPnLSar: monthlyPnL, currentRange } = cf;
-    const monthStartDay = (data as any)?.settings?.monthStartDay ?? 1;
+    const monthStartDay = resolveMonthStartDayFromData(data);
     const prevKey: FinancialMonthKey = addMonthsToKey(currentRange.key, -1);
     /** Use `financialMonthRangeFromKey` — do not derive the period via `financialMonthRange(midCalendarDay)`; when `monthStartDay > 15`, a mid-month reference falls before the period start and maps to the wrong financial month. */
     const prevRange = financialMonthRangeFromKey(prevKey, monthStartDay);
@@ -141,8 +156,7 @@ export function computeDashboardKpiSnapshot(
     const lastMonthPnL = lastMonthIncome - lastMonthExpenses;
 
     const netWorth = headline.netWorth;
-    const netWorthPrevMonth = netWorth - monthlyPnL;
-    const netWorthTrend = netWorthPrevMonth !== 0 ? ((netWorth - netWorthPrevMonth) / netWorthPrevMonth) * 100 : 0;
+    const netWorthTrend = computeImpliedFinancialMonthNetWorthTrendPct(netWorth, monthlyPnL);
 
     const headlineInv = computeHeadlinePersonalInvestmentRoiDecimal(
       data,
@@ -186,7 +200,7 @@ export function computeDashboardKpiSnapshot(
   }
 }
 
-/** Average SAR-based savings rate over the last `months` calendar months (including current). */
+/** Average SAR-based savings rate over the last `months` financial months (including current). */
 export function averageSavingsRateSarRolling(
   transactions: Transaction[],
   accounts: Account[],
@@ -194,15 +208,18 @@ export function averageSavingsRateSarRolling(
   uiExchangeRate: number,
   months: number = 3,
 ): number {
-  if (!transactions.length || months < 1) return 0;
-  hydrateSarPerUsdDailySeries(data ?? null, uiExchangeRate);
-  const sar = resolveSarPerUsd(data ?? null, uiExchangeRate);
+  if (!transactions.length || months < 1 || !data) return 0;
+  hydrateSarPerUsdDailySeries(data, uiExchangeRate);
+  const monthStartDay = resolveMonthStartDayFromData(data);
   const now = new Date();
+  const { key: currentKey } = financialMonthRange(now, monthStartDay);
   let sum = 0;
   let n = 0;
   for (let i = 0; i < months; i++) {
-    const ref = new Date(now.getFullYear(), now.getMonth() - i, 15);
-    sum += savingsRateSar(transactions, accounts, ref, sar);
+    const k = addMonthsToKey(currentKey, -i);
+    const { start, end } = financialMonthRangeFromKey(k, monthStartDay);
+    const mid = new Date((start.getTime() + end.getTime()) / 2);
+    sum += savingsRateSarFinancialMonth(transactions, accounts, mid, data, uiExchangeRate);
     n++;
   }
   return n > 0 ? sum / n : 0;
@@ -220,7 +237,7 @@ export function computeDashboardValidationWarnings(
   const budgets = data.budgets ?? [];
   const accounts = (d.personalAccounts ?? data.accounts ?? []) as Account[];
   const now = new Date();
-  const monthStartDay = (data as any)?.settings?.monthStartDay ?? 1;
+  const monthStartDay = resolveMonthStartDayFromData(data);
   const { key } = financialMonthRange(now, monthStartDay);
   const month = key.month;
   const year = key.year;

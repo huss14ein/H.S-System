@@ -2,7 +2,7 @@ import React, { useContext, useState, useEffect, useMemo, useCallback, useRef } 
 import { DataContext } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { AuthContext } from '../context/AuthContext';
-import { RiskProfile, Page } from '../types';
+import { RiskProfile, Page, type Settings as AppSettings } from '../types';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import InfoHint from '../components/InfoHint';
@@ -13,6 +13,7 @@ import { rankCapitalUses, buyScoreBreakdown } from '../services/decisionEngine';
 import { computeDecisionPreviewVerdict } from '../services/decisionPreviewVerdict';
 import DecisionPreviewPanel from '../components/DecisionPreviewPanel';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { loadTradingPolicy, saveTradingPolicy, type TradingPolicy, DEFAULT_TRADING_POLICY, TRADING_POLICY_PRESETS } from '../services/tradingPolicy';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import {
@@ -28,7 +29,7 @@ import {
 import { useCurrency } from '../context/CurrencyContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useNotifications } from '../context/NotificationsContext';
-import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { toSAR } from '../utils/currencyMath';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import AIAdvisor from '../components/AIAdvisor';
@@ -42,10 +43,11 @@ import {
   countPortfolioDriftAttention,
   countTrackedSymbolsForFeed,
 } from '../services/settingsSnapshot';
-import { computeWealthSummaryReportModel, computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
+import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { computeMaxAbsSleeveDriftPercent } from '../services/settingsDecisionPreview';
 import type { FinancialData } from '../types';
-import { financialMonthRange } from '../utils/financialMonth';
+import { financialMonthRange, resolveMonthStartDayFromData } from '../utils/financialMonth';
+import { isAutoNetWorthSnapshotEnabled, setAutoNetWorthSnapshotEnabled } from '../services/scheduledNetWorthSnapshot';
 
 /** Largest single holding as % of total managed holdings value (personal scope). */
 function computeLargestHoldingWeightPercent(data: FinancialData | null): number {
@@ -71,7 +73,7 @@ const FINANCIAL_PREFERENCE_PRESETS: Record<string, { riskProfile: RiskProfile; b
 };
 
 const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
-    const { data, loading, updateSettings, restoreFromBackup, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, showBlockingLoader, updateSettings, restoreFromBackup, getAvailableCashForAccount } = useContext(DataContext)!;
     const { showToast } = useToast();
     const auth = useContext(AuthContext)!;
     const { exchangeRate, currency, setCurrency } = useCurrency();
@@ -94,21 +96,11 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         includeLiabilities: true,
     });
     const [tradingPolicyLocal, setTradingPolicyLocal] = useState<TradingPolicy>(() => loadTradingPolicy());
+    const [autoNwSnapshot, setAutoNwSnapshot] = useState(() => isAutoNetWorthSnapshotEnabled(auth?.user?.id));
     const ef = useEmergencyFund(data ?? null);
     const { maskSensitive, setMaskSensitive, playNotificationSound, setPlayNotificationSound } = usePrivacyMask();
 
-    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
-
-    const liquidCashSar = useMemo(() => {
-        const accounts = getPersonalAccounts(data);
-        return accounts
-            .filter((a) => a.type === 'Checking' || a.type === 'Savings')
-            .reduce((s, a) => {
-                const bal = Math.max(0, Number(a.balance) || 0);
-                const cur = a.currency === 'USD' ? 'USD' : 'SAR';
-                return s + toSAR(bal, cur, sarPerUsd);
-            }, 0);
-    }, [data, sarPerUsd]);
+    const { sarPerUsd, liquidCashSar, wealthSummary } = useCanonicalFinancialMetrics();
 
     const sleeveDriftPct = useMemo(() => computeMaxAbsSleeveDriftPercent(data), [data]);
 
@@ -125,8 +117,8 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         [localSettings?.driftThreshold]
     );
     const monthStartDaySetting = useMemo(
-        () => Math.min(31, Math.max(1, Math.round(Number((localSettings as any)?.monthStartDay ?? 1)))),
-        [(localSettings as any)?.monthStartDay]
+        () => resolveMonthStartDayFromData({ settings: localSettings as AppSettings }),
+        [localSettings]
     );
 
     const financialMonthPreview = useMemo(() => {
@@ -274,9 +266,8 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     }, [liquidCashSar]);
 
     const wealthSummaryPayload = useMemo((): WealthSummaryReportInput | null => {
-        if (!data) return null;
-        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount).wealthSummaryReportPayload;
-    }, [data, exchangeRate, getAvailableCashForAccount]);
+        return wealthSummary?.wealthSummaryReportPayload ?? null;
+    }, [wealthSummary]);
 
     const [isAdmin, setIsAdmin] = useState(false);
     const [pendingUsers, setPendingUsers] = useState<{ id: string; name: string | null; email: string | null; created_at: string }[]>([]);
@@ -449,7 +440,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
 const hasData = accountsForEmptyCheck.length > 0;
     const defaultWealthUltra = useMemo(() => ({ ...getDefaultWealthUltraConfig(), ...(data?.wealthUltraConfig || {}) }), [data?.wealthUltraConfig]);
 
-    if (loading || !data) {
+    if (showBlockingLoader) {
         return (
             <div className="page-container flex justify-center items-center min-h-[24rem]" aria-busy="true">
                 <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading settings" />
@@ -545,6 +536,21 @@ const hasData = accountsForEmptyCheck.length > 0;
                         hint="In-app feed size from Notifications engine. Email = weekly summary toggle below. Sound = in-app beep only (not OS push)."
                     />
                 </div>
+                <label className="mt-4 flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3 cursor-pointer">
+                    <input
+                        type="checkbox"
+                        checked={autoNwSnapshot}
+                        onChange={(e) => {
+                            const on = e.target.checked;
+                            setAutoNwSnapshot(on);
+                            if (auth.user?.id) setAutoNetWorthSnapshotEnabled(auth.user.id, on);
+                        }}
+                        className="mt-1 h-4 w-4 rounded border-slate-300 text-primary"
+                    />
+                    <span className="text-sm text-slate-700">
+                        <strong className="text-slate-900">Auto-capture net worth snapshot</strong> once per calendar month on login (extended fields: runway, goals, allocation). Manual capture remains on Summary and Command palette.
+                    </span>
+                </label>
             </SectionCard>
 
             <SectionCard id="user-profile" title="User Profile" collapsible collapsibleSummary="Email, user ID">

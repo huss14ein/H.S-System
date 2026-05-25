@@ -13,8 +13,7 @@ import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
-import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { fetchLiveGoldPriceSarPerGram } from '../utils/commodityLiveValue';
 import { summarizeZakatableCommoditiesForZakat, summarizeZakatableInvestmentsForZakat } from '../services/zakatInvestmentValuation';
 import { summarizeZakatableCashForZakat } from '../services/zakatCashValuation';
@@ -23,13 +22,17 @@ import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestmen
 import AIAdvisor from '../components/AIAdvisor';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
+import { sortByNewestFirst } from '../utils/sortRecency';
+import { useConfirmAction } from '../hooks/useConfirmAction';
+import { summarizeZakatPaymentForConfirm } from '../utils/recordConfirmMessages';
 
 const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => void }> = ({ isOpen, onClose, onSave }) => {
+    const confirmAction = useConfirmAction();
     const [amount, setAmount] = useState('');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [notes, setNotes] = useState('');
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const amt = parseFloat(amount);
         if (!Number.isFinite(amt) || amt <= 0) {
@@ -40,6 +43,8 @@ const ZakatPaymentModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave
             alert('Please provide a valid payment date.');
             return;
         }
+        const ok = await confirmAction(summarizeZakatPaymentForConfirm({ amount: amt, date, notes: notes.trim() }));
+        if (!ok) return;
         onSave({ amount: amt, date, notes: notes.trim() });
         setAmount('');
         setDate(new Date().toISOString().split('T')[0]);
@@ -74,9 +79,8 @@ interface ZakatProps {
 }
 
 const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
-    const { data, loading, addZakatPayment, updateSettings } = useContext(DataContext)!;
-    const { exchangeRate } = useCurrency();
-    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+    const { data, showBlockingLoader, addZakatPayment, updateSettings } = useContext(DataContext)!;
+    const { sarPerUsd } = useCanonicalFinancialMetrics();
     const { formatCurrencyString } = useFormatCurrency();
     
     const defaultGold = Number((data?.settings as any)?.gold_price ?? data?.settings?.goldPrice ?? 275);
@@ -173,6 +177,10 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
     const isNisabMet = useMemo(() => netZakatableWealth >= nisab, [netZakatableWealth, nisab]);
     const zakatDue = useMemo(() => isNisabMet ? netZakatableWealth * 0.025 : 0, [isNisabMet, netZakatableWealth]);
     const totalPaid = useMemo(() => (data?.zakatPayments ?? []).reduce((sum, p) => sum + p.amount, 0), [data?.zakatPayments]);
+    const zakatPaymentsNewestFirst = useMemo(
+        () => sortByNewestFirst(data?.zakatPayments ?? []),
+        [data?.zakatPayments],
+    );
     const outstandingZakat = useMemo(() => Math.max(0, zakatDue - totalPaid), [zakatDue, totalPaid]);
     const overpaidZakat = useMemo(() => Math.max(0, totalPaid - zakatDue), [totalPaid, zakatDue]);
     const zakatValidationWarnings = useMemo(() => {
@@ -209,7 +217,7 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
         }
     };
 
-    if (loading || !data) {
+    if (showBlockingLoader) {
         return (
             <div className="flex justify-center items-center h-96" aria-busy="true">
                 <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading Zakat" />
@@ -524,7 +532,7 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                     </div>
                     
                     <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
-                        {(data?.zakatPayments ?? []).map(p => (
+                        {zakatPaymentsNewestFirst.map(p => (
                              <div key={p.id} className="flex justify-between items-center text-sm p-3 bg-gray-50 rounded-lg border">
                                 <div className="flex items-center gap-3">
                                     <BanknotesIcon className="h-6 w-6 text-green-500 flex-shrink-0" />
@@ -536,36 +544,38 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                                 {p.notes && <p className="text-xs text-gray-600 italic text-right clamp-2-lines break-words max-w-[220px]" title={p.notes}>{p.notes}</p>}
                             </div>
                         ))}
-                        {(data?.zakatPayments ?? []).length === 0 && <p className="empty-state py-4">No payments recorded yet.</p>}
+                        {zakatPaymentsNewestFirst.length === 0 && <p className="empty-state py-4">No payments recorded yet.</p>}
                     </div>
                 </div>
             </div>
 
             <AIAdvisor
-                pageContext="analysis"
+                pageContext="zakat"
                 contextData={{
-                    spendingData: [
-                        { category: 'Zakatable Assets', value: zakatableAssets.total },
-                        { category: 'Deductible Liabilities', value: deductibleLiabilities.total },
-                        { category: 'Net Zakatable Wealth', value: netZakatableWealth },
-                        { category: 'Outstanding Zakat', value: outstandingZakat },
-                    ],
-                    trendData: (data?.zakatPayments ?? [])
-                        .slice()
-                        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-                        .map((p) => ({ month: String(p.date).slice(0, 7), value: Number(p.amount) || 0 })),
-                    compositionData: [
+                    zakatableTotal: zakatableAssets.total,
+                    deductibleLiabilities: deductibleLiabilities.total,
+                    netZakatable: netZakatableWealth,
+                    outstandingZakat,
+                    composition: [
                         { name: 'Cash', value: zakatableAssets.cash },
                         { name: 'Investments', value: zakatableAssets.investments },
                         { name: 'Commodities', value: zakatableAssets.commodities },
                     ],
+                    paymentTrend: (data?.zakatPayments ?? [])
+                        .slice()
+                        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                        .map((p) => ({ month: String(p.date).slice(0, 7), value: Number(p.amount) || 0 })),
                 }}
                 title="Zakat AI Advisor"
                 subtitle="Nisab readiness, payment planning, and Zakat composition insights."
                 buttonLabel="Get AI Zakat Insights"
             />
 
-            <ZakatPaymentModal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} onSave={addZakatPayment} />
+            <ZakatPaymentModal
+                isOpen={isPaymentModalOpen}
+                onClose={() => setIsPaymentModalOpen(false)}
+                onSave={(p) => void addZakatPayment(p, { confirmed: true })}
+            />
         </PageLayout>
     );
 };

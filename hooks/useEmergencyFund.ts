@@ -1,11 +1,12 @@
-import { useMemo } from 'react';
+import { useMemo, useContext } from 'react';
 import type { FinancialData, Account, Transaction, Budget } from '../types';
+import { DataContext } from '../context/DataContext';
 import { getPersonalWealthData } from '../utils/wealthScope';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
-import { resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
-import { brokerCashBucketsFromInvestmentAccount } from '../services/investmentCashLedger';
-import { getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
+import { resolveSarPerUsd, toSAR, totalLiquidCashSARFromAccounts } from '../utils/currencyMath';
+import { getSarPerUsdForCalendarDay, hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { useCurrency } from '../context/CurrencyContext';
+import { useCanonicalSpotFx } from './useCanonicalFinancialMetrics';
 
 /** Recommended months of expenses to hold as emergency cash (3–6 is common; 6 is conservative). */
 export const EMERGENCY_FUND_TARGET_MONTHS = 6;
@@ -81,7 +82,11 @@ function txExpenseSar(
  */
 export function computeEmergencyFundMetrics(
     data: FinancialData | null | undefined,
-    opts?: { sarPerUsd?: number; exchangeRate?: number }
+    opts?: {
+        sarPerUsd?: number;
+        exchangeRate?: number;
+        getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number };
+    }
 ): EmergencyFundMetrics {
     const defaultResult: EmergencyFundMetrics = {
         emergencyCash: 0,
@@ -102,28 +107,27 @@ export function computeEmergencyFundMetrics(
     const transactions = personalTransactions as Transaction[];
     const budgets = (data.budgets ?? []) as Budget[];
 
-    const uiEx = opts?.exchangeRate;
-    const useDailyFx = uiEx != null && Number.isFinite(uiEx) && uiEx > 0;
+    const uiExchangeRate = opts?.exchangeRate;
+    const useDailyFx = uiExchangeRate != null && Number.isFinite(uiExchangeRate) && uiExchangeRate > 0;
+    if (useDailyFx) {
+        hydrateSarPerUsdDailySeries(data, uiExchangeRate);
+    }
 
     const spotSarPerUsd =
         opts?.sarPerUsd != null && Number.isFinite(opts.sarPerUsd) && opts.sarPerUsd > 0
             ? opts.sarPerUsd
-            : resolveSarPerUsd(data, useDailyFx ? uiEx : undefined);
+            : resolveSarPerUsd(data, useDailyFx ? uiExchangeRate : undefined);
 
     const accById = new Map(accounts.map((a) => [a.id, a]));
 
-    const bankCashSar = accounts
-        .filter((a) => a.type === 'Checking' || a.type === 'Savings')
-        .reduce((sum, a) => {
-            const cur = a.currency === 'USD' ? 'USD' : 'SAR';
-            return sum + toSAR(Math.max(0, a.balance ?? 0), cur, spotSarPerUsd);
-        }, 0);
-    let platformCashSar = 0;
-    for (const a of accounts) {
-        if (a.type !== 'Investment') continue;
-        platformCashSar += tradableCashBucketToSAR(brokerCashBucketsFromInvestmentAccount(a), spotSarPerUsd);
-    }
-    const emergencyCash = bankCashSar + platformCashSar;
+    const emergencyCash = opts?.getAvailableCashForAccount
+        ? totalLiquidCashSARFromAccounts(accounts, opts.getAvailableCashForAccount, spotSarPerUsd)
+        : accounts
+              .filter((a) => a.type === 'Checking' || a.type === 'Savings')
+              .reduce((sum, a) => {
+                  const cur = a.currency === 'USD' ? 'USD' : 'SAR';
+                  return sum + toSAR(Math.max(0, a.balance ?? 0), cur, spotSarPerUsd);
+              }, 0);
 
     const now = new Date();
     const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
@@ -146,7 +150,8 @@ export function computeEmergencyFundMetrics(
             const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
             byMonth.set(
                 key,
-                (byMonth.get(key) ?? 0) + txExpenseSar(t, accById, spotSarPerUsd, data, useDailyFx, uiEx ?? 0),
+                (byMonth.get(key) ?? 0) +
+                    txExpenseSar(t, accById, spotSarPerUsd, data, useDailyFx, uiExchangeRate ?? 0),
             );
         }
     });
@@ -172,7 +177,8 @@ export function computeEmergencyFundMetrics(
                 const key = t.date.slice(0, 7);
                 allByMonth.set(
                     key,
-                    (allByMonth.get(key) ?? 0) + txExpenseSar(t, accById, spotSarPerUsd, data, useDailyFx, uiEx ?? 0),
+                    (allByMonth.get(key) ?? 0) +
+                        txExpenseSar(t, accById, spotSarPerUsd, data, useDailyFx, uiExchangeRate ?? 0),
                 );
             });
             monthlyCoreExpenses =
@@ -220,8 +226,15 @@ export function emergencyFundCoverage(data: FinancialData | null | undefined): n
  */
 export function useEmergencyFund(data: FinancialData | null | undefined): EmergencyFundMetrics {
     const { exchangeRate } = useCurrency();
+    const sarPerUsd = useCanonicalSpotFx();
+    const { getAvailableCashForAccount } = useContext(DataContext)!;
     return useMemo(
-        () => computeEmergencyFundMetrics(data, { exchangeRate }),
-        [data, exchangeRate]
+        () =>
+            computeEmergencyFundMetrics(data, {
+                exchangeRate,
+                sarPerUsd,
+                getAvailableCashForAccount,
+            }),
+        [data, exchangeRate, sarPerUsd, getAvailableCashForAccount]
     );
 }

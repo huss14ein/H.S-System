@@ -5,12 +5,25 @@ alwaysApply: true
 
 # Single source of truth for financial KPIs
 
-- **Headline personal net worth (SAR)** and stacked buckets: use `computePersonalHeadlineNetWorthSar(data, uiExchangeRate, { getAvailableCashForAccount })` from `services/personalNetWorth.ts`. Pass **CurrencyContext `exchangeRate`** and **DataContext `data`** — never invent a separate FX path for the same headline (e.g. do not use a calendar-day spot for NW while KPI uses `resolveSarPerUsd`).
+- **Headline personal net worth (SAR)** and stacked buckets: use `computePersonalHeadlineNetWorthSar(data, uiExchangeRate, { getAvailableCashForAccount, simulatedPrices })` from `services/personalNetWorth.ts`. Pass **CurrencyContext `exchangeRate`**, **DataContext `data`**, and **`simulatedPrices` from `useMarketData()`** so holdings match Investments hub live quotes — never invent a separate FX path for the same headline (e.g. do not use a calendar-day spot for NW while KPI uses `resolveSarPerUsd`).
 - **Dashboard KPI row** (`netWorth`, `monthlyPnL`, trends, liquid cash SAR, ROI): use `computeDashboardKpiSnapshot` from `services/dashboardKpiSnapshot.ts` only — pass **`simulatedPrices`** from `useMarketData()` so **Investment ROI** matches the Investments hub (`computeHeadlinePersonalInvestmentRoiDecimal`: platform rollup + commodities + Sukuk).
-- **Wealth Summary / exports / reconciliation**: `computeWealthSummaryReportModel(data, uiExchangeRate, getAvailableCashForAccount)` — second argument is **UI exchange rate**, not a pre-resolved SAR/USD number.
+- **Wealth Summary / exports / reconciliation**: `computeWealthSummaryReportModel(data, uiExchangeRate, getAvailableCashForAccount, simulatedPrices)` — second argument is **UI exchange rate**, not a pre-resolved SAR/USD number; fourth is live quotes (same as headline NW).
 - **Weekly email digest (Edge)**: build rows with `buildFinancialDataForWeeklyDigest` then `computeWeeklyDigestPersonalNetWorthSar` from `services/weeklyDigestNetWorthSar.ts` — same balance sheet + **Investment account cash balances** as personal NW (not ad-hoc SQL sums).
 - **Transaction-dated FX** (historical TX conversion): `getSarPerUsdForCalendarDay` remains valid **inside** cashflow and ledger paths — not for replacing headline balance-sheet NW.
 
 When adding a new surface that shows “My net worth” or the same number as the Dashboard card, **import the headline helper** (or `computeDashboardKpiSnapshot`) instead of re-rolling `accounts + investments − debt`.
+
+- **React:** `useCanonicalFinancialMetrics()` from `hooks/useCanonicalFinancialMetrics.ts` — use on **every page/sub-page** that shows headline NW, investment total, liquid cash, or SAR/USD conversion for personal wealth (prefer `sarPerUsd`, `netWorth`, `investmentsTotalSar`, `investableCashTotalSar`, `liquidCashSar`, `platformsRollupSar` from the hook instead of `resolveSarPerUsd` + ad-hoc sums). **Spot FX only** (no full KPI recompute on quote ticks): `useCanonicalSpotFx()` — **Header**, **NotificationsContext**, **MarketSimulator**, **AIFeed**, **AIAdvisor**, **DividendSmsImportPanel**, **useEmergencyFund**, **useFinancialEnhancementInsights**. **`useEmergencyFund()`** uses headline spot FX for liquid-cash math. **Page loading:** gate on `DataContext.showBlockingLoader` (not `loading || !data`) so background refetches do not blank pages; enforced by `tests/pageLoadingGateCoverage.vitest.test.ts`. Enforced by `tests/canonicalMetricsSurfaceCoverage.vitest.test.ts` for `pages/`, key `components/`, and `NotificationsContext`.
+- **Non-React** (command palette, scripts): `computeCanonicalFinancialMetrics()` from `services/canonicalFinancialMetrics.ts` — same bundle as the hook (headline, KPI, wealth summary, today snapshot, investable cash).
+
+**Today snapshot (Dashboard cockpit):** `computeTodayBalanceSheetSnapshotSar` — same headline path as KPI buckets.
+
+**Investable cash bars / Accounts tradable cash:** `buildInvestableCashBarsFromInvestmentAccounts` / `sumTradableCashSarFromInvestmentAccounts` from `services/investmentCashLedger.ts`.
+
+**Investment total (SAR) — same on Investments hub, Dashboard today snapshot, Summary chart band, exports:** `computeHeadlinePersonalInvestmentRoiDecimal(...).totalExposureSar` (platform rollup + commodities + Sukuk). In React use `useCanonicalFinancialMetrics().investmentsTotalSar` or `investmentExposure`. The balance-sheet `investments` bucket uses this total; commodities are **not** duplicated under Physical.
+
+**Investment Overview pie / asset-class bars:** `useCanonicalFinancialMetrics().investmentAllocation` (`buildHeadlineInvestmentAllocationSlices`) — slices scale to `investmentsTotalSar`; do not build chart totals from raw holdings + cash rows alone.
+
+**Plan / recovery / rebalancer:** pass `sarPerUsd` from `useCanonicalFinancialMetrics()` into `computeCanonicalPlanningSnapshot` so plan cash and notionals match headline FX.
 
 **Not one function for literally everything:** the app also has **liquidity-specific** (`computeLiquidNetWorth`), **cashflow / ledger** metrics (transaction-dated FX), **platform-only investment KPIs** (diagnostics), and **historical** series — those are different questions. What we guarantee is **one canonical path per family** (e.g. headline balance-sheet NW → `computePersonalHeadlineNetWorthSar` only; do not call `computePersonalNetWorthSAR` with a bare `resolveSarPerUsd` unless you also mirrored the headline hydrate step).

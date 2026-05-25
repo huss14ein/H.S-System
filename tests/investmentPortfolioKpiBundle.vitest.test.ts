@@ -206,7 +206,7 @@ describe('computePortfolioMetricsBundle', () => {
     expect(high.totalWithdrawnSAR).toBeCloseTo(300, 5);
   });
 
-  it('with one portfolio, KPI metrics use full tx list + cash + net_capital like the platform header', () => {
+  it('with one portfolio, KPI metrics use full tx list + cash + holdings_cost for P/L and ROI', () => {
     const account: Account = {
       id: 'acc-single',
       name: 'Broker',
@@ -267,7 +267,66 @@ describe('computePortfolioMetricsBundle', () => {
     expect(m.totalInvestedSAR).toBe(2000);
     expect(m.totalWithdrawnSAR).toBe(400);
     expect(m.netCapitalSAR).toBeCloseTo(1600, 5);
-    expect(m.unrealizedPnLBasis).toBeUndefined();
+    expect(m.unrealizedPnLBasis).toBe('holdings_cost');
+    expect(m.holdingsCostBasisSAR).toBeCloseTo(1000, 5);
+    expect(m.totalGainLossSAR).toBeCloseTo(0, 5);
+    expect(m.roi).toBeCloseTo(0, 5);
     expect(m.totalValueInSAR).toBeCloseTo(1000 + 50, 5);
+  });
+
+  it('single portfolio with sparse deposits uses holdings cost for unrealized P/L (manual fund)', () => {
+    const account: Account = {
+      id: 'acc-retire',
+      name: 'Retirement',
+      type: 'Investment',
+      balance: 0,
+    };
+    const portfolio: InvestmentPortfolio = {
+      id: 'jazirah',
+      name: 'Jazirah Retirement',
+      accountId: 'acc-retire',
+      currency: 'SAR',
+      holdings: [
+        {
+          id: 'h-fund',
+          symbol: '0006',
+          quantity: 269.12221,
+          avgCost: 234.0944,
+          currentValue: 72671,
+          zakahClass: 'Zakatable',
+          realizedPnL: 0,
+          holdingType: 'manual_fund',
+        },
+      ],
+    };
+    const txs: InvestmentTransaction[] = [
+      {
+        id: 'd-small',
+        accountId: 'acc-retire',
+        symbol: 'CASH',
+        type: 'deposit',
+        date: '2026-01-01',
+        total: 1000,
+        currency: 'SAR',
+      },
+    ];
+
+    const bundle = computePortfolioMetricsBundle({
+      siblingPortfolios: [portfolio],
+      transactions: txs,
+      accounts: [account],
+      allInvestments: [portfolio],
+      sarPerUsd: 3.75,
+      simulatedPrices: {},
+      accountAvailableCashByCurrency: { SAR: 0, USD: 0 },
+    });
+
+    const m = bundle.metricsByPortfolioId.get('jazirah')!;
+    const costBasis = 269.12221 * 234.0944;
+    expect(m.holdingsCostBasisSAR).toBeCloseTo(costBasis, 0);
+    expect(m.totalGainLossSAR).toBeCloseTo(72671 - costBasis, 0);
+    expect(m.roi).toBeCloseTo(((72671 - costBasis) / costBasis) * 100, 1);
+    expect(m.totalInvestedSAR).toBe(1000);
+    expect(m.totalGainLossSAR).not.toBeCloseTo(72671 - 1000, 0);
   });
 });

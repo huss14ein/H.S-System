@@ -14,8 +14,7 @@ import PageLayout from '../components/PageLayout';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import SectionCard from '../components/SectionCard';
 import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
-import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from '../components/charts/chartTheme';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
@@ -41,7 +40,17 @@ import { resolveInvestmentTransactionAccountId } from '../utils/investmentLedger
 import { buildAnnualPlanRows, formatAnnualPlanIncomeHint, type AnnualPlanRow } from '../services/annualPlanFromData';
 import { goalsWithResolvedCurrentAmount } from '../services/goalResolvedTotals';
 import { computeGoalMonthlyFundingEnvelopeSar } from '../services/goalProjectionFunding';
-import { normalizeGoalAllocationPercent } from '../services/goalAllocation';
+import {
+    currentFinancialMonthColumnEndIndex,
+    financialMonthColumnHeadersForPlanYear,
+    financialMonthLabel,
+    financialMonthKeysEndingAt,
+    financialMonthRangeFromKey,
+    resolveMonthStartDayFromData,
+} from '../utils/financialMonth';
+import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
+import { useFinancialEnhancementInsights } from '../hooks/useFinancialEnhancementInsights';
+import { useEmergencyFund } from '../hooks/useEmergencyFund';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -55,15 +64,19 @@ const SCENARIO_PRESETS = [
 ];
 
 const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
-    const { data, loading } = useContext(DataContext)!;
+    const { data, showBlockingLoader } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const { exchangeRate, currency: displayCurrency } = useCurrency();
-    const sarPerUsd = useMemo(() => {
-        if (data) hydrateSarPerUsdDailySeries(data, exchangeRate);
-        return resolveSarPerUsd(data, exchangeRate);
-    }, [data, exchangeRate]);
+    const { sarPerUsd, liquidCashSar: dashboardLiquidCashSar } = useCanonicalFinancialMetrics();
+    const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data]);
+    const emergencyFund = useEmergencyFund(data);
+    const planInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
     const [year, setYear] = useState(new Date().getFullYear());
+    const planMonthColumnLabels = useMemo(
+        () => financialMonthColumnHeadersForPlanYear(year, monthStartDay),
+        [year, monthStartDay],
+    );
     const [householdAdults, setHouseholdAdults] = useState(2);
     const [householdKids, setHouseholdKids] = useState(0);
     const [householdOverrides, setHouseholdOverrides] = useState<HouseholdMonthlyOverride[]>([]);
@@ -292,10 +305,9 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
         const now = new Date();
         const curY = now.getFullYear();
-        const curM = now.getMonth();
         let endIdx = 11;
         if (year > curY) endIdx = -1;
-        else if (year === curY) endIdx = curM;
+        else if (year === curY) endIdx = currentFinancialMonthColumnEndIndex(year, now, monthStartDay);
         else endIdx = 11;
 
         const sliceSum = (arr: number[] | undefined, end: number) => {
@@ -339,19 +351,19 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             ytdVarianceSar,
             planProgressEndIdx: endIdx,
         };
-    }, [processedPlanData, year]);
+    }, [processedPlanData, year, monthStartDay]);
 
-    /** Over-plan counts: one tick per (expense category × calendar month). Scoped to the same period as the summary (YTD for the selected year when it is the current year; full year for past years; none for future years). */
+    /** Over-plan counts: one tick per (expense category × financial month). Scoped to the same period as the summary (YTD for the selected year when it is the current year; full year for past years; none for future years). */
     const insights = useMemo((): {
         monthsOverBudget: number;
         worst: { category: string; month: string; pct: number } | null;
         overBudgetPeriodLabel: string | null;
     } => {
         const curY = new Date().getFullYear();
-        const curM = new Date().getMonth();
+        const now = new Date();
         let endIdx = -1;
         if (year > curY) endIdx = -1;
-        else if (year === curY) endIdx = curM;
+        else if (year === curY) endIdx = currentFinancialMonthColumnEndIndex(year, now, monthStartDay);
         else endIdx = 11;
 
         let monthsOverBudget = 0;
@@ -369,28 +381,42 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                             : plan > 0 && actual > plan + 1e-6;
                     if (over) monthsOverBudget++;
                     const pct = plan > 0 ? ((actual - plan) / plan) * 100 : actual > 0 ? 100 : 0;
-                    if (pct > 0 && (!worst || pct > worst.pct)) worst = { category: row.category, month: MONTHS[mi], pct };
+                    if (pct > 0 && (!worst || pct > worst.pct)) {
+                        const monthLabel =
+                            monthStartDay === 1
+                                ? MONTHS[mi]
+                                : financialMonthLabel({ year, month: mi + 1 }, monthStartDay).split(' – ')[0];
+                        worst = { category: row.category, month: monthLabel, pct };
+                    }
                 }
             });
         }
 
+        const ytdThroughLabel =
+            monthStartDay === 1
+                ? MONTHS[endIdx]
+                : financialMonthLabel({ year, month: endIdx + 1 }, monthStartDay).split(' – ')[0];
         const overBudgetPeriodLabel =
             endIdx < 0
                 ? null
                 : year < curY
                   ? `full year ${year}`
-                  : `YTD through ${MONTHS[endIdx]} ${year}`;
+                  : `YTD through ${ytdThroughLabel} ${year}`;
 
         return { monthsOverBudget, worst, overBudgetPeriodLabel };
-    }, [processedPlanData, year]);
+    }, [processedPlanData, year, monthStartDay]);
 
     /** Planned vs actual through end of selected period (YTD for current year, full year for past years). Hidden for future years. */
     const planProgressPeriod = useMemo(() => {
         const curY = new Date().getFullYear();
-        const curM = new Date().getMonth();
+        const now = new Date();
         if (year > curY) return null;
-        const endIdx = year < curY ? 11 : curM;
-        const label = year < curY ? `Full year ${year}` : `Year-to-date through ${MONTHS[endIdx]}`;
+        const endIdx = year < curY ? 11 : currentFinancialMonthColumnEndIndex(year, now, monthStartDay);
+        const ytdMonthLabel =
+            monthStartDay === 1
+                ? MONTHS[endIdx]
+                : financialMonthLabel({ year, month: endIdx + 1 }, monthStartDay).split(' – ')[0];
+        const label = year < curY ? `Full year ${year}` : `Year-to-date through ${ytdMonthLabel}`;
         const sumSlice = (planned: number[], actual: number[]) => ({
             planned: planned.slice(0, endIdx + 1).reduce((a, b) => a + b, 0),
             actual: actual.slice(0, endIdx + 1).reduce((a, b) => a + b, 0),
@@ -423,7 +449,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             expenses: { planned: expensesPlanned, actual: expensesActual },
             investment: hasInvestment ? investmentPair! : null,
         };
-    }, [processedPlanData, year]);
+    }, [processedPlanData, year, monthStartDay]);
 
     // Goals: when will you reach them? Required per month vs projected surplus (after expenses + investment)
     const goalsResolved = useMemo(
@@ -447,11 +473,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 : 0;
             const requiredPerMonth = monthsRemaining > 0 && shortfall > 0 ? shortfall / monthsRemaining : shortfall;
 
-            const pct = normalizeGoalAllocationPercent(g.savingsAllocationPercent ?? 0);
-            const projectedMonthly =
-                env.envelopeMonthly > 0
-                    ? env.envelopeMonthly
-                    : monthlySurplusAfterInvestment * (pct / 100);
+            const projectedMonthly = env.envelopeMonthly;
 
             /** Months to cover shortfall at this goal’s monthly plan allocation — not total household surplus. */
             const monthsToReachAtAllocationRate =
@@ -551,15 +573,16 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const { household: householdConstraints } = useFinancialEnginesIntegration();
     const dynamicBaselines = useMemo(() => calculateDynamicBaselines(transactions as any[], 6), [transactions]);
     const predictiveSpend = useMemo(() => {
-        const currentMonth = new Date().getMonth() + 1;
+        const now = new Date();
+        const lookbackKeys = financialMonthKeysEndingAt(now, 3, monthStartDay);
+        const earliest = financialMonthRangeFromKey(lookbackKeys[0], monthStartDay).start;
+        const currentFinMonth = financialMonthKeysEndingAt(now, 1, monthStartDay)[0]?.month ?? now.getMonth() + 1;
         const recentTx = (transactions as any[]).filter((t: { date: string }) => {
             const d = new Date(t.date);
-            const cutoff = new Date();
-            cutoff.setMonth(cutoff.getMonth() - 3);
-            return d >= cutoff;
+            return d >= earliest;
         });
-        return generatePredictiveSpend(dynamicBaselines, currentMonth, recentTx, []);
-    }, [dynamicBaselines, transactions]);
+        return generatePredictiveSpend(dynamicBaselines, currentFinMonth, recentTx, []);
+    }, [dynamicBaselines, transactions, monthStartDay]);
 
     useEffect(() => {
         const riskProfile = String((data as any)?.settings?.riskProfile || '').toLowerCase();
@@ -570,7 +593,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     }, [(data as any)?.settings?.riskProfile]);
 
     const planChartData = useMemo(() => {
-        return MONTHS.map((month, index) => {
+        return planMonthColumnLabels.map((month, index) => {
             const incPlanned = Number(processedPlanData.find((r: PlanRow) => r.type === 'income')?.monthly_planned[index] ?? 0);
             const incActual = Number(processedPlanData.find((r: PlanRow) => r.type === 'income')?.monthly_actual[index] ?? 0);
             const expPlanned = processedPlanData
@@ -589,7 +612,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 'Net actual': incActual - expActual,
             };
         });
-    }, [processedPlanData]);
+    }, [processedPlanData, planMonthColumnLabels]);
 
     const planChartHasPlannedSeries = useMemo(
         () => planChartData.some((d) => (d.Income ?? 0) !== 0 || (d.Expenses ?? 0) !== 0),
@@ -625,7 +648,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         );
     }
 
-    if (loading || !data) {
+    if (showBlockingLoader) {
         return (
             <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
                 <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading plan" />
@@ -671,6 +694,12 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 </div>
             ) : (
             <div className="space-y-6 sm:space-y-8">
+            <EnhancementInsightStrip
+                capitalDeployment={planInsights.capitalDeployment}
+                goalConflicts={planInsights.goalConflicts}
+                budgetDrift={planInsights.budgetDrift.slice(0, 2)}
+                compact
+            />
             <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50/90 to-white px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm text-slate-700 shadow-sm">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <span className="inline-flex items-center rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-indigo-900">SAR plan math</span>
@@ -781,15 +810,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
             {/* Liquid cash from Accounts; debt from Liabilities — equal-width columns when both show */}
             {((accounts.length > 0) || (liabilities.length > 0)) && (() => {
-                const liquidCash =
-                    accounts.length > 0
-                        ? accounts
-                    .filter((a: { type: string }) => a.type === 'Checking' || a.type === 'Savings')
-                    .reduce((sum: number, a: Account) => {
-                        const cur = a.currency === 'USD' ? 'USD' : 'SAR';
-                        return sum + Math.max(0, toSAR(Number(a.balance) || 0, cur, sarPerUsd));
-                              }, 0)
-                        : 0;
+                const liquidCash = accounts.length > 0 ? dashboardLiquidCashSar : 0;
                 const totalDebt =
                     liabilities.length > 0
                         ? liabilities
@@ -807,7 +828,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         >
                         <p className="metric-label text-xs font-medium text-emerald-800 uppercase tracking-wide w-full">Liquid cash (Checking + Savings)</p>
                         <p className="metric-value text-xl font-bold text-emerald-800 tabular-nums mt-0.5 w-full">{formatCurrencyString(liquidCash, { inCurrency: 'SAR', digits: 0 })}</p>
-                        <p className="text-xs text-slate-600 mt-0.5">From Accounts (SAR equivalent).</p>
+                        <p className="text-xs text-slate-600 mt-0.5">Same liquid cash SAR as Dashboard KPIs (ledger-aware checking + savings).</p>
                         {setActivePage && (
                             <button type="button" onClick={() => setActivePage('Accounts')} className="mt-2 text-xs font-medium text-primary hover:underline inline-flex items-center gap-1">Accounts →</button>
                         )}
@@ -1293,7 +1314,15 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     <thead className="bg-gray-100 text-dark">
                         <tr>
                             <th className="sticky left-0 bg-gray-100 p-2 text-left font-semibold">Category</th>
-                            {MONTHS.map(m => <th key={m} className="p-2 min-w-[150px] font-semibold">{m}</th>)}
+                            {planMonthColumnLabels.map((m, mi) => (
+                                <th
+                                    key={`${year}-${mi}-${m}`}
+                                    className="p-2 min-w-[150px] font-semibold whitespace-nowrap"
+                                    title={monthStartDay !== 1 ? financialMonthLabel({ year, month: mi + 1 }, monthStartDay) : undefined}
+                                >
+                                    {m}
+                                </th>
+                            ))}
                             <th className="p-2 min-w-[150px] font-semibold">Total</th>
                         </tr>
                     </thead>

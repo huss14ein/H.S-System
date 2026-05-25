@@ -57,6 +57,33 @@ describe('liquid metrics currency normalization', () => {
     expect(result.creditCardDebtSar + result.loanAndMortgageDebtSar).toBeCloseTo(result.shortTermDebt, 4);
   });
 
+  it('fallback without ledger cash splits platform holdings, commodities, and Sukuk (no double-subtract)', () => {
+    const data = {
+      accounts: [{ id: 'chk', name: 'Checking', type: 'Checking', balance: 1000, currency: 'SAR' }],
+      investments: [
+        {
+          id: 'pf1',
+          name: 'PF',
+          accountId: 'inv',
+          currency: 'SAR',
+          holdings: [{ symbol: '2222', quantity: 10, avgCost: 80, currentValue: 9000 }],
+        },
+      ],
+      commodityHoldings: [{ id: 'c1', name: 'Gold', quantity: 1, currentValue: 5000, purchaseValue: 4000 }],
+      liabilities: [],
+      assets: [{ id: 'sk1', name: 'Sukuk', type: 'Sukuk', value: 25000 }],
+      transactions: [],
+      wealthUltraConfig: { fxRate: 3.75 },
+    } as unknown as FinancialData;
+
+    const result = computeLiquidNetWorth(data, { exchangeRate: 3.75 });
+    expect(result.portfolioHoldingsSar).toBeCloseTo(9000, 4);
+    expect(result.commodities).toBeCloseTo(5000, 4);
+    expect(result.sukukSar).toBeCloseTo(25000, 4);
+    expect(result.investmentsSAR).toBeCloseTo(34000, 4);
+    expect(result.liquidNetWorth).toBeCloseTo(40000, 4);
+  });
+
   it('splits credit card vs loan debt and converts USD credit balances to SAR', () => {
     const data = {
       accounts: [
@@ -76,6 +103,22 @@ describe('liquid metrics currency normalization', () => {
     expect(r.loanAndMortgageDebtSar).toBeCloseTo(500000, 4);
     expect(r.creditCardDebtSar).toBeCloseTo(5000 + 375, 4);
     expect(r.shortTermDebt).toBeCloseTo(r.creditCardDebtSar + r.loanAndMortgageDebtSar, 4);
+  });
+
+  it('hydrates daily FX from UI rate before resolving (wealth config overrides UI fallback)', () => {
+    const data = {
+      accounts: [{ id: 'chk', name: 'Checking', type: 'Checking', balance: 1000, currency: 'SAR' }],
+      investments: [],
+      liabilities: [],
+      assets: [],
+      transactions: [],
+      wealthUltraConfig: { fxRate: 4 },
+    } as unknown as FinancialData;
+
+    const withUi = computeLiquidNetWorth(data, { exchangeRate: 3.75 });
+    const withDefault = computeLiquidNetWorth(data, {});
+    expect(withUi.liquidCash).toBe(1000);
+    expect(withDefault.liquidCash).toBe(1000);
   });
 
   it('computes liquidity runway using SAR-normalized cash and expenses', () => {

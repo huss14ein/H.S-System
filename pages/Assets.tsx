@@ -27,16 +27,19 @@ import PageLayout from '../components/PageLayout';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { parseMoneyInput, roundMoney, roundQuantity } from '../utils/money';
 import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
-import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { financialMonthIsoKey, financialMonthKey, resolveMonthStartDayFromData } from '../utils/financialMonth';
 import AIAdvisor from '../components/AIAdvisor';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from '../context/AuthContext';
 import { materializeSukukPayoutEvents } from '../services/sukuk/sukukPayoutEngine';
+import { useConfirmAction } from '../hooks/useConfirmAction';
+import { summarizeCommodityForConfirm } from '../utils/recordConfirmMessages';
 
 // --- Physical Asset Components ---
 const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asset: Asset) => void; assetToEdit: Asset | null; preferredType?: AssetType; }> = ({ isOpen, onClose, onSave, assetToEdit, preferredType = 'Property' }) => {
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
+    const confirmAction = useConfirmAction();
     const [name, setName] = useState('');
     const [type, setType] = useState<AssetType>('Property');
     const [value, setValue] = useState('');
@@ -78,7 +81,7 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
         setFormError(null);
     }, [assetToEdit, isOpen, preferredType, getLearnedDefault]);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setFormError(null);
         const parsedValue = parseMoneyInput(value);
@@ -127,12 +130,17 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
             maturityDate: type === 'Sukuk' && maturityDate.trim() !== '' ? maturityDate.trim().slice(0, 10) : undefined,
             notes: notes.trim() !== '' ? notes.trim() : undefined,
         };
+        const ok = await confirmAction({
+            title: assetToEdit ? 'Save asset?' : 'Add asset?',
+            message: assetToEdit ? 'Update this physical asset on your balance sheet?' : 'Add this physical asset to your balance sheet?',
+            confirmLabel: assetToEdit ? 'Save' : 'Add',
+            details: [`${newAsset.name} (${newAsset.type})`, `Value: ${newAsset.value} SAR`],
+        });
+        if (!ok) return;
         onSave(newAsset);
         if (!assetToEdit) trackFormDefault('asset-add', 'type', type);
         onClose();
     };
-
-
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={assetToEdit ? 'Edit Physical Asset' : 'Add Physical Asset'}>
@@ -535,6 +543,7 @@ const AssetCardComponent: React.FC<{
 // --- Commodity Components ---
 const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => Promise<void>; holdingToEdit: CommodityHolding | null; goals: Goal[]; sarPerUsd: number; }> = ({ isOpen, onClose, onSave, holdingToEdit, goals, sarPerUsd }) => {
     const { formatCurrencyString } = useFormatCurrency();
+    const confirmAction = useConfirmAction();
     const [name, setName] = useState<CommodityHolding['name']>('Gold');
     const [quantity, setQuantity] = useState('');
     const [unit, setUnit] = useState<CommodityHolding['unit']>('gram');
@@ -661,6 +670,16 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
             }
 
             const holdingData = { ...holdingDataBase, currentValue: parsedCurrentValue };
+            const ok = await confirmAction(
+                summarizeCommodityForConfirm({
+                    name,
+                    quantity: parsedQuantity,
+                    unit,
+                    purchaseValue: parsedPurchaseValue,
+                    isEdit: !!holdingToEdit,
+                }),
+            );
+            if (!ok) return;
             if (holdingToEdit) await onSave({ ...holdingToEdit, ...holdingData });
             else await onSave(holdingData);
             onClose();
@@ -869,11 +888,10 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
 interface AssetsProps { pageAction?: string | null; clearPageAction?: () => void; setActivePage?: (page: Page) => void; }
 
 const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
-    const { data, loading, refreshData, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
+    const { data, showBlockingLoader, refreshData, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
     const { isAiAvailable, aiHealthChecked } = useAI();
     const { formatCurrencyString } = useFormatCurrency();
-    const { exchangeRate } = useCurrency();
-    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+    const { sarPerUsd, commoditiesValueSar, sukukAssetsValueSar } = useCanonicalFinancialMetrics();
 
     // State for both types of modals
     const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
@@ -905,10 +923,8 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
         const physicalValue = assetsList
             .filter((asset: { type?: string }) => asset.type !== 'Sukuk')
             .reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0);
-        const sukukValue = assetsList
-            .filter((asset: { type?: string }) => asset.type === 'Sukuk')
-            .reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0);
-        const commodityValue = commodityList.reduce((sum: number, h: { currentValue?: number }) => sum + (h.currentValue ?? 0), 0);
+        const sukukValue = sukukAssetsValueSar;
+        const commodityValue = commoditiesValueSar;
         const rentalIncome = assetsList.filter((a: { isRental?: boolean; monthlyRent?: number }) => a.isRental && a.monthlyRent).reduce((sum: number, a: { monthlyRent?: number }) => sum + (a.monthlyRent ?? 0), 0);
         return {
             totalAssetValue: physicalValue + sukukValue + commodityValue,
@@ -916,11 +932,14 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             totalCommodityValue: commodityValue,
             totalRentalIncome: rentalIncome,
         };
-    }, [assetsList, commodityList]);
+    }, [assetsList, commoditiesValueSar, sukukAssetsValueSar]);
 
     // Physical Asset Handlers
     const handleOpenAssetModal = (asset: Asset | null = null, preferredType: AssetType = 'Property') => { setAssetToEdit(asset); setPreferredAssetType(preferredType); setIsAssetModalOpen(true); };
-    const handleSaveAsset = (asset: Asset) => { if (assetsList.some((a: Asset) => a.id === asset.id)) updateAsset(asset); else addAsset(asset); };
+    const handleSaveAsset = (asset: Asset) => {
+        if (assetsList.some((a: Asset) => a.id === asset.id)) updateAsset(asset);
+        else void addAsset(asset, { confirmed: true });
+    };
     const handleLinkGoal = (assetId: string, goalId: string) => { const asset = assetsList.find((a: Asset) => a.id === assetId); if (asset) updateAsset({ ...asset, goalId: goalId === 'none' ? undefined : goalId }); };
     const handleLinkCommodityGoal = (holdingId: string, goalId: string) => {
         const holding = commodityList.find((h: CommodityHolding) => h.id === holdingId);
@@ -931,7 +950,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const handleOpenCommodityModal = (holding: CommodityHolding | null = null) => { setCommodityToEdit(holding); setIsCommodityModalOpen(true); };
     const handleSaveCommodity = async (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => {
         if ('id' in holding) await updateCommodityHolding(holding);
-        else await addCommodityHolding(holding);
+        else await addCommodityHolding(holding, { confirmed: true });
     };
 
     // Generic Delete Handlers
@@ -1030,7 +1049,8 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     }, [sarPerUsd, data?.goals, assetsList, commodityList, totalAssetValue]);
     const assetsAiContext = useMemo(() => {
         const now = new Date();
-        const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const monthStartDay = resolveMonthStartDayFromData(data);
+        const month = financialMonthIsoKey(financialMonthKey(now, monthStartDay));
         const byType = new Map<string, number>();
         for (const a of assetsList as Asset[]) {
             const key = a.type || 'Other';
@@ -1051,9 +1071,9 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             trendData: [{ month, value: totalAssetValue }],
             compositionData: compositionData.length > 0 ? compositionData : [{ name: 'No Assets', value: 0 }],
         };
-    }, [assetsList, commodityList, totalPhysicalAssetValue, totalCommodityValue, totalRentalIncome, totalAssetValue]);
+    }, [assetsList, commodityList, totalPhysicalAssetValue, totalCommodityValue, totalRentalIncome, totalAssetValue, data]);
 
-    if (loading || !data) {
+    if (showBlockingLoader) {
         return (
             <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
                 <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading assets" />
@@ -1099,7 +1119,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             <div className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
                 <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Personal wealth only: physical + metals/crypto (same rows below). Excludes assets with Owner set." />
                 <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} indicatorColor="green" valueColor="text-indigo-700" icon={<HomeModernIcon className="h-5 w-5 text-indigo-600" />} tooltip="Personal physical assets (property, vehicles, Sukuk, etc.)." />
-                <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} tooltip="Personal commodity holdings only." />
+                <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} tooltip="Live commodity slice — same mark as Investments hub and Dashboard investments band." />
                 <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} tooltip="Rental income from your personal rental-flagged properties." />
             </div>
             {assetsValidationWarnings.length > 0 && (
@@ -1231,7 +1251,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             </SectionCard>
 
             <AIAdvisor
-                pageContext="analysis"
+                pageContext="assets"
                 contextData={assetsAiContext}
                 title="Assets AI Advisor"
                 subtitle="Allocation clarity, valuation signals, and asset-quality insights."

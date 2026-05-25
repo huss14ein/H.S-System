@@ -43,18 +43,20 @@ import { compareToBenchmark } from '../services/benchmarkService';
 import { computeRiskLaneFromData } from '../services/riskLaneEngine';
 import { generateNextBestActions } from '../services/nextBestActionEngine';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
+import { computeGoalMonthlyFundingEnvelopeSar } from '../services/goalProjectionFunding';
 import { runShockDrill } from '../services/shockDrillEngine';
 import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
 import { lifestyleGuardrailCheck, discretionarySpendApproval } from '../services/lifestyleGuardrailEngine';
 import { monthlyProvisionNeeded } from '../services/provisionEngine';
 import { computeLiquidityRunwayFromData } from '../services/liquidityRunwayEngine';
-import { netCashFlowForMonthSarDated } from '../services/financeMetrics';
+import { netCashFlowForFinancialMonthSarDated } from '../services/financeMetrics';
+import { financialMonthKey, resolveMonthStartDayFromData } from '../utils/financialMonth';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { debtStressScore } from '../services/debtEngines';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useCurrency } from '../context/CurrencyContext';
-import { computePersonalHeadlineNetWorthSar } from '../services/personalNetWorth';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { toSAR } from '../utils/currencyMath';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { getPersonalInvestments } from '../utils/wealthScope';
@@ -121,26 +123,21 @@ interface LogicEnginesHubProps {
 }
 
 const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, triggerPageAction, dataTick = 0 }) => {
-  const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
+  const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
   const { trackAction } = useSelfLearning();
   const engines = useFinancialEnginesIntegration();
   const ef = useEmergencyFund(data ?? null);
   const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
   const { exchangeRate, currency: displayCurrency } = useCurrency();
-  const headlineNw = useMemo(
-    () => computePersonalHeadlineNetWorthSar(data ?? null, exchangeRate, { getAvailableCashForAccount }),
-    [data, exchangeRate, getAvailableCashForAccount],
-  );
-  const sarPerUsd = headlineNw.sarPerUsd;
-  const netWorth = headlineNw.netWorth;
+  const { sarPerUsd, netWorth } = useCanonicalFinancialMetrics();
 
   const scoped = useMemo(() => getScopedData(data ?? null), [data]);
   const goalResolvedMap = useMemo(() => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd), [data, sarPerUsd]);
   /** Local NW snapshots (device); refresh when tab visible so Risk hub + Dashboard writes show up. */
   const snaps = useMemo(() => listNetWorthSnapshots(), [data?.accounts?.length, dataTick]);
   const liquidityRunway = useMemo(
-    () => computeLiquidityRunwayFromData(data ?? null, { exchangeRate: sarPerUsd, getAvailableCashForAccount }),
-    [data, sarPerUsd, getAvailableCashForAccount]
+    () => computeLiquidityRunwayFromData(data ?? null, { exchangeRate, getAvailableCashForAccount }),
+    [data, exchangeRate, getAvailableCashForAccount]
   );
 
   const portfolioReturnPct = useMemo(() => {
@@ -192,7 +189,7 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
   );
   const monthlyCashflowSar = useMemo(() => {
     if (data) hydrateSarPerUsdDailySeries(data, exchangeRate);
-    return netCashFlowForMonthSarDated(scoped.txs, scoped.accounts, new Date(), data ?? null, exchangeRate);
+    return netCashFlowForFinancialMonthSarDated(scoped.txs, scoped.accounts, new Date(), data ?? null, exchangeRate);
   }, [scoped.txs, scoped.accounts, data, exchangeRate]);
   const bucketAllocInput = useMemo(() => {
     const surplus = Math.max(0, monthlyCashflowSar.net);
@@ -260,7 +257,7 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
   const fxAlloc = useMemo(() => portfolioFXAllocation(fxBreakdown.positions), [fxBreakdown.positions]);
   const usdThousandInSar = useMemo(() => toSAR(1000, 'USD', sarPerUsd), [sarPerUsd]);
 
-  const monthNow = new Date().getMonth() + 1;
+  const monthNow = financialMonthKey(new Date(), resolveMonthStartDayFromData(data)).month;
   const seasonEvents = useMemo(() => buildDefaultSeasonalityEvents(), []);
   const seasonAdj = useMemo(
     () => seasonalityAdjustedExpense({ baseMonthlyExpense: ef.monthlyCoreExpenses || 3000, month: monthNow, events: seasonEvents }),
@@ -336,21 +333,30 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
   const renewalAlerts = useMemo(() => insuranceRenewalAlert({ existing: [] }), []);
 
   const firstGoal = scoped.goals[0];
+  const firstGoalId = firstGoal?.id;
   const firstGoalSavedSar = firstGoal ? goalResolvedMap.get(firstGoal.id) ?? Number(firstGoal.currentAmount ?? 0) : 0;
   const firstGoalTarget = firstGoal ? Number(firstGoal.targetAmount ?? 0) : 0;
   const goalSim = useMemo(() => {
-    if (!firstGoal) return null;
+    const goal = firstGoalId ? scoped.goals.find((g) => g.id === firstGoalId) : undefined;
+    if (!goal) return null;
+    const saved = goalResolvedMap.get(goal.id) ?? Number(goal.currentAmount ?? 0);
+    const target = Number(goal.targetAmount ?? 0);
+    const envelope = computeGoalMonthlyFundingEnvelopeSar({
+      goal,
+      data: data ?? null,
+      sarPerUsd,
+    }).envelopeMonthly;
     return simulateGoalCompletionProbability({
-      startingValue: Math.max(0, firstGoalSavedSar),
-      monthlyContribution: (plan?.monthlyBudget ?? 0) * ((firstGoal.savingsAllocationPercent ?? 10) / 100),
-      goalAmount: Math.max(0, firstGoalTarget),
+      startingValue: Math.max(0, saved),
+      monthlyContribution: envelope,
+      goalAmount: Math.max(0, target),
       years: 5,
       expectedAnnualReturnPct: 6,
       annualVolatilityPct: 15,
       simulations: 800,
       seed: 42,
     });
-  }, [firstGoal, firstGoalSavedSar, firstGoalTarget, plan?.monthlyBudget]);
+  }, [firstGoalId, scoped.goals, goalResolvedMap, data, sarPerUsd]);
 
   const portRange = useMemo(
     () =>
@@ -620,7 +626,7 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
         ]
       : [];
 
-  if (loading && !data) {
+  if (showBlockingLoader) {
     return (
       <PageLayout
         title="Behind the numbers"

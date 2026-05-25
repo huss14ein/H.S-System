@@ -4,14 +4,20 @@ import { useSelfLearning } from '../context/SelfLearningContext';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import { useCurrency } from '../context/CurrencyContext';
-import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { toSAR } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { sellScore } from '../services/decisionEngine';
 import { thesisValidityCheck, type ThesisRecord } from '../services/thesisJournalEngine';
 import type { Holding, InvestmentPortfolio, Page } from '../types';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
+import { getPersonalInvestments } from '../utils/wealthScope';
+import {
+  buildHoldingSymbolOptions,
+  navigateToRecordTradeFromHolding,
+  resolveHoldingOptionKeyFromSymbol,
+} from '../services/holdingSymbolOptions';
 
 const THESIS_KEY = 'finova_thesis_records_v1';
 
@@ -40,11 +46,10 @@ interface LiquidationPlannerProps {
 }
 
 const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, triggerPageAction, dataTick }) => {
-  const { data, loading } = useContext(DataContext)!;
+  const { data, showBlockingLoader } = useContext(DataContext)!;
   const { trackAction } = useSelfLearning();
   const { formatCurrencyString } = useFormatCurrency();
-  const { exchangeRate } = useCurrency();
-  const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+  const { sarPerUsd } = useCanonicalFinancialMetrics();
   const [theses, setTheses] = useState<ThesisRecord[]>([]);
 
   useEffect(() => {
@@ -59,7 +64,16 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
 
   const ranked = useMemo(() => {
     const portfolios = (data as any)?.personalInvestments ?? data?.investments ?? [];
-    const rows: { symbol: string; name: string; valueSAR: number; score: number; reasons: string; hasThesis: boolean }[] = [];
+    const rows: {
+      symbol: string;
+      name: string;
+      valueSAR: number;
+      score: number;
+      reasons: string;
+      hasThesis: boolean;
+      portfolioId: string;
+      holdingId: string;
+    }[] = [];
     let totalSAR = 0;
     portfolios.forEach((p: InvestmentPortfolio) => {
       const cur = resolveInvestmentPortfolioCurrency(p);
@@ -90,6 +104,8 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
           score,
           reasons: [thesisBroken ? 'Review needed' : null, reasons.join(', ') || 'review'].filter(Boolean).join(', '),
           hasThesis: !!thesis,
+          portfolioId: String(p.id ?? ''),
+          holdingId: String(h.id ?? ''),
         });
       });
     });
@@ -102,7 +118,7 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
   );
   const { names: liqCompanyNames } = useCompanyNames(liqSymbols);
 
-  if (loading || !data) {
+  if (showBlockingLoader) {
     return (
       <div className="flex justify-center py-24">
         <div className="animate-spin h-10 w-10 border-2 border-primary border-t-transparent rounded-full" />
@@ -147,6 +163,7 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
                   <th className="py-2 pr-4">Value</th>
                   <th className="py-2 pr-4" title="Higher = consider reviewing sooner">Priority</th>
                   <th className="py-2">Why</th>
+                  {setActivePage && <th className="py-2 text-right">Action</th>}
                 </tr>
               </thead>
               <tbody>
@@ -168,6 +185,30 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
                       <span className={`font-semibold ${r.score >= 50 ? 'text-amber-700' : 'text-slate-700'}`}>{r.score}</span>
                     </td>
                     <td className="py-3 text-slate-600 text-xs sm:text-sm">{r.reasons}</td>
+                    {setActivePage && (
+                      <td className="py-3 text-right">
+                        <button
+                          type="button"
+                          className="text-xs font-semibold text-rose-700 hover:text-rose-900 underline"
+                          onClick={() => {
+                            trackAction('liquidation-record-sell', 'Engines & Tools');
+                            const inv = getPersonalInvestments(data ?? null);
+                            const opts = buildHoldingSymbolOptions(inv);
+                            const key = resolveHoldingOptionKeyFromSymbol(opts, r.symbol, r.portfolioId);
+                            const opt = key ? opts.find((o) => o.optionKey === key) : undefined;
+                            if (!opt) {
+                              return;
+                            }
+                            navigateToRecordTradeFromHolding(opt, triggerPageAction, {
+                              reason: 'From liquidation planner',
+                            });
+                            setActivePage('Investments');
+                          }}
+                        >
+                          Record sell
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

@@ -2,9 +2,8 @@ import React, { useMemo, useContext, useEffect, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import { useCurrency } from '../context/CurrencyContext';
 import { useAI } from '../context/AiContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { aggregateMonthlyBudgetAcrossPortfolios } from '../utils/investmentPlanPerPortfolio';
 import type { InvestmentPlanSettings, UniverseTicker } from '../types';
 import AIAdvisor from '../components/AIAdvisor';
@@ -20,6 +19,9 @@ import {
 import { calculatePortfolioRisk } from '../services/advancedRiskScoring';
 import { valueAtRiskHistorical, getPDTStatus, getMarketHoursGuardrail, volatilityAdjustedWeights } from '../services/riskCompliance';
 import type { WealthUltraSleeve, WealthUltraPosition, WealthUltraRiskTier } from '../types';
+import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
+import { useFinancialEnhancementInsights } from '../hooks/useFinancialEnhancementInsights';
+import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import type { Page } from '../types';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
@@ -64,13 +66,14 @@ const SCENARIO_OPTIONS: { id: string; label: string; multiplier: number }[] = [
 ];
 
 const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePage, triggerPageAction }) => {
-  const { data, loading, totalDeployableCash } = useContext(DataContext)!;
+  const { data, showBlockingLoader, totalDeployableCash } = useContext(DataContext)!;
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
-  const { exchangeRate } = useCurrency();
   const { isAiAvailable, aiHealthChecked } = useAI();
 
-  const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
+  const { sarPerUsd, netWorth: headlineNetWorthSar, investmentsTotalSar } = useCanonicalFinancialMetrics();
+  const emergencyFund = useEmergencyFund(data);
+  const ultraInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
 
   /** Engine outputs (positions, orders, deployable cash from config) are interpreted as USD for display consistency. */
   const fmtEngineUsd = useCallback(
@@ -495,7 +498,11 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     try {
       const raw = window.localStorage.getItem('wealth-ultra-exception-history');
       const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed.slice(0, 25) : [];
+      const rows = Array.isArray(parsed) ? parsed : [];
+      return rows
+        .slice()
+        .sort((a: { at?: string }, b: { at?: string }) => String(b.at ?? '').localeCompare(String(a.at ?? '')))
+        .slice(0, 25);
     } catch {
       return [];
     }
@@ -584,7 +591,9 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                 {Number.isFinite(config.fxRate) && Math.abs(config.fxRate - sarPerUsd) > 0.0001 && (
                   <span className="text-slate-500"> (stored config {config.fxRate.toFixed(4)} is ignored for display — resolver wins)</span>
                 )}
-                .
+                . Personal balance sheet (Dashboard / Investments): net worth{' '}
+                <span className="font-mono font-semibold">{headlineNetWorthSar.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span> SAR · investment exposure{' '}
+                <span className="font-mono font-semibold">{investmentsTotalSar.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span> SAR.
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -1323,7 +1332,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       ultraTickerNames,
     ]
   );
-  if (loading || !data) {
+  if (showBlockingLoader) {
     return (
       <div className="flex flex-col justify-center items-center min-h-[50vh] gap-4" aria-busy="true">
         <div className="animate-spin rounded-full h-14 w-14 border-2 border-primary border-t-transparent" aria-label="Loading Wealth Ultra" />
@@ -1370,6 +1379,11 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       }
     >
       <div className="space-y-8 md:space-y-10 lg:space-y-12">
+        <EnhancementInsightStrip
+          capitalDeployment={ultraInsights.capitalDeployment}
+          goalConflicts={ultraInsights.goalConflicts}
+          compact
+        />
         {engineWarning && (
           <div className="rounded-xl border-2 border-amber-400 bg-amber-50 p-4 text-sm text-amber-950 shadow-sm" role="alert">
             <p className="font-semibold flex items-center gap-2">

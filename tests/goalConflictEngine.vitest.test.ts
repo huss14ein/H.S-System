@@ -19,17 +19,22 @@ describe('detectGoalConflict', () => {
       investments: [],
       assets: [],
       liabilities: [],
+      budgets: [
+        { id: 'b1', category: 'Save A', limit: 100, month: 1, year: 2026, period: 'monthly', goalId: 'a' },
+        { id: 'b2', category: 'Save B', limit: 100, month: 1, year: 2026, period: 'monthly', goalId: 'b' },
+      ],
     } as unknown as FinancialData;
     const rows = buildGoalFundingScheduleRows(data, 3.75);
     const expectedSum = rows.filter((r) => r.requiredPerMonth > 0).reduce((s, r) => s + r.requiredPerMonth, 0);
     const conflicts = detectGoalConflict({
       goals,
-      monthlySurplusForGoals: 1,
+      monthlySurplusForGoals: 5000,
       data,
       sarPerUsdUi: 3.75,
     });
     const same = conflicts.find((c) => c.reason === 'same_cash_source');
     expect(same?.requiredMonthlyTotal).toBeCloseTo(expectedSum, 5);
+    expect(same?.surplusMonthly).toBeCloseTo(200, 5);
   });
 });
 

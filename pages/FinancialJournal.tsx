@@ -1,5 +1,16 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useContext } from 'react';
 import { useSelfLearning } from '../context/SelfLearningContext';
+import { AuthContext } from '../context/AuthContext';
+import { supabase } from '../services/supabaseClient';
+import {
+  fetchInvestmentJournalEntries,
+  fetchInvestmentTheses,
+  insertInvestmentJournalEntry,
+  upsertInvestmentThesis,
+  deleteInvestmentThesis,
+  deleteInvestmentJournalEntry,
+} from '../services/investmentThesisStore';
+import { toast } from '../context/ToastContext';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import type { Page } from '../types';
@@ -45,6 +56,7 @@ interface FinancialJournalProps {
 
 const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, dataTick }) => {
   const { trackAction } = useSelfLearning();
+  const auth = useContext(AuthContext);
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -69,7 +81,53 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
   };
 
   const [theses, setTheses] = useState<ThesisRecord[]>([]);
+  const [cloudSync, setCloudSync] = useState<'idle' | 'synced' | 'offline'>('idle');
+  const [editingThesisSymbol, setEditingThesisSymbol] = useState<string | null>(null);
   useEffect(() => setTheses(loadTheses()), [dataTick]);
+
+  useEffect(() => {
+    const userId = auth?.user?.id;
+    if (!userId || !supabase) return;
+    let alive = true;
+    (async () => {
+      try {
+        const remoteTheses = await fetchInvestmentTheses(supabase, userId);
+        if (alive && remoteTheses.length) {
+          setTheses((prev) => {
+            const bySym = new Map(prev.map((t) => [(t.symbol || '').toUpperCase(), t]));
+            for (const r of remoteTheses) bySym.set(r.symbol.toUpperCase(), r);
+            const merged = [...bySym.values()];
+            saveTheses(merged);
+            return merged;
+          });
+          setCloudSync('synced');
+        } else if (alive) {
+          setCloudSync(supabase ? 'synced' : 'offline');
+        }
+        const remoteJournal = await fetchInvestmentJournalEntries(supabase, userId);
+        if (alive && remoteJournal.length) {
+          setEntries((prev) => {
+            const ids = new Set(prev.map((e) => e.id));
+            const added = remoteJournal
+              .filter((r) => !ids.has(r.id))
+              .map((r) => ({
+                id: r.id,
+                at: r.createdAt,
+                title: r.symbol ? `${r.symbol} · ${r.entryType}` : r.entryType,
+                body: r.body,
+              }));
+            if (!added.length) return prev;
+            const merged = [...added, ...prev].slice(0, 200);
+            save(merged);
+            return merged;
+          });
+        }
+      } catch {
+        setCloudSync('offline');
+      }
+    })();
+    return () => { alive = false; };
+  }, [auth?.user?.id, dataTick]);
 
   const [symbol, setSymbol] = useState('');
   const [buyThesis, setBuyThesis] = useState('');
@@ -83,24 +141,52 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
   const thesisSymbols = useMemo(() => theses.map((t) => t.symbol).filter((s): s is string => !!s && s.length >= 2), [theses]);
   const { names: thesisCompanyNames } = useCompanyNames(thesisSymbols);
 
+  const loadThesisIntoForm = (t: ThesisRecord) => {
+    setSymbol(t.symbol);
+    setBuyThesis(t.buyThesis);
+    setExpectedUpsidePct(t.expectedUpsidePct != null ? String(t.expectedUpsidePct) : '');
+    setExpectedTimeline(t.expectedTimeline ?? '');
+    setKeyRisks(t.keyRisks ?? '');
+    setCatalystDates(t.catalystDates ?? '');
+    setInvalidationPoint(t.invalidationPoint ?? '');
+    setReviewDate(t.reviewDate ?? '');
+    setEditingThesisSymbol(t.symbol.toUpperCase());
+  };
+
   const addThesis = () => {
-    trackAction('add-thesis', 'Engines & Tools');
+    trackAction(editingThesisSymbol ? 'update-thesis' : 'add-thesis', 'Engines & Tools');
     const sym = symbol.trim().toUpperCase();
     if (!sym) return;
-    const record = createThesisRecord({
-      symbol: sym,
-      buyThesis: buyThesis.trim() || '',
-      expectedUpsidePct: expectedUpsidePct ? Number(expectedUpsidePct) : undefined,
-      expectedTimeline: expectedTimeline.trim() || undefined,
-      keyRisks: keyRisks.trim() || undefined,
-      catalystDates: catalystDates.trim() || undefined,
-      invalidationPoint: invalidationPoint.trim() || undefined,
-      reviewDate: reviewDate.trim() || undefined,
-    });
+    const prior = theses.find((t) => (t.symbol || '').toUpperCase() === sym);
+    const record: ThesisRecord = {
+      ...createThesisRecord({
+        symbol: sym,
+        buyThesis: buyThesis.trim() || '',
+        expectedUpsidePct: expectedUpsidePct ? Number(expectedUpsidePct) : undefined,
+        expectedTimeline: expectedTimeline.trim() || undefined,
+        keyRisks: keyRisks.trim() || undefined,
+        catalystDates: catalystDates.trim() || undefined,
+        invalidationPoint: invalidationPoint.trim() || undefined,
+        reviewDate: reviewDate.trim() || undefined,
+      }),
+      createdAt: prior?.createdAt ?? new Date().toISOString(),
+      postResultReflection: prior?.postResultReflection,
+    };
     const next = [record, ...theses.filter((t) => (t.symbol || '').toUpperCase() !== sym)];
     setTheses(next);
     saveTheses(next);
+    if (auth?.user?.id && supabase) {
+      void upsertInvestmentThesis(supabase, auth.user.id, record)
+        .then(() => {
+          setCloudSync('synced');
+          toast(editingThesisSymbol ? 'Idea updated (cloud).' : 'Idea saved (cloud).', 'success');
+        })
+        .catch(() => toast('Saved locally; cloud sync failed.', 'warning'));
+    } else {
+      toast('Saved locally.', 'success');
+    }
 
+    setEditingThesisSymbol(null);
     setSymbol('');
     setBuyThesis('');
     setExpectedUpsidePct('');
@@ -134,6 +220,9 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
     nextTheses[idx] = updated;
     setTheses(nextTheses);
     saveTheses(nextTheses);
+    if (auth?.user?.id && supabase) {
+      void upsertInvestmentThesis(supabase, auth.user.id, updated).catch(() => {});
+    }
 
     setActualReturnPct('');
     setReflection('');
@@ -142,6 +231,30 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
   const recordOutcomeWithTracking = () => {
     trackAction('record-outcome', 'Engines & Tools');
     recordOutcome();
+  };
+
+  const removeThesis = (sym: string) => {
+    const upper = sym.toUpperCase();
+    const next = theses.filter((t) => (t.symbol || '').toUpperCase() !== upper);
+    setTheses(next);
+    saveTheses(next);
+    if (auth?.user?.id && supabase) {
+      void deleteInvestmentThesis(supabase, auth.user.id, upper).catch(() => {});
+    }
+    if (editingThesisSymbol === upper) {
+      setEditingThesisSymbol(null);
+      setSymbol('');
+      setBuyThesis('');
+    }
+  };
+
+  const removeJournalEntry = (id: string) => {
+    const next = entries.filter((e) => e.id !== id);
+    setEntries(next);
+    save(next);
+    if (auth?.user?.id && supabase && !id.startsWith('j-')) {
+      void deleteInvestmentJournalEntry(supabase, auth.user.id, id).catch(() => {});
+    }
   };
 
   const add = () => {
@@ -156,6 +269,16 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
     const next = [e, ...entries];
     setEntries(next);
     save(next);
+    if (auth?.user?.id && supabase) {
+      void insertInvestmentJournalEntry(supabase, auth.user.id, {
+        body: e.body,
+        entryType: e.title,
+      })
+        .then((row) => {
+          setEntries((prev) => prev.map((x) => (x.id === e.id ? { ...x, id: row.id, at: row.createdAt } : x)));
+        })
+        .catch(() => {});
+    }
     setTitle('');
     setBody('');
   };
@@ -163,12 +286,23 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
   return (
     <PageLayout
       title="Notes & ideas"
-      description="Write down why you bought each investment and when to revisit it. Stored only on this device—your private notes."
+      description="Write down why you bought each investment and when to revisit it. Syncs to your account when the investment journal tables are available; local notes remain as backup."
     >
-      <div className="mb-4 rounded-xl bg-slate-50 border border-slate-200 p-4">
+      <div className="mb-4 rounded-xl bg-slate-50 border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-slate-700">
           <strong className="text-slate-900">Why use this?</strong> Writing down your reasons helps you avoid emotional decisions. When you set a review date, the system reminds you to check if your reasons still hold.
         </p>
+        <span
+          className={`text-xs font-semibold px-2 py-1 rounded-full ${
+            cloudSync === 'synced'
+              ? 'bg-emerald-100 text-emerald-800'
+              : cloudSync === 'offline'
+                ? 'bg-amber-100 text-amber-800'
+                : 'bg-slate-100 text-slate-600'
+          }`}
+        >
+          {cloudSync === 'synced' ? 'Cloud sync on' : cloudSync === 'offline' ? 'Local only' : 'Sync pending'}
+        </span>
       </div>
 
       {triggerPageAction && theses.length > 0 && (
@@ -227,9 +361,30 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
             </div>
           </div>
 
-          <button type="button" className="btn-primary" onClick={addThesis}>
-            Save idea
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="btn-primary" onClick={addThesis}>
+              {editingThesisSymbol ? 'Update idea' : 'Save idea'}
+            </button>
+            {editingThesisSymbol && (
+              <button
+                type="button"
+                className="btn-outline"
+                onClick={() => {
+                  setEditingThesisSymbol(null);
+                  setSymbol('');
+                  setBuyThesis('');
+                  setExpectedUpsidePct('');
+                  setExpectedTimeline('');
+                  setKeyRisks('');
+                  setCatalystDates('');
+                  setInvalidationPoint('');
+                  setReviewDate('');
+                }}
+              >
+                Cancel edit
+              </button>
+            )}
+          </div>
         </div>
       </SectionCard>
 
@@ -304,9 +459,17 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
                           />
                         </div>
                       </div>
-                      <span className={`text-xs px-2 py-1 rounded-full font-semibold ${validity.valid ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
-                        {validity.valid ? 'On track' : 'Time to review'}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs px-2 py-1 rounded-full font-semibold ${validity.valid ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                          {validity.valid ? 'On track' : 'Time to review'}
+                        </span>
+                        <button type="button" className="text-xs text-primary font-medium hover:underline" onClick={() => loadThesisIntoForm(t)}>
+                          Edit
+                        </button>
+                        <button type="button" className="text-xs text-red-600 font-medium hover:underline" onClick={() => removeThesis(t.symbol)}>
+                          Delete
+                        </button>
+                      </div>
                     </div>
                     <p className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{t.buyThesis}</p>
                     <div className="mt-3 text-sm text-slate-600 space-y-1">
@@ -338,7 +501,12 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
           <ul className="space-y-4">
             {sorted.map((e) => (
               <li key={e.id} className="border border-slate-100 rounded-xl p-4 bg-slate-50/50">
-                <p className="text-xs text-slate-400">{new Date(e.at).toLocaleString()}</p>
+                <div className="flex justify-between gap-2">
+                  <p className="text-xs text-slate-400">{new Date(e.at).toLocaleString()}</p>
+                  <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => removeJournalEntry(e.id)}>
+                    Delete
+                  </button>
+                </div>
                 <p className="font-semibold text-slate-900">{e.title}</p>
                 <p className="text-sm text-slate-700 whitespace-pre-wrap mt-1">{e.body}</p>
               </li>

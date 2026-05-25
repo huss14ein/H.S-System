@@ -17,6 +17,7 @@ import {
 } from '../services/netWorthSnapshot';
 import { approximatePortfolioMWRR, flowsFromInvestmentTransactionsInSARWithDatedFx } from '../services/portfolioXirr';
 import { attributeNetWorthWithFlows } from '../services/portfolioAttribution';
+import { buildPortfolioPerformanceSnapshot } from '../services/portfolioPerformance';
 import { personalNetCashflowBetween } from '../services/netWorthPeriodFlows';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import {
@@ -31,9 +32,10 @@ import { detectStaleMarketData } from '../services/dataQuality';
 import { MarketDataContext } from '../context/MarketDataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import type { Page, Transaction } from '../types';
-import { computePersonalHeadlineNetWorthSar } from '../services/personalNetWorth';
-import { getAllInvestmentsValueInSAR } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { personalInvestmentTerminalValueSAR } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
+import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 
 const RiskTradingHub: React.FC<{
@@ -42,7 +44,7 @@ const RiskTradingHub: React.FC<{
   /** When true, render without full-page chrome (e.g. inside Money Tools). */
   embedded?: boolean;
 }> = ({ setActivePage, triggerPageAction, embedded = false }) => {
-  const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
+  const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
   const auth = useContext(AuthContext);
   const marketData = useContext(MarketDataContext);
   const ef = useEmergencyFund(data ?? null);
@@ -84,12 +86,12 @@ const RiskTradingHub: React.FC<{
   }, [snaps, restoreDate]);
 
   const { exchangeRate } = useCurrency();
-  const headlinePersonal = useMemo(
-    () => computePersonalHeadlineNetWorthSar(data ?? null, exchangeRate, { getAvailableCashForAccount }),
-    [data, exchangeRate, getAvailableCashForAccount],
+  const { sarPerUsd, netWorth: currentNetWorth, liquidCashSar } = useCanonicalFinancialMetrics();
+  const personalInvestments = useMemo(() => getPersonalInvestments(data ?? null), [data]);
+  const personalInvestmentAccountIds = useMemo(
+    () => getPersonalAccounts(data ?? null).filter((a) => a.type === 'Investment').map((a) => a.id),
+    [data],
   );
-  const sarPerUsd = headlinePersonal.sarPerUsd;
-  const currentNetWorth = headlinePersonal.netWorth;
 
   const reviewInputs = useMemo(() => {
     const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
@@ -113,7 +115,7 @@ const RiskTradingHub: React.FC<{
       missingBudgetCategories: uncategorized > 0,
       shouldSnapshot: true,
     };
-  }, [data, marketData?.lastUpdated, marketData?.isLive]);
+  }, [data, marketData?.lastUpdated, marketData?.isLive, liquidCashSar]);
 
   const dailyItems = useMemo(() => dailyReviewChecklist({ hasStaleMarketData: reviewInputs.hasStaleMarketData, debtStressScore: reviewInputs.debtStressScore }), [reviewInputs.hasStaleMarketData, reviewInputs.debtStressScore]);
   const weeklyItems = useMemo(() => weeklyReviewChecklist({ budgetVariancePct: reviewInputs.budgetVariancePct, isUncategorizedSpend: reviewInputs.isUncategorizedSpend }), [reviewInputs.budgetVariancePct, reviewInputs.isUncategorizedSpend]);
@@ -126,11 +128,28 @@ const RiskTradingHub: React.FC<{
     hydrateSarPerUsdDailySeries(data, exchangeRate);
     const txs = data.investmentTransactions ?? [];
     const flows = flowsFromInvestmentTransactionsInSARWithDatedFx(txs, data, exchangeRate);
-    const inv = (data as any)?.personalInvestments ?? data?.investments ?? [];
-    const tv = getAllInvestmentsValueInSAR(inv, sarPerUsd);
+    const tv = personalInvestmentTerminalValueSAR({
+      portfolios: personalInvestments,
+      investmentAccountIds: personalInvestmentAccountIds,
+      exchangeRate: sarPerUsd,
+      getAvailableCashForAccount,
+    });
     const r = approximatePortfolioMWRR(flows, tv, new Date().toISOString().slice(0, 10));
     return r;
-  }, [data, sarPerUsd, exchangeRate]);
+  }, [data, sarPerUsd, exchangeRate, personalInvestments, personalInvestmentAccountIds, getAvailableCashForAccount]);
+
+  const perfSnapshot = useMemo(() => {
+    if (!data) return null;
+    hydrateSarPerUsdDailySeries(data, exchangeRate);
+    const endVal = personalInvestmentTerminalValueSAR({
+      portfolios: personalInvestments,
+      investmentAccountIds: personalInvestmentAccountIds,
+      exchangeRate: sarPerUsd,
+      getAvailableCashForAccount,
+    });
+    const priorVal = snaps.length >= 2 ? Math.max(0, snaps[1].netWorth * 0.35) : endVal * 0.85;
+    return buildPortfolioPerformanceSnapshot(data, endVal, priorVal, 12);
+  }, [data, sarPerUsd, snaps, exchangeRate, personalInvestments, personalInvestmentAccountIds, getAvailableCashForAccount]);
 
   const attr = useMemo(() => {
     if (snaps.length < 2) return null;
@@ -148,7 +167,7 @@ const RiskTradingHub: React.FC<{
   const buyS = buyScore({ emergencyFundMonths: ef.monthsCovered, runwayMonths: ef.monthsCovered });
   const sellS = sellScore({ aboveTargetWeightPct: 8, needCash: true });
 
-  if (loading || !data) {
+  if (showBlockingLoader) {
     return (
       <div className="flex justify-center py-24">
         <div className="animate-spin h-10 w-10 border-2 border-primary border-t-transparent rounded-full" />
@@ -206,7 +225,11 @@ const RiskTradingHub: React.FC<{
         <SectionCard title="Portfolio return (simplified)" infoHint="How your investments performed over time, considering deposits and withdrawals. Not audited." collapsible collapsibleSummary="Return over time"
         >
           <p className="text-2xl font-bold">{mwrr != null ? `${mwrr.toFixed(2)}%` : '—'}</p>
-          <p className="text-xs text-slate-500">Based on your deposits, withdrawals, and current value.</p>
+          <p className="text-xs text-slate-500 mt-1">
+            TWRR approx: {perfSnapshot?.twrrApproxPct != null ? `${perfSnapshot.twrrApproxPct.toFixed(1)}%` : '—'}
+            {perfSnapshot?.benchmarkExcessPct != null ? ` · vs benchmark ${perfSnapshot.benchmarkExcessPct >= 0 ? '+' : ''}${perfSnapshot.benchmarkExcessPct.toFixed(1)}%` : ''}
+          </p>
+          <p className="text-xs text-slate-500">Based on your deposits, withdrawals, and current value ({perfSnapshot?.periodLabel ?? '12 mo'}).</p>
         </SectionCard>
       </div>
       <SectionCard title="Why did net worth change?" className="mt-4" collapsible collapsibleSummary="Contributions vs market"

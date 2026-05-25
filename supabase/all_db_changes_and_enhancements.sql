@@ -389,3 +389,6 @@ alter table if exists public.budget_requests
 
 alter table if exists public.budget_requests
   add column if not exists request_note text;
+
+-- ===== Master enhancement rollout (20260522120000) — also in migrations/20260522120000_enhancement_rollout.sql =====
+-- watchlist research, liability enrichment, planned_trade tranches, investment_thesis, investment_journal_entries, accounts.account_role

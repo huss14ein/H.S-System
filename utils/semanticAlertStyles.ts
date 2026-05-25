@@ -11,13 +11,13 @@ export function notificationSeverityLabel(s: NotificationSeverity | undefined): 
 /** List row / preview card: left accent + soft tint (read items slightly muted). */
 export function notificationRowSurface(severity: NotificationSeverity | undefined, isRead: boolean): string {
   const s = severity ?? 'info';
-  const muted = isRead ? 'opacity-[0.93]' : '';
+  const muted = isRead ? 'opacity-90' : '';
   const tone =
     s === 'urgent'
-      ? 'border-l-4 border-l-rose-600 bg-rose-50/95 border-y border-r border-rose-100/90'
+      ? 'border-l-[3px] border-l-rose-500 bg-rose-50/70 ring-1 ring-rose-100/80'
       : s === 'warning'
-        ? 'border-l-4 border-l-amber-500 bg-amber-50/95 border-y border-r border-amber-100/90'
-        : 'border-l-4 border-l-sky-600 bg-sky-50/90 border-y border-r border-sky-100/90';
+        ? 'border-l-[3px] border-l-amber-500 bg-amber-50/70 ring-1 ring-amber-100/80'
+        : 'border-l-[3px] border-l-sky-500 bg-sky-50/60 ring-1 ring-sky-100/80';
   return `${tone} ${muted}`.trim();
 }
 

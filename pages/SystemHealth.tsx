@@ -26,6 +26,7 @@ import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 import { reconcileCashAccountBalance, reconcileCreditAccountBalance, buildFinancialIntegrityReport } from '../services/dataQuality';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { reconcileHoldings, reconciliationExceptionReport } from '../services/reconciliationEngine';
+import { buildHoldingsDividendReconciliationReport } from '../services/holdingsDividendReconciliation';
 import DashboardKpiQualityPanel from '../components/DashboardKpiQualityPanel';
 import {
   validateSystemIntegrity,
@@ -640,6 +641,8 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     combined.forEach((ex: any) => pushException(ex));
     const queue = getExceptionQueue();
 
+    const holdingsDividendReport = buildHoldingsDividendReconciliationReport(financialData);
+
     return {
       integrityOk: integrity.ok,
       integrityExceptions: integrity.exceptions,
@@ -649,6 +652,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       holdingExceptions,
       reconciliation,
       investmentKpiReconciliation,
+      holdingsDividendReport,
       repairSuggestions,
       queue,
       ledgerReport,
@@ -1011,6 +1015,30 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
                     {s.action}
                     {s.detail ? ` — ${s.detail}` : ''}
                     {s.entityId ? ` · id ${s.entityId}` : ''}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {integritySummary.holdingsDividendReport && !integritySummary.holdingsDividendReport.isClean && (
+            <div className="mt-4 pt-4 border-t border-slate-200">
+              <h4 className="text-sm font-semibold text-slate-800">Holdings &amp; dividend reconciliation</h4>
+              <ul className="mt-2 text-sm text-slate-700 space-y-1 list-disc pl-5">
+                {integritySummary.holdingsDividendReport.rows.slice(0, 12).map((r) => (
+                  <li key={r.id}>
+                    <span className={r.severity === 'fail' ? 'text-rose-800 font-medium' : 'text-amber-900'}>
+                      [{r.category}] {r.symbol}: {r.message}
+                    </span>
+                    {setActivePage && (
+                      <button
+                        type="button"
+                        className="ml-2 text-xs text-primary underline"
+                        onClick={() => setActivePage(r.drillTarget)}
+                      >
+                        Open {r.drillTarget}
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>

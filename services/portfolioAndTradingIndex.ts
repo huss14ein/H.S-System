@@ -45,6 +45,51 @@ export {
 } from './riskCompliance';
 
 export {
+  generatePositionRecyclingPlan,
+  type PositionRecyclingInput,
+  type PositionRecyclingPlan,
+  type ConvictionGrade,
+  type StockQualityStatus,
+  type RecyclingLadderStep,
+  type ProjectedRecyclingOutcome,
+} from './positionRecyclingPlan';
+
+export {
+  buildPositionRecyclingInputFromHolding,
+  buildRecyclingPlanForHolding,
+  recyclingPlanToOrderDrafts,
+  inferConvictionGradeFromRiskTier,
+  inferStockQualityFromPlPct,
+  inferConvictionFromUniverseStatus,
+  summarizeRecyclingPlan,
+} from './positionRecyclingIntegration';
+
+export {
+  loadRecyclingPrefs,
+  saveRecyclingPrefs,
+  saveRecyclingExecutionFromPlan,
+  exportRecyclingPlanJson,
+  getRecyclingExecutionsBySymbol,
+} from './positionRecyclingPersistence';
+
+export {
+  resolveSyncedRecoveryConviction,
+  convictionGradeFromWatchlistBlend,
+  buildWatchlistScoresFromItems,
+} from './recoveryConvictionSync';
+
+export {
+  buildTrancheExecutionStates,
+  inferHoldingAfterTrancheFills,
+  executionProgressLabel,
+  parseTrancheFromLabel,
+} from './recoveryExecutionTracker';
+
+export { buildUnifiedRecoveryPlan, type UnifiedRecoveryPlan, type UnifiedRecoveryStrategy } from './unifiedRecoveryPlan';
+
+export { buildRecoveryPlanAfterFilledLevels, reconcileAfterFill } from './recoveryPlan';
+
+export {
   sma,
   ema,
   crossover,

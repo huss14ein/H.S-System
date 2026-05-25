@@ -6,6 +6,8 @@ import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolio
 import { effectiveHoldingUnitPriceInBookCurrency, effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { lookupLiveQuoteForSymbol, lookupQuoteUpdatedAtIso } from './finnhubService';
 import { buildRecoveryPlan, DEFAULT_RECOVERY_GLOBAL_CONFIG } from './recoveryPlan';
+import { buildRecyclingPlanForHolding, summarizeRecyclingPlan, type RecyclingPlanSummary } from './positionRecyclingIntegration';
+import { resolveSyncedRecoveryConviction } from './recoveryConvictionSync';
 import { tickerToRiskTier, tickerToSleeve } from '../wealth-ultra/position';
 
 export type SimulatedPricesLike = Record<string, { price?: number; change?: number } | undefined>;
@@ -14,6 +16,8 @@ export type SymbolQuoteUpdatedAt = Record<string, string>;
 export type CanonicalPlanInputs = {
   data: DataContextFinancialData;
   exchangeRate: number;
+  /** When set, matches `computePersonalHeadlineNetWorthSar` / `useCanonicalFinancialMetrics().sarPerUsd`. */
+  sarPerUsd?: number;
   simulatedPrices: SimulatedPricesLike;
   getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number };
   /** Optional: per-symbol ISO timestamp from MarketDataContext; used for freshness/confidence. */
@@ -94,6 +98,8 @@ export type CanonicalPlanningSnapshot = {
     deployableCashSar: number;
     positions: CanonicalRecoveryPosition[];
     qualified: CanonicalRecoveryPosition[];
+    /** No-new-cash sell/rebuy summaries for underwater holdings. */
+    recyclingSummaries: RecyclingPlanSummary[];
   };
   aiBalancer: {
     portfolios: CanonicalBalancerPortfolioSnapshot[];
@@ -113,10 +119,13 @@ function clamp01(n: number): number {
 }
 
 export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): CanonicalPlanningSnapshot {
-  const { data, exchangeRate, simulatedPrices, getAvailableCashForAccount, symbolQuoteUpdatedAt, nowMs } = inputs;
+  const { data, exchangeRate, sarPerUsd: sarPerUsdOverride, simulatedPrices, getAvailableCashForAccount, symbolQuoteUpdatedAt, nowMs } = inputs;
   const now = typeof nowMs === 'number' && Number.isFinite(nowMs) ? nowMs : Date.now();
   const staleQuoteThresholdMinutes = 90; // default: 1.5 hours (covers non-continuous markets + manual refresh cadence)
-  const sarPerUsd = resolveSarPerUsd(data ?? null, exchangeRate);
+  const sarPerUsd =
+    typeof sarPerUsdOverride === 'number' && Number.isFinite(sarPerUsdOverride) && sarPerUsdOverride > 0
+      ? sarPerUsdOverride
+      : resolveSarPerUsd(data ?? null, exchangeRate);
 
   const quoteFreshnessForSymbol = (symbol: string): QuoteFreshness => {
     const iso = lookupQuoteUpdatedAtIso(symbolQuoteUpdatedAt ?? undefined, symbol);
@@ -405,6 +414,7 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
   }
   const sleeveInput = { coreTickers: [...coreTickers], upsideTickers: [...upsideTickers], specTickers: [...specTickers] };
   const recoveryPositions: CanonicalRecoveryPosition[] = [];
+  const recyclingSummaries: RecyclingPlanSummary[] = [];
   for (const p of personalPortfolios) {
     const bookCurrency = (resolveInvestmentPortfolioCurrency(p) as TradeCurrency) || 'USD';
     for (const h of p.holdings ?? []) {
@@ -447,6 +457,20 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
         plan,
         priceProvenance,
       });
+
+      if (plan.plPct < 0 && currentUnitPriceBook > 0) {
+        const synced = resolveSyncedRecoveryConviction({
+          symbol: sym,
+          plPct: plan.plPct,
+          riskTier: positionConfig.riskTier,
+          universe,
+        });
+        const recyclingPlan = buildRecyclingPlanForHolding(h, currentUnitPriceBook, positionConfig as any, {
+          convictionGrade: synced.convictionGrade,
+          stockQualityStatus: synced.stockQualityStatus,
+        });
+        recyclingSummaries.push(summarizeRecyclingPlan(recyclingPlan));
+      }
     }
   }
 
@@ -478,7 +502,7 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
   return {
     sarPerUsd,
     investmentPlan: { rows: planRows, prioritizedPricePlans },
-    recoveryPlan: { deployableCashSar, positions: recoveryPositions, qualified },
+    recoveryPlan: { deployableCashSar, positions: recoveryPositions, qualified, recyclingSummaries },
     aiBalancer: { portfolios: balancerPortfolios },
     dataQuality: { staleQuoteThresholdMinutes },
   };

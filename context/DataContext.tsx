@@ -1,4 +1,5 @@
 import React, { createContext, useState, ReactNode, useEffect, useContext, useRef, useMemo, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
 import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, HOLDING_ASSET_CLASS_OPTIONS, type HoldingAssetClass, type TradeCurrency, type SukukPayoutSchedule, type SukukPayoutEvent } from '../types';
@@ -11,7 +12,7 @@ import {
   getPersonalLiabilities,
   getPersonalTransactions,
 } from '../utils/wealthScope';
-import { tradableCashBucketToSAR, resolveSarPerUsd, toSAR, fromSAR, availableTradableCashInLedgerCurrency, DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
+import { resolveSarPerUsd, toSAR, fromSAR, availableTradableCashInLedgerCurrency, DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
 import {
     inferInvestmentTransactionCurrency,
     ledgerCurrencyCashToInvestment,
@@ -23,6 +24,14 @@ import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolio
 import { auditChangeLog } from '../services/auditLog';
 import { toast } from './ToastContext';
 import { validateAccount, validateGoal, validateHolding, validateTrade, validateTransactionCore, validateSettings, validateBackup, validateLiability, validateCommodityHolding, validateBudget, validateAsset, validatePlannedTrade, validateUniverseTicker, validatePortfolio, validateRecurringTransaction, validatePriceAlert, validateZakatPayment, validateWatchlistItem, validateGoalAllocation, validateTickerStatus, validateInvestmentPlan, validateExecutionLog } from '../services/dataQuality/validation';
+import { assertDividendNotDuplicate, validateDividendRecordInput } from '../services/dividendLedgerGuards';
+import {
+    assertDividendUpdateNotDuplicate,
+    computeInvestmentTxCashDelta,
+    investmentTransactionToRow,
+    netBalanceDeltaForInvestmentTxUpdate,
+    validateDividendTransactionUpdate,
+} from '../services/investmentTransactionLedger';
 import { canPostTransactionToAccount } from '../services/dataQuality/accountPostingPolicy';
 import { parseSplitsFromNote } from '../services/transactionSplitNote';
 import { applyBuyToHolding, consolidateHoldingsBySymbol } from '../services/holdingMath';
@@ -30,20 +39,48 @@ import { roundAvgCostPerUnit, roundMoney, roundQuantity } from '../utils/money';
 import { normalizeCoreUpsideAllocations } from '../utils/investmentPlanAllocations';
 import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/investmentPlanPerPortfolio';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
+import { financialDataHasHydrated } from '../services/financialDataHydration';
 import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
 import { deltaForInvestmentTrade } from '../services/investmentBalanceDelta';
 import { buildTransactionPayloadVariants } from '../services/transactionPayloadVariants';
 import { decodeInstallmentPaymentNote } from '../services/installments/installmentLinkNote';
-import { brokerCashBucketsFromInvestmentAccount } from '../services/investmentCashLedger';
+import { getTradableCashBucketsForAccount, sumTradableCashSarFromInvestmentAccounts } from '../services/investmentCashLedger';
 import { findCreditCardLiabilityForAccount } from '../services/creditCardLinking';
 import { normalizePlannedTradeRow, plannedTradeToDbInsert, plannedTradeToDbUpdate } from '../utils/plannedTradeDb';
+import {
+    dateInRange,
+    effectiveMonthStartDate,
+    financialMonthRange,
+    financialMonthRangeFromKey,
+    resolveMonthStartDayFromData,
+} from '../utils/financialMonth';
+import { sortByNewestFirst, sortPlannedTradesNewestFirst } from '../utils/sortRecency';
+import { normalizeWatchlistRow, watchlistToDbRow } from '../utils/watchlistDb';
+import { recomputeTrancheAfterFill } from '../services/plannedTradeTranches';
+import { guardRecordWrite, type RecordWriteOptions } from '../services/recordConfirmBridge';
+import {
+    summarizeBudgetForConfirm,
+    summarizeCommodityForConfirm,
+    summarizeGoalForConfirm,
+    summarizeInvestmentTradeForConfirm,
+    summarizeLiabilityForConfirm,
+    summarizePriceAlertForConfirm,
+    summarizeRecurringForConfirm,
+    summarizeTransactionForConfirm,
+    summarizeTransferForConfirm,
+    summarizeUpdateTransactionForConfirm,
+    summarizeWatchlistForConfirm,
+    summarizeZakatPaymentForConfirm,
+} from '../utils/recordConfirmMessages';
+
+export type { RecordWriteOptions };
 
 // Default parameters: wealth-ultra/config + optional `wealth_ultra_config` in Supabase (merged in fetchData).
 const initialData: FinancialData = {
     accounts: [], assets: [], liabilities: [], goals: [], transactions: [], recurringTransactions: [],
     investments: [], investmentTransactions: [], budgets: [], commodityHoldings: [], watchlist: [],
     sukukPayoutSchedules: [], sukukPayoutEvents: [],
-    settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275, monthStartDay: 1 },
+    settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275, monthStartDay: 28 },
     zakatPayments: [], priceAlerts: [], plannedTrades: [], notifications: [],
     investmentPlan: {
         monthlyBudget: 0, budgetCurrency: 'SAR', executionCurrency: 'USD', fxRateSource: 'GoogleFinance:CURRENCY:SARUSD',
@@ -76,28 +113,30 @@ const HOLDING_QUANTITY_EPSILON = 0.00001;
 interface DataContextType {
   data: FinancialData;
   loading: boolean;
+  /** Full-screen gate: true only on first load before any personal rows exist (background refetch does not block). */
+  showBlockingLoader: boolean;
   /** Force a reload from the backend (non-destructive). */
   refreshData: () => Promise<void>;
-  addAsset: (asset: Asset) => Promise<void>;
+  addAsset: (asset: Asset, opts?: RecordWriteOptions) => Promise<void>;
   updateAsset: (asset: Asset) => Promise<void>;
   deleteAsset: (assetId: string) => Promise<void>;
-  addGoal: (goal: Goal) => Promise<void>;
+  addGoal: (goal: Goal, opts?: RecordWriteOptions) => Promise<void>;
   updateGoal: (goal: Goal) => Promise<void>;
   deleteGoal: (goalId: string) => Promise<void>;
   updateGoalAllocations: (allocations: { id: string, savingsAllocationPercent: number }[]) => Promise<void>;
-  addLiability: (liability: Liability) => Promise<void>;
+  addLiability: (liability: Liability, opts?: RecordWriteOptions) => Promise<void>;
   updateLiability: (liability: Liability) => Promise<void>;
   deleteLiability: (liabilityId: string) => Promise<void>;
-  addBudget: (budget: Omit<Budget, 'id' | 'user_id'>) => Promise<void>;
+  addBudget: (budget: Omit<Budget, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<void>;
   updateBudget: (budget: Budget) => Promise<void>;
   deleteBudget: (category: string, month: number, year: number) => Promise<void>;
   copyBudgetsFromPreviousMonth: (targetYear: number, targetMonth: number) => Promise<void>;
-  addTransaction: (transaction: Omit<Transaction, 'id' | 'user_id'>) => Promise<void>;
-  updateTransaction: (transaction: Transaction) => Promise<void>;
+  addTransaction: (transaction: Omit<Transaction, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<void>;
+  updateTransaction: (transaction: Transaction, opts?: RecordWriteOptions) => Promise<void>;
   deleteTransaction: (transactionId: string) => Promise<void>;
   /** Create a transfer between two accounts (two transactions: out from fromAccountId, in to toAccountId). */
-  addTransfer: (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string, feeAmount?: number) => Promise<void>;
-  addRecurringTransaction: (recurring: Omit<RecurringTransaction, 'id' | 'user_id'>) => Promise<void>;
+  addTransfer: (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string, feeAmount?: number, opts?: RecordWriteOptions) => Promise<void>;
+  addRecurringTransaction: (recurring: Omit<RecurringTransaction, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<void>;
   updateRecurringTransaction: (recurring: RecurringTransaction) => Promise<void>;
   deleteRecurringTransaction: (id: string) => Promise<void>;
   /** `skipped` counts any rule where `applyRecurringRuleForMonth` returns `skipped: true` (not only duplicate-in-month). */
@@ -119,7 +158,7 @@ interface DataContextType {
   addHolding: (holding: Omit<Holding, 'id' | 'user_id'>) => Promise<void>;
   updateHolding: (holding: Holding) => Promise<void>;
   batchUpdateHoldingValues: (updates: { id: string; currentValue: number }[]) => void;
-  recordTrade: (trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number }, executedPlanId?: string) => Promise<{
+  recordTrade: (trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number }, executedPlanId?: string, opts?: RecordWriteOptions) => Promise<{
     insertedInvestmentTransactionId: string | null;
     insertedTradeTransactions: number;
     insertedCashLedgerRows: number;
@@ -127,20 +166,23 @@ interface DataContextType {
     cashDelta: number;
     positionDelta: number;
   }>;
-  addWatchlistItem: (item: WatchlistItem) => Promise<void>;
+  updateInvestmentTransaction: (tx: InvestmentTransaction, opts?: RecordWriteOptions) => Promise<void>;
+  deleteInvestmentTransaction: (transactionId: string, opts?: RecordWriteOptions) => Promise<void>;
+  addWatchlistItem: (item: WatchlistItem, opts?: RecordWriteOptions) => Promise<void>;
+  updateWatchlistItem: (item: WatchlistItem) => Promise<void>;
   deleteWatchlistItem: (symbol: string) => Promise<void>;
-  addZakatPayment: (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => Promise<void>;
-  addPriceAlert: (alert: Omit<PriceAlert, 'id' | 'user_id' | 'status' | 'createdAt'>) => Promise<void>;
+  addZakatPayment: (payment: Omit<ZakatPayment, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<void>;
+  addPriceAlert: (alert: Omit<PriceAlert, 'id' | 'user_id' | 'status' | 'createdAt'>, opts?: RecordWriteOptions) => Promise<void>;
   updatePriceAlert: (alert: PriceAlert) => Promise<void>;
   deletePriceAlert: (alertId: string) => Promise<void>;
-  addPlannedTrade: (plan: Omit<PlannedTrade, 'id' | 'user_id'>) => Promise<boolean>;
+  addPlannedTrade: (plan: Omit<PlannedTrade, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<boolean>;
   updatePlannedTrade: (plan: PlannedTrade) => Promise<boolean>;
   deletePlannedTrade: (planId: string) => Promise<void>;
   saveInvestmentPlan: (plan: InvestmentPlanSettings, portfolioId?: string) => Promise<void>;
   addUniverseTicker: (ticker: Omit<UniverseTicker, 'id' | 'user_id'>) => Promise<void>;
   updateUniverseTickerStatus: (tickerId: string, status: TickerStatus, updates?: Partial<UniverseTicker>) => Promise<void>;
   deleteUniverseTicker: (tickerId: string) => Promise<void>;
-  addCommodityHolding: (holding: Omit<CommodityHolding, 'id' | 'user_id'>) => Promise<void>;
+  addCommodityHolding: (holding: Omit<CommodityHolding, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<void>;
   updateCommodityHolding: (holding: CommodityHolding) => Promise<void>;
   deleteCommodityHolding: (holdingId: string) => Promise<void>;
   batchUpdateCommodityHoldingValues: (updates: { id: string; currentValue: number }[]) => Promise<void>;
@@ -172,7 +214,11 @@ function normalizeSettings(raw: any): Settings {
         driftThreshold: Number(raw.drift_threshold ?? raw.driftThreshold ?? initialData.settings.driftThreshold),
         enableEmails: Boolean(raw.enable_emails ?? raw.enableEmails ?? initialData.settings.enableEmails),
         goldPrice: Number(raw.gold_price ?? raw.goldPrice ?? initialData.settings.goldPrice),
-        monthStartDay: raw.month_start_day != null || raw.monthStartDay != null ? Number(raw.month_start_day ?? raw.monthStartDay) : (initialData.settings as any).monthStartDay,
+        monthStartDay: (() => {
+            const n = Number(raw.month_start_day ?? raw.monthStartDay ?? initialData.settings.monthStartDay);
+            if (!Number.isFinite(n)) return initialData.settings.monthStartDay ?? 28;
+            return Math.min(31, Math.max(1, Math.round(n)));
+        })(),
         nisabAmount: raw.nisab_amount != null || raw.nisabAmount != null ? Number(raw.nisab_amount ?? raw.nisabAmount) : undefined,
     };
 }
@@ -319,6 +365,8 @@ function normalizeAccount(raw: any): Account {
         owner: raw.owner,
         linkedAccountIds: Array.isArray(linkedAccountIds) ? linkedAccountIds.filter((id: any): id is string => typeof id === 'string') : undefined,
         platformDetails: raw.platformDetails ?? raw.platform_details,
+        accountRole: raw.account_role ?? raw.accountRole,
+        bucketType: raw.bucket_type ?? raw.bucketType,
     };
 }
 
@@ -345,6 +393,8 @@ function buildAccountInsertPayload(platform: Omit<Account, 'id' | 'user_id' | 'b
     if (platform.currency === 'SAR' || platform.currency === 'USD') {
         payload.currency = platform.currency;
     }
+    if (platform.accountRole) payload.account_role = platform.accountRole;
+    if (platform.bucketType) payload.bucket_type = platform.bucketType;
     return payload;
 }
 
@@ -498,6 +548,23 @@ function holdingToRow(holding: Partial<Holding> & { quantity: number }): Record<
     } else {
         row.acquisition_date = null;
     }
+    if (holding.dividendYield != null && Number.isFinite(Number(holding.dividendYield))) {
+        row.dividend_yield = Number(holding.dividendYield);
+    }
+    if (holding.dividendDistribution === 'Reinvest' || holding.dividendDistribution === 'Payout') {
+        row.dividend_distribution = holding.dividendDistribution;
+    }
+    if (holding.expectedAnnualDividendSar != null && Number.isFinite(Number(holding.expectedAnnualDividendSar))) {
+        row.expected_annual_dividend_sar = roundMoney(Math.max(0, Number(holding.expectedAnnualDividendSar)));
+    } else if ((holding as any).expected_annual_dividend_sar === null) {
+        row.expected_annual_dividend_sar = null;
+    }
+    const cadence = holding.dividendPayoutCadence ?? (holding as any).dividend_payout_cadence;
+    if (cadence) row.dividend_payout_cadence = cadence;
+    const months = holding.typicalPayoutMonths ?? (holding as any).typical_payout_months;
+    if (Array.isArray(months) && months.length > 0) {
+        row.typical_payout_months = months.filter((m: number) => m >= 1 && m <= 12);
+    }
     return row;
 }
 
@@ -517,6 +584,12 @@ function normalizeHoldingFromRow(row: any): Holding {
         assetClass: row.asset_class ?? row.assetClass,
         goalId: row.goal_id ?? row.goalId,
         acquisitionDate: row.acquisition_date ?? row.acquisitionDate ?? undefined,
+        dividendDistribution: row.dividend_distribution ?? row.dividendDistribution,
+        dividendYield: row.dividend_yield != null ? Number(row.dividend_yield) : row.dividendYield,
+        expectedAnnualDividendSar:
+            row.expected_annual_dividend_sar != null ? Number(row.expected_annual_dividend_sar) : row.expectedAnnualDividendSar,
+        dividendPayoutCadence: row.dividend_payout_cadence ?? row.dividendPayoutCadence,
+        typicalPayoutMonths: Array.isArray(row.typical_payout_months) ? row.typical_payout_months : row.typicalPayoutMonths,
     };
 }
 
@@ -605,8 +678,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const tradeSubmissionInFlightRef = useRef(false);
     const duplicateHoldingsReconcileInFlightRef = useRef(false);
     const duplicateHoldingsLastSignatureRef = useRef<string>('');
+    /** After first successful Supabase hydrate, refetches refresh in the background without blocking pages. */
+    const financialDataLoadedRef = useRef(false);
+    /** UI gate: true until first hydrate for this session/user completes (independent of background `loading`). */
+    const [awaitingInitialHydrate, setAwaitingInitialHydrate] = useState(true);
+    const recurringAutoApplyInFlightRef = useRef(false);
     const transactionsRef = useRef<FinancialData['transactions']>(data?.transactions ?? []);
     transactionsRef.current = data?.transactions ?? [];
+    const dataRef = useRef(data);
+    dataRef.current = data;
     const updatePlatformRef = useRef<((platform: Account, opts?: { fromTransactionDelta?: boolean }) => Promise<void>) | null>(null);
     /** Accumulator for cash account deltas during recurring-apply loops; avoids stale balance when multiple txs hit the same account. */
     const cashBalanceAccumulatorRef = useRef<Record<string, number>>({});
@@ -626,6 +706,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             realizedPnL: roundMoney(Number(holding.realizedPnL ?? holding.realized_pnl ?? 0)),
             dividendDistribution: holding.dividendDistribution ?? holding.dividend_distribution,
             dividendYield: holding.dividendYield ?? holding.dividend_yield,
+            expectedAnnualDividendSar:
+                holding.expectedAnnualDividendSar ?? holding.expected_annual_dividend_sar ?? undefined,
+            dividendPayoutCadence: holding.dividendPayoutCadence ?? holding.dividend_payout_cadence ?? undefined,
+            typicalPayoutMonths: Array.isArray(holding.typicalPayoutMonths)
+                ? holding.typicalPayoutMonths
+                : Array.isArray(holding.typical_payout_months)
+                  ? holding.typical_payout_months
+                  : undefined,
             zakahClass: holding.zakahClass ?? holding.zakah_class ?? 'Zakatable',
             acquisitionDate: holding.acquisitionDate ?? holding.acquisition_date,
         };
@@ -700,6 +788,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             amount: roundMoney(amount),
             goalId: raw.goalId ?? raw.goal_id,
             accountId,
+            apr: raw.apr != null ? Number(raw.apr) : undefined,
+            minPayment: raw.min_payment != null ? Number(raw.min_payment) : raw.minPayment != null ? Number(raw.minPayment) : undefined,
+            maturityDate: raw.maturity_date != null ? String(raw.maturity_date).slice(0, 10) : raw.maturityDate != null ? String(raw.maturityDate).slice(0, 10) : undefined,
+            payoffPriority: raw.payoff_priority != null ? Number(raw.payoff_priority) : raw.payoffPriority != null ? Number(raw.payoffPriority) : undefined,
         };
     };
 
@@ -714,10 +806,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const goal = liability.goalId != null && String(liability.goalId).trim() !== '' ? liability.goalId : null;
         const accountLink =
             liability.accountId != null && String(liability.accountId).trim() !== '' ? liability.accountId : null;
+        const enrich = {
+            apr: liability.apr ?? null,
+            min_payment: liability.minPayment ?? null,
+            maturity_date: liability.maturityDate ?? null,
+            payoff_priority: liability.payoffPriority ?? null,
+        };
         const snake = { ...common, goal_id: goal, account_id: accountLink };
+        const snakeEnriched = { ...snake, ...enrich };
         const camel = { ...common, goalId: goal, accountId: accountLink };
         const snakeLegacy = { ...common, goal_id: goal };
-        return [snake, snakeLegacy, camel, common];
+        return [snakeEnriched, snake, snakeLegacy, camel, common];
     };
 
     const normalizeTransaction = (transaction: any): Transaction => {
@@ -847,7 +946,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         const db = supabase;
-        setLoading(true);
+        const showBlockingLoader = !financialDataLoadedRef.current;
+        if (showBlockingLoader) setLoading(true);
         try {
             // Optional tables: fetch so they never reject (migrations may not be run yet)
             const recurringPromise = trySelectOptionalTable<any>(db.from('recurring_transactions').select('*').eq('user_id', auth.user.id));
@@ -907,85 +1007,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const normalizedSukukSchedules = filterOwnedRows((sukukPayoutSchedules.data as any[]) || []).map(normalizeSukukPayoutScheduleRow);
             const normalizedSukukEvents = filterOwnedRows((sukukPayoutEvents.data as any[]) || []).map(normalizeSukukPayoutEventRow);
 
-            // Auto-post due Sukuk payouts into investment_transactions so the platform cash becomes reinvestable.
-            // Idempotent: events are marked posted and store the created investment transaction id.
             const todayYmd = new Date().toISOString().slice(0, 10);
-            const dueEvents = normalizedSukukEvents
-                .filter((e) => !e.posted && e.amount > 0 && String(e.payoutDate) <= todayYmd);
-            let appendedInvestmentTx: InvestmentTransaction[] = [];
-            const postedEventIds = new Set<string>();
-            if (dueEvents.length) {
-                try {
-                    for (const ev of dueEvents.slice(0, 50)) {
-                        const symbol = `SUKUK:${String(ev.assetId).slice(0, 8)}:${ev.kind.toUpperCase()}`;
-                        const txType: InvestmentTransaction['type'] = ev.kind === 'principal' ? 'deposit' : 'dividend';
-                        const payload: Omit<InvestmentTransaction, 'id' | 'user_id'> = {
-                            accountId: ev.investmentAccountId,
-                            date: ev.payoutDate,
-                            type: txType,
-                            symbol,
-                            quantity: 0,
-                            price: 0,
-                            total: ev.amount,
-                            currency: ev.currency,
-                        };
-                        // Insert (with best-effort payload variants for schema drift) then mark event as posted.
-                        let inserted: any | null = null;
-                        for (const variant of tradePayloadVariants(payload)) {
-                            const res = await db.from('investment_transactions').insert(withUser(variant)).select('*').maybeSingle();
-                            if (!res.error && res.data) {
-                                inserted = res.data;
-                                break;
-                            }
-                        }
-                        if (inserted?.id) {
-                            const postUpdate = await db
-                                .from('sukuk_payout_events')
-                                .update({ posted: true, posted_at: new Date().toISOString(), posted_investment_transaction_id: inserted.id })
-                                .eq('id', ev.id)
-                                .eq('user_id', auth.user.id)
-                                // Verify at least one row was actually updated (defense-in-depth).
-                                .select('id')
-                                .maybeSingle();
-                            if (postUpdate.error || !postUpdate.data?.id) {
-                                // If we can't mark the payout as posted, try to rollback the inserted investment transaction
-                                // to avoid duplicate posting on next refresh.
-                                try {
-                                    await db.from('investment_transactions').delete().eq('id', inserted.id);
-                                } catch {
-                                    // ignore rollback failures; DB remains source of truth.
-                                }
-                            } else {
-                                appendedInvestmentTx.push(normalizeInvestmentTransaction(inserted));
-                                postedEventIds.add(ev.id);
-                            }
-                        }
-                    }
-                } catch (e) {
-                    console.warn('Sukuk auto-post skipped:', e);
-                }
-            }
-            // Check if user is admin (has special email or role)
-            const isAdmin = auth.user.email?.toLowerCase().includes('admin') || 
-                           auth.user.email?.toLowerCase().includes('hussein') ||
-                           (auth.user.user_metadata?.role === 'admin');
-
-            // Admin: fetch only Pending transactions (for approval UI) and own budgets. Never fetch other users' investment_plan or planned_trades.
-            let allTransactionsData: any[] = [];
-            let allBudgetsData: any[] = [];
-            if (isAdmin && supabase) {
-                try {
-                    const [allTxResult, allBudgetsResult] = await Promise.allSettled([
-                        supabase.from('transactions').select('*').eq('status', 'Pending'),
-                        supabase.from('budgets').select('*')
-                    ]);
-                    allTransactionsData = (allTxResult.status === 'fulfilled' ? (allTxResult.value.data || []) : []) as any[];
-                    allBudgetsData = (allBudgetsResult.status === 'fulfilled' ? (allBudgetsResult.value.data || []) : []) as any[];
-                } catch (e) {
-                    console.error('Error fetching admin data:', e);
-                }
-            }
-
+            const dueSukukEvents = normalizedSukukEvents
+                .filter((e) => !e.posted && e.amount > 0 && String(e.payoutDate) <= todayYmd)
+                .slice(0, 50);
             const wuBase = getDefaultWealthUltraSystemConfig();
             let wealthUltraConfig = wuBase;
             if (supabase && auth.user) {
@@ -1016,9 +1041,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setData({
                 accounts: ownedAccounts,
                 assets: filterOwnedRows(assets.data as any[]).map(normalizeAssetRow),
-                liabilities: filterOwnedRows(((liabilities.data as any[]) || []).map(normalizeLiability)),
-                goals: filterOwnedRows(goals.data as any[]).map(normalizeGoalRow),
-                transactions: filterOwnedRows(transactions.data as any[]).map(normalizeTransaction),
+                liabilities: [...filterOwnedRows(((liabilities.data as any[]) || []).map(normalizeLiability))].sort(
+                    (a, b) => b.id.localeCompare(a.id),
+                ),
+                goals: [...filterOwnedRows(goals.data as any[]).map(normalizeGoalRow)].sort((a, b) =>
+                    b.id.localeCompare(a.id),
+                ),
+                transactions: sortByNewestFirst(
+                    filterOwnedRows(transactions.data as any[]).map(normalizeTransaction),
+                ),
                 // Portfolios: API uses goal_id / account_id; app + Portfolio modal use goalId / accountId (do not drop on refresh).
                 investments: filterOwnedRows((investments.data as any) || []).map((portfolio: any) => {
                     const rawAccountId = portfolio.accountId || portfolio.account_id;
@@ -1033,11 +1064,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         holdings,
                     };
                 }),
-                investmentTransactions: appendedInvestmentTx.length ? [...normalizedInvestmentTransactions, ...appendedInvestmentTx] : normalizedInvestmentTransactions,
+                investmentTransactions: sortByNewestFirst(normalizedInvestmentTransactions),
                 sukukPayoutSchedules: normalizedSukukSchedules,
-                sukukPayoutEvents: postedEventIds.size
-                    ? normalizedSukukEvents.map((e) => (postedEventIds.has(e.id) ? { ...e, posted: true } : e))
-                    : normalizedSukukEvents,
+                sukukPayoutEvents: normalizedSukukEvents,
                 budgets: filterOwnedRows(budgets.data as any[]).map((b: any) => ({
                     ...b,
                     period: b.period ?? 'monthly',
@@ -1047,37 +1076,122 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     limit: roundMoney(Number(b.limit ?? 0)),
                 })),
                 commodityHoldings: filterOwnedRows(commodityHoldings.data as any[]).map(normalizeCommodityHolding),
-                watchlist: filterOwnedRows(watchlist.data as any[]),
+                watchlist: filterOwnedRows(watchlist.data as any[])
+                    .map((w: any) => normalizeWatchlistRow(w))
+                    .sort((a, b) => String(b.symbol).localeCompare(String(a.symbol))),
                 settings: normalizeSettings((settings as any).data ?? initialData.settings),
-                zakatPayments: filterOwnedRows(zakatPayments.data as any[]),
+                zakatPayments: sortByNewestFirst(filterOwnedRows(zakatPayments.data as any[])),
                 priceAlerts: filterOwnedRows(priceAlerts.data as any[]).map(normalizePriceAlert),
-                plannedTrades: filterOwnedRows(plannedTrades.data as any[]).map(normalizePlannedTradeRow),
+                plannedTrades: sortPlannedTradesNewestFirst(
+                    filterOwnedRows(plannedTrades.data as any[]).map(normalizePlannedTradeRow),
+                ),
                 notifications: [],
                 investmentPlan: normalizeInvestmentPlan((investmentPlan as any).data),
                 wealthUltraConfig,
                 portfolioUniverse: filterOwnedRows((portfolioUniverse as any).data || []).map(normalizeUniverseTicker),
-                statusChangeLog: filterOwnedRows((statusChangeLog as any).data || []),
-                executionLogs: filterOwnedRows((executionLogs as any).data || []).map(normalizeExecutionLog),
-                recurringTransactions: (recurringTransactions as any).error ? [] : filterOwnedRows((recurringTransactions as any).data || []).map((r: any) =>
-                    normalizeRecurringTransaction(r, resolveAccountId(r.account_id ?? r.accountId, normalizedAccounts) ?? undefined)
+                statusChangeLog: sortByNewestFirst(filterOwnedRows((statusChangeLog as any).data || [])),
+                executionLogs: sortByNewestFirst(
+                    filterOwnedRows((executionLogs as any).data || []).map(normalizeExecutionLog),
                 ),
-                budgetRequests: ((budgetRequests as any).data || []).map((r: any) => ({
-                    id: r.id,
-                    userId: r.user_id ?? r.userId,
-                    requestType: (r.request_type ?? r.requestType) === 'IncreaseLimit' ? 'IncreaseLimit' : 'NewCategory',
-                    categoryId: r.category_id ?? r.categoryId,
-                    categoryName: r.category_name ?? r.categoryName,
-                    amount: roundMoney(Number(r.amount ?? 0)),
-                    note: r.note ?? r.request_note,
-                    status: r.status === 'Finalized' ? 'Finalized' : r.status === 'Rejected' ? 'Rejected' : 'Pending',
-                })),
-                allTransactions: allTransactionsData.map(normalizeTransaction),
-                allBudgets: allBudgetsData,
+                recurringTransactions: (recurringTransactions as any).error
+                    ? []
+                    : [...filterOwnedRows((recurringTransactions as any).data || []).map((r: any) =>
+                          normalizeRecurringTransaction(
+                              r,
+                              resolveAccountId(r.account_id ?? r.accountId, normalizedAccounts) ?? undefined,
+                          ),
+                      )].sort((a, b) => b.id.localeCompare(a.id)),
+                budgetRequests: sortByNewestFirst(
+                    ((budgetRequests as any).data || []).map((r: any) => ({
+                        id: r.id,
+                        userId: r.user_id ?? r.userId,
+                        requestType: (r.request_type ?? r.requestType) === 'IncreaseLimit' ? 'IncreaseLimit' : 'NewCategory',
+                        categoryId: r.category_id ?? r.categoryId,
+                        categoryName: r.category_name ?? r.categoryName,
+                        amount: roundMoney(Number(r.amount ?? 0)),
+                        note: r.note ?? r.request_note,
+                        status: r.status === 'Finalized' ? 'Finalized' : r.status === 'Rejected' ? 'Rejected' : 'Pending',
+                        created_at: r.created_at,
+                    })),
+                ),
+                allTransactions: [],
+                allBudgets: [],
             });
+
+            // Post due Sukuk payouts after first paint (was blocking setData for up to 5s).
+            if (dueSukukEvents.length) {
+                const userId = auth.user.id;
+                void (async () => {
+                    try {
+                        const appendedInvestmentTx: InvestmentTransaction[] = [];
+                        const postedEventIds = new Set<string>();
+                        const sukukPostDeadline = Date.now() + 5000;
+                        for (const ev of dueSukukEvents) {
+                            if (Date.now() > sukukPostDeadline) {
+                                console.warn('Sukuk auto-post time budget reached; remaining events deferred to next refresh.');
+                                break;
+                            }
+                            const symbol = `SUKUK:${String(ev.assetId).slice(0, 8)}:${ev.kind.toUpperCase()}`;
+                            const txType: InvestmentTransaction['type'] = ev.kind === 'principal' ? 'deposit' : 'dividend';
+                            const payload: Omit<InvestmentTransaction, 'id' | 'user_id'> = {
+                                accountId: ev.investmentAccountId,
+                                date: ev.payoutDate,
+                                type: txType,
+                                symbol,
+                                quantity: 0,
+                                price: 0,
+                                total: ev.amount,
+                                currency: ev.currency,
+                            };
+                            let inserted: any | null = null;
+                            for (const variant of tradePayloadVariants(payload)) {
+                                const res = await db.from('investment_transactions').insert(withUser(variant)).select('*').maybeSingle();
+                                if (!res.error && res.data) {
+                                    inserted = res.data;
+                                    break;
+                                }
+                            }
+                            if (inserted?.id) {
+                                const postUpdate = await db
+                                    .from('sukuk_payout_events')
+                                    .update({ posted: true, posted_at: new Date().toISOString(), posted_investment_transaction_id: inserted.id })
+                                    .eq('id', ev.id)
+                                    .eq('user_id', userId)
+                                    .select('id')
+                                    .maybeSingle();
+                                if (postUpdate.error || !postUpdate.data?.id) {
+                                    try {
+                                        await db.from('investment_transactions').delete().eq('id', inserted.id);
+                                    } catch {
+                                        // ignore rollback failures
+                                    }
+                                } else {
+                                    appendedInvestmentTx.push(normalizeInvestmentTransaction(inserted));
+                                    postedEventIds.add(ev.id);
+                                }
+                            }
+                        }
+                        if (!appendedInvestmentTx.length && postedEventIds.size === 0) return;
+                        setData((prev) => ({
+                            ...prev,
+                            investmentTransactions: appendedInvestmentTx.length
+                                ? sortByNewestFirst([...prev.investmentTransactions, ...appendedInvestmentTx])
+                                : prev.investmentTransactions,
+                            sukukPayoutEvents: postedEventIds.size
+                                ? (prev.sukukPayoutEvents ?? []).map((e) => (postedEventIds.has(e.id) ? { ...e, posted: true } : e))
+                                : prev.sukukPayoutEvents,
+                        }));
+                    } catch (e) {
+                        console.warn('Sukuk auto-post skipped:', e);
+                    }
+                })();
+            }
 
         } catch (error) {
             console.error("Error fetching financial data:", error);
         } finally {
+            financialDataLoadedRef.current = true;
+            setAwaitingInitialHydrate(false);
             setLoading(false);
         }
     };
@@ -1088,13 +1202,23 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
 
     useEffect(() => {
-        fetchData();
-        
+        if (!auth?.user?.id || !supabase) {
+            financialDataLoadedRef.current = false;
+            setAwaitingInitialHydrate(false);
+            setLoading(false);
+            return;
+        }
+        // New session or switched user — must block UI until this user's rows hydrate (avoid showing prior user's shell).
+        financialDataLoadedRef.current = false;
+        setAwaitingInitialHydrate(true);
+        void fetchData();
+
         // Safety timeout to ensure loading state is cleared even if Supabase hangs
         const timeoutId = setTimeout(() => {
+            setAwaitingInitialHydrate(false);
             setLoading(false);
         }, 8000);
-        
+
         return () => clearTimeout(timeoutId);
         // Use user id only: `user` object reference changes on TOKEN_REFRESHED; refetching then caused global loading flashes.
     }, [auth?.user?.id]);
@@ -1106,7 +1230,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     /** Keep a dense SAR/USD point per calendar day for charts/KPIs (spot + snapshot seed + forward-fill). */
     useEffect(() => {
-        hydrateSarPerUsdDailySeries(data, resolveSarPerUsd(data ?? null, DEFAULT_SAR_PER_USD));
+        hydrateSarPerUsdDailySeries(data, DEFAULT_SAR_PER_USD);
     }, [data, dataResetKey]);
 
     // Helper to add user_id to any object
@@ -1116,6 +1240,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!supabase || !auth?.user) return;
         const db = supabase;
         setLoading(true);
+        financialDataLoadedRef.current = false;
+        setAwaitingInitialHydrate(true);
         const tables = [
             'accounts', 'assets', 'liabilities', 'goals', 'transactions', 'holdings',
             'investment_portfolios', 'investment_transactions', 'budgets', 'watchlist',
@@ -1128,6 +1254,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await Promise.allSettled(tables.map(table => db.from(table).delete().eq('user_id', auth.user!.id)));
         setData(initialData);
         setDataResetKey((k) => k + 1);
+        financialDataLoadedRef.current = true;
+        setAwaitingInitialHydrate(false);
         setLoading(false);
     };
 
@@ -1152,9 +1280,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             rows.length ? db.from(name).insert(rows.map(row)) : Promise.resolve({ data: null, error: null });
         try {
             setLoading(true);
+            setAwaitingInitialHydrate(true);
+            financialDataLoadedRef.current = false;
             await _internalResetData();
             if (!supabase || !auth?.user) return { ok: false, error: 'Session lost' };
             setLoading(true);
+            setAwaitingInitialHydrate(true);
             const tables: { key: string; dbTable: string }[] = [
                 { key: 'accounts', dbTable: 'accounts' },
                 { key: 'assets', dbTable: 'assets' },
@@ -1226,7 +1357,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
 
     // --- Assets ---
-    const addAsset = async (asset: Asset) => {
+    const addAsset = async (asset: Asset, opts?: RecordWriteOptions) => {
         if(!supabase || !auth?.user) {
             toast("You must be logged in to add an asset.", 'error');
             return;
@@ -1240,6 +1371,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             maturityDate: sanitized.maturityDate,
         });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        const assetOk = await guardRecordWrite(opts, {
+            title: 'Add asset?',
+            message: 'Add this physical asset to your balance sheet?',
+            confirmLabel: 'Add',
+            details: [`${sanitized.name} (${sanitized.type})`, `Value: ${sanitized.value} SAR`],
+        });
+        if (!assetOk) return;
         const db = supabase;
         const { id: _omitId, user_id: _omitUid, issueDate, maturityDate, notes: notesForDb, ...insertRest } = sanitized;
         const dates = assetDatesForDb(sanitized);
@@ -1290,7 +1428,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Goals ---
-    const addGoal = async (goal: Goal) => {
+    const addGoal = async (goal: Goal, opts?: RecordWriteOptions) => {
         if(!supabase || !auth?.user) {
             toast("You must be logged in to add a goal.", 'error');
             return;
@@ -1300,6 +1438,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             toast(v.errors.join('\n'), 'error');
             return;
         }
+        const goalOk = await guardRecordWrite(opts, summarizeGoalForConfirm({
+            name: goal.name,
+            targetAmount: goal.targetAmount,
+            deadline: goal.deadline,
+        }));
+        if (!goalOk) return;
         const db = supabase;
         let newGoal: any = null;
         let error: any = null;
@@ -1379,10 +1523,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Liabilities ---
-    const addLiability = async (liability: Liability) => {
+    const addLiability = async (liability: Liability, opts?: RecordWriteOptions) => {
       if(!supabase || !auth?.user) return;
       const v = validateLiability({ name: liability.name, type: liability.type, amount: liability.amount, status: liability.status });
       if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+      const liabOk = await guardRecordWrite(opts, summarizeLiabilityForConfirm({
+        name: liability.name,
+        type: liability.type,
+        amount: Math.abs(liability.amount),
+      }));
+      if (!liabOk) return;
       const db = supabase;
       let newLiability: any = null;
       let lastErr: any = null;
@@ -1463,10 +1613,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Budgets ---
-    const addBudget = async (budget: Omit<Budget, 'id' | 'user_id'>) => {
+    const addBudget = async (budget: Omit<Budget, 'id' | 'user_id'>, opts?: RecordWriteOptions) => {
       if(!supabase) return;
       const v = validateBudget({ category: budget.category, month: budget.month, year: budget.year, limit: budget.limit, period: (budget as Budget).period });
       if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+      const budgetOk = await guardRecordWrite(opts, summarizeBudgetForConfirm({
+        category: budget.category,
+        limit: budget.limit,
+        month: budget.month,
+        year: budget.year,
+      }));
+      if (!budgetOk) return;
       const db = supabase;
       const payload: Record<string, unknown> = { ...withUser(budget) as Record<string, unknown> };
       if (budget.destinationAccountId != null) payload.destination_account_id = budget.destinationAccountId;
@@ -1715,7 +1872,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await up({ ...acc, balance: newBalance }, { fromTransactionDelta: true });
     };
 
-    const addTransaction = async (transaction: Omit<Transaction, 'id' | 'user_id'>) => {
+    const addTransaction = async (transaction: Omit<Transaction, 'id' | 'user_id'>, opts?: RecordWriteOptions) => {
         if(!supabase || !auth?.user) {
             toast("You must be logged in to add a transaction.", 'error');
             return;
@@ -1739,6 +1896,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             toast(postingPolicy.reason ?? 'Transaction blocked by account posting policy.', 'error');
             return;
         }
+        const txConfirm = summarizeTransactionForConfirm(
+            { ...transaction, id: 'new' } as Transaction,
+            postingAccount?.name,
+        );
+        const txOk = await guardRecordWrite(opts, txConfirm);
+        if (!txOk) return;
         const db = supabase;
         let newTx: any = null;
         let error: any = null;
@@ -1822,7 +1985,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
         }
     };
-    const addTransfer = async (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string, feeAmount?: number) => {
+    const addTransfer = async (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string, feeAmount?: number, opts?: RecordWriteOptions) => {
         if (!supabase || !auth?.user) return;
         const absAmount = Math.abs(Number(amount));
         const fee = Math.max(0, Number(feeAmount) || 0);
@@ -1854,6 +2017,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const fromName = fromAcc?.name ?? fromAccountId;
         const toName = toAcc?.name ?? toAccountId;
         const dateStr = date ?? new Date().toISOString().split('T')[0];
+        const fromCur = fromAcc?.currency === 'USD' ? 'USD' : 'SAR';
+        const transferOk = await guardRecordWrite(
+            opts,
+            summarizeTransferForConfirm({
+                amount: absAmount,
+                fromName,
+                toName,
+                fromCurrency: fromCur,
+                feeAmount: fee > 0 ? fee : undefined,
+                note: note?.trim() || undefined,
+            }),
+        );
+        if (!transferOk) return;
         const feeTag = fee > 0 ? ` (fee ${fee.toFixed(2)})` : '';
         const descOut = note ? `Transfer to ${toName}: ${note}${feeTag}` : `Transfer to ${toName}${feeTag}`;
         const descIn = note ? `Transfer from ${fromName}: ${note}` : `Transfer from ${fromName}`;
@@ -1884,7 +2060,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     price: 0,
                     linkedCashAccountId,
                     transferGroupId,
-                } as Parameters<typeof recordTrade>[0]);
+                } as Parameters<typeof recordTrade>[0], undefined, { system: true });
             } catch (e: unknown) {
                 const msg = e instanceof Error ? e.message : 'Transfer failed.';
                 toast(msg, 'error');
@@ -1900,7 +2076,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     category: 'Transfer',
                     transferGroupId,
                     transferRole: 'principal_out',
-                });
+                }, { system: true });
             }
             if (fee > 0) {
                 await addTransaction({
@@ -1912,7 +2088,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     category: 'Fee',
                     transferGroupId,
                     transferRole: 'fee',
-                });
+                }, { system: true });
             }
             return;
         }
@@ -1940,7 +2116,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     price: 0,
                     linkedCashAccountId,
                     transferGroupId,
-                } as Parameters<typeof recordTrade>[0]);
+                } as Parameters<typeof recordTrade>[0], undefined, { system: true });
             } catch (e: unknown) {
                 const msg = e instanceof Error ? e.message : 'Transfer failed.';
                 toast(msg, 'error');
@@ -1956,7 +2132,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     category: 'Transfer',
                     transferGroupId,
                     transferRole: 'principal_in',
-                });
+                }, { system: true });
             }
             if (fee > 0) {
                 const feeAccountId = linkedCashAccountId ?? fromAccountId;
@@ -1969,13 +2145,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     category: 'Fee',
                     transferGroupId,
                     transferRole: 'fee',
-                });
+                }, { system: true });
             }
             return;
         }
 
         const rate = resolveSarPerUsd(data ?? null, (data as any)?.investmentPlan?.fxRate);
-        const fromCur = fromAcc?.currency === 'USD' ? 'USD' : 'SAR';
         const toCur = toAcc?.currency === 'USD' ? 'USD' : 'SAR';
         const inboundAmount = fromCur === toCur ? absAmount : fromSAR(toSAR(absAmount, fromCur, rate), toCur, rate);
         const rpcPayload = {
@@ -2032,7 +2207,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             category: 'Transfer',
             transferGroupId,
             transferRole: 'principal_out',
-        });
+        }, { system: true });
         if (fee > 0) {
             await addTransaction({
                 date: dateStr,
@@ -2043,7 +2218,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 category: 'Fee',
                 transferGroupId,
                 transferRole: 'fee',
-            });
+            }, { system: true });
         }
         await addTransaction({
             date: dateStr,
@@ -2054,12 +2229,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             category: 'Transfer',
             transferGroupId,
             transferRole: 'principal_in',
-        });
+        }, { system: true });
     };
-    const updateTransaction = async (transaction: Transaction) => {
+    const updateTransaction = async (transaction: Transaction, opts?: RecordWriteOptions) => {
         if(!supabase || !auth?.user) return;
         const core = validateTransactionCore({ date: transaction.date, amount: transaction.amount, accountId: transaction.accountId, description: transaction.description });
         if (!core.valid) { toast(core.errors.join('\n'), 'error'); return; }
+        const postingAccount = (data?.accounts ?? []).find((a) => a.id === transaction.accountId);
+        const updateOk = await guardRecordWrite(opts, summarizeUpdateTransactionForConfirm(transaction, postingAccount?.name));
+        if (!updateOk) return;
         const db = supabase;
         let error: any = null;
         let savedWithoutNote = false;
@@ -2191,10 +2369,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Recurring transactions ---
-    const addRecurringTransaction = async (recurring: Omit<RecurringTransaction, 'id' | 'user_id'>) => {
+    const addRecurringTransaction = async (recurring: Omit<RecurringTransaction, 'id' | 'user_id'>, opts?: RecordWriteOptions) => {
         if (!supabase || !auth?.user) return;
         const v = validateRecurringTransaction({ description: recurring.description, amount: recurring.amount, type: recurring.type, accountId: recurring.accountId, category: recurring.category, dayOfMonth: recurring.dayOfMonth });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        const acc = (data?.accounts ?? []).find((a) => a.id === recurring.accountId);
+        const recOk = await guardRecordWrite(opts, summarizeRecurringForConfirm({
+            description: recurring.description,
+            amount: recurring.amount,
+            type: recurring.type,
+            dayOfMonth: recurring.dayOfMonth,
+            accountName: acc?.name,
+        }));
+        if (!recOk) return;
         const db = supabase;
         const row = {
             description: recurring.description,
@@ -2264,19 +2451,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (rule.addManually === true) return { applied: false, skipped: true, skipReason: 'manual' };
         if (!supabase || !auth?.user) return { applied: false, skipped: true };
 
-        const monthStr = String(month).padStart(2, '0');
-        const dayStr = (d: number) => String(d).padStart(2, '0');
-        const date = `${year}-${monthStr}-${dayStr(rule.dayOfMonth)}`;
-        const monthPrefix = `${year}-${monthStr}-`;
+        const monthStartDay = resolveMonthStartDayFromData(data);
+        const postDate = effectiveMonthStartDate(year, month, rule.dayOfMonth);
+        const date = postDate.toISOString().slice(0, 10);
+        const { start, end } = financialMonthRangeFromKey({ year, month }, monthStartDay);
         const already = (data?.transactions ?? []).some((t) => {
             const rid = t.recurringId ?? (t as any).recurring_id;
             if (rid !== rule.id) return false;
-            if (!t.date.startsWith(monthPrefix)) return false;
-            if (rule.dayOfMonth === 28) {
-                const day = parseInt(t.date.slice(8, 10), 10);
-                if (day >= 28) return true;
-            }
-            return t.date.startsWith(date);
+            return dateInRange(t.date, start, end);
         });
         if (already) return { applied: false, skipped: true, skipReason: 'already' };
 
@@ -2292,7 +2474,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 budgetCategory: rule.type === 'expense' ? rule.budgetCategory : undefined,
                 type: rule.type,
                 recurringId: rule.id,
-            });
+            }, { system: true });
             cashBalanceAccumulatorRef.current = {};
             return { applied: true, skipped: false };
         } catch (_) {
@@ -2320,8 +2502,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
      * dayOfMonth is stored clamped to 1–28, so on the 29th/30th/31st we treat dayOfMonth 28 as due (end-of-month); we use effectiveDateStr 28th so duplicates are detected by applyRecurringForMonth. */
     const applyRecurringDueToday = useCallback(async (): Promise<number> => {
         if (!supabase || !auth?.user) return 0;
+        const snapshot = dataRef.current;
+        if (!snapshot) return 0;
         cashBalanceAccumulatorRef.current = {};
         const today = new Date();
+        const monthStartDay = resolveMonthStartDayFromData(snapshot);
+        const { start: fmStart, end: fmEnd } = financialMonthRange(today, monthStartDay);
         const year = today.getFullYear();
         const month = today.getMonth() + 1;
         const day = today.getDate();
@@ -2330,7 +2516,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // dayOfMonth is clamped to 1–28, so (dayOfMonth > lastDayOfMonth) is never true; only exact match and EOM-28 apply
         const isDueToday = (r: { dayOfMonth: number }) =>
             r.dayOfMonth === day || (day >= 28 && r.dayOfMonth === 28);
-        const toApply = data.recurringTransactions.filter(
+        const toApply = (snapshot.recurringTransactions ?? []).filter(
             r => r.enabled && !(r.addManually === true) && isDueToday(r)
         );
         let applied = 0;
@@ -2343,10 +2529,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 : todayStr;
             const key = `${rule.id}:${effectiveDateStr}`;
             if (appliedThisRun.has(key)) continue;
-            const already = (transactionsRef.current ?? []).some(
-                t => (t.recurringId ?? (t as any).recurring_id) === rule.id &&
-                    t.date.startsWith(effectiveDateStr)
-            );
+            const already = (transactionsRef.current ?? []).some((t) => {
+                if ((t.recurringId ?? (t as any).recurring_id) !== rule.id) return false;
+                return dateInRange(t.date, fmStart, fmEnd);
+            });
             if (already) continue;
             const amount = rule.type === 'income' ? rule.amount : -rule.amount;
             try {
@@ -2359,7 +2545,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     budgetCategory: rule.type === 'expense' ? rule.budgetCategory : undefined,
                     type: rule.type,
                     recurringId: rule.id,
-                });
+                }, { system: true });
                 appliedThisRun.add(key);
                 applied++;
             } catch (err) {
@@ -2369,20 +2555,35 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         cashBalanceAccumulatorRef.current = {};
         return applied;
-    }, [data.recurringTransactions, addTransaction, supabase, auth?.user?.id]);
+    }, [data, addTransaction, supabase, auth?.user?.id]);
 
     // Auto-apply recurring transactions due today (dayOfMonth === today, addManually === false), once per calendar day.
-    // Intentionally omit data.transactions so the effect does not re-run when we add transactions (avoids effect loop); duplicate check uses transactionsRef.
+    // Intentionally omit data.transactions from this effect so it does not re-run on every new tx (avoids loop); duplicate check uses transactionsRef.
+    // applyRecurringDueToday reads settings/rules via dataRef at invoke time and lists `data` in its deps when rules/settings change.
     useEffect(() => {
-        if (loading || !auth?.user || !data.recurringTransactions?.length) return;
+        if (
+            loading ||
+            awaitingInitialHydrate ||
+            !financialDataHasHydrated(data) ||
+            !auth?.user ||
+            !data.recurringTransactions?.length ||
+            recurringAutoApplyInFlightRef.current
+        ) {
+            return;
+        }
         const todayStr = new Date().toDateString();
         const storageKey = `recurring_auto_apply_${auth.user.id}`;
         if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(storageKey) === todayStr) return;
         if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(storageKey, todayStr);
-        applyRecurringDueToday().catch(() => {
-            if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(storageKey);
-        });
-    }, [loading, auth?.user?.id, data.recurringTransactions, applyRecurringDueToday]);
+        recurringAutoApplyInFlightRef.current = true;
+        applyRecurringDueToday()
+            .catch(() => {
+                if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(storageKey);
+            })
+            .finally(() => {
+                recurringAutoApplyInFlightRef.current = false;
+            });
+    }, [loading, awaitingInitialHydrate, data, auth?.user?.id, data.recurringTransactions, applyRecurringDueToday]);
 
     // --- Accounts / Platforms ---
     const addPlatform = async (platform: Omit<Account, 'id' | 'user_id' | 'balance'> & { balance?: number }) => {
@@ -2453,6 +2654,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (platform.platformDetails) {
             payload.platform_details = platform.platformDetails;
         }
+        if (platform.accountRole) payload.account_role = platform.accountRole;
+        if (platform.bucketType) payload.bucket_type = platform.bucketType;
         
         let { error } = await db.from('accounts').update(payload).match({ id: platform.id, user_id: auth.user.id });
         if (error && isAccountsCurrencyColumnMissing(error) && 'currency' in payload) {
@@ -2627,6 +2830,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const recordTrade = async (
         trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string, transferGroupId?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number },
         executedPlanId?: string,
+        opts?: RecordWriteOptions,
     ) => {
         if (!supabase || !auth?.user) {
             return {
@@ -2652,6 +2856,26 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
         if (!tradeVal.valid) {
             throw new Error(tradeVal.errors.join('\n'));
+        }
+
+        const portfolioForConfirm = (data?.investments ?? []).find((p) => p.id === trade.portfolioId);
+        const accountForConfirm = (data?.accounts ?? []).find((a) => a.id === trade.accountId);
+        const tradeOk = await guardRecordWrite(
+            opts,
+            summarizeInvestmentTradeForConfirm(trade, {
+                portfolioName: portfolioForConfirm?.name,
+                accountName: accountForConfirm?.name,
+            }),
+        );
+        if (!tradeOk) {
+            return {
+                insertedInvestmentTransactionId: null,
+                insertedTradeTransactions: 0,
+                insertedCashLedgerRows: 0,
+                recomputed: false,
+                cashDelta: 0,
+                positionDelta: 0,
+            };
         }
 
         tradeSubmissionInFlightRef.current = true;
@@ -2772,6 +2996,28 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (tradeData.type === 'dividend' && tradeTotal <= 0) {
             throw new Error('Dividend amount must be greater than zero.');
         }
+        if (tradeData.type === 'dividend') {
+            const divExtra = validateDividendRecordInput({
+                symbol: normalizedSymbol,
+                date: trade.date,
+                total: tradeTotal,
+                portfolioId: portfolio?.id,
+                accountId: accountIdForInsert,
+            });
+            if (!divExtra.valid) {
+                throw new Error(divExtra.errors.join('\n'));
+            }
+            assertDividendNotDuplicate({
+                transactions: data?.investmentTransactions ?? [],
+                accounts: data?.accounts ?? [],
+                accountId: accountIdForInsert,
+                symbol: normalizedSymbol,
+                payDate: trade.date,
+                totalBook: tradeTotal,
+                bookCurrency: txCurrency,
+                portfolioId: portfolio?.id,
+            });
+        }
         if ((tradeData.type === 'withdrawal' || tradeData.type === 'fee' || tradeData.type === 'vat') && tradeTotal > availableInTxCurrency + 1e-9) {
             throw new Error(
                 `Cannot withdraw ${roundMoney(tradeTotal).toLocaleString()} ${txCurrency}. Available cash is ${roundMoney(availableInTxCurrency).toLocaleString()} ${txCurrency} (pooled from ${roundMoney(availableBefore.SAR).toLocaleString()} SAR + ${roundMoney(availableBefore.USD).toLocaleString()} USD).`,
@@ -2798,6 +3044,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         if (linkedCashAccountId) {
             tradePayload.linked_cash_account_id = linkedCashAccountId;
+        }
+        if (portfolio?.id) {
+            tradePayload.portfolio_id = portfolio.id;
+            tradePayload.portfolioId = portfolio.id;
         }
         if (isCashFlow && !(tradePayload.currency === 'SAR' || tradePayload.currency === 'USD')) {
             const cashAcc = linkedCashAccountId
@@ -3055,7 +3305,60 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (executedPlanId) {
             const plan = (data?.plannedTrades ?? []).find(p => p.id === executedPlanId);
             if (plan) {
-                await updatePlannedTrade({ ...plan, status: 'Executed' });
+                const filledQty = Math.abs(Number(tradeData.quantity) || 0);
+                const executedPatch: PlannedTrade = {
+                    ...plan,
+                    status: 'Executed',
+                    filledQty: Math.max(plan.filledQty ?? 0, filledQty),
+                };
+                const { error: pe } = await supabase
+                    .from('planned_trades')
+                    .update(plannedTradeToDbUpdate(executedPatch))
+                    .match({ id: plan.id, user_id: auth.user.id });
+                if (pe) console.error('Error updating executed plan:', pe);
+                const applyTrancheRecompute = (plannedTrades: PlannedTrade[]) => {
+                    let trades = plannedTrades.map((p) => (p.id === plan.id ? executedPatch : p));
+                    if (plan.trancheGroupId && filledQty > 0) {
+                        trades = recomputeTrancheAfterFill(trades, plan.id, filledQty);
+                    }
+                    return trades;
+                };
+                let refreshedTrades: PlannedTrade[] = [];
+                flushSync(() => {
+                    setData((prev) => {
+                        refreshedTrades = applyTrancheRecompute(prev.plannedTrades);
+                        return { ...prev, plannedTrades: refreshedTrades };
+                    });
+                });
+                if (plan.trancheGroupId && filledQty > 0) {
+                    const trancheUpdateErrors: string[] = [];
+                    const siblingsToPersist = refreshedTrades.filter(
+                        (t) =>
+                            t.trancheGroupId === plan.trancheGroupId &&
+                            t.id !== plan.id &&
+                            t.status === 'Planned',
+                    );
+                    for (const t of siblingsToPersist) {
+                        const { error: te } = await supabase
+                            .from('planned_trades')
+                            .update(plannedTradeToDbUpdate(t))
+                            .match({ id: t.id, user_id: auth.user.id });
+                        if (te) {
+                            console.error('Error updating tranche planned trade:', te, {
+                                id: t.id,
+                                symbol: t.symbol,
+                                trancheIndex: t.trancheIndex,
+                            });
+                            trancheUpdateErrors.push(t.symbol || t.id);
+                        }
+                    }
+                    if (trancheUpdateErrors.length > 0) {
+                        toast(
+                            `Trade recorded, but ${trancheUpdateErrors.length} tranche row(s) failed to save (${trancheUpdateErrors.slice(0, 3).join(', ')}). Refresh and update remaining tranches in Execution History.`,
+                            'warning',
+                        );
+                    }
+                }
             }
         }
         return {
@@ -3071,11 +3374,108 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
+    const updateInvestmentTransaction = async (tx: InvestmentTransaction, opts?: RecordWriteOptions) => {
+        if (!supabase || !auth?.user) return;
+        const editOk = await guardRecordWrite(opts, {
+            title: 'Save dividend changes?',
+            message: 'Update this dividend in your investment ledger?',
+            confirmLabel: 'Save changes',
+            details: [`Symbol: ${tx.symbol}`, `Date: ${tx.date}`, `Amount: ${tx.total}`],
+        });
+        if (!editOk) return;
+        const existing = (data?.investmentTransactions ?? []).find((t) => t.id === tx.id);
+        if (!existing) throw new Error('Transaction not found.');
+        if (existing.type !== 'dividend' || tx.type !== 'dividend') {
+            throw new Error('Only dividend rows can be edited here. For buys/sells, adjust via Record Trade or holdings.');
+        }
+        const total = roundMoney(Math.max(0, Number(tx.total) || 0));
+        const book: 'USD' | 'SAR' = tx.currency === 'SAR' ? 'SAR' : 'USD';
+        const v = validateDividendTransactionUpdate({
+            symbol: tx.symbol,
+            date: tx.date,
+            total,
+            portfolioId: tx.portfolioId,
+            accountId: tx.accountId,
+        });
+        if (!v.valid) throw new Error(v.errors.join('\n'));
+        assertDividendUpdateNotDuplicate({
+            existingId: tx.id,
+            transactions: data?.investmentTransactions ?? [],
+            accounts: data?.accounts ?? [],
+            accountId: tx.accountId,
+            portfolioId: tx.portfolioId,
+            symbol: tx.symbol,
+            payDate: tx.date,
+            totalBook: total,
+            bookCurrency: book,
+        });
+        const row = investmentTransactionToRow({ ...tx, total, currency: book }, data ?? null);
+        const { error } = await supabase
+            .from('investment_transactions')
+            .update(row)
+            .match({ id: tx.id, user_id: auth.user.id });
+        if (error) {
+            console.error(error);
+            throw error;
+        }
+        const normalized: InvestmentTransaction = normalizeInvestmentTransaction({ ...existing, ...tx, total, currency: book });
+        const netDelta = netBalanceDeltaForInvestmentTxUpdate(existing, normalized);
+        setData((prev) => ({
+            ...prev,
+            investmentTransactions: prev.investmentTransactions.map((t) => (t.id === tx.id ? normalized : t)),
+        }));
+        const accountId = resolveCanonicalAccountId(tx.accountId, data?.accounts ?? []);
+        if (netDelta !== 0) {
+            await applyInvestmentAccountDeltaForTrade(accountId, netDelta);
+        }
+    };
+
+    const deleteInvestmentTransaction = async (transactionId: string, opts?: RecordWriteOptions) => {
+        if (!supabase || !auth?.user) return;
+        const existing = (data?.investmentTransactions ?? []).find((t) => t.id === transactionId);
+        const delOk = await guardRecordWrite(opts, {
+            title: 'Delete dividend?',
+            message: 'Remove this dividend from your ledger and reverse its cash impact?',
+            confirmLabel: 'Delete',
+            variant: 'danger',
+            details: existing ? [`Symbol: ${existing.symbol}`, `Date: ${existing.date}`] : [],
+        });
+        if (!delOk) return;
+        if (!existing) throw new Error('Transaction not found.');
+        if (existing.type !== 'dividend') {
+            throw new Error('Only dividend rows can be deleted here to protect buy/sell history. Contact support if you need to remove other trade types.');
+        }
+        const { error } = await supabase
+            .from('investment_transactions')
+            .delete()
+            .match({ id: transactionId, user_id: auth.user.id });
+        if (error) {
+            console.error(error);
+            throw error;
+        }
+        const reverseDelta = -computeInvestmentTxCashDelta(existing);
+        setData((prev) => ({
+            ...prev,
+            investmentTransactions: prev.investmentTransactions.filter((t) => t.id !== transactionId),
+        }));
+        const accountId = resolveCanonicalAccountId(existing.accountId, data?.accounts ?? []);
+        if (reverseDelta !== 0) {
+            await applyInvestmentAccountDeltaForTrade(accountId, reverseDelta);
+        }
+    };
+
     // --- Planned Trades ---
-    const addPlannedTrade = async (plan: Omit<PlannedTrade, 'id' | 'user_id'>): Promise<boolean> => {
+    const addPlannedTrade = async (plan: Omit<PlannedTrade, 'id' | 'user_id'>, opts?: RecordWriteOptions): Promise<boolean> => {
         if(!supabase) return false;
         const v = validatePlannedTrade({ symbol: plan.symbol, name: plan.name, tradeType: plan.tradeType, conditionType: plan.conditionType, targetValue: plan.targetValue, quantity: plan.quantity, amount: plan.amount, priority: plan.priority });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return false; }
+        const planOk = await guardRecordWrite(opts, {
+            title: 'Create investment plan?',
+            message: `Create planned ${plan.tradeType} for ${plan.symbol}? Execution still happens via Record Trade.`,
+            confirmLabel: 'Create',
+            details: [`${plan.tradeType.toUpperCase()} · ${plan.symbol}`, plan.amount != null ? `Amount: ${plan.amount}` : ''].filter(Boolean),
+        });
+        if (!planOk) return false;
         const { data: newPlan, error } = await supabase.from('planned_trades').insert(withUser(plannedTradeToDbInsert(plan))).select().single();
         if (error) { console.error(error); return false; }
         if (newPlan) { setData(prev => ({ ...prev, plannedTrades: [...prev.plannedTrades, normalizePlannedTradeRow(newPlan)] })); return true; }
@@ -3087,7 +3487,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return false; }
         const { error } = await supabase.from('planned_trades').update(plannedTradeToDbUpdate(plan)).match({ id: plan.id, user_id: auth.user.id });
         if (error) { console.error(error); return false; }
-        setData(prev => ({ ...prev, plannedTrades: prev.plannedTrades.map(p => p.id === plan.id ? plan : p) }));
+        setData((prev) => {
+            let trades = prev.plannedTrades.map((p) => (p.id === plan.id ? plan : p));
+            if (plan.status === 'Executed' && plan.trancheGroupId && (plan.filledQty ?? 0) > 0) {
+                trades = recomputeTrancheAfterFill(trades, plan.id, plan.filledQty ?? 0);
+            }
+            return { ...prev, plannedTrades: trades };
+        });
         return true;
     };
     const deletePlannedTrade = async (planId: string) => {
@@ -3098,10 +3504,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Commodities --- (snake_case: purchase_value, current_value, zakah_class; name required)
-    const addCommodityHolding = async (holding: Omit<CommodityHolding, 'id' | 'user_id'>) => {
+    const addCommodityHolding = async (holding: Omit<CommodityHolding, 'id' | 'user_id'>, opts?: RecordWriteOptions) => {
         if (!supabase) return;
         const v = validateCommodityHolding({ name: holding.name, quantity: holding.quantity, purchaseValue: holding.purchaseValue, currentValue: holding.currentValue, symbol: holding.symbol });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        const commodityOk = await guardRecordWrite(opts, summarizeCommodityForConfirm({
+            name: holding.name,
+            quantity: holding.quantity,
+            unit: holding.unit,
+            purchaseValue: holding.purchaseValue,
+        }));
+        if (!commodityOk) return;
         const row = commodityHoldingToRow(holding);
         const { data: newHolding, error } = await supabase.from('commodity_holdings').insert(withUser(row)).select().single();
         if (error) {
@@ -3163,7 +3576,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
 
     // --- Watchlist, Alerts, Zakat, Settings ---
-    const addWatchlistItem = async (item: WatchlistItem) => {
+    const addWatchlistItem = async (item: WatchlistItem, opts?: RecordWriteOptions) => {
         if (!supabase || !auth?.user) {
             console.error('Supabase client not available or user not authenticated');
             toast('You must be logged in to manage your watchlist.', 'error');
@@ -3171,13 +3584,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         const v = validateWatchlistItem({ symbol: item.symbol });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        const watchOk = await guardRecordWrite(opts, summarizeWatchlistForConfirm({ symbol: item.symbol, name: item.name }));
+        if (!watchOk) return;
         const db = supabase;
         const symbol = String(item.symbol || '').trim().toUpperCase();
         if ((data?.watchlist ?? []).some((w) => String(w.symbol || '').trim().toUpperCase() === symbol)) {
             toast(`${symbol} is already in your watchlist.`, 'info');
             return;
         }
-        const row = withUser({ ...item, symbol, name: String(item.name || symbol).trim() || symbol });
+        const row = watchlistToDbRow({ ...item, symbol, name: String(item.name || symbol).trim() || symbol }, auth.user.id);
         const { data: inserted, error } = await db.from('watchlist').upsert(row, { onConflict: 'user_id,symbol' }).select().single();
         if (error) {
             console.error('Error adding watchlist item:', error);
@@ -3185,11 +3600,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         if (inserted) {
-            const normalized: WatchlistItem = {
-                user_id: inserted.user_id ?? auth.user.id,
-                symbol: String(inserted.symbol ?? symbol).toUpperCase(),
-                name: String(inserted.name ?? item.name ?? '').trim() || String(inserted.symbol ?? symbol).toUpperCase(),
-            };
+            const normalized = normalizeWatchlistRow(inserted as Record<string, unknown>);
             setData(prev => ({
                 ...prev,
                 watchlist: prev.watchlist.some((w) => String(w.symbol || '').toUpperCase() === normalized.symbol)
@@ -3198,16 +3609,55 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }));
         }
     };
+    const updateWatchlistItem = async (item: WatchlistItem) => {
+        if (!supabase || !auth?.user) {
+            toast('You must be logged in to update your watchlist.', 'error');
+            return;
+        }
+        const symbol = String(item.symbol || '').trim().toUpperCase();
+        const row = watchlistToDbRow(item, auth.user.id);
+        let lastErr: unknown = null;
+        for (const payload of [row, { user_id: auth.user.id, symbol, name: row.name }]) {
+            const { data: updated, error } = await supabase
+                .from('watchlist')
+                .update(payload)
+                .match({ user_id: auth.user.id, symbol })
+                .select()
+                .single();
+            lastErr = error;
+            if (!error && updated) {
+                const normalized = normalizeWatchlistRow(updated as Record<string, unknown>);
+                setData((prev) => ({
+                    ...prev,
+                    watchlist: prev.watchlist.map((w) =>
+                        String(w.symbol || '').toUpperCase() === symbol ? normalized : w,
+                    ),
+                }));
+                return;
+            }
+            if (error && !isMissingColumnError(error)) break;
+        }
+        if (lastErr) {
+            console.error('Error updating watchlist item:', lastErr);
+            toast(`Failed to update ${symbol} on watchlist.`, 'error');
+        }
+    };
     const deleteWatchlistItem = async (symbol: string) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
         await db.from('watchlist').delete().match({ user_id: auth.user.id, symbol });
         setData(prev => ({ ...prev, watchlist: prev.watchlist.filter(i => i.symbol !== symbol) }));
     };
-    const addPriceAlert = async (alert: Omit<PriceAlert, 'id' | 'status' | 'createdAt'>) => {
+    const addPriceAlert = async (alert: Omit<PriceAlert, 'id' | 'status' | 'createdAt'>, opts?: RecordWriteOptions) => {
         if(!supabase) return;
         const v = validatePriceAlert({ symbol: alert.symbol, targetPrice: alert.targetPrice });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        const alertOk = await guardRecordWrite(opts, summarizePriceAlertForConfirm({
+            symbol: alert.symbol,
+            targetPrice: alert.targetPrice,
+            currency: alert.currency ?? 'USD',
+        }));
+        if (!alertOk) return;
         const db = supabase;
         const createdAt = new Date().toISOString();
         const targetPrice = typeof alert.targetPrice === 'number' && Number.isFinite(alert.targetPrice) ? alert.targetPrice : parseFloat(String(alert.targetPrice)) || 0;
@@ -3236,10 +3686,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await db.from('price_alerts').delete().match({ id: alertId, user_id: auth.user.id });
         setData(prev => ({ ...prev, priceAlerts: prev.priceAlerts.filter(a => a.id !== alertId) }));
     };
-    const addZakatPayment = async (payment: Omit<ZakatPayment, 'id' | 'user_id'>) => {
+    const addZakatPayment = async (payment: Omit<ZakatPayment, 'id' | 'user_id'>, opts?: RecordWriteOptions) => {
         if(!supabase) return;
         const v = validateZakatPayment({ date: payment.date, amount: payment.amount });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        const zakatOk = await guardRecordWrite(opts, summarizeZakatPaymentForConfirm({
+            amount: payment.amount,
+            date: payment.date,
+            notes: payment.notes,
+        }));
+        if (!zakatOk) return;
         const db = supabase;
         const { data: newPayment, error } = await db.from('zakat_payments').insert(withUser(payment)).select().single();
         if(error) console.error(error);
@@ -3264,7 +3720,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const row: Record<string, unknown> = { ...overrides, user_id: auth.user.id };
         /** Always persist when the user changes this field — `settingsOverridesToRow` omits values equal to app defaults, which would leave a stale DB value (e.g. reverting 25 → 1). */
         if ('monthStartDay' in settingsUpdate) {
-          const d = Math.min(31, Math.max(1, Math.round(Number(merged.monthStartDay ?? 1))));
+          const d = Math.min(31, Math.max(1, Math.round(Number(merged.monthStartDay ?? initialData.settings.monthStartDay ?? 28))));
           row.month_start_day = d;
           merged = { ...merged, monthStartDay: d };
         }
@@ -3424,10 +3880,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const getAvailableCashForAccount = useCallback((accountId: string): { SAR: number; USD: number } => {
-        const canonical = resolveCanonicalAccountId(accountId, data?.accounts ?? []) ?? accountId;
-        const acc = (data?.accounts ?? []).find((a) => a.id === canonical);
-        if (!acc || acc.type !== 'Investment') return { SAR: 0, USD: 0 };
-        return brokerCashBucketsFromInvestmentAccount(acc);
+        return getTradableCashBucketsForAccount(accountId, data?.accounts ?? []);
     }, [data?.accounts]);
 
     /**
@@ -3453,18 +3906,34 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return (d.personalAccounts ?? d.accounts ?? EMPTY_ACCOUNTS_FOR_DEPLOY) as Account[];
     }, [dataWithPersonal]);
 
+    /** Full account list for canonical ids + fresh Investment balances (scope may hold older object refs). */
+    const allAccountsForDeployableCanon = useMemo(
+        (): Account[] => (data?.accounts ?? EMPTY_ACCOUNTS_FOR_DEPLOY) as Account[],
+        [data?.accounts],
+    );
+
     const totalDeployableCash = useMemo(() => {
-        const sarPerUsd = resolveSarPerUsd(data as FinancialData);
-        const platformCash = accountsForDeployable.filter((a: Account) => a.type === 'Investment').reduce((s: number, a: Account) => {
-            const cash = getAvailableCashForAccount(a.id);
-            return s + tradableCashBucketToSAR(cash, sarPerUsd);
-        }, 0);
-        return platformCash;
-    }, [accountsForDeployable, getAvailableCashForAccount, data]);
+        if (!data) return 0;
+        hydrateSarPerUsdDailySeries(data as FinancialData, DEFAULT_SAR_PER_USD);
+        const sarPerUsd = resolveSarPerUsd(data as FinancialData, DEFAULT_SAR_PER_USD);
+        return sumTradableCashSarFromInvestmentAccounts(
+            accountsForDeployable.filter((a: Account) => a.type === 'Investment'),
+            allAccountsForDeployableCanon,
+            sarPerUsd,
+        );
+    }, [accountsForDeployable, allAccountsForDeployableCanon, data]);
 
     // Auto-heal legacy duplicate holdings (same portfolio + symbol) once per unique snapshot.
     useEffect(() => {
-        if (loading || !auth?.user || duplicateHoldingsReconcileInFlightRef.current) return;
+        if (
+            loading ||
+            awaitingInitialHydrate ||
+            !financialDataHasHydrated(data) ||
+            !auth?.user ||
+            duplicateHoldingsReconcileInFlightRef.current
+        ) {
+            return;
+        }
         const duplicateGroups: Holding[][] = [];
         (data.investments ?? []).forEach((portfolio: InvestmentPortfolio) => {
             const bySymbol = new Map<string, Holding[]>();
@@ -3504,9 +3973,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 duplicateHoldingsReconcileInFlightRef.current = false;
             }
         })();
-    }, [loading, auth?.user?.id, data.investments]);
+    }, [loading, awaitingInitialHydrate, data, auth?.user?.id, data.investments]);
 
-    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, addWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const showBlockingLoader = awaitingInitialHydrate;
+
+    const value = { data: dataWithPersonal, loading, showBlockingLoader, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, updateInvestmentTransaction, deleteInvestmentTransaction, addWatchlistItem, updateWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

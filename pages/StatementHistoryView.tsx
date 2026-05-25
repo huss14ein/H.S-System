@@ -108,14 +108,23 @@ const StatementHistoryView: React.FC<StatementHistoryViewProps> = ({ setActivePa
       description="View and manage all uploaded statements, reconcile transactions, and track import history"
       action={
         setActivePage && (
-          <button
-            type="button"
-            onClick={() => setActivePage('Statement Upload')}
-            className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors flex items-center gap-2"
-          >
-            <StatementIcons.upload className="h-5 w-5" />
-            Upload New Statement
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setActivePage('Statement Upload')}
+              className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors flex items-center gap-2"
+            >
+              <StatementIcons.upload className="h-5 w-5" />
+              Upload New Statement
+            </button>
+            <button
+              type="button"
+              onClick={() => setActivePage('System & APIs Health')}
+              className="px-4 py-2 bg-slate-100 text-slate-800 rounded-lg hover:bg-slate-200 transition-colors text-sm font-medium"
+            >
+              Data reconciliation
+            </button>
+          </div>
         )
       }
     >

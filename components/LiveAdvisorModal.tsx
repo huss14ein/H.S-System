@@ -4,9 +4,15 @@ import type { FunctionDeclaration, Content, Part, FunctionCall } from '@google/g
 import { SchemaType } from '../services/geminiSchemaTypes';
 import { DataContext } from '../context/DataContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { computePersonalHeadlineNetWorthSar } from '../services/personalNetWorth';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { formatGoalsProgressForPrompt } from '../services/goalResolvedTotals';
+import { buildAiPersonalWealthGrounding } from '../services/aiPersonalWealthGrounding';
+import { computeCapitalDeployment } from '../services/capitalDeploymentOrchestrator';
+import { getPersonalLiabilities } from '../utils/wealthScope';
+import { useMarketData } from '../context/MarketDataContext';
 import { invokeAI, formatAiError, buildLiveAdvisorSystemInstruction } from '../services/geminiService';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
+import { financialMonthRange, resolveMonthStartDayFromData } from '../utils/financialMonth';
 import { HeadsetIcon } from './icons/HeadsetIcon';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { SendIcon } from './icons/SendIcon';
@@ -17,6 +23,7 @@ const ADVISOR_LANG_KEY = 'finova_default_ai_lang_v1';
 const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({ isOpen, onClose }) => {
     const { data, addWatchlistItem, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
+    const { simulatedPrices } = useMarketData();
     const [history, setHistory] = useState<Content[]>([]);
     const [userInput, setUserInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -52,17 +59,46 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
     }, [isOpen, view, history, replyLang]);
 
     // Function definitions
+    const wealthGroundingRef = useMemo(
+        () =>
+            buildAiPersonalWealthGrounding({
+                data,
+                exchangeRate,
+                getAvailableCashForAccount,
+                simulatedPrices,
+            }),
+        [data, exchangeRate, getAvailableCashForAccount, simulatedPrices],
+    );
+
+    const { netWorth: headlineNetWorthSar, liquidCashSar: headlineLiquidCashSar, kpiSnapshot, sarPerUsd } =
+        useCanonicalFinancialMetrics();
+
     const getNetWorth_ = useCallback(() => {
-        const h = computePersonalHeadlineNetWorthSar(data, exchangeRate, { getAvailableCashForAccount });
-        return { netWorth: h.netWorth };
-    }, [data, exchangeRate, getAvailableCashForAccount]);
+        return {
+            netWorthSar: headlineNetWorthSar,
+            liquidCashSar: headlineLiquidCashSar || wealthGroundingRef.liquidCashSar,
+            monthlyPnLSar: kpiSnapshot?.monthlyPnL ?? wealthGroundingRef.monthlyPnLSar,
+            financialMonth: wealthGroundingRef.financialMonthLabel,
+        };
+    }, [headlineNetWorthSar, headlineLiquidCashSar, kpiSnapshot?.monthlyPnL, wealthGroundingRef]);
+
+    const getGoalsProgress_ = useCallback(() => {
+        return {
+            summary: formatGoalsProgressForPrompt(data, sarPerUsd) || 'No goals configured.',
+        };
+    }, [data, sarPerUsd]);
+
+    const getTopHoldings_ = useCallback(() => {
+        return { holdings: wealthGroundingRef.topHoldingsLines };
+    }, [wealthGroundingRef]);
 
     const getBudgetStatus_ = useCallback(({ category }: { category: string }) => {
         const budget = (data?.budgets ?? []).find(b => b.category.toLowerCase() === category.toLowerCase());
         if (!budget) return { error: `Budget category "${category}" not found.` };
         const monthlyLimit = budget.period === 'yearly' ? budget.limit / 12 : budget.period === 'weekly' ? budget.limit * (52 / 12) : budget.period === 'daily' ? budget.limit * (365 / 12) : budget.limit;
         const now = new Date();
-        const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const monthStartDay = resolveMonthStartDayFromData(data);
+        const { start: firstDayOfMonth } = financialMonthRange(now, monthStartDay);
         const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
         const spent = transactions
             .filter((t: { type?: string; date: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && new Date(t.date) >= firstDayOfMonth && t.budgetCategory === budget.category)
@@ -73,9 +109,37 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
      const getRecentTransactions_ = useCallback(({ limit }: { limit: number }) => {
         const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
         const sortedTransactions = [...transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        return { transactions: sortedTransactions.slice(0, limit).map((t: { description?: string; amount?: number }) => ({ description: t.description, amount: t.amount })) };
+        return {
+            transactions: sortedTransactions.slice(0, limit).map((t: { description?: string; amount?: number; date?: string; budgetCategory?: string; category?: string; type?: string }) => ({
+                date: t.date?.slice(0, 10),
+                description: t.description,
+                amount: t.amount,
+                category: t.budgetCategory || t.category,
+                type: t.type,
+            })),
+        };
     }, [data]);
     
+    const getLiabilitiesSummary_ = useCallback(() => {
+        const liabs = getPersonalLiabilities(data);
+        const active = liabs.filter((l) => (l.status ?? 'Active') === 'Active');
+        const total = active.reduce((s, l) => s + Math.abs(Number(l.amount) || 0), 0);
+        return {
+            count: active.length,
+            totalDebtSar: Math.round(total),
+            top: active.slice(0, 5).map((l) => `${l.name} (${l.type}): ${Math.round(Math.abs(l.amount))} SAR`),
+        };
+    }, [data]);
+
+    const getCapitalDeployment_ = useCallback(() => {
+        const cap = computeCapitalDeployment(data, exchangeRate, getAvailableCashForAccount, 0, 6);
+        return {
+            canInvest: cap.canInvest,
+            runwayMonths: cap.runwayMonths,
+            reasons: cap.reasons,
+        };
+    }, [data, exchangeRate, getAvailableCashForAccount]);
+
     const handleAddWatchlistItem_ = useCallback(async ({ symbol, name }: { symbol: string, name: string }) => {
         if (!symbol || !name) return { success: false, error: "Symbol and name are required." };
         try {
@@ -88,35 +152,39 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
     }, [addWatchlistItem]);
 
     const functionDeclarations: FunctionDeclaration[] = [
-        { name: 'getNetWorth', parameters: { type: SchemaType.OBJECT, properties: {} } },
+        { name: 'getNetWorth', description: 'Headline net worth and financial-month P&L (SAR).', parameters: { type: SchemaType.OBJECT, properties: {} } },
+        { name: 'getGoalsProgress', description: 'Goal progress using resolved linked wealth.', parameters: { type: SchemaType.OBJECT, properties: {} } },
+        { name: 'getTopHoldings', description: 'Top personal holdings by app valuation (SAR).', parameters: { type: SchemaType.OBJECT, properties: {} } },
         { name: 'getBudgetStatus', parameters: { type: SchemaType.OBJECT, properties: { category: { type: SchemaType.STRING } }, required: ['category'] } },
         { name: 'getRecentTransactions', parameters: { type: SchemaType.OBJECT, properties: { limit: { type: SchemaType.NUMBER } }, required: ['limit'] } },
         { name: 'addWatchlistItem', description: "Adds a stock to the user's watchlist.", parameters: { type: SchemaType.OBJECT, properties: { symbol: { type: SchemaType.STRING, description: "The stock ticker symbol, e.g., MSFT or 2222.SR" }, name: { type: SchemaType.STRING, description: "The full name of the company, e.g., Microsoft Corp." } }, required: ['symbol', 'name'] } },
+        { name: 'getLiabilitiesSummary', description: 'Active liabilities total and top lines (SAR).', parameters: { type: SchemaType.OBJECT, properties: {} } },
+        { name: 'getCapitalDeployment', description: 'Whether new investment is allowed and runway context.', parameters: { type: SchemaType.OBJECT, properties: {} } },
     ];
     
     const functionHandlers: Record<string, (args: any) => any> = {
         getNetWorth: getNetWorth_,
+        getGoalsProgress: getGoalsProgress_,
+        getTopHoldings: getTopHoldings_,
         getBudgetStatus: getBudgetStatus_,
         getRecentTransactions: getRecentTransactions_,
         addWatchlistItem: handleAddWatchlistItem_,
+        getLiabilitiesSummary: getLiabilitiesSummary_,
+        getCapitalDeployment: getCapitalDeployment_,
     };
 
     const buildDeterministicAdvisorReply = useCallback((question: string): string => {
-        const netWorthSar = computePersonalHeadlineNetWorthSar(data, exchangeRate, {
-            getAvailableCashForAccount,
-        }).netWorth;
         const budgets = data?.budgets ?? [];
         const tx = ((data as any)?.personalTransactions ?? data?.transactions ?? [])
             .slice()
             .sort((a: { date: string }, b: { date: string }) => new Date(b.date).getTime() - new Date(a.date).getTime());
         const recent = tx.slice(0, 3);
-        const monthStart = new Date();
-        monthStart.setDate(1);
-        monthStart.setHours(0, 0, 0, 0);
+        const monthStartDay = resolveMonthStartDayFromData(data);
+        const { start: monthStart, end: monthEnd } = financialMonthRange(new Date(), monthStartDay);
         const approvedThisMonth = tx.filter((t: { date: string; status?: string }) => {
             const d = new Date(t.date);
             const status = (t.status ?? 'Approved').toLowerCase();
-            return d >= monthStart && status === 'approved';
+            return d >= monthStart && d <= monthEnd && status === 'approved';
         });
         const monthlyExpenses = approvedThisMonth
             .filter((t: { type?: string }) => countsAsExpenseForCashflowKpi(t))
@@ -140,7 +208,10 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
                   .join('\n')
             : '- No recent transactions found.';
         return `### Quick financial snapshot (fallback mode)
-- Net worth (SAR): **${netWorthSar.toLocaleString()}**
+- Financial month: **${wealthGroundingRef.financialMonthLabel}**
+- Net worth (SAR): **${wealthGroundingRef.netWorthSar.toLocaleString()}**
+- Month P&L (SAR): **${wealthGroundingRef.monthlyPnLSar.toLocaleString()}** (income ${wealthGroundingRef.monthlyIncomeSar.toLocaleString()} / expenses ${wealthGroundingRef.monthlyExpensesSar.toLocaleString()})
+- Liquid cash (SAR): **${wealthGroundingRef.liquidCashSar.toLocaleString()}**
 - This month expenses (approved): **${monthlyExpenses.toLocaleString()}**
 - Top spending category: **${topCat ? `${topCat[0]} (${topCat[1].toLocaleString()})` : 'No category data yet'}**
 
@@ -148,7 +219,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
 ${recentSnippet}${budgetSnippet}
 
 > Live AI provider is temporarily unavailable, so this answer is generated from your current in-app data.`;
-    }, [data, exchangeRate, getAvailableCashForAccount]);
+    }, [data, exchangeRate, getAvailableCashForAccount, wealthGroundingRef]);
 
     const processTurn = async (chatHistory: Content[], remainingToolRounds = 4) => {
         setIsLoading(true);
@@ -162,6 +233,7 @@ ${recentSnippet}${budgetSnippet}
                         tools: [{ functionDeclarations }],
                         systemInstruction,
                     },
+                    groundingAuditExtra: wealthGroundingRef.promptBlock,
                 });
             } catch (primaryError) {
                 response = await invokeAI({

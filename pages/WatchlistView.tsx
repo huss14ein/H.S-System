@@ -30,12 +30,16 @@ import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangle
 import { useCurrency } from '../context/CurrencyContext';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { XMarkIcon } from '../components/icons';
-import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { toSAR } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { rsi, rsiSignal, zScore, zScoreSignal, bollingerBands, shortTermCrossoverSignal } from '../services/technicalIndicators';
 import { rankWatchlistIdeas } from '../services/decisionEngine';
+import { computeBuyScore } from '../services/buyScore';
+import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { inferInvestmentTransactionCurrency, resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { toast } from '../context/ToastContext';
 import { useSelfLearning } from '../context/SelfLearningContext';
 
 /** Merge live/simulated quote with daily-candle close when quote is missing (e.g. stale Tadawul). */
@@ -327,6 +331,99 @@ const AddWatchlistItemModal: React.FC<{
     );
 };
 
+const WatchlistResearchModal: React.FC<{
+    item: WatchlistItem | null;
+    isOpen: boolean;
+    onClose: () => void;
+    onSave: (item: WatchlistItem) => void;
+}> = ({ item, isOpen, onClose, onSave }) => {
+    const [targetBuyLow, setTargetBuyLow] = useState('');
+    const [targetBuyHigh, setTargetBuyHigh] = useState('');
+    const [fairValue, setFairValue] = useState('');
+    const [qualityScore, setQualityScore] = useState('');
+    const [valuationScore, setValuationScore] = useState('');
+    const [catalyst, setCatalyst] = useState('');
+    const [thesisStatus, setThesisStatus] = useState('');
+    const [researchNotes, setResearchNotes] = useState('');
+
+    useEffect(() => {
+        if (!item) return;
+        setTargetBuyLow(item.targetBuyLow != null ? String(item.targetBuyLow) : '');
+        setTargetBuyHigh(item.targetBuyHigh != null ? String(item.targetBuyHigh) : '');
+        setFairValue(item.fairValue != null ? String(item.fairValue) : '');
+        setQualityScore(item.qualityScore != null ? String(item.qualityScore) : '');
+        setValuationScore(item.valuationScore != null ? String(item.valuationScore) : '');
+        setCatalyst(item.catalyst ?? '');
+        setThesisStatus(item.thesisStatus ?? '');
+        setResearchNotes(item.researchNotes ?? '');
+    }, [item, isOpen]);
+
+    if (!item) return null;
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        onSave({
+            ...item,
+            targetBuyLow: targetBuyLow.trim() !== '' ? Number(targetBuyLow) : undefined,
+            targetBuyHigh: targetBuyHigh.trim() !== '' ? Number(targetBuyHigh) : undefined,
+            fairValue: fairValue.trim() !== '' ? Number(fairValue) : undefined,
+            qualityScore: qualityScore.trim() !== '' ? Number(qualityScore) : undefined,
+            valuationScore: valuationScore.trim() !== '' ? Number(valuationScore) : undefined,
+            catalyst: catalyst.trim() || undefined,
+            thesisStatus: thesisStatus.trim() || undefined,
+            researchNotes: researchNotes.trim() || undefined,
+        });
+        onClose();
+    };
+
+    return (
+        <Modal isOpen={isOpen} onClose={onClose} title={`Research — ${item.symbol}`} maxWidthClass="max-w-lg">
+            <form onSubmit={handleSubmit} className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                    <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">Target buy low</label>
+                        <input type="number" step="any" value={targetBuyLow} onChange={(e) => setTargetBuyLow(e.target.value)} className="input-base" />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">Target buy high</label>
+                        <input type="number" step="any" value={targetBuyHigh} onChange={(e) => setTargetBuyHigh(e.target.value)} className="input-base" />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">Fair value</label>
+                        <input type="number" step="any" value={fairValue} onChange={(e) => setFairValue(e.target.value)} className="input-base" />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">Quality score (1–5)</label>
+                        <input type="number" min="1" max="5" step="0.1" value={qualityScore} onChange={(e) => setQualityScore(e.target.value)} className="input-base" />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">Valuation score (1–5)</label>
+                        <input type="number" min="1" max="5" step="0.1" value={valuationScore} onChange={(e) => setValuationScore(e.target.value)} className="input-base" />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">Thesis status</label>
+                        <select value={thesisStatus} onChange={(e) => setThesisStatus(e.target.value)} className="select-base">
+                            <option value="">—</option>
+                            <option value="active">active</option>
+                            <option value="review">review</option>
+                            <option value="exit">exit</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Catalyst</label>
+                    <input type="text" value={catalyst} onChange={(e) => setCatalyst(e.target.value)} className="input-base" />
+                </div>
+                <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Research notes</label>
+                    <textarea value={researchNotes} onChange={(e) => setResearchNotes(e.target.value)} rows={4} className="input-base" />
+                </div>
+                <button type="submit" className="w-full py-2.5 bg-primary text-white rounded-xl font-medium">Save research</button>
+            </form>
+        </Modal>
+    );
+};
+
 const WatchlistItemRow: React.FC<{
     item: WatchlistItem;
     companyNames: SymbolNamesMap;
@@ -339,7 +436,10 @@ const WatchlistItemRow: React.FC<{
     exchangeRate: number;
     onOpenAlertModal: (item: WatchlistItem) => void;
     onOpenDeleteModal: (item: WatchlistItem) => void;
-}> = ({ item, companyNames, priceInfo, activeAlerts, historical1M, fundamentals, fundamentalsLoading, preferredCurrency, exchangeRate, onOpenAlertModal, onOpenDeleteModal }) => {
+    onOpenResearchModal: (item: WatchlistItem) => void;
+    onAddToPlan?: (item: WatchlistItem) => void;
+    buyScore?: { score: number; allowed: boolean };
+}> = ({ item, companyNames, priceInfo, activeAlerts, historical1M, fundamentals, fundamentalsLoading, preferredCurrency, exchangeRate, onOpenAlertModal, onOpenDeleteModal, onOpenResearchModal, onAddToPlan, buyScore }) => {
     const quoteSource = priceInfo.source ?? (priceInfo.price > 0 ? 'live' : 'none');
     const market = getExchangeAndCurrencyForSymbol(item.symbol);
     const priceCurrency: 'USD' | 'SAR' = (market?.currency === 'SAR' ? 'SAR' : 'USD');
@@ -445,6 +545,24 @@ const WatchlistItemRow: React.FC<{
                 {market ? (
                     <div className="text-[10px] text-gray-400 mt-0.5">{market.exchange}</div>
                 ) : null}
+                {buyScore != null && (
+                    <div className={`text-[10px] mt-1 font-medium ${buyScore.allowed ? 'text-emerald-700' : 'text-amber-700'}`}>
+                        Buy score {buyScore.score}{buyScore.allowed ? ' · OK' : ' · gated'}
+                    </div>
+                )}
+                {(item.thesisStatus || item.fairValue != null || item.qualityScore != null) && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                        {item.thesisStatus && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">{item.thesisStatus}</span>
+                        )}
+                        {item.fairValue != null && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-50 text-violet-800">FV {item.fairValue}</span>
+                        )}
+                        {item.qualityScore != null && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-800">Q {item.qualityScore}</span>
+                        )}
+                    </div>
+                )}
             </td>
             <td className="px-4 py-2 w-36">
                 <MiniPriceChart symbol={item.symbol} currentPrice={priceInfo.price} changePercent={priceInfo.changePercent} formatPrice={formatPrice} showIllustrativeLabel historicalData={historical1M} realDataOnly />
@@ -584,6 +702,19 @@ const WatchlistItemRow: React.FC<{
             </td>
             <td className="px-4 py-2 text-center">
                 <div className="flex justify-center items-center space-x-1">
+                    <button type="button" onClick={() => onOpenResearchModal(item)} className="text-gray-400 hover:text-primary p-1 text-xs font-medium" title="Edit research fields">
+                        Research
+                    </button>
+                    {onAddToPlan && (
+                        <button
+                            type="button"
+                            onClick={() => onAddToPlan(item)}
+                            className={`p-1 text-xs font-medium ${buyScore?.allowed !== false ? 'text-primary hover:underline' : 'text-amber-700'}`}
+                            title={buyScore?.allowed === false ? `Buy gate: score ${buyScore?.score ?? '—'}/100` : 'Create trade plan'}
+                        >
+                            Plan
+                        </button>
+                    )}
                     <button onClick={() => onOpenAlertModal(item)} className="text-gray-400 hover:text-yellow-500 p-1" title={activeAlerts.length > 0 ? 'Manage price alerts' : 'Set price alert'}>
                         {activeAlerts.length > 0 ? <BellAlertIcon className="h-5 w-5 text-yellow-500"/> : <BellIcon className="h-5 w-5" />}
                     </button>
@@ -600,23 +731,79 @@ const WatchlistItemRow: React.FC<{
 type WatchlistViewProps = {
   onNavigateToTab?: (tab: string) => void;
   setActivePage?: (page: Page) => void;
+  /** Stage a buy plan on Investment Plan tab (after buy-score gate). */
+  onCreatePlanFromWatchlist?: (payload: {
+    symbol: string;
+    name?: string;
+    targetPrice?: number;
+    tradeType: 'buy' | 'sell';
+    notes?: string;
+  }) => void;
 };
 
 const WATCHLIST_AI_LANG_KEY = 'finova_default_ai_lang_v1';
 
-const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActivePage: _setActivePage }) => {
-    const { data, loading, addWatchlistItem, deleteWatchlistItem, addPriceAlert, deletePriceAlert } = useContext(DataContext)!;
+const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActivePage: _setActivePage, onCreatePlanFromWatchlist }) => {
+    const { data, showBlockingLoader, addWatchlistItem, updateWatchlistItem, deleteWatchlistItem, addPriceAlert, deletePriceAlert, getAvailableCashForAccount } =
+        useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const { exchangeRate } = useCurrency();
-    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+    const { sarPerUsd } = useCanonicalFinancialMetrics();
     const { formatCurrencyString } = useFormatCurrency();
     const { simulatedPrices } = useMarketData();
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
+    const emergencyFund = useEmergencyFund(data ?? null);
+    const buyScoreBySymbol = useMemo(() => {
+        const m = new Map<string, { score: number; allowed: boolean }>();
+        if (!data) return m;
+        for (const item of data.watchlist ?? []) {
+            const sym = String(item.symbol || '').toUpperCase();
+            const gate = computeBuyScore(
+                data,
+                sym,
+                exchangeRate,
+                getAvailableCashForAccount,
+                emergencyFund.monthsCovered,
+                6,
+                item,
+            );
+            m.set(sym, { score: gate.score, allowed: gate.allowed });
+        }
+        return m;
+    }, [data, exchangeRate, getAvailableCashForAccount, emergencyFund.monthsCovered]);
+
+    const handleAddToPlan = useCallback(
+        (item: WatchlistItem) => {
+            if (!onCreatePlanFromWatchlist) {
+                onNavigateToTab?.('Investment Plan');
+                return;
+            }
+            const sym = String(item.symbol || '').toUpperCase();
+            const gate = buyScoreBySymbol.get(sym);
+            if (gate && !gate.allowed) {
+                toast(`Buy gate: score ${gate.score}/100 — add research scores or improve runway before planning a buy.`, 'error');
+                return;
+            }
+            const price = lookupLiveQuoteForSymbol(simulatedPrices, sym)?.price;
+            onCreatePlanFromWatchlist({
+                symbol: sym,
+                name: item.name,
+                targetPrice: price != null && Number.isFinite(price) ? price : undefined,
+                tradeType: 'buy',
+                notes: item.researchNotes ? `From watchlist: ${item.researchNotes.slice(0, 120)}` : 'From watchlist',
+            });
+            onNavigateToTab?.('Investment Plan');
+            trackAction('watchlist-add-to-plan', 'Watchlist');
+        },
+        [onCreatePlanFromWatchlist, onNavigateToTab, buyScoreBySymbol, simulatedPrices, trackAction],
+    );
 
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [itemToDelete, setItemToDelete] = useState<WatchlistItem | null>(null);
     const [isAlertModalOpen, setIsAlertModalOpen] = useState(false);
+    const [researchItem, setResearchItem] = useState<WatchlistItem | null>(null);
+    const [isResearchModalOpen, setIsResearchModalOpen] = useState(false);
     const [stockForAlert, setStockForAlert] = useState<{ symbol: string, name: string, price: number } | null>(null);
     const [aiTradeAnalysis, setAiTradeAnalysis] = useState('');
     const [aiTradeLoading, setAiTradeLoading] = useState(false);
@@ -926,7 +1113,21 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
         setAiWatchlistLoading(true);
         setWatchlistTipsAr(null);
         try {
-            const tips = await getAIWatchlistAdvice((data?.watchlist ?? []).map(w => w.symbol ?? ''));
+            const watchlist = data?.watchlist ?? [];
+            const symbols = watchlist.map((w) => w.symbol ?? '').filter(Boolean);
+            const holdingsSymbols = getPersonalInvestments(data).flatMap((p) =>
+                (p.holdings ?? []).map((h) => String(h.symbol ?? '').trim()).filter(Boolean),
+            );
+            const tips = await getAIWatchlistAdvice(symbols, {
+                data,
+                items: watchlist.map((w) => ({ symbol: w.symbol ?? '', name: w.name })),
+                holdingsSymbols,
+                insightOpts: {
+                    exchangeRate: sarPerUsd,
+                    getAvailableCashForAccount,
+                    simulatedPrices,
+                },
+            });
             setAiWatchlistTips(tips);
         } catch (err) {
             setAiWatchlistError(formatAiError(err));
@@ -934,8 +1135,10 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
         } finally {
             setAiWatchlistLoading(false);
         }
-    }, [data?.watchlist]);
-    const handleSaveAlert = (symbol: string, targetPrice: number, currency: 'USD' | 'SAR') => { addPriceAlert({ symbol, targetPrice, currency }); };
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
+    const handleSaveAlert = (symbol: string, targetPrice: number, currency: 'USD' | 'SAR') => {
+        void addPriceAlert({ symbol, targetPrice, currency }, { confirmed: true });
+    };
     const handleDeleteAlert = (alertId: string) => { deletePriceAlert(alertId); };
 
     const handleCreateBucket = () => {
@@ -1032,7 +1235,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
         URL.revokeObjectURL(url);
     };
 
-    if (loading || !data) {
+    if (showBlockingLoader) {
         return (
             <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50 flex items-center justify-center" aria-busy="true">
                 <div className="text-center">
@@ -1157,6 +1360,9 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
                                   exchangeRate={sarPerUsd}
                                   onOpenAlertModal={handleOpenAlertModal}
                                   onOpenDeleteModal={handleOpenDeleteModal}
+                                  onOpenResearchModal={(it) => { setResearchItem(it); setIsResearchModalOpen(true); }}
+                                  onAddToPlan={onCreatePlanFromWatchlist ? handleAddToPlan : undefined}
+                                  buyScore={buyScoreBySymbol.get(String(item.symbol || '').toUpperCase())}
                                />
                             );
                         })}
@@ -1306,9 +1512,15 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
             </div>
             </div>
 
-            <AddWatchlistItemModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onAdd={handleAddWatchlistItemWithBucket} onAddAlert={(sym, targetPrice, currency) => addPriceAlert({ symbol: sym, targetPrice, currency: currency ?? 'USD' })} />
+            <AddWatchlistItemModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onAdd={handleAddWatchlistItemWithBucket} onAddAlert={(sym, targetPrice, currency) => void addPriceAlert({ symbol: sym, targetPrice, currency: currency ?? 'USD' }, { confirmed: true })} />
             <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
             <PriceAlertModal isOpen={isAlertModalOpen} onClose={() => setIsAlertModalOpen(false)} onSave={handleSaveAlert} onDeleteAlert={handleDeleteAlert} stock={stockForAlert} existingAlerts={stockForAlert ? (data?.priceAlerts ?? []).filter(a => (a.symbol || '').toUpperCase() === (stockForAlert.symbol || '').toUpperCase()) : []} />
+            <WatchlistResearchModal
+                item={researchItem}
+                isOpen={isResearchModalOpen}
+                onClose={() => { setIsResearchModalOpen(false); setResearchItem(null); }}
+                onSave={(it) => { void updateWatchlistItem(it); }}
+            />
         </div>
     );
 };

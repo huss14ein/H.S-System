@@ -8,10 +8,13 @@ import { Page } from '../types';
 import { DataContext } from '../context/DataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import { computePersonalHeadlineNetWorthSar } from '../services/personalNetWorth';
-import { netCashFlowForMonthSarDated } from '../services/financeMetrics';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { netCashFlowForFinancialMonthSarDated } from '../services/financeMetrics';
 import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
+import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
+import { useFinancialEnhancementInsights } from '../hooks/useFinancialEnhancementInsights';
+import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { CubeIcon } from '../components/icons/CubeIcon';
 import { ArrowTrendingDownIcon } from '../components/icons/ArrowTrendingDownIcon';
@@ -108,26 +111,23 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
   const [dataTick, setDataTick] = useState(0);
   const engines = useFinancialEnginesIntegration();
   const { trackAction } = useSelfLearning();
-  const { data, getAvailableCashForAccount } = useContext(DataContext)!;
+  const { data, showBlockingLoader } = useContext(DataContext)!;
+  const emergencyFund = useEmergencyFund(data ?? null);
+  const enhancementInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
   const { exchangeRate, currency: displayCurrency } = useCurrency();
   const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
-
-  const headlineMoneyTools = useMemo(
-    () =>
-      data ? computePersonalHeadlineNetWorthSar(data, exchangeRate, { getAvailableCashForAccount }) : null,
-    [data, exchangeRate, getAvailableCashForAccount, dataTick],
-  );
+  const { headline: headlineMoneyTools } = useCanonicalFinancialMetrics();
 
   const moneyToolsKpis = useMemo(() => {
-    if (!data || !headlineMoneyTools) return null;
+    if (!data) return null;
     const nw = headlineMoneyTools.netWorth;
     const accounts = getPersonalAccounts(data);
     const txs = getPersonalTransactions(data);
     const ref = new Date();
-    const { income, expenses, net } = netCashFlowForMonthSarDated(txs, accounts, ref, data, exchangeRate);
+    const { income, expenses, net } = netCashFlowForFinancialMonthSarDated(txs, accounts, ref, data, exchangeRate);
     const sr = income <= 0 ? 0 : Math.max(0, Math.min(100, ((income - expenses) / income) * 100));
     return { nw, income, expenses, net, sr };
-  }, [data, exchangeRate, getAvailableCashForAccount, dataTick, headlineMoneyTools]);
+  }, [data, exchangeRate, dataTick, headlineMoneyTools]);
 
   const moneyToolsValidation = useMemo(() => {
     const msgs: { level: 'warn' | 'info'; text: string }[] = [];
@@ -241,8 +241,18 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
   const tabIds = useMemo(() => Object.keys(TOOL_VISUAL) as EnginesSubTab[], []);
   const activeVisual = TOOL_VISUAL[activeTab];
 
+  if (showBlockingLoader) {
+    return <LoadingSpinner className="min-h-[24rem]" ariaLabel="Loading money tools" />;
+  }
+
   return (
     <div className="space-y-8">
+      <EnhancementInsightStrip
+        capitalDeployment={enhancementInsights.capitalDeployment}
+        goalConflicts={enhancementInsights.goalConflicts}
+        budgetDrift={enhancementInsights.budgetDrift.slice(0, 2)}
+        compact
+      />
       {/* Hero + live status */}
       <div className="relative overflow-hidden rounded-2xl border border-slate-200/80 bg-gradient-to-br from-slate-50 via-white to-indigo-50/40 shadow-sm">
         <div

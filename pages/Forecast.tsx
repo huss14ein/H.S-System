@@ -12,11 +12,10 @@ import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import { useCurrency } from '../context/CurrencyContext';
 import { useMarketData } from '../context/MarketDataContext';
-import { getAllInvestmentsValueInSAR, resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
-import { computePersonalHeadlineNetWorthSar } from '../services/personalNetWorth';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
 import type { Page, Transaction } from '../types';
-import { normalizedMonthlyExpenseSar, personalMonthlyNetByMonthKeySar, savingsRateSar } from '../services/financeMetrics';
+import { normalizedMonthlyExpenseSar, personalMonthlyNetByMonthKeySar, savingsRateSarFinancialMonth } from '../services/financeMetrics';
 import { stressTestScenario, compareStrategies } from '../services/stressScenario';
 import AIAdvisor from '../components/AIAdvisor';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
@@ -31,14 +30,12 @@ const TOOLTIP_STYLE = { backgroundColor: 'white', border: '1px solid #e2e8f0', b
 
 const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
-    const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate, currency: displayCurrency } = useCurrency();
     const { simulatedPrices } = useMarketData();
     const [stressJobLossM, setStressJobLossM] = useState(3);
     const [stressMarketDrop, setStressMarketDrop] = useState(15);
     const [stressMedical, setStressMedical] = useState(8000);
-
-    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
 
     const savingsAnalytics = useMemo(() => {
         if (!data) {
@@ -96,24 +93,18 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         setMonthlySavings(Math.max(0, savingsAnalytics.medianMonthlyNet));
     }, [savingsAnalytics.medianMonthlyNet, monthlySavingsTouched]);
 
-    const initialValues = useMemo(() => {
-        const d = data as any;
-        const investments = d?.personalInvestments ?? data?.investments ?? [];
-        const accounts = d?.personalAccounts ?? data?.accounts ?? [];
-        const headline = computePersonalHeadlineNetWorthSar(data, exchangeRate, { getAvailableCashForAccount });
-        const netWorth = headline.netWorth;
-        const fx = headline.sarPerUsd;
-        const holdingsSar = getAllInvestmentsValueInSAR(investments, fx);
-        const brokerageCashSar = accounts
-            .filter((a: { type?: string }) => a.type === 'Investment')
-            .reduce((s: number, a: { id: string }) => s + tradableCashBucketToSAR(getAvailableCashForAccount(a.id), fx), 0);
-        const investmentValue = holdingsSar + brokerageCashSar;
-        return { netWorth, investmentValue };
-    }, [data, exchangeRate, getAvailableCashForAccount]);
+    const { netWorth: headlineNetWorth, sarPerUsd, investmentsTotalSar, liquidCashSar } = useCanonicalFinancialMetrics();
+    const initialValues = useMemo(
+        () => ({
+            netWorth: headlineNetWorth,
+            investmentValue: investmentsTotalSar,
+        }),
+        [headlineNetWorth, investmentsTotalSar],
+    );
 
     const goalResolvedSarById = useMemo(
-        () => computeGoalResolvedAmountsSar(data ?? null, resolveSarPerUsd(data, exchangeRate)),
-        [data, exchangeRate],
+        () => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd),
+        [data, sarPerUsd],
     );
 
     const applyScenarioPreset = (preset: 'Conservative' | 'Base' | 'Aggressive') => {
@@ -246,17 +237,9 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const stressInputs = useMemo(() => {
         const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
         const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
-        const fx = resolveSarPerUsd(data, exchangeRate);
-        const liquidCash = accounts
-            .filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings')
-            .reduce(
-                (s: number, a: { balance?: number; currency?: string }) =>
-                    s + Math.max(0, toSAR(a.balance ?? 0, (a.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD', fx)),
-                0,
-            );
-        const monthlyExpense = normalizedMonthlyExpenseSar(txs as Transaction[], accounts, fx, { monthsLookback: 6 });
-        return { liquidCash, monthlyExpense };
-    }, [data, exchangeRate]);
+        const monthlyExpense = normalizedMonthlyExpenseSar(txs as Transaction[], accounts, sarPerUsd, { monthsLookback: 6 });
+        return { liquidCash: liquidCashSar, monthlyExpense };
+    }, [data, sarPerUsd, liquidCashSar]);
 
     const stressResult = useMemo(
         () =>
@@ -284,8 +267,8 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         if (!data) return 0;
         const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
         const accounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []) as import('../types').Account[];
-        return savingsRateSar(txs, accounts, new Date(), sarPerUsd);
-    }, [data, sarPerUsd]);
+        return savingsRateSarFinancialMonth(txs, accounts, new Date(), data, exchangeRate);
+    }, [data, exchangeRate]);
 
     const timeline = useMemo(() => {
         if (!summary) return null;
@@ -294,7 +277,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
 
     const forecastValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
-        const fx = resolveSarPerUsd(data, exchangeRate);
+        const fx = sarPerUsd;
         const kpis = computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
         if (!Number.isFinite(fx) || fx <= 0) warnings.push('Exchange rate is invalid — USD-linked balances may mis-state projections.');
         if (!Number.isFinite(initialValues.netWorth)) warnings.push('Net worth baseline is invalid.');
@@ -329,7 +312,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         handleManualIncomeGrowthChange(Number(savingsAnalytics.incomeGrowthSuggestion.toFixed(1)));
     }, [savingsAnalytics.medianMonthlyNet, savingsAnalytics.incomeGrowthSuggestion]);
 
-    if (loading || !data) {
+    if (showBlockingLoader) {
         return (
             <div className="flex justify-center items-center h-96" aria-busy="true">
                 <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading forecast" />
@@ -385,12 +368,24 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             <AIAdvisor
                     pageContext="forecast"
                 contextData={{
-                        baselineNetWorth: initialValues.netWorth,
-                        baselineInvestments: initialValues.investmentValue,
-                        projectedNetWorth: summary?.projectedNetWorth ?? 0,
-                        monthlySavings,
-                        horizonYears: horizon,
-                        forecastTrendSample: aiForecastTrendSample,
+                        forecast: {
+                            baselineNetWorthSar: initialValues.netWorth,
+                            baselineInvestmentsSar: initialValues.investmentValue,
+                            projectedNetWorthSar: summary?.projectedNetWorth ?? 0,
+                            projectedInvestmentsSar: summary?.projectedInvestments,
+                            monthlySavingsSar: monthlySavings,
+                            horizonYears: horizon,
+                            investmentGrowthAnnualPct: investmentGrowth,
+                            savingsGrowthAnnualPct: incomeGrowth,
+                            scenarioPresets: {
+                                conservative: scenarioComparison.Conservative?.projectedNetWorth ?? 0,
+                                base: scenarioComparison.Base?.projectedNetWorth ?? 0,
+                                aggressive: scenarioComparison.Aggressive?.projectedNetWorth ?? 0,
+                            },
+                            confidenceLowSar: confidenceBand?.low,
+                            confidenceHighSar: confidenceBand?.high,
+                            trendSample: aiForecastTrendSample,
+                        },
                     }}
                     title="Forecast advisor"
                     subtitle="Plain-language read on your sliders and projected path"
