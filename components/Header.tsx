@@ -5,6 +5,7 @@ import { HSLogo } from './icons/HSLogo';
 import { AuthContext } from '../context/AuthContext';
 import { UserCircleIcon } from './icons/UserCircleIcon';
 import { BellIcon } from './icons/BellIcon';
+import HeaderAlertsPopover from './HeaderAlertsPopover';
 import { useCurrency } from '../context/CurrencyContext';
 import { DataContext } from '../context/DataContext';
 import { ChevronDownIcon } from './icons/ChevronDownIcon';
@@ -24,12 +25,6 @@ import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCur
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import { financialMonthRange, resolveMonthStartDayFromData, dateInRange } from '../utils/financialMonth';
 import { isSupportedPageAction } from '../utils/pageActions';
-import type { AppNotification } from '../context/NotificationsContext';
-import {
-  notificationRowSurface,
-  notificationSeverityLabel,
-  notificationSeverityPillClass,
-} from '../utils/semanticAlertStyles';
 import { INFOHINT_CLOSE_OTHERS } from './infoHintEvents';
 interface HeaderProps {
   activePage: Page;
@@ -143,21 +138,6 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
     if (triggerPageActionPair) triggerPageActionPair('Notifications', 'notifications-tab:tasks');
     else setActivePage('Notifications');
   };
-
-  const severityRank = (s: AppNotification['severity']) =>
-    s === 'urgent' ? 3 : s === 'warning' ? 2 : 1;
-
-  const topNotificationPreview = useMemo(() => {
-    const list = notificationsContext?.notifications ?? [];
-    return [...list]
-      .sort((a, b) => {
-        if (a.isRead !== b.isRead) return a.isRead ? 1 : -1;
-        const ds = severityRank(b.severity) - severityRank(a.severity);
-        if (ds !== 0) return ds;
-        return new Date(b.date).getTime() - new Date(a.date).getTime();
-      })
-      .slice(0, 4);
-  }, [notificationsContext?.notifications]);
 
   const topTasksPreview = useMemo(() => {
     const todos = todosOpt?.todos ?? [];
@@ -416,83 +396,19 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                 )}
               </div>
 
-              <div className="relative hidden sm:block" ref={notificationsPreviewRef}>
-                <button
-                  onClick={() => {
-                    if (soundEnabled && notificationCount > 0) playBeepRef.current();
+              <div className="relative" ref={notificationsPreviewRef}>
+                <HeaderAlertsPopover
+                  isOpen={isNotificationsPreviewOpen}
+                  onToggle={() => {
                     setIsTasksPreviewOpen(false);
                     setIsNotificationsPreviewOpen((v) => !v);
                   }}
-                  className={`relative p-2.5 rounded-2xl transition-all border ${
-                    notificationCount > 0
-                      ? 'text-primary bg-primary/5 border-primary/20 shadow-sm hover:bg-primary/10'
-                      : 'text-gray-400 border-transparent hover:text-primary hover:bg-gray-50'
-                  }`}
-                  aria-label={`Notifications${notificationCount > 0 ? `, ${notificationCount} unread` : ''}`}
-                  aria-expanded={isNotificationsPreviewOpen}
-                >
-                    <BellIcon className="h-6 w-6" />
-                    {notificationCount > 0 && (
-                        <span className="absolute top-2 right-2 flex h-4 w-4">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-danger opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-4 w-4 bg-danger text-white text-[10px] items-center justify-center font-bold">{notificationCount}</span>
-                        </span>
-                    )}
-                </button>
-                {isNotificationsPreviewOpen && (
-                  <div className="absolute right-0 mt-2 w-[24rem] max-w-[90vw] rounded-2xl border border-slate-200 bg-white shadow-2xl z-50 p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm font-semibold text-slate-800">Alerts preview</p>
-                      <span className="text-[11px] text-slate-500">{notificationCount} unread</span>
-                    </div>
-                    {topNotificationPreview.length === 0 ? (
-                      <p className="text-xs text-slate-500">No alerts right now.</p>
-                    ) : (
-                      <ul className="space-y-2">
-                        {topNotificationPreview.map((n) => (
-                          <li
-                            key={n.id}
-                            className={`rounded-lg px-2.5 py-2 shadow-sm ${notificationRowSurface(n.severity, n.isRead)}`}
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0 flex-1">
-                                <div className="flex flex-wrap items-center gap-1.5 mb-0.5">
-                                  <span
-                                    className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${notificationSeverityPillClass(n.severity)}`}
-                                  >
-                                    {notificationSeverityLabel(n.severity)}
-                                  </span>
-                                  {!n.isRead && (
-                                    <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-wide">New</span>
-                                  )}
-                                </div>
-                                <p className="text-sm text-slate-800 line-clamp-2 leading-snug">{n.message}</p>
-                                {n.actionHint && (
-                                  <p className="text-[11px] text-slate-600 mt-0.5 line-clamp-2">{n.actionHint}</p>
-                                )}
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => openNotificationTarget(n)}
-                                className="shrink-0 text-[11px] font-semibold leading-none text-primary hover:underline"
-                                aria-label="Open alert target"
-                              >
-                                Open
-                              </button>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    <button
-                      type="button"
-                      onClick={openAlertsPage}
-                      className="mt-3 w-full inline-flex items-center justify-center rounded-lg bg-primary text-white text-sm font-semibold leading-none h-10 hover:bg-secondary"
-                    >
-                      View all alerts
-                    </button>
-                  </div>
-                )}
+                  onClose={() => setIsNotificationsPreviewOpen(false)}
+                  onOpenAlertsPage={openAlertsPage}
+                  onOpenNotification={openNotificationTarget}
+                  soundEnabled={soundEnabled}
+                  onPlaySound={() => playBeepRef.current()}
+                />
               </div>
 
               {onOpenCommandPalette && (
@@ -562,8 +478,13 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                 <div className="grid grid-cols-3 gap-2">
                     <button
                         type="button"
-                        onClick={() => { openAlertsPage(); setIsMobileMenuOpen(false); }}
-                        className="relative flex items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-2 py-2.5 text-xs font-semibold text-slate-700"
+                        onClick={() => {
+                            setIsMobileMenuOpen(false);
+                            setIsTasksPreviewOpen(false);
+                            if (soundEnabled && notificationCount > 0) playBeepRef.current();
+                            setIsNotificationsPreviewOpen(true);
+                        }}
+                        className="relative flex items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-2 py-2.5 text-xs font-semibold text-slate-700 hover:border-primary/30 hover:bg-primary/5"
                     >
                         <BellIcon className="h-4 w-4 text-slate-500" />
                         Alerts

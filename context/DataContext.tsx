@@ -3863,7 +3863,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const totalDeployableCash = useMemo(() => {
         if (!data) return 0;
-        const sarPerUsd = resolveSarPerUsd(data as FinancialData);
+        hydrateSarPerUsdDailySeries(data as FinancialData, DEFAULT_SAR_PER_USD);
+        const sarPerUsd = resolveSarPerUsd(data as FinancialData, DEFAULT_SAR_PER_USD);
         return sumTradableCashSarFromInvestmentAccounts(
             accountsForDeployable.filter((a: Account) => a.type === 'Investment'),
             allAccountsForDeployableCanon,

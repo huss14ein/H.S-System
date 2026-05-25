@@ -3,7 +3,9 @@
  * budgets, goals, holdings. Keeps model replies aligned with Dashboard KPIs.
  */
 import type { Budget, FinancialData, Holding, Transaction } from '../types';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
+import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { computePersonalHeadlineNetWorthSar } from './personalNetWorth';
 import { computeDashboardKpiSnapshot, financialMonthNetCashflowSar } from './dashboardKpiSnapshot';
 import { formatGoalsProgressForPrompt } from './goalResolvedTotals';
@@ -24,6 +26,8 @@ export type AiGroundingBuildOptions = {
 };
 
 export type AiPersonalWealthGrounding = {
+  /** Resolved SAR/USD — same as headline NW / Dashboard KPIs. */
+  sarPerUsd: number;
   asOfDate: string;
   financialMonthLabel: string;
   netWorthSar: number;
@@ -49,21 +53,28 @@ function budgetMonthlyLimit(b: Budget): number {
   return b.limit;
 }
 
-function topHoldingsLines(data: FinancialData, limit = 5): string[] {
+function topHoldingsLines(
+  data: FinancialData,
+  sarPerUsd: number,
+  simulatedPrices: SimulatedPriceMap,
+  limit = 5,
+): string[] {
   const portfolios = (data as { personalInvestments?: { holdings?: Holding[] }[] }).personalInvestments
     ?? data.investments
     ?? [];
-  const rows: { symbol: string; value: number }[] = [];
+  const rows: { symbol: string; valueSar: number }[] = [];
   for (const p of portfolios) {
+    const book = resolveInvestmentPortfolioCurrency(p);
     for (const h of p.holdings ?? []) {
-      const v = Number(h.currentValue) || 0;
-      if (v > 0 && h.symbol) rows.push({ symbol: h.symbol, value: v });
+      const curVal = effectiveHoldingValueInBookCurrency(h, book, simulatedPrices, sarPerUsd);
+      const valueSar = toSAR(curVal, book, sarPerUsd);
+      if (valueSar > 0 && h.symbol) rows.push({ symbol: h.symbol, valueSar });
     }
   }
   return rows
-    .sort((a, b) => b.value - a.value)
+    .sort((a, b) => b.valueSar - a.valueSar)
     .slice(0, limit)
-    .map((r) => `${r.symbol}: ${fmt(r.value)} SAR (app valuation)`);
+    .map((r) => `${r.symbol}: ${fmt(r.valueSar)} SAR`);
 }
 
 export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): AiPersonalWealthGrounding {
@@ -106,7 +117,7 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
   }
 
   const goalsProgress = formatGoalsProgressForPrompt(data, headline.sarPerUsd);
-  const holdings = topHoldingsLines(data);
+  const holdings = topHoldingsLines(data, headline.sarPerUsd, simulatedPrices);
   const recentTxLines = personalTx.slice(0, 8).map((t) => {
     const cat = t.budgetCategory || t.category || 'Uncategorized';
     return `${t.date?.slice(0, 10) ?? ''}: ${(t.description || '').slice(0, 48)} | ${fmt(Math.abs(Number(t.amount) || 0))} SAR | ${cat}`;
@@ -129,6 +140,7 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
   ].join('\n');
 
   return {
+    sarPerUsd: headline.sarPerUsd,
     asOfDate,
     financialMonthLabel: finLabel,
     netWorthSar: headline.netWorth,

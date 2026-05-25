@@ -16,8 +16,7 @@ import {
     saveQuoteCacheRows,
     upsertCacheFromLiveQuotes,
 } from '../services/quotePriceCache';
-import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { portfolioBelongsToAccount, resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
 import { getRefreshableHoldingQuoteSymbols } from '../services/quoteRefreshSymbols';
 import { isTadawulQuoteSymbol } from '../services/marketQuoteRouting';
@@ -30,10 +29,10 @@ import {
 const MarketSimulator: React.FC = () => {
     const dataContext = useContext(DataContext);
     const marketContext = useContext(MarketDataContext);
-    const { exchangeRate } = useCurrency();
+    const { sarPerUsd } = useCanonicalFinancialMetrics();
 
-    const contextRef = useRef({ dataContext, marketContext, exchangeRate });
-    contextRef.current = { dataContext, marketContext, exchangeRate };
+    const contextRef = useRef({ dataContext, marketContext, sarPerUsd });
+    contextRef.current = { dataContext, marketContext, sarPerUsd };
 
     const previousPricesRef = useRef<Record<string, number>>({});
     const didInitialPricePassRef = useRef(false);
@@ -76,7 +75,7 @@ const MarketSimulator: React.FC = () => {
 
             const { data, batchUpdateHoldingValues, batchUpdateCommodityHoldingValues, updatePriceAlert } = dataContext;
             const { setSimulatedPrices, simulatedPrices: currentSimulatedPrices, setIsLive, setLastUpdated, touchQuoteTimestamps } = marketContext;
-            const sarPerUsd = resolveSarPerUsd(data, contextRef.current.exchangeRate);
+            const sarPerUsd = contextRef.current.sarPerUsd;
 
             const accounts = data.accounts ?? [];
             const allInvestments = ((data as any)?.personalInvestments ?? data?.investments ?? []) as InvestmentPortfolio[];

@@ -1,6 +1,6 @@
 import { useContext, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
-import { useCurrency } from '../context/CurrencyContext';
+import { useCanonicalFinancialMetrics } from './useCanonicalFinancialMetrics';
 import { AuthContext } from '../context/AuthContext';
 import { computeCapitalDeployment } from '../services/capitalDeploymentOrchestrator';
 import { detectGoalConflictsFromData } from '../services/goalConflictDetection';
@@ -15,7 +15,7 @@ const EF_TARGET = 6;
 
 export function useFinancialEnhancementInsights(emergencyFundMonths = 0) {
   const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-  const { exchangeRate } = useCurrency();
+  const { exchangeRate } = useCanonicalFinancialMetrics();
   const auth = useContext(AuthContext);
 
   return useMemo(() => {

@@ -4,7 +4,7 @@ import { AuthContext } from './AuthContext';
 import { Page, Transaction } from '../types';
 import { DataContext } from './DataContext';
 import { useMarketData } from './MarketDataContext';
-import { useCurrency } from './CurrencyContext';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import {
   reconcileCashAccountBalance,
   detectStaleMarketData,
@@ -15,7 +15,7 @@ import {
 import { normalizedMonthlyExpenseSar, cashRunwayMonths } from '../services/financeMetrics';
 import { salaryToExpenseCoverageSar } from '../services/salaryExpenseCoverage';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
-import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { toSAR } from '../utils/currencyMath';
 import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import { useTodosOptional } from './TodosContext';
 import { computeTaskCounts } from '../services/todoModel';
@@ -91,7 +91,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const { data } = useContext(DataContext) ?? {};
   const auth = useContext(AuthContext);
   const todosOpt = useTodosOptional();
-  const { exchangeRate } = useCurrency();
+  const { sarPerUsd } = useCanonicalFinancialMetrics();
   const { simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt } = useMarketData();
   const [readIds, setReadIds] = useState<Set<string>>(loadReadIds);
   const [pendingBudgetRequestCount, setPendingBudgetRequestCount] = useState(0);
@@ -276,7 +276,6 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     // Cash runway — personal checking/savings in SAR vs SAR-normalized avg monthly expense
     const accountsForRunway = getPersonalAccounts(data);
     const transactionsForRunway = getPersonalTransactions(data);
-    const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
     const liquidCashSar = accountsForRunway
       .filter((a) => a.type === 'Checking' || a.type === 'Savings')
       .reduce((sum, a) => {
@@ -512,7 +511,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       }
     }
 
-    for (const c of detectGoalConflictsFromData(data, exchangeRate)) {
+    for (const c of detectGoalConflictsFromData(data, sarPerUsd)) {
       push({
         id: `goal-conflict-${c.id}`,
         category: 'Goal',
@@ -524,7 +523,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         actionHint: 'Review goal deadlines and linked budgets or investments on Goals.',
       });
     }
-    for (const d of detectBudgetDrift(data, exchangeRate).slice(0, 2)) {
+    for (const d of detectBudgetDrift(data, sarPerUsd).slice(0, 2)) {
       push({
         id: `budget-drift-${d.category}`,
         category: 'Budget',
@@ -563,7 +562,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     return list
       .sort((a, b) => (b.score || 0) - (a.score || 0) || new Date(b.date).getTime() - new Date(a.date).getTime())
       .slice(0, 40);
-  }, [data, simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt, exchangeRate, pendingBudgetRequestCount, pendingTransactionApprovalCount, isAdmin, auth?.user?.id, todosOpt?.todos]);
+  }, [data, simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt, sarPerUsd, pendingBudgetRequestCount, pendingTransactionApprovalCount, isAdmin, auth?.user?.id, todosOpt?.todos]);
 
   const notificationsWithRead = useMemo(
     () => notifications.map((n) => ({ ...n, isRead: readIds.has(n.id) })),

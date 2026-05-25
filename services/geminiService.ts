@@ -22,6 +22,7 @@ import {
     type TrendChartRow,
 } from './aiPersonalWealthGrounding';
 
+/** Fallback when no `buildAiPersonalWealthGrounding` opts — cache keys should use `g.sarPerUsd` instead. */
 function sarPerUsdForResolvedGoals(data: FinancialData | null | undefined): number {
   const r = resolveSarPerUsd(data, undefined);
   return Number.isFinite(r) && r > 0 ? r : DEFAULT_SAR_PER_USD;
@@ -897,13 +898,13 @@ export type AiInsightOptions = Pick<
 >;
 
 export const getAIFeedInsights = async (data: FinancialData, opts?: AiInsightOptions): Promise<FeedItem[]> => {
-    const resolvedFp = resolvedGoalAmountsFingerprint(data, sarPerUsdForResolvedGoals(data));
     const g = buildAiPersonalWealthGrounding({
         data,
         exchangeRate: opts?.exchangeRate,
         getAvailableCashForAccount: opts?.getAvailableCashForAccount,
         simulatedPrices: opts?.simulatedPrices,
     });
+    const resolvedFp = resolvedGoalAmountsFingerprint(data, g.sarPerUsd);
     const cacheKey = `getAIFeedInsights:v2:${g.netWorthSar}:${g.monthlyPnLSar}:${(data?.budgets ?? []).length}:${resolvedFp}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
@@ -1810,7 +1811,7 @@ export const getAIExecutiveSummary = async (data: FinancialData, opts?: AiInsigh
         getAvailableCashForAccount: opts?.getAvailableCashForAccount,
         simulatedPrices: opts?.simulatedPrices,
     });
-    const resolvedFp = resolvedGoalAmountsFingerprint(data, sarPerUsdForResolvedGoals(data));
+    const resolvedFp = resolvedGoalAmountsFingerprint(data, g.sarPerUsd);
     const cacheKey = `getAIExecutiveSummary:v2:${g.netWorthSar}:${g.monthlyPnLSar}:${resolvedFp}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
