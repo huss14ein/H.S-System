@@ -216,23 +216,31 @@ export function accumulateHouseholdYearCashflowSar(
 ): { monthlyIncome: number[]; monthlyExpense: number[] } {
   const monthlyIncome: number[] = Array(12).fill(0);
   const monthlyExpense: number[] = Array(12).fill(0);
-  if (!financialData || !Array.isArray(transactions)) {
+  if (!Array.isArray(transactions)) {
     return { monthlyIncome, monthlyExpense };
   }
-  const spot = resolveSarPerUsd(financialData, uiExchangeRate);
+  const spot = financialData
+    ? resolveSarPerUsd(financialData, uiExchangeRate)
+    : Number(uiExchangeRate);
   if (!Number.isFinite(spot) || spot <= 0) {
     return { monthlyIncome, monthlyExpense };
   }
   const monthStartDay =
     monthStartDayOverride != null
       ? monthStartDayOverride
-      : resolveMonthStartDayFromData(financialData);
-  hydrateSarPerUsdDailySeries(financialData, uiExchangeRate);
+      : financialData
+        ? resolveMonthStartDayFromData(financialData)
+        : 1;
+  if (financialData) {
+    hydrateSarPerUsdDailySeries(financialData, uiExchangeRate);
+  }
   const accList =
     Array.isArray(accounts) && accounts.length > 0
       ? accounts
-      : ((((financialData as { personalAccounts?: Array<{ id?: string; currency?: string }> }).personalAccounts ??
-          financialData.accounts) ?? []) as Array<{ id?: string; currency?: string }>);
+      : financialData
+        ? ((((financialData as { personalAccounts?: Array<{ id?: string; currency?: string }> }).personalAccounts ??
+            financialData.accounts) ?? []) as Array<{ id?: string; currency?: string }>)
+        : [];
   const accById = new Map(accList.map((a) => [String(a.id ?? ''), a]));
   transactions.forEach((t) => {
     if (!t.date) return;
@@ -240,7 +248,10 @@ export function accumulateHouseholdYearCashflowSar(
     if (col == null) return;
     const cur = accById.get(String(t.accountId ?? ''))?.currency === 'USD' ? 'USD' : 'SAR';
     const day = String(t.date).slice(0, 10);
-    const r = day.length === 10 ? getSarPerUsdForCalendarDay(day, financialData, uiExchangeRate) : spot;
+    const r =
+      financialData && day.length === 10
+        ? getSarPerUsdForCalendarDay(day, financialData, uiExchangeRate)
+        : spot;
     const amt = toSAR(Math.abs(Number(t.amount) || 0), cur, r);
     if (countsAsIncomeForCashflowKpi(t)) monthlyIncome[col] += amt;
     else if (countsAsExpenseForCashflowKpi(t)) monthlyExpense[col] += amt;
@@ -820,16 +831,18 @@ export function buildHouseholdEngineInputFromData(
   const year = options?.year ?? new Date().getFullYear();
   const monthStartDay =
     options?.monthStartDay ??
-    (options?.financialData ? resolveMonthStartDayFromData(options.financialData) : resolveMonthStartDayFromData(null));
+    (options?.financialData != null
+      ? resolveMonthStartDayFromData(options.financialData)
+      : 1);
   const salary = options?.expectedMonthlySalary ?? 0;
   const monthlySalaryPlan = Array(12).fill(salary);
   let monthlyActualIncome = Array(12).fill(0);
   let monthlyActualExpense = Array(12).fill(0);
   const rate = Number(options?.sarPerUsd);
   const uiEx = Number(options?.uiExchangeRate ?? options?.sarPerUsd);
-  if (options?.financialData && Number.isFinite(rate) && rate > 0 && Number.isFinite(uiEx) && uiEx > 0) {
+  if (Number.isFinite(uiEx) && uiEx > 0) {
     const acc = accumulateHouseholdYearCashflowSar(
-      options.financialData,
+      options?.financialData ?? null,
       transactions,
       accounts,
       year,
