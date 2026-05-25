@@ -8,7 +8,9 @@ import { useDebouncedValue } from './useDebouncedValue';
 import { useHydrateSarPerUsdDailySeries } from './useHydrateSarPerUsdDailySeries';
 import {
   computeCanonicalFinancialMetrics,
+  computeDashboardCanonicalMetrics,
   type CanonicalFinancialMetrics,
+  type DashboardCanonicalMetrics,
 } from '../services/canonicalFinancialMetrics';
 
 export type { CanonicalFinancialMetrics } from '../services/canonicalFinancialMetrics';
@@ -68,6 +70,38 @@ export function useCanonicalFinancialMetrics(): UseCanonicalFinancialMetricsResu
       platformsRollupSar: parts.platformsRollupSar,
       commoditiesValueSar: parts.commoditiesValueSar,
       sukukAssetsValueSar: parts.sukukAssetsValueSar,
+    };
+  }, [data, exchangeRate, getAvailableCashForAccount, debouncedPrices]);
+}
+
+/** Lighter than full canonical bundle — use on Dashboard to avoid wealth-summary work on every quote tick. */
+export function useDashboardCanonicalMetrics(): DashboardCanonicalMetrics & {
+  data: FinancialData | null;
+  exchangeRate: number;
+  simulatedPrices: Record<string, { price: number; change?: number; changePercent?: number }>;
+  getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number };
+} {
+  const ctx = useContext(DataContext);
+  const data = ctx?.data ?? null;
+  const getAvailableCashForAccount = ctx?.getAvailableCashForAccount;
+  const { exchangeRate } = useCurrency();
+  const { simulatedPrices } = useMarketData();
+  const debouncedPrices = useDebouncedValue(simulatedPrices, 400);
+  useHydrateSarPerUsdDailySeries(data, exchangeRate);
+
+  return useMemo(() => {
+    const metrics = computeDashboardCanonicalMetrics({
+      data,
+      exchangeRate,
+      getAvailableCashForAccount,
+      simulatedPrices: debouncedPrices,
+    });
+    return {
+      data,
+      exchangeRate,
+      simulatedPrices: debouncedPrices,
+      getAvailableCashForAccount,
+      ...metrics,
     };
   }, [data, exchangeRate, getAvailableCashForAccount, debouncedPrices]);
 }

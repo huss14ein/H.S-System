@@ -1007,69 +1007,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const normalizedSukukSchedules = filterOwnedRows((sukukPayoutSchedules.data as any[]) || []).map(normalizeSukukPayoutScheduleRow);
             const normalizedSukukEvents = filterOwnedRows((sukukPayoutEvents.data as any[]) || []).map(normalizeSukukPayoutEventRow);
 
-            // Auto-post due Sukuk payouts into investment_transactions so the platform cash becomes reinvestable.
-            // Idempotent: events are marked posted and store the created investment transaction id.
             const todayYmd = new Date().toISOString().slice(0, 10);
-            const dueEvents = normalizedSukukEvents
-                .filter((e) => !e.posted && e.amount > 0 && String(e.payoutDate) <= todayYmd);
-            let appendedInvestmentTx: InvestmentTransaction[] = [];
-            const postedEventIds = new Set<string>();
-            if (dueEvents.length) {
-                try {
-                    const sukukPostDeadline = Date.now() + 5000;
-                    for (const ev of dueEvents.slice(0, 50)) {
-                        if (Date.now() > sukukPostDeadline) {
-                            console.warn('Sukuk auto-post time budget reached; remaining events deferred to next refresh.');
-                            break;
-                        }
-                        const symbol = `SUKUK:${String(ev.assetId).slice(0, 8)}:${ev.kind.toUpperCase()}`;
-                        const txType: InvestmentTransaction['type'] = ev.kind === 'principal' ? 'deposit' : 'dividend';
-                        const payload: Omit<InvestmentTransaction, 'id' | 'user_id'> = {
-                            accountId: ev.investmentAccountId,
-                            date: ev.payoutDate,
-                            type: txType,
-                            symbol,
-                            quantity: 0,
-                            price: 0,
-                            total: ev.amount,
-                            currency: ev.currency,
-                        };
-                        // Insert (with best-effort payload variants for schema drift) then mark event as posted.
-                        let inserted: any | null = null;
-                        for (const variant of tradePayloadVariants(payload)) {
-                            const res = await db.from('investment_transactions').insert(withUser(variant)).select('*').maybeSingle();
-                            if (!res.error && res.data) {
-                                inserted = res.data;
-                                break;
-                            }
-                        }
-                        if (inserted?.id) {
-                            const postUpdate = await db
-                                .from('sukuk_payout_events')
-                                .update({ posted: true, posted_at: new Date().toISOString(), posted_investment_transaction_id: inserted.id })
-                                .eq('id', ev.id)
-                                .eq('user_id', auth.user.id)
-                                // Verify at least one row was actually updated (defense-in-depth).
-                                .select('id')
-                                .maybeSingle();
-                            if (postUpdate.error || !postUpdate.data?.id) {
-                                // If we can't mark the payout as posted, try to rollback the inserted investment transaction
-                                // to avoid duplicate posting on next refresh.
-                                try {
-                                    await db.from('investment_transactions').delete().eq('id', inserted.id);
-                                } catch {
-                                    // ignore rollback failures; DB remains source of truth.
-                                }
-                            } else {
-                                appendedInvestmentTx.push(normalizeInvestmentTransaction(inserted));
-                                postedEventIds.add(ev.id);
-                            }
-                        }
-                    }
-                } catch (e) {
-                    console.warn('Sukuk auto-post skipped:', e);
-                }
-            }
+            const dueSukukEvents = normalizedSukukEvents
+                .filter((e) => !e.posted && e.amount > 0 && String(e.payoutDate) <= todayYmd)
+                .slice(0, 50);
             const wuBase = getDefaultWealthUltraSystemConfig();
             let wealthUltraConfig = wuBase;
             if (supabase && auth.user) {
@@ -1123,15 +1064,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         holdings,
                     };
                 }),
-                investmentTransactions: sortByNewestFirst(
-                    appendedInvestmentTx.length
-                        ? [...normalizedInvestmentTransactions, ...appendedInvestmentTx]
-                        : normalizedInvestmentTransactions,
-                ),
+                investmentTransactions: sortByNewestFirst(normalizedInvestmentTransactions),
                 sukukPayoutSchedules: normalizedSukukSchedules,
-                sukukPayoutEvents: postedEventIds.size
-                    ? normalizedSukukEvents.map((e) => (postedEventIds.has(e.id) ? { ...e, posted: true } : e))
-                    : normalizedSukukEvents,
+                sukukPayoutEvents: normalizedSukukEvents,
                 budgets: filterOwnedRows(budgets.data as any[]).map((b: any) => ({
                     ...b,
                     period: b.period ?? 'monthly',
@@ -1182,6 +1117,75 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 allTransactions: [],
                 allBudgets: [],
             });
+
+            // Post due Sukuk payouts after first paint (was blocking setData for up to 5s).
+            if (dueSukukEvents.length) {
+                const userId = auth.user.id;
+                void (async () => {
+                    try {
+                        const appendedInvestmentTx: InvestmentTransaction[] = [];
+                        const postedEventIds = new Set<string>();
+                        const sukukPostDeadline = Date.now() + 5000;
+                        for (const ev of dueSukukEvents) {
+                            if (Date.now() > sukukPostDeadline) {
+                                console.warn('Sukuk auto-post time budget reached; remaining events deferred to next refresh.');
+                                break;
+                            }
+                            const symbol = `SUKUK:${String(ev.assetId).slice(0, 8)}:${ev.kind.toUpperCase()}`;
+                            const txType: InvestmentTransaction['type'] = ev.kind === 'principal' ? 'deposit' : 'dividend';
+                            const payload: Omit<InvestmentTransaction, 'id' | 'user_id'> = {
+                                accountId: ev.investmentAccountId,
+                                date: ev.payoutDate,
+                                type: txType,
+                                symbol,
+                                quantity: 0,
+                                price: 0,
+                                total: ev.amount,
+                                currency: ev.currency,
+                            };
+                            let inserted: any | null = null;
+                            for (const variant of tradePayloadVariants(payload)) {
+                                const res = await db.from('investment_transactions').insert(withUser(variant)).select('*').maybeSingle();
+                                if (!res.error && res.data) {
+                                    inserted = res.data;
+                                    break;
+                                }
+                            }
+                            if (inserted?.id) {
+                                const postUpdate = await db
+                                    .from('sukuk_payout_events')
+                                    .update({ posted: true, posted_at: new Date().toISOString(), posted_investment_transaction_id: inserted.id })
+                                    .eq('id', ev.id)
+                                    .eq('user_id', userId)
+                                    .select('id')
+                                    .maybeSingle();
+                                if (postUpdate.error || !postUpdate.data?.id) {
+                                    try {
+                                        await db.from('investment_transactions').delete().eq('id', inserted.id);
+                                    } catch {
+                                        // ignore rollback failures
+                                    }
+                                } else {
+                                    appendedInvestmentTx.push(normalizeInvestmentTransaction(inserted));
+                                    postedEventIds.add(ev.id);
+                                }
+                            }
+                        }
+                        if (!appendedInvestmentTx.length && postedEventIds.size === 0) return;
+                        setData((prev) => ({
+                            ...prev,
+                            investmentTransactions: appendedInvestmentTx.length
+                                ? sortByNewestFirst([...prev.investmentTransactions, ...appendedInvestmentTx])
+                                : prev.investmentTransactions,
+                            sukukPayoutEvents: postedEventIds.size
+                                ? (prev.sukukPayoutEvents ?? []).map((e) => (postedEventIds.has(e.id) ? { ...e, posted: true } : e))
+                                : prev.sukukPayoutEvents,
+                        }));
+                    } catch (e) {
+                        console.warn('Sukuk auto-post skipped:', e);
+                    }
+                })();
+            }
 
         } catch (error) {
             console.error("Error fetching financial data:", error);

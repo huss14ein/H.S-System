@@ -91,6 +91,36 @@ export type CanonicalFinancialMetrics = {
   investmentAllocation: HeadlineInvestmentAllocationSlices;
 };
 
+/** Dashboard-only bundle: headline NW + KPI snapshot (skips wealth summary / allocation). */
+export type DashboardCanonicalMetrics = Pick<
+  CanonicalFinancialMetrics,
+  'headline' | 'kpiSnapshot' | 'sarPerUsd' | 'netWorth' | 'liquidCashSar' | 'nwOptions'
+>;
+
+export function computeDashboardCanonicalMetrics(
+  input: CanonicalFinancialMetricsInput,
+): DashboardCanonicalMetrics {
+  const { data, exchangeRate, getAvailableCashForAccount, simulatedPrices = {} } = input;
+  const nwOptions: PersonalNetWorthOptions | undefined = getAvailableCashForAccount
+    ? { getAvailableCashForAccount, simulatedPrices }
+    : undefined;
+
+  const headline = computePersonalHeadlineNetWorthSar(data, exchangeRate, nwOptions);
+  const kpiSnapshot =
+    data && getAvailableCashForAccount
+      ? computeDashboardKpiSnapshot(data, exchangeRate, getAvailableCashForAccount, simulatedPrices)
+      : null;
+
+  return {
+    headline,
+    kpiSnapshot,
+    sarPerUsd: headline.sarPerUsd,
+    netWorth: headline.netWorth,
+    liquidCashSar: kpiSnapshot?.liquidCashSar ?? 0,
+    nwOptions,
+  };
+}
+
 export function computeCanonicalFinancialMetrics(
   input: CanonicalFinancialMetricsInput,
 ): CanonicalFinancialMetrics {

@@ -31,11 +31,12 @@ import { GoldBarIcon } from '../components/icons/GoldBarIcon';
 import { UsersIcon } from '../components/icons/UsersIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx, useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import PageLoading from '../components/PageLoading';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
-import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
+import { getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
 import { supabase } from '../services/supabaseClient';
 import { pushNetWorthSnapshot, listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { subscriptionSpendMonthlySar } from '../services/transactionIntelligence';
@@ -68,6 +69,7 @@ import {
 import {
     buildPersonalInvestmentTreemapRows,
     computeMonthlyReportFinancialKpis,
+    computeWealthSummaryReportModel,
 } from '../services/wealthSummaryReportModel';
 import { reconcileDashboardVsSummaryKpis } from '../services/kpiReconciliation';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
@@ -75,7 +77,6 @@ import { logKpiReconciliationDrift } from '../services/kpiDriftTelemetry';
 import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { useMarketData } from '../context/MarketDataContext';
-import { computeCapitalDeployment } from '../services/capitalDeploymentOrchestrator';
 import { useDashboardReconciliationPrefs } from '../hooks/useDashboardReconciliationPrefs';
 import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
 import { useFinancialEnhancementInsights } from '../hooks/useFinancialEnhancementInsights';
@@ -256,7 +257,7 @@ const AccountsOverview: React.FC<{ accounts: Account[], onClick: () => void }> =
 const UpcomingBills: React.FC = () => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const { sarPerUsd: headlineFx } = useCanonicalFinancialMetrics();
+    const headlineFx = useCanonicalSpotFx();
     const formatDate = (date: Date) => date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
     const accountsById = useMemo(() => {
@@ -414,12 +415,12 @@ const AI_SUMMARY_LANG_KEY = 'finova_dashboard_ai_summary_lang_v1';
 
 const SYSTEM_HEALTH_PAGE = 'System & APIs Health' as Page;
 
-const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
-    const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
+const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
+    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
     const { simulatedPrices } = useMarketData();
-    const { headline, kpiSnapshot, wealthSummary, sarPerUsd: canonicalSarPerUsd } = useCanonicalFinancialMetrics();
+    const { headline, kpiSnapshot, sarPerUsd: canonicalSarPerUsd } = useDashboardCanonicalMetrics();
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
     const { maskBalance } = usePrivacyMask();
@@ -455,7 +456,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0, planCurrency: 'SAR' as const };
         const plan = data.investmentPlan;
         const planCurrency = (plan.budgetCurrency === 'SAR' || plan.budgetCurrency === 'USD' ? plan.budgetCurrency : 'SAR') as 'SAR' | 'USD';
-        hydrateSarPerUsdDailySeries(data, exchangeRate);
         const spotRate = canonicalSarPerUsd;
         const monthStartDay = resolveMonthStartDayFromData(data);
         const { start: finStart, end: finEnd } = financialMonthRange(new Date(), monthStartDay);
@@ -489,7 +489,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         try {
             if (!data) return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
 
-            hydrateSarPerUsdDailySeries(data, exchangeRate);
             const sarPerUsd = canonicalSarPerUsd;
 
             const now = new Date();
@@ -539,9 +538,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 investmentCapitalSource,
             } = snap;
 
-            const investmentTreemapData =
-                wealthSummary?.investmentTreemapData ??
-                buildPersonalInvestmentTreemapRows(data, sarPerUsd, simulatedPrices);
+            const investmentTreemapData = buildPersonalInvestmentTreemapRows(data, sarPerUsd, simulatedPrices);
             const monthlySpending = new Map<string, number>();
             monthlyTransactions
                 .filter((t: { type?: string }) => countsAsExpenseForCashflowKpi(t))
@@ -645,7 +642,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             console.error("Dashboard calculation error:", e);
             return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
         }
-    }, [data, exchangeRate, getAvailableCashForAccount, kpiSnapshot, canonicalSarPerUsd, wealthSummary, simulatedPrices]);
+    }, [data, exchangeRate, getAvailableCashForAccount, kpiSnapshot, canonicalSarPerUsd, simulatedPrices]);
 
     useEffect(() => {
         if (!auth?.user || !data) return;
@@ -673,25 +670,14 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         if (!data) return { monthlyEstimate: 0, count: 0 };
         const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
         const accounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []) as Account[];
-        hydrateSarPerUsdDailySeries(data, exchangeRate);
         const sarPerUsd = canonicalSarPerUsd;
         return subscriptionSpendMonthlySar(txs, accounts, sarPerUsd, 3);
     }, [data, exchangeRate, canonicalSarPerUsd]);
 
     const { strictReconciliationMode } = useDashboardReconciliationPrefs(auth?.user?.id);
 
-    const capitalDeployment = useMemo(() => {
-        if (!data) return null;
-        return computeCapitalDeployment(
-            data,
-            exchangeRate,
-            getAvailableCashForAccount,
-            emergencyFund.monthsCovered,
-            EMERGENCY_FUND_TARGET_MONTHS,
-        );
-    }, [data, exchangeRate, getAvailableCashForAccount, emergencyFund.monthsCovered]);
-
     const enhancementInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
+    const capitalDeployment = enhancementInsights.capitalDeployment;
 
     const nextBestActions = useMemo(() => {
         const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
@@ -723,7 +709,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         if (!hasSufficientData) return { score: null, parts: null };
 
         const liquidityScore = Math.min(100, (emergencyFund.monthsCovered / EMERGENCY_FUND_TARGET_MONTHS) * 100);
-        hydrateSarPerUsdDailySeries(data, exchangeRate);
         const sarPerUsd = canonicalSarPerUsd;
         const goalResolved = computeGoalResolvedAmountsSar(data, sarPerUsd);
         const now = new Date();
@@ -762,14 +747,18 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         return { score, parts };
     }, [data, emergencyFund.monthsCovered, kpiSummary, exchangeRate, canonicalSarPerUsd]);
 
-    const summaryModelForReconciliation = wealthSummary;
+    const summaryModelForReconciliation = useMemo(() => {
+        if (!strictReconciliationMode || !data || !getAvailableCashForAccount) return null;
+        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
+    }, [strictReconciliationMode, data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
+
     const summaryMonthlyKpisForReconciliation = useMemo(() => {
-        if (!data) return null;
+        if (!strictReconciliationMode || !data || !getAvailableCashForAccount) return null;
         return computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
+    }, [strictReconciliationMode, data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
 
     const kpiReconciliation = useMemo(() => {
-        if (!summaryModelForReconciliation || !summaryMonthlyKpisForReconciliation) return null;
+        if (!strictReconciliationMode || !summaryModelForReconciliation || !summaryMonthlyKpisForReconciliation) return null;
         return reconcileDashboardVsSummaryKpis({
             dashboard: {
                 netWorth: Number(kpiSummary.netWorth ?? 0),
@@ -781,7 +770,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             summaryMetrics: summaryModelForReconciliation.financialMetricsWithEf,
             summaryMonthlyExtras: summaryMonthlyKpisForReconciliation,
         });
-    }, [summaryModelForReconciliation, summaryMonthlyKpisForReconciliation, kpiSummary, emergencyFund.monthsCovered]);
+    }, [strictReconciliationMode, summaryModelForReconciliation, summaryMonthlyKpisForReconciliation, kpiSummary, emergencyFund.monthsCovered]);
 
     const getTrendString = (trend: number = 0) => trend.toFixed(1) + '%';
     const visibleKpiOrder: KpiCardKey[] = KPI_CARD_ORDER;
@@ -854,14 +843,6 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         };
     }, [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, emergencyFund, setActivePage, kpiDensity, maskBalance, goToInvestmentKpiReconciliation]);
     
-    if (showBlockingLoader) {
-        return (
-            <div className="flex justify-center items-center h-96" aria-busy="true">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading dashboard" />
-            </div>
-        );
-    }
-
     const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
     const goals = data?.goals ?? [];
     const isNewUser = accounts.length === 0 || (accounts.length <= 1 && recentTransactions.length === 0 && goals.length === 0);
@@ -938,25 +919,66 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             )}
 
             {capitalDeployment && (
-                <div className={`mb-4 p-4 rounded-xl border text-sm ${capitalDeployment.canInvest ? 'bg-emerald-50/80 border-emerald-200' : 'bg-amber-50/80 border-amber-200'}`}>
-                    <h3 className="text-sm font-semibold text-slate-900 mb-1">Can I invest?</h3>
-                    <p className="text-slate-800">
-                        Investable surplus: <strong>{formatCurrencyString(capitalDeployment.investableSurplusSar, { digits: 0 })}</strong>
-                        {' · '}Runway: {capitalDeployment.runwayMonths.toFixed(1)} mo
-                        {' · '}Free cash flow (model): {formatCurrencyString(capitalDeployment.monthlyFreeCashFlowSar, { digits: 0 })}
-                    </p>
+                <section
+                    className={`mb-4 overflow-hidden rounded-xl border shadow-sm ${
+                        capitalDeployment.canInvest
+                            ? 'border-emerald-200 bg-white'
+                            : 'border-amber-200 bg-white'
+                    }`}
+                    aria-label="Capital deployment"
+                >
+                    <div
+                        className={`flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-b ${
+                            capitalDeployment.canInvest
+                                ? 'bg-emerald-50/90 border-emerald-100'
+                                : 'bg-amber-50/90 border-amber-100'
+                        }`}
+                    >
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Can I invest?</h3>
+                        <span
+                            className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-md ${
+                                capitalDeployment.canInvest
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-amber-100 text-amber-900'
+                            }`}
+                        >
+                            {capitalDeployment.canInvest ? 'Ready' : 'Gated'}
+                        </span>
+                    </div>
+                    <div className="px-4 py-3 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                        <div className="rounded-lg bg-slate-50/80 px-3 py-2 ring-1 ring-slate-100">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Investable surplus</p>
+                            <p className="text-base font-bold tabular-nums text-slate-900 mt-0.5">
+                                {formatCurrencyString(capitalDeployment.investableSurplusSar, { digits: 0 })}
+                            </p>
+                        </div>
+                        <div className="rounded-lg bg-slate-50/80 px-3 py-2 ring-1 ring-slate-100">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Runway</p>
+                            <p className="text-base font-bold tabular-nums text-slate-900 mt-0.5">
+                                {capitalDeployment.runwayMonths.toFixed(1)} mo
+                            </p>
+                        </div>
+                        <div className="rounded-lg bg-slate-50/80 px-3 py-2 ring-1 ring-slate-100 sm:col-span-1">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Free cash flow</p>
+                            <p className="text-base font-bold tabular-nums text-slate-900 mt-0.5">
+                                {formatCurrencyString(capitalDeployment.monthlyFreeCashFlowSar, { digits: 0 })}
+                            </p>
+                        </div>
+                    </div>
                     {capitalDeployment.reasons.length > 0 && (
-                        <ul className="mt-2 text-xs text-slate-700 list-disc pl-4 space-y-0.5">
+                        <ul className="px-4 pb-3 text-xs text-slate-700 space-y-1.5 border-t border-slate-100 pt-2.5">
                             {capitalDeployment.reasons.map((r, i) => (
-                                <li key={`cap-${i}`}>{r}</li>
+                                <li key={`cap-${i}`} className="flex gap-2 leading-relaxed">
+                                    <span className="text-slate-400 shrink-0">•</span>
+                                    <span>{r}</span>
+                                </li>
                             ))}
                         </ul>
                     )}
-                </div>
+                </section>
             )}
 
             <EnhancementInsightStrip
-                capitalDeployment={enhancementInsights.capitalDeployment}
                 goalConflicts={enhancementInsights.goalConflicts}
                 budgetDrift={enhancementInsights.budgetDrift.slice(0, 2)}
                 lifestyleHits={enhancementInsights.lifestyleHits}
@@ -1006,36 +1028,70 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 </div>
             )}
 
-            <div className="mb-4 p-3 rounded-xl bg-slate-50 border border-slate-200 text-sm space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium text-slate-700 inline-flex items-center gap-1.5">
-                        Financial health score
-                        <InfoHint text="Each pill below is a 0–100 ingredient (not a weight). Final score is a weighted blend: liquidity 22%, savings 18%, debt ease 18%, goals 18%, budget/expense control 14%, P&amp;L momentum vs prior month 10%. Momentum can swing when last month’s net was small (division effect in the KPI)." />
-                    </span>
+            <section className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm text-sm" aria-label="Financial health score">
+                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 bg-slate-50/80 px-4 py-3">
+                    <div className="min-w-0 flex-1">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 inline-flex items-center gap-1.5">
+                            Financial health
+                            <InfoHint text="Each ingredient is 0–100. Final score blends liquidity 22%, savings 18%, debt ease 18%, goals 18%, budget control 14%, P&amp;L momentum 10%." />
+                        </h3>
+                        <p className="text-xs text-slate-500 mt-1 max-w-xl leading-relaxed">
+                            Emergency liquidity, savings rate, debt pressure, goal progress, budget control, and cashflow momentum.
+                        </p>
+                    </div>
                     {financialHealth.score != null ? (
-                        <>
-                            <span className={`font-bold tabular-nums text-lg ${financialHealth.score >= 70 ? 'text-green-700' : financialHealth.score >= 50 ? 'text-amber-700' : 'text-red-700'}`}>
-                                {financialHealth.score}/100
-                            </span>
-                            <span className="text-slate-500 text-xs max-w-xl">
-                                Blends emergency liquidity, SAR savings rate (this month + 3-mo average), debt ease vs income, resolved goal progress, budget variance, and month-on-month P&amp;L momentum.
-                            </span>
-                        </>
+                        <div
+                            className={`shrink-0 flex flex-col items-center justify-center rounded-xl px-4 py-2 min-w-[4.5rem] ring-1 ${
+                                financialHealth.score >= 70
+                                    ? 'bg-emerald-50 text-emerald-800 ring-emerald-100'
+                                    : financialHealth.score >= 50
+                                      ? 'bg-amber-50 text-amber-800 ring-amber-100'
+                                      : 'bg-rose-50 text-rose-800 ring-rose-100'
+                            }`}
+                        >
+                            <span className="text-2xl font-bold tabular-nums leading-none">{financialHealth.score}</span>
+                            <span className="text-[10px] font-semibold uppercase tracking-wide opacity-80 mt-0.5">/ 100</span>
+                        </div>
                     ) : (
-                        <span className="text-slate-500 text-xs">Add account balances, transactions, or goals to see your score.</span>
+                        <p className="text-slate-500 text-xs shrink-0 max-w-[12rem]">Add balances, transactions, or goals to score.</p>
                     )}
                 </div>
                 {financialHealth.parts && (
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600 border-t border-slate-200/80 pt-2">
-                        <span title="Months of essential expenses covered vs target (capped at 100).">Liquidity {financialHealth.parts.liquidity}</span>
-                        <span title="Savings rate 0–100: min(100, average of this month &amp; 3-mo rolling savings % × 2).">Savings {financialHealth.parts.savings}</span>
-                        <span title="100 = low debt stress vs income and cash; lower if payments are heavy vs income.">Debt ease {financialHealth.parts.debtRelief}</span>
-                        <span title="Progress toward goal targets using resolved SAR saved (linked assets + investments + receivables).">Goals {financialHealth.parts.goals}</span>
-                        <span title="From current-month budget variance (under budget scores higher).">Budget {financialHealth.parts.expenses}</span>
-                        <span title="PnL trend vs prior financial month mapped to 0–100 (50 = flat).">Momentum {financialHealth.parts.momentum}</span>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 p-3">
+                        {(
+                            [
+                                ['Liquidity', financialHealth.parts.liquidity, 'Months of essential expenses covered vs target.'],
+                                ['Savings', financialHealth.parts.savings, 'Savings rate (this month + 3-mo rolling).'],
+                                ['Debt ease', financialHealth.parts.debtRelief, 'Lower debt stress vs income scores higher.'],
+                                ['Goals', financialHealth.parts.goals, 'Progress toward goal targets in SAR.'],
+                                ['Budget', financialHealth.parts.expenses, 'Under-budget performance this month.'],
+                                ['Momentum', financialHealth.parts.momentum, 'P&amp;L trend vs prior financial month.'],
+                            ] as const
+                        ).map(([label, value, hint]) => (
+                            <div
+                                key={label}
+                                className="rounded-lg bg-slate-50/80 px-2.5 py-2 ring-1 ring-slate-100"
+                                title={hint}
+                            >
+                                <div className="flex items-center justify-between gap-1 mb-1">
+                                    <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 truncate">
+                                        {label}
+                                    </span>
+                                    <span className="text-xs font-bold tabular-nums text-slate-800">{value}</span>
+                                </div>
+                                <div className="h-1 rounded-full bg-slate-200/90 overflow-hidden">
+                                    <div
+                                        className={`h-full rounded-full transition-all ${
+                                            value >= 70 ? 'bg-emerald-500' : value >= 50 ? 'bg-amber-500' : 'bg-rose-500'
+                                        }`}
+                                        style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
+                                    />
+                                </div>
+                            </div>
+                        ))}
                     </div>
                 )}
-            </div>
+            </section>
 
             <p className="text-xs text-slate-500 mb-1">
                 Drag cards to reorder them; click a card to open that page.
@@ -1192,6 +1248,14 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             />
         </div>
     );
+};
+
+const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = (props) => {
+    const { showBlockingLoader } = useContext(DataContext)!;
+    if (showBlockingLoader) {
+        return <PageLoading ariaLabel="Loading dashboard" message="Loading your dashboard…" />;
+    }
+    return <DashboardContent {...props} />;
 };
 
 export default Dashboard;
