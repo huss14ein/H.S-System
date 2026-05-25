@@ -704,7 +704,7 @@ const Goals: React.FC<{
   clearPageAction?: () => void;
   triggerPageAction?: (page: Page, action: string) => void;
 }> = ({ setActivePage, pageAction, clearPageAction, triggerPageAction }) => {
-    const { data, loading, addGoal, updateGoal, deleteGoal } = useContext(DataContext)!;
+    const { data, showBlockingLoader, addGoal, updateGoal, deleteGoal } = useContext(DataContext)!;
     const { aiHealthChecked, isAiAvailable } = useAI();
     const { trackAction } = useSelfLearning();
     const { currency: displayCurrency } = useCurrency();
@@ -908,7 +908,7 @@ const Goals: React.FC<{
         return warnings;
     }, [data?.goals, data, data?.accounts, (data as any)?.personalAccounts, goalCurrentAmountByGoalId, averageMonthlySavings, sarPerUsd]);
 
-    if (loading || !data) {
+    if (showBlockingLoader) {
         return (
             <div className="flex justify-center items-center h-96" aria-busy="true">
                 <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading goals" />

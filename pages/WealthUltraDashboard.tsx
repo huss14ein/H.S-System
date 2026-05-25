@@ -66,7 +66,7 @@ const SCENARIO_OPTIONS: { id: string; label: string; multiplier: number }[] = [
 ];
 
 const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePage, triggerPageAction }) => {
-  const { data, loading, totalDeployableCash } = useContext(DataContext)!;
+  const { data, showBlockingLoader, totalDeployableCash } = useContext(DataContext)!;
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
   const { isAiAvailable, aiHealthChecked } = useAI();
@@ -1332,7 +1332,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
       ultraTickerNames,
     ]
   );
-  if (loading || !data) {
+  if (showBlockingLoader) {
     return (
       <div className="flex flex-col justify-center items-center min-h-[50vh] gap-4" aria-busy="true">
         <div className="animate-spin rounded-full h-14 w-14 border-2 border-primary border-t-transparent" aria-label="Loading Wealth Ultra" />

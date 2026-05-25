@@ -888,7 +888,7 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
 interface AssetsProps { pageAction?: string | null; clearPageAction?: () => void; setActivePage?: (page: Page) => void; }
 
 const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
-    const { data, loading, refreshData, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
+    const { data, showBlockingLoader, refreshData, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
     const { isAiAvailable, aiHealthChecked } = useAI();
     const { formatCurrencyString } = useFormatCurrency();
     const { sarPerUsd, commoditiesValueSar, sukukAssetsValueSar } = useCanonicalFinancialMetrics();
@@ -1073,7 +1073,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
         };
     }, [assetsList, commodityList, totalPhysicalAssetValue, totalCommodityValue, totalRentalIncome, totalAssetValue, data]);
 
-    if (loading || !data) {
+    if (showBlockingLoader) {
         return (
             <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
                 <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading assets" />

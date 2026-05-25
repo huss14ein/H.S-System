@@ -928,7 +928,7 @@ const InvestmentPlanView: React.FC<{
     onStagedAddOnPlannedHandled?: () => void;
 }> = ({ onExecutePlan, setActivePage: _setActivePage, triggerPageAction, embedded = false, stagedAddOnPlanned, onStagedAddOnPlannedHandled }) => {
     const { aiActionsEnabled } = useAI();
-    const { data, loading, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, showBlockingLoader, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker, getAvailableCashForAccount } = useContext(DataContext)!;
     const { trackAction, trackSuggestionFeedback } = useSelfLearning();
     const { simulatedPrices, symbolQuoteUpdatedAt } = useMarketData();
     const { exchangeRate } = useCurrency();
@@ -970,7 +970,7 @@ const InvestmentPlanView: React.FC<{
     );
 
     // Loading state
-    if (loading || !data) {
+    if (showBlockingLoader) {
         const loadingInner = (
             <div className="flex items-center justify-center py-12" aria-busy="true">
                 <div className="text-center">

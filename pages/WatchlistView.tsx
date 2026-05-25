@@ -744,7 +744,7 @@ type WatchlistViewProps = {
 const WATCHLIST_AI_LANG_KEY = 'finova_default_ai_lang_v1';
 
 const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActivePage: _setActivePage, onCreatePlanFromWatchlist }) => {
-    const { data, loading, addWatchlistItem, updateWatchlistItem, deleteWatchlistItem, addPriceAlert, deletePriceAlert, getAvailableCashForAccount } =
+    const { data, showBlockingLoader, addWatchlistItem, updateWatchlistItem, deleteWatchlistItem, addPriceAlert, deletePriceAlert, getAvailableCashForAccount } =
         useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const { exchangeRate } = useCurrency();
@@ -1235,7 +1235,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
         URL.revokeObjectURL(url);
     };
 
-    if (loading || !data) {
+    if (showBlockingLoader) {
         return (
             <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50 flex items-center justify-center" aria-busy="true">
                 <div className="text-center">

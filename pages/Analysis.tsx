@@ -191,7 +191,7 @@ const AssetLiabilityChart: React.FC = () => {
 
 const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { aiHealthChecked, isAiAvailable } = useAI();
-    const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate, currency: displayCurrency } = useCurrency();
     const { simulatedPrices } = useMarketData();
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
@@ -287,7 +287,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const budgetDriftRows = useMemo(() => detectBudgetDrift(data!, exchangeRate), [data, exchangeRate]);
     const incomeStability = useMemo(() => computeIncomeStability(data!), [data]);
 
-    if (loading || !data) {
+    if (showBlockingLoader) {
         return (
             <div className="flex justify-center items-center h-96" aria-busy="true">
                 <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading analysis" />

@@ -46,7 +46,7 @@ interface LiquidationPlannerProps {
 }
 
 const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, triggerPageAction, dataTick }) => {
-  const { data, loading } = useContext(DataContext)!;
+  const { data, showBlockingLoader } = useContext(DataContext)!;
   const { trackAction } = useSelfLearning();
   const { formatCurrencyString } = useFormatCurrency();
   const { sarPerUsd } = useCanonicalFinancialMetrics();
@@ -118,7 +118,7 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
   );
   const { names: liqCompanyNames } = useCompanyNames(liqSymbols);
 
-  if (loading || !data) {
+  if (showBlockingLoader) {
     return (
       <div className="flex justify-center py-24">
         <div className="animate-spin h-10 w-10 border-2 border-primary border-t-transparent rounded-full" />

@@ -32,7 +32,7 @@ interface AIRebalancerViewProps {
 }
 
 const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, onOpenWealthUltra, setActivePage: _setActivePage }) => {
-  const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
+  const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
   const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
   const { trackAction } = useSelfLearning();
   const { simulatedPrices, symbolQuoteUpdatedAt } = useMarketData();
@@ -249,7 +249,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
     return { ...res, labels };
   }, [selectedPortfolio, simulatedPrices, sarPerUsd]);
 
-  if (loading || !data) {
+  if (showBlockingLoader) {
     return (
       <div className="page-container flex items-center justify-center min-h-[24rem]" aria-busy="true">
         <div className="text-center">

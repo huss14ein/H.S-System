@@ -123,7 +123,7 @@ interface LogicEnginesHubProps {
 }
 
 const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, triggerPageAction, dataTick = 0 }) => {
-  const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
+  const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
   const { trackAction } = useSelfLearning();
   const engines = useFinancialEnginesIntegration();
   const ef = useEmergencyFund(data ?? null);
@@ -626,7 +626,7 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
         ]
       : [];
 
-  if (loading && !data) {
+  if (showBlockingLoader) {
     return (
       <PageLayout
         title="Behind the numbers"

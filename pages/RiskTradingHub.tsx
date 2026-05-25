@@ -44,7 +44,7 @@ const RiskTradingHub: React.FC<{
   /** When true, render without full-page chrome (e.g. inside Money Tools). */
   embedded?: boolean;
 }> = ({ setActivePage, triggerPageAction, embedded = false }) => {
-  const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
+  const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
   const auth = useContext(AuthContext);
   const marketData = useContext(MarketDataContext);
   const ef = useEmergencyFund(data ?? null);
@@ -167,7 +167,7 @@ const RiskTradingHub: React.FC<{
   const buyS = buyScore({ emergencyFundMonths: ef.monthsCovered, runwayMonths: ef.monthsCovered });
   const sellS = sellScore({ aboveTargetWeightPct: 8, needCash: true });
 
-  if (loading || !data) {
+  if (showBlockingLoader) {
     return (
       <div className="flex justify-center py-24">
         <div className="animate-spin h-10 w-10 border-2 border-primary border-t-transparent rounded-full" />

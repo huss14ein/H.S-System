@@ -66,7 +66,7 @@ function plainLanguageExecutionNote(logDetails: string): { headline: string; tec
 }
 
 const ExecutionHistoryView: React.FC = () => {
-  const { data, loading } = useContext(DataContext)!;
+  const { data, showBlockingLoader } = useContext(DataContext)!;
   const { formatCurrencyString } = useFormatCurrency();
   const [filterStatus, setFilterStatus] = useState<'All' | 'success' | 'failure'>('All');
 
@@ -166,7 +166,7 @@ const ExecutionHistoryView: React.FC = () => {
     return { total: allExecutionLogs.length, success, failure };
   }, [allExecutionLogs]);
 
-  if (loading || !data) {
+  if (showBlockingLoader) {
     return (
       <div className="page-container flex items-center justify-center min-h-[24rem]" aria-busy="true">
         <div className="flex items-center gap-3">

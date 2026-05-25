@@ -269,7 +269,7 @@ interface CommoditiesProps {
 }
 
 const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
-    const { data, loading, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
+    const { data, showBlockingLoader, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const { formatCurrencyString } = useFormatCurrency();
     const { sarPerUsd, commoditiesValueSar, investmentsTotalSar } = useCanonicalFinancialMetrics();
@@ -364,7 +364,7 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
                 </div>
             }
         >
-        {(loading || !data) ? (
+        {showBlockingLoader ? (
             <div className="flex justify-center items-center min-h-[20rem]" aria-busy="true">
                 <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading commodities" />
             </div>

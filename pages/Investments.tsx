@@ -4978,7 +4978,7 @@ interface InvestmentsProps {
 }
 
 const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
-  const { data, loading, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
+  const { data, showBlockingLoader, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
   const recordTradeConfirmed = useCallback(
     (trade: Parameters<typeof recordTrade>[0], executedPlanId?: string) =>
       recordTrade(trade, executedPlanId, { confirmed: true }),
@@ -5406,7 +5406,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     }
   };
 
-  if (loading || !data) {
+  if (showBlockingLoader) {
     return (
       <div className="flex justify-center items-center min-h-[24rem] bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 rounded-2xl border border-slate-200" aria-busy="true">
         <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading investments" />

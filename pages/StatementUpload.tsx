@@ -30,7 +30,7 @@ interface StatementUploadProps {
 }
 
 const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, triggerPageAction }) => {
-  const { data, loading, addTransaction, recordTrade, addBudget } = useContext(DataContext)!;
+  const { data, showBlockingLoader, addTransaction, recordTrade, addBudget } = useContext(DataContext)!;
   const confirmAction = useConfirmAction();
   const { commitParsedStatementFromUpload } = useStatementProcessing();
   const { formatCurrencyString } = useFormatCurrency();
@@ -768,7 +768,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
     );
   };
 
-  if (loading || !data) {
+  if (showBlockingLoader) {
     return <PageLoading ariaLabel="Loading statement upload" message="Loading…" />;
   }
 
