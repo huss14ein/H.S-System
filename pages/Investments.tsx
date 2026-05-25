@@ -16,10 +16,7 @@ import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { Squares2X2Icon } from '../components/icons/Squares2X2Icon';
 import { EyeIcon } from '../components/icons/EyeIcon';
-import AIRebalancerView from './AIRebalancerView';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
-import WatchlistView from './WatchlistView';
-import RecoveryPlanView from './RecoveryPlanView';
 import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
@@ -29,7 +26,6 @@ import MiniPriceChart from '../components/charts/MiniPriceChart';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
-import InvestmentOverview from './InvestmentOverview';
 import { useMarketData } from '../context/MarketDataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useAI } from '../context/AiContext';
@@ -58,7 +54,6 @@ import { summarizeInvestmentTradeForConfirm } from '../utils/recordConfirmMessag
 import { checkExtendedHoursGuardrail, getTIFLabel, getNBBOStub, getSORStub, getVWAPSlices, type TIF } from '../services/tradingExecution';
 import { getSettlementDate, isSettled } from '../services/riskCompliance';
 import { ClockIcon } from '../components/icons/ClockIcon';
-import ExecutionHistoryView from './ExecutionHistoryView';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { loadTradingPolicy, evaluateBuyAgainstPolicy } from '../services/tradingPolicy';
 import { EXECUTE_PLAN_STORAGE_KEY } from '../content/plainLanguage';
@@ -118,11 +113,41 @@ import {
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
 const InvestmentPlanView = lazy(() => import('./InvestmentPlanView'));
-
-
-
+const InvestmentOverview = lazy(() => import('./InvestmentOverview'));
+const RecoveryPlanView = lazy(() => import('./RecoveryPlanView'));
+const AIRebalancerView = lazy(() => import('./AIRebalancerView'));
+const WatchlistView = lazy(() => import('./WatchlistView'));
+const ExecutionHistoryView = lazy(() => import('./ExecutionHistoryView'));
 
 type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
+
+function prefetchInvestmentTab(tab: InvestmentSubPage): void {
+  switch (tab) {
+    case 'Overview':
+      void import('./InvestmentOverview');
+      break;
+    case 'Investment Plan':
+      void import('./InvestmentPlanView');
+      break;
+    case 'Recovery Plan':
+      void import('./RecoveryPlanView');
+      break;
+    case 'Dividend Tracker':
+      void import('./DividendTrackerView');
+      break;
+    case 'AI Rebalancer':
+      void import('./AIRebalancerView');
+      break;
+    case 'Watchlist':
+      void import('./WatchlistView');
+      break;
+    case 'Execution History':
+      void import('./ExecutionHistoryView');
+      break;
+    default:
+      break;
+  }
+}
 
 class InvestmentTabErrorBoundary extends React.Component<
     { activeTab: InvestmentSubPage; onReset: () => void; children: React.ReactNode },
@@ -4978,7 +5003,7 @@ interface InvestmentsProps {
 }
 
 const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
-  const { data, showBlockingLoader, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
+  const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
   const recordTradeConfirmed = useCallback(
     (trade: Parameters<typeof recordTrade>[0], executedPlanId?: string) =>
       recordTrade(trade, executedPlanId, { confirmed: true }),
@@ -4990,10 +5015,15 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
   const { trackAction } = useSelfLearning();
   const [activeTab, setActiveTabState] = useState<InvestmentSubPage>('Overview');
   const setActiveTab = useCallback((tab: InvestmentSubPage) => {
+    prefetchInvestmentTab(tab);
     trackAction(`tab-${tab.replace(/\s+/g, '-')}`, 'Investments');
     setActiveTabState(tab);
   }, [trackAction]);
-  
+
+  useEffect(() => {
+    prefetchInvestmentTab(activeTab);
+  }, [activeTab]);
+
   const [isHoldingModalOpen, setIsHoldingModalOpen] = useState(false);
   const [selectedHolding, setSelectedHolding] = useState<(Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number; }) | null>(null);
   const [selectedPortfolio, setSelectedPortfolio] = useState<InvestmentPortfolio | null>(null);
@@ -5158,14 +5188,9 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     }
     if (pageAction?.startsWith('investment-tab:')) {
         const raw = pageAction.slice('investment-tab:'.length);
-        const allowed = new Set<InvestmentSubPage>([
-            'Investment Plan',
-            'Recovery Plan',
-            'Dividend Tracker',
-            'AI Rebalancer',
-            'Watchlist',
-        ]);
+        const allowed = new Set<InvestmentSubPage>(INVESTMENT_SUB_PAGES.map((t) => t.name));
         if (allowed.has(raw as InvestmentSubPage)) {
+            prefetchInvestmentTab(raw as InvestmentSubPage);
             setActiveTab(raw as InvestmentSubPage);
         }
         clearPageAction?.();
@@ -5406,14 +5431,6 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     }
   };
 
-  if (showBlockingLoader) {
-    return (
-      <div className="flex justify-center items-center min-h-[24rem] bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 rounded-2xl border border-slate-200" aria-busy="true">
-        <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading investments" />
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-8 sm:space-y-10">
         <header className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 via-white to-indigo-50 px-5 py-6 sm:px-6 shadow-sm">
@@ -5550,6 +5567,8 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
               {INVESTMENT_SUB_PAGES.map(tab => (
                 <button
                   key={tab.name}
+                  onMouseEnter={() => prefetchInvestmentTab(tab.name)}
+                  onFocus={() => prefetchInvestmentTab(tab.name)}
                   onClick={() => setActiveTab(tab.name)}
                   className={`inline-flex items-center gap-2 whitespace-nowrap py-2.5 px-4 rounded-xl font-medium text-sm transition-colors ${
                     activeTab === tab.name

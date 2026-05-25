@@ -928,7 +928,7 @@ const InvestmentPlanView: React.FC<{
     onStagedAddOnPlannedHandled?: () => void;
 }> = ({ onExecutePlan, setActivePage: _setActivePage, triggerPageAction, embedded = false, stagedAddOnPlanned, onStagedAddOnPlannedHandled }) => {
     const { aiActionsEnabled } = useAI();
-    const { data, showBlockingLoader, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker, getAvailableCashForAccount } = useContext(DataContext)!;
     const { trackAction, trackSuggestionFeedback } = useSelfLearning();
     const { simulatedPrices, symbolQuoteUpdatedAt } = useMarketData();
     const { exchangeRate } = useCurrency();
@@ -968,24 +968,6 @@ const InvestmentPlanView: React.FC<{
         () => computeHouseholdStressFromData(data),
         [data]
     );
-
-    // Loading state
-    if (showBlockingLoader) {
-        const loadingInner = (
-            <div className="flex items-center justify-center py-12" aria-busy="true">
-                <div className="text-center">
-                    <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" aria-label="Loading trade plans" />
-                    <p className="text-sm text-slate-600">Loading trade plans…</p>
-                </div>
-            </div>
-        );
-        if (embedded) return loadingInner;
-        return (
-            <PageLayout title="Trade plans" description="Schedule future buys or sells. We’ll flag when your rule is met.">
-                {loadingInner}
-            </PageLayout>
-        );
-    }
 
     const handleSave = async (planData: PlanSavePayload | PlannedTrade) => {
         if ('id' in planData) {

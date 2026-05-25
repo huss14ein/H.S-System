@@ -47,7 +47,7 @@ function holdingValueInBookCurrency(
 }
 
 const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => void }> = ({ setActiveTab }) => {
-    const { data, showBlockingLoader } = useContext(DataContext)!;
+    const { data } = useContext(DataContext)!;
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { simulatedPrices } = useMarketData();
     const {
@@ -191,14 +191,6 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
             setIsAiLoading(false);
         }
     }, [allHoldingsWithGains, portfolioAllocation, assetClassAllocation, companyNameMap]);
-
-    if (showBlockingLoader) {
-        return (
-            <div className="flex justify-center items-center min-h-[20rem]" aria-busy="true">
-                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading investment overview" />
-            </div>
-        );
-    }
 
     const hasNoPortfolios = portfolioAllocation.length === 0 && tradableCashSAR <= 0 && sukukAssetsSAR <= 0;
 

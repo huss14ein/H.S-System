@@ -1,6 +1,5 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import PageLayout from '../components/PageLayout';
-import PageLoading from '../components/PageLoading';
 import { DataContext } from '../context/DataContext';
 import { getMarketCalendarCached, getMarketCalendarFresh, getMarketHolidays, type MarketCalendarLoadMode } from '../services/finnhubService';
 import { getStaticMarketHolidays, getStaticEconomicCalendar } from '../services/staticMarketCalendarService';
@@ -316,7 +315,7 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
 }
 
 const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
-  const { data, showBlockingLoader } = useContext(DataContext)!;
+  const { data } = useContext(DataContext)!;
   const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data]);
   const financialMonthBanner = useMemo(() => {
     const { start, end, key } = financialMonthRange(new Date(), monthStartDay);
@@ -918,10 +917,6 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     a.click();
     URL.revokeObjectURL(href);
   };
-
-  if (showBlockingLoader) {
-    return <PageLoading ariaLabel="Loading market events" message="Loading…" />;
-  }
 
   return (
     <PageLayout

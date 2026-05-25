@@ -9,6 +9,7 @@ import LiveAdvisorModal from './LiveAdvisorModal';
 import { useTrackPageVisit } from '../context/SelfLearningContext';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import CrossEngineAlertsBanner from './CrossEngineAlertsBanner';
+import FinancialDataHydrateBanner from './FinancialDataHydrateBanner';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { useCurrency } from '../context/CurrencyContext';
@@ -53,7 +54,7 @@ const Layout: React.FC<LayoutProps> = ({
   useEffect(() => {
     const uid = auth?.user?.id;
     const data = dataCtx?.data;
-    if (!uid || !data || dataCtx?.showBlockingLoader || !dataCtx.getAvailableCashForAccount) return;
+    if (!uid || !data || dataCtx?.showHydrateBanner || !dataCtx.getAvailableCashForAccount) return;
     void runAutoNetWorthSnapshotIfDue({
       userId: uid,
       data,
@@ -62,7 +63,7 @@ const Layout: React.FC<LayoutProps> = ({
       simulatedPrices,
       supabase,
     });
-  }, [auth?.user?.id, dataCtx?.showBlockingLoader, dataCtx?.data, exchangeRate, simulatedPrices, dataCtx?.getAvailableCashForAccount]);
+  }, [auth?.user?.id, dataCtx?.showHydrateBanner, dataCtx?.data, exchangeRate, simulatedPrices, dataCtx?.getAvailableCashForAccount]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -106,6 +107,7 @@ const Layout: React.FC<LayoutProps> = ({
         className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-6 lg:p-8 w-full"
       >
         <div className={`${contentMaxClass} mx-auto w-full animate-fadeIn min-w-0`}>
+          <FinancialDataHydrateBanner />
           {ready && (
             <CrossEngineAlertsBanner
               ready={ready}

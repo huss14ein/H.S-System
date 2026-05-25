@@ -45,6 +45,7 @@ export function useCanonicalSpotFx(): number {
 export function useCanonicalFinancialMetrics(): UseCanonicalFinancialMetricsResult {
   const ctx = useContext(DataContext);
   const data = ctx?.data ?? null;
+  const showHydrateBanner = ctx?.showHydrateBanner ?? false;
   const getAvailableCashForAccount = ctx?.getAvailableCashForAccount;
   const { exchangeRate } = useCurrency();
   const { simulatedPrices } = useMarketData();
@@ -52,6 +53,26 @@ export function useCanonicalFinancialMetrics(): UseCanonicalFinancialMetricsResu
   useHydrateSarPerUsdDailySeries(data, exchangeRate);
 
   return useMemo((): UseCanonicalFinancialMetricsResult => {
+    if (showHydrateBanner) {
+      const metrics = computeCanonicalFinancialMetrics({
+        data: null,
+        exchangeRate,
+        getAvailableCashForAccount: undefined,
+        simulatedPrices: {},
+      });
+      const parts = metrics.headlineExposureParts;
+      return {
+        data,
+        exchangeRate,
+        simulatedPrices: debouncedPrices,
+        getAvailableCashForAccount,
+        ...metrics,
+        buckets: metrics.headline.buckets,
+        platformsRollupSar: parts.platformsRollupSar,
+        commoditiesValueSar: parts.commoditiesValueSar,
+        sukukAssetsValueSar: parts.sukukAssetsValueSar,
+      };
+    }
     const metrics = computeCanonicalFinancialMetrics({
       data,
       exchangeRate,
@@ -71,7 +92,7 @@ export function useCanonicalFinancialMetrics(): UseCanonicalFinancialMetricsResu
       commoditiesValueSar: parts.commoditiesValueSar,
       sukukAssetsValueSar: parts.sukukAssetsValueSar,
     };
-  }, [data, exchangeRate, getAvailableCashForAccount, debouncedPrices]);
+  }, [data, exchangeRate, getAvailableCashForAccount, debouncedPrices, showHydrateBanner]);
 }
 
 /** Lighter than full canonical bundle — use on Dashboard to avoid wealth-summary work on every quote tick. */
@@ -83,6 +104,7 @@ export function useDashboardCanonicalMetrics(): DashboardCanonicalMetrics & {
 } {
   const ctx = useContext(DataContext);
   const data = ctx?.data ?? null;
+  const showHydrateBanner = ctx?.showHydrateBanner ?? false;
   const getAvailableCashForAccount = ctx?.getAvailableCashForAccount;
   const { exchangeRate } = useCurrency();
   const { simulatedPrices } = useMarketData();
@@ -90,6 +112,20 @@ export function useDashboardCanonicalMetrics(): DashboardCanonicalMetrics & {
   useHydrateSarPerUsdDailySeries(data, exchangeRate);
 
   return useMemo(() => {
+    if (showHydrateBanner) {
+      return {
+        data,
+        exchangeRate,
+        simulatedPrices: debouncedPrices,
+        getAvailableCashForAccount,
+        ...computeDashboardCanonicalMetrics({
+          data: null,
+          exchangeRate,
+          getAvailableCashForAccount: undefined,
+          simulatedPrices: {},
+        }),
+      };
+    }
     const metrics = computeDashboardCanonicalMetrics({
       data,
       exchangeRate,
@@ -103,5 +139,5 @@ export function useDashboardCanonicalMetrics(): DashboardCanonicalMetrics & {
       getAvailableCashForAccount,
       ...metrics,
     };
-  }, [data, exchangeRate, getAvailableCashForAccount, debouncedPrices]);
+  }, [data, exchangeRate, getAvailableCashForAccount, debouncedPrices, showHydrateBanner]);
 }

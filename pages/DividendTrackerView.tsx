@@ -48,7 +48,7 @@ const DividendTrackerView: React.FC<{
   pageAction?: string | null;
   clearPageAction?: () => void;
 }> = ({ setActivePage, triggerPageAction, pageAction, clearPageAction }) => {
-    const { data, showBlockingLoader, recordTrade, updateHolding, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, showHydrateBanner, recordTrade, updateHolding, getAvailableCashForAccount } = useContext(DataContext)!;
     const confirmAction = useConfirmAction();
     const { exchangeRate } = useCurrency();
     const { sarPerUsd } = useCanonicalFinancialMetrics();
@@ -327,7 +327,7 @@ const DividendTrackerView: React.FC<{
     }, [pageAction, clearPageAction]);
 
     useEffect(() => {
-        if (showBlockingLoader || autoSyncStarted.current) return;
+        if (showHydrateBanner || autoSyncStarted.current) return;
         autoSyncStarted.current = true;
         let cancelled = false;
         (async () => {
@@ -360,7 +360,7 @@ const DividendTrackerView: React.FC<{
         return () => {
             cancelled = true;
         };
-    }, [showBlockingLoader, data, runFinnhubSync, personalInvestments, dividendTransactions]);
+    }, [showHydrateBanner, data, runFinnhubSync, personalInvestments, dividendTransactions]);
 
     const formatTxAmountSar = useCallback(
         (t: InvestmentTransaction) => {
@@ -377,13 +377,12 @@ const DividendTrackerView: React.FC<{
         [accountsFull, portfoliosAll, data, exchangeRate, formatCurrencyString],
     );
 
-    if (showBlockingLoader || !tracker) {
+    if (!tracker) {
         return (
-            <div className="page-container flex items-center justify-center min-h-[24rem]" aria-busy="true">
-                <div className="text-center">
-                    <div className="w-12 h-12 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" aria-label="Loading dividend tracker" />
-                    <p className="text-sm text-slate-600">Loading dividend data...</p>
-                </div>
+            <div className="page-container">
+                <p className="text-sm text-slate-600" role="status">
+                    Loading dividend data…
+                </p>
             </div>
         );
     }
@@ -403,12 +402,12 @@ const DividendTrackerView: React.FC<{
             )}
 
             <div className="section-card p-6 sm:p-8">
-                <div className="flex items-center gap-4">
-                    <div className="w-14 h-14 bg-primary/10 rounded-xl flex items-center justify-center">
-                        <TrophyIcon className="h-7 w-7 text-primary" />
-                    </div>
-                    <div>
-                        <h2 className="page-title text-2xl sm:text-3xl">Dividend Tracker</h2>
+                    <div className="flex items-center gap-4">
+                        <div className="w-14 h-14 bg-primary/10 rounded-xl flex items-center justify-center">
+                            <TrophyIcon className="h-7 w-7 text-primary" />
+                        </div>
+                        <div>
+                            <h2 className="page-title text-2xl sm:text-3xl">Dividend Tracker</h2>
                         <p className="text-slate-600 mt-1 max-w-2xl">
                             Two layers: <strong>received</strong> cash from your ledger, and an <strong>expected plan</strong> you control (yield %, manual annual SAR, or optional market hints). Record cash on Investments → Record Trade → Dividend.
                         </p>

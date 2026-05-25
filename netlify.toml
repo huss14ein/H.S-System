@@ -32,6 +32,12 @@
   to = "/index.html"
   status = 200
 
+# Hashed Vite assets are immutable — long cache improves repeat visits without affecting deploy safety (index.html still revalidates).
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
 # SPA shell must revalidate so clients don’t keep an old index that references deleted hashed JS chunks (dynamic import failures).
 [[headers]]
   for = "/index.html"

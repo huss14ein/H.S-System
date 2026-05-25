@@ -30,7 +30,7 @@ const TOOLTIP_STYLE = { backgroundColor: 'white', border: '1px solid #e2e8f0', b
 
 const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
-    const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate, currency: displayCurrency } = useCurrency();
     const { simulatedPrices } = useMarketData();
     const [stressJobLossM, setStressJobLossM] = useState(3);
@@ -311,14 +311,6 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         setMonthlySavings(Math.max(0, savingsAnalytics.medianMonthlyNet));
         handleManualIncomeGrowthChange(Number(savingsAnalytics.incomeGrowthSuggestion.toFixed(1)));
     }, [savingsAnalytics.medianMonthlyNet, savingsAnalytics.incomeGrowthSuggestion]);
-
-    if (showBlockingLoader) {
-        return (
-            <div className="flex justify-center items-center h-96" aria-busy="true">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading forecast" />
-            </div>
-        );
-    }
 
     const aiForecastTrendSample = chartDisplayData.map((r) => ({
         name: r.name,

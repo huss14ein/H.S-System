@@ -50,6 +50,8 @@ import { normalizePlannedTradeRow, plannedTradeToDbInsert, plannedTradeToDbUpdat
 import {
     dateInRange,
     effectiveMonthStartDate,
+    addMonthsToKey,
+    budgetAppliesToFinancialView,
     financialMonthRange,
     financialMonthRangeFromKey,
     resolveMonthStartDayFromData,
@@ -113,7 +115,9 @@ const HOLDING_QUANTITY_EPSILON = 0.00001;
 interface DataContextType {
   data: FinancialData;
   loading: boolean;
-  /** Full-screen gate: true only on first load before any personal rows exist (background refetch does not block). */
+  /** True during first Supabase hydrate — use for inline hints only (Layout banner). Never full-page block. */
+  showHydrateBanner: boolean;
+  /** @deprecated Always false — pages must not early-return on this; use showHydrateBanner + Layout banner. */
   showBlockingLoader: boolean;
   /** Force a reload from the backend (non-destructive). */
   refreshData: () => Promise<void>;
@@ -940,14 +944,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const trySelectOptionalTable = <T,>(q: PromiseLike<any>) =>
         q.then((r: any) => r, () => ({ data: [] as T[], error: { code: 'PGRST205', message: 'Table not found' } }));
 
+    const FETCH_SETTLE_BUDGET_MS = 10_000;
+
     const fetchData = async () => {
         if (!auth?.user || !supabase) {
+            financialDataLoadedRef.current = true;
+            setAwaitingInitialHydrate(false);
             setLoading(false);
             return;
         }
         const db = supabase;
-        const showBlockingLoader = !financialDataLoadedRef.current;
-        if (showBlockingLoader) setLoading(true);
+        const isInitialHydrate = !financialDataLoadedRef.current;
+        if (isInitialHydrate) setLoading(true);
         try {
             // Optional tables: fetch so they never reject (migrations may not be run yet)
             const recurringPromise = trySelectOptionalTable<any>(db.from('recurring_transactions').select('*').eq('user_id', auth.user.id));
@@ -980,8 +988,23 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 sukukEventsPromise,
             ];
             const keys = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'investments', 'investmentTransactions', 'budgets', 'watchlist', 'settings', 'zakatPayments', 'priceAlerts', 'commodityHoldings', 'plannedTrades', 'investmentPlan', 'portfolioUniverse', 'statusChangeLog', 'executionLogs', 'recurringTransactions', 'budgetRequests', 'sukukPayoutSchedules', 'sukukPayoutEvents'] as const;
-            const settled = await Promise.allSettled(fetchPromises);
             const emptyResult = (err?: any) => ({ data: null, error: err || { code: 'FETCH_FAILED' } });
+            const settled = await Promise.race([
+                Promise.allSettled(fetchPromises.map((p) => Promise.resolve(p))),
+                new Promise<PromiseSettledResult<{ data: unknown; error: unknown }>[]>((resolve) => {
+                    setTimeout(() => {
+                        console.warn(
+                            `Financial data fetch exceeded ${FETCH_SETTLE_BUDGET_MS}ms; continuing with partial workspace.`,
+                        );
+                        resolve(
+                            keys.map(() => ({
+                                status: 'fulfilled' as const,
+                                value: emptyResult({ code: 'TIMEOUT' }),
+                            })),
+                        );
+                    }, FETCH_SETTLE_BUDGET_MS);
+                }),
+            ]);
             const results = settled.map((s, i) => {
                 if (s.status === 'fulfilled') return s.value as any;
                 console.error(`Error fetching ${keys[i]}:`, s.reason);
@@ -1213,11 +1236,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setAwaitingInitialHydrate(true);
         void fetchData();
 
-        // Safety timeout to ensure loading state is cleared even if Supabase hangs
+        // Safety timeout: never leave hydrate banner up longer than 3s on slow Supabase / preview cold starts
         const timeoutId = setTimeout(() => {
+            financialDataLoadedRef.current = true;
             setAwaitingInitialHydrate(false);
             setLoading(false);
-        }, 8000);
+        }, 3000);
 
         return () => clearTimeout(timeoutId);
         // Use user id only: `user` object reference changes on TOKEN_REFRESHED; refetching then caused global loading flashes.
@@ -1344,6 +1368,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setLoading(false);
             return { ok: true };
         } catch (e) {
+            financialDataLoadedRef.current = true;
+            setAwaitingInitialHydrate(false);
             setLoading(false);
             const msg = e instanceof Error ? e.message : String(e);
             return { ok: false, error: msg };
@@ -1691,15 +1717,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const copyBudgetsFromPreviousMonth = async (targetYear: number, targetMonth: number) => {
         if (!supabase || !auth?.user) return;
-        const sourceDate = new Date(targetYear, targetMonth - 2, 1);
-        const sourceYear = sourceDate.getFullYear();
-        const sourceMonth = sourceDate.getMonth() + 1;
+        const monthStartDay = resolveMonthStartDayFromData(data);
+        const targetKey = { year: targetYear, month: targetMonth };
+        const sourceKey = addMonthsToKey(targetKey, -1);
 
-        const { data: sourceBudgets, error } = await supabase.from('budgets').select('*').match({ user_id: auth.user.id, year: sourceYear, month: sourceMonth });
+        const { data: allUserBudgets, error } = await supabase.from('budgets').select('*').eq('user_id', auth.user.id);
         if (error) { console.error("Error fetching source budgets:", error); toast("Could not fetch last month's budgets.", 'warning'); return; }
+        const sourceBudgets = (allUserBudgets ?? []).filter((b) =>
+            budgetAppliesToFinancialView(b, sourceKey, monthStartDay, 'Monthly'),
+        );
         if (!sourceBudgets || sourceBudgets.length === 0) { toast("No budgets found for the previous month to copy.", 'info'); return; }
 
-        const existingTargetCategories = new Set((data?.budgets ?? []).filter(b => b.year === targetYear && b.month === targetMonth).map(b => b.category));
+        const existingTargetCategories = new Set(
+            (data?.budgets ?? [])
+                .filter((b) => budgetAppliesToFinancialView(b, targetKey, monthStartDay, 'Monthly'))
+                .map((b) => b.category),
+        );
         
         const budgetsToInsert = sourceBudgets
             .filter((b: any) => !existingTargetCategories.has(b.category))
@@ -3975,9 +4008,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         })();
     }, [loading, awaitingInitialHydrate, data, auth?.user?.id, data.investments]);
 
-    const showBlockingLoader = awaitingInitialHydrate;
+    const showHydrateBanner = awaitingInitialHydrate;
+    const showBlockingLoader = false;
 
-    const value = { data: dataWithPersonal, loading, showBlockingLoader, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, updateInvestmentTransaction, deleteInvestmentTransaction, addWatchlistItem, updateWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const value = { data: dataWithPersonal, loading, showHydrateBanner, showBlockingLoader, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, updateInvestmentTransaction, deleteInvestmentTransaction, addWatchlistItem, updateWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

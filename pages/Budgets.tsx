@@ -89,7 +89,14 @@ import { getPersonalTransactions } from '../utils/wealthScope';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { toSAR } from '../utils/currencyMath';
 import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
-import { addMonthsToKey, financialMonthKey, financialMonthRangeFromKey, resolveMonthStartDayFromData } from '../utils/financialMonth';
+import {
+    addMonthsToKey,
+    budgetAppliesToFinancialView,
+    financialMonthKey,
+    financialMonthRangeFromKey,
+    resolveMonthStartDayFromData,
+    type FinancialMonthKey,
+} from '../utils/financialMonth';
 import AIAdvisor from '../components/AIAdvisor';
 import { dedupeSharedBudgetRows, makeSharedOwnerCategoryKey, normalizeSharedCategoryKey, normalizeSharedOwnerKey } from '../services/sharedBudgetKeys';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
@@ -265,6 +272,8 @@ interface BudgetModalProps {
 
 const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budgetToEdit, currentMonth, currentYear }) => {
     const { data } = useContext(DataContext)!;
+    const monthStartDay = resolveMonthStartDayFromData(data);
+    const viewKey: FinancialMonthKey = { year: currentYear, month: currentMonth };
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
     const confirmAction = useConfirmAction();
     const [category, setCategory] = useState('');
@@ -273,7 +282,15 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
     const [tier, setTier] = useState<'Core' | 'Supporting' | 'Optional'>('Optional');
     const [goalId, setGoalId] = useState<string>('');
 
-    const existingCategories = useMemo(() => new Set((data?.budgets ?? []).filter(b => b.year === currentYear && b.month === currentMonth).map(b => b.category)), [data?.budgets, currentYear, currentMonth]);
+    const existingCategories = useMemo(
+        () =>
+            new Set(
+                (data?.budgets ?? [])
+                    .filter((b) => budgetAppliesToFinancialView(b, viewKey, monthStartDay, 'Monthly'))
+                    .map((b) => b.category),
+            ),
+        [data?.budgets, viewKey, monthStartDay],
+    );
     
     const availableCategories = useMemo(() => {
         const allPossible = ['Food', 'Transportation', 'Housing', 'Utilities', 'Shopping', 'Entertainment', 'Health', 'Education', 'Savings & Investments', 'Personal Care', 'Miscellaneous'];
@@ -416,7 +433,7 @@ interface BudgetsProps {
 }
 
 const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pageAction, clearPageAction }) => {
-    const { data, showBlockingLoader, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
+    const { data, showHydrateBanner, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { trackSuggestionFeedback } = useSelfLearning();
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
@@ -447,6 +464,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const { year: currentYear, month: currentMonth } = useMemo(
         () => financialMonthKey(currentDate, monthStartDay),
         [currentDate, monthStartDay]
+    );
+    const currentViewKey = useMemo<FinancialMonthKey>(
+        () => ({ year: currentYear, month: currentMonth }),
+        [currentYear, currentMonth],
     );
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [budgetView, setBudgetView] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
@@ -1182,9 +1203,13 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         });
 
         const ownScopedBudgets = (data?.budgets ?? [])
-            .filter(b => b.year === currentYear)
-            .filter(b => budgetView === 'Yearly' || b.month === currentMonth || (b.period === 'yearly' && b.year === currentYear))
-            .filter(b => isAdmin || permittedCategories.includes(b.category));
+            .filter((b) => budgetAppliesToFinancialView(b, currentViewKey, monthStartDay, budgetView))
+            .filter(
+                (b) =>
+                    isAdmin ||
+                    permittedCategories.length === 0 ||
+                    permittedCategories.includes(b.category),
+            );
 
         const syntheticRestrictedBudgets: Budget[] = !isAdmin
             ? permittedCategories
@@ -1316,7 +1341,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 };
             })
             .sort((a, b) => b.spent - a.spent);
-    }, [data?.transactions, (data as any)?.personalTransactions, data?.budgets, data?.budgetRequests, currentYear, currentMonth, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id, sarPerUsd, accountCurrencyById, installmentBudgetRows, budgetSpendWindows]);
+    }, [data?.transactions, (data as any)?.personalTransactions, data?.budgets, data?.budgetRequests, currentViewKey, monthStartDay, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id, sarPerUsd, accountCurrencyById, installmentBudgetRows, budgetSpendWindows]);
 
     // Admin Approved Budgets Overview: same SAR splits, YTD envelope, and prior-month trend as main Budgets cards.
     const adminApprovedOverviewRaw = useMemo<BudgetRow[]>(() => {
@@ -1375,8 +1400,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         });
 
         const allBudgetRows = data?.budgets ?? [];
-        const budgetsForMonth = (data?.budgets ?? []).filter(
-            (b) => (b.month === mo && b.year === yr) || (b.period === 'yearly' && b.year === yr),
+        const overviewKey: FinancialMonthKey = { year: yr, month: mo };
+        const budgetsForMonth = (data?.budgets ?? []).filter((b) =>
+            budgetAppliesToFinancialView(b, overviewKey, monthStartDay, 'Monthly'),
         );
 
         const rows: BudgetRow[] = budgetsForMonth.map((budget) => {
@@ -1712,11 +1738,18 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         }
 
         return rowsForYear
-            .filter((b) => {
-                const month = Number((b as any).month) || currentMonth;
-                const year = Number((b as any).year) || currentYear;
-                return month === currentMonth || (b.period === 'yearly' && year === currentYear);
-            })
+            .filter((b) =>
+                budgetAppliesToFinancialView(
+                    {
+                        year: Number((b as any).year) || currentYear,
+                        month: Number((b as any).month) || currentMonth,
+                        period: b.period,
+                    },
+                    currentViewKey,
+                    monthStartDay,
+                    budgetView,
+                ),
+            )
             .map((b) => {
                 const period = b.period ?? 'monthly';
                 const ownerKey = normalizeSharedOwnerKey((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
@@ -1792,8 +1825,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         sharedConsumedYtdByOwnerCategory,
         sharedConsumedPreviousByOwnerCategory,
         budgetView,
-        currentYear,
-        currentMonth,
+        currentViewKey,
+        monthStartDay,
         auth?.user?.id,
         sarPerUsd,
         accountCurrencyById,
@@ -2002,8 +2035,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
         const existingForMonth = new Set(
             (data?.budgets ?? [])
-                .filter((b) => b.year === currentYear && b.month === currentMonth)
-                .map((b) => b.category)
+                .filter((b) => budgetAppliesToFinancialView(b, currentViewKey, monthStartDay, 'Monthly'))
+                .map((b) => b.category),
         );
 
         const toCreate = suggestions.filter((s) => !existingForMonth.has(s.category));
@@ -2046,7 +2079,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             accountCurrencyById,
             ownerSharedTransactions,
         });
-        const currentForMonth = budgets.filter(b => b.month === currentMonth && b.year === currentYear);
+        const currentForMonth = budgets.filter((b) =>
+            budgetAppliesToFinancialView(b, currentViewKey, monthStartDay, 'Monthly'),
+        );
         const proposals: Array<{ orig: Budget; proposed: Budget }> = [];
         currentForMonth.forEach(orig => {
             const prop = adjusted.find(b => b.id === orig.id || (b.category === orig.category && b.month === orig.month && b.year === orig.year));
@@ -2302,7 +2337,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             }
 
             const targetCategory = resolveRequestCategory(request);
-            const matchingBudgets = (data?.budgets ?? []).filter((b) => b.category === targetCategory && b.year === currentYear && (b.month === currentMonth || b.period === 'yearly'));
+            const matchingBudgets = (data?.budgets ?? []).filter(
+                (b) =>
+                    b.category === targetCategory &&
+                    budgetAppliesToFinancialView(b, currentViewKey, monthStartDay, budgetView),
+            );
             if (matchingBudgets.length > 0) {
                 matchingBudgets.forEach((b) => updateBudget({ ...b, limit: amount }));
             } else if (targetCategory && auth?.user?.id) {
@@ -2383,26 +2422,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const visibleHistoryRequests = useMemo(() => allRespondedRequests.slice(0, historyItemsToShow), [allRespondedRequests, historyItemsToShow]);
     const hasMoreHistory = historyItemsToShow < allRespondedRequests.length;
 
-    if (showBlockingLoader) {
-        return (
-            <PageLayout title="Budgets" description="Loading your budget data…" action={null}>
-                <div className="space-y-5" aria-busy="true" aria-label="Loading budgets">
-                    <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white/80 px-4 py-3">
-                        <div className="h-10 w-10 shrink-0 rounded-full border-2 border-primary border-t-transparent animate-spin" aria-hidden />
-                        <div>
-                            <p className="text-sm font-semibold text-slate-800">Loading transactions, budgets, and permissions…</p>
-                            <p className="text-xs text-slate-500 mt-0.5">Card totals appear after your workspace data finishes loading.</p>
-                        </div>
-                    </div>
-                    <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
-                        {Array.from({ length: 6 }).map((_, i) => (
-                            <BudgetCardSkeleton key={`budget-sk-${i}`} />
-                        ))}
-                    </div>
-                </div>
-            </PageLayout>
-        );
-    }
+    const budgetsLoadingBanner = showHydrateBanner ? (
+        <div
+            className="mb-4 flex items-center gap-3 rounded-xl border border-slate-200 bg-white/90 px-4 py-3 shadow-sm"
+            role="status"
+            aria-live="polite"
+            aria-label="Loading budget data"
+        >
+            <div className="h-8 w-8 shrink-0 rounded-full border-2 border-primary border-t-transparent animate-spin" aria-hidden />
+            <p className="text-sm font-medium text-slate-700">Loading transactions, budgets, and permissions…</p>
+        </div>
+    ) : null;
 
     return (
         <PageLayout
@@ -2441,6 +2471,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             }
         >
             <div className={budgetSubPage === 'household' ? 'hidden' : 'space-y-6'}>
+            {budgetsLoadingBanner}
             <EnhancementInsightStrip
                 budgetDrift={financialEnhancementInsights.budgetDrift}
                 lifestyleHits={financialEnhancementInsights.lifestyleHits}
@@ -3357,7 +3388,13 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                             const selectedSet = new Set(bulkAddSelectedCategoriesNormalized);
                                             const categories = bulkAddScaledCategories.filter((c) => selectedSet.has(c.category));
                                             if (!window.confirm(`Create or update ${categories.length} budgets for ${MONTHS[bulkAddTargetMonth - 1]} ${bulkAddTargetYear}? Existing budgets for that month will be updated.`)) return;
-                                            const existingBudgets = (data?.budgets ?? []).filter((b) => b.year === bulkAddTargetYear && b.month === bulkAddTargetMonth);
+                                            const bulkTargetKey: FinancialMonthKey = {
+                                                year: bulkAddTargetYear,
+                                                month: bulkAddTargetMonth,
+                                            };
+                                            const existingBudgets = (data?.budgets ?? []).filter((b) =>
+                                                budgetAppliesToFinancialView(b, bulkTargetKey, monthStartDay, 'Monthly'),
+                                            );
                                             let created = 0, updated = 0;
                                             try {
                                                 for (const cat of categories) {

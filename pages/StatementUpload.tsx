@@ -2,7 +2,6 @@ import React, { useState, useContext, useRef, useEffect, useMemo, useCallback } 
 import { DataContext } from '../context/DataContext';
 import { useStatementProcessing } from '../context/StatementProcessingContext';
 import PageLayout from '../components/PageLayout';
-import PageLoading from '../components/PageLoading';
 import SectionCard from '../components/SectionCard';
 import Modal from '../components/Modal';
 import { DocumentArrowUpIcon, CheckCircleIcon, ClockIcon } from '../components/icons';
@@ -30,7 +29,7 @@ interface StatementUploadProps {
 }
 
 const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, triggerPageAction }) => {
-  const { data, showBlockingLoader, addTransaction, recordTrade, addBudget } = useContext(DataContext)!;
+  const { data, addTransaction, recordTrade, addBudget } = useContext(DataContext)!;
   const confirmAction = useConfirmAction();
   const { commitParsedStatementFromUpload } = useStatementProcessing();
   const { formatCurrencyString } = useFormatCurrency();
@@ -767,10 +766,6 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       }),
     );
   };
-
-  if (showBlockingLoader) {
-    return <PageLoading ariaLabel="Loading statement upload" message="Loading…" />;
-  }
 
   return (
     <PageLayout

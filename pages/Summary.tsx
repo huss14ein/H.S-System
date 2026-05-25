@@ -123,7 +123,7 @@ interface SummaryProps {
 
 const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) => {
     const { aiActionsEnabled, aiHealthChecked, isAiAvailable } = useAI();
-    const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const auth = useContext(AuthContext);
     const { exchangeRate, currency: displayCurrency } = useCurrency();
@@ -376,19 +376,13 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         return out;
     }, [reportModel, summaryMonthlyKpis, data, exchangeRate]);
 
-    if (showBlockingLoader) {
-        return (
-            <div className="flex justify-center items-center h-96" aria-busy="true">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading summary" />
-            </div>
-        );
-    }
-
     if (!reportModel) {
         return (
-            <div className="flex justify-center items-center h-96" aria-busy="true">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading summary" />
-            </div>
+            <PageLayout title="Wealth Summary" description="Consolidated view of net worth, investments, and cashflow.">
+                <p className="text-sm text-slate-600" role="status">
+                    Preparing wealth summary…
+                </p>
+            </PageLayout>
         );
     }
 

@@ -26,6 +26,7 @@ import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScop
 import { financialMonthRange, resolveMonthStartDayFromData, dateInRange } from '../utils/financialMonth';
 import { isSupportedPageAction } from '../utils/pageActions';
 import { INFOHINT_CLOSE_OTHERS } from './infoHintEvents';
+import { prefetchPage } from '../utils/lazyPages';
 interface HeaderProps {
   activePage: Page;
   setActivePage: (page: Page) => void;
@@ -258,6 +259,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                           return (
                             <button
                               key={itemName}
+                              onMouseEnter={() => prefetchPage(itemName as Page)}
+                              onFocus={() => prefetchPage(itemName as Page)}
                               onClick={() => { setActivePage(itemName as Page); setActiveGroup(null); }}
                               className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors ${
                                 activePage === itemName ? 'text-primary bg-primary/5 font-semibold' : 'text-gray-600 hover:bg-gray-50'
@@ -280,6 +283,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
             {/* Investment Plan Quick Status */}
             <div 
               className="hidden xl:flex flex-col items-end mr-4 cursor-pointer hover:opacity-80 transition-opacity"
+              onMouseEnter={() => prefetchPage('Investments')}
               onClick={() => setActivePage('Investments')}
               title={investmentProgress.target > 0 ? `Invested ${investmentProgress.amount.toLocaleString()} of ${investmentProgress.target.toLocaleString()} this month` : 'Set monthly budget in Investments → Monthly Plan'}
             >
@@ -526,7 +530,9 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                         const isActive = activePage === itemName;
                         return (
                           <button 
-                              key={itemName} 
+                              key={itemName}
+                              onMouseEnter={() => prefetchPage(itemName as Page)}
+                              onFocus={() => prefetchPage(itemName as Page)}
                               onClick={() => { setActivePage(itemName as Page); setIsMobileMenuOpen(false); }}
                               className={`w-full flex items-center px-4 py-3.5 text-sm font-semibold rounded-2xl transition-all ${
                                   isActive 

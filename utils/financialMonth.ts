@@ -234,3 +234,50 @@ export function currentFinancialMonthIso(ref: Date, monthStartDay: unknown): str
   return financialMonthIsoKey(financialMonthKey(ref, monthStartDay));
 }
 
+export type BudgetViewPeriod = 'Monthly' | 'Weekly' | 'Daily' | 'Yearly';
+
+function calendarMonthInterval(year: number, month1to12: number): { start: Date; end: Date } {
+  return {
+    start: new Date(year, month1to12 - 1, 1, 0, 0, 0, 0),
+    end: new Date(year, month1to12, 0, 23, 59, 59, 999),
+  };
+}
+
+function dateRangesOverlap(
+  a: { start: Date; end: Date },
+  b: { start: Date; end: Date },
+): boolean {
+  return a.start.getTime() <= b.end.getTime() && b.start.getTime() <= a.end.getTime();
+}
+
+/**
+ * Whether a persisted budget row applies to the financial period selected in Budgets UI.
+ * Rows may store `month` as financial index (canonical) or legacy calendar month — both are accepted.
+ */
+export function budgetAppliesToFinancialView(
+  b: { year: number; month: number; period?: string | null },
+  viewKey: FinancialMonthKey,
+  monthStartDay: unknown,
+  budgetView: BudgetViewPeriod,
+): boolean {
+  const year = Number(b.year);
+  const month = Number(b.month);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return false;
+
+  if (budgetView === 'Yearly' || b.period === 'yearly') {
+    return year === viewKey.year;
+  }
+
+  if (year !== viewKey.year) return false;
+
+  if (month === viewKey.month) return true;
+
+  const viewRange = financialMonthRangeFromKey(viewKey, monthStartDay);
+  const cal = calendarMonthInterval(year, month);
+  if (dateRangesOverlap(viewRange, cal)) return true;
+
+  const anchor = new Date(year, month - 1, 15);
+  const rowFinKey = financialMonthKey(anchor, monthStartDay);
+  return rowFinKey.year === viewKey.year && rowFinKey.month === viewKey.month;
+}
+

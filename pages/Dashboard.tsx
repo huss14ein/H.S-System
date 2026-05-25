@@ -1,6 +1,8 @@
-import React, { useMemo, useContext, useState, useCallback, useEffect } from 'react';
+import React, { useMemo, useContext, useState, useCallback, useEffect, Suspense, lazy } from 'react';
 import Card from '../components/Card';
-import DraggableResizableGrid from '../components/DraggableResizableGrid';
+import LoadingSpinner from '../components/LoadingSpinner';
+
+const DraggableResizableGrid = lazy(() => import('../components/DraggableResizableGrid'));
 import { Transaction, Page, Budget, Account } from '../types';
 import ProgressBar from '../components/ProgressBar';
 import CashflowChart from '../components/charts/CashflowChart';
@@ -32,7 +34,6 @@ import { UsersIcon } from '../components/icons/UsersIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import { useCanonicalSpotFx, useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
-import PageLoading from '../components/PageLoading';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
@@ -416,7 +417,7 @@ const AI_SUMMARY_LANG_KEY = 'finova_dashboard_ai_summary_lang_v1';
 const SYSTEM_HEALTH_PAGE = 'System & APIs Health' as Page;
 
 const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
-    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, getAvailableCashForAccount, showHydrateBanner } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
     const { simulatedPrices } = useMarketData();
@@ -849,6 +850,17 @@ const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerP
 
     return (
         <div className="page-container">
+            {showHydrateBanner && (
+                <div
+                    className="mb-4 flex items-center gap-3 rounded-xl border border-slate-200 bg-white/90 px-4 py-3 shadow-sm"
+                    role="status"
+                    aria-live="polite"
+                    aria-label="Loading dashboard data"
+                >
+                    <div className="h-8 w-8 shrink-0 rounded-full border-2 border-primary border-t-transparent animate-spin" aria-hidden />
+                    <p className="text-sm font-medium text-slate-700">Loading your dashboard…</p>
+                </div>
+            )}
             {isNewUser && (
                 <div className="mb-6 p-5 rounded-xl border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-white">
                     <h2 className="text-lg font-semibold text-slate-800">{PAGE_INTROS.Dashboard.title}</h2>
@@ -1140,26 +1152,28 @@ const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerP
                 </div>
             )}
 
-            <DraggableResizableGrid
-                layoutKey="dashboard-kpi"
-                itemOverflowY="visible"
-                items={visibleKpiOrder.map((cardKey) => ({
-                    id: cardKey,
-                    content: (
-                        <div className="min-h-[132px] flex flex-col h-full">
-                            <div className="flex-1 min-h-0">
-                                {kpiCards[cardKey]}
+            <Suspense fallback={<LoadingSpinner className="min-h-[16rem]" message="Loading dashboard layout…" />}>
+                <DraggableResizableGrid
+                    layoutKey="dashboard-kpi"
+                    itemOverflowY="visible"
+                    items={visibleKpiOrder.map((cardKey) => ({
+                        id: cardKey,
+                        content: (
+                            <div className="min-h-[132px] flex flex-col h-full">
+                                <div className="flex-1 min-h-0">
+                                    {kpiCards[cardKey]}
+                                </div>
                             </div>
-                        </div>
-                    ),
-                    defaultW: 4,
-                    defaultH: 2,
-                    minW: 2,
-                    minH: 1,
-                }))}
-                cols={12}
-                rowHeight={72}
-            />
+                        ),
+                        defaultW: 4,
+                        defaultH: 2,
+                        minW: 2,
+                        minH: 1,
+                    }))}
+                    cols={12}
+                    rowHeight={72}
+                />
+            </Suspense>
 
             {data?.accounts?.length > 0 && (
                 <div className="section-card border-l-4 border-primary/40">
@@ -1250,12 +1264,8 @@ const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerP
     );
 };
 
-const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = (props) => {
-    const { showBlockingLoader } = useContext(DataContext)!;
-    if (showBlockingLoader) {
-        return <PageLoading ariaLabel="Loading dashboard" message="Loading your dashboard…" />;
-    }
-    return <DashboardContent {...props} />;
-};
+const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = (props) => (
+    <DashboardContent {...props} />
+);
 
 export default Dashboard;

@@ -269,7 +269,7 @@ interface CommoditiesProps {
 }
 
 const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
-    const { data, showBlockingLoader, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
+    const { data, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const { formatCurrencyString } = useFormatCurrency();
     const { sarPerUsd, commoditiesValueSar, investmentsTotalSar } = useCanonicalFinancialMetrics();
@@ -364,11 +364,6 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
                 </div>
             }
         >
-        {showBlockingLoader ? (
-            <div className="flex justify-center items-center min-h-[20rem]" aria-busy="true">
-                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading commodities" />
-            </div>
-        ) : (
         <div className="space-y-6">
             <Card title="Total Commodity Value" value={formatCurrencyString(totalCommodityValue)} tooltip="Personal holdings only (excludes commodities with Owner set). Matches Assets page metals/crypto total." />
 
@@ -397,7 +392,6 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
             <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} sarPerUsd={sarPerUsd} />
             <DeleteConfirmationModal isOpen={!!commodityToDelete} onClose={() => setCommodityToDelete(null)} onConfirm={handleConfirmCommodityDelete} itemName={commodityToDelete?.name || ''} />
         </div>
-        )}
         </PageLayout>
     );
 };

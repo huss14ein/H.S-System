@@ -88,7 +88,7 @@ const severityScore: Record<'info' | 'warning' | 'urgent', number> = {
 };
 
 export function NotificationsProvider({ children }: { children: React.ReactNode }) {
-  const { data, showBlockingLoader } = useContext(DataContext) ?? {};
+  const { data, showHydrateBanner } = useContext(DataContext) ?? {};
   const auth = useContext(AuthContext);
   const todosOpt = useTodosOptional();
   const sarPerUsd = useCanonicalSpotFx();
@@ -134,7 +134,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
 
   const notifications = useMemo<AppNotification[]>(() => {
     const list: AppNotification[] = [];
-    if (!data || showBlockingLoader) return list;
+    if (!data || showHydrateBanner) return list;
     const now = new Date();
 
     const push = (n: AppNotification) => {
@@ -562,7 +562,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     return list
       .sort((a, b) => (b.score || 0) - (a.score || 0) || new Date(b.date).getTime() - new Date(a.date).getTime())
       .slice(0, 40);
-  }, [data, showBlockingLoader, simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt, sarPerUsd, pendingBudgetRequestCount, pendingTransactionApprovalCount, isAdmin, auth?.user?.id, todosOpt?.todos]);
+  }, [data, showHydrateBanner, simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt, sarPerUsd, pendingBudgetRequestCount, pendingTransactionApprovalCount, isAdmin, auth?.user?.id, todosOpt?.todos]);
 
   const notificationsWithRead = useMemo(
     () => notifications.map((n) => ({ ...n, isRead: readIds.has(n.id) })),
