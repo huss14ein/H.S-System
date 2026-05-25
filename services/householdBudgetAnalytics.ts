@@ -6,6 +6,10 @@
 import type { HouseholdMonthPlan, HouseholdEngineResult } from './householdBudgetEngine';
 import { countsAsExpenseForCashflowKpi } from './transactionFilters';
 import { toSAR } from '../utils/currencyMath';
+import {
+  clampMonthStartDay,
+  financialMonthColumnIndexForDate,
+} from '../utils/financialMonth';
 
 /** Bucket keys that are savings / investments — not consumption outflows. */
 const SAVINGS_BUCKET_KEYS = new Set([
@@ -367,16 +371,18 @@ function stdevPop(values: number[]): number {
 /**
  * Anomaly detection from **real cash transactions** (approved expenses), grouped by
  * `budgetCategory` (fallback: `category`, then `Uncategorized`), converted to SAR using
- * each account’s book currency. Compares each month to leave-one-out mean / stdev of the
- * other months in the same calendar year for that category.
+ * each account’s book currency. Compares each financial-month column (plan year) to leave-one-out
+ * mean / stdev of the other months for that category. Pass `monthStartDay` from settings (default 1 = calendar).
  */
 export function detectSpendingAnomaliesFromTransactions(args: {
   year: number;
   transactions: TxForAnomaly[];
   accounts: AccountForFx[] | null | undefined;
   sarPerUsd: number;
+  monthStartDay?: unknown;
 }): BudgetAnomaly[] {
-  const { year, transactions, accounts, sarPerUsd } = args;
+  const { year, transactions, accounts, sarPerUsd, monthStartDay: msd } = args;
+  const monthStartDay = clampMonthStartDay(msd, 1);
   const rate = Number(sarPerUsd);
   const fx = Number.isFinite(rate) && rate > 0 ? rate : 3.75;
   const accById = new Map<string, AccountForFx>(((accounts ?? []) as AccountForFx[]).map((a) => [String(a.id ?? ''), a]));
@@ -386,8 +392,9 @@ export function detectSpendingAnomaliesFromTransactions(args: {
   for (const t of transactions ?? []) {
     if ((t.status ?? 'Approved') !== 'Approved') continue;
     if (!countsAsExpenseForCashflowKpi(t as any)) continue;
-    const d = new Date(t.date);
-    if (Number.isNaN(d.getTime()) || d.getFullYear() !== year) continue;
+    if (!t.date) continue;
+    const mIdx = financialMonthColumnIndexForDate(t.date, year, monthStartDay);
+    if (mIdx == null) continue;
 
     const acc = accById.get(String(t.accountId ?? ''));
     const cur = acc?.currency === 'USD' ? 'USD' : 'SAR';
@@ -395,7 +402,6 @@ export function detectSpendingAnomaliesFromTransactions(args: {
     if (sar <= 0) continue;
 
     const cat = String(t.budgetCategory ?? t.category ?? '').trim() || 'Uncategorized';
-    const mIdx = d.getMonth();
     if (!monthSpendByCategory[cat]) {
       monthSpendByCategory[cat] = Array(12).fill(0);
     }

@@ -281,3 +281,71 @@ export function budgetAppliesToFinancialView(
   return rowFinKey.year === viewKey.year && rowFinKey.month === viewKey.month;
 }
 
+/**
+ * How well a persisted budget row matches the selected financial view (higher = preferred).
+ * Used to pick one row per category when legacy calendar-index rows overlap the same window.
+ */
+export function budgetRowViewMatchScore(
+  b: { year: number; month: number; period?: string | null },
+  viewKey: FinancialMonthKey,
+  monthStartDay: unknown,
+): number {
+  const year = Number(b.year);
+  const month = Number(b.month);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return -1;
+  if (year !== viewKey.year) return -1;
+
+  const period = b.period ?? 'monthly';
+  if (month === viewKey.month && period !== 'yearly') return 200;
+
+  const anchor = new Date(year, month - 1, 15);
+  const rowFinKey = financialMonthKey(anchor, monthStartDay);
+  if (rowFinKey.year === viewKey.year && rowFinKey.month === viewKey.month) {
+    return period === 'monthly' ? 100 : 90;
+  }
+
+  const viewRange = financialMonthRangeFromKey(viewKey, monthStartDay);
+  const cal = calendarMonthInterval(year, month);
+  if (dateRangesOverlap(viewRange, cal)) return 20;
+  return -1;
+}
+
+/** One budget card per category for the active financial view (fixes duplicate Transportation/Groceries cards). */
+export function dedupeBudgetRowsForFinancialView<
+  T extends { category: string; year: number; month: number; period?: string | null; limit?: number },
+>(
+  budgets: T[],
+  viewKey: FinancialMonthKey,
+  monthStartDay: unknown,
+  budgetView: BudgetViewPeriod,
+): T[] {
+  const byCategory = new Map<string, T[]>();
+  for (const b of budgets) {
+    if (!budgetAppliesToFinancialView(b, viewKey, monthStartDay, budgetView)) continue;
+    const key = String(b.category ?? '').trim().toLowerCase();
+    if (!key) continue;
+    const list = byCategory.get(key) ?? [];
+    list.push(b);
+    byCategory.set(key, list);
+  }
+
+  const out: T[] = [];
+  for (const group of byCategory.values()) {
+    let best = group[0];
+    let bestScore = budgetRowViewMatchScore(best, viewKey, monthStartDay);
+    for (let i = 1; i < group.length; i++) {
+      const candidate = group[i];
+      const score = budgetRowViewMatchScore(candidate, viewKey, monthStartDay);
+      if (
+        score > bestScore ||
+        (score === bestScore && Number(candidate.limit) > Number(best.limit))
+      ) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+    if (bestScore >= 0) out.push(best);
+  }
+  return out;
+}
+

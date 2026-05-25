@@ -20,7 +20,7 @@ import { ToastProvider } from '../context/ToastContext';
 import { ConfirmActionProvider } from '../hooks/useConfirmAction';
 import { SelfLearningProvider } from '../context/SelfLearningContext';
 import { PAGE_DISPLAY_NAMES, INVESTMENT_SUB_NAV_PAGE_NAMES } from '../constants';
-import { PAGE_MODULES, prefetchPage, resolveShellPage } from '../utils/lazyPages';
+import { PAGE_MODULES, prefetchCommonPagesIdle, prefetchPage, resolveShellPage } from '../utils/lazyPages';
 
 const VALID_PAGES: Page[] = [
   'Dashboard', 'Summary', 'Accounts', 'Goals', 'Liabilities', 'Transactions',
@@ -183,6 +183,11 @@ const AuthenticatedAppShell: React.FC = () => {
     document.title = activePage === 'Dashboard' ? base : `${base} – ${displayName}`;
     return () => { document.title = base; };
   }, [activePage]);
+
+  useEffect(() => {
+    prefetchPage(getInitialPage());
+    prefetchCommonPagesIdle();
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;

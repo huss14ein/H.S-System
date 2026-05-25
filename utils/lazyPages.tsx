@@ -37,17 +37,21 @@ function eagerPage<T extends ComponentType<any>>(component: T): PageModule {
   };
 }
 
-/** Only Dashboard is eager — keeps first paint small; other routes load on demand with prefetch on nav hover. */
+/** Dashboard + high-traffic Management routes are eager to avoid Suspense "Loading page…" on every visit. */
 import DashboardPage from '../pages/Dashboard';
+import BudgetsPage from '../pages/Budgets';
+import TransactionsPage from '../pages/Transactions';
+import AccountsPage from '../pages/Accounts';
+import SummaryPage from '../pages/Summary';
 
 export const PAGE_MODULES: Record<Page, PageModule | undefined> = {
   Dashboard: eagerPage(DashboardPage),
   'Wealth Ultra': lazyPage(() => import('../pages/WealthUltraDashboard')),
-  Budgets: lazyPage(() => import('../pages/Budgets')),
-  Transactions: lazyPage(() => import('../pages/Transactions')),
+  Budgets: eagerPage(BudgetsPage),
+  Transactions: eagerPage(TransactionsPage),
   Investments: lazyPage(() => import('../pages/Investments')),
-  Accounts: lazyPage(() => import('../pages/Accounts')),
-  Summary: lazyPage(() => import('../pages/Summary')),
+  Accounts: eagerPage(AccountsPage),
+  Summary: eagerPage(SummaryPage),
   Liabilities: lazyPage(() => import('../pages/Liabilities')),
   Goals: lazyPage(() => import('../pages/Goals')),
   Forecast: lazyPage(() => import('../pages/Forecast')),
@@ -86,4 +90,30 @@ export function prefetchPage(page: Page): void {
   const shell = resolveShellPage(page);
   if (PAGE_MODULES[shell]?.eager) return;
   PAGE_MODULES[shell]?.prefetch();
+}
+
+const IDLE_PREFETCH_PAGES: Page[] = [
+  'Investments',
+  'Plan',
+  'Liabilities',
+  'Goals',
+  'Wealth Ultra',
+  'Settings',
+];
+
+/** Warm common lazy chunks after first paint without blocking the main thread. */
+export function prefetchCommonPagesIdle(): void {
+  if (typeof window === 'undefined') return;
+  const run = () => {
+    for (const p of IDLE_PREFETCH_PAGES) prefetchPage(p);
+  };
+  const w = window as Window & {
+    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+    cancelIdleCallback?: (id: number) => void;
+  };
+  if (typeof w.requestIdleCallback === 'function') {
+    w.requestIdleCallback(run, { timeout: 4000 });
+    return;
+  }
+  window.setTimeout(run, 1500);
 }

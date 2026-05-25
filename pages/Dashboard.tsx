@@ -39,7 +39,8 @@ import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
 import { supabase } from '../services/supabaseClient';
-import { pushNetWorthSnapshot, listNetWorthSnapshots } from '../services/netWorthSnapshot';
+import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
+import { captureExtendedNetWorthSnapshot } from '../services/netWorthSnapshotExtended';
 import { subscriptionSpendMonthlySar } from '../services/transactionIntelligence';
 import InfoHint from '../components/InfoHint';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
@@ -57,7 +58,6 @@ import { averageSavingsRateSarRolling } from '../services/dashboardKpiSnapshot';
 import type { InvestmentCapitalSource } from '../services/investmentKpiCore';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
-import { sumPersonalSukukAssetsSar } from '../services/personalNetWorth';
 import {
     financialMonthRange,
     financialMonthKeysEndingAt,
@@ -488,7 +488,9 @@ const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerP
 
     const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions, projectedCash30d, currentCash } = useMemo(() => {
         try {
-            if (!data) return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
+            if (!data || showHydrateBanner || !kpiSnapshot) {
+                return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
+            }
 
             const sarPerUsd = canonicalSarPerUsd;
 
@@ -643,29 +645,20 @@ const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerP
             console.error("Dashboard calculation error:", e);
             return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
         }
-    }, [data, exchangeRate, getAvailableCashForAccount, kpiSnapshot, canonicalSarPerUsd, simulatedPrices]);
+    }, [data, exchangeRate, getAvailableCashForAccount, kpiSnapshot, canonicalSarPerUsd, simulatedPrices, showHydrateBanner]);
 
     useEffect(() => {
-        if (!auth?.user || !data) return;
-        const b = headline.buckets;
+        if (!auth?.user || !data || showHydrateBanner) return;
         const nw = typeof headline.netWorth === 'number' && Number.isFinite(headline.netWorth) ? headline.netWorth : (kpiSummary as { netWorth?: number }).netWorth;
-        if (typeof nw === 'number' && Number.isFinite(nw)) {
-            const sukukAudit = sumPersonalSukukAssetsSar(data);
-            pushNetWorthSnapshot(
-                nw,
-                {
-                    cash: b.cash,
-                    investments: b.investments,
-                    physicalAndCommodities: b.physicalAndCommodities,
-                    receivables: b.receivables,
-                    liabilities: b.liabilities,
-                    ...(sukukAudit > 0 ? { sukukSar: sukukAudit } : {}),
-                },
-                headline.sarPerUsd,
-                supabase && auth.user?.id ? { supabase, userId: auth.user.id } : null,
-            );
-        }
-    }, [auth?.user, kpiSummary, data, headline, getAvailableCashForAccount]);
+        if (typeof nw !== 'number' || !Number.isFinite(nw)) return;
+        captureExtendedNetWorthSnapshot(
+            data,
+            exchangeRate,
+            getAvailableCashForAccount,
+            supabase && auth.user.id ? { supabase, userId: auth.user.id } : null,
+            simulatedPrices,
+        );
+    }, [auth?.user, kpiSummary, data, headline.netWorth, exchangeRate, getAvailableCashForAccount, simulatedPrices, showHydrateBanner]);
 
     const subsIntel = useMemo(() => {
         if (!data) return { monthlyEstimate: 0, count: 0 };

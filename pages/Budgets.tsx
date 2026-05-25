@@ -1,7 +1,6 @@
 import React, { useMemo, useState, useContext, useEffect, useRef, useCallback } from 'react';
 import BudgetCardShell from '../components/BudgetCardShell';
 import BudgetCardMetricsBlocks from '../components/BudgetCardMetricsBlocks';
-import BudgetCardSkeleton from '../components/BudgetCardSkeleton';
 import HouseholdEngineSkeleton from '../components/HouseholdEngineSkeleton';
 import BudgetOwnPortfolioCard from '../components/BudgetOwnPortfolioCard';
 import BudgetUsageDial from '../components/BudgetUsageDial';
@@ -88,17 +87,27 @@ import { learnAndAutoAdjust } from '../services/aiBudgetAutomation';
 import { getPersonalTransactions } from '../utils/wealthScope';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { toSAR } from '../utils/currencyMath';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import {
     addMonthsToKey,
     budgetAppliesToFinancialView,
+    dedupeBudgetRowsForFinancialView,
     financialMonthKey,
     financialMonthRangeFromKey,
     resolveMonthStartDayFromData,
     type FinancialMonthKey,
 } from '../utils/financialMonth';
 import AIAdvisor from '../components/AIAdvisor';
-import { dedupeSharedBudgetRows, makeSharedOwnerCategoryKey, normalizeSharedCategoryKey, normalizeSharedOwnerKey } from '../services/sharedBudgetKeys';
+import {
+    dedupeSharedBudgetRows,
+    dedupeSharedBudgetRowsForFinancialView,
+    normalizeSharedBudgetRowFromRpc,
+    sharedBudgetRowInPlanYear,
+    makeSharedOwnerCategoryKey,
+    normalizeSharedCategoryKey,
+    normalizeSharedOwnerKey,
+} from '../services/sharedBudgetKeys';
+import { expenseAmountSarForBudget, transactionDateInSpendWindow } from '../services/budgetSpendMath';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
 import {
     aggregateSmartFillSpendByCategorySar,
@@ -108,6 +117,7 @@ import {
 import {
     clampDateToFinancialMonthBounds,
     computeBudgetSpendWindows,
+    financialPlanYearYtdWindow,
     formatBudgetSpendWindowLabel,
 } from '../services/budgetViewSpendWindows';
 import {
@@ -504,13 +514,15 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const [sharedConsumedSyncedAt, setSharedConsumedSyncedAt] = useState<number | null>(null);
     /** False while permissions + shared-budget RPCs run (avoids empty/wrong cards for non-admin). */
     const [governanceReady, setGovernanceReady] = useState(() => !auth?.user?.id);
+    const [sharedTotalsSyncing, setSharedTotalsSyncing] = useState(false);
+    const governanceSessionRef = React.useRef<string | null>(null);
     const [sharedTxMonthFilter, setSharedTxMonthFilter] = useState<string>(`${currentYear}-${String(currentMonth).padStart(2, '0')}`);
     const [sharedTxStatusFilter, setSharedTxStatusFilter] = useState<'All' | 'Approved' | 'Pending' | 'Rejected'>('All');
     const [sharedTxCategoryFilter, setSharedTxCategoryFilter] = useState<string>('All');
     const [showKsaExpenseRef, setShowKsaExpenseRef] = useState(false);
     const [suggestedAdjustments, setSuggestedAdjustments] = useState<Array<{ orig: Budget; proposed: Budget }> | null>(null);
     const [installmentBudgetRows, setInstallmentBudgetRows] = useState<Array<{ dueDate: string; amountMinor: string; currency: 'SAR' | 'USD'; budgetCategory: string }>>([]);
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
     const accountCurrencyById = useMemo(() => {
         const map = new Map<string, 'SAR' | 'USD'>();
         (((data as any)?.personalAccounts ?? data?.accounts ?? []) as Array<{ id: string; currency?: string }>).forEach((a) => {
@@ -518,13 +530,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         });
         return map;
     }, [data]);
-    const txAmountSar = (tx: any): number => {
-        const raw = Math.abs(Number(tx?.amount) || 0);
-        const txCur = tx?.currency === 'USD' ? 'USD' : tx?.currency === 'SAR' ? 'SAR' : undefined;
-        const accId = String(tx?.accountId ?? tx?.account_id ?? '');
-        const fallbackCur = accountCurrencyById.get(accId) ?? 'SAR';
-        return toSAR(raw, txCur ?? fallbackCur, sarPerUsd);
-    };
+    const txAmountSar = React.useCallback(
+        (tx: any): number => expenseAmountSarForBudget(tx, accountCurrencyById, data, sarPerUsd),
+        [accountCurrencyById, data, sarPerUsd],
+    );
 
     React.useEffect(() => {
         const loadInstallmentRowsForBudgetWindow = async () => {
@@ -736,6 +745,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         annualUtilizationLabel?: 'Healthy' | 'Watch' | 'Critical';
         showDualEnvelope?: boolean;
         periodWindowLabel?: string;
+        periodSpendCap?: number;
     };
 
     const householdProfileStorageKey = useMemo(() => `household-profile:${auth?.user?.id ?? 'anon'}`, [auth?.user?.id]);
@@ -847,7 +857,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const householdBudgetEngine = useMemo(() => {
         const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
         const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-        const { monthlyIncome } = accumulateHouseholdYearCashflowSar(data ?? null, transactions, accounts, currentYear, exchangeRate);
+        const { monthlyIncome } = accumulateHouseholdYearCashflowSar(
+            data ?? null,
+            transactions,
+            accounts,
+            currentYear,
+            exchangeRate,
+            monthStartDay,
+        );
         const incomeWithData = monthlyIncome.filter((v: number) => v > 0);
         const suggested =
             incomeWithData.length > 0 ? Math.round(incomeWithData.reduce((a: number, b: number) => a + b, 0) / incomeWithData.length) : 0;
@@ -866,6 +883,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 financialData: data ?? null,
                 sarPerUsd,
                 uiExchangeRate: exchangeRate,
+                monthStartDay,
             }
         );
         const result = buildHouseholdBudgetPlan(input);
@@ -885,6 +903,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         householdOverrides,
         engineProfile,
         expectedMonthlySalary,
+        monthStartDay,
     ]);
 
     React.useEffect(() => {
@@ -911,6 +930,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     transactions: txRows,
                     accounts: accRows,
                     sarPerUsd,
+                    monthStartDay,
                 }),
             );
         } catch (error) {
@@ -920,16 +940,23 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             setAnomalies([]);
             setSeasonalityPatterns([]);
         }
-    }, [householdBudgetEngine, data?.goals, data, currentYear, sarPerUsd]);
+    }, [householdBudgetEngine, data?.goals, data, currentYear, sarPerUsd, monthStartDay]);
 
     const suggestedMonthlySalary = useMemo(() => {
         if (!data) return 0;
         const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
         const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-        const { monthlyIncome } = accumulateHouseholdYearCashflowSar(data, transactions, accounts, currentYear, exchangeRate);
+        const { monthlyIncome } = accumulateHouseholdYearCashflowSar(
+            data,
+            transactions,
+            accounts,
+            currentYear,
+            exchangeRate,
+            monthStartDay,
+        );
         const withData = monthlyIncome.filter((v: number) => v > 0);
         return withData.length > 0 ? Math.round(withData.reduce((a: number, b: number) => a + b, 0) / withData.length) : 0;
-    }, [data, currentYear, exchangeRate]);
+    }, [data, currentYear, exchangeRate, monthStartDay]);
 
     const householdEngineValidationWarnings = useMemo(() => {
         const w: string[] = [];
@@ -1002,6 +1029,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             ? 'Advance from next month'
             : (request?.request_type ?? 'Request');
 
+    /** Permissions, shared budget rows, and ledger txs — not re-blocked when spend window changes. */
     React.useEffect(() => {
         if (!supabase || !auth?.user) {
             setGovernanceReady(true);
@@ -1011,9 +1039,18 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const sb = supabase;
         const user = auth.user;
         let cancelled = false;
-
-        const loadGovernance = async () => {
+        const sessionKey = `${user.id}:${dataResetKey}`;
+        const isNewSession = governanceSessionRef.current !== sessionKey;
+        if (isNewSession) {
+            governanceSessionRef.current = sessionKey;
             setGovernanceReady(false);
+        }
+
+        const safety = window.setTimeout(() => {
+            if (!cancelled) setGovernanceReady(true);
+        }, 8000);
+
+        const loadGovernanceCore = async () => {
             try {
                 const { data: userRecord } = await sb.from('users').select('role').eq('id', user.id).maybeSingle();
                 const admin = inferIsAdmin(user, userRecord?.role ?? null);
@@ -1080,18 +1117,52 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     console.warn(normalized);
                     setSharedBudgets([]);
                 } else {
-                    const filtered = ((sharedRows || []) as any[]).map((b) => ({
-                        ...b,
-                        period: b.period ?? 'monthly',
-                        month: Number(b.month) || currentMonth,
-                        year: Number(b.year) || currentYear,
-                        tier: b.tier ?? b.budget_tier ?? 'Optional',
-                        ownerEmail: b.owner_email || b.owner_user_id || b.user_id,
-                        owner_user_id: b.owner_user_id || b.user_id,
-                    }));
+                    const filtered = ((sharedRows || []) as any[]).map((b) =>
+                        normalizeSharedBudgetRowFromRpc(b),
+                    );
                     setSharedBudgets(dedupeSharedBudgetRows(filtered));
                 }
 
+                const { data: ownerTxRows } = await sb
+                    .from('budget_shared_transactions')
+                    .select('*')
+                    .eq('owner_user_id', user.id)
+                    .order('transaction_date', { ascending: false })
+                    .then((r) => r, () => ({ data: [] as any[] } as any));
+                if (cancelled) return;
+                setOwnerSharedTransactions((ownerTxRows || []) as any[]);
+
+                const { data: myTxRows } = await sb
+                    .from('budget_shared_transactions')
+                    .select('*')
+                    .eq('contributor_user_id', user.id)
+                    .order('transaction_date', { ascending: false })
+                    .then((r) => r, () => ({ data: [] as any[] } as any));
+                if (cancelled) return;
+                setMySharedBudgetTransactions((myTxRows || []) as any[]);
+            } finally {
+                window.clearTimeout(safety);
+                if (!cancelled) setGovernanceReady(true);
+            }
+        };
+
+        void loadGovernanceCore();
+        return () => {
+            cancelled = true;
+            window.clearTimeout(safety);
+        };
+    }, [auth?.user?.id, dataResetKey]);
+
+    /** Shared consumed RPCs — refresh in background when the spend window changes; never hide own budget cards. */
+    React.useEffect(() => {
+        if (!supabase || !auth?.user || !governanceReady) return;
+
+        const sb = supabase;
+        let cancelled = false;
+        setSharedTotalsSyncing(true);
+
+        const refreshSharedConsumed = async () => {
+            try {
                 const rpcWindow = sharedBudgetConsumedRpcArgs(budgetView, currentDate, currentYear, currentMonth, monthStartDay);
                 const consumedMap = await fetchSharedConsumedMap(sb, rpcWindow as Record<string, unknown>);
                 if (cancelled) return;
@@ -1113,33 +1184,26 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 if (cancelled) return;
                 setSharedConsumedYtdByOwnerCategory(ytdMap);
                 setSharedConsumedSyncedAt(Date.now());
-                const { data: ownerTxRows } = await sb
-                    .from('budget_shared_transactions')
-                    .select('*')
-                    .eq('owner_user_id', user.id)
-                    .order('transaction_date', { ascending: false })
-                    .then((r) => r, () => ({ data: [] as any[] } as any));
-                if (cancelled) return;
-                setOwnerSharedTransactions((ownerTxRows || []) as any[]);
-
-                const { data: myTxRows } = await sb
-                    .from('budget_shared_transactions')
-                    .select('*')
-                    .eq('contributor_user_id', user.id)
-                    .order('transaction_date', { ascending: false })
-                    .then((r) => r, () => ({ data: [] as any[] } as any));
-                if (cancelled) return;
-                setMySharedBudgetTransactions((myTxRows || []) as any[]);
             } finally {
-                if (!cancelled) setGovernanceReady(true);
+                if (!cancelled) setSharedTotalsSyncing(false);
             }
         };
 
-        void loadGovernance();
+        void refreshSharedConsumed();
         return () => {
             cancelled = true;
+            setSharedTotalsSyncing(false);
         };
-    }, [auth?.user?.id, dataResetKey, budgetSpendWindows, budgetView, currentDate, currentYear, currentMonth, monthStartDay]);
+    }, [
+        auth?.user?.id,
+        governanceReady,
+        budgetSpendWindows,
+        budgetView,
+        currentDate,
+        currentYear,
+        currentMonth,
+        monthStartDay,
+    ]);
 
 
     const budgetData = useMemo<BudgetRow[]>(() => {
@@ -1152,17 +1216,16 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         ((data as any)?.personalTransactions ?? data?.transactions ?? [])
             .filter((t: { type?: string; status?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && (t.status ?? 'Approved') === 'Approved')
             .forEach((t: { date: string; amount?: number; budgetCategory?: string; category?: string; splitLines?: { category: string; amount: number }[] }) => {
-                const txDate = new Date(t.date);
                 const allocations = getTransactionBudgetAllocations(t as any);
                 allocations.forEach((allocation) => {
                     const amount = txAmountSar({ ...t, amount: allocation.amount });
-                    if (txDate >= rangeStart && txDate <= rangeEnd) {
+                    if (transactionDateInSpendWindow(t.date, rangeStart, rangeEnd)) {
                         spending.set(allocation.category, (spending.get(allocation.category) || 0) + amount);
                     }
-                    if (ytdStart && ytdEnd && txDate >= ytdStart && txDate <= ytdEnd) {
+                    if (ytdStart && ytdEnd && transactionDateInSpendWindow(t.date, ytdStart, ytdEnd)) {
                         ytdSpending.set(allocation.category, (ytdSpending.get(allocation.category) || 0) + amount);
                     }
-                    if (txDate >= previousRangeStart && txDate <= previousRangeEnd) {
+                    if (transactionDateInSpendWindow(t.date, previousRangeStart, previousRangeEnd)) {
                         previousSpending.set(allocation.category, (previousSpending.get(allocation.category) || 0) + amount);
                     }
                 });
@@ -1171,17 +1234,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         // Reflect collaborator spending into owner budget totals for shared categories.
         ownerSharedTransactions.forEach((tx) => {
             if ((tx.status ?? 'Approved') !== 'Approved') return;
-            const d = new Date(tx.transaction_date || tx.date);
             const cat = String(tx.budget_category || '').trim();
             if (!cat) return;
             const amount = txAmountSar(tx);
-            if (d >= rangeStart && d <= rangeEnd) {
+            const txDate = tx.transaction_date || tx.date;
+            if (transactionDateInSpendWindow(txDate, rangeStart, rangeEnd)) {
                 spending.set(cat, (spending.get(cat) || 0) + amount);
             }
-            if (ytdStart && ytdEnd && d >= ytdStart && d <= ytdEnd) {
+            if (ytdStart && ytdEnd && transactionDateInSpendWindow(txDate, ytdStart, ytdEnd)) {
                 ytdSpending.set(cat, (ytdSpending.get(cat) || 0) + amount);
             }
-            if (d >= previousRangeStart && d <= previousRangeEnd) {
+            if (transactionDateInSpendWindow(txDate, previousRangeStart, previousRangeEnd)) {
                 previousSpending.set(cat, (previousSpending.get(cat) || 0) + amount);
             }
         });
@@ -1189,27 +1252,30 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         // Installment projection: counts *due* installments into budgets for their due month (does not hit today's budget).
         // This is intentionally separate from `transactions` so future installments don't change account balances today.
         installmentBudgetRows.forEach((r) => {
-            const d = new Date(String(r.dueDate));
             const amount = toSAR(Math.abs(Number(r.amountMinor) || 0) / 100, r.currency, sarPerUsd);
-            if (d >= rangeStart && d <= rangeEnd) {
+            const due = String(r.dueDate);
+            if (transactionDateInSpendWindow(due, rangeStart, rangeEnd)) {
                 spending.set(r.budgetCategory, (spending.get(r.budgetCategory) || 0) + amount);
             }
-            if (ytdStart && ytdEnd && d >= ytdStart && d <= ytdEnd) {
+            if (ytdStart && ytdEnd && transactionDateInSpendWindow(due, ytdStart, ytdEnd)) {
                 ytdSpending.set(r.budgetCategory, (ytdSpending.get(r.budgetCategory) || 0) + amount);
             }
-            if (d >= previousRangeStart && d <= previousRangeEnd) {
+            if (transactionDateInSpendWindow(due, previousRangeStart, previousRangeEnd)) {
                 previousSpending.set(r.budgetCategory, (previousSpending.get(r.budgetCategory) || 0) + amount);
             }
         });
 
-        const ownScopedBudgets = (data?.budgets ?? [])
-            .filter((b) => budgetAppliesToFinancialView(b, currentViewKey, monthStartDay, budgetView))
-            .filter(
-                (b) =>
-                    isAdmin ||
-                    permittedCategories.length === 0 ||
-                    permittedCategories.includes(b.category),
-            );
+        const ownScopedBudgets = dedupeBudgetRowsForFinancialView(
+            data?.budgets ?? [],
+            currentViewKey,
+            monthStartDay,
+            budgetView,
+        ).filter(
+            (b) =>
+                isAdmin ||
+                permittedCategories.length === 0 ||
+                permittedCategories.includes(b.category),
+        );
 
         const syntheticRestrictedBudgets: Budget[] = !isAdmin
             ? permittedCategories
@@ -1264,7 +1330,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     const trend = budgetTrendFromPeriods(prevYear, spent);
                     const visual = buildBudgetCardVisualMetrics({
                         budgetView: 'Yearly',
-                        period: 'monthly',
+                        period: 'yearly',
                         limit: yearlyLimit,
                         spentPeriod: spent,
                         spentYtd: spent,
@@ -1305,6 +1371,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     currentYear,
                     allBudgetRows,
                     period,
+                    monthStartDay,
                 );
                 const visual = buildBudgetCardVisualMetrics({
                     budgetView,
@@ -1338,10 +1405,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     trendDirection: trend.trendDirection,
                     budgetTier: (budget.tier ?? 'Optional') as BudgetTier,
                     utilizationLabel: visual.utilizationLabel,
+                    periodSpendCap: visual.periodSpendCap,
                 };
             })
             .sort((a, b) => b.spent - a.spent);
-    }, [data?.transactions, (data as any)?.personalTransactions, data?.budgets, data?.budgetRequests, currentViewKey, monthStartDay, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id, sarPerUsd, accountCurrencyById, installmentBudgetRows, budgetSpendWindows]);
+    }, [data?.transactions, (data as any)?.personalTransactions, data?.budgets, data?.budgetRequests, currentViewKey, monthStartDay, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id, sarPerUsd, accountCurrencyById, installmentBudgetRows, budgetSpendWindows, txAmountSar]);
 
     // Admin Approved Budgets Overview: same SAR splits, YTD envelope, and prior-month trend as main Budgets cards.
     const adminApprovedOverviewRaw = useMemo<BudgetRow[]>(() => {
@@ -1352,18 +1420,23 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const ytdSpending = new Map<string, number>();
         const previousSpending = new Map<string, number>();
 
-        const ytdStart = new Date(yr, 0, 1);
-        ytdStart.setHours(0, 0, 0, 0);
+        const { ytdStart, ytdEnd } = financialPlanYearYtdWindow(yr, mo, monthStartDay);
         const prevKey = addMonthsToKey({ year: yr, month: mo }, -1);
         const { start: pStart, end: pEnd } = financialMonthRangeFromKey(prevKey, monthStartDay);
 
-        const bumpCategory = (category: string, rawAmount: number, tx: any, d: Date) => {
+        const bumpCategory = (category: string, rawAmount: number, tx: any, dateStr: string) => {
             const cat = String(category ?? '').trim();
             if (!cat) return;
             const amt = txAmountSar({ ...tx, amount: rawAmount });
-            if (d >= rangeStart && d <= rangeEnd) spending.set(cat, (spending.get(cat) || 0) + amt);
-            if (d >= ytdStart && d <= rangeEnd) ytdSpending.set(cat, (ytdSpending.get(cat) || 0) + amt);
-            if (d >= pStart && d <= pEnd) previousSpending.set(cat, (previousSpending.get(cat) || 0) + amt);
+            if (transactionDateInSpendWindow(dateStr, rangeStart, rangeEnd)) {
+                spending.set(cat, (spending.get(cat) || 0) + amt);
+            }
+            if (transactionDateInSpendWindow(dateStr, ytdStart, ytdEnd)) {
+                ytdSpending.set(cat, (ytdSpending.get(cat) || 0) + amt);
+            }
+            if (transactionDateInSpendWindow(dateStr, pStart, pEnd)) {
+                previousSpending.set(cat, (previousSpending.get(cat) || 0) + amt);
+            }
         };
 
         ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach(
@@ -1378,38 +1451,44 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             }) => {
                 if (!countsAsExpenseForCashflowKpi(tx)) return;
                 if ((tx.status ?? 'Approved') !== 'Approved') return;
-                const d = new Date(tx.date);
                 const allocations = getTransactionBudgetAllocations(tx as any);
-                allocations.forEach((allocation) => bumpCategory(allocation.category, allocation.amount, tx, d));
+                allocations.forEach((allocation) => bumpCategory(allocation.category, allocation.amount, tx, tx.date));
             },
         );
 
         ownerSharedTransactions
             .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
             .forEach((tx) => {
-                const d = new Date(tx.transaction_date || (tx as any).date);
                 const cat = String(tx.budget_category || '').trim();
                 if (!cat) return;
-                bumpCategory(cat, Math.abs(Number(tx.amount) || 0), tx, d);
+                bumpCategory(cat, Math.abs(Number(tx.amount) || 0), tx, String(tx.transaction_date || (tx as any).date));
             });
 
         installmentBudgetRows.forEach((r) => {
-            const d = new Date(String(r.dueDate));
             const amtSar = toSAR(Math.abs(Number(r.amountMinor) || 0) / 100, r.currency, sarPerUsd);
-            bumpCategory(r.budgetCategory, amtSar, { amount: amtSar, currency: 'SAR' }, d);
+            bumpCategory(r.budgetCategory, amtSar, { amount: amtSar, currency: 'SAR' }, String(r.dueDate));
         });
 
         const allBudgetRows = data?.budgets ?? [];
         const overviewKey: FinancialMonthKey = { year: yr, month: mo };
-        const budgetsForMonth = (data?.budgets ?? []).filter((b) =>
-            budgetAppliesToFinancialView(b, overviewKey, monthStartDay, 'Monthly'),
+        const budgetsForMonth = dedupeBudgetRowsForFinancialView(
+            data?.budgets ?? [],
+            overviewKey,
+            monthStartDay,
+            'Monthly',
         );
 
         const rows: BudgetRow[] = budgetsForMonth.map((budget) => {
             const period = budget.period ?? 'monthly';
             const spentPeriod = spending.get(budget.category) || 0;
             const spentYtd = ytdSpending.get(budget.category) || 0;
-            const annualEnvelopeLimit = annualEnvelopeForBudgetRow(budget.category, yr, allBudgetRows, period);
+            const annualEnvelopeLimit = annualEnvelopeForBudgetRow(
+                budget.category,
+                yr,
+                allBudgetRows,
+                period,
+                monthStartDay,
+            );
             const visual = buildBudgetCardVisualMetrics({
                 budgetView: 'Monthly',
                 period,
@@ -1630,22 +1709,22 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         mySharedBudgetTransactions
             .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
             .forEach((tx) => {
-                const d = new Date(tx.transaction_date || tx.date);
                 const category = normalizeSharedCategoryKey(tx.budget_category || '');
                 if (!category) return;
                 const amount = txAmountSar(tx);
                 const ownerKey = normalizeSharedOwnerKey(tx.owner_user_id || tx.owner_id || tx.user_id || 'owner');
                 const key = makeSharedOwnerCategoryKey(ownerKey, category);
-                if (d >= rangeStart && d <= rangeEnd) {
+                const txDate = String(tx.transaction_date || tx.date);
+                if (transactionDateInSpendWindow(txDate, rangeStart, rangeEnd)) {
                     spendingByOwnerCategory.set(key, (spendingByOwnerCategory.get(key) || 0) + amount);
                 }
-                if (ytdStart && ytdEnd && d >= ytdStart && d <= ytdEnd) {
+                if (ytdStart && ytdEnd && transactionDateInSpendWindow(txDate, ytdStart, ytdEnd)) {
                     bumpYtd(key, amount);
                 }
-                if (d >= previousRangeStart && d <= previousRangeEnd) {
+                if (transactionDateInSpendWindow(txDate, previousRangeStart, previousRangeEnd)) {
                     previousSpendingByOwnerCategory.set(key, (previousSpendingByOwnerCategory.get(key) || 0) + amount);
                 }
-                if (prevYearStart && prevYearEnd && d >= prevYearStart && d <= prevYearEnd) {
+                if (prevYearStart && prevYearEnd && transactionDateInSpendWindow(txDate, prevYearStart, prevYearEnd)) {
                     prevYearSpendingByOwnerCategory.set(key, (prevYearSpendingByOwnerCategory.get(key) || 0) + amount);
                 }
             });
@@ -1653,34 +1732,39 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         ownerSharedTransactions
             .filter((tx) => (tx.status ?? 'Approved') === 'Approved')
             .forEach((tx) => {
-                const d = new Date(tx.transaction_date || tx.date);
                 const category = normalizeSharedCategoryKey(tx.budget_category || '');
                 if (!category) return;
                 const amount = txAmountSar(tx);
                 const ownerKey = normalizeSharedOwnerKey(tx.owner_user_id || tx.owner_id || tx.user_id || auth?.user?.id || 'owner');
                 const key = makeSharedOwnerCategoryKey(ownerKey, category);
-                if (d >= rangeStart && d <= rangeEnd) {
+                const txDate = String(tx.transaction_date || tx.date);
+                if (transactionDateInSpendWindow(txDate, rangeStart, rangeEnd)) {
                     spendingByOwnerCategory.set(key, (spendingByOwnerCategory.get(key) || 0) + amount);
                 }
-                if (ytdStart && ytdEnd && d >= ytdStart && d <= ytdEnd) {
+                if (ytdStart && ytdEnd && transactionDateInSpendWindow(txDate, ytdStart, ytdEnd)) {
                     bumpYtd(key, amount);
                 }
-                if (d >= previousRangeStart && d <= previousRangeEnd) {
+                if (transactionDateInSpendWindow(txDate, previousRangeStart, previousRangeEnd)) {
                     previousSpendingByOwnerCategory.set(key, (previousSpendingByOwnerCategory.get(key) || 0) + amount);
                 }
-                if (prevYearStart && prevYearEnd && d >= prevYearStart && d <= prevYearEnd) {
+                if (prevYearStart && prevYearEnd && transactionDateInSpendWindow(txDate, prevYearStart, prevYearEnd)) {
                     prevYearSpendingByOwnerCategory.set(key, (prevYearSpendingByOwnerCategory.get(key) || 0) + amount);
                 }
             });
 
-        const rowsForYear = (sharedBudgets ?? [])
-            .filter((b) => (Number((b as any).year) || currentYear) === currentYear);
+        const rowsForYear = (sharedBudgets ?? []).filter((b) =>
+            sharedBudgetRowInPlanYear(b, currentYear),
+        );
+        const rowsForView =
+            budgetView === 'Yearly'
+                ? dedupeSharedBudgetRows(rowsForYear)
+                : dedupeSharedBudgetRowsForFinancialView(rowsForYear, currentViewKey, monthStartDay, budgetView);
 
         const toYearly = (b: Budget) => b.period === 'yearly' ? b.limit : b.period === 'weekly' ? b.limit * 52 : b.period === 'daily' ? b.limit * 365 : b.limit * 12;
 
         if (budgetView === 'Yearly') {
             const yearlyByOwnerCategory = new Map<string, Budget & { ownerEmail?: string; ownerKey: string; yearlyLimit: number }>();
-            rowsForYear.forEach((b) => {
+            rowsForView.forEach((b) => {
                 const ownerKey = normalizeSharedOwnerKey((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
                 const key = makeSharedOwnerCategoryKey(ownerKey, b.category);
                 const existing = yearlyByOwnerCategory.get(key);
@@ -1708,7 +1792,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     const trend = budgetTrendFromPeriods(prevY, spent);
                     const visual = buildBudgetCardVisualMetrics({
                         budgetView: 'Yearly',
-                        period: entry.period ?? 'monthly',
+                        period: 'yearly',
                         limit: entry.yearlyLimit,
                         spentPeriod: spent,
                         spentYtd: spent,
@@ -1737,20 +1821,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 .sort((a, b) => b.spent - a.spent);
         }
 
-        return rowsForYear
-            .filter((b) =>
-                budgetAppliesToFinancialView(
-                    {
-                        year: Number((b as any).year) || currentYear,
-                        month: Number((b as any).month) || currentMonth,
-                        period: b.period,
-                    },
-                    currentViewKey,
-                    monthStartDay,
-                    budgetView,
-                ),
-            )
-            .map((b) => {
+        return rowsForView.map((b) => {
                 const period = b.period ?? 'monthly';
                 const ownerKey = normalizeSharedOwnerKey((b as any).owner_user_id || b.user_id || b.ownerEmail || 'owner');
                 const ownerCategoryKey = makeSharedOwnerCategoryKey(ownerKey, b.category);
@@ -1765,18 +1836,18 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                           0
                         : spentPeriod;
 
-                const ownerEnvelopeRows = rowsForYear.filter((row) => {
-                    const ok =
-                        normalizeSharedOwnerKey((row as any).owner_user_id || row.user_id || (row as any).ownerEmail || 'owner') ===
-                        ownerKey;
-                    return ok && row.category === b.category;
-                });
-
                 const annualEnvelopeLimit = annualEnvelopeForBudgetRow(
                     b.category,
                     currentYear,
-                    ownerEnvelopeRows as Budget[],
+                    rowsForYear.filter((row) => {
+                        const ok =
+                            normalizeSharedOwnerKey(
+                                (row as any).owner_user_id || row.user_id || (row as any).ownerEmail || 'owner',
+                            ) === ownerKey;
+                        return ok && row.category === b.category;
+                    }) as Budget[],
                     period,
+                    monthStartDay,
                 );
                 const visual = buildBudgetCardVisualMetrics({
                     budgetView,
@@ -1814,6 +1885,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     trendDirection: trend.trendDirection,
                     budgetTier: (b.tier ?? 'Optional') as BudgetTier,
                     utilizationLabel: visual.utilizationLabel,
+                    periodSpendCap: visual.periodSpendCap,
                 };
             })
             .sort((a, b) => b.spent - a.spent);
@@ -1821,6 +1893,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         sharedBudgets,
         mySharedBudgetTransactions,
         ownerSharedTransactions,
+        txAmountSar,
         sharedConsumedByOwnerCategory,
         sharedConsumedYtdByOwnerCategory,
         sharedConsumedPreviousByOwnerCategory,
@@ -2537,15 +2610,15 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
             <SectionCard title="Budget Intelligence" collapsible collapsibleSummary="Portfolio, spend, attention" defaultExpanded>
                 <p className="text-xs text-slate-500 mb-2">
-                    {auth?.user?.id && !governanceReady ? (
-                        <span className="font-medium text-indigo-700">Updating permissions and shared-budget sync—totals refresh in a moment.</span>
+                    {auth?.user?.id && sharedTotalsSyncing ? (
+                        <span className="font-medium text-indigo-700">Refreshing shared-budget totals for this window…</span>
                     ) : sharedBudgetCards.length > 0 ? (
                         `Totals and health counts include your budgets plus ${sharedBudgetCards.length} shared card(s).`
                     ) : (
                         'Totals reflect the budgets shown above for the selected view.'
                     )}
                 </p>
-                {auth?.user?.id && !governanceReady ? (
+                {auth?.user?.id && !portfolioInsightsReady ? (
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm min-w-0" aria-busy="true">
                         {Array.from({ length: 4 }).map((_, i) => (
                             <div key={`insight-sk-${i}`} className="rounded-lg border border-slate-200 bg-slate-100/60 p-3 min-h-[4.5rem] animate-pulse" />
@@ -4417,10 +4490,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         <span className="text-slate-500">Display currency:</span>{' '}
                         <span className="font-semibold text-slate-900">{displayCurrency}</span>
                     </span>
-                    {auth?.user?.id && !governanceReady ? (
+                    {auth?.user?.id && (sharedTotalsSyncing || !governanceReady) ? (
                         <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2 py-1 font-semibold text-amber-900 ring-1 ring-amber-200/80">
                             <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" aria-hidden />
-                            Syncing permissions &amp; shared totals…
+                            {governanceReady ? 'Refreshing shared totals…' : 'Syncing permissions…'}
                         </span>
                     ) : null}
                     <InfoHint text="Totals use approved expenses only, converted to SAR at your app FX rate (transaction splits respected). Shared-budget cards use the same date window via owner consumed totals when synced. Unpaid installments count on their due dates." />
@@ -4428,27 +4501,23 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             </div>
 
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
-                {auth?.user?.id && !governanceReady ? (
-                    Array.from({ length: 6 }).map((_, i) => <BudgetCardSkeleton key={`gov-sk-${i}`} />)
-                ) : (
-                    orderedBudgetData.map((budget) => (
-                        <BudgetOwnPortfolioCard
-                            key={budget.id}
-                            budget={budget}
-                            budgetView={budgetView}
-                            currentYear={currentYear}
-                            periodWindowLabel={periodWindowLabel}
-                            expanded={Boolean(expandedCards[budget.id])}
-                            getCategoryHint={getCategoryHint}
-                            formatCurrencyString={formatCurrencyString}
-                            onNavigateToTransactions={handleOwnPortfolioNavigate}
-                            onToggleExpand={toggleBudgetCardSize}
-                            onEdit={handleOwnPortfolioEdit}
-                            onDelete={handleOwnPortfolioDelete}
-                            canDelete={isAdmin}
-                        />
-                    ))
-                )}
+                {orderedBudgetData.map((budget) => (
+                    <BudgetOwnPortfolioCard
+                        key={budget.id}
+                        budget={budget}
+                        budgetView={budgetView}
+                        currentYear={currentYear}
+                        periodWindowLabel={periodWindowLabel}
+                        expanded={Boolean(expandedCards[budget.id])}
+                        getCategoryHint={getCategoryHint}
+                        formatCurrencyString={formatCurrencyString}
+                        onNavigateToTransactions={handleOwnPortfolioNavigate}
+                        onToggleExpand={toggleBudgetCardSize}
+                        onEdit={handleOwnPortfolioEdit}
+                        onDelete={handleOwnPortfolioDelete}
+                        canDelete={isAdmin}
+                    />
+                ))}
             </div>
              {governanceReady && budgetData.length === 0 && (
                 <div className="text-center py-14 px-6 rounded-3xl border border-dashed border-slate-300/90 bg-gradient-to-b from-slate-50 via-white to-indigo-50/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">

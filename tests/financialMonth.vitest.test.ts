@@ -15,6 +15,8 @@ import {
   resolveMonthStartDayFromData,
   DEFAULT_FINANCIAL_MONTH_START_DAY,
   budgetAppliesToFinancialView,
+  budgetRowViewMatchScore,
+  dedupeBudgetRowsForFinancialView,
 } from '../utils/financialMonth';
 
 describe('financialMonthRangeFromKey vs calendar reference', () => {
@@ -106,6 +108,24 @@ describe('budgetAppliesToFinancialView', () => {
     expect(
       budgetAppliesToFinancialView({ year: 2025, month: 1, period: 'yearly' }, viewKey, monthStartDay, 'Yearly'),
     ).toBe(false);
+  });
+});
+
+describe('dedupeBudgetRowsForFinancialView', () => {
+  const monthStartDay = 28;
+  const viewKey = { year: 2026, month: 4 };
+
+  it('keeps one row per category, preferring financial-month index over overlap-only calendar row', () => {
+    const rows = [
+      { id: 'a', category: 'Transportation', year: 2026, month: 4, period: 'monthly' as const, limit: 600 },
+      { id: 'b', category: 'Transportation', year: 2026, month: 5, period: 'monthly' as const, limit: 800 },
+    ];
+    const deduped = dedupeBudgetRowsForFinancialView(rows, viewKey, monthStartDay, 'Monthly');
+    expect(deduped).toHaveLength(1);
+    expect(deduped[0].limit).toBe(600);
+    expect(budgetRowViewMatchScore(rows[0], viewKey, monthStartDay)).toBeGreaterThan(
+      budgetRowViewMatchScore(rows[1], viewKey, monthStartDay),
+    );
   });
 });
 

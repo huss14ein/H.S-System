@@ -17,6 +17,7 @@ describe('detectSpendingAnomaliesFromTransactions', () => {
       transactions,
       accounts,
       sarPerUsd: 3.75,
+      monthStartDay: 1,
     });
     const apr = rows.find((r) => r.month === 4 && r.category === 'housing');
     expect(apr).toBeDefined();
@@ -39,6 +40,7 @@ describe('detectSpendingAnomaliesFromTransactions', () => {
       transactions,
       accounts,
       sarPerUsd: 3.75,
+      monthStartDay: 1,
     });
     const g = rows.find((r) => r.month === 4 && r.category === 'groceries');
     const f = rows.find((r) => r.month === 4 && r.category === 'fuel');

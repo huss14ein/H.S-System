@@ -23,10 +23,21 @@ export type BudgetSpendWindows = {
   rangeEnd: Date;
   previousRangeStart: Date;
   previousRangeEnd: Date;
-  /** Calendar-year YTD through `rangeEnd` — only for Monthly view envelope math. */
+  /** Plan-year YTD through the active financial month — only for Monthly view envelope math. */
   ytdStart: Date | null;
   ytdEnd: Date | null;
 };
+
+/** YTD window from financial month 1 of `planYear` through `throughFinancialMonth` (inclusive). */
+export function financialPlanYearYtdWindow(
+  planYear: number,
+  throughFinancialMonth: number,
+  monthStartDay: number,
+): { ytdStart: Date; ytdEnd: Date } {
+  const { start } = financialMonthRangeFromKey({ year: planYear, month: 1 }, monthStartDay);
+  const { end } = financialMonthRangeFromKey({ year: planYear, month: throughFinancialMonth }, monthStartDay);
+  return { ytdStart: new Date(start.getTime()), ytdEnd: new Date(end.getTime()) };
+}
 
 /**
  * Spend aggregation windows for Budgets cards (own + shared) and shared consumed RPC.
@@ -57,8 +68,9 @@ export function computeBudgetSpendWindows(args: {
     const prev = financialMonthRangeFromKey(prevKey, monthStartDay);
     previousRangeStart = new Date(prev.start.getTime());
     previousRangeEnd = new Date(prev.end.getTime());
-    ytdStart = new Date(currentYear, 0, 1, 0, 0, 0, 0);
-    ytdEnd = new Date(rangeEnd.getTime());
+    const ytd = financialPlanYearYtdWindow(currentYear, currentMonth, monthStartDay);
+    ytdStart = ytd.ytdStart;
+    ytdEnd = ytd.ytdEnd;
   } else if (budgetView === 'Weekly') {
     const anchor = clampDateToFinancialMonthBounds(anchorDate, key, monthStartDay);
     const d = new Date(anchor.getTime());
