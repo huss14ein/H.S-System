@@ -20,7 +20,7 @@ import { useTodosOptional } from '../context/TodosContext';
 import { ClipboardDocumentListIcon } from './icons/ClipboardDocumentListIcon';
 import { ArrowPathIcon } from './icons/ArrowPathIcon';
 import { usePrivacyMask } from '../context/PrivacyContext';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import { financialMonthRange, resolveMonthStartDayFromData, dateInRange } from '../utils/financialMonth';
@@ -173,7 +173,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
     { name: 'System', items: ['Notifications', 'Settings', 'System & APIs Health'] }
   ], []);
 
-  const { sarPerUsd: headlineFx } = useCanonicalFinancialMetrics();
+  const headlineFx = useCanonicalSpotFx();
 
   const investmentProgress = useMemo(() => {
     if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0 };

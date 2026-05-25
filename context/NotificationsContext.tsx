@@ -4,7 +4,7 @@ import { AuthContext } from './AuthContext';
 import { Page, Transaction } from '../types';
 import { DataContext } from './DataContext';
 import { useMarketData } from './MarketDataContext';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import {
   reconcileCashAccountBalance,
   detectStaleMarketData,
@@ -88,10 +88,10 @@ const severityScore: Record<'info' | 'warning' | 'urgent', number> = {
 };
 
 export function NotificationsProvider({ children }: { children: React.ReactNode }) {
-  const { data } = useContext(DataContext) ?? {};
+  const { data, showBlockingLoader } = useContext(DataContext) ?? {};
   const auth = useContext(AuthContext);
   const todosOpt = useTodosOptional();
-  const { sarPerUsd } = useCanonicalFinancialMetrics();
+  const sarPerUsd = useCanonicalSpotFx();
   const { simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt } = useMarketData();
   const [readIds, setReadIds] = useState<Set<string>>(loadReadIds);
   const [pendingBudgetRequestCount, setPendingBudgetRequestCount] = useState(0);
@@ -134,7 +134,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
 
   const notifications = useMemo<AppNotification[]>(() => {
     const list: AppNotification[] = [];
-    if (!data) return list;
+    if (!data || showBlockingLoader) return list;
     const now = new Date();
 
     const push = (n: AppNotification) => {
@@ -562,7 +562,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     return list
       .sort((a, b) => (b.score || 0) - (a.score || 0) || new Date(b.date).getTime() - new Date(a.date).getTime())
       .slice(0, 40);
-  }, [data, simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt, sarPerUsd, pendingBudgetRequestCount, pendingTransactionApprovalCount, isAdmin, auth?.user?.id, todosOpt?.todos]);
+  }, [data, showBlockingLoader, simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt, sarPerUsd, pendingBudgetRequestCount, pendingTransactionApprovalCount, isAdmin, auth?.user?.id, todosOpt?.todos]);
 
   const notificationsWithRead = useMemo(
     () => notifications.map((n) => ({ ...n, isRead: readIds.has(n.id) })),

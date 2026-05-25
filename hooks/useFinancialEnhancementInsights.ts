@@ -1,6 +1,6 @@
 import { useContext, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
-import { useCanonicalFinancialMetrics } from './useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from './useCanonicalFinancialMetrics';
 import { AuthContext } from '../context/AuthContext';
 import { computeCapitalDeployment } from '../services/capitalDeploymentOrchestrator';
 import { detectGoalConflictsFromData } from '../services/goalConflictDetection';
@@ -8,14 +8,13 @@ import { detectBudgetDrift } from '../services/budgetDrift';
 import { evaluateLifestyleGuardrailsFromData } from '../services/lifestyleGuardrails';
 import { computeIncomeStability } from '../services/incomeStability';
 import { computeMonthlyCashflowKpisSar } from '../services/financeTruth';
-import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { getPersonalTransactions } from '../utils/wealthScope';
 
 const EF_TARGET = 6;
 
 export function useFinancialEnhancementInsights(emergencyFundMonths = 0) {
   const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-  const { exchangeRate } = useCanonicalFinancialMetrics();
+  const exchangeRate = useCanonicalSpotFx();
   const auth = useContext(AuthContext);
 
   return useMemo(() => {
@@ -29,7 +28,6 @@ export function useFinancialEnhancementInsights(emergencyFundMonths = 0) {
         monthlySurplusSar: 0,
       };
     }
-    hydrateSarPerUsdDailySeries(data, exchangeRate);
     const txs = getPersonalTransactions(data);
     const cf = computeMonthlyCashflowKpisSar({
       data,

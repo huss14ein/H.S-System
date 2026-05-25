@@ -39,6 +39,7 @@ import { roundAvgCostPerUnit, roundMoney, roundQuantity } from '../utils/money';
 import { normalizeCoreUpsideAllocations } from '../utils/investmentPlanAllocations';
 import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/investmentPlanPerPortfolio';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
+import { financialDataHasHydrated } from '../services/financialDataHydration';
 import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
 import { deltaForInvestmentTrade } from '../services/investmentBalanceDelta';
 import { buildTransactionPayloadVariants } from '../services/transactionPayloadVariants';
@@ -112,6 +113,8 @@ const HOLDING_QUANTITY_EPSILON = 0.00001;
 interface DataContextType {
   data: FinancialData;
   loading: boolean;
+  /** Full-screen gate: true only on first load before any personal rows exist (background refetch does not block). */
+  showBlockingLoader: boolean;
   /** Force a reload from the backend (non-destructive). */
   refreshData: () => Promise<void>;
   addAsset: (asset: Asset, opts?: RecordWriteOptions) => Promise<void>;
@@ -675,6 +678,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const tradeSubmissionInFlightRef = useRef(false);
     const duplicateHoldingsReconcileInFlightRef = useRef(false);
     const duplicateHoldingsLastSignatureRef = useRef<string>('');
+    /** After first successful Supabase hydrate, refetches refresh in the background without blocking pages. */
+    const financialDataLoadedRef = useRef(false);
+    /** UI gate: true until first hydrate for this session/user completes (independent of background `loading`). */
+    const [awaitingInitialHydrate, setAwaitingInitialHydrate] = useState(true);
+    const recurringAutoApplyInFlightRef = useRef(false);
     const transactionsRef = useRef<FinancialData['transactions']>(data?.transactions ?? []);
     transactionsRef.current = data?.transactions ?? [];
     const dataRef = useRef(data);
@@ -938,7 +946,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         const db = supabase;
-        setLoading(true);
+        const showBlockingLoader = !financialDataLoadedRef.current;
+        if (showBlockingLoader) setLoading(true);
         try {
             // Optional tables: fetch so they never reject (migrations may not be run yet)
             const recurringPromise = trySelectOptionalTable<any>(db.from('recurring_transactions').select('*').eq('user_id', auth.user.id));
@@ -1007,7 +1016,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const postedEventIds = new Set<string>();
             if (dueEvents.length) {
                 try {
+                    const sukukPostDeadline = Date.now() + 5000;
                     for (const ev of dueEvents.slice(0, 50)) {
+                        if (Date.now() > sukukPostDeadline) {
+                            console.warn('Sukuk auto-post time budget reached; remaining events deferred to next refresh.');
+                            break;
+                        }
                         const symbol = `SUKUK:${String(ev.assetId).slice(0, 8)}:${ev.kind.toUpperCase()}`;
                         const txType: InvestmentTransaction['type'] = ev.kind === 'principal' ? 'deposit' : 'dividend';
                         const payload: Omit<InvestmentTransaction, 'id' | 'user_id'> = {
@@ -1172,6 +1186,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } catch (error) {
             console.error("Error fetching financial data:", error);
         } finally {
+            financialDataLoadedRef.current = true;
+            setAwaitingInitialHydrate(false);
             setLoading(false);
         }
     };
@@ -1182,13 +1198,23 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
 
     useEffect(() => {
-        fetchData();
-        
+        if (!auth?.user?.id || !supabase) {
+            financialDataLoadedRef.current = false;
+            setAwaitingInitialHydrate(false);
+            setLoading(false);
+            return;
+        }
+        // New session or switched user — must block UI until this user's rows hydrate (avoid showing prior user's shell).
+        financialDataLoadedRef.current = false;
+        setAwaitingInitialHydrate(true);
+        void fetchData();
+
         // Safety timeout to ensure loading state is cleared even if Supabase hangs
         const timeoutId = setTimeout(() => {
+            setAwaitingInitialHydrate(false);
             setLoading(false);
         }, 8000);
-        
+
         return () => clearTimeout(timeoutId);
         // Use user id only: `user` object reference changes on TOKEN_REFRESHED; refetching then caused global loading flashes.
     }, [auth?.user?.id]);
@@ -1210,6 +1236,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!supabase || !auth?.user) return;
         const db = supabase;
         setLoading(true);
+        financialDataLoadedRef.current = false;
+        setAwaitingInitialHydrate(true);
         const tables = [
             'accounts', 'assets', 'liabilities', 'goals', 'transactions', 'holdings',
             'investment_portfolios', 'investment_transactions', 'budgets', 'watchlist',
@@ -1222,6 +1250,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await Promise.allSettled(tables.map(table => db.from(table).delete().eq('user_id', auth.user!.id)));
         setData(initialData);
         setDataResetKey((k) => k + 1);
+        financialDataLoadedRef.current = true;
+        setAwaitingInitialHydrate(false);
         setLoading(false);
     };
 
@@ -1246,9 +1276,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             rows.length ? db.from(name).insert(rows.map(row)) : Promise.resolve({ data: null, error: null });
         try {
             setLoading(true);
+            setAwaitingInitialHydrate(true);
+            financialDataLoadedRef.current = false;
             await _internalResetData();
             if (!supabase || !auth?.user) return { ok: false, error: 'Session lost' };
             setLoading(true);
+            setAwaitingInitialHydrate(true);
             const tables: { key: string; dbTable: string }[] = [
                 { key: 'accounts', dbTable: 'accounts' },
                 { key: 'assets', dbTable: 'assets' },
@@ -2524,15 +2557,29 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // Intentionally omit data.transactions from this effect so it does not re-run on every new tx (avoids loop); duplicate check uses transactionsRef.
     // applyRecurringDueToday reads settings/rules via dataRef at invoke time and lists `data` in its deps when rules/settings change.
     useEffect(() => {
-        if (loading || !auth?.user || !data.recurringTransactions?.length) return;
+        if (
+            loading ||
+            awaitingInitialHydrate ||
+            !financialDataHasHydrated(data) ||
+            !auth?.user ||
+            !data.recurringTransactions?.length ||
+            recurringAutoApplyInFlightRef.current
+        ) {
+            return;
+        }
         const todayStr = new Date().toDateString();
         const storageKey = `recurring_auto_apply_${auth.user.id}`;
         if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(storageKey) === todayStr) return;
         if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(storageKey, todayStr);
-        applyRecurringDueToday().catch(() => {
-            if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(storageKey);
-        });
-    }, [loading, auth?.user?.id, data.recurringTransactions, applyRecurringDueToday]);
+        recurringAutoApplyInFlightRef.current = true;
+        applyRecurringDueToday()
+            .catch(() => {
+                if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(storageKey);
+            })
+            .finally(() => {
+                recurringAutoApplyInFlightRef.current = false;
+            });
+    }, [loading, awaitingInitialHydrate, data, auth?.user?.id, data.recurringTransactions, applyRecurringDueToday]);
 
     // --- Accounts / Platforms ---
     const addPlatform = async (platform: Omit<Account, 'id' | 'user_id' | 'balance'> & { balance?: number }) => {
@@ -3874,7 +3921,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     // Auto-heal legacy duplicate holdings (same portfolio + symbol) once per unique snapshot.
     useEffect(() => {
-        if (loading || !auth?.user || duplicateHoldingsReconcileInFlightRef.current) return;
+        if (
+            loading ||
+            awaitingInitialHydrate ||
+            !financialDataHasHydrated(data) ||
+            !auth?.user ||
+            duplicateHoldingsReconcileInFlightRef.current
+        ) {
+            return;
+        }
         const duplicateGroups: Holding[][] = [];
         (data.investments ?? []).forEach((portfolio: InvestmentPortfolio) => {
             const bySymbol = new Map<string, Holding[]>();
@@ -3914,9 +3969,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 duplicateHoldingsReconcileInFlightRef.current = false;
             }
         })();
-    }, [loading, auth?.user?.id, data.investments]);
+    }, [loading, awaitingInitialHydrate, data, auth?.user?.id, data.investments]);
 
-    const value = { data: dataWithPersonal, loading, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, updateInvestmentTransaction, deleteInvestmentTransaction, addWatchlistItem, updateWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const showBlockingLoader = awaitingInitialHydrate;
+
+    const value = { data: dataWithPersonal, loading, showBlockingLoader, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, updateInvestmentTransaction, deleteInvestmentTransaction, addWatchlistItem, updateWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

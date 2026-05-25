@@ -47,7 +47,7 @@ function holdingValueInBookCurrency(
 }
 
 const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => void }> = ({ setActiveTab }) => {
-    const { data, loading } = useContext(DataContext)!;
+    const { data, showBlockingLoader } = useContext(DataContext)!;
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { simulatedPrices } = useMarketData();
     const {
@@ -192,7 +192,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
         }
     }, [allHoldingsWithGains, portfolioAllocation, assetClassAllocation, companyNameMap]);
 
-    if (loading || !data) {
+    if (showBlockingLoader) {
         return (
             <div className="flex justify-center items-center min-h-[20rem]" aria-busy="true">
                 <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading investment overview" />

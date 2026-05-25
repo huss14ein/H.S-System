@@ -53,7 +53,7 @@ const Layout: React.FC<LayoutProps> = ({
   useEffect(() => {
     const uid = auth?.user?.id;
     const data = dataCtx?.data;
-    if (!uid || !data || dataCtx?.loading || !dataCtx.getAvailableCashForAccount) return;
+    if (!uid || !data || dataCtx?.showBlockingLoader || !dataCtx.getAvailableCashForAccount) return;
     void runAutoNetWorthSnapshotIfDue({
       userId: uid,
       data,
@@ -62,7 +62,7 @@ const Layout: React.FC<LayoutProps> = ({
       simulatedPrices,
       supabase,
     });
-  }, [auth?.user?.id, dataCtx?.loading, dataCtx?.data, exchangeRate, simulatedPrices, dataCtx?.getAvailableCashForAccount]);
+  }, [auth?.user?.id, dataCtx?.showBlockingLoader, dataCtx?.data, exchangeRate, simulatedPrices, dataCtx?.getAvailableCashForAccount]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

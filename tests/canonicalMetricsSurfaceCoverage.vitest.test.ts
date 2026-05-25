@@ -30,10 +30,11 @@ const PAGE_NO_HEADLINE_METRICS = new Set([
   'TransactionsPage.tsx',
 ]);
 
-/** Shared UI that shows wealth / FX — must use canonical hook (not raw resolveSarPerUsd). */
+/** Shared UI that shows wealth / FX — full metrics or spot-only hook (not raw resolveSarPerUsd). */
 const COMPONENT_CANONICAL_REQUIRED = new Set([
   'AIFeed.tsx',
   'MarketSimulator.tsx',
+  'DividendSmsImportPanel.tsx',
 ]);
 
 const CONTEXT_CANONICAL_REQUIRED = new Set(['NotificationsContext.tsx']);
@@ -71,15 +72,17 @@ describe('canonical metrics surface coverage', () => {
     expect(offenders, `Use hook sarPerUsd instead of resolveSarPerUsd in: ${offenders.join(', ')}`).toEqual([]);
   });
 
-  it('key shared components use useCanonicalFinancialMetrics', () => {
+  it('key shared components use canonical FX (full metrics or spot-only hook)', () => {
     const missing: string[] = [];
     for (const file of COMPONENT_CANONICAL_REQUIRED) {
       const src = readFileSync(join(COMPONENTS_DIR, file), 'utf8');
-      if (!src.includes('useCanonicalFinancialMetrics')) {
+      const usesCanonicalFx =
+        src.includes('useCanonicalFinancialMetrics') || src.includes('useCanonicalSpotFx');
+      if (!usesCanonicalFx) {
         missing.push(file);
       }
     }
-    expect(missing, `Add useCanonicalFinancialMetrics() to: ${missing.join(', ')}`).toEqual([]);
+    expect(missing, `Add useCanonicalFinancialMetrics() or useCanonicalSpotFx() to: ${missing.join(', ')}`).toEqual([]);
   });
 
   it('key shared components do not call resolveSarPerUsd directly', () => {
@@ -93,10 +96,12 @@ describe('canonical metrics surface coverage', () => {
     expect(offenders, `Use hook sarPerUsd in: ${offenders.join(', ')}`).toEqual([]);
   });
 
-  it('NotificationsContext uses canonical metrics for FX', () => {
+  it('NotificationsContext uses canonical FX (full metrics or spot-only hook)', () => {
     for (const file of CONTEXT_CANONICAL_REQUIRED) {
       const src = readFileSync(join(process.cwd(), 'context', file), 'utf8');
-      expect(src.includes('useCanonicalFinancialMetrics')).toBe(true);
+      const usesCanonicalFx =
+        src.includes('useCanonicalFinancialMetrics') || src.includes('useCanonicalSpotFx');
+      expect(usesCanonicalFx).toBe(true);
       expect(src.includes('resolveSarPerUsd')).toBe(false);
     }
   });

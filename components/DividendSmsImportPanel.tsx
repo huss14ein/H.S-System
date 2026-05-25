@@ -3,7 +3,7 @@ import { DataContext } from '../context/DataContext';
 import InfoHint from './InfoHint';
 import { useToast } from '../context/ToastContext';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import {
   parseDividendSmsText,
   resolveDividendSmsRows,
@@ -25,7 +25,7 @@ export const DIVIDEND_SMS_IMPORT_SECTION_ID = 'dividend-sms-import';
 
 const DividendSmsImportPanel: React.FC = () => {
   const { data, recordTrade } = useContext(DataContext)!;
-  const { sarPerUsd } = useCanonicalFinancialMetrics();
+  const sarPerUsd = useCanonicalSpotFx();
   const { showToast } = useToast();
   const confirmAction = useConfirmAction();
   const { formatCurrencyString } = useFormatCurrency();

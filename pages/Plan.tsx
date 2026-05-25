@@ -64,7 +64,7 @@ const SCENARIO_PRESETS = [
 ];
 
 const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
-    const { data, loading } = useContext(DataContext)!;
+    const { data, showBlockingLoader } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const { exchangeRate, currency: displayCurrency } = useCurrency();
@@ -648,7 +648,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         );
     }
 
-    if (loading || !data) {
+    if (showBlockingLoader) {
         return (
             <div className="flex justify-center items-center min-h-[24rem]" aria-busy="true">
                 <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading plan" />

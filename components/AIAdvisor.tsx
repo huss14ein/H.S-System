@@ -37,7 +37,7 @@ import { FinancialData, type Holding } from '../types';
 import { useAI } from '../context/AiContext';
 import AiProxyUnavailableHint from './AiProxyUnavailableHint';
 import { useMarketData } from '../context/MarketDataContext';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import type { AiInsightOptions } from '../services/geminiService';
 
 type AIContext =
@@ -310,7 +310,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
     const [isTranslating, setIsTranslating] = useState(false);
     const [translateError, setTranslateError] = useState<string | null>(null);
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
     const { simulatedPrices } = useMarketData();
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
 

@@ -48,7 +48,7 @@ const DividendTrackerView: React.FC<{
   pageAction?: string | null;
   clearPageAction?: () => void;
 }> = ({ setActivePage, triggerPageAction, pageAction, clearPageAction }) => {
-    const { data, loading, recordTrade, updateHolding, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, showBlockingLoader, recordTrade, updateHolding, getAvailableCashForAccount } = useContext(DataContext)!;
     const confirmAction = useConfirmAction();
     const { exchangeRate } = useCurrency();
     const { sarPerUsd } = useCanonicalFinancialMetrics();
@@ -327,7 +327,7 @@ const DividendTrackerView: React.FC<{
     }, [pageAction, clearPageAction]);
 
     useEffect(() => {
-        if (loading || !data || autoSyncStarted.current) return;
+        if (showBlockingLoader || autoSyncStarted.current) return;
         autoSyncStarted.current = true;
         let cancelled = false;
         (async () => {
@@ -360,7 +360,7 @@ const DividendTrackerView: React.FC<{
         return () => {
             cancelled = true;
         };
-    }, [loading, data, runFinnhubSync, personalInvestments, dividendTransactions]);
+    }, [showBlockingLoader, data, runFinnhubSync, personalInvestments, dividendTransactions]);
 
     const formatTxAmountSar = useCallback(
         (t: InvestmentTransaction) => {
@@ -377,7 +377,7 @@ const DividendTrackerView: React.FC<{
         [accountsFull, portfoliosAll, data, exchangeRate, formatCurrencyString],
     );
 
-    if (loading || !data || !tracker) {
+    if (showBlockingLoader || !tracker) {
         return (
             <div className="page-container flex items-center justify-center min-h-[24rem]" aria-busy="true">
                 <div className="text-center">

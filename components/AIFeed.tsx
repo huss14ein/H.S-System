@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useContext, useEffect, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useMarketData } from '../context/MarketDataContext';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { getAIFeedInsights, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { LightBulbIcon } from './icons/LightBulbIcon';
@@ -41,7 +41,7 @@ const AIFeed: React.FC = () => {
     const [arItems, setArItems] = useState<{ title: string; description: string }[] | null>(null);
     const [translating, setTranslating] = useState(false);
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
     const { simulatedPrices } = useMarketData();
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const dataRef = useRef(data);

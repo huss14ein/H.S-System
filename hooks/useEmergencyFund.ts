@@ -6,7 +6,7 @@ import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { resolveSarPerUsd, toSAR, totalLiquidCashSARFromAccounts } from '../utils/currencyMath';
 import { getSarPerUsdForCalendarDay, hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { useCurrency } from '../context/CurrencyContext';
-import { useCanonicalFinancialMetrics } from './useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from './useCanonicalFinancialMetrics';
 
 /** Recommended months of expenses to hold as emergency cash (3–6 is common; 6 is conservative). */
 export const EMERGENCY_FUND_TARGET_MONTHS = 6;
@@ -226,7 +226,7 @@ export function emergencyFundCoverage(data: FinancialData | null | undefined): n
  */
 export function useEmergencyFund(data: FinancialData | null | undefined): EmergencyFundMetrics {
     const { exchangeRate } = useCurrency();
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
     const { getAvailableCashForAccount } = useContext(DataContext)!;
     return useMemo(
         () =>

@@ -3,6 +3,9 @@ import { DataContext } from '../context/DataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useMarketData } from '../context/MarketDataContext';
 import type { FinancialData } from '../types';
+import { resolveSarPerUsd } from '../utils/currencyMath';
+import { useDebouncedValue } from './useDebouncedValue';
+import { useHydrateSarPerUsdDailySeries } from './useHydrateSarPerUsdDailySeries';
 import {
   computeCanonicalFinancialMetrics,
   type CanonicalFinancialMetrics,
@@ -21,6 +24,21 @@ export type UseCanonicalFinancialMetricsResult = CanonicalFinancialMetrics & {
   sukukAssetsValueSar: number;
 };
 
+/**
+ * Headline SAR/USD spot only (hydrates daily FX series). Use in Header / notifications
+ * instead of the full canonical bundle so quote ticks do not block the UI thread.
+ */
+export function useCanonicalSpotFx(): number {
+  const ctx = useContext(DataContext);
+  const data = ctx?.data ?? null;
+  const { exchangeRate } = useCurrency();
+  useHydrateSarPerUsdDailySeries(data, exchangeRate);
+  return useMemo(() => {
+    if (!data) return exchangeRate;
+    return resolveSarPerUsd(data, exchangeRate);
+  }, [data, exchangeRate]);
+}
+
 /** Canonical personal NW + Dashboard KPI inputs (UI exchange rate + live quotes). */
 export function useCanonicalFinancialMetrics(): UseCanonicalFinancialMetricsResult {
   const ctx = useContext(DataContext);
@@ -28,19 +46,22 @@ export function useCanonicalFinancialMetrics(): UseCanonicalFinancialMetricsResu
   const getAvailableCashForAccount = ctx?.getAvailableCashForAccount;
   const { exchangeRate } = useCurrency();
   const { simulatedPrices } = useMarketData();
+  const debouncedPrices = useDebouncedValue(simulatedPrices, 400);
+  useHydrateSarPerUsdDailySeries(data, exchangeRate);
 
   return useMemo((): UseCanonicalFinancialMetricsResult => {
     const metrics = computeCanonicalFinancialMetrics({
       data,
       exchangeRate,
       getAvailableCashForAccount,
-      simulatedPrices,
+      simulatedPrices: debouncedPrices,
     });
     const parts = metrics.headlineExposureParts;
     return {
       data,
       exchangeRate,
-      simulatedPrices,
+      /** Same map passed into `computeCanonicalFinancialMetrics` (debounced live quotes). */
+      simulatedPrices: debouncedPrices,
       getAvailableCashForAccount,
       ...metrics,
       buckets: metrics.headline.buckets,
@@ -48,5 +69,5 @@ export function useCanonicalFinancialMetrics(): UseCanonicalFinancialMetricsResu
       commoditiesValueSar: parts.commoditiesValueSar,
       sukukAssetsValueSar: parts.sukukAssetsValueSar,
     };
-  }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
+  }, [data, exchangeRate, getAvailableCashForAccount, debouncedPrices]);
 }

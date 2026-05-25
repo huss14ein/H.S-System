@@ -13,7 +13,7 @@ export interface PageLoadingProps {
 
 /**
  * Shared full-page or section loading UI with consistent spinner, aria-busy and aria-label.
- * Use when a page or section is loading (e.g. DataContext loading || !data).
+ * Use when a page or section is loading (e.g. DataContext `showBlockingLoader`).
  */
 const PageLoading: React.FC<PageLoadingProps> = ({
   ariaLabel,

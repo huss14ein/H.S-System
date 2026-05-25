@@ -416,7 +416,7 @@ interface BudgetsProps {
 }
 
 const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pageAction, clearPageAction }) => {
-    const { data, loading, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
+    const { data, showBlockingLoader, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { trackSuggestionFeedback } = useSelfLearning();
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
@@ -2383,7 +2383,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const visibleHistoryRequests = useMemo(() => allRespondedRequests.slice(0, historyItemsToShow), [allRespondedRequests, historyItemsToShow]);
     const hasMoreHistory = historyItemsToShow < allRespondedRequests.length;
 
-    if (loading || !data) {
+    if (showBlockingLoader) {
         return (
             <PageLayout title="Budgets" description="Loading your budget data…" action={null}>
                 <div className="space-y-5" aria-busy="true" aria-label="Loading budgets">

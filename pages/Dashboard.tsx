@@ -415,7 +415,7 @@ const AI_SUMMARY_LANG_KEY = 'finova_dashboard_ai_summary_lang_v1';
 const SYSTEM_HEALTH_PAGE = 'System & APIs Health' as Page;
 
 const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
-    const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
     const { simulatedPrices } = useMarketData();
@@ -854,7 +854,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
         };
     }, [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, emergencyFund, setActivePage, kpiDensity, maskBalance, goToInvestmentKpiReconciliation]);
     
-    if (loading || !data) {
+    if (showBlockingLoader) {
         return (
             <div className="flex justify-center items-center h-96" aria-busy="true">
                 <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading dashboard" />

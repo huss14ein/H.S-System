@@ -16,7 +16,7 @@ import {
     saveQuoteCacheRows,
     upsertCacheFromLiveQuotes,
 } from '../services/quotePriceCache';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { portfolioBelongsToAccount, resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
 import { getRefreshableHoldingQuoteSymbols } from '../services/quoteRefreshSymbols';
 import { isTadawulQuoteSymbol } from '../services/marketQuoteRouting';
@@ -29,7 +29,7 @@ import {
 const MarketSimulator: React.FC = () => {
     const dataContext = useContext(DataContext);
     const marketContext = useContext(MarketDataContext);
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
 
     const contextRef = useRef({ dataContext, marketContext, sarPerUsd });
     contextRef.current = { dataContext, marketContext, sarPerUsd };
