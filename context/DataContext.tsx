@@ -1200,7 +1200,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     /** Keep a dense SAR/USD point per calendar day for charts/KPIs (spot + snapshot seed + forward-fill). */
     useEffect(() => {
-        hydrateSarPerUsdDailySeries(data, resolveSarPerUsd(data ?? null, DEFAULT_SAR_PER_USD));
+        hydrateSarPerUsdDailySeries(data, DEFAULT_SAR_PER_USD);
     }, [data, dataResetKey]);
 
     // Helper to add user_id to any object

@@ -4,8 +4,55 @@ import { deltaForInvestmentTrade } from './investmentBalanceDelta';
 import { inferInvestmentTransactionCurrency, resolveCanonicalAccountId, resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 
-function bucketCashScore(bucket: { SAR: number; USD: number }): number {
-  return Math.abs(Number(bucket.SAR) || 0) + Math.abs(Number(bucket.USD) || 0);
+function preferBrokerCashBucket(
+  prev: { SAR: number; USD: number } | undefined,
+  next: { SAR: number; USD: number },
+  sarPerUsd: number,
+): boolean {
+  if (!prev) return true;
+  return tradableCashBucketToSAR(next, sarPerUsd) > tradableCashBucketToSAR(prev, sarPerUsd);
+}
+
+type MergedTradableCashRow = {
+  accountId: string;
+  bucket: { SAR: number; USD: number };
+  label: string;
+};
+
+/** Platform key for dedupe — honors legacy `account_id` aliases, then normal id resolution. */
+function canonicalInvestmentPlatformId(row: Account, allAccounts: Account[]): string {
+  const alias = (
+    (row as { account_id?: string }).account_id ?? (row as { accountId?: string }).accountId ?? ''
+  ).trim();
+  const raw = alias || row.id;
+  return resolveCanonicalAccountId(raw, allAccounts) || row.id;
+}
+
+/** One balance row per canonical investment platform — same winner rule for bars and totals. */
+function mergeTradableCashByCanonicalId(
+  scopeAccounts: Account[],
+  allAccounts: Account[],
+  sarPerUsd: number,
+  labelMaxLen: number,
+): Map<string, MergedTradableCashRow> {
+  const allForCanon = allAccounts.length ? allAccounts : scopeAccounts;
+  const merged = new Map<string, MergedTradableCashRow>();
+  for (const acc of scopeAccounts) {
+    if (acc.type !== 'Investment') continue;
+    const row = allForCanon.find((a) => a.id === acc.id) ?? acc;
+    const id = canonicalInvestmentPlatformId(row, allForCanon);
+    if (!id) continue;
+    const bucket = brokerCashBucketsFromInvestmentAccount(row);
+    const prev = merged.get(id);
+    if (preferBrokerCashBucket(prev?.bucket, bucket, sarPerUsd)) {
+      merged.set(id, {
+        accountId: id,
+        bucket,
+        label: (row.name || 'Platform').slice(0, labelMaxLen),
+      });
+    }
+  }
+  return merged;
 }
 
 /**
@@ -23,18 +70,19 @@ export function brokerCashBucketsFromInvestmentAccount(
   return cur === 'USD' ? { SAR: 0, USD: n } : { SAR: n, USD: 0 };
 }
 
-/** Canonical investment account id → SAR/USD buckets from each platform's `balance`. */
-export function computeBrokerCashByAccountMap(accounts: Account[]): Record<string, { SAR: number; USD: number }> {
+/**
+ * Canonical platform id → SAR/USD buckets from Accounts `balance`.
+ * Same dedupe + SAR-equivalent winner as {@link sumTradableCashSarFromInvestmentAccounts}.
+ */
+export function computeBrokerCashByAccountMap(
+  accounts: Account[],
+  sarPerUsd: number,
+): Record<string, { SAR: number; USD: number }> {
+  const scope = accounts.filter((a) => a.type === 'Investment');
+  const merged = mergeTradableCashByCanonicalId(scope, accounts, sarPerUsd, 14);
   const map: Record<string, { SAR: number; USD: number }> = {};
-  for (const acc of accounts) {
-    if (acc.type !== 'Investment') continue;
-    const id = resolveCanonicalAccountId(acc.id, accounts) ?? acc.id;
-    if (!id) continue;
-    const next = brokerCashBucketsFromInvestmentAccount(acc);
-    const prev = map[id];
-    if (!prev || bucketCashScore(next) > bucketCashScore(prev)) {
-      map[id] = next;
-    }
+  for (const row of merged.values()) {
+    map[row.accountId] = row.bucket;
   }
   return map;
 }
@@ -73,23 +121,10 @@ export function sumTradableCashSarFromInvestmentAccounts(
   allAccounts: Account[],
   sarPerUsd: number,
 ): number {
-  const allForCanon = allAccounts.length ? allAccounts : scopeAccounts;
-  const merged = new Map<string, { SAR: number; USD: number }>();
-  for (const acc of scopeAccounts) {
-    if (acc.type !== 'Investment') continue;
-    /** Prefer the live row from `allAccounts` (same id) so deployable cash tracks balance updates. */
-    const row = allForCanon.find((a) => a.id === acc.id) ?? acc;
-    const id = resolveCanonicalAccountId(row.id, allForCanon) ?? row.id;
-    if (!id) continue;
-    const next = brokerCashBucketsFromInvestmentAccount(row);
-    const prev = merged.get(id);
-    if (!prev || bucketCashScore(next) > bucketCashScore(prev)) {
-      merged.set(id, next);
-    }
-  }
+  const merged = mergeTradableCashByCanonicalId(scopeAccounts, allAccounts, sarPerUsd, 14);
   let sum = 0;
-  for (const bucket of merged.values()) {
-    sum += tradableCashBucketToSAR(bucket, sarPerUsd);
+  for (const row of merged.values()) {
+    sum += tradableCashBucketToSAR(row.bucket, sarPerUsd);
   }
   return sum;
 }
@@ -106,26 +141,15 @@ export function buildInvestableCashBarsFromInvestmentAccounts(
   sarPerUsd: number,
   options?: { maxBars?: number; labelMaxLen?: number },
 ): InvestableCashBarRow[] {
-  const allForCanon = allAccounts.length ? allAccounts : scopeAccounts;
-  const merged = new Map<string, InvestableCashBarRow>();
   const labelMaxLen = options?.labelMaxLen ?? 14;
-
-  for (const acc of scopeAccounts) {
-    if (acc.type !== 'Investment') continue;
-    const row = allForCanon.find((a) => a.id === acc.id) ?? acc;
-    const id = resolveCanonicalAccountId(row.id, allForCanon) ?? row.id;
-    if (!id) continue;
-    const sar = Math.max(0, tradableCashBucketToSAR(brokerCashBucketsFromInvestmentAccount(row), sarPerUsd));
-    const next: InvestableCashBarRow = {
-      accountId: id,
-      label: (row.name || 'Platform').slice(0, labelMaxLen),
-      sar,
-    };
-    const prev = merged.get(id);
-    if (!prev || next.sar > prev.sar) merged.set(id, next);
-  }
+  const merged = mergeTradableCashByCanonicalId(scopeAccounts, allAccounts, sarPerUsd, labelMaxLen);
 
   return [...merged.values()]
+    .map((r) => ({
+      accountId: r.accountId,
+      label: r.label,
+      sar: Math.max(0, tradableCashBucketToSAR(r.bucket, sarPerUsd)),
+    }))
     .filter((r) => r.sar > 0.5)
     .sort((a, b) => b.sar - a.sar)
     .slice(0, options?.maxBars ?? 8);

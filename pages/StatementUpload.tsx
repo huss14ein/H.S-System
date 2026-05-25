@@ -20,8 +20,7 @@ import {
   planStatementImport,
   type StatementImportContext,
 } from '../services/statementImportPrepare';
-import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { useConfirmAction } from '../hooks/useConfirmAction';
 import { summarizeStatementImportForConfirm } from '../utils/recordConfirmMessages';
 
@@ -35,8 +34,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
   const confirmAction = useConfirmAction();
   const { commitParsedStatementFromUpload } = useStatementProcessing();
   const { formatCurrencyString } = useFormatCurrency();
-  const { exchangeRate } = useCurrency();
-  const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+  const { sarPerUsd } = useCanonicalFinancialMetrics();
   const [activeTab, setActiveTab] = useState<'bank' | 'sms' | 'trading'>('bank');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [smsText, setSmsText] = useState('');

@@ -36,9 +36,8 @@ import { LightBulbIcon } from './icons/LightBulbIcon';
 import { FinancialData, type Holding } from '../types';
 import { useAI } from '../context/AiContext';
 import AiProxyUnavailableHint from './AiProxyUnavailableHint';
-import { useCurrency } from '../context/CurrencyContext';
 import { useMarketData } from '../context/MarketDataContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import type { AiInsightOptions } from '../services/geminiService';
 
 type AIContext =
@@ -311,7 +310,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
     const [isTranslating, setIsTranslating] = useState(false);
     const [translateError, setTranslateError] = useState<string | null>(null);
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-    const { exchangeRate } = useCurrency();
+    const { sarPerUsd } = useCanonicalFinancialMetrics();
     const { simulatedPrices } = useMarketData();
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
 
@@ -365,7 +364,6 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
         setTranslateError(null);
         setDisplayLang('en');
         try {
-            const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
             const insightOpts: AiInsightOptions = {
                 exchangeRate: sarPerUsd,
                 getAvailableCashForAccount,
@@ -386,7 +384,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
             setInsightEn(formatAiError(error));
         }
         setIsLoading(false);
-    }, [pageContext, data, contextData, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
+    }, [pageContext, data, contextData, sarPerUsd, getAvailableCashForAccount, simulatedPrices]);
 
     const handleLangChange = (lang: 'en' | 'ar') => {
         setDisplayLang(lang);

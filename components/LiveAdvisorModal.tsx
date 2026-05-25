@@ -6,7 +6,6 @@ import { DataContext } from '../context/DataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { formatGoalsProgressForPrompt } from '../services/goalResolvedTotals';
-import { resolveSarPerUsd } from '../utils/currencyMath';
 import { buildAiPersonalWealthGrounding } from '../services/aiPersonalWealthGrounding';
 import { computeCapitalDeployment } from '../services/capitalDeploymentOrchestrator';
 import { getPersonalLiabilities } from '../utils/wealthScope';
@@ -71,7 +70,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         [data, exchangeRate, getAvailableCashForAccount, simulatedPrices],
     );
 
-    const { netWorth: headlineNetWorthSar, liquidCashSar: headlineLiquidCashSar, kpiSnapshot } =
+    const { netWorth: headlineNetWorthSar, liquidCashSar: headlineLiquidCashSar, kpiSnapshot, sarPerUsd } =
         useCanonicalFinancialMetrics();
 
     const getNetWorth_ = useCallback(() => {
@@ -84,11 +83,10 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
     }, [headlineNetWorthSar, headlineLiquidCashSar, kpiSnapshot?.monthlyPnL, wealthGroundingRef]);
 
     const getGoalsProgress_ = useCallback(() => {
-        const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
         return {
             summary: formatGoalsProgressForPrompt(data, sarPerUsd) || 'No goals configured.',
         };
-    }, [data, exchangeRate]);
+    }, [data, sarPerUsd]);
 
     const getTopHoldings_ = useCallback(() => {
         return { holdings: wealthGroundingRef.topHoldingsLines };

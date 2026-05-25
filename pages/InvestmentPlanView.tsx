@@ -34,7 +34,8 @@ import { ChartBarIcon } from '../components/icons/ChartBarIcon';
 import { ClockIcon, TargetIcon } from '../components/icons';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd, convertBetweenTradeCurrencies, inferInstrumentCurrencyFromSymbol } from '../utils/currencyMath';
+import { convertBetweenTradeCurrencies, inferInstrumentCurrencyFromSymbol } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
 import CurrencyDualDisplay from '../components/CurrencyDualDisplay';
 import { fetchCompanyNameForSymbol } from '../hooks/useSymbolCompanyName';
@@ -110,7 +111,7 @@ const PlanTradeModal: React.FC<{
         return computeBuyScore(data, sym, exchangeRate, getAvailableCashForAccount, emergencyFund.monthsCovered, 6, wl);
     }, [data, symbol, tradeType, exchangeRate, getAvailableCashForAccount, emergencyFund.monthsCovered]);
     const planCcy = (budgetCurrency || 'SAR') as TradeCurrency;
-    const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
+    const { sarPerUsd } = useCanonicalFinancialMetrics();
     const instrumentCurrency = useMemo(() => inferInstrumentCurrencyFromSymbol(symbol), [symbol]);
     const portfolios = useMemo(() => getPersonalInvestments(data ?? null), [data]);
     const holdingSymbolOptions = useMemo(() => buildHoldingSymbolOptions(portfolios), [portfolios]);
@@ -931,11 +932,21 @@ const InvestmentPlanView: React.FC<{
     const { trackAction, trackSuggestionFeedback } = useSelfLearning();
     const { simulatedPrices, symbolQuoteUpdatedAt } = useMarketData();
     const { exchangeRate } = useCurrency();
-    const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
+    const { sarPerUsd } = useCanonicalFinancialMetrics();
     const emergencyFund = useEmergencyFund(data ?? null);
     const canonicalPlan = useMemo(
-        () => (data ? computeCanonicalPlanningSnapshot({ data: data as any, exchangeRate, simulatedPrices, getAvailableCashForAccount, symbolQuoteUpdatedAt }) : null),
-        [data, exchangeRate, simulatedPrices, getAvailableCashForAccount, symbolQuoteUpdatedAt],
+        () =>
+            data
+                ? computeCanonicalPlanningSnapshot({
+                      data: data as any,
+                      exchangeRate,
+                      sarPerUsd,
+                      simulatedPrices,
+                      getAvailableCashForAccount,
+                      symbolQuoteUpdatedAt,
+                  })
+                : null,
+        [data, exchangeRate, sarPerUsd, simulatedPrices, getAvailableCashForAccount, symbolQuoteUpdatedAt],
     );
 
     const [isModalOpen, setIsModalOpen] = useState(false);

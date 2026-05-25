@@ -40,7 +40,8 @@ import { encodeNoteWithSplits } from '../services/transactionSplitNote';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
 import { evaluateTransactionBudgetCoverageState } from '../services/transactionBudgetCoverage';
 import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd, toSAR, fromSAR } from '../utils/currencyMath';
+import { toSAR, fromSAR } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { exportCashTransactionsToCsv } from '../services/reportingEngine';
 import { computeMonthlyCashflowKpisSar } from '../services/financeTruth';
@@ -1146,6 +1147,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     const { data, loading, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth } = useContext(DataContext)!;
     const confirmAction = useConfirmAction();
     const { exchangeRate } = useCurrency();
+    const { sarPerUsd } = useCanonicalFinancialMetrics();
     const recurringList = data?.recurringTransactions ?? [];
     const auth = useContext(AuthContext);
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
@@ -2201,7 +2203,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 allCategories={allCategories}
                 accounts={availableAccounts}
                 existingTransactions={(data as any)?.personalTransactions ?? data?.transactions ?? []}
-                sarPerUsd={resolveSarPerUsd(data, exchangeRate)}
+                sarPerUsd={sarPerUsd}
                 monthStartDay={monthStartDay}
             />
              <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.description || ''} />

@@ -26,5 +26,25 @@ describe('computeEmergencyFundMetrics', () => {
     expect(m.monthlyCoreExpenses).toBeCloseTo(2000, 6);
     expect(m.monthsCovered).toBeCloseTo(6, 6);
   });
+
+  it('uses sarPerUsd opt for spot cash conversion (independent of exchangeRate UI rate)', () => {
+    const data = {
+      accounts: [{ id: 'a1', type: 'Checking', balance: 100, currency: 'USD' }],
+      budgets: [],
+      transactions: [],
+      investments: [],
+      liabilities: [],
+      assets: [],
+      commodityHoldings: [],
+      goals: [],
+      recurringTransactions: [],
+      investmentTransactions: [],
+    } as unknown as FinancialData;
+
+    const at10 = computeEmergencyFundMetrics(data, { sarPerUsd: 10, exchangeRate: 3.75 });
+    const at5 = computeEmergencyFundMetrics(data, { sarPerUsd: 5, exchangeRate: 3.75 });
+    expect(at10.emergencyCash).toBeCloseTo(1000, 6);
+    expect(at5.emergencyCash).toBeCloseTo(500, 6);
+  });
 });
 

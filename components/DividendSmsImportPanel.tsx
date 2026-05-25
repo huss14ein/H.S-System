@@ -1,10 +1,9 @@
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { DataContext } from '../context/DataContext';
-import { useCurrency } from '../context/CurrencyContext';
 import InfoHint from './InfoHint';
 import { useToast } from '../context/ToastContext';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import {
   parseDividendSmsText,
   resolveDividendSmsRows,
@@ -26,8 +25,7 @@ export const DIVIDEND_SMS_IMPORT_SECTION_ID = 'dividend-sms-import';
 
 const DividendSmsImportPanel: React.FC = () => {
   const { data, recordTrade } = useContext(DataContext)!;
-  const { exchangeRate } = useCurrency();
-  const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
+  const { sarPerUsd } = useCanonicalFinancialMetrics();
   const { showToast } = useToast();
   const confirmAction = useConfirmAction();
   const { formatCurrencyString } = useFormatCurrency();

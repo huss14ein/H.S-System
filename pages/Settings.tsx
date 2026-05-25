@@ -29,7 +29,7 @@ import {
 import { useCurrency } from '../context/CurrencyContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useNotifications } from '../context/NotificationsContext';
-import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { toSAR } from '../utils/currencyMath';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import AIAdvisor from '../components/AIAdvisor';
@@ -43,7 +43,7 @@ import {
   countPortfolioDriftAttention,
   countTrackedSymbolsForFeed,
 } from '../services/settingsSnapshot';
-import { computeWealthSummaryReportModel, computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
+import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { computeMaxAbsSleeveDriftPercent } from '../services/settingsDecisionPreview';
 import type { FinancialData } from '../types';
 import { financialMonthRange, resolveMonthStartDayFromData } from '../utils/financialMonth';
@@ -100,9 +100,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     const ef = useEmergencyFund(data ?? null);
     const { maskSensitive, setMaskSensitive, playNotificationSound, setPlayNotificationSound } = usePrivacyMask();
 
-    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
-
-    const { liquidCashSar } = useCanonicalFinancialMetrics();
+    const { sarPerUsd, liquidCashSar, wealthSummary } = useCanonicalFinancialMetrics();
 
     const sleeveDriftPct = useMemo(() => computeMaxAbsSleeveDriftPercent(data), [data]);
 
@@ -268,10 +266,8 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     }, [liquidCashSar]);
 
     const wealthSummaryPayload = useMemo((): WealthSummaryReportInput | null => {
-        if (!data) return null;
-        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount, simulatedPrices)
-            .wealthSummaryReportPayload;
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
+        return wealthSummary?.wealthSummaryReportPayload ?? null;
+    }, [wealthSummary]);
 
     const [isAdmin, setIsAdmin] = useState(false);
     const [pendingUsers, setPendingUsers] = useState<{ id: string; name: string | null; email: string | null; created_at: string }[]>([]);

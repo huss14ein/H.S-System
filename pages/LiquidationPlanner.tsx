@@ -4,8 +4,8 @@ import { useSelfLearning } from '../context/SelfLearningContext';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import { useCurrency } from '../context/CurrencyContext';
-import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
+import { toSAR } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { sellScore } from '../services/decisionEngine';
 import { thesisValidityCheck, type ThesisRecord } from '../services/thesisJournalEngine';
@@ -49,8 +49,7 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
   const { data, loading } = useContext(DataContext)!;
   const { trackAction } = useSelfLearning();
   const { formatCurrencyString } = useFormatCurrency();
-  const { exchangeRate } = useCurrency();
-  const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+  const { sarPerUsd } = useCanonicalFinancialMetrics();
   const [theses, setTheses] = useState<ThesisRecord[]>([]);
 
   useEffect(() => {

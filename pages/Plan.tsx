@@ -14,8 +14,7 @@ import PageLayout from '../components/PageLayout';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import SectionCard from '../components/SectionCard';
 import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
-import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from '../components/charts/chartTheme';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
@@ -52,7 +51,6 @@ import {
 import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
 import { useFinancialEnhancementInsights } from '../hooks/useFinancialEnhancementInsights';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -70,13 +68,9 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
     const auth = useContext(AuthContext);
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const { exchangeRate, currency: displayCurrency } = useCurrency();
-    const sarPerUsd = useMemo(() => {
-        if (data) hydrateSarPerUsdDailySeries(data, exchangeRate);
-        return resolveSarPerUsd(data, exchangeRate);
-    }, [data, exchangeRate]);
+    const { sarPerUsd, liquidCashSar: dashboardLiquidCashSar } = useCanonicalFinancialMetrics();
     const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data]);
     const emergencyFund = useEmergencyFund(data);
-    const { liquidCashSar: dashboardLiquidCashSar } = useCanonicalFinancialMetrics();
     const planInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
     const [year, setYear] = useState(new Date().getFullYear());
     const planMonthColumnLabels = useMemo(

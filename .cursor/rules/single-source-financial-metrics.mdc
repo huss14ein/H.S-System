@@ -13,4 +13,17 @@ alwaysApply: true
 
 When adding a new surface that shows “My net worth” or the same number as the Dashboard card, **import the headline helper** (or `computeDashboardKpiSnapshot`) instead of re-rolling `accounts + investments − debt`.
 
+- **React:** `useCanonicalFinancialMetrics()` from `hooks/useCanonicalFinancialMetrics.ts` — use on **every page/sub-page** that shows headline NW, investment total, liquid cash, or SAR/USD conversion for personal wealth (prefer `sarPerUsd`, `netWorth`, `investmentsTotalSar`, `investableCashTotalSar`, `liquidCashSar`, `platformsRollupSar` from the hook instead of `resolveSarPerUsd` + ad-hoc sums). **`useEmergencyFund()`** passes headline `sarPerUsd` into liquid-cash math. Shared UI (**Header**, **AIAdvisor**, **LiveAdvisorModal**, **DividendSmsImportPanel**, **NetWorthCockpit**) uses the hook for spot FX. Enforced by `tests/canonicalMetricsSurfaceCoverage.vitest.test.ts` for `pages/`.
+- **Non-React** (command palette, scripts): `computeCanonicalFinancialMetrics()` from `services/canonicalFinancialMetrics.ts` — same bundle as the hook (headline, KPI, wealth summary, today snapshot, investable cash).
+
+**Today snapshot (Dashboard cockpit):** `computeTodayBalanceSheetSnapshotSar` — same headline path as KPI buckets.
+
+**Investable cash bars / Accounts tradable cash:** `buildInvestableCashBarsFromInvestmentAccounts` / `sumTradableCashSarFromInvestmentAccounts` from `services/investmentCashLedger.ts`.
+
+**Investment total (SAR) — same on Investments hub, Dashboard today snapshot, Summary chart band, exports:** `computeHeadlinePersonalInvestmentRoiDecimal(...).totalExposureSar` (platform rollup + commodities + Sukuk). In React use `useCanonicalFinancialMetrics().investmentsTotalSar` or `investmentExposure`. The balance-sheet `investments` bucket uses this total; commodities are **not** duplicated under Physical.
+
+**Investment Overview pie / asset-class bars:** `useCanonicalFinancialMetrics().investmentAllocation` (`buildHeadlineInvestmentAllocationSlices`) — slices scale to `investmentsTotalSar`; do not build chart totals from raw holdings + cash rows alone.
+
+**Plan / recovery / rebalancer:** pass `sarPerUsd` from `useCanonicalFinancialMetrics()` into `computeCanonicalPlanningSnapshot` so plan cash and notionals match headline FX.
+
 **Not one function for literally everything:** the app also has **liquidity-specific** (`computeLiquidNetWorth`), **cashflow / ledger** metrics (transaction-dated FX), **platform-only investment KPIs** (diagnostics), and **historical** series — those are different questions. What we guarantee is **one canonical path per family** (e.g. headline balance-sheet NW → `computePersonalHeadlineNetWorthSar` only; do not call `computePersonalNetWorthSAR` with a bare `resolveSarPerUsd` unless you also mirrored the headline hydrate step).

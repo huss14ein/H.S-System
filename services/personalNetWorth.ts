@@ -4,12 +4,11 @@ import { getPersonalAccounts, getPersonalAssets, getPersonalLiabilities, getPers
 import { getCreditCardLinkedAccountIds } from './creditCardLinking';
 import { hydrateSarPerUsdDailySeries } from './fxDailySeries';
 import {
-  computeAllPlatformsRollupSAR,
-  computeCommodityHoldingsContributionSAR,
   computePersonalCommoditiesContributionSAR,
   computePersonalPlatformsRollupSAR,
   type SimulatedPriceMap,
 } from './investmentPlatformCardMetrics';
+import { computeHeadlinePersonalInvestmentRoiDecimal } from './investmentKpiCore';
 
 export type PersonalNetWorthOptions = {
   /** When set, cash sitting in investment accounts (ledger) is included in assets — matches Dashboard ROI / deployable cash. */
@@ -33,7 +32,7 @@ export type PersonalNetWorthBreakdownSAR = {
 export type PersonalNetWorthChartBucketsSAR = {
   cash: number;
   investments: number;
-  /** Recorded physical assets + commodities (SAR) */
+  /** Illiquid physical assets (SAR). Commodities live in `investments` when headline ROI path is active. */
   physicalAndCommodities: number;
   receivables: number;
   /** Negative total debt for signed stack / liability band */
@@ -168,12 +167,27 @@ function accumulatePersonalBalanceSheet(
   };
 }
 
-function accumulateAllBalanceSheet(
-  data: FinancialData,
-  exchangeRate: number,
-  options?: PersonalNetWorthOptions,
-) {
-  const base = accumulateBalanceSheetSlices(
+/** Hydrate daily FX then resolve SAR/USD — same path as {@link computePersonalHeadlineNetWorthSar}. */
+function resolveBalanceSheetSarPerUsd(data: FinancialData, uiExchangeRate: number): number {
+  hydrateSarPerUsdDailySeries(data, uiExchangeRate);
+  return resolveSarPerUsd(data, uiExchangeRate);
+}
+
+/**
+ * Balance-sheet buckets for **all** accounts/assets (household-inclusive). Use for Analysis / full-ledger views.
+ *
+ * @param uiExchangeRate CurrencyContext UI rate; resolved via `wealthUltraConfig` when set (same as headline NW).
+ */
+export function computeAllNetWorthChartBucketsSAR(
+  data: FinancialData | null | undefined,
+  uiExchangeRate: number,
+  options?: PersonalNetWorthOptions
+): PersonalNetWorthChartBucketsSAR {
+  if (!data) {
+    return { cash: 0, investments: 0, physicalAndCommodities: 0, receivables: 0, liabilities: 0, netWorth: 0 };
+  }
+  const sarPerUsd = resolveBalanceSheetSarPerUsd(data, uiExchangeRate);
+  const b = accumulateBalanceSheetSlices(
     {
       accounts: data.accounts ?? [],
       assets: data.assets ?? [],
@@ -181,57 +195,34 @@ function accumulateAllBalanceSheet(
       commodityHoldings: data.commodityHoldings ?? [],
       investments: data.investments ?? [],
     },
-    exchangeRate,
-    options,
+    sarPerUsd,
+    options
   );
-  if (!options?.getAvailableCashForAccount) return base;
-
-  const prices = options.simulatedPrices ?? {};
-  const getCash = options.getAvailableCashForAccount;
-  const platform = computeAllPlatformsRollupSAR(data, exchangeRate, prices, getCash);
-  const commodities = computeCommodityHoldingsContributionSAR(data.commodityHoldings ?? [], prices);
-  return {
-    ...base,
-    totalInvestmentsValue: platform.subtotalSAR,
-    brokerageCashSAR: 0,
-    totalCommodities: commodities.valueSAR,
-  };
-}
-
-/**
- * Balance-sheet buckets for **all** accounts/assets (household-inclusive). Use for Analysis / full-ledger views.
- * Pass `simulatedPrices` + `getAvailableCashForAccount` for live holdings (same valuation path as headline NW).
- */
-export function computeAllNetWorthChartBucketsSAR(
-  data: FinancialData | null | undefined,
-  exchangeRate: number,
-  options?: PersonalNetWorthOptions
-): PersonalNetWorthChartBucketsSAR {
-  if (!data) {
-    return { cash: 0, investments: 0, physicalAndCommodities: 0, receivables: 0, liabilities: 0, netWorth: 0 };
-  }
-  const b = accumulateAllBalanceSheet(data, exchangeRate, options);
   const cash = b.cashAndSavingsPositive;
-  const investments = b.totalInvestmentsValue + b.brokerageCashSAR + b.sukukAssetsSar;
-  const physicalAndCommodities = b.physicalAssetsSar + b.totalCommodities;
   const receivables = b.totalReceivable;
   const liabilities = -b.totalDebt;
+  /** Same bucket taxonomy as personal headline (commodities in investments, not physical). */
+  const investments = b.totalInvestmentsValue + b.brokerageCashSAR + b.sukukAssetsSar + b.totalCommodities;
+  const physicalAndCommodities = b.physicalAssetsSar;
   const netWorth = cash + investments + physicalAndCommodities + receivables + liabilities;
   return { cash, investments, physicalAndCommodities, receivables, liabilities, netWorth };
 }
 
 /**
  * Personal-scope balance sheet pieces in **SAR** (same scope as net worth).
+ *
+ * @param uiExchangeRate CurrencyContext UI rate; resolved via `wealthUltraConfig` when set (same as headline NW).
  */
 export function computePersonalNetWorthBreakdownSAR(
   data: FinancialData | null | undefined,
-  exchangeRate: number,
+  uiExchangeRate: number,
   options?: PersonalNetWorthOptions
 ): PersonalNetWorthBreakdownSAR {
   if (!data) {
     return { totalAssets: 0, totalDebt: 0, totalReceivable: 0, netWorth: 0 };
   }
-  const b = accumulatePersonalBalanceSheet(data, exchangeRate, options);
+  const sarPerUsd = resolveBalanceSheetSarPerUsd(data, uiExchangeRate);
+  const b = accumulatePersonalBalanceSheet(data, sarPerUsd, options);
   const totalAssets =
     b.physicalAssetsSar +
     b.cashAndSavingsPositive +
@@ -240,28 +231,42 @@ export function computePersonalNetWorthBreakdownSAR(
     b.brokerageCashSAR +
     b.sukukAssetsSar;
 
-  const netWorth = totalAssets - b.totalDebt + b.totalReceivable;
+  /** With platform cash, investments use headline exposure (platforms + commodities + Sukuk) — match chart buckets NW. */
+  const netWorth = options?.getAvailableCashForAccount
+    ? computePersonalNetWorthChartBucketsSAR(data, sarPerUsd, options).netWorth
+    : totalAssets - b.totalDebt + b.totalReceivable;
   return { totalAssets, totalDebt: b.totalDebt, totalReceivable: b.totalReceivable, netWorth };
 }
 
 /**
  * Chart buckets aligned with headline personal net worth (Summary / Dashboard).
  * Past months in the composition chart still use a simplified backward model; **today’s** row matches the balance sheet.
+ *
+ * @param sarPerUsd Resolved SAR/USD (`resolveSarPerUsd` after `hydrateSarPerUsdDailySeries`) — not the raw
+ * CurrencyContext UI rate. From React/UI, use {@link computePersonalHeadlineNetWorthSar} so FX matches KPIs.
  */
 export function computePersonalNetWorthChartBucketsSAR(
   data: FinancialData | null | undefined,
-  exchangeRate: number,
+  sarPerUsd: number,
   options?: PersonalNetWorthOptions
 ): PersonalNetWorthChartBucketsSAR {
   if (!data) {
     return { cash: 0, investments: 0, physicalAndCommodities: 0, receivables: 0, liabilities: 0, netWorth: 0 };
   }
-  const b = accumulatePersonalBalanceSheet(data, exchangeRate, options);
+  const b = accumulatePersonalBalanceSheet(data, sarPerUsd, options);
   const cash = b.cashAndSavingsPositive;
-  const investments = b.totalInvestmentsValue + b.brokerageCashSAR + b.sukukAssetsSar;
-  const physicalAndCommodities = b.physicalAssetsSar + b.totalCommodities;
   const receivables = b.totalReceivable;
   const liabilities = -b.totalDebt;
+  /** Match Investments hub headline (`totalExposureSar`): platforms + commodities + Sukuk. */
+  const investments = options?.getAvailableCashForAccount
+    ? computeHeadlinePersonalInvestmentRoiDecimal(
+        data,
+        sarPerUsd,
+        options.getAvailableCashForAccount,
+        options.simulatedPrices ?? {},
+      ).totalExposureSar
+    : b.totalInvestmentsValue + b.brokerageCashSAR + b.sukukAssetsSar + b.totalCommodities;
+  const physicalAndCommodities = b.physicalAssetsSar;
   const netWorth = cash + investments + physicalAndCommodities + receivables + liabilities;
   return { cash, investments, physicalAndCommodities, receivables, liabilities, netWorth };
 }
@@ -273,10 +278,10 @@ export function computePersonalNetWorthChartBucketsSAR(
  */
 export function computePersonalNetWorthSAR(
   data: FinancialData | null | undefined,
-  exchangeRate: number,
+  uiExchangeRate: number,
   options?: PersonalNetWorthOptions
 ): number {
-  return computePersonalNetWorthBreakdownSAR(data, exchangeRate, options).netWorth;
+  return computePersonalNetWorthBreakdownSAR(data, uiExchangeRate, options).netWorth;
 }
 
 export type PersonalHeadlineNetWorthResult = {
@@ -309,7 +314,7 @@ export function computeTodayBalanceSheetSnapshotSar(
   options?: PersonalNetWorthOptions,
 ): TodayBalanceSheetSnapshotSAR {
   const headline = computePersonalHeadlineNetWorthSar(data, uiExchangeRate, options);
-  const breakdown = computePersonalNetWorthBreakdownSAR(data, headline.sarPerUsd, options);
+  const breakdown = computePersonalNetWorthBreakdownSAR(data, uiExchangeRate, options);
   const b = headline.buckets;
   return {
     netWorth: headline.netWorth,

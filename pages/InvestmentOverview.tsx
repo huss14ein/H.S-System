@@ -10,16 +10,13 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
-import { useCurrency } from '../context/CurrencyContext';
 import { useMarketData } from '../context/MarketDataContext';
-import { quoteNotionalInBookCurrency, resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
+import { quoteNotionalInBookCurrency, toSAR } from '../utils/currencyMath';
 import { holdingUsesLiveQuote } from '../utils/holdingValuation';
-import { getPersonalInvestments, getPersonalWealthData } from '../utils/wealthScope';
+import { getPersonalInvestments } from '../utils/wealthScope';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import type { InvestmentPortfolio } from '../types';
-import type { Account } from '../types';
-import { computePersonalCommoditiesContributionSAR } from '../services/investmentPlatformCardMetrics';
-import { normalizeInvestmentAssetClassBucket } from '../services/investmentAssetClassBuckets';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import {
     ResolvedSymbolLabel,
@@ -50,29 +47,22 @@ function holdingValueInBookCurrency(
 }
 
 const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => void }> = ({ setActiveTab }) => {
-    const { data, loading, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, loading } = useContext(DataContext)!;
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
-    const { exchangeRate } = useCurrency();
     const { simulatedPrices } = useMarketData();
+    const {
+        sarPerUsd,
+        investmentsTotalSar,
+        investableCashTotalSar: tradableCashSAR,
+        sukukAssetsValueSar: sukukAssetsSAR,
+        investmentAllocation,
+    } = useCanonicalFinancialMetrics();
 
-    const { allHoldingsWithGains, assetClassAllocation, portfolioAllocation, tradableCashSAR, commoditiesSAR, sukukAssetsSAR } = useMemo(() => {
-        const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+    const assetClassAllocation = investmentAllocation.assetClassAllocation;
+    const portfolioAllocation = investmentAllocation.portfolioAllocation;
+
+    const allHoldingsWithGains = useMemo(() => {
         const investments = getPersonalInvestments(data);
-        const { personalAccounts, personalAssets } = getPersonalWealthData(data);
-        const tradableCashSAR = (personalAccounts as Account[])
-            .filter((a) => a.type === 'Investment')
-            .reduce((s, a) => s + tradableCashBucketToSAR(getAvailableCashForAccount(a.id), sarPerUsd), 0);
-
-        const { valueSAR: commoditiesSAR } = computePersonalCommoditiesContributionSAR(
-            data,
-            sarPerUsd,
-            simulatedPrices,
-        );
-
-        const sukukAssetsSAR = (personalAssets ?? [])
-            .filter((a) => a?.type === 'Sukuk')
-            .reduce((sum, a) => sum + Math.max(0, Number(a?.value) || 0), 0);
-
         const allHoldings: (Holding & { portfolioCurrency?: 'USD' | 'SAR' })[] = investments.flatMap(
             (p: InvestmentPortfolio) =>
                 (p.holdings || []).map((h: Holding) => ({
@@ -103,45 +93,8 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                 };
             })
             .filter((h) => Number.isFinite(h.currentValue) && h.currentValue > 0);
-
-        const assetAllocationMap = new Map<string, number>();
-        allHoldingsWithGains.forEach((h) => {
-            const assetClass = normalizeInvestmentAssetClassBucket(h.assetClass);
-            assetAllocationMap.set(assetClass, (assetAllocationMap.get(assetClass) || 0) + h.currentValue);
-        });
-        if (tradableCashSAR > 0) {
-            assetAllocationMap.set('Cash', (assetAllocationMap.get('Cash') || 0) + tradableCashSAR);
-        }
-        if (commoditiesSAR > 0) {
-            assetAllocationMap.set('Commodities', (assetAllocationMap.get('Commodities') || 0) + commoditiesSAR);
-        }
-        if (sukukAssetsSAR > 0) {
-            assetAllocationMap.set('Sukuk', (assetAllocationMap.get('Sukuk') || 0) + sukukAssetsSAR);
-        }
-        const assetClassAllocation = Array.from(assetAllocationMap, ([name, value]: [string, number]) => ({ name, value }))
-            .filter((x: { name: string; value: number }) => Number.isFinite(x.value) && x.value > 0)
-            .sort((a: { value: number }, b: { value: number }) => b.value - a.value);
-
-        const portfolioRows = investments
-            .map((p: InvestmentPortfolio) => {
-                const cur = resolveInvestmentPortfolioCurrency(p);
-                let sumNative = 0;
-                for (const h of p.holdings || []) {
-                    sumNative += holdingValueInBookCurrency(h, cur, simulatedPrices, sarPerUsd);
-                }
-                return { name: p.name ?? 'Portfolio', value: toSAR(sumNative, cur, sarPerUsd) };
-            })
-            .filter((x: { name: string; value: number }) => Number.isFinite(x.value) && x.value > 0);
-        const cashRow =
-            tradableCashSAR > 0 ? [{ name: 'Uninvested cash (platforms)', value: tradableCashSAR }] : [];
-        const commodityRow = commoditiesSAR > 0 ? [{ name: 'Commodities', value: commoditiesSAR }] : [];
-        const sukukRow = sukukAssetsSAR > 0 ? [{ name: 'Sukuk (assets)', value: sukukAssetsSAR }] : [];
-        const portfolioAllocation = [...portfolioRows, ...cashRow, ...commodityRow, ...sukukRow].sort(
-            (a: { value: number }, b: { value: number }) => b.value - a.value,
-        );
-
-        return { allHoldingsWithGains, assetClassAllocation, portfolioAllocation, tradableCashSAR, commoditiesSAR, sukukAssetsSAR };
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
+        return allHoldingsWithGains;
+    }, [data, simulatedPrices, sarPerUsd]);
 
     const holdingSymbolsForNames = useMemo(() => symbolsFromHoldings(allHoldingsWithGains), [allHoldingsWithGains]);
     const { names: companyNameMap } = useCompanyNames(holdingSymbolsForNames);
@@ -181,8 +134,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
     }, [swotDisplayLang, swotEn, swotAr, aiActionsEnabled]);
 
     const diversification = useMemo(() => {
-        const totalValue =
-            allHoldingsWithGains.reduce((s, h) => s + h.currentValue, 0) + tradableCashSAR + commoditiesSAR + sukukAssetsSAR;
+        const totalValue = investmentsTotalSar;
         const topHolding = [...allHoldingsWithGains].sort((a, b) => b.currentValue - a.currentValue)[0];
         const topHoldingPct = totalValue > 0 && topHolding ? (topHolding.currentValue / totalValue) * 100 : 0;
         const topAssetClass = assetClassAllocation[0];
@@ -213,7 +165,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
             warnings,
             status,
         };
-    }, [allHoldingsWithGains, assetClassAllocation, tradableCashSAR, commoditiesSAR, sukukAssetsSAR]);
+    }, [allHoldingsWithGains, assetClassAllocation, investmentsTotalSar]);
 
     const handleGenerateAnalysis = useCallback(async () => {
         setIsAiLoading(true);
@@ -466,7 +418,9 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                 <div className="section-card flex flex-col min-h-[460px] border border-slate-200 shadow-sm">
                     <div className="min-h-[58px]">
                         <h3 className="section-title mb-1">Portfolio Allocation</h3>
-                        <p className="text-sm text-slate-500 mb-4">How your total investment value is distributed across portfolios.</p>
+                        <p className="text-sm text-slate-500 mb-4">
+                            How your total investment value is distributed across portfolios. Slices reconcile to the Investments hub headline total (platforms + commodities + Sukuk).
+                        </p>
                     </div>
                     <div className="w-full flex-1 min-h-[320px] h-[320px] rounded-lg overflow-hidden">
                         {portfolioAllocation?.length ? (
@@ -486,7 +440,9 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                 <div className="section-card flex flex-col min-h-[460px] border border-slate-200 shadow-sm">
                     <div className="min-h-[58px]">
                         <h3 className="section-title mb-1">Allocation by Asset Class</h3>
-                        <p className="text-sm text-slate-500 mb-4">The mix of asset types across all your investments.</p>
+                        <p className="text-sm text-slate-500 mb-4">
+                            The mix of asset types across all your investments. Same headline total as the Portfolios tab.
+                        </p>
                     </div>
                     <div className="w-full flex-1 min-h-[320px] h-[320px] rounded-lg overflow-hidden">
                         <AllocationBarChart data={assetClassAllocation} />

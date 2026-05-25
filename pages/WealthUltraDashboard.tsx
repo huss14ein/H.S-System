@@ -2,9 +2,8 @@ import React, { useMemo, useContext, useEffect, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import { useCurrency } from '../context/CurrencyContext';
 import { useAI } from '../context/AiContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { aggregateMonthlyBudgetAcrossPortfolios } from '../utils/investmentPlanPerPortfolio';
 import type { InvestmentPlanSettings, UniverseTicker } from '../types';
 import AIAdvisor from '../components/AIAdvisor';
@@ -70,10 +69,9 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
   const { data, loading, totalDeployableCash } = useContext(DataContext)!;
   const { simulatedPrices } = useMarketData();
   const { formatCurrencyString } = useFormatCurrency();
-  const { exchangeRate } = useCurrency();
   const { isAiAvailable, aiHealthChecked } = useAI();
 
-  const sarPerUsd = useMemo(() => resolveSarPerUsd(data ?? null, exchangeRate), [data, exchangeRate]);
+  const { sarPerUsd, netWorth: headlineNetWorthSar, investmentsTotalSar } = useCanonicalFinancialMetrics();
   const emergencyFund = useEmergencyFund(data);
   const ultraInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
 
@@ -593,7 +591,9 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                 {Number.isFinite(config.fxRate) && Math.abs(config.fxRate - sarPerUsd) > 0.0001 && (
                   <span className="text-slate-500"> (stored config {config.fxRate.toFixed(4)} is ignored for display — resolver wins)</span>
                 )}
-                .
+                . Personal balance sheet (Dashboard / Investments): net worth{' '}
+                <span className="font-mono font-semibold">{headlineNetWorthSar.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span> SAR · investment exposure{' '}
+                <span className="font-mono font-semibold">{investmentsTotalSar.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span> SAR.
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">

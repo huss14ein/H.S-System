@@ -18,8 +18,7 @@ import { getAICommodityPrices, formatAiError } from '../services/geminiService';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { parseMoneyInput, roundQuantity } from '../utils/money';
 import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
-import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import AIAdvisor from '../components/AIAdvisor';
 import { useConfirmAction } from '../hooks/useConfirmAction';
 import { summarizeCommodityForConfirm } from '../utils/recordConfirmMessages';
@@ -273,8 +272,7 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
     const { data, loading, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const { formatCurrencyString } = useFormatCurrency();
-    const { exchangeRate } = useCurrency();
-    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+    const { sarPerUsd, commoditiesValueSar, investmentsTotalSar } = useCanonicalFinancialMetrics();
     
     const [isCommodityModalOpen, setIsCommodityModalOpen] = useState(false);
     const [commodityToEdit, setCommodityToEdit] = useState<CommodityHolding | null>(null);
@@ -286,9 +284,8 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
         [data, (data as any)?.personalCommodityHoldings, data?.commodityHoldings]
     );
 
-    const totalCommodityValue = useMemo(() => {
-        return commodityRows.reduce((sum: number, h: { currentValue?: number }) => sum + (h.currentValue ?? 0), 0);
-    }, [commodityRows]);
+    /** Live headline commodity slice (matches Investments hub / Dashboard investments band). */
+    const totalCommodityValue = commoditiesValueSar;
 
     const commoditiesAiContext = useMemo(
         () => ({
@@ -302,10 +299,11 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
                 owner: h.owner,
             })),
             totalValueSar: totalCommodityValue,
+            investmentsHeadlineSar: investmentsTotalSar,
             sarPerUsd,
             holdingCount: commodityRows.length,
         }),
-        [commodityRows, totalCommodityValue, sarPerUsd],
+        [commodityRows, totalCommodityValue, investmentsTotalSar, sarPerUsd],
     );
 
     const handleOpenCommodityModal = (holding: CommodityHolding | null = null) => { setCommodityToEdit(holding); setIsCommodityModalOpen(true); };

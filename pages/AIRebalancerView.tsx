@@ -13,7 +13,7 @@ import type { Holding, Page } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { getPersonalInvestments } from '../utils/wealthScope';
@@ -57,19 +57,20 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
   const [isTranslatingRebal, setIsTranslatingRebal] = useState(false);
 
   const portfolios = useMemo(() => getPersonalInvestments(data), [data]);
-  const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+  const { sarPerUsd } = useCanonicalFinancialMetrics();
   const canonical = useMemo(
     () =>
       data
         ? computeCanonicalPlanningSnapshot({
             data: data as any,
             exchangeRate,
+            sarPerUsd,
             simulatedPrices,
             getAvailableCashForAccount,
             symbolQuoteUpdatedAt,
           })
         : null,
-    [data, exchangeRate, simulatedPrices, getAvailableCashForAccount, symbolQuoteUpdatedAt],
+    [data, exchangeRate, sarPerUsd, simulatedPrices, getAvailableCashForAccount, symbolQuoteUpdatedAt],
   );
 
   useEffect(() => {

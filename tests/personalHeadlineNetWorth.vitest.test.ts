@@ -27,7 +27,7 @@ describe('computePersonalHeadlineNetWorthSar', () => {
     const fx = 3.75;
     const getCash = () => ({ SAR: 0, USD: 0 });
     const h = computePersonalHeadlineNetWorthSar(data, fx, { getAvailableCashForAccount: getCash });
-    const b = computePersonalNetWorthBreakdownSAR(data, h.sarPerUsd, { getAvailableCashForAccount: getCash });
+    const b = computePersonalNetWorthBreakdownSAR(data, fx, { getAvailableCashForAccount: getCash });
     expect(h.netWorth).toBe(b.netWorth);
     expect(h.buckets.netWorth).toBe(h.netWorth);
   });

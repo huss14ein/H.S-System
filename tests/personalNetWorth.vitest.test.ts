@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  computePersonalHeadlineNetWorthSar,
   computePersonalNetWorthBreakdownSAR,
   computePersonalNetWorthChartBucketsSAR,
   computePersonalNetWorthSAR,
 } from '../services/personalNetWorth';
+import { resolveSarPerUsd } from '../utils/currencyMath';
 
 describe('personalNetWorth', () => {
   it('returns zero breakdown on null data', () => {
@@ -84,6 +86,60 @@ describe('personalNetWorth', () => {
       breakdown.netWorth
     );
     expect(buckets.netWorth).toBe(breakdown.netWorth);
+  });
+
+  it('breakdown uses resolved FX when wealth config overrides UI rate', () => {
+    const data: any = {
+      wealthUltraConfig: { fxRate: 4 },
+      accounts: [{ id: 'inv', type: 'Investment', balance: 0, currency: 'USD' }],
+      assets: [],
+      liabilities: [],
+      commodityHoldings: [],
+      investments: [
+        {
+          id: 'pf1',
+          name: 'PF',
+          accountId: 'inv',
+          currency: 'USD',
+          holdings: [{ symbol: 'AAPL', name: 'AAPL', quantity: 1, avgCost: 100, currentValue: 100 }],
+        },
+      ],
+    };
+    const uiFx = 3.75;
+    const getAvailableCashForAccount = () => ({ SAR: 0, USD: 0 });
+    const opts = { getAvailableCashForAccount, simulatedPrices: {} as Record<string, { price: number }> };
+    const headline = computePersonalHeadlineNetWorthSar(data, uiFx, opts);
+    const breakdown = computePersonalNetWorthBreakdownSAR(data, uiFx, opts);
+    expect(headline.sarPerUsd).toBe(4);
+    expect(breakdown.netWorth).toBe(headline.netWorth);
+  });
+
+  it('headline investment bucket uses resolved FX, not raw UI rate when wealth config overrides', () => {
+    const data: any = {
+      wealthUltraConfig: { fxRate: 4 },
+      accounts: [{ id: 'inv', type: 'Investment', balance: 0, currency: 'USD' }],
+      assets: [],
+      liabilities: [],
+      commodityHoldings: [],
+      investments: [
+        {
+          id: 'pf1',
+          name: 'PF',
+          accountId: 'inv',
+          currency: 'USD',
+          holdings: [{ symbol: 'AAPL', name: 'AAPL', quantity: 1, avgCost: 100, currentValue: 100 }],
+        },
+      ],
+    };
+    const uiFx = 3.75;
+    const getAvailableCashForAccount = () => ({ SAR: 0, USD: 0 });
+    const opts = { getAvailableCashForAccount, simulatedPrices: {} as Record<string, { price: number }> };
+    const wrongUiBuckets = computePersonalNetWorthChartBucketsSAR(data, uiFx, opts);
+    const headline = computePersonalHeadlineNetWorthSar(data, uiFx, opts);
+    expect(headline.sarPerUsd).toBe(resolveSarPerUsd(data, uiFx));
+    expect(headline.sarPerUsd).toBe(4);
+    expect(wrongUiBuckets.investments).not.toBe(headline.buckets.investments);
+    expect(headline.buckets.investments).toBeGreaterThan(wrongUiBuckets.investments);
   });
 
   it('puts Sukuk (Assets) into the investments bucket, not physical assets', () => {

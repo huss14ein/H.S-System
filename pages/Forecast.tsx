@@ -12,7 +12,6 @@ import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import { useCurrency } from '../context/CurrencyContext';
 import { useMarketData } from '../context/MarketDataContext';
-import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
 import type { Page, Transaction } from '../types';
@@ -37,8 +36,6 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const [stressJobLossM, setStressJobLossM] = useState(3);
     const [stressMarketDrop, setStressMarketDrop] = useState(15);
     const [stressMedical, setStressMedical] = useState(8000);
-
-    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
 
     const savingsAnalytics = useMemo(() => {
         if (!data) {
@@ -96,18 +93,18 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         setMonthlySavings(Math.max(0, savingsAnalytics.medianMonthlyNet));
     }, [savingsAnalytics.medianMonthlyNet, monthlySavingsTouched]);
 
-    const { netWorth: headlineNetWorth, buckets: headlineBuckets } = useCanonicalFinancialMetrics();
+    const { netWorth: headlineNetWorth, sarPerUsd, investmentsTotalSar, liquidCashSar } = useCanonicalFinancialMetrics();
     const initialValues = useMemo(
         () => ({
             netWorth: headlineNetWorth,
-            investmentValue: Math.max(0, headlineBuckets.investments),
+            investmentValue: investmentsTotalSar,
         }),
-        [headlineNetWorth, headlineBuckets.investments],
+        [headlineNetWorth, investmentsTotalSar],
     );
 
     const goalResolvedSarById = useMemo(
-        () => computeGoalResolvedAmountsSar(data ?? null, resolveSarPerUsd(data, exchangeRate)),
-        [data, exchangeRate],
+        () => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd),
+        [data, sarPerUsd],
     );
 
     const applyScenarioPreset = (preset: 'Conservative' | 'Base' | 'Aggressive') => {
@@ -240,17 +237,9 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const stressInputs = useMemo(() => {
         const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
         const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
-        const fx = resolveSarPerUsd(data, exchangeRate);
-        const liquidCash = accounts
-            .filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings')
-            .reduce(
-                (s: number, a: { balance?: number; currency?: string }) =>
-                    s + Math.max(0, toSAR(a.balance ?? 0, (a.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD', fx)),
-                0,
-            );
-        const monthlyExpense = normalizedMonthlyExpenseSar(txs as Transaction[], accounts, fx, { monthsLookback: 6 });
-        return { liquidCash, monthlyExpense };
-    }, [data, exchangeRate]);
+        const monthlyExpense = normalizedMonthlyExpenseSar(txs as Transaction[], accounts, sarPerUsd, { monthsLookback: 6 });
+        return { liquidCash: liquidCashSar, monthlyExpense };
+    }, [data, sarPerUsd, liquidCashSar]);
 
     const stressResult = useMemo(
         () =>
@@ -288,7 +277,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
 
     const forecastValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
-        const fx = resolveSarPerUsd(data, exchangeRate);
+        const fx = sarPerUsd;
         const kpis = computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
         if (!Number.isFinite(fx) || fx <= 0) warnings.push('Exchange rate is invalid — USD-linked balances may mis-state projections.');
         if (!Number.isFinite(initialValues.netWorth)) warnings.push('Net worth baseline is invalid.');

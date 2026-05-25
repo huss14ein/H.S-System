@@ -10,7 +10,7 @@ import { captureExtendedNetWorthSnapshot } from '../services/netWorthSnapshotExt
 import { buildReviewPack, downloadReviewPackMarkdown } from '../services/reviewPack';
 import { sendReviewPackEmail } from '../services/reviewPackEmail';
 import { toast } from '../context/ToastContext';
-import { computeWealthSummaryReportModel } from '../services/wealthSummaryReportModel';
+import { computeCanonicalFinancialMetrics } from '../services/canonicalFinancialMetrics';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { MagnifyingGlassIcon } from './icons/MagnifyingGlassIcon';
 import { HeadsetIcon } from './icons/HeadsetIcon';
@@ -114,7 +114,12 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
             name: 'Export review pack (Markdown)',
             action: () => {
                 if (!data) return;
-                const model = computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
+                const model = computeCanonicalFinancialMetrics({
+                    data,
+                    exchangeRate,
+                    getAvailableCashForAccount,
+                    simulatedPrices,
+                }).wealthSummary;
                 const fm = model?.financialMetricsWithEf;
                 const surplus = Math.max(0, (fm?.monthlyIncome ?? 0) - (fm?.monthlyExpenses ?? 0));
                 const pack = buildReviewPack(data, exchangeRate, getAvailableCashForAccount, surplus, simulatedPrices);
@@ -128,7 +133,12 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
             name: 'Email review pack',
             action: () => {
                 if (!data) return;
-                const model = computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
+                const model = computeCanonicalFinancialMetrics({
+                    data,
+                    exchangeRate,
+                    getAvailableCashForAccount,
+                    simulatedPrices,
+                }).wealthSummary;
                 const fm = model?.financialMetricsWithEf;
                 const surplus = Math.max(0, (fm?.monthlyIncome ?? 0) - (fm?.monthlyExpenses ?? 0));
                 const pack = buildReviewPack(data, exchangeRate, getAvailableCashForAccount, surplus, simulatedPrices);

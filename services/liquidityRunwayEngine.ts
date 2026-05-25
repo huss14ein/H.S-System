@@ -2,7 +2,8 @@ import type { FinancialData } from '../types';
 import { normalizedMonthlyExpenseSar, cashRunwayMonths } from './financeMetrics';
 import { computeHouseholdStressFromData } from './householdBudgetStress';
 import { getPerformanceSnapshots } from './wealthUltraPerformance';
-import { resolveSarPerUsd, totalLiquidCashSARFromAccounts, toSAR } from '../utils/currencyMath';
+import { DEFAULT_SAR_PER_USD, resolveSarPerUsd, totalLiquidCashSARFromAccounts, toSAR } from '../utils/currencyMath';
+import { hydrateSarPerUsdDailySeries } from './fxDailySeries';
 
 export interface LiquidityRunwaySummary {
   monthsOfRunway: number;
@@ -13,14 +14,21 @@ export interface LiquidityRunwaySummary {
 
 export function computeLiquidityRunwayFromData(
   data: FinancialData | null | undefined,
-  options?: { exchangeRate?: number; getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number } }
+  options?: {
+    /** CurrencyContext UI rate (not pre-resolved). */
+    exchangeRate?: number;
+    getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number };
+  },
 ): LiquidityRunwaySummary | null {
   if (!data) return null;
 
   const stress = computeHouseholdStressFromData(data);
   const accounts = (data as any).personalAccounts ?? data.accounts ?? [];
   const transactions = (data as any).personalTransactions ?? data.transactions ?? [];
-  const sarPerUsd = resolveSarPerUsd(data as { wealthUltraConfig?: { fxRate?: number | null } | null }, options?.exchangeRate);
+  const rawUi = options?.exchangeRate;
+  const uiExchangeRate = Number(rawUi) > 0 ? Number(rawUi) : DEFAULT_SAR_PER_USD;
+  hydrateSarPerUsdDailySeries(data, uiExchangeRate);
+  const sarPerUsd = resolveSarPerUsd(data, uiExchangeRate);
 
   const avgMonthlyExpense = normalizedMonthlyExpenseSar(
     transactions as any,

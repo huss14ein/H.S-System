@@ -19,7 +19,7 @@ import { useTodosOptional } from '../context/TodosContext';
 import { ClipboardDocumentListIcon } from './icons/ClipboardDocumentListIcon';
 import { ArrowPathIcon } from './icons/ArrowPathIcon';
 import { usePrivacyMask } from '../context/PrivacyContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import { financialMonthRange, resolveMonthStartDayFromData, dateInRange } from '../utils/financialMonth';
@@ -49,7 +49,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   
   const auth = useContext(AuthContext);
   const { data } = useContext(DataContext)!;
-  const { currency, setCurrency, exchangeRate } = useCurrency();
+  const { currency, setCurrency } = useCurrency();
   const { refreshPrices, isRefreshing, quotesRefreshUIScope, lastUpdated, isLive } = useMarketData();
   const headerRefreshing = isRefreshing && quotesRefreshUIScope.mode === 'all';
   const [pricesStatusLabel, setPricesStatusLabel] = useState('');
@@ -193,9 +193,11 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
     { name: 'System', items: ['Notifications', 'Settings', 'System & APIs Health'] }
   ], []);
 
+  const { sarPerUsd: headlineFx } = useCanonicalFinancialMetrics();
+
   const investmentProgress = useMemo(() => {
     if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0 };
-    const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+    const sarPerUsd = headlineFx;
     const plan = data.investmentPlan;
     const planCurrency: TradeCurrency = (plan.budgetCurrency as TradeCurrency) || 'SAR';
     const convertAmount = (amount: number, from: TradeCurrency, to: TradeCurrency) => {
@@ -228,7 +230,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
       amount: monthlyInvested,
       target,
     };
-  }, [data, exchangeRate]);
+  }, [data, headlineFx]);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;

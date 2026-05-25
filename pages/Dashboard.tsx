@@ -31,9 +31,10 @@ import { GoldBarIcon } from '../components/icons/GoldBarIcon';
 import { UsersIcon } from '../components/icons/UsersIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
-import { toSAR, tradableCashBucketToSAR, resolveSarPerUsd, totalLiquidCashSARFromAccounts } from '../utils/currencyMath';
+import { toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
 import { supabase } from '../services/supabaseClient';
 import { pushNetWorthSnapshot, listNetWorthSnapshots } from '../services/netWorthSnapshot';
@@ -50,11 +51,11 @@ import { usePrivacyMask } from '../context/PrivacyContext';
 import { savingsRateSarFinancialMonth } from '../services/financeMetrics';
 import { debtStressScore } from '../services/debtEngines';
 import { cashflowMomentumFromPnlTrend, personalFinanceHealthScore } from '../services/decisionScoringEngine';
-import { computeDashboardKpiSnapshot, averageSavingsRateSarRolling } from '../services/dashboardKpiSnapshot';
+import { averageSavingsRateSarRolling } from '../services/dashboardKpiSnapshot';
 import type { InvestmentCapitalSource } from '../services/investmentKpiCore';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
-import { computePersonalHeadlineNetWorthSar, sumPersonalSukukAssetsSar } from '../services/personalNetWorth';
+import { sumPersonalSukukAssetsSar } from '../services/personalNetWorth';
 import {
     financialMonthRange,
     financialMonthKeysEndingAt,
@@ -67,7 +68,6 @@ import {
 import {
     buildPersonalInvestmentTreemapRows,
     computeMonthlyReportFinancialKpis,
-    computeWealthSummaryReportModel,
 } from '../services/wealthSummaryReportModel';
 import { reconcileDashboardVsSummaryKpis } from '../services/kpiReconciliation';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
@@ -255,8 +255,8 @@ const AccountsOverview: React.FC<{ accounts: Account[], onClick: () => void }> =
 
 const UpcomingBills: React.FC = () => {
     const { data } = useContext(DataContext)!;
-    const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
+    const { sarPerUsd: headlineFx } = useCanonicalFinancialMetrics();
     const formatDate = (date: Date) => date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
     const accountsById = useMemo(() => {
@@ -265,7 +265,7 @@ const UpcomingBills: React.FC = () => {
     }, [data?.accounts, (data as any)?.personalAccounts]);
 
     const upcomingBills = useMemo(() => {
-        const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+        const sarPerUsd = headlineFx;
         const recurringExpenses = new Map<string, { totalSAR: number; lastAmount: number; lastDate: Date; count: number; lastAccountId?: string }>();
         const now = new Date();
 
@@ -300,7 +300,7 @@ const UpcomingBills: React.FC = () => {
             }
         }
         return bills.sort((a,b) => a.date.getTime() - b.date.getTime()).slice(0, 3);
-    }, [data, data?.transactions, (data as any)?.personalTransactions, accountsById, exchangeRate]);
+    }, [data, data?.transactions, (data as any)?.personalTransactions, accountsById, headlineFx]);
 
     return (
         <div className="section-card">
@@ -419,6 +419,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
     const { simulatedPrices } = useMarketData();
+    const { headline, kpiSnapshot, wealthSummary, sarPerUsd: canonicalSarPerUsd } = useCanonicalFinancialMetrics();
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
     const { maskBalance } = usePrivacyMask();
@@ -441,21 +442,21 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
     /** Investment rows: tradable platform cash (Accounts balance → SAR), not holdings value. */
     const accountsForOverview = useMemo(() => {
         const list = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-        const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+        const sarPerUsd = canonicalSarPerUsd;
         return list.map((acc: Account) => {
             if (acc.type === 'Investment') {
                 return { ...acc, balance: tradableCashBucketToSAR(getAvailableCashForAccount(acc.id), sarPerUsd) };
             }
             return acc;
         });
-    }, [data, exchangeRate, getAvailableCashForAccount]);
+    }, [data, canonicalSarPerUsd, getAvailableCashForAccount]);
 
     const investmentProgress = useMemo(() => {
         if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0, planCurrency: 'SAR' as const };
         const plan = data.investmentPlan;
         const planCurrency = (plan.budgetCurrency === 'SAR' || plan.budgetCurrency === 'USD' ? plan.budgetCurrency : 'SAR') as 'SAR' | 'USD';
         hydrateSarPerUsdDailySeries(data, exchangeRate);
-        const spotRate = resolveSarPerUsd(data, exchangeRate);
+        const spotRate = canonicalSarPerUsd;
         const monthStartDay = resolveMonthStartDayFromData(data);
         const { start: finStart, end: finEnd } = financialMonthRange(new Date(), monthStartDay);
         const accounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []) as Account[];
@@ -481,7 +482,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             target,
             planCurrency,
         };
-    }, [data, exchangeRate]);
+    }, [data, exchangeRate, canonicalSarPerUsd]);
 
 
     const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions, projectedCash30d, currentCash } = useMemo(() => {
@@ -489,7 +490,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             if (!data) return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
 
             hydrateSarPerUsdDailySeries(data, exchangeRate);
-            const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+            const sarPerUsd = canonicalSarPerUsd;
 
             const now = new Date();
             const monthStartDay = resolveMonthStartDayFromData(data);
@@ -522,7 +523,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             const currentMonthBudgets = (data?.budgets ?? []).filter(
                 (b) => b.month === currentFinMonth.key.month && b.year === currentFinMonth.key.year,
             );
-            const snap = computeDashboardKpiSnapshot(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
+            const snap = kpiSnapshot;
             if (!snap) {
                 return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
             }
@@ -538,7 +539,9 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 investmentCapitalSource,
             } = snap;
 
-            const investmentTreemapData = buildPersonalInvestmentTreemapRows(data, sarPerUsd, simulatedPrices);
+            const investmentTreemapData =
+                wealthSummary?.investmentTreemapData ??
+                buildPersonalInvestmentTreemapRows(data, sarPerUsd, simulatedPrices);
             const monthlySpending = new Map<string, number>();
             monthlyTransactions
                 .filter((t: { type?: string }) => countsAsExpenseForCashflowKpi(t))
@@ -598,12 +601,8 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
 
             const recentTransactions = [...transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-            // 30-day projected cash: same liquid definition as KPI `liquidCashSar` / net worth (bank + platform cash per Accounts).
-            const currentCash = totalLiquidCashSARFromAccounts(
-                accounts as Account[],
-                getAvailableCashForAccount as (id: string) => { SAR: number; USD: number },
-                sarPerUsd,
-            );
+            // 30-day projected cash: canonical KPI liquid cash (bank + platform tradable cash).
+            const currentCash = liquidCashSar;
             const finMonthKeys6 = financialMonthKeysEndingAt(now, 6, monthStartDay);
             const earliestProj = financialMonthRangeFromKey(finMonthKeys6[0], monthStartDay).start;
             const recentTx = transactions.filter((t: { date: string }) => new Date(t.date) >= earliestProj);
@@ -646,14 +645,10 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             console.error("Dashboard calculation error:", e);
             return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
         }
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
+    }, [data, exchangeRate, getAvailableCashForAccount, kpiSnapshot, canonicalSarPerUsd, wealthSummary, simulatedPrices]);
 
     useEffect(() => {
         if (!auth?.user || !data) return;
-        const headline = computePersonalHeadlineNetWorthSar(data, exchangeRate, {
-            getAvailableCashForAccount,
-            simulatedPrices,
-        });
         const b = headline.buckets;
         const nw = typeof headline.netWorth === 'number' && Number.isFinite(headline.netWorth) ? headline.netWorth : (kpiSummary as { netWorth?: number }).netWorth;
         if (typeof nw === 'number' && Number.isFinite(nw)) {
@@ -672,16 +667,16 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
                 supabase && auth.user?.id ? { supabase, userId: auth.user.id } : null,
             );
         }
-    }, [auth?.user, kpiSummary, data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
+    }, [auth?.user, kpiSummary, data, headline, getAvailableCashForAccount]);
 
     const subsIntel = useMemo(() => {
         if (!data) return { monthlyEstimate: 0, count: 0 };
         const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
         const accounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []) as Account[];
         hydrateSarPerUsdDailySeries(data, exchangeRate);
-        const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+        const sarPerUsd = canonicalSarPerUsd;
         return subscriptionSpendMonthlySar(txs, accounts, sarPerUsd, 3);
-    }, [data, exchangeRate]);
+    }, [data, exchangeRate, canonicalSarPerUsd]);
 
     const { strictReconciliationMode } = useDashboardReconciliationPrefs(auth?.user?.id);
 
@@ -729,7 +724,7 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
 
         const liquidityScore = Math.min(100, (emergencyFund.monthsCovered / EMERGENCY_FUND_TARGET_MONTHS) * 100);
         hydrateSarPerUsdDailySeries(data, exchangeRate);
-        const sarPerUsd = resolveSarPerUsd(data, exchangeRate);
+        const sarPerUsd = canonicalSarPerUsd;
         const goalResolved = computeGoalResolvedAmountsSar(data, sarPerUsd);
         const now = new Date();
         const savingsThisMonth = savingsRateSarFinancialMonth(txs, accounts, now, data, exchangeRate);
@@ -765,13 +760,9 @@ const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageActi
             momentum: Math.round(cashflowMomentumScore),
         };
         return { score, parts };
-    }, [data, emergencyFund.monthsCovered, kpiSummary, exchangeRate]);
+    }, [data, emergencyFund.monthsCovered, kpiSummary, exchangeRate, canonicalSarPerUsd]);
 
-    const summaryModelForReconciliation = useMemo(() => {
-        if (!data) return null;
-        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
-
+    const summaryModelForReconciliation = wealthSummary;
     const summaryMonthlyKpisForReconciliation = useMemo(() => {
         if (!data) return null;
         return computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);

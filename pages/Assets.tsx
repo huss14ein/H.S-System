@@ -27,8 +27,7 @@ import PageLayout from '../components/PageLayout';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { parseMoneyInput, roundMoney, roundQuantity } from '../utils/money';
 import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
-import { useCurrency } from '../context/CurrencyContext';
-import { resolveSarPerUsd } from '../utils/currencyMath';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { financialMonthIsoKey, financialMonthKey, resolveMonthStartDayFromData } from '../utils/financialMonth';
 import AIAdvisor from '../components/AIAdvisor';
 import { supabase } from '../services/supabaseClient';
@@ -892,8 +891,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const { data, loading, refreshData, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
     const { isAiAvailable, aiHealthChecked } = useAI();
     const { formatCurrencyString } = useFormatCurrency();
-    const { exchangeRate } = useCurrency();
-    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+    const { sarPerUsd, commoditiesValueSar, sukukAssetsValueSar } = useCanonicalFinancialMetrics();
 
     // State for both types of modals
     const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
@@ -925,10 +923,8 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
         const physicalValue = assetsList
             .filter((asset: { type?: string }) => asset.type !== 'Sukuk')
             .reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0);
-        const sukukValue = assetsList
-            .filter((asset: { type?: string }) => asset.type === 'Sukuk')
-            .reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0);
-        const commodityValue = commodityList.reduce((sum: number, h: { currentValue?: number }) => sum + (h.currentValue ?? 0), 0);
+        const sukukValue = sukukAssetsValueSar;
+        const commodityValue = commoditiesValueSar;
         const rentalIncome = assetsList.filter((a: { isRental?: boolean; monthlyRent?: number }) => a.isRental && a.monthlyRent).reduce((sum: number, a: { monthlyRent?: number }) => sum + (a.monthlyRent ?? 0), 0);
         return {
             totalAssetValue: physicalValue + sukukValue + commodityValue,
@@ -936,7 +932,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             totalCommodityValue: commodityValue,
             totalRentalIncome: rentalIncome,
         };
-    }, [assetsList, commodityList]);
+    }, [assetsList, commoditiesValueSar, sukukAssetsValueSar]);
 
     // Physical Asset Handlers
     const handleOpenAssetModal = (asset: Asset | null = null, preferredType: AssetType = 'Property') => { setAssetToEdit(asset); setPreferredAssetType(preferredType); setIsAssetModalOpen(true); };
@@ -1123,7 +1119,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             <div className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
                 <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Personal wealth only: physical + metals/crypto (same rows below). Excludes assets with Owner set." />
                 <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} indicatorColor="green" valueColor="text-indigo-700" icon={<HomeModernIcon className="h-5 w-5 text-indigo-600" />} tooltip="Personal physical assets (property, vehicles, Sukuk, etc.)." />
-                <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} tooltip="Personal commodity holdings only." />
+                <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} tooltip="Live commodity slice — same mark as Investments hub and Dashboard investments band." />
                 <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} tooltip="Rental income from your personal rental-flagged properties." />
             </div>
             {assetsValidationWarnings.length > 0 && (

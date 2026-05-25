@@ -6,8 +6,7 @@ import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, fo
 import ChartContainer from './ChartContainer';
 import { useCurrency } from '../../context/CurrencyContext';
 import { hydrateSarPerUsdDailySeries } from '../../services/fxDailySeries';
-import { computePersonalHeadlineNetWorthSar } from '../../services/personalNetWorth';
-import { useMarketData } from '../../context/MarketDataContext';
+import { useCanonicalFinancialMetrics } from '../../hooks/useCanonicalFinancialMetrics';
 import {
     listNetWorthSnapshots,
     NW_BUCKETS_SCHEMA_LEGACY,
@@ -182,9 +181,9 @@ const SERIES_DEFAULT: SeriesVisibility = {
 const LEGACY_SCHEMA_BANNER_KEY = 'finova_nw_legacy_schema_banner_dismissed';
 
 const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => void }> = ({ title, onOpenSummary }) => {
-    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
-    const { simulatedPrices } = useMarketData();
+    const { buckets: liveBucketsFromHook } = useCanonicalFinancialMetrics();
     const { formatCurrencyString } = useFormatCurrency();
     const [timePeriod, setTimePeriod] = useState<TimePeriod>('All');
     /** When snapshots are sparse, optionally build a 12‑month line from ledger cashflow (can diverge from true balance‑sheet NW). */
@@ -211,10 +210,7 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
             horizonDays: 4000,
             earliestCalendarDay: oldestDay,
         });
-        const buckets = computePersonalHeadlineNetWorthSar(data, exchangeRate, {
-            getAvailableCashForAccount,
-            simulatedPrices,
-        }).buckets;
+        const buckets = liveBucketsFromHook;
         const byLocalDay = new Map<string, {
             date: string;
             netWorth: number;
@@ -312,15 +308,9 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
         }
 
         return filterRowsByTimePeriod(finalData, timePeriod);
-    }, [data, timePeriod, exchangeRate, getAvailableCashForAccount, simulatedPrices, useLedgerEstimateWhenSparse]);
+    }, [data, timePeriod, exchangeRate, liveBucketsFromHook, useLedgerEstimateWhenSparse]);
 
-    const liveBuckets = useMemo(() => {
-        if (!data) return null;
-        return computePersonalHeadlineNetWorthSar(data, exchangeRate, {
-            getAvailableCashForAccount,
-            simulatedPrices,
-        }).buckets;
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
+    const liveBuckets = liveBucketsFromHook;
 
     const snapshotSchemaMix = useMemo(() => {
         const snaps = listNetWorthSnapshots();

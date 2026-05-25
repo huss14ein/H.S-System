@@ -31,9 +31,6 @@ import {
 } from '../services/recoveryPlanPerformance';
 import type { Page } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
-import {
-  resolveSarPerUsd,
-} from '../utils/currencyMath';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import { ResolvedSymbolLabel, formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
 import { toast } from '../context/ToastContext';
@@ -65,6 +62,7 @@ import {
 } from '../services/positionRecyclingPersistence';
 import { validatePlannedTrade } from '../services/dataQuality/validation';
 import { computeCanonicalPlanningSnapshot } from '../services/canonicalPlanningEngine';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { getPersonalInvestments } from '../utils/wealthScope';
 import {
   buildHoldingSymbolOptions,
@@ -109,20 +107,22 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const { formatCurrencyString } = useFormatCurrency();
   const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
   const aiOptimizeDisabled = !aiActionsEnabled;
+  const { sarPerUsd: headlineFx } = useCanonicalFinancialMetrics();
   const canonical = useMemo(
     () =>
       data
         ? computeCanonicalPlanningSnapshot({
             data: data as any,
             exchangeRate,
+            sarPerUsd: headlineFx,
             simulatedPrices,
             getAvailableCashForAccount,
             symbolQuoteUpdatedAt,
           })
         : null,
-    [data, exchangeRate, simulatedPrices, getAvailableCashForAccount, symbolQuoteUpdatedAt],
+    [data, exchangeRate, headlineFx, simulatedPrices, getAvailableCashForAccount, symbolQuoteUpdatedAt],
   );
-  const sarPerUsd = canonical?.sarPerUsd ?? resolveSarPerUsd(data, exchangeRate);
+  const sarPerUsd = canonical?.sarPerUsd ?? headlineFx;
 
   const deployableCashSAR = canonical?.recoveryPlan?.deployableCashSar ?? 0;
 

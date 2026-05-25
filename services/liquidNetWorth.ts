@@ -1,17 +1,24 @@
 import type { FinancialData, Liability } from '../types';
 import {
+  DEFAULT_SAR_PER_USD,
+  getAllInvestmentsValueInSAR,
   resolveSarPerUsd,
   toSAR,
   totalLiquidCashSARFromAccounts,
-  getAllInvestmentsValueInSAR,
+  tradableCashBucketToSAR,
 } from '../utils/currencyMath';
+import { hydrateSarPerUsdDailySeries } from './fxDailySeries';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { sumPersonalSukukAssetsSar } from './personalNetWorth';
+import {
+  computePersonalCommoditiesContributionSAR,
+  computePersonalPlatformsRollupSAR,
+  type SimulatedPriceMap,
+} from './investmentPlatformCardMetrics';
 import {
   getPersonalAccounts,
   getPersonalAssets,
   getPersonalInvestments,
-  getPersonalCommodityHoldings,
   getPersonalLiabilities,
   getPersonalTransactions,
 } from '../utils/wealthScope';
@@ -19,8 +26,10 @@ import { getCreditCardLinkedAccountIds } from './creditCardLinking';
 
 export type LiquidNetWorthOptions = {
   getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number };
-  /** SAR per USD — used for cross-currency normalization (USD→SAR). */
+  /** CurrencyContext UI rate (not pre-resolved); hydrated then resolved like headline NW. */
   exchangeRate?: number;
+  /** Live quotes — aligns portfolio holdings with Investments hub / headline NW. */
+  simulatedPrices?: SimulatedPriceMap;
 };
 
 /** Cash-like + investments + commodities + receivables − debt (simplified liquid picture). */
@@ -65,7 +74,10 @@ export function computeLiquidNetWorth(
       marketMoveEstimate30d: 0,
     };
   }
-  const fx = resolveSarPerUsd(data as { wealthUltraConfig?: { fxRate?: number | null } | null }, options?.exchangeRate);
+  const rawUi = options?.exchangeRate;
+  const uiExchangeRate = Number(rawUi) > 0 ? Number(rawUi) : DEFAULT_SAR_PER_USD;
+  hydrateSarPerUsdDailySeries(data, uiExchangeRate);
+  const fx = resolveSarPerUsd(data, uiExchangeRate);
   const accounts = getPersonalAccounts(data);
   const liquidCash = options?.getAvailableCashForAccount
     ? totalLiquidCashSARFromAccounts(accounts as { id: string; type?: string; balance?: number; currency?: 'USD' | 'SAR' }[], options.getAvailableCashForAccount, fx)
@@ -77,12 +89,30 @@ export function computeLiquidNetWorth(
           return sum + toSAR(bal, cur, fx);
         }, 0);
 
-  const inv = getPersonalInvestments(data);
-  const portfolioHoldingsSar = getAllInvestmentsValueInSAR(inv as any, fx);
   const sukukSar = sumPersonalSukukAssetsSar(data);
+  let portfolioHoldingsSar: number;
+  let commodities: number;
+  if (options?.getAvailableCashForAccount) {
+    const prices = options.simulatedPrices ?? {};
+    const getCash = options.getAvailableCashForAccount;
+    const platform = computePersonalPlatformsRollupSAR(data, fx, prices, getCash);
+    const invAccounts = accounts.filter((a: { type?: string }) => a.type === 'Investment');
+    let platformCashSar = 0;
+    for (const acc of invAccounts) {
+      platformCashSar += tradableCashBucketToSAR(getCash(String((acc as { id?: string }).id ?? '')), fx);
+    }
+    portfolioHoldingsSar = Math.max(0, platform.subtotalSAR - platformCashSar);
+    commodities = computePersonalCommoditiesContributionSAR(data, fx, prices).valueSAR;
+  } else {
+    /** Platform holdings only — commodities valued separately; Sukuk added in `investmentsSAR`. */
+    const prices = options?.simulatedPrices ?? {};
+    portfolioHoldingsSar = Math.max(
+      0,
+      getAllInvestmentsValueInSAR(getPersonalInvestments(data), fx),
+    );
+    commodities = computePersonalCommoditiesContributionSAR(data, fx, prices).valueSAR;
+  }
   const investmentsSAR = portfolioHoldingsSar + sukukSar;
-  const comm = getPersonalCommodityHoldings(data);
-  const commodities = comm.reduce((s: number, c: { currentValue?: number }) => s + (Number(c.currentValue) || 0), 0);
   const liab = getPersonalLiabilities(data);
   const receivables = liab.filter((l: { amount?: number }) => (l.amount ?? 0) > 0).reduce((s: number, l: { amount?: number }) => s + (l.amount ?? 0), 0);
 

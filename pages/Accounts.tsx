@@ -33,9 +33,8 @@ import { summarizeTransferForConfirm } from '../utils/recordConfirmMessages';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 
-import { useCurrency } from '../context/CurrencyContext';
 import { currentFinancialMonthIso, financialMonthRangeFromIsoKey, resolveMonthStartDayFromData } from '../utils/financialMonth';
-import { tradableCashBucketToSAR, resolveSarPerUsd, toSAR, fromSAR } from '../utils/currencyMath';
+import { tradableCashBucketToSAR, toSAR, fromSAR } from '../utils/currencyMath';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import { accountBookCurrency } from '../utils/cashAccountDisplay';
 import { isInternalTransferTransaction } from '../services/transactionFilters';
@@ -44,7 +43,8 @@ import { aggregateCreditCardStatementActivity, estimateMinimumCardPaymentDue } f
 import { useSelfLearning } from '../context/SelfLearningContext';
 import AIAdvisor from '../components/AIAdvisor';
 import { getPersonalAccounts } from '../utils/wealthScope';
-import { brokerCashBucketsFromInvestmentAccount, sumTradableCashSarFromInvestmentAccounts } from '../services/investmentCashLedger';
+import { brokerCashBucketsFromInvestmentAccount } from '../services/investmentCashLedger';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 
 type SharedAccountRow = Account & { ownerEmail?: string; owner_user_id?: string; account_id?: string; show_balance?: boolean };
@@ -349,7 +349,6 @@ const AccountCardComponent: React.FC<{
 const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     const { data, loading, addPlatform, updatePlatform, deletePlatform, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
-    const { exchangeRate } = useCurrency();
     const { formatCurrencyString } = useFormatCurrency();
     const confirmAction = useConfirmAction();
     const emergencyFund = useEmergencyFund(data);
@@ -441,11 +440,10 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         loadSharingState();
     }, [auth?.user?.id, data?.accounts?.length]);
 
-    const sarPerUsd = useMemo(() => resolveSarPerUsd(data, exchangeRate), [data, exchangeRate]);
+    const { sarPerUsd, investableCashTotalSar, investmentsTotalSar, liquidCashSar } = useCanonicalFinancialMetrics();
 
-    const { cashAccounts, creditAccounts, investmentAccounts, totalCash, totalCredit, totalInvestmentTradableCash } = useMemo(() => {
+    const { cashAccounts, creditAccounts, investmentAccounts, totalCash, totalCredit } = useMemo(() => {
         const accounts = getPersonalAccounts(data);
-        const allAccounts = data?.accounts ?? [];
         const cash = accounts.filter((a: { type?: string }) => ['Checking', 'Savings'].includes(a.type ?? ''));
         const credit = accounts.filter((a: { type?: string }) => a.type === 'Credit');
         const investmentAccountsList = accounts.filter((a: { type?: string }) => a.type === 'Investment');
@@ -459,13 +457,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             return sum + toSAR(Number(acc.balance) || 0, cur, sarPerUsd);
         }, 0);
 
-        const totalInvestmentTradableCash = sumTradableCashSarFromInvestmentAccounts(
-            investmentAccountsList as Account[],
-            allAccounts,
-            sarPerUsd,
-        );
-
-        return { cashAccounts: cash, creditAccounts: credit, investmentAccounts: investmentAccountsList, totalCash, totalCredit, totalInvestmentTradableCash };
+        return { cashAccounts: cash, creditAccounts: credit, investmentAccounts: investmentAccountsList, totalCash, totalCredit };
     }, [data, sarPerUsd]);
 
     const spendableBalanceSar = useCallback(
@@ -918,11 +910,13 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 </div>
             }
         >
-            <div className="cards-grid grid grid-cols-1 md:grid-cols-3">
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4">
                  <Card title="Total Cash Balance (SAR eq.)" value={maskBalance(formatCurrencyString(totalCash))} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of Checking and Savings converted to SAR equivalent using current FX rate." />
                  <Card title="Total Credit Balance (SAR eq.)" value={maskBalance(formatCurrencyString(totalCredit))} indicatorColor="red" valueColor="text-rose-700" icon={<CreditCardIcon className="h-5 w-5 text-rose-600" />} tooltip="Total amount owed across all credit accounts, converted to SAR equivalent." />
-                 <Card title="Tradable cash (platforms, SAR eq.)" value={maskBalance(formatCurrencyString(totalInvestmentTradableCash))} indicatorColor="yellow" valueColor="text-indigo-700" icon={<ArrowTrendingUpIcon className="h-5 w-5 text-indigo-600" />} tooltip="Cash available for trading on investment platforms (from deposits, sells, dividends minus buys & withdrawals), converted to SAR equivalent." />
+                 <Card title="Tradable cash (platforms, SAR eq.)" value={maskBalance(formatCurrencyString(investableCashTotalSar))} indicatorColor="yellow" valueColor="text-indigo-700" icon={<ArrowTrendingUpIcon className="h-5 w-5 text-indigo-600" />} tooltip="Cash available for trading on investment platforms — same total as Dashboard liquid-cash breakdown and Accounts investable cash chart." />
+                 <Card title="Investment exposure (SAR)" value={maskBalance(formatCurrencyString(investmentsTotalSar))} indicatorColor="green" valueColor="text-violet-700" icon={<ArrowTrendingUpIcon className="h-5 w-5 text-violet-600" />} tooltip="Platforms + commodities + Sukuk — matches Investments hub headline and Dashboard today snapshot. Not the same as tradable cash above." />
             </div>
+            <p className="text-xs text-slate-500 -mt-2 mb-2">Headline liquid cash (bank + platform idle cash): <strong className="tabular-nums">{maskBalance(formatCurrencyString(liquidCashSar, { digits: 0 }))}</strong> — same as Dashboard KPI.</p>
             {accountValidationWarnings.length > 0 && (
                 <SectionCard title="Accounts validation checks" collapsible collapsibleSummary="Data quality and wiring checks" defaultExpanded className="mt-4">
                     <ul className="space-y-1 text-sm text-amber-800">

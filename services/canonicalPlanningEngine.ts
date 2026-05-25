@@ -16,6 +16,8 @@ export type SymbolQuoteUpdatedAt = Record<string, string>;
 export type CanonicalPlanInputs = {
   data: DataContextFinancialData;
   exchangeRate: number;
+  /** When set, matches `computePersonalHeadlineNetWorthSar` / `useCanonicalFinancialMetrics().sarPerUsd`. */
+  sarPerUsd?: number;
   simulatedPrices: SimulatedPricesLike;
   getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number };
   /** Optional: per-symbol ISO timestamp from MarketDataContext; used for freshness/confidence. */
@@ -117,10 +119,13 @@ function clamp01(n: number): number {
 }
 
 export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): CanonicalPlanningSnapshot {
-  const { data, exchangeRate, simulatedPrices, getAvailableCashForAccount, symbolQuoteUpdatedAt, nowMs } = inputs;
+  const { data, exchangeRate, sarPerUsd: sarPerUsdOverride, simulatedPrices, getAvailableCashForAccount, symbolQuoteUpdatedAt, nowMs } = inputs;
   const now = typeof nowMs === 'number' && Number.isFinite(nowMs) ? nowMs : Date.now();
   const staleQuoteThresholdMinutes = 90; // default: 1.5 hours (covers non-continuous markets + manual refresh cadence)
-  const sarPerUsd = resolveSarPerUsd(data ?? null, exchangeRate);
+  const sarPerUsd =
+    typeof sarPerUsdOverride === 'number' && Number.isFinite(sarPerUsdOverride) && sarPerUsdOverride > 0
+      ? sarPerUsdOverride
+      : resolveSarPerUsd(data ?? null, exchangeRate);
 
   const quoteFreshnessForSymbol = (symbol: string): QuoteFreshness => {
     const iso = lookupQuoteUpdatedAtIso(symbolQuoteUpdatedAt ?? undefined, symbol);

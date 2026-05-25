@@ -1,5 +1,6 @@
 import type { FinancialData } from '../types';
 import { computePersonalHeadlineNetWorthSar } from './personalNetWorth';
+import { totalLiquidCashSARFromAccounts } from '../utils/currencyMath';
 import { debtStressScore } from './debtEngines';
 import { normalizedMonthlyExpenseSar, cashRunwayMonths } from './financeMetrics';
 import { getPersonalAccounts, getPersonalTransactions, getPersonalLiabilities } from '../utils/wealthScope';
@@ -31,9 +32,7 @@ export function buildExtendedNetWorthSnapshot(
   const totalDebt = liabilities
     .filter((l) => (l.status ?? 'Active') === 'Active' && (l.amount ?? 0) < 0)
     .reduce((s, l) => s + Math.abs(l.amount ?? 0), 0);
-  const liquidCash = accounts
-    .filter((a) => a.type === 'Checking' || a.type === 'Savings')
-    .reduce((s, a) => s + Math.max(0, getAvailableCashForAccount(a.id).SAR), 0);
+  const liquidCash = totalLiquidCashSARFromAccounts(accounts, getAvailableCashForAccount, headline.sarPerUsd);
   const monthlyExpense = normalizedMonthlyExpenseSar(txs, accounts, uiExchangeRate, { monthsLookback: 6 });
   const runway = cashRunwayMonths(liquidCash, monthlyExpense);
   const goals = data.goals ?? [];

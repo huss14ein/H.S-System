@@ -25,7 +25,7 @@ import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import type { Page } from '../types';
 import { SHOCK_TEMPLATES } from '../services/shockDrillEngine';
-import { computeWealthSummaryReportModel } from '../services/wealthSummaryReportModel';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import { buildReviewPack, downloadReviewPackMarkdown } from '../services/reviewPack';
@@ -128,13 +128,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     const auth = useContext(AuthContext);
     const { exchangeRate, currency: displayCurrency } = useCurrency();
     const { simulatedPrices } = useMarketData();
-    const reportModel = useMemo(
-        () =>
-            data
-                ? computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount, simulatedPrices)
-                : null,
-        [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]
-    );
+    const { wealthSummary: reportModel, kpiSnapshot } = useCanonicalFinancialMetrics();
     const fxBanner = useMemo(() => {
         const w = Number(data?.wealthUltraConfig?.fxRate);
         const hasWu = Number.isFinite(w) && w > 0;
@@ -337,10 +331,12 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
 
     const summaryMonthlyKpis = useMemo(
         () =>
-            data
-                ? computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices)
-                : { budgetVariance: Number.NaN, roi: Number.NaN },
-        [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]
+            kpiSnapshot
+                ? { budgetVariance: kpiSnapshot.budgetVariance, roi: kpiSnapshot.roi }
+                : data
+                  ? computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices)
+                  : { budgetVariance: Number.NaN, roi: Number.NaN },
+        [kpiSnapshot, data, exchangeRate, getAvailableCashForAccount, simulatedPrices],
     );
 
     const summaryValidationWarnings = useMemo(() => {
@@ -673,7 +669,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                     <div className="mb-2 sm:mb-4 space-y-1">
                         <h3 className="section-title !mb-0">Investment Allocation &amp; Performance</h3>
                         <p className="text-xs text-slate-500 max-w-prose">
-                            Tile area reflects position size; color reflects unrealized performance vs cost basis. Sukuk recorded under <strong>Assets</strong> is included here and in the Investments band on the net worth chart.
+                            Tile area reflects position size; color reflects unrealized performance vs cost basis. The headline total matches the Investments hub (platforms + commodities + Sukuk); idle broker cash is included in the platform rollup, not as separate treemap tiles.
                         </p>
                     </div>
                     <div className="flex-1 min-h-[320px] rounded-lg overflow-hidden border border-slate-100">
