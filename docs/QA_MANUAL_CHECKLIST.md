@@ -53,6 +53,10 @@ Use this to satisfy release-style verification. **Income-tax flows are out of pr
 
 - Toggle display currency in header (if available); confirm **Summary** / **Accounts** / key cards rescale consistently; spot-check one SAR/USD conversion against `CurrencyContext` rate.
 
+## 11. Performance recovery (2.1.1.0)
+
+Run `npm run verify:performance-recovery` locally first, then on deploy preview follow [`PERFORMANCE_RECOVERY_E2E.md`](./PERFORMANCE_RECOVERY_E2E.md) (signed-in).
+
 ---
 
 *Mark these steps in your release notes when executed; `npm run test` does not replace this list.*

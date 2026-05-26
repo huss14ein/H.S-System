@@ -3,8 +3,7 @@ import { DataContext } from '../context/DataContext';
 import { useCanonicalSpotFx } from './useCanonicalFinancialMetrics';
 import { AuthContext } from '../context/AuthContext';
 import { computeCapitalDeployment } from '../services/capitalDeploymentOrchestrator';
-import { detectGoalConflictsFromData } from '../services/goalConflictDetection';
-import { detectBudgetDrift } from '../services/budgetDrift';
+import { useEnhancementSignals } from './useEnhancementSignals';
 import { evaluateLifestyleGuardrailsFromData } from '../services/lifestyleGuardrails';
 import { computeIncomeStability } from '../services/incomeStability';
 import { computeMonthlyCashflowKpisSar } from '../services/financeTruth';
@@ -16,6 +15,7 @@ export function useFinancialEnhancementInsights(emergencyFundMonths = 0) {
   const { data, getAvailableCashForAccount } = useContext(DataContext)!;
   const exchangeRate = useCanonicalSpotFx();
   const auth = useContext(AuthContext);
+  const { goalConflicts, budgetDrift } = useEnhancementSignals();
 
   return useMemo(() => {
     if (!data) {
@@ -46,12 +46,12 @@ export function useFinancialEnhancementInsights(emergencyFundMonths = 0) {
         emergencyFundMonths,
         EF_TARGET,
       ),
-      goalConflicts: detectGoalConflictsFromData(data, exchangeRate),
-      budgetDrift: detectBudgetDrift(data, exchangeRate),
+      goalConflicts,
+      budgetDrift,
       lifestyleHits: evaluateLifestyleGuardrailsFromData(data, emergencyFundMonths, EF_TARGET, savingsRate),
       incomeStability: computeIncomeStability(data),
       monthlySurplusSar,
       userId: auth?.user?.id,
     };
-  }, [data, exchangeRate, getAvailableCashForAccount, emergencyFundMonths, auth?.user?.id]);
+  }, [data, exchangeRate, getAvailableCashForAccount, emergencyFundMonths, auth?.user?.id, goalConflicts, budgetDrift]);
 }

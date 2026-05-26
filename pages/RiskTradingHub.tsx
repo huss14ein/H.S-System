@@ -32,7 +32,7 @@ import { detectStaleMarketData } from '../services/dataQuality';
 import { MarketDataContext } from '../context/MarketDataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import type { Page, Transaction } from '../types';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { personalInvestmentTerminalValueSAR } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
@@ -86,7 +86,7 @@ const RiskTradingHub: React.FC<{
   }, [snaps, restoreDate]);
 
   const { exchangeRate } = useCurrency();
-  const { sarPerUsd, netWorth: currentNetWorth, liquidCashSar } = useCanonicalFinancialMetrics();
+  const { sarPerUsd, netWorth: currentNetWorth, liquidCashSar } = useDashboardCanonicalMetrics();
   const personalInvestments = useMemo(() => getPersonalInvestments(data ?? null), [data]);
   const personalInvestmentAccountIds = useMemo(
     () => getPersonalAccounts(data ?? null).filter((a) => a.type === 'Investment').map((a) => a.id),

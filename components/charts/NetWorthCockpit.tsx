@@ -18,6 +18,8 @@ import { DataContext } from '../../context/DataContext';
 import { useCurrency } from '../../context/CurrencyContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { useCanonicalFinancialMetrics } from '../../hooks/useCanonicalFinancialMetrics';
+import type { DashboardCanonicalMetrics } from '../../services/canonicalFinancialMetrics';
+import type { SimulatedPriceMap } from '../../services/investmentPlatformCardMetrics';
 import { toSAR } from '../../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency } from '../../utils/holdingValuation';
 import { resolveInvestmentPortfolioCurrency } from '../../utils/investmentPortfolioCurrency';
@@ -181,18 +183,37 @@ function netCashflowBetweenSarDated(args: {
   return { income, expenses, net: income - expenses };
 }
 
-export default function NetWorthCockpit(props: {
+export type NetWorthCockpitMetricsOverride = Pick<
+  DashboardCanonicalMetrics,
+  'headline' | 'todaySnapshot' | 'investableCashBars' | 'sarPerUsd'
+> & { simulatedPrices?: SimulatedPriceMap };
+
+type NetWorthCockpitShellProps = {
   title?: string;
   onOpenSummary?: () => void;
   onOpenInvestments?: () => void;
   onOpenAccounts?: () => void;
   onOpenAssets?: () => void;
   onOpenDataReconciliation?: () => void;
-}) {
-  const { title = 'Net worth', onOpenSummary, onOpenInvestments, onOpenAccounts, onOpenAssets, onOpenDataReconciliation } = props;
+};
+
+function NetWorthCockpitContent(
+  props: NetWorthCockpitShellProps & {
+    metrics: NetWorthCockpitMetricsOverride & { simulatedPrices: SimulatedPriceMap };
+  },
+) {
+  const {
+    title = 'Net worth',
+    onOpenSummary,
+    onOpenInvestments,
+    onOpenAccounts,
+    onOpenAssets,
+    onOpenDataReconciliation,
+    metrics,
+  } = props;
+  const { headline, todaySnapshot, investableCashBars, sarPerUsd, simulatedPrices } = metrics;
   const { data } = useContext(DataContext)!;
   const { exchangeRate } = useCurrency();
-  const { headline, todaySnapshot, investableCashBars, sarPerUsd, simulatedPrices } = useCanonicalFinancialMetrics();
   const { formatCurrencyString } = useFormatCurrency();
   const [period, setPeriod] = useState<TimePeriod>('6M');
   const buckets = headline.buckets;
@@ -868,3 +889,30 @@ export default function NetWorthCockpit(props: {
   );
 }
 
+function NetWorthCockpitFromCanonical(shell: NetWorthCockpitShellProps) {
+  const { headline, todaySnapshot, investableCashBars, sarPerUsd, simulatedPrices } = useCanonicalFinancialMetrics();
+  return (
+    <NetWorthCockpitContent
+      {...shell}
+      metrics={{ headline, todaySnapshot, investableCashBars, sarPerUsd, simulatedPrices }}
+    />
+  );
+}
+
+export default function NetWorthCockpit(
+  props: NetWorthCockpitShellProps & { metricsOverride?: NetWorthCockpitMetricsOverride },
+) {
+  const { metricsOverride, ...shell } = props;
+  if (metricsOverride) {
+    return (
+      <NetWorthCockpitContent
+        {...shell}
+        metrics={{
+          ...metricsOverride,
+          simulatedPrices: metricsOverride.simulatedPrices ?? {},
+        }}
+      />
+    );
+  }
+  return <NetWorthCockpitFromCanonical {...shell} />;
+}

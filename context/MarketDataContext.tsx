@@ -1,5 +1,5 @@
 
-import React, { createContext, useState, useCallback, ReactNode, useContext, useEffect, useRef } from 'react';
+import React, { createContext, useState, useCallback, ReactNode, useContext, useEffect, useRef, useMemo } from 'react';
 import { cacheRowsToSimulatedMap, loadQuoteCacheRows } from '../services/quotePriceCache';
 
 interface SimulatedPrices {
@@ -136,27 +136,46 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         [bumpPriceRefresh],
     );
 
-    const value: MarketDataContextType = {
-        simulatedPrices,
-        setSimulatedPrices,
-        isRefreshing,
-        setIsRefreshing,
-        quotesRefreshUIScope,
-        finishQuotesRefresh,
-        refreshPrices,
-        refreshPricesForPlatform,
-        bumpPriceRefresh,
-        consumePriceRefreshScope,
-        hasQueuedPriceRefresh,
-        notifyQueuedPriceRefresh,
-        lastUpdated,
-        setLastUpdated,
-        isLive,
-        setIsLive,
-        refreshTrigger,
-        symbolQuoteUpdatedAt,
-        touchQuoteTimestamps,
-    };
+    const value = useMemo(
+        (): MarketDataContextType => ({
+            simulatedPrices,
+            setSimulatedPrices,
+            isRefreshing,
+            setIsRefreshing,
+            quotesRefreshUIScope,
+            finishQuotesRefresh,
+            refreshPrices,
+            refreshPricesForPlatform,
+            bumpPriceRefresh,
+            consumePriceRefreshScope,
+            hasQueuedPriceRefresh,
+            notifyQueuedPriceRefresh,
+            lastUpdated,
+            setLastUpdated,
+            isLive,
+            setIsLive,
+            refreshTrigger,
+            symbolQuoteUpdatedAt,
+            touchQuoteTimestamps,
+        }),
+        [
+            simulatedPrices,
+            isRefreshing,
+            quotesRefreshUIScope,
+            finishQuotesRefresh,
+            refreshPrices,
+            refreshPricesForPlatform,
+            bumpPriceRefresh,
+            consumePriceRefreshScope,
+            hasQueuedPriceRefresh,
+            notifyQueuedPriceRefresh,
+            lastUpdated,
+            isLive,
+            refreshTrigger,
+            symbolQuoteUpdatedAt,
+            touchQuoteTimestamps,
+        ],
+    );
 
     return (
         <MarketDataContext.Provider value={value}>

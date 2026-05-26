@@ -9,7 +9,7 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { TrophyIcon } from '../components/icons/TrophyIcon';
 import { useCurrency } from '../context/CurrencyContext';
 import { personalInvestmentTerminalValueSAR } from '../utils/currencyMath';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import type { InvestmentTransaction, Page } from '../types';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import { useAI } from '../context/AiContext';
@@ -51,7 +51,7 @@ const DividendTrackerView: React.FC<{
     const { data, showHydrateBanner, recordTrade, updateHolding, getAvailableCashForAccount } = useContext(DataContext)!;
     const confirmAction = useConfirmAction();
     const { exchangeRate } = useCurrency();
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
     const { formatCurrencyString } = useFormatCurrency();
     const { showToast } = useToast();
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();

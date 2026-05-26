@@ -12,7 +12,7 @@ import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import { useCurrency } from '../context/CurrencyContext';
 import { useMarketData } from '../context/MarketDataContext';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
 import type { Page, Transaction } from '../types';
 import { normalizedMonthlyExpenseSar, personalMonthlyNetByMonthKeySar, savingsRateSarFinancialMonth } from '../services/financeMetrics';
@@ -93,7 +93,8 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         setMonthlySavings(Math.max(0, savingsAnalytics.medianMonthlyNet));
     }, [savingsAnalytics.medianMonthlyNet, monthlySavingsTouched]);
 
-    const { netWorth: headlineNetWorth, sarPerUsd, investmentsTotalSar, liquidCashSar } = useCanonicalFinancialMetrics();
+    const { netWorth: headlineNetWorth, sarPerUsd, headline, liquidCashSar } = useDashboardCanonicalMetrics();
+    const investmentsTotalSar = headline.buckets.investments;
     const initialValues = useMemo(
         () => ({
             netWorth: headlineNetWorth,

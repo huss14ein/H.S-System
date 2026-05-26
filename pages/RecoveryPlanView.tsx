@@ -62,7 +62,7 @@ import {
 } from '../services/positionRecyclingPersistence';
 import { validatePlannedTrade } from '../services/dataQuality/validation';
 import { computeCanonicalPlanningSnapshot } from '../services/canonicalPlanningEngine';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { getPersonalInvestments } from '../utils/wealthScope';
 import {
   buildHoldingSymbolOptions,
@@ -107,7 +107,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const { formatCurrencyString } = useFormatCurrency();
   const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
   const aiOptimizeDisabled = !aiActionsEnabled;
-  const { sarPerUsd: headlineFx } = useCanonicalFinancialMetrics();
+  const headlineFx = useCanonicalSpotFx();
   const canonical = useMemo(
     () =>
       data

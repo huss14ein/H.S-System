@@ -151,6 +151,17 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
             },
             icon: ArrowDownTrayIcon,
         });
+        if (triggerPageAction) {
+            quick.push({
+                name: 'Borrow from next month (Budgets)',
+                action: () => {
+                    trackAction('budgets-advance', 'Budgets');
+                    triggerPageAction('Budgets', 'budgets-advance-from-next-month');
+                    setIsOpen(false);
+                },
+                icon: NAVIGATION_ITEMS.find((i) => i.name === 'Budgets')!.icon,
+            });
+        }
         quick.push({
             name: 'Open data reconciliation (System Health)',
             action: () => {

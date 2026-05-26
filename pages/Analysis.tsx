@@ -24,7 +24,7 @@ import { toSAR } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { computeAllNetWorthChartBucketsSAR } from '../services/personalNetWorth';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalFinancialMetrics, useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { useMarketData } from '../context/MarketDataContext';
 import { detectBudgetDrift } from '../services/budgetDrift';
@@ -81,7 +81,7 @@ function buildTrendDataSar(
 const SpendingByCategoryChart: React.FC = () => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const { sarPerUsd: fx } = useCanonicalFinancialMetrics();
+    const fx = useCanonicalSpotFx();
     const chartData = useMemo(() => {
         const txs = data?.transactions ?? [];
         const accounts = data?.accounts ?? [];
@@ -107,7 +107,7 @@ const SpendingByCategoryChart: React.FC = () => {
 const IncomeExpenseTrendChart: React.FC = () => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const { sarPerUsd: fx } = useCanonicalFinancialMetrics();
+    const fx = useCanonicalSpotFx();
     const chartData = useMemo(() => {
         const monthStartDay = resolveMonthStartDayFromData(data);
         return buildTrendDataSar(data?.transactions ?? [], data?.accounts ?? [], fx, monthStartDay, 6);

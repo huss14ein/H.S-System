@@ -34,6 +34,7 @@ import { UsersIcon } from '../components/icons/UsersIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import { useCanonicalSpotFx, useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
@@ -41,6 +42,7 @@ import { getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
 import { supabase } from '../services/supabaseClient';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { captureExtendedNetWorthSnapshot } from '../services/netWorthSnapshotExtended';
+import { markAutoNetWorthSnapshotCaptured, shouldThrottleAutoNetWorthSnapshot } from '../services/netWorthSnapshotThrottle';
 import { subscriptionSpendMonthlySar } from '../services/transactionIntelligence';
 import InfoHint from '../components/InfoHint';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
@@ -421,7 +423,15 @@ const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerP
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
     const { simulatedPrices } = useMarketData();
-    const { headline, kpiSnapshot, sarPerUsd: canonicalSarPerUsd } = useDashboardCanonicalMetrics();
+    const debouncedPrices = useDebouncedValue(simulatedPrices, 400);
+    const {
+        headline,
+        kpiSnapshot,
+        todaySnapshot: dashboardTodaySnapshot,
+        investableCashBars: dashboardInvestableCashBars,
+        sarPerUsd: canonicalSarPerUsd,
+        simulatedPrices: dashboardDebouncedPrices,
+    } = useDashboardCanonicalMetrics();
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
     const { maskBalance } = usePrivacyMask();
@@ -541,7 +551,7 @@ const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerP
                 investmentCapitalSource,
             } = snap;
 
-            const investmentTreemapData = buildPersonalInvestmentTreemapRows(data, sarPerUsd, simulatedPrices);
+            const investmentTreemapData = buildPersonalInvestmentTreemapRows(data, sarPerUsd, debouncedPrices);
             const monthlySpending = new Map<string, number>();
             monthlyTransactions
                 .filter((t: { type?: string }) => countsAsExpenseForCashflowKpi(t))
@@ -645,20 +655,21 @@ const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerP
             console.error("Dashboard calculation error:", e);
             return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
         }
-    }, [data, exchangeRate, getAvailableCashForAccount, kpiSnapshot, canonicalSarPerUsd, simulatedPrices, showHydrateBanner]);
+    }, [data, exchangeRate, getAvailableCashForAccount, kpiSnapshot, canonicalSarPerUsd, debouncedPrices, showHydrateBanner]);
 
     useEffect(() => {
-        if (!auth?.user || !data || showHydrateBanner) return;
+        if (!auth?.user?.id || !data || showHydrateBanner) return;
         const nw = typeof headline.netWorth === 'number' && Number.isFinite(headline.netWorth) ? headline.netWorth : (kpiSummary as { netWorth?: number }).netWorth;
         if (typeof nw !== 'number' || !Number.isFinite(nw)) return;
+        if (shouldThrottleAutoNetWorthSnapshot(auth.user.id, nw)) return;
         captureExtendedNetWorthSnapshot(
             data,
             exchangeRate,
             getAvailableCashForAccount,
-            supabase && auth.user.id ? { supabase, userId: auth.user.id } : null,
-            simulatedPrices,
+            supabase ? { supabase, userId: auth.user.id } : null,
         );
-    }, [auth?.user, kpiSummary, data, headline.netWorth, exchangeRate, getAvailableCashForAccount, simulatedPrices, showHydrateBanner]);
+        markAutoNetWorthSnapshotCaptured(auth.user.id, nw);
+    }, [auth?.user?.id, data, headline.netWorth, exchangeRate, getAvailableCashForAccount, showHydrateBanner]);
 
     const subsIntel = useMemo(() => {
         if (!data) return { monthlyEstimate: 0, count: 0 };
@@ -1193,6 +1204,13 @@ const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerP
                     <div className="flex-1 min-h-0">
                         <NetWorthCockpit
                             title="Net worth"
+                            metricsOverride={{
+                                headline,
+                                todaySnapshot: dashboardTodaySnapshot,
+                                investableCashBars: dashboardInvestableCashBars,
+                                sarPerUsd: canonicalSarPerUsd,
+                                simulatedPrices: dashboardDebouncedPrices,
+                            }}
                             onOpenSummary={() => setActivePage('Summary')}
                             onOpenInvestments={() => setActivePage('Investments')}
                             onOpenAccounts={() => setActivePage('Accounts')}

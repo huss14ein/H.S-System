@@ -56,7 +56,7 @@ import { debtStressScore } from '../services/debtEngines';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useCurrency } from '../context/CurrencyContext';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { toSAR } from '../utils/currencyMath';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { getPersonalInvestments } from '../utils/wealthScope';
@@ -129,7 +129,7 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
   const ef = useEmergencyFund(data ?? null);
   const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
   const { exchangeRate, currency: displayCurrency } = useCurrency();
-  const { sarPerUsd, netWorth } = useCanonicalFinancialMetrics();
+  const { sarPerUsd, netWorth } = useDashboardCanonicalMetrics();
 
   const scoped = useMemo(() => getScopedData(data ?? null), [data]);
   const goalResolvedMap = useMemo(() => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd), [data, sarPerUsd]);

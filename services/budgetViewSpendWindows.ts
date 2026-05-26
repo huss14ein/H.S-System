@@ -109,6 +109,21 @@ export function computeBudgetSpendWindows(args: {
   return { rangeStart, rangeEnd, previousRangeStart, previousRangeEnd, ytdStart, ytdEnd };
 }
 
+/** Monthly card windows for a specific financial month (Admin overview, reports). */
+export function computeMonthlySpendWindowsForFinancialKey(
+  key: FinancialMonthKey,
+  monthStartDay: number,
+  anchorDate = new Date(key.year, key.month - 1, 15),
+): BudgetSpendWindows {
+  return computeBudgetSpendWindows({
+    budgetView: 'Monthly',
+    currentYear: key.year,
+    currentMonth: key.month,
+    monthStartDay,
+    anchorDate,
+  });
+}
+
 /** Human-readable label for the active card spend window (shown under “This month” / “This period”). */
 export function formatBudgetSpendWindowLabel(
   budgetView: BudgetViewMode,

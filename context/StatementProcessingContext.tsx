@@ -1,13 +1,18 @@
-import React, { createContext, useState, useEffect, ReactNode, useContext } from 'react';
+import React, { createContext, useState, useEffect, ReactNode, useContext, useRef, useCallback, useMemo } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
 import { DataContext } from './DataContext';
 import { invokeAI } from '../services/geminiService';
 import type { Transaction, InvestmentTransaction } from '../types';
+import {
+  buildStatementUpsertRow,
+  isStatementUuid,
+  shouldPersistStatementsAfterHydrate,
+  STATEMENT_DETAIL_SELECT,
+  STATEMENT_LIST_SELECT,
+} from '../services/statementPersistence';
 
-function isStatementUuid(id: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-}
+const LOCAL_STORAGE_DEBOUNCE_MS = 500;
 
 function randomUuid(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -165,88 +170,135 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
   const [isProcessing, setIsProcessing] = useState(false);
   const auth = useContext(AuthContext);
   const dataContext = useContext(DataContext);
+  const statementsHydratedRef = useRef(false);
+  const detailLoadInFlightRef = useRef<Set<string>>(new Set());
 
-  // Load statements from database and localStorage (fallback)
+  const mapExtractedRow = useCallback((row: any): ExtractedTransaction => ({
+    id: row.id,
+    date: new Date(row.transaction_date),
+    description: row.description ?? '',
+    amount: Number(row.amount),
+    type: row.transaction_type as ExtractedTransaction['type'],
+    balance: row.balance != null ? Number(row.balance) : undefined,
+    category: row.category ?? undefined,
+    subcategory: row.subcategory ?? undefined,
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    confidence: row.confidence ?? 0,
+    rawText: row.raw_text ?? '',
+    matchedTransaction: row.matched_transaction_id ?? undefined,
+    reconciliationStatus: (row.reconciliation_status || 'unmatched') as ExtractedTransaction['reconciliationStatus'],
+  }), []);
+
+  const mapDbStatementRow = useCallback(
+    (s: any, transactions: ExtractedTransaction[]): FinancialStatement => ({
+      id: s.id,
+      fileName: s.file_name,
+      fileType: s.file_type as FinancialStatement['fileType'],
+      fileSize: s.file_size,
+      uploadedAt: new Date(s.uploaded_at),
+      processedAt: s.processed_at ? new Date(s.processed_at) : undefined,
+      status: s.status as FinancialStatement['status'],
+      bankName: s.bank_name,
+      accountNumber: s.account_number,
+      accountId: s.account_id ?? undefined,
+      accountType: s.account_type as FinancialStatement['accountType'],
+      statementPeriod: {
+        startDate: s.statement_period_start ? new Date(s.statement_period_start) : new Date(),
+        endDate: s.statement_period_end ? new Date(s.statement_period_end) : new Date(),
+      },
+      openingBalance: Number(s.opening_balance) || 0,
+      closingBalance: Number(s.closing_balance) || 0,
+      transactions,
+      summary: (s.summary as StatementSummary) || {
+        totalCredits: 0,
+        totalDebits: 0,
+        netChange: 0,
+        transactionCount: 0,
+        categories: {},
+        averageTransaction: 0,
+        largestTransaction: 0,
+        smallestTransaction: 0,
+        dailySpending: {},
+      },
+      confidence: s.confidence ?? 0,
+      errors: s.errors ? (Array.isArray(s.errors) ? s.errors : []) : [],
+      storageBucket: s.storage_bucket ?? undefined,
+      storagePath: s.storage_path ?? undefined,
+    }),
+    [],
+  );
+
+  const persistStatementRow = useCallback(
+    async (statement: FinancialStatement, options?: { touchUpdatedAt?: boolean }) => {
+      if (!supabase || !auth?.user || !isStatementUuid(statement.id)) return;
+      const user = auth.user;
+      if (!user) return;
+      try {
+        const row = buildStatementUpsertRow(statement, user.id, options);
+        const { error } = await supabase.from('financial_statements').upsert(row, { onConflict: 'id' });
+        if (error) console.error('Failed to save statement to database:', error);
+      } catch (error) {
+        console.error('Error saving statement:', error);
+      }
+    },
+    [auth?.user],
+  );
+
+  const loadStatementDetail = useCallback(
+    async (statementId: string): Promise<void> => {
+      if (!supabase || !auth?.user || !isStatementUuid(statementId)) return;
+      if (detailLoadInFlightRef.current.has(statementId)) return;
+      detailLoadInFlightRef.current.add(statementId);
+      try {
+        const { data, error } = await supabase
+          .from('financial_statements')
+          .select(STATEMENT_DETAIL_SELECT)
+          .eq('id', statementId)
+          .eq('user_id', auth.user!.id)
+          .maybeSingle();
+        if (error || !data) return;
+        const rawExtracted = (data as any).extracted_transactions;
+        const extractedList: any[] = Array.isArray(rawExtracted)
+          ? rawExtracted
+          : rawExtracted
+            ? [rawExtracted]
+            : [];
+        const transactions = extractedList
+          .map(mapExtractedRow)
+          .sort((a, b) => a.date.getTime() - b.date.getTime());
+        const merged = mapDbStatementRow(data, transactions);
+        setStatements((prev) => prev.map((s) => (s.id === statementId ? merged : s)));
+        setCurrentStatement((cur) => (cur?.id === statementId ? merged : cur));
+      } catch (e) {
+        console.error('Failed to load statement detail:', e);
+      } finally {
+        detailLoadInFlightRef.current.delete(statementId);
+      }
+    },
+    [auth?.user, mapDbStatementRow, mapExtractedRow],
+  );
+
+  // Load statements from database and localStorage (fallback) — metadata only; no DB writes on hydrate
   useEffect(() => {
+    statementsHydratedRef.current = false;
     const loadStatements = async () => {
-      // Try to load from database first
       if (supabase && auth?.user) {
-        const supabaseClient = supabase; // Type narrowing
         const user = auth.user;
         if (!user) return;
-        
+
         try {
-          const { data: dbStatements, error } = await supabaseClient
+          const { data: dbStatements, error } = await supabase
             .from('financial_statements')
-            .select('*, extracted_transactions(*)')
+            .select(STATEMENT_LIST_SELECT)
             .eq('user_id', user.id)
             .order('uploaded_at', { ascending: false });
 
           if (!error && dbStatements) {
-            const mapExtractedRow = (row: any): ExtractedTransaction => ({
-              id: row.id,
-              date: new Date(row.transaction_date),
-              description: row.description ?? '',
-              amount: Number(row.amount),
-              type: row.transaction_type as ExtractedTransaction['type'],
-              balance: row.balance != null ? Number(row.balance) : undefined,
-              category: row.category ?? undefined,
-              subcategory: row.subcategory ?? undefined,
-              tags: Array.isArray(row.tags) ? row.tags : [],
-              confidence: row.confidence ?? 0,
-              rawText: row.raw_text ?? '',
-              matchedTransaction: row.matched_transaction_id ?? undefined,
-              reconciliationStatus: (row.reconciliation_status || 'unmatched') as ExtractedTransaction['reconciliationStatus'],
-            });
-
-            const loaded: FinancialStatement[] = dbStatements.map((s: any) => {
-              const rawExtracted = s.extracted_transactions;
-              const extractedList: any[] = Array.isArray(rawExtracted)
-                ? rawExtracted
-                : rawExtracted
-                  ? [rawExtracted]
-                  : [];
-              const transactions = extractedList
-                .map(mapExtractedRow)
-                .sort((a, b) => a.date.getTime() - b.date.getTime());
-
-              return {
-                id: s.id,
-                fileName: s.file_name,
-                fileType: s.file_type as FinancialStatement['fileType'],
-                fileSize: s.file_size,
-                uploadedAt: new Date(s.uploaded_at),
-                processedAt: s.processed_at ? new Date(s.processed_at) : undefined,
-                status: s.status as FinancialStatement['status'],
-                bankName: s.bank_name,
-                accountNumber: s.account_number,
-                accountId: s.account_id ?? undefined,
-                accountType: s.account_type as FinancialStatement['accountType'],
-                statementPeriod: {
-                  startDate: s.statement_period_start ? new Date(s.statement_period_start) : new Date(),
-                  endDate: s.statement_period_end ? new Date(s.statement_period_end) : new Date(),
-                },
-                openingBalance: Number(s.opening_balance) || 0,
-                closingBalance: Number(s.closing_balance) || 0,
-                transactions,
-                summary: (s.summary as StatementSummary) || {
-                  totalCredits: 0,
-                  totalDebits: 0,
-                  netChange: 0,
-                  transactionCount: 0,
-                  categories: {},
-                  averageTransaction: 0,
-                  largestTransaction: 0,
-                  smallestTransaction: 0,
-                  dailySpending: {},
-                },
-                confidence: s.confidence ?? 0,
-                errors: s.errors ? (Array.isArray(s.errors) ? s.errors : []) : [],
-                storageBucket: s.storage_bucket ?? undefined,
-                storagePath: s.storage_path ?? undefined,
-              };
-            });
+            const loaded: FinancialStatement[] = dbStatements.map((s: any) =>
+              mapDbStatementRow(s, []),
+            );
             setStatements(loaded);
+            statementsHydratedRef.current = true;
             return;
           }
         } catch (error) {
@@ -254,90 +306,49 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
         }
       }
 
-      // Fallback to localStorage
       try {
         const stored = localStorage.getItem('financialStatements');
         if (stored) {
           const statementData = JSON.parse(stored);
-          setStatements(statementData.map((s: any) => ({
-            ...s,
-            uploadedAt: new Date(s.uploadedAt),
-            processedAt: s.processedAt ? new Date(s.processedAt) : undefined,
-            statementPeriod: {
-              ...s.statementPeriod,
-              startDate: new Date(s.statementPeriod.startDate),
-              endDate: new Date(s.statementPeriod.endDate)
-            },
-            transactions: s.transactions?.map((t: any) => ({
-              ...t,
-              date: new Date(t.date)
-            })) || []
-          })));
+          setStatements(
+            statementData.map((s: any) => ({
+              ...s,
+              uploadedAt: new Date(s.uploadedAt),
+              processedAt: s.processedAt ? new Date(s.processedAt) : undefined,
+              statementPeriod: {
+                ...s.statementPeriod,
+                startDate: new Date(s.statementPeriod.startDate),
+                endDate: new Date(s.statementPeriod.endDate),
+              },
+              transactions:
+                s.transactions?.map((t: any) => ({
+                  ...t,
+                  date: new Date(t.date),
+                })) || [],
+            })),
+          );
         }
       } catch (error) {
         console.error('Failed to load statements from localStorage:', error);
       }
+      statementsHydratedRef.current = true;
     };
 
-    loadStatements();
-  }, [auth?.user?.id]);
+    void loadStatements();
+  }, [auth?.user?.id, mapDbStatementRow]);
 
-  // Save statements to database (and localStorage as backup)
+  // Debounced localStorage backup only (no Supabase upsert on every statements change)
   useEffect(() => {
-    if (!statements.length) return;
-
-    // Save to database if available
-    if (supabase && auth?.user) {
-      const user = auth.user;
-      if (!user || !supabase) return;
-      
-      const supabaseClient = supabase; // Type narrowing
-      
-      statements.forEach(async (statement) => {
-        if (!isStatementUuid(statement.id)) return;
-        try {
-          const { error } = await supabaseClient
-            .from('financial_statements')
-            .upsert({
-              id: statement.id,
-              user_id: user.id,
-              file_name: statement.fileName,
-              file_type: statement.fileType,
-              file_size: statement.fileSize,
-              bank_name: statement.bankName,
-              account_number: statement.accountNumber,
-              account_type: statement.accountType,
-              statement_period_start: statement.statementPeriod.startDate.toISOString().split('T')[0],
-              statement_period_end: statement.statementPeriod.endDate.toISOString().split('T')[0],
-              opening_balance: statement.openingBalance,
-              closing_balance: statement.closingBalance,
-              status: statement.status,
-              confidence: statement.confidence,
-              summary: statement.summary,
-              errors: statement.errors || [],
-              uploaded_at: statement.uploadedAt.toISOString(),
-              processed_at: statement.processedAt?.toISOString(),
-              updated_at: new Date().toISOString(),
-              storage_bucket: statement.storageBucket ?? null,
-              storage_path: statement.storagePath ?? null,
-            }, { onConflict: 'id' });
-
-          if (error) {
-            console.error('Failed to save statement to database:', error);
-          }
-        } catch (error) {
-          console.error('Error saving statement:', error);
-        }
-      });
-    }
-
-    // Also save to localStorage as backup
-    try {
-      localStorage.setItem('financialStatements', JSON.stringify(statements));
-    } catch (error) {
-      console.error('Failed to save statements to localStorage:', error);
-    }
-  }, [statements, auth?.user?.id]);
+    if (!shouldPersistStatementsAfterHydrate(statementsHydratedRef.current, statements.length)) return;
+    const t = window.setTimeout(() => {
+      try {
+        localStorage.setItem('financialStatements', JSON.stringify(statements));
+      } catch (error) {
+        console.error('Failed to save statements to localStorage:', error);
+      }
+    }, LOCAL_STORAGE_DEBOUNCE_MS);
+    return () => window.clearTimeout(t);
+  }, [statements]);
 
   const uploadStatement = async (file: File, bankInfo?: BankInfo): Promise<FinancialStatement> => {
     const statement: FinancialStatement = {
@@ -373,12 +384,14 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
 
     setStatements(prev => [...prev, statement]);
     setCurrentStatement(statement);
+    void persistStatementRow(statement);
 
     // Simulate file upload
     await new Promise(resolve => setTimeout(resolve, 2000));
 
     statement.status = 'processing';
     setStatements(prev => prev.map(s => s.id === statement.id ? statement : s));
+    void persistStatementRow(statement);
 
     return statement;
   };
@@ -395,19 +408,27 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
 
       const processedStatement = await processStatementData(statement);
       
-      setStatements(prev => prev.map(s => 
-        s.id === statementId 
-          ? { ...processedStatement, status: 'completed', processedAt: new Date() }
-          : s
-      ));
-
-      setCurrentStatement(processedStatement);
+      const completed = {
+        ...processedStatement,
+        status: 'completed' as const,
+        processedAt: new Date(),
+      };
+      setStatements(prev => prev.map(s => (s.id === statementId ? completed : s)));
+      setCurrentStatement(completed);
+      void persistStatementRow(completed);
     } catch (error) {
-      setStatements(prev => prev.map(s => 
-        s.id === statementId 
-          ? { ...s, status: 'failed', errors: [error instanceof Error ? error.message : 'Processing failed'] }
-          : s
-      ));
+      const failed = statements.find(s => s.id === statementId);
+      const failedRow = failed
+        ? { ...failed, status: 'failed' as const, errors: [error instanceof Error ? error.message : 'Processing failed'] }
+        : null;
+      setStatements(prev =>
+        prev.map(s =>
+          s.id === statementId
+            ? { ...s, status: 'failed', errors: [error instanceof Error ? error.message : 'Processing failed'] }
+            : s,
+        ),
+      );
+      if (failedRow) void persistStatementRow(failedRow);
     } finally {
       setIsProcessing(false);
     }
@@ -590,25 +611,34 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
   const reviewStatement = (statementId: string) => {
     const statement = statements.find(s => s.id === statementId);
     if (statement) {
-      setCurrentStatement(statement);
-      setStatements(prev => prev.map(s => 
-        s.id === statementId ? { ...s, status: 'reviewing' } : s
-      ));
+      if (statement.transactions.length === 0) {
+        void loadStatementDetail(statementId);
+      }
+      const reviewing = { ...statement, status: 'reviewing' as const };
+      setCurrentStatement(reviewing);
+      setStatements(prev => prev.map(s => (s.id === statementId ? reviewing : s)));
+      void persistStatementRow(reviewing);
     }
   };
 
   const approveStatement = async (statementId: string) => {
-    setStatements(prev => prev.map(s => 
-      s.id === statementId ? { ...s, status: 'completed' } : s
-    ));
+    setStatements(prev => {
+      const next = prev.map(s => (s.id === statementId ? { ...s, status: 'completed' as const } : s));
+      const row = next.find(s => s.id === statementId);
+      if (row) void persistStatementRow(row);
+      return next;
+    });
   };
 
   const rejectStatement = async (statementId: string, reason: string) => {
-    setStatements(prev => prev.map(s => 
-      s.id === statementId 
-        ? { ...s, status: 'failed', errors: [reason] }
-        : s
-    ));
+    setStatements(prev => {
+      const next = prev.map(s =>
+        s.id === statementId ? { ...s, status: 'failed' as const, errors: [reason] } : s,
+      );
+      const row = next.find(s => s.id === statementId);
+      if (row) void persistStatementRow(row);
+      return next;
+    });
   };
 
   const deleteStatement = (statementId: string) => {
@@ -742,12 +772,12 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
       }
     }
 
-    // Update statement with reconciliation status
-    setStatements(prev => prev.map(s => 
-      s.id === statementId 
-        ? { ...s, transactions: statement.transactions }
-        : s
-    ));
+    const updatedReconcile = { ...statement, transactions: statement.transactions };
+    setStatements(prev => {
+      const next = prev.map(s => (s.id === statementId ? updatedReconcile : s));
+      void persistStatementRow(updatedReconcile);
+      return next;
+    });
 
     const unmatchedCount = statement.transactions.length - matchedCount - duplicateCount;
     const confidence = statement.transactions.length > 0 
@@ -933,7 +963,11 @@ Return ONLY valid JSON, no markdown or extra text.`;
   };
 
   const getStatementById = (id: string): FinancialStatement | undefined => {
-    return statements.find(s => s.id === id);
+    const found = statements.find(s => s.id === id);
+    if (found && found.transactions.length === 0 && isStatementUuid(id)) {
+      void loadStatementDetail(id);
+    }
+    return found;
   };
 
   const getStatementsByAccount = (accountNumber: string): FinancialStatement[] => {
@@ -1151,24 +1185,44 @@ Return ONLY valid JSON, no markdown or extra text.`;
     return statement;
   };
 
-  const value: StatementProcessingContextType = {
-    statements,
-    currentStatement,
-    isProcessing,
-    uploadStatement,
-    commitParsedStatementFromUpload,
-    processStatement,
-    reviewStatement,
-    approveStatement,
-    rejectStatement,
-    deleteStatement,
-    reconcileTransactions,
-    exportTransactions,
-    getStatementDownloadUrl,
-    getStatementById,
-    getStatementsByAccount,
-    getProcessingStats
-  };
+  const value = useMemo<StatementProcessingContextType>(
+    () => ({
+      statements,
+      currentStatement,
+      isProcessing,
+      uploadStatement,
+      commitParsedStatementFromUpload,
+      processStatement,
+      reviewStatement,
+      approveStatement,
+      rejectStatement,
+      deleteStatement,
+      reconcileTransactions,
+      exportTransactions,
+      getStatementDownloadUrl,
+      getStatementById,
+      getStatementsByAccount,
+      getProcessingStats,
+    }),
+    [
+      statements,
+      currentStatement,
+      isProcessing,
+      uploadStatement,
+      commitParsedStatementFromUpload,
+      processStatement,
+      reviewStatement,
+      approveStatement,
+      rejectStatement,
+      deleteStatement,
+      reconcileTransactions,
+      exportTransactions,
+      getStatementDownloadUrl,
+      getStatementById,
+      getStatementsByAccount,
+      getProcessingStats,
+    ],
+  );
 
   return React.createElement(
     StatementProcessingContext.Provider,

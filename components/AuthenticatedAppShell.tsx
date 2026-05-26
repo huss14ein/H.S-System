@@ -21,6 +21,7 @@ import { ConfirmActionProvider } from '../hooks/useConfirmAction';
 import { SelfLearningProvider } from '../context/SelfLearningContext';
 import { PAGE_DISPLAY_NAMES, INVESTMENT_SUB_NAV_PAGE_NAMES } from '../constants';
 import { PAGE_MODULES, prefetchCommonPagesIdle, prefetchPage, resolveShellPage } from '../utils/lazyPages';
+import { CanonicalFinancialMetricsProvider } from '../context/CanonicalFinancialMetricsContext';
 
 const VALID_PAGES: Page[] = [
   'Dashboard', 'Summary', 'Accounts', 'Goals', 'Liabilities', 'Transactions',
@@ -229,6 +230,7 @@ const AuthenticatedAppShell: React.FC = () => {
             <CurrencyProvider>
               <ExchangeRateSync />
               <MarketDataProvider>
+                <CanonicalFinancialMetricsProvider>
                 <TodosProvider>
                   <NotificationsProvider>
                     <StatementProcessingProvider>
@@ -261,6 +263,7 @@ const AuthenticatedAppShell: React.FC = () => {
                     </StatementProcessingProvider>
                   </NotificationsProvider>
                 </TodosProvider>
+                </CanonicalFinancialMetricsProvider>
               </MarketDataProvider>
             </CurrencyProvider>
           </DataProvider>

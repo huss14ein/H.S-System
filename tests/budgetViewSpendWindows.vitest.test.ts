@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   clampDateToFinancialMonthBounds,
   computeBudgetSpendWindows,
+  computeMonthlySpendWindowsForFinancialKey,
   financialPlanYearYtdWindow,
   formatBudgetSpendWindowLabel,
 } from '../services/budgetViewSpendWindows';
@@ -32,6 +33,25 @@ describe('computeBudgetSpendWindows', () => {
     expect(w.ytdStart?.getMonth()).toBe(0);
     expect(w.ytdStart?.getDate()).toBe(1);
     expect(w.ytdEnd?.getTime()).toBe(w.rangeEnd.getTime());
+  });
+
+  it('computeMonthlySpendWindowsForFinancialKey matches Monthly computeBudgetSpendWindows', () => {
+    const monthStartDay = 28;
+    const key = { year: 2026, month: 4 };
+    const anchor = new Date(2026, 3, 15);
+    const fromKey = computeMonthlySpendWindowsForFinancialKey(key, monthStartDay, anchor);
+    const fromView = computeBudgetSpendWindows({
+      budgetView: 'Monthly',
+      currentYear: key.year,
+      currentMonth: key.month,
+      monthStartDay,
+      anchorDate: anchor,
+    });
+    expect(fromKey.rangeStart.getTime()).toBe(fromView.rangeStart.getTime());
+    expect(fromKey.rangeEnd.getTime()).toBe(fromView.rangeEnd.getTime());
+    expect(fromKey.ytdStart?.getTime()).toBe(fromView.ytdStart?.getTime());
+    expect(fromKey.ytdEnd?.getTime()).toBe(fromView.ytdEnd?.getTime());
+    expect(fromKey.ytdStart?.getTime()).not.toBe(new Date(2026, 0, 1, 0, 0, 0, 0).getTime());
   });
 
   it('Monthly YTD start follows financial month 1 when monthStartDay > 1', () => {

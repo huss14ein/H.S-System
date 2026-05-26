@@ -13,7 +13,7 @@ import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { fetchLiveGoldPriceSarPerGram } from '../utils/commodityLiveValue';
 import { summarizeZakatableCommoditiesForZakat, summarizeZakatableInvestmentsForZakat } from '../services/zakatInvestmentValuation';
 import { summarizeZakatableCashForZakat } from '../services/zakatCashValuation';
@@ -80,7 +80,7 @@ interface ZakatProps {
 
 const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
     const { data, addZakatPayment, updateSettings } = useContext(DataContext)!;
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
     const { formatCurrencyString } = useFormatCurrency();
     
     const defaultGold = Number((data?.settings as any)?.gold_price ?? data?.settings?.goldPrice ?? 275);

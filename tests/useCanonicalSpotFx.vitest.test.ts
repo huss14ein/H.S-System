@@ -16,9 +16,13 @@ describe('useCanonicalSpotFx', () => {
 
 describe('useCanonicalFinancialMetrics', () => {
   it('returns debounced prices as simulatedPrices (same input as compute)', () => {
-    const src = readFileSync(join(process.cwd(), 'hooks/useCanonicalFinancialMetrics.ts'), 'utf8');
-    const metricsFn = src.slice(src.indexOf('export function useCanonicalFinancialMetrics'));
-    expect(metricsFn).toMatch(/simulatedPrices:\s*debouncedPrices/);
-    expect(metricsFn).not.toMatch(/return\s*\{[\s\S]*simulatedPrices,\s*\n[\s\S]*getAvailableCashForAccount/);
+    const src = readFileSync(join(process.cwd(), 'hooks/canonicalFinancialMetricsBundle.ts'), 'utf8');
+    expect(src).toMatch(/simulatedPrices:\s*debouncedPrices/);
+    expect(src).toContain('buildCanonicalFinancialMetricsResult');
+  });
+
+  it('shell provider is mounted in AuthenticatedAppShell', () => {
+    const src = readFileSync(join(process.cwd(), 'components/AuthenticatedAppShell.tsx'), 'utf8');
+    expect(src).toContain('CanonicalFinancialMetricsProvider');
   });
 });

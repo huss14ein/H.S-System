@@ -32,6 +32,10 @@ import { buildReviewPack, downloadReviewPackMarkdown } from '../services/reviewP
 import { sendReviewPackEmail } from '../services/reviewPackEmail';
 import { toast } from '../context/ToastContext';
 import { captureExtendedNetWorthSnapshot } from '../services/netWorthSnapshotExtended';
+import {
+    markAutoNetWorthSnapshotCaptured,
+    shouldThrottleAutoNetWorthSnapshot,
+} from '../services/netWorthSnapshotThrottle';
 import { useMarketData } from '../context/MarketDataContext';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { attributeNetWorthWithFlows } from '../services/portfolioAttribution';
@@ -123,12 +127,20 @@ interface SummaryProps {
 
 const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) => {
     const { aiActionsEnabled, aiHealthChecked, isAiAvailable } = useAI();
-    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, getAvailableCashForAccount, showHydrateBanner } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const auth = useContext(AuthContext);
     const { exchangeRate, currency: displayCurrency } = useCurrency();
     const { simulatedPrices } = useMarketData();
-    const { wealthSummary: reportModel, kpiSnapshot } = useCanonicalFinancialMetrics();
+    const {
+        wealthSummary: reportModel,
+        kpiSnapshot,
+        headline,
+        todaySnapshot,
+        investableCashBars,
+        sarPerUsd: canonicalSarPerUsd,
+        simulatedPrices: canonicalSimulatedPrices,
+    } = useCanonicalFinancialMetrics();
     const fxBanner = useMemo(() => {
         const w = Number(data?.wealthUltraConfig?.fxRate);
         const hasWu = Number.isFinite(w) && w > 0;
@@ -310,6 +322,21 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         );
         trackAction('capture-nw-snapshot', 'Summary');
     }, [data, exchangeRate, getAvailableCashForAccount, auth?.user?.id, simulatedPrices, trackAction]);
+
+    useEffect(() => {
+        if (!auth?.user?.id || !data || showHydrateBanner) return;
+        const nw = headline?.netWorth;
+        if (typeof nw !== 'number' || !Number.isFinite(nw)) return;
+        if (shouldThrottleAutoNetWorthSnapshot(auth.user.id, nw)) return;
+        captureExtendedNetWorthSnapshot(
+            data,
+            exchangeRate,
+            getAvailableCashForAccount,
+            supabase ? { supabase, userId: auth.user.id } : null,
+            simulatedPrices,
+        );
+        markAutoNetWorthSnapshotCaptured(auth.user.id, nw);
+    }, [auth?.user?.id, data, headline?.netWorth, exchangeRate, getAvailableCashForAccount, showHydrateBanner, simulatedPrices]);
 
     const handleExportWealthSummaryCsv = useCallback(() => {
         const payload = reportModel?.wealthSummaryReportPayload;
@@ -651,6 +678,13 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                     <div className="section-card flex flex-col border-l-4 border-l-sky-500">
                         <NetWorthCockpit
                             title="Net worth (history + today)"
+                            metricsOverride={{
+                                headline,
+                                todaySnapshot,
+                                investableCashBars,
+                                sarPerUsd: canonicalSarPerUsd,
+                                simulatedPrices: canonicalSimulatedPrices,
+                            }}
                             onOpenInvestments={setActivePage ? () => setActivePage('Investments') : undefined}
                             onOpenAccounts={setActivePage ? () => setActivePage('Accounts') : undefined}
                             onOpenAssets={setActivePage ? () => setActivePage('Assets') : undefined}

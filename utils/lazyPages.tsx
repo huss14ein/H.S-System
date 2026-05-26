@@ -37,21 +37,17 @@ function eagerPage<T extends ComponentType<any>>(component: T): PageModule {
   };
 }
 
-/** Dashboard + high-traffic Management routes are eager to avoid Suspense "Loading page…" on every visit. */
+/** Dashboard only eager — avoids Suspense on home; other heavy routes lazy-loaded for initial bundle. */
 import DashboardPage from '../pages/Dashboard';
-import BudgetsPage from '../pages/Budgets';
-import TransactionsPage from '../pages/Transactions';
-import AccountsPage from '../pages/Accounts';
-import SummaryPage from '../pages/Summary';
 
 export const PAGE_MODULES: Record<Page, PageModule | undefined> = {
   Dashboard: eagerPage(DashboardPage),
   'Wealth Ultra': lazyPage(() => import('../pages/WealthUltraDashboard')),
-  Budgets: eagerPage(BudgetsPage),
-  Transactions: eagerPage(TransactionsPage),
+  Budgets: lazyPage(() => import('../pages/Budgets')),
+  Transactions: lazyPage(() => import('../pages/Transactions')),
   Investments: lazyPage(() => import('../pages/Investments')),
-  Accounts: eagerPage(AccountsPage),
-  Summary: eagerPage(SummaryPage),
+  Accounts: lazyPage(() => import('../pages/Accounts')),
+  Summary: lazyPage(() => import('../pages/Summary')),
   Liabilities: lazyPage(() => import('../pages/Liabilities')),
   Goals: lazyPage(() => import('../pages/Goals')),
   Forecast: lazyPage(() => import('../pages/Forecast')),
@@ -93,6 +89,10 @@ export function prefetchPage(page: Page): void {
 }
 
 const IDLE_PREFETCH_PAGES: Page[] = [
+  'Budgets',
+  'Transactions',
+  'Accounts',
+  'Summary',
   'Investments',
   'Plan',
   'Liabilities',

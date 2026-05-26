@@ -77,6 +77,10 @@ export type BudgetCardMetricsModel = {
     periodSpendCap?: number;
     trendDelta?: number;
     trendDirection?: 'up' | 'down' | 'flat';
+    nextMonthAvailableSar?: number;
+    borrowedInSar?: number;
+    lentOutSar?: number;
+    effectiveMonthlyLimitSar?: number;
 };
 
 const BudgetCardMetricsBlocks: React.FC<{
@@ -131,6 +135,29 @@ const BudgetCardMetricsBlocks: React.FC<{
 
     return (
         <div className="mt-5 flex min-h-0 flex-1 flex-col gap-0">
+            {budgetView === 'Monthly' &&
+                budget.nextMonthAvailableSar != null &&
+                budget.nextMonthAvailableSar > 0 && (
+                    <p className="mb-2 text-xs text-indigo-800/90 font-medium">
+                        Next month available:{' '}
+                        <span className="tabular-nums">
+                            {formatCurrencyString(budget.nextMonthAvailableSar, { digits: 0 })}
+                        </span>
+                    </p>
+                )}
+            {budgetView === 'Monthly' && (budget.borrowedInSar ?? 0) > 0 && (
+                <p className="mb-2 text-xs text-violet-800/90 font-medium">
+                    Effective limit includes{' '}
+                    <span className="tabular-nums">{formatCurrencyString(budget.borrowedInSar!, { digits: 0 })}</span>{' '}
+                    borrowed from next month
+                </p>
+            )}
+            {budgetView === 'Monthly' && (budget.lentOutSar ?? 0) > 0 && (
+                <p className="mb-2 text-xs text-amber-800/90 font-medium">
+                    <span className="tabular-nums">{formatCurrencyString(budget.lentOutSar!, { digits: 0 })}</span>{' '}
+                    moved to a prior month
+                </p>
+            )}
             <div className="shrink-0 space-y-3">
                 {showDual ? (
                     <>

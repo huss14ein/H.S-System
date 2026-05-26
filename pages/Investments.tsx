@@ -90,7 +90,8 @@ import {
   computePlatformCardMetrics,
   computePortfolioMetricsBundle,
 } from '../services/investmentPlatformCardMetrics';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
+import { InvestmentsMetricsProvider, useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 import { aggregateMonthlyBudgetAcrossPortfolios, getEffectivePlanForPortfolio } from '../utils/investmentPlanPerPortfolio';
 import { computeGoalMonthlyFundingEnvelopeSar } from '../services/goalProjectionFunding';
@@ -204,7 +205,7 @@ const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGP
 const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
 
     const investmentProgress = useMemo(() => {
         if (!data?.investmentPlan) {
@@ -405,7 +406,7 @@ const priorityRank = (p?: Goal['priority']) => (p === 'High' ? 0 : p === 'Medium
 const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGoals }) => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
     const goalCurrentByIdSar = useMemo(() => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd), [data, sarPerUsd]);
     const sortedGoals = useMemo(() => {
         const normalized = (data?.goals ?? [])
@@ -637,7 +638,7 @@ const RecordTradeModal: React.FC<{
 
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const efRunway = useEmergencyFund(data ?? null);
-    const { sarPerUsd, liquidCashSar: liquidCashSARForBuyPolicy } = useCanonicalFinancialMetrics();
+    const { sarPerUsd, liquidCashSar: liquidCashSARForBuyPolicy } = useInvestmentsCanonicalMetrics();
     const runwayMonthsForBuyPolicy = useMemo(() => {
         const exp = efRunway.monthlyCoreExpenses;
         if (exp > 0) return liquidCashSARForBuyPolicy / exp;
@@ -1644,7 +1645,7 @@ const HoldingDetailModal: React.FC<{
 }> = ({ isOpen, onClose, holding, portfolio, onRecordSell }) => {
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [analystAr, setAnalystAr] = useState<string | null>(null);
     const [analystDisplayLang, setAnalystDisplayLang] = useState<'en' | 'ar'>(() => {
@@ -3149,7 +3150,7 @@ const PlatformView: React.FC<{
     simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
 }> = (props) => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-    const { sarPerUsd, platformsRollupSar } = useCanonicalFinancialMetrics();
+    const { sarPerUsd, platformsRollupSar } = useInvestmentsCanonicalMetrics();
     const { setActivePage, setActiveTab, onOpenAddPortfolio } = props;
 
     const platformsData = useMemo(() => {
@@ -3392,7 +3393,7 @@ const InvestmentPlan: React.FC<{
     const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { isAiAvailable, aiHealthChecked } = useAI();
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
     const { simulatedPrices } = useMarketData();
 
     const planFromData = data?.investmentPlan;
@@ -5002,7 +5003,7 @@ interface InvestmentsProps {
   triggerPageAction?: (page: Page, action: string) => void;
 }
 
-const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
+const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
   const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
   const recordTradeConfirmed = useCallback(
     (trade: Parameters<typeof recordTrade>[0], executedPlanId?: string) =>
@@ -5055,7 +5056,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
   const [currentAccountId, setCurrentAccountId] = useState<string|null>(null);
 
   const { currency: appDisplayCurrency } = useCurrency();
-  const { investmentExposure } = useCanonicalFinancialMetrics();
+  const { investmentExposure } = useInvestmentsCanonicalMetrics();
   const { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage, platformsRollupSAR, commoditiesValueSAR, sukukAssetsValueSAR } = useMemo(() => {
     const h = investmentExposure;
     if (!h) {
@@ -5636,5 +5637,11 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     </div>
   );
 };
+
+const Investments: React.FC<InvestmentsProps> = (props) => (
+  <InvestmentsMetricsProvider>
+    <InvestmentsPageBody {...props} />
+  </InvestmentsMetricsProvider>
+);
 
 export default Investments;

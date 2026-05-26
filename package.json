@@ -18,6 +18,7 @@
     "verify:regressions": "vitest run tests/investmentSarFlowMetrics.vitest.test.ts tests/householdBulkLimits.vitest.test.ts tests/investmentPlanAllocations.vitest.test.ts tests/regressionUserFixes.vitest.test.ts",
     "verify:atomic-workflows": "node scripts/verify-atomic-workflows.js",
     "test:e2e": "playwright test",
+    "verify:performance-recovery": "node scripts/verify-performance-recovery.mjs",
     "test:release": "npm run test && npm run build && npm run test:e2e"
   },
   "dependencies": {

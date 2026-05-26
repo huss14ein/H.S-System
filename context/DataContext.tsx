@@ -60,6 +60,7 @@ import { sortByNewestFirst, sortPlannedTradesNewestFirst } from '../utils/sortRe
 import { normalizeWatchlistRow, watchlistToDbRow } from '../utils/watchlistDb';
 import { recomputeTrancheAfterFill } from '../services/plannedTradeTranches';
 import { guardRecordWrite, type RecordWriteOptions } from '../services/recordConfirmBridge';
+import { bindStableActions } from '../utils/stableActionBindings';
 import {
     summarizeBudgetForConfirm,
     summarizeCommodityForConfirm,
@@ -209,6 +210,71 @@ interface DataContextType {
 }
 
 export const DataContext = createContext<DataContextType | null>(null);
+
+const DATA_CONTEXT_ACTION_KEYS = [
+  'refreshData',
+  'addAsset',
+  'updateAsset',
+  'deleteAsset',
+  'addGoal',
+  'updateGoal',
+  'deleteGoal',
+  'updateGoalAllocations',
+  'addLiability',
+  'updateLiability',
+  'deleteLiability',
+  'addBudget',
+  'updateBudget',
+  'deleteBudget',
+  'copyBudgetsFromPreviousMonth',
+  'addTransaction',
+  'updateTransaction',
+  'deleteTransaction',
+  'addTransfer',
+  'addRecurringTransaction',
+  'updateRecurringTransaction',
+  'deleteRecurringTransaction',
+  'applyRecurringForMonth',
+  'applyRecurringRuleForMonth',
+  'applyRecurringDueToday',
+  'addPlatform',
+  'updatePlatform',
+  'deletePlatform',
+  'addPortfolio',
+  'updatePortfolio',
+  'deletePortfolio',
+  'addHolding',
+  'updateHolding',
+  'batchUpdateHoldingValues',
+  'recordTrade',
+  'updateInvestmentTransaction',
+  'deleteInvestmentTransaction',
+  'addWatchlistItem',
+  'updateWatchlistItem',
+  'deleteWatchlistItem',
+  'addZakatPayment',
+  'addPriceAlert',
+  'updatePriceAlert',
+  'deletePriceAlert',
+  'addPlannedTrade',
+  'updatePlannedTrade',
+  'deletePlannedTrade',
+  'saveInvestmentPlan',
+  'addUniverseTicker',
+  'updateUniverseTickerStatus',
+  'deleteUniverseTicker',
+  'addCommodityHolding',
+  'updateCommodityHolding',
+  'deleteCommodityHolding',
+  'batchUpdateCommodityHoldingValues',
+  'updateSettings',
+  'resetData',
+  'loadDemoData',
+  'restoreFromBackup',
+  'saveExecutionLog',
+] as const;
+
+type DataContextActions = Pick<DataContextType, (typeof DATA_CONTEXT_ACTION_KEYS)[number]>;
 
 function normalizeSettings(raw: any): Settings {
     if (!raw) return initialData.settings;
@@ -675,6 +741,7 @@ function investmentPlanOverridesToRow(plan: InvestmentPlanSettings): Record<stri
 }
 
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+    const dataActionsRef = useRef({} as DataContextActions);
     const [data, setData] = useState<FinancialData>(initialData);
     const [loading, setLoading] = useState(true);
     const [dataResetKey, setDataResetKey] = useState(0);
@@ -3956,11 +4023,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         );
     }, [accountsForDeployable, allAccountsForDeployableCanon, data]);
 
+    const showHydrateBanner = awaitingInitialHydrate;
+    const showBlockingLoader = false;
+
     // Auto-heal legacy duplicate holdings (same portfolio + symbol) once per unique snapshot.
     useEffect(() => {
         if (
             loading ||
             awaitingInitialHydrate ||
+            showHydrateBanner ||
             !financialDataHasHydrated(data) ||
             !auth?.user ||
             duplicateHoldingsReconcileInFlightRef.current
@@ -3988,6 +4059,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             .join('|');
         if (!signature || signature === duplicateHoldingsLastSignatureRef.current) return;
 
+        duplicateHoldingsLastSignatureRef.current = signature;
         duplicateHoldingsReconcileInFlightRef.current = true;
         (async () => {
             try {
@@ -3999,19 +4071,108 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         await deleteHolding(dup.id);
                     }
                 }
-                duplicateHoldingsLastSignatureRef.current = signature;
             } catch (error) {
                 console.warn('Duplicate holdings reconciliation skipped due to error:', error);
+                duplicateHoldingsLastSignatureRef.current = '';
             } finally {
                 duplicateHoldingsReconcileInFlightRef.current = false;
             }
         })();
-    }, [loading, awaitingInitialHydrate, data, auth?.user?.id, data.investments]);
+    }, [loading, awaitingInitialHydrate, showHydrateBanner, data, auth?.user?.id, data.investments]);
 
-    const showHydrateBanner = awaitingInitialHydrate;
-    const showBlockingLoader = false;
+    dataActionsRef.current = {
+        refreshData,
+        addAsset,
+        updateAsset,
+        deleteAsset,
+        addGoal,
+        updateGoal,
+        deleteGoal,
+        updateGoalAllocations,
+        addLiability,
+        updateLiability,
+        deleteLiability,
+        addBudget,
+        updateBudget,
+        deleteBudget,
+        copyBudgetsFromPreviousMonth,
+        addTransaction,
+        updateTransaction,
+        deleteTransaction,
+        addTransfer,
+        addRecurringTransaction,
+        updateRecurringTransaction,
+        deleteRecurringTransaction,
+        applyRecurringForMonth,
+        applyRecurringRuleForMonth,
+        applyRecurringDueToday,
+        addPlatform,
+        updatePlatform,
+        deletePlatform,
+        addPortfolio,
+        updatePortfolio,
+        deletePortfolio,
+        addHolding,
+        updateHolding,
+        batchUpdateHoldingValues,
+        recordTrade,
+        updateInvestmentTransaction,
+        deleteInvestmentTransaction,
+        addWatchlistItem,
+        updateWatchlistItem,
+        deleteWatchlistItem,
+        addZakatPayment,
+        addPriceAlert,
+        updatePriceAlert,
+        deletePriceAlert,
+        addPlannedTrade,
+        updatePlannedTrade,
+        deletePlannedTrade,
+        saveInvestmentPlan,
+        addUniverseTicker,
+        updateUniverseTickerStatus,
+        deleteUniverseTicker,
+        addCommodityHolding,
+        updateCommodityHolding,
+        deleteCommodityHolding,
+        batchUpdateCommodityHoldingValues,
+        updateSettings,
+        resetData,
+        loadDemoData,
+        restoreFromBackup,
+        saveExecutionLog,
+    };
 
-    const value = { data: dataWithPersonal, loading, showHydrateBanner, showBlockingLoader, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, updateInvestmentTransaction, deleteInvestmentTransaction, addWatchlistItem, updateWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const stableDataActions = useMemo(
+        () => bindStableActions(dataActionsRef, DATA_CONTEXT_ACTION_KEYS),
+        [],
+    );
+
+    const value = useMemo(
+        (): DataContextType => ({
+            data: dataWithPersonal ?? initialData,
+            loading,
+            showHydrateBanner,
+            showBlockingLoader,
+            dataResetKey,
+            allTransactions: data?.transactions ?? [],
+            allBudgets: data?.budgets ?? [],
+            getAvailableCashForAccount,
+            totalDeployableCash,
+            ...stableDataActions,
+        }),
+        [
+            dataWithPersonal,
+            loading,
+            showHydrateBanner,
+            dataResetKey,
+            data?.transactions,
+            data?.budgets,
+            getAvailableCashForAccount,
+            totalDeployableCash,
+            stableDataActions,
+        ],
+    );
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

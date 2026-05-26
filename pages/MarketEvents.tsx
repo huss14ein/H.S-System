@@ -10,7 +10,7 @@ import { Bars3Icon } from '../components/icons/Bars3Icon';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { toSAR } from '../utils/currencyMath';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { getAIMarketEventInsight, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
@@ -341,7 +341,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiTranslateError, setAiTranslateError] = useState<string | null>(null);
 
-  const { sarPerUsd } = useCanonicalFinancialMetrics();
+  const sarPerUsd = useCanonicalSpotFx();
   const investmentAccounts = useMemo(() => (data?.accounts ?? []).filter((a) => a.type === 'Investment'), [data]);
   const investmentAccountIds = useMemo(() => new Set(investmentAccounts.map((a) => a.id)), [investmentAccounts]);
   const investmentPortfolios = useMemo(() => (data?.investments ?? []) as any[], [data]);

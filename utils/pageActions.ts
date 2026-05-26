@@ -27,7 +27,9 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
       action === 'budgets-focus-requests' ||
       action === 'budgets-focus-my-pending' ||
       action === 'budgets-open-request-form' ||
-      action === 'budgets-focus-admin-pending'
+      action === 'budgets-focus-admin-pending' ||
+      action === 'budgets-advance-from-next-month' ||
+      /^budgets-advance-from-next-month:.+/.test(action)
     );
   }
 

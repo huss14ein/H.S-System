@@ -24,6 +24,7 @@ import { sanitizeLiveQuoteRow } from '../services/tadawulQuoteSanity';
 import {
     buildCommodityHoldingValueUpdatesFromTrustedSnapshot,
     buildEquityHoldingValueUpdatesFromTrustedSnapshot,
+    filterNoOpHoldingValueUpdates,
 } from '../services/marketSimulatorHoldingPersist';
 
 const MarketSimulator: React.FC = () => {
@@ -325,12 +326,22 @@ const MarketSimulator: React.FC = () => {
                 ),
             );
             
-            if (holdingUpdates.length > 0) {
-                batchUpdateHoldingValues(holdingUpdates);
+            const holdingUpdatesFiltered = filterNoOpHoldingValueUpdates(portfoliosInScope, holdingUpdates);
+            if (holdingUpdatesFiltered.length > 0) {
+                batchUpdateHoldingValues(holdingUpdatesFiltered);
             }
 
-            if (commodityUpdates.length > 0) {
-                batchUpdateCommodityHoldingValues(commodityUpdates);
+            const commodityPrevById = new Map(
+                (allCommodities as { id?: string; currentValue?: number }[])
+                    .filter((c) => c.id)
+                    .map((c) => [c.id!, Number(c.currentValue) || 0]),
+            );
+            const commodityUpdatesFiltered = commodityUpdates.filter((u) => {
+                const prev = commodityPrevById.get(u.id);
+                return prev == null || Math.abs(prev - u.currentValue) > 0.01;
+            });
+            if (commodityUpdatesFiltered.length > 0) {
+                batchUpdateCommodityHoldingValues(commodityUpdatesFiltered);
             }
             
             if (triggeredAlerts.length > 0) {

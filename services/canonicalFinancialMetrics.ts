@@ -91,10 +91,17 @@ export type CanonicalFinancialMetrics = {
   investmentAllocation: HeadlineInvestmentAllocationSlices;
 };
 
-/** Dashboard-only bundle: headline NW + KPI snapshot (skips wealth summary / allocation). */
+/** Dashboard + NetWorthCockpit bundle (skips wealth summary / allocation charts). */
 export type DashboardCanonicalMetrics = Pick<
   CanonicalFinancialMetrics,
-  'headline' | 'kpiSnapshot' | 'sarPerUsd' | 'netWorth' | 'liquidCashSar' | 'nwOptions'
+  | 'headline'
+  | 'kpiSnapshot'
+  | 'todaySnapshot'
+  | 'investableCashBars'
+  | 'sarPerUsd'
+  | 'netWorth'
+  | 'liquidCashSar'
+  | 'nwOptions'
 >;
 
 export function computeDashboardCanonicalMetrics(
@@ -106,14 +113,24 @@ export function computeDashboardCanonicalMetrics(
     : undefined;
 
   const headline = computePersonalHeadlineNetWorthSar(data, exchangeRate, nwOptions);
+  const todaySnapshot = computeTodayBalanceSheetSnapshotSar(data, exchangeRate, nwOptions);
   const kpiSnapshot =
     data && getAvailableCashForAccount
       ? computeDashboardKpiSnapshot(data, exchangeRate, getAvailableCashForAccount, simulatedPrices)
       : null;
 
+  let investableCashBars: InvestableCashBarRow[] = [];
+  if (data) {
+    const scope = getPersonalAccounts(data);
+    const allAccounts = data.accounts ?? scope;
+    investableCashBars = buildInvestableCashBarsFromInvestmentAccounts(scope, allAccounts, headline.sarPerUsd);
+  }
+
   return {
     headline,
     kpiSnapshot,
+    todaySnapshot,
+    investableCashBars,
     sarPerUsd: headline.sarPerUsd,
     netWorth: headline.netWorth,
     liquidCashSar: kpiSnapshot?.liquidCashSar ?? 0,

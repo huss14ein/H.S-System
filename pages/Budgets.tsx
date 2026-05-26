@@ -117,13 +117,23 @@ import {
 import {
     clampDateToFinancialMonthBounds,
     computeBudgetSpendWindows,
-    financialPlanYearYtdWindow,
+    computeMonthlySpendWindowsForFinancialKey,
     formatBudgetSpendWindowLabel,
 } from '../services/budgetViewSpendWindows';
 import {
     annualEnvelopeForBudgetRow,
     buildBudgetCardVisualMetrics,
 } from '../services/budgetCardMetrics';
+import {
+    buildAdvanceFromNextMonthNoteTag,
+    computeNextMonthBorrowHeadroomSar,
+    effectiveMonthlyLimitSar,
+    nextFinancialMonthKey,
+    parseAdvanceFromNextMonthNote,
+    summarizeFinalizedAdvanceTransfers,
+} from '../services/budgetAdvanceFromNextMonth';
+import { buildBudgetMonthOpenHints } from '../services/budgetMonthOpenAssistant';
+import BudgetMonthOpenBanner from '../components/BudgetMonthOpenBanner';
 
 /** Compare current view spend vs prior period (same calendar length as main range) for card trends. */
 function budgetTrendFromPeriods(previousPeriodSpent: number, currentPeriodSpent: number): {
@@ -481,6 +491,18 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     );
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [budgetView, setBudgetView] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
+    const monthOpenHints = useMemo(
+        () =>
+            data && budgetView === 'Monthly'
+                ? buildBudgetMonthOpenHints({
+                      data,
+                      currentViewKey,
+                      budgetDrift: financialEnhancementInsights.budgetDrift,
+                      budgets: (data.budgets ?? []) as Array<{ category: string; year: number; month: number }>,
+                  })
+                : [],
+        [data, budgetView, currentViewKey, financialEnhancementInsights.budgetDrift],
+    );
     const budgetSpendWindows = useMemo(
         () =>
             computeBudgetSpendWindows({
@@ -600,7 +622,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         } else if (pageAction === 'budgets-focus-my-pending') {
             scrollTo('budget-my-pending-requests');
             clearPageAction?.();
-        } else if (pageAction === 'budgets-open-request-form') {
+        } else if (pageAction === 'budgets-open-request-form' || pageAction === 'budgets-advance-from-next-month' || pageAction?.startsWith('budgets-advance-from-next-month:')) {
+            if (pageAction === 'budgets-advance-from-next-month' || pageAction?.startsWith('budgets-advance-from-next-month:')) {
+                setRequestType('AdvanceFromNextMonth');
+            }
             scrollTo('budget-request-form');
             clearPageAction?.();
         } else if (pageAction === 'budgets-focus-admin-pending') {
@@ -746,6 +771,13 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         showDualEnvelope?: boolean;
         periodWindowLabel?: string;
         periodSpendCap?: number;
+        /** Limit − spend in next financial month (same category). */
+        nextMonthAvailableSar?: number;
+        /** Finalized advance into this month (informational; limit row already updated). */
+        borrowedInSar?: number;
+        /** Finalized advance out of this month to a prior month. */
+        lentOutSar?: number;
+        effectiveMonthlyLimitSar?: number;
     };
 
     const householdProfileStorageKey = useMemo(() => `household-profile:${auth?.user?.id ?? 'anon'}`, [auth?.user?.id]);
@@ -1004,21 +1036,15 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         return { rawAmount, rawPeriod: m[1] as any };
     };
 
-    const addMonths = (month: number, year: number, delta: number): { month: number; year: number } => {
-        const d = new Date(year, month - 1 + delta, 1);
-        return { month: d.getMonth() + 1, year: d.getFullYear() };
-    };
     const parseAdvanceMeta = (request: any): { fromYear: number; fromMonth: number; toYear: number; toMonth: number } | null => {
-        const note = String(request?.request_note || request?.note || '');
-        const m = note.match(/\[AdvanceFromNextMonth:\s*from=(\d{4})-(\d{2});\s*to=(\d{4})-(\d{2})\]/i);
-        if (!m) return null;
-        const fromYear = Number(m[1]);
-        const fromMonth = Number(m[2]);
-        const toYear = Number(m[3]);
-        const toMonth = Number(m[4]);
-        if (![fromYear, fromMonth, toYear, toMonth].every(Number.isFinite)) return null;
-        if (fromMonth < 1 || fromMonth > 12 || toMonth < 1 || toMonth > 12) return null;
-        return { fromYear, fromMonth, toYear, toMonth };
+        const parsed = parseAdvanceFromNextMonthNote(String(request?.request_note || request?.note || ''));
+        if (!parsed) return null;
+        return {
+            fromYear: parsed.from.year,
+            fromMonth: parsed.from.month,
+            toYear: parsed.to.year,
+            toMonth: parsed.to.month,
+        };
     };
     const requestMode = (request: any): 'Standard' | 'AdvanceFromNextMonth' => {
         const note = String(request?.request_note || request?.note || '');
@@ -1383,6 +1409,15 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 });
                 const prevSpent = previousSpending.get(budget.category) ?? 0;
                 const trend = budgetTrendFromPeriods(prevSpent, spentPeriod);
+                const advanceXfer =
+                    budgetView === 'Monthly'
+                        ? summarizeFinalizedAdvanceTransfers({
+                              requests: data?.budgetRequests,
+                              category: budget.category,
+                              month: currentViewKey,
+                          })
+                        : { borrowedInSar: 0, lentOutSar: 0 };
+                const effectiveLimit = effectiveMonthlyLimitSar(visual.monthlyLimit);
 
                 return {
                     ...budget,
@@ -1394,7 +1429,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     secondaryBarValue: visual.secondaryBarValue,
                     secondaryBarMax: visual.secondaryBarMax,
                     displayLimit: budget.limit,
-                    monthlyLimit: visual.monthlyLimit,
+                    monthlyLimit: effectiveLimit,
+                    effectiveMonthlyLimitSar: effectiveLimit,
+                    borrowedInSar: advanceXfer.borrowedInSar > 0 ? advanceXfer.borrowedInSar : undefined,
+                    lentOutSar: advanceXfer.lentOutSar > 0 ? advanceXfer.lentOutSar : undefined,
                     percentage: visual.percentage,
                     annualPercentage: visual.annualPercentage,
                     annualUtilizationLabel: visual.annualUtilizationLabel,
@@ -1406,23 +1444,54 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     budgetTier: (budget.tier ?? 'Optional') as BudgetTier,
                     utilizationLabel: visual.utilizationLabel,
                     periodSpendCap: visual.periodSpendCap,
+                    nextMonthAvailableSar:
+                        budgetView === 'Monthly'
+                            ? computeNextMonthBorrowHeadroomSar({
+                                  budgets: allBudgetRows,
+                                  category: budget.category,
+                                  currentView: currentViewKey,
+                                  monthStartDay,
+                              })
+                            : undefined,
                 };
             })
             .sort((a, b) => b.spent - a.spent);
     }, [data?.transactions, (data as any)?.personalTransactions, data?.budgets, data?.budgetRequests, currentViewKey, monthStartDay, isAdmin, permittedCategories, budgetView, ownerSharedTransactions, governanceCategories, auth?.user?.id, sarPerUsd, accountCurrencyById, installmentBudgetRows, budgetSpendWindows, txAmountSar]);
 
+    useEffect(() => {
+        if (!pageAction?.startsWith('budgets-advance-from-next-month:')) return;
+        const cat = decodeURIComponent(pageAction.replace(/^budgets-advance-from-next-month:/, ''));
+        if (cat && budgetData.some((b) => b.category === cat)) {
+            setRequestCategoryId(`OWN::${cat}`);
+        }
+    }, [pageAction, budgetData]);
+
+    const handleBorrowFromNextMonth = useCallback(
+        (budget: BudgetRow) => {
+            setRequestType('AdvanceFromNextMonth');
+            setRequestCategoryId(`OWN::${budget.category}`);
+            const el = document.getElementById('budget-request-form');
+            el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        },
+        [],
+    );
+
     // Admin Approved Budgets Overview: same SAR splits, YTD envelope, and prior-month trend as main Budgets cards.
     const adminApprovedOverviewRaw = useMemo<BudgetRow[]>(() => {
         const mo = approvedOverviewMonth;
         const yr = approvedOverviewYear;
-        const { start: rangeStart, end: rangeEnd } = financialMonthRangeFromKey({ year: yr, month: mo }, monthStartDay);
+        const overviewKey: FinancialMonthKey = { year: yr, month: mo };
+        const {
+            rangeStart,
+            rangeEnd,
+            previousRangeStart: pStart,
+            previousRangeEnd: pEnd,
+            ytdStart,
+            ytdEnd,
+        } = computeMonthlySpendWindowsForFinancialKey(overviewKey, monthStartDay);
         const spending = new Map<string, number>();
         const ytdSpending = new Map<string, number>();
         const previousSpending = new Map<string, number>();
-
-        const { ytdStart, ytdEnd } = financialPlanYearYtdWindow(yr, mo, monthStartDay);
-        const prevKey = addMonthsToKey({ year: yr, month: mo }, -1);
-        const { start: pStart, end: pEnd } = financialMonthRangeFromKey(prevKey, monthStartDay);
 
         const bumpCategory = (category: string, rawAmount: number, tx: any, dateStr: string) => {
             const cat = String(category ?? '').trim();
@@ -1470,7 +1539,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         });
 
         const allBudgetRows = data?.budgets ?? [];
-        const overviewKey: FinancialMonthKey = { year: yr, month: mo };
         const budgetsForMonth = dedupeBudgetRowsForFinancialView(
             data?.budgets ?? [],
             overviewKey,
@@ -1690,6 +1758,33 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const map = new Map(budgetData.map((b) => [b.id, b]));
         return cardOrder.map((id) => map.get(id)).filter((b): b is BudgetRow => !!b);
     }, [budgetData, cardOrder]);
+
+    const BUDGET_CARDS_PAGE_SIZE = 24;
+    const [budgetCardsVisibleCount, setBudgetCardsVisibleCount] = useState(BUDGET_CARDS_PAGE_SIZE);
+    useEffect(() => {
+        setBudgetCardsVisibleCount(BUDGET_CARDS_PAGE_SIZE);
+    }, [currentViewKey.year, currentViewKey.month, budgetView, budgetData.length]);
+    const visibleBudgetCards = useMemo(
+        () => orderedBudgetData.slice(0, budgetCardsVisibleCount),
+        [orderedBudgetData, budgetCardsVisibleCount],
+    );
+    const hasMoreBudgetCards = orderedBudgetData.length > budgetCardsVisibleCount;
+
+    const scrollToBudgetCategory = useCallback(
+        (category: string) => {
+            const idx = orderedBudgetData.findIndex((b) => b.category === category);
+            if (idx >= 0 && idx >= budgetCardsVisibleCount) {
+                setBudgetCardsVisibleCount(Math.min(orderedBudgetData.length, idx + BUDGET_CARDS_PAGE_SIZE));
+            }
+            window.requestAnimationFrame(() => {
+                const el = document.querySelector(`[data-budget-category="${CSS.escape(category)}"]`);
+                el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                el?.classList.add('ring-2', 'ring-primary', 'ring-offset-2');
+                window.setTimeout(() => el?.classList.remove('ring-2', 'ring-primary', 'ring-offset-2'), 2400);
+            });
+        },
+        [orderedBudgetData, budgetCardsVisibleCount],
+    );
 
     const sharedBudgetCards = useMemo<BudgetRow[]>(() => {
         const spendingByOwnerCategory = new Map<string, number>();
@@ -2234,8 +2329,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const modeTag = requestType === 'AdvanceFromNextMonth' ? '[Request mode: AdvanceFromNextMonth]' : '';
         const advanceWindowTag = (() => {
             if (requestType !== 'AdvanceFromNextMonth') return '';
-            const from = addMonths(currentMonth, currentYear, 1);
-            return `[AdvanceFromNextMonth: from=${from.year}-${String(from.month).padStart(2, '0')}; to=${currentYear}-${String(currentMonth).padStart(2, '0')}]`;
+            const to: FinancialMonthKey = { year: currentYear, month: currentMonth };
+            const from = nextFinancialMonthKey(to, monthStartDay);
+            return buildAdvanceFromNextMonthNoteTag(from, to);
         })();
         const mergedNote = [modeTag, advanceWindowTag, periodTag, requestNote.trim()].filter(Boolean).join(' ').trim() || null;
 
@@ -2352,10 +2448,20 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         let finalizedByAtomicAdvance = false;
         if (mode === 'AdvanceFromNextMonth') {
             const targetCategory = resolveRequestCategory(request);
-            const advanceMeta = parseAdvanceMeta(request) ?? (() => {
-                const from = addMonths(currentMonth, currentYear, 1);
-                return { fromYear: from.year, fromMonth: from.month, toYear: currentYear, toMonth: currentMonth };
-            })();
+            const parsedTag = parseAdvanceFromNextMonthNote(String(request.note ?? ''));
+            const advanceMeta = parseAdvanceMeta(request) ??
+                (parsedTag
+                    ? {
+                          fromYear: parsedTag.from.year,
+                          fromMonth: parsedTag.from.month,
+                          toYear: parsedTag.to.year,
+                          toMonth: parsedTag.to.month,
+                      }
+                    : (() => {
+                          const to: FinancialMonthKey = { year: currentYear, month: currentMonth };
+                          const from = nextFinancialMonthKey(to, monthStartDay);
+                          return { fromYear: from.year, fromMonth: from.month, toYear: to.year, toMonth: to.month };
+                      })());
 
             const { data: requesterBudgets, error: requesterBudgetError } = await supabase
                 .from('budgets')
@@ -2545,10 +2651,20 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         >
             <div className={budgetSubPage === 'household' ? 'hidden' : 'space-y-6'}>
             {budgetsLoadingBanner}
+            <BudgetMonthOpenBanner
+                hints={monthOpenHints}
+                monthKey={currentViewKey}
+                onCopyLastMonth={isAdmin ? handleCopyBudgets : undefined}
+                onReviewDrift={() => {
+                    const el = document.getElementById('budget-category-cards');
+                    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }}
+            />
             <EnhancementInsightStrip
                 budgetDrift={financialEnhancementInsights.budgetDrift}
                 lifestyleHits={financialEnhancementInsights.lifestyleHits}
                 goalConflicts={financialEnhancementInsights.goalConflicts.slice(0, 1)}
+                onBudgetDriftCategoryClick={scrollToBudgetCategory}
                 compact
             />
             <div id="budget-requests-center">
@@ -2698,7 +2814,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 const currentBudgetRow = (requestType === 'IncreaseLimit' || requestType === 'AdvanceFromNextMonth') && selectedCategoryName ? budgetData.find(b => b.category === selectedCategoryName) : null;
                 const currentLimit = currentBudgetRow?.monthlyLimit ?? 0;
                 const currentSpent = currentBudgetRow?.spent ?? 0;
-                const nextMonthCtx = addMonths(currentMonth, currentYear, 1);
+                const nextMonthCtx = nextFinancialMonthKey(
+                    { year: currentYear, month: currentMonth },
+                    monthStartDay,
+                );
                 return (
                     <div id="budget-request-form" className="bg-gradient-to-br from-white via-primary/5 to-indigo-50 rounded-lg shadow p-5 border border-primary/20">
                         <h2 className="text-lg font-semibold mb-3 flex items-center">Request Budget Change <InfoHint text="Submit requests that always require admin approval: new category, increase limit, or pull budget from next month." /></h2>
@@ -4500,11 +4619,15 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 </div>
             </div>
 
-            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
-                {orderedBudgetData.map((budget) => (
+            <div
+                id="budget-category-cards"
+                className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch"
+            >
+                {visibleBudgetCards.map((budget) => (
                     <BudgetOwnPortfolioCard
                         key={budget.id}
                         budget={budget}
+                        dataBudgetCategory={budget.category}
                         budgetView={budgetView}
                         currentYear={currentYear}
                         periodWindowLabel={periodWindowLabel}
@@ -4515,10 +4638,26 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         onToggleExpand={toggleBudgetCardSize}
                         onEdit={handleOwnPortfolioEdit}
                         onDelete={handleOwnPortfolioDelete}
+                        onBorrowFromNextMonth={handleBorrowFromNextMonth}
                         canDelete={isAdmin}
                     />
                 ))}
             </div>
+            {hasMoreBudgetCards ? (
+                <div className="mt-4 flex justify-center">
+                    <button
+                        type="button"
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
+                        onClick={() =>
+                            setBudgetCardsVisibleCount((n) =>
+                                Math.min(orderedBudgetData.length, n + BUDGET_CARDS_PAGE_SIZE),
+                            )
+                        }
+                    >
+                        Show more categories ({orderedBudgetData.length - budgetCardsVisibleCount} remaining)
+                    </button>
+                </div>
+            ) : null}
              {governanceReady && budgetData.length === 0 && (
                 <div className="text-center py-14 px-6 rounded-3xl border border-dashed border-slate-300/90 bg-gradient-to-b from-slate-50 via-white to-indigo-50/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
                     <p className="text-slate-600 font-medium">No budgets set for this month.</p>

@@ -33,7 +33,9 @@ export type BudgetOwnPortfolioCardProps = {
     onToggleExpand: (id: string) => void;
     onEdit: (budget: OwnPortfolioBudgetRow) => void;
     onDelete: (budget: OwnPortfolioBudgetRow) => void;
+    onBorrowFromNextMonth?: (budget: OwnPortfolioBudgetRow) => void;
     canDelete: boolean;
+    dataBudgetCategory?: string;
 };
 
 const BudgetOwnPortfolioCard: React.FC<BudgetOwnPortfolioCardProps> = React.memo(function BudgetOwnPortfolioCard({
@@ -48,7 +50,9 @@ const BudgetOwnPortfolioCard: React.FC<BudgetOwnPortfolioCardProps> = React.memo
     onToggleExpand,
     onEdit,
     onDelete,
+    onBorrowFromNextMonth,
     canDelete,
+    dataBudgetCategory,
 }) {
     const utilLabel = (budget.utilizationLabel ?? 'Healthy') as BudgetUtilizationLabel;
     const periodBadge =
@@ -63,6 +67,7 @@ const BudgetOwnPortfolioCard: React.FC<BudgetOwnPortfolioCardProps> = React.memo
     return (
         <button
             type="button"
+            data-budget-category={dataBudgetCategory ?? budget.category}
             className={`group flex h-full min-h-0 w-full flex-col text-left rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary/80 transition-shadow duration-200 hover:shadow-md ${expanded ? 'md:col-span-2' : ''}`}
             onClick={() => onNavigateToTransactions(budget)}
         >
@@ -110,7 +115,22 @@ const BudgetOwnPortfolioCard: React.FC<BudgetOwnPortfolioCardProps> = React.memo
 
                     <div className="min-h-[1px] flex-1" aria-hidden />
 
-                    <div className="mt-auto flex shrink-0 justify-end items-center gap-1 border-t border-slate-200/50 pt-3">
+                    <div className="mt-auto flex shrink-0 flex-wrap justify-end items-center gap-1 border-t border-slate-200/50 pt-3">
+                        {budgetView === 'Monthly' &&
+                            (budget.nextMonthAvailableSar ?? 0) > 0 &&
+                            (budget.percentage ?? 0) >= 90 &&
+                            onBorrowFromNextMonth && (
+                                <button
+                                    type="button"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onBorrowFromNextMonth(budget);
+                                    }}
+                                    className="mr-auto px-2 py-1 text-[10px] font-semibold rounded-lg bg-indigo-50 text-indigo-900 border border-indigo-200 hover:bg-indigo-100"
+                                >
+                                    Borrow from next month
+                                </button>
+                            )}
                         <button
                             type="button"
                             onClick={(e) => {

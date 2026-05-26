@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useMemo, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
 import { Page, Transaction } from '../types';
@@ -20,8 +20,7 @@ import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestmen
 import { useTodosOptional } from './TodosContext';
 import { computeTaskCounts } from '../services/todoModel';
 import { isSupportedPageAction } from '../utils/pageActions';
-import { detectGoalConflictsFromData } from '../services/goalConflictDetection';
-import { detectBudgetDrift } from '../services/budgetDrift';
+import { useEnhancementSignals } from '../hooks/useEnhancementSignals';
 
 const READ_STORAGE_KEY = 'h.s.notifications.read';
 
@@ -93,7 +92,15 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const todosOpt = useTodosOptional();
   const sarPerUsd = useCanonicalSpotFx();
   const { simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt } = useMarketData();
+  const [debouncedPrices, setDebouncedPrices] = useState(simulatedPrices);
+  const staleQuoteScanAtRef = useRef(0);
+  const enhancementSignals = useEnhancementSignals();
   const [readIds, setReadIds] = useState<Set<string>>(loadReadIds);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedPrices(simulatedPrices), 2000);
+    return () => window.clearTimeout(t);
+  }, [simulatedPrices]);
   const [pendingBudgetRequestCount, setPendingBudgetRequestCount] = useState(0);
   const [pendingTransactionApprovalCount, setPendingTransactionApprovalCount] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -132,7 +139,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     return () => { alive = false; window.clearInterval(timer); };
   }, [auth?.user?.id]);
 
-  const notifications = useMemo<AppNotification[]>(() => {
+  const coreNotifications = useMemo<AppNotification[]>(() => {
     const list: AppNotification[] = [];
     if (!data || showHydrateBanner) return list;
     const now = new Date();
@@ -343,6 +350,10 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         (data.watchlist ?? []).length > 0 ||
         getPersonalCommodityHoldings(data).length > 0);
     if (hasMarketExposure) {
+      const nowMs = Date.now();
+      const allowStaleQuoteScan = nowMs - staleQuoteScanAtRef.current >= 60_000;
+      if (allowStaleQuoteScan) staleQuoteScanAtRef.current = nowMs;
+
       const staleM = detectStaleMarketData(lastUpdated, isLive);
       if (staleM.isStale) {
         push({
@@ -361,16 +372,18 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         ? (Date.now() - lastUpdated.getTime()) / 3600000
         : 999;
       const globalFresh = hoursSinceGlobal < 2;
-      const staleSyms = getStaleQuoteSymbols(tracked, symbolQuoteUpdatedAt, isLive, {
-        countMissingTimestampAsStale: !globalFresh,
-      });
+      const staleSyms = allowStaleQuoteScan
+        ? getStaleQuoteSymbols(tracked, symbolQuoteUpdatedAt, isLive, {
+            countMissingTimestampAsStale: !globalFresh,
+          })
+        : [];
       const priceTriggeredPlans = (data.plannedTrades ?? []).filter(
         (p) => p.status !== 'Executed' && p.conditionType === 'price' && (p.symbol ?? '').trim(),
       );
       const stalePlanSymbols = staleSyms.filter((s) =>
         priceTriggeredPlans.some((p) => (p.symbol ?? '').toUpperCase() === s),
       );
-      if (staleSyms.length > 0) {
+      if (allowStaleQuoteScan && staleSyms.length > 0) {
         push({
           id: 'market-symbols-stale',
           category: 'System',
@@ -428,28 +441,6 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         severity: 'urgent',
         actionHint: 'Review execution decision in Investments.',
       });
-    });
-
-    (data.plannedTrades ?? []).filter((p) => p.status === 'Planned').forEach((plan) => {
-      const priceInfo = simulatedPrices?.[plan.symbol];
-      if (!priceInfo) return;
-      const targetVal = (plan as any).target_value ?? (plan as any).targetValue ?? 0;
-      const tradeType = (plan as any).trade_type ?? plan.tradeType ?? 'buy';
-      const triggered = (tradeType === 'buy' && priceInfo.price <= targetVal) || (tradeType === 'sell' && priceInfo.price >= targetVal);
-      if (triggered) {
-        push({
-          id: `plan-${plan.id}`,
-          category: 'Plan',
-          message: `Target met: ${tradeType.toUpperCase()} ${plan.name ?? plan.symbol} ready to execute.`,
-          date: now.toISOString(),
-          isRead: false,
-          pageLink: 'Investments',
-          pageAction: safePageAction('Investments', 'open-trade-modal:from-plan'),
-          symbol: plan.symbol,
-          severity: 'urgent',
-          actionHint: 'Open Investments and execute or reschedule this plan.',
-        });
-      }
     });
 
     // Smart monthly digest (external expenses only, SAR-normalized per account currency)
@@ -511,7 +502,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       }
     }
 
-    for (const c of detectGoalConflictsFromData(data, sarPerUsd)) {
+    for (const c of enhancementSignals.goalConflicts) {
       push({
         id: `goal-conflict-${c.id}`,
         category: 'Goal',
@@ -523,7 +514,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         actionHint: 'Review goal deadlines and linked budgets or investments on Goals.',
       });
     }
-    for (const d of detectBudgetDrift(data, sarPerUsd).slice(0, 2)) {
+    for (const d of enhancementSignals.budgetDrift.slice(0, 2)) {
       push({
         id: `budget-drift-${d.category}`,
         category: 'Budget',
@@ -558,11 +549,51 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       });
     }
 
-    // Prioritize smarter, keep feed concise
-    return list
+    return list;
+  }, [data, showHydrateBanner, lastUpdated, isLive, symbolQuoteUpdatedAt, sarPerUsd, pendingBudgetRequestCount, pendingTransactionApprovalCount, isAdmin, auth?.user?.id, todosOpt?.todos, enhancementSignals]);
+
+  const priceTriggeredPlanNotifications = useMemo<AppNotification[]>(() => {
+    const list: AppNotification[] = [];
+    if (!data || showHydrateBanner) return list;
+    const now = new Date();
+    const push = (n: AppNotification) => {
+      const sev = n.severity ?? 'info';
+      const recencyHours = Math.max(1, (now.getTime() - new Date(n.date).getTime()) / 3600000);
+      n.score = (severityScore[sev] * 10) + 1 / recencyHours;
+      list.push(n);
+    };
+    (data.plannedTrades ?? []).filter((p) => p.status === 'Planned').forEach((plan) => {
+      const priceInfo = debouncedPrices?.[plan.symbol];
+      if (!priceInfo) return;
+      const targetVal = (plan as any).target_value ?? (plan as any).targetValue ?? 0;
+      const tradeType = (plan as any).trade_type ?? plan.tradeType ?? 'buy';
+      const triggered =
+        (tradeType === 'buy' && priceInfo.price <= targetVal) ||
+        (tradeType === 'sell' && priceInfo.price >= targetVal);
+      if (triggered) {
+        push({
+          id: `plan-${plan.id}`,
+          category: 'Plan',
+          message: `Target met: ${tradeType.toUpperCase()} ${plan.name ?? plan.symbol} ready to execute.`,
+          date: now.toISOString(),
+          isRead: false,
+          pageLink: 'Investments',
+          pageAction: safePageAction('Investments', 'open-trade-modal:from-plan'),
+          symbol: plan.symbol,
+          severity: 'urgent',
+          actionHint: 'Open Investments and execute or reschedule this plan.',
+        });
+      }
+    });
+    return list;
+  }, [data, showHydrateBanner, debouncedPrices]);
+
+  const notifications = useMemo<AppNotification[]>(() => {
+    const merged = [...coreNotifications, ...priceTriggeredPlanNotifications];
+    return merged
       .sort((a, b) => (b.score || 0) - (a.score || 0) || new Date(b.date).getTime() - new Date(a.date).getTime())
       .slice(0, 40);
-  }, [data, showHydrateBanner, simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt, sarPerUsd, pendingBudgetRequestCount, pendingTransactionApprovalCount, isAdmin, auth?.user?.id, todosOpt?.todos]);
+  }, [coreNotifications, priceTriggeredPlanNotifications]);
 
   const notificationsWithRead = useMemo(
     () => notifications.map((n) => ({ ...n, isRead: readIds.has(n.id) })),

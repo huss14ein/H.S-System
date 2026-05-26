@@ -8,7 +8,7 @@ import { Page } from '../types';
 import { DataContext } from '../context/DataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { netCashFlowForFinancialMonthSarDated } from '../services/financeMetrics';
 import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
@@ -116,7 +116,7 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
   const enhancementInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
   const { exchangeRate, currency: displayCurrency } = useCurrency();
   const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
-  const { headline: headlineMoneyTools } = useCanonicalFinancialMetrics();
+  const { headline: headlineMoneyTools } = useDashboardCanonicalMetrics();
 
   const moneyToolsKpis = useMemo(() => {
     if (!data) return null;

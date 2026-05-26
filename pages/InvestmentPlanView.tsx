@@ -35,7 +35,7 @@ import { ClockIcon, TargetIcon } from '../components/icons';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { convertBetweenTradeCurrencies, inferInstrumentCurrencyFromSymbol } from '../utils/currencyMath';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
 import CurrencyDualDisplay from '../components/CurrencyDualDisplay';
 import { fetchCompanyNameForSymbol } from '../hooks/useSymbolCompanyName';
@@ -111,7 +111,7 @@ const PlanTradeModal: React.FC<{
         return computeBuyScore(data, sym, exchangeRate, getAvailableCashForAccount, emergencyFund.monthsCovered, 6, wl);
     }, [data, symbol, tradeType, exchangeRate, getAvailableCashForAccount, emergencyFund.monthsCovered]);
     const planCcy = (budgetCurrency || 'SAR') as TradeCurrency;
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
     const instrumentCurrency = useMemo(() => inferInstrumentCurrencyFromSymbol(symbol), [symbol]);
     const portfolios = useMemo(() => getPersonalInvestments(data ?? null), [data]);
     const holdingSymbolOptions = useMemo(() => buildHoldingSymbolOptions(portfolios), [portfolios]);
@@ -932,7 +932,7 @@ const InvestmentPlanView: React.FC<{
     const { trackAction, trackSuggestionFeedback } = useSelfLearning();
     const { simulatedPrices, symbolQuoteUpdatedAt } = useMarketData();
     const { exchangeRate } = useCurrency();
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
     const emergencyFund = useEmergencyFund(data ?? null);
     const canonicalPlan = useMemo(
         () =>
