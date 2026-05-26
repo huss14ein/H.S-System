@@ -89,7 +89,6 @@ import { useSelfLearning } from '../context/SelfLearningContext';
 import { toSAR } from '../utils/currencyMath';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import {
-    addMonthsToKey,
     budgetAppliesToFinancialView,
     dedupeBudgetRowsForFinancialView,
     financialMonthKey,
@@ -1500,7 +1499,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             if (transactionDateInSpendWindow(dateStr, rangeStart, rangeEnd)) {
                 spending.set(cat, (spending.get(cat) || 0) + amt);
             }
-            if (transactionDateInSpendWindow(dateStr, ytdStart, ytdEnd)) {
+            if (ytdStart && ytdEnd && transactionDateInSpendWindow(dateStr, ytdStart, ytdEnd)) {
                 ytdSpending.set(cat, (ytdSpending.get(cat) || 0) + amt);
             }
             if (transactionDateInSpendWindow(dateStr, pStart, pEnd)) {

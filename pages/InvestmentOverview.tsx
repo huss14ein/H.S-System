@@ -17,6 +17,7 @@ import { getPersonalInvestments } from '../utils/wealthScope';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import type { InvestmentPortfolio } from '../types';
 import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import type { HeadlineAllocationRow } from '../services/headlineInvestmentAllocation';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import {
     ResolvedSymbolLabel,
@@ -141,8 +142,8 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
         const topAssetClassPct = totalValue > 0 && topAssetClass ? (topAssetClass.value / totalValue) * 100 : 0;
 
         const weights = allHoldingsWithGains
-            .map(h => (totalValue > 0 ? h.currentValue / totalValue : 0))
-            .filter(w => w > 0);
+            .map((h) => (totalValue > 0 ? h.currentValue / totalValue : 0))
+            .filter((w: number) => w > 0);
         const hhi = weights.reduce((acc, w) => acc + w * w, 0);
         const effectiveHoldings = hhi > 0 ? 1 / hhi : 0;
 
@@ -338,7 +339,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                     </div>
                     <div className="space-y-2">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Asset class exposure</p>
-                        {assetClassAllocation.slice(0, 5).map((a) => {
+                        {assetClassAllocation.slice(0, 5).map((a: HeadlineAllocationRow) => {
                             const pct = diversification.totalValue > 0 ? (a.value / diversification.totalValue) * 100 : 0;
                             return (
                                 <div key={a.name}>

@@ -27,7 +27,8 @@ import { reconcileCashAccountBalance, reconcileCreditAccountBalance, buildFinanc
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { reconcileHoldings, reconciliationExceptionReport } from '../services/reconciliationEngine';
 import { buildHoldingsDividendReconciliationReport } from '../services/holdingsDividendReconciliation';
-import { findHoldingsValueOutliers } from '../services/holdingsOutlierAudit';
+import { findHoldingsValueOutliers, type HoldingOutlierRow } from '../services/holdingsOutlierAudit';
+import type { HoldingsReconcileRow } from '../services/holdingsDividendReconciliation';
 import DashboardKpiQualityPanel from '../components/DashboardKpiQualityPanel';
 import {
   validateSystemIntegrity,
@@ -1028,7 +1029,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
             <div className="mt-4 pt-4 border-t border-slate-200">
               <h4 className="text-sm font-semibold text-slate-800">Holdings &amp; dividend reconciliation</h4>
               <ul className="mt-2 text-sm text-slate-700 space-y-1 list-disc pl-5">
-                {integritySummary.holdingsDividendReport.rows.slice(0, 12).map((r) => (
+                {integritySummary.holdingsDividendReport.rows.slice(0, 12).map((r: HoldingsReconcileRow) => (
                   <li key={r.id}>
                     <span className={r.severity === 'fail' ? 'text-rose-800 font-medium' : 'text-amber-900'}>
                       [{r.category}] {r.symbol}: {r.message}
@@ -1055,7 +1056,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
                 Stored <code className="text-[11px]">current_value</code> looks corrupt — fix in Supabase or re-record trades. Inflated values break net worth and ROI.
               </p>
               <ul className="mt-2 text-sm text-rose-950 space-y-1 list-disc pl-5">
-                {integritySummary.holdingsValueOutliers.slice(0, 8).map((r) => (
+                {integritySummary.holdingsValueOutliers.slice(0, 8).map((r: HoldingOutlierRow) => (
                   <li key={r.holdingId}>
                     {r.symbol} ({r.portfolioName}): {formatSarFixed2(r.currentValue)} SAR — {r.reason}
                   </li>

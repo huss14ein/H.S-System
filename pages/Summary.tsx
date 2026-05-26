@@ -722,7 +722,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                     <p className="text-sm text-slate-800 mb-2">{householdStress.summary}</p>
                     {householdStress.flags.length > 0 && (
                         <ul className="text-xs text-slate-600 list-disc pl-5 space-y-0.5">
-                            {householdStress.flags.slice(0, 4).map(flag => (
+                            {householdStress.flags.slice(0, 4).map((flag: string) => (
                                 <li key={flag}>{flag}</li>
                             ))}
                         </ul>
