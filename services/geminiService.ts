@@ -2393,7 +2393,7 @@ export const getGoalAIPlan = async (
             - **Currently Saved:** ${calculatedCurrentAmount.toLocaleString()} SAR
             - **Time Remaining:** ${monthsLeft} months
             - **Required Monthly Savings:** ${requiredMonthlyContribution.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/month
-            - **Projected Monthly Savings:** ${projectedMonthlyContribution.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/month (${typeof ov === 'number' && Number.isFinite(ov) ? 'linked budgets + linked investment plan/deposits only' : 'map budgets or investments to this goal — surplus after goal budgets funds emergency, not goals'})
+            - **Projected Monthly Savings:** ${projectedMonthlyContribution.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/month (${typeof ov === 'number' && Number.isFinite(ov) ? 'linked budget envelope when set, else linked investment plan/deposits only' : 'map budgets or investments to this goal — surplus after goal budgets funds emergency, not goals'})
 
             **Your Task:**
             1.  **Status Assessment:** In one friendly sentence, state if the goal is on track, needs attention, or is at risk based on the data. Be direct.
@@ -2439,7 +2439,7 @@ export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: n
         const { sumAllGoalMonthlyFundingEnvelopesSar, monthlySurplusForEmergencyFund } = await import('./goalProjectionFunding');
         const mappedGoalFunding = sumAllGoalMonthlyFundingEnvelopesSar(allData, sar);
         const emergencyCapacity = monthlySurplusForEmergencyFund(allData, sar);
-        const prompt = `You are Finova AI, a very clever expert financial advisor. Goal strategy data: rolling monthly net ${monthlySavings.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR; mapped goal envelopes ${mappedGoalFunding.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/mo (linked budgets + investments only); emergency-fund capacity after goal budgets ${emergencyCapacity.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/mo; ${goals.length} goals. Progress: ${goalDataWithProgress}. Return a short analysis in Markdown only (no HTML). Use ### for each section. Be direct.
+        const prompt = `You are Finova AI, a very clever expert financial advisor. Goal strategy data: rolling monthly net ${monthlySavings.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR; mapped goal envelopes ${mappedGoalFunding.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/mo (linked budget when present, else linked investment plan/deposits — not both summed); emergency-fund capacity after goal budgets ${emergencyCapacity.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/mo; ${goals.length} goals. Progress: ${goalDataWithProgress}. Return a short analysis in Markdown only (no HTML). Use ### for each section. Be direct.
 
 ### Overall Assessment
 One sentence: health of their goal strategy.

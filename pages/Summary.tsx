@@ -36,7 +36,6 @@ import {
     markAutoNetWorthSnapshotCaptured,
     shouldThrottleAutoNetWorthSnapshot,
 } from '../services/netWorthSnapshotThrottle';
-import { useMarketData } from '../context/MarketDataContext';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { attributeNetWorthWithFlows } from '../services/portfolioAttribution';
 import DashboardKpiQualityPanel from '../components/DashboardKpiQualityPanel';
@@ -131,7 +130,6 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     const { trackAction } = useSelfLearning();
     const auth = useContext(AuthContext);
     const { exchangeRate, currency: displayCurrency } = useCurrency();
-    const { simulatedPrices } = useMarketData();
     const {
         wealthSummary: reportModel,
         kpiSnapshot,
@@ -290,16 +288,16 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         if (!data) return;
         const fm = reportModel?.financialMetricsWithEf;
         const surplus = Math.max(0, (fm?.monthlyIncome ?? 0) - (fm?.monthlyExpenses ?? 0));
-        const pack = buildReviewPack(data, exchangeRate, getAvailableCashForAccount, surplus, simulatedPrices);
+        const pack = buildReviewPack(data, exchangeRate, getAvailableCashForAccount, surplus, canonicalSimulatedPrices);
         downloadReviewPackMarkdown(pack.markdown);
         trackAction('export-review-pack', 'Summary');
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, reportModel?.financialMetricsWithEf, trackAction]);
+    }, [data, exchangeRate, getAvailableCashForAccount, canonicalSimulatedPrices, reportModel?.financialMetricsWithEf, trackAction]);
 
     const handleEmailReviewPack = useCallback(async () => {
         if (!data || reviewPackEmailSending) return;
         const fm = reportModel?.financialMetricsWithEf;
         const surplus = Math.max(0, (fm?.monthlyIncome ?? 0) - (fm?.monthlyExpenses ?? 0));
-        const pack = buildReviewPack(data, exchangeRate, getAvailableCashForAccount, surplus, simulatedPrices);
+        const pack = buildReviewPack(data, exchangeRate, getAvailableCashForAccount, surplus, canonicalSimulatedPrices);
         setReviewPackEmailSending(true);
         const result = await sendReviewPackEmail(pack.markdown);
         setReviewPackEmailSending(false);
@@ -309,7 +307,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         } else {
             toast(result.error, 'error');
         }
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, reportModel?.financialMetricsWithEf, reviewPackEmailSending, trackAction]);
+    }, [data, exchangeRate, getAvailableCashForAccount, canonicalSimulatedPrices, reportModel?.financialMetricsWithEf, reviewPackEmailSending, trackAction]);
 
     const handleCaptureSnapshot = useCallback(() => {
         if (!data) return;
@@ -318,10 +316,10 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
             exchangeRate,
             getAvailableCashForAccount,
             supabase && auth?.user?.id ? { supabase, userId: auth.user.id } : null,
-            simulatedPrices,
+            canonicalSimulatedPrices,
         );
         trackAction('capture-nw-snapshot', 'Summary');
-    }, [data, exchangeRate, getAvailableCashForAccount, auth?.user?.id, simulatedPrices, trackAction]);
+    }, [data, exchangeRate, getAvailableCashForAccount, auth?.user?.id, canonicalSimulatedPrices, trackAction]);
 
     useEffect(() => {
         if (!auth?.user?.id || !data || showHydrateBanner) return;
@@ -333,10 +331,10 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
             exchangeRate,
             getAvailableCashForAccount,
             supabase ? { supabase, userId: auth.user.id } : null,
-            simulatedPrices,
+            canonicalSimulatedPrices,
         );
         markAutoNetWorthSnapshotCaptured(auth.user.id, nw);
-    }, [auth?.user?.id, data, headline?.netWorth, exchangeRate, getAvailableCashForAccount, showHydrateBanner, simulatedPrices]);
+    }, [auth?.user?.id, data, headline?.netWorth, exchangeRate, getAvailableCashForAccount, showHydrateBanner, canonicalSimulatedPrices]);
 
     const handleExportWealthSummaryCsv = useCallback(() => {
         const payload = reportModel?.wealthSummaryReportPayload;
@@ -361,9 +359,9 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
             kpiSnapshot
                 ? { budgetVariance: kpiSnapshot.budgetVariance, roi: kpiSnapshot.roi }
                 : data
-                  ? computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices)
+                  ? computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, canonicalSimulatedPrices)
                   : { budgetVariance: Number.NaN, roi: Number.NaN },
-        [kpiSnapshot, data, exchangeRate, getAvailableCashForAccount, simulatedPrices],
+        [kpiSnapshot, data, exchangeRate, getAvailableCashForAccount, canonicalSimulatedPrices],
     );
 
     const summaryValidationWarnings = useMemo(() => {

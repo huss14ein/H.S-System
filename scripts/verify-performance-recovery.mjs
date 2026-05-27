@@ -9,7 +9,19 @@ const steps = [
   {
     name: 'Static wiring (vitest)',
     cmd: 'npx',
-    args: ['vitest', 'run', 'tests/performanceRecoveryCoverage.vitest.test.ts', 'tests/pageLoadingGateCoverage.vitest.test.ts', 'tests/statementProcessingPersist.vitest.test.ts', 'tests/netWorthSnapshotThrottle.vitest.test.ts'],
+    args: [
+      'vitest',
+      'run',
+      'tests/performanceRecoveryCoverage.vitest.test.ts',
+      'tests/planDashboardCompare.vitest.test.ts',
+      'tests/planDashboardCompareContext.vitest.test.ts',
+      'tests/quoteEdgeCache.vitest.test.ts',
+      'tests/planExpenseOutliers.vitest.test.ts',
+      'tests/holdingValuationClamp.vitest.test.ts',
+      'tests/pageLoadingGateCoverage.vitest.test.ts',
+      'tests/statementProcessingPersist.vitest.test.ts',
+      'tests/netWorthSnapshotThrottle.vitest.test.ts',
+    ],
   },
   {
     name: 'Full unit suite',

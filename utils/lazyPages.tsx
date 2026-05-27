@@ -99,6 +99,13 @@ const IDLE_PREFETCH_PAGES: Page[] = [
   'Goals',
   'Wealth Ultra',
   'Settings',
+  'Analysis',
+  'Forecast',
+  'Zakat',
+  'Assets',
+  'Commodities',
+  'Market Events',
+  'Notifications',
 ];
 
 /** Warm common lazy chunks after first paint without blocking the main thread. */

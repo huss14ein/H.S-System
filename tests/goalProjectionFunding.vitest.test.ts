@@ -21,7 +21,44 @@ describe('goalProjectionFunding', () => {
     expect(budgetMonthlyEquivalentSar(b)).toBeCloseTo(1000, 5);
   });
 
-  it('envelope is assigned budget + linked investments only (no surplus slice)', () => {
+  it('when budget and investment are both linked, envelope uses budget only (no double-count)', () => {
+    vi.spyOn(goalResolvedTotals, 'averageRollingMonthlyNetSurplus').mockReturnValue(5000);
+    const g1: Goal = {
+      id: 'g1',
+      name: 'Home',
+      targetAmount: 100000,
+      currentAmount: 0,
+      deadline: '2030-01-01',
+      priority: 'High',
+      savingsAllocationPercent: 40,
+    };
+    const budgets: Budget[] = [
+      { id: 'b1', category: 'Save', limit: 11000, month: 4, year: 2026, period: 'monthly', goalId: 'g1' },
+    ];
+    const data = {
+      goals: [g1],
+      budgets,
+      transactions: [],
+      accounts: [],
+      liabilities: [],
+      investments: [
+        { id: 'pf1', name: 'Inv', accountId: 'acc1', currency: 'SAR', goalId: 'g1', holdings: [] },
+      ],
+      investmentPlan: {
+        monthlyBudget: 0,
+        budgetCurrency: 'SAR',
+        plansByPortfolioId: { pf1: { monthlyBudget: 6000, budgetCurrency: 'SAR' } },
+      },
+      assets: [],
+    } as unknown as FinancialData;
+
+    const env = computeGoalMonthlyFundingEnvelopeSar({ goal: g1, data });
+    expect(env.assignedBudgetMonthly).toBeCloseTo(11000, 5);
+    expect(env.assignedInvestmentPlanMonthly).toBeCloseTo(6000, 5);
+    expect(env.envelopeMonthly).toBeCloseTo(11000, 5);
+  });
+
+  it('envelope is assigned budget or linked investments only (no surplus slice)', () => {
     vi.spyOn(goalResolvedTotals, 'averageRollingMonthlyNetSurplus').mockReturnValue(5000);
 
     const g1: Goal = {

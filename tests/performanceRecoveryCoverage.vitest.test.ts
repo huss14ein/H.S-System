@@ -129,4 +129,60 @@ describe('performance recovery E2E wiring', () => {
       expect(src).toContain('useDashboardCanonicalMetrics');
     }
   });
+
+  it('stability rollout: shared budget RPC migration fixes date trim', () => {
+    const sql = read('supabase/migrations/20260527120000_fix_shared_budget_consumed_date_trim.sql');
+    expect(sql).toContain('get_shared_budget_consumed_for_me');
+    expect(sql).toMatch(/t\.date::date/);
+    expect(sql).not.toMatch(/trim\(t\.date\)/);
+  });
+
+  it('stability rollout: quotes, budgets fingerprint, plan drill-down, goal envelope', () => {
+    expect(read('services/quoteRefreshCooldown.ts')).toContain('startQuoteRefreshCooldown');
+    expect(read('components/MarketSimulator.tsx')).toContain('startQuoteRefreshCooldown');
+    expect(read('components/Header.tsx')).toContain('quoteRefreshCooldownRemainingMs');
+    expect(read('components/Layout.tsx')).toContain('cancelQuoteRefresh');
+    expect(read('pages/Budgets.tsx')).toContain('buildBudgetSpendFingerprint');
+    expect(read('pages/Budgets.tsx')).toContain('sharedRpcBackoffUntilRef');
+    expect(read('utils/pageActions.ts')).toMatch(/filter-plan-expense/);
+    expect(read('pages/Transactions.tsx')).toContain('filter-plan-expense:');
+    expect(read('services/goalProjectionFunding.ts')).toMatch(
+      /assignedBudgetMonthly > 0 \? assignedBudgetMonthly : assignedInvestmentMonthly/,
+    );
+    expect(read('pages/Investments.tsx')).toContain("unrealizedPnLBasis: 'net_capital'");
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toMatch(/useDebouncedValue\(simulatedPrices,\s*1500\)/);
+    expect(read('services/monthlyInvestmentPlanProgress.ts')).toContain('aggregateMonthlyBudgetAcrossPortfolios');
+    expect(read('components/Header.tsx')).toContain('computeMonthlyInvestmentPlanProgress');
+    expect(read('pages/Budgets.tsx')).toContain('BudgetSharedRpcBanner');
+    expect(read('pages/Budgets.tsx')).toContain('BudgetSharedRpcStatusLine');
+    expect(read('services/planExpenseOutliers.ts')).toContain('detectPlanExpenseOutliers');
+    expect(read('pages/Plan.tsx')).toContain('PlanExpenseSpikePanel');
+    expect(read('pages/Investments.tsx')).toContain('InvestmentsQuoteStatusBanner');
+    expect(read('utils/holdingValuation.ts')).toContain('clampStoredMarketValue');
+    expect(read('pages/Goals.tsx')).toContain('GoalsFundingEnvelopeBanner');
+    expect(read('services/sharedBudgetConsumedRpc.ts')).toContain('fetchSharedConsumedMapOnce');
+    expect(read('netlify/functions/sahmk-proxy.ts')).toContain('quoteEdgeCache');
+    expect(read('pages/Budgets.tsx')).toContain('setHouseholdEngineReady(true)');
+    expect(read('pages/Budgets.tsx')).toContain('Expand to load year projection');
+    expect(read('pages/Plan.tsx')).toContain('Compare on Dashboard');
+    expect(read('pages/Plan.tsx')).toContain('How planned columns work in the grid');
+    expect(read('pages/Plan.tsx')).toContain('savePlanDashboardCompareContext');
+    expect(read('pages/Plan.tsx')).toContain("triggerPageAction('Dashboard', 'plan-compare-dashboard')");
+    expect(read('pages/Dashboard.tsx')).toContain('PlanCompareContextBanner');
+    expect(read('pages/Dashboard.tsx')).toContain('dashboard-kpi-row');
+    expect(read('utils/pageActions.ts')).toContain('plan-compare-dashboard');
+    expect(read('context/NotificationsContext.tsx')).toContain('priceTriggeredPlanNotifications');
+    expect(read('components/MarketSimulator.tsx')).toContain('pendingLiveFetchSymbolsRef');
+  });
+
+  it('system performance: idle enhancement insights, debounced quotes, expanded prefetch', () => {
+    expect(read('hooks/useFinancialEnhancementInsights.ts')).toContain('scheduleIdleWork');
+    expect(read('hooks/useEnhancementSignals.ts')).toMatch(/showHydrateBanner/);
+    expect(read('hooks/useDebouncedMarketPrices.ts')).toContain('useDebouncedValue');
+    expect(read('components/Layout.tsx')).toContain('useDebouncedMarketPrices');
+    expect(read('pages/Summary.tsx')).not.toContain('useMarketData');
+    expect(read('pages/Investments.tsx')).toContain('const { simulatedPrices } = useInvestmentsCanonicalMetrics()');
+    expect(read('utils/lazyPages.tsx')).toContain("'Analysis'");
+    expect(read('utils/lazyPages.tsx')).toContain("'Notifications'");
+  });
 });

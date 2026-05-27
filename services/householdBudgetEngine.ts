@@ -91,6 +91,14 @@ export interface HouseholdBudgetPlanResult {
   reserveGap?: number;
 }
 
+/** Lightweight placeholder until idle/deferred household engine compute runs. */
+export const EMPTY_HOUSEHOLD_BUDGET_PLAN: HouseholdBudgetPlanResult = {
+  months: [],
+  plannedVsActual: { plannedNet: 0, actualNet: 0 },
+  balanceProjection: { projectedYearEndLiquid: 0 },
+  recommendations: [],
+};
+
 /** Alias for consumers that expect HouseholdMonthPlan (e.g. analytics). */
 export type HouseholdMonthPlan = HouseholdMonthResult;
 

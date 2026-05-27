@@ -408,7 +408,7 @@ export function computePortfolioMetricsBundle(args: {
         availableCashByCurrency: accountAvailableCashByCurrency,
         simulatedPrices,
         platformCurrency: pc,
-        unrealizedPnLBasis: 'holdings_cost',
+        unrealizedPnLBasis: 'net_capital',
       }),
     );
     return { metricsByPortfolioId, allocatedCashByPortfolioId };
@@ -438,7 +438,7 @@ export function computePortfolioMetricsBundle(args: {
         availableCashByCurrency: { SAR: 0, USD: 0 },
         simulatedPrices,
         platformCurrency: pc,
-        unrealizedPnLBasis: 'holdings_cost',
+        unrealizedPnLBasis: 'net_capital',
       }),
     );
   }

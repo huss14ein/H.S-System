@@ -2,6 +2,7 @@ import './loadNetlifyFunctionEnv';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 import { accessControlOriginHeader, assertBrowserOriginAllowed } from './corsAllowlist';
 import { assertProxySupabaseJwt } from './proxySupabaseJwt';
+import { getQuoteEdgeCached, quoteEdgeCacheKey, setQuoteEdgeCached } from './quoteEdgeCache';
 
 /**
  * Proxy for SAHMK (sahmk.sa) Tadawul quotes — browsers must not hold the API key.
@@ -75,6 +76,20 @@ const handler: Handler = async (event: HandlerEvent) => {
     };
   }
 
+  const cacheKey = quoteEdgeCacheKey('sahmk', code);
+  const cached = getQuoteEdgeCached(cacheKey);
+  if (cached) {
+    return {
+      statusCode: cached.status,
+      headers: {
+        ...corsHeaders(event),
+        'Content-Type': cached.contentType,
+        'X-Quote-Cache': 'HIT',
+      },
+      body: cached.body,
+    };
+  }
+
   try {
     const url = `${SAHMK_BASE}/quote/${encodeURIComponent(code)}/`;
     const res = await fetch(url, {
@@ -84,11 +99,16 @@ const handler: Handler = async (event: HandlerEvent) => {
       },
     });
     const body = await res.text();
+    const contentType = res.headers.get('Content-Type') ?? 'application/json; charset=utf-8';
+    if (res.ok) {
+      setQuoteEdgeCached(cacheKey, { status: res.status, body, contentType });
+    }
     return {
       statusCode: res.status,
       headers: {
         ...corsHeaders(event),
-        'Content-Type': res.headers.get('Content-Type') ?? 'application/json; charset=utf-8',
+        'Content-Type': contentType,
+        'X-Quote-Cache': 'MISS',
       },
       body,
     };

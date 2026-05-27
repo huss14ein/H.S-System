@@ -1,6 +1,7 @@
 
 
-import React, { useState, useEffect, useRef, useContext } from 'react';
+import React, { useState, useEffect, useRef, useContext, useCallback } from 'react';
+import { INVESTMENT_SUB_NAV_PAGE_NAMES } from '../constants';
 import Header from './Header';
 import { Page } from '../types';
 import QuickActionsSidebar from './QuickActionsSidebar';
@@ -14,6 +15,7 @@ import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useMarketData } from '../context/MarketDataContext';
+import { useDebouncedMarketPrices } from '../hooks/useDebouncedMarketPrices';
 import { supabase } from '../services/supabaseClient';
 import { runAutoNetWorthSnapshotIfDue } from '../services/scheduledNetWorthSnapshot';
 
@@ -40,7 +42,18 @@ const Layout: React.FC<LayoutProps> = ({
   const dataCtx = useContext(DataContext);
   const auth = useContext(AuthContext);
   const { exchangeRate } = useCurrency();
-  const { simulatedPrices } = useMarketData();
+  const debouncedPrices = useDebouncedMarketPrices(1500);
+  const { cancelQuoteRefresh } = useMarketData();
+  const navigatePage = useCallback(
+    (page: Page) => {
+      const fromInvestments =
+        activePage === 'Investments' || INVESTMENT_SUB_NAV_PAGE_NAMES.includes(activePage);
+      const toInvestments = page === 'Investments' || INVESTMENT_SUB_NAV_PAGE_NAMES.includes(page);
+      if (fromInvestments && !toInvestments) cancelQuoteRefresh();
+      setActivePage(page);
+    },
+    [activePage, setActivePage, cancelQuoteRefresh],
+  );
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isLiveAdvisorOpen, setIsLiveAdvisorOpen] = useState(false);
   const mainContentRef = useRef<HTMLElement>(null);
@@ -60,10 +73,10 @@ const Layout: React.FC<LayoutProps> = ({
       data,
       exchangeRate,
       getAvailableCashForAccount: dataCtx.getAvailableCashForAccount,
-      simulatedPrices,
+      simulatedPrices: debouncedPrices,
       supabase,
     });
-  }, [auth?.user?.id, dataCtx?.showHydrateBanner, dataCtx?.data, exchangeRate, simulatedPrices, dataCtx?.getAvailableCashForAccount]);
+  }, [auth?.user?.id, dataCtx?.showHydrateBanner, dataCtx?.data, exchangeRate, debouncedPrices, dataCtx?.getAvailableCashForAccount]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -93,7 +106,7 @@ const Layout: React.FC<LayoutProps> = ({
       </a>
       <Header
         activePage={activePage}
-        setActivePage={setActivePage}
+        setActivePage={navigatePage}
         onOpenLiveAdvisor={() => setIsLiveAdvisorOpen(true)}
         onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         triggerPageActionPair={triggerPageActionPair}
@@ -113,7 +126,7 @@ const Layout: React.FC<LayoutProps> = ({
               ready={ready}
               analysis={analysis ?? undefined}
               actionQueue={actionQueue}
-              setActivePage={setActivePage}
+              setActivePage={navigatePage}
               triggerPageAction={triggerPageAction}
             />
           )}
@@ -126,7 +139,7 @@ const Layout: React.FC<LayoutProps> = ({
       <CommandPalette
         isOpen={isCommandPaletteOpen}
         setIsOpen={setIsCommandPaletteOpen}
-        setActivePage={setActivePage}
+        setActivePage={navigatePage}
         triggerPageAction={triggerPageAction}
         onOpenLiveAdvisor={() => {
           setIsCommandPaletteOpen(false);

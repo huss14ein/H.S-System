@@ -98,7 +98,7 @@ const AppRouteHost: React.FC<AppRouteHostProps> = ({
 
     switch (shell) {
       case 'Dashboard':
-        return <Lazy key={routeKey} {...nav} />;
+        return <Lazy key={routeKey} {...nav} {...actionProps} />;
       case 'Summary':
         return <Lazy key={routeKey} {...nav} />;
       case 'Accounts':
@@ -124,7 +124,7 @@ const AppRouteHost: React.FC<AppRouteHostProps> = ({
       case 'Investments':
         return <Lazy key={routeKey} {...actionProps} {...nav} />;
       case 'Plan':
-        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+        return <Lazy key={routeKey} {...nav} />;
       case 'Assets':
         return <Lazy key={routeKey} {...actionProps} setActivePage={setActivePage} />;
       case 'Commodities':

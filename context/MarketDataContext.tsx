@@ -29,7 +29,7 @@ interface MarketDataContextType {
   quotesRefreshUIScope: QuotesRefreshUIScope;
   /** Clears refreshing state and UI scope (call when a quote tick completes). */
   finishQuotesRefresh: () => void;
-  refreshPrices: () => Promise<void>;
+  refreshPrices: (options?: { forceFetch?: boolean }) => Promise<void>;
   /** Refresh live quotes for holdings under one investment platform only (skips watchlist, planned trades, commodities). */
   refreshPricesForPlatform: (platformId: string) => Promise<void>;
   /** Increment refresh counter so MarketSimulator runs a live/simulated price pass. */
@@ -49,6 +49,10 @@ interface MarketDataContextType {
   symbolQuoteUpdatedAt: SymbolQuoteTimestamps;
   /** Mark symbols as freshly quoted (call after each price tick). */
   touchQuoteTimestamps: (symbols: string[]) => void;
+  /** Drop queued/in-flight quote work (e.g. navigate away from Investments). */
+  cancelQuoteRefresh: () => void;
+  /** When true, MarketSimulator should stop processing further refresh scopes. */
+  isQuoteRefreshCancelled: () => boolean;
 }
 
 export const MarketDataContext = createContext<MarketDataContextType | null>(null);
@@ -93,8 +97,15 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
 
     const [refreshTrigger, setRefreshTrigger] = useState(0);
     const refreshQueueRef = useRef<PriceRefreshScope[]>([]);
+    const quoteRefreshAbortRef = useRef(false);
+
+    const isQuoteRefreshCancelled = useCallback(() => quoteRefreshAbortRef.current, []);
 
     const consumePriceRefreshScope = useCallback((): PriceRefreshScope | null => {
+        if (quoteRefreshAbortRef.current) {
+            refreshQueueRef.current = [];
+            return null;
+        }
         return refreshQueueRef.current.shift() ?? null;
     }, []);
 
@@ -109,6 +120,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
     }, []);
 
     const bumpPriceRefresh = useCallback((scope: PriceRefreshScope = { kind: 'all' }) => {
+        quoteRefreshAbortRef.current = false;
         refreshQueueRef.current.push(scope);
         setRefreshTrigger((prev) => prev + 1);
     }, []);
@@ -118,10 +130,16 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         setQuotesRefreshUIScope({ mode: 'idle' });
     }, []);
 
-    const refreshPrices = useCallback(async () => {
+    const cancelQuoteRefresh = useCallback(() => {
+        quoteRefreshAbortRef.current = true;
+        refreshQueueRef.current = [];
+        finishQuotesRefresh();
+    }, [finishQuotesRefresh]);
+
+    const refreshPrices = useCallback(async (options?: { forceFetch?: boolean }) => {
         setQuotesRefreshUIScope({ mode: 'all' });
         setIsRefreshing(true);
-        bumpPriceRefresh({ kind: 'all', forceFetch: true });
+        bumpPriceRefresh({ kind: 'all', forceFetch: options?.forceFetch === true });
         // MarketSimulator performs fetch + calls finishQuotesRefresh when done
     }, [bumpPriceRefresh]);
 
@@ -157,6 +175,8 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             refreshTrigger,
             symbolQuoteUpdatedAt,
             touchQuoteTimestamps,
+            cancelQuoteRefresh,
+            isQuoteRefreshCancelled,
         }),
         [
             simulatedPrices,
@@ -174,6 +194,8 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             refreshTrigger,
             symbolQuoteUpdatedAt,
             touchQuoteTimestamps,
+            cancelQuoteRefresh,
+            isQuoteRefreshCancelled,
         ],
     );
 

@@ -30,7 +30,7 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
   const getAvailableCashForAccount = ctx?.getAvailableCashForAccount;
   const { exchangeRate } = useCurrency();
   const { simulatedPrices } = useMarketData();
-  const debouncedPrices = useDebouncedValue(simulatedPrices, 400);
+  const debouncedPrices = useDebouncedValue(simulatedPrices, 1500);
   useHydrateSarPerUsdDailySeries(data, exchangeRate);
 
   const value = useMemo((): CanonicalFinancialMetricsContextValue => {

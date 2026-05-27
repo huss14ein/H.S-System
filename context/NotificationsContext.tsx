@@ -21,6 +21,7 @@ import { useTodosOptional } from './TodosContext';
 import { computeTaskCounts } from '../services/todoModel';
 import { isSupportedPageAction } from '../utils/pageActions';
 import { useEnhancementSignals } from '../hooks/useEnhancementSignals';
+import { buildNotificationsDataFingerprint } from '../services/budgetSpendFingerprint';
 
 const READ_STORAGE_KEY = 'h.s.notifications.read';
 
@@ -95,10 +96,23 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const [debouncedPrices, setDebouncedPrices] = useState(simulatedPrices);
   const staleQuoteScanAtRef = useRef(0);
   const enhancementSignals = useEnhancementSignals();
+  const notificationsDataFingerprint = useMemo(
+    () => buildNotificationsDataFingerprint(data),
+    [
+      data?.budgets,
+      data?.goals,
+      data?.transactions,
+      data?.budgetRequests,
+      data?.settings?.budgetThreshold,
+      data?.investmentPlan,
+      data?.plannedTrades,
+      data?.executionLogs,
+    ],
+  );
   const [readIds, setReadIds] = useState<Set<string>>(loadReadIds);
 
   useEffect(() => {
-    const t = window.setTimeout(() => setDebouncedPrices(simulatedPrices), 2000);
+    const t = window.setTimeout(() => setDebouncedPrices(simulatedPrices), 2500);
     return () => window.clearTimeout(t);
   }, [simulatedPrices]);
   const [pendingBudgetRequestCount, setPendingBudgetRequestCount] = useState(0);
@@ -550,7 +564,20 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     }
 
     return list;
-  }, [data, showHydrateBanner, lastUpdated, isLive, symbolQuoteUpdatedAt, sarPerUsd, pendingBudgetRequestCount, pendingTransactionApprovalCount, isAdmin, auth?.user?.id, todosOpt?.todos, enhancementSignals]);
+  }, [
+    notificationsDataFingerprint,
+    showHydrateBanner,
+    lastUpdated,
+    isLive,
+    symbolQuoteUpdatedAt,
+    sarPerUsd,
+    pendingBudgetRequestCount,
+    pendingTransactionApprovalCount,
+    isAdmin,
+    auth?.user?.id,
+    todosOpt?.todos,
+    enhancementSignals,
+  ]);
 
   const priceTriggeredPlanNotifications = useMemo<AppNotification[]>(() => {
     const list: AppNotification[] = [];

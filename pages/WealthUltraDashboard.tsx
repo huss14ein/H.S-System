@@ -1,6 +1,5 @@
 import React, { useMemo, useContext, useEffect, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
-import { useMarketData } from '../context/MarketDataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useAI } from '../context/AiContext';
 import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
@@ -67,7 +66,7 @@ const SCENARIO_OPTIONS: { id: string; label: string; multiplier: number }[] = [
 
 const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePage, triggerPageAction }) => {
   const { data, totalDeployableCash } = useContext(DataContext)!;
-  const { simulatedPrices } = useMarketData();
+  const { simulatedPrices } = useCanonicalFinancialMetrics();
   const { formatCurrencyString } = useFormatCurrency();
   const { isAiAvailable, aiHealthChecked } = useAI();
 

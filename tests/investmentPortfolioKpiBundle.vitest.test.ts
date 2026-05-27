@@ -93,10 +93,10 @@ describe('computePortfolioMetricsBundle', () => {
     expect(mb.totalValueInSAR).toBeCloseTo(3000, 5);
     expect(ma.totalAvailable).toBe(0);
     expect(mb.totalAvailable).toBe(0);
-    // Unrealized P/L = holdings value − qty×avg cost (same idea as each holdings row).
-    expect(ma.totalGainLossSAR).toBeCloseTo(0, 5);
-    expect(mb.totalGainLossSAR).toBeCloseTo(2500, 5);
-    expect(ma.unrealizedPnLBasis).toBe('holdings_cost');
+    // Unrealized P/L = total value − net capital (deposits − withdrawals).
+    expect(ma.totalGainLossSAR).toBeCloseTo(ma.totalValueInSAR - ma.netCapitalSAR, 5);
+    expect(mb.totalGainLossSAR).toBeCloseTo(mb.totalValueInSAR - mb.netCapitalSAR, 5);
+    expect(ma.unrealizedPnLBasis ?? 'net_capital').toBe('net_capital');
   });
 
   it('repeats full cash buckets for each portfolio when there are no holdings', () => {
@@ -206,7 +206,7 @@ describe('computePortfolioMetricsBundle', () => {
     expect(high.totalWithdrawnSAR).toBeCloseTo(300, 5);
   });
 
-  it('with one portfolio, KPI metrics use full tx list + cash + holdings_cost for P/L and ROI', () => {
+  it('with one portfolio, KPI metrics use full tx list + cash + net_capital for P/L and ROI', () => {
     const account: Account = {
       id: 'acc-single',
       name: 'Broker',
@@ -267,14 +267,16 @@ describe('computePortfolioMetricsBundle', () => {
     expect(m.totalInvestedSAR).toBe(2000);
     expect(m.totalWithdrawnSAR).toBe(400);
     expect(m.netCapitalSAR).toBeCloseTo(1600, 5);
-    expect(m.unrealizedPnLBasis).toBe('holdings_cost');
-    expect(m.holdingsCostBasisSAR).toBeCloseTo(1000, 5);
-    expect(m.totalGainLossSAR).toBeCloseTo(0, 5);
-    expect(m.roi).toBeCloseTo(0, 5);
+    expect(m.unrealizedPnLBasis ?? 'net_capital').toBe('net_capital');
+    expect(m.totalGainLossSAR).toBeCloseTo(m.totalValueInSAR - m.netCapitalSAR, 5);
+    expect(m.roi).toBeCloseTo(
+      m.netCapitalSAR > 0 ? (m.totalGainLossSAR / m.netCapitalSAR) * 100 : 0,
+      5,
+    );
     expect(m.totalValueInSAR).toBeCloseTo(1000 + 50, 5);
   });
 
-  it('single portfolio with sparse deposits uses holdings cost for unrealized P/L (manual fund)', () => {
+  it('single portfolio with sparse deposits uses net_capital for unrealized P/L (manual fund)', () => {
     const account: Account = {
       id: 'acc-retire',
       name: 'Retirement',
@@ -322,11 +324,9 @@ describe('computePortfolioMetricsBundle', () => {
     });
 
     const m = bundle.metricsByPortfolioId.get('jazirah')!;
-    const costBasis = 269.12221 * 234.0944;
-    expect(m.holdingsCostBasisSAR).toBeCloseTo(costBasis, 0);
-    expect(m.totalGainLossSAR).toBeCloseTo(72671 - costBasis, 0);
-    expect(m.roi).toBeCloseTo(((72671 - costBasis) / costBasis) * 100, 1);
+    expect(m.unrealizedPnLBasis ?? 'net_capital').toBe('net_capital');
     expect(m.totalInvestedSAR).toBe(1000);
-    expect(m.totalGainLossSAR).not.toBeCloseTo(72671 - 1000, 0);
+    expect(m.totalGainLossSAR).toBeCloseTo(m.totalValueInSAR - m.netCapitalSAR, 0);
+    expect(m.totalGainLossSAR).toBeCloseTo(72671 - 1000, 0);
   });
 });

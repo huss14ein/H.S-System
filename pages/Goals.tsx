@@ -46,6 +46,7 @@ import {
     monthlySurplusForEmergencyFund,
     sumAllGoalMonthlyFundingEnvelopesSar,
 } from '../services/goalProjectionFunding';
+import GoalsFundingEnvelopeBanner from '../components/goals/GoalsFundingEnvelopeBanner';
 import { toast } from '../context/ToastContext';
 import { useAI } from '../context/AiContext';
 import AiProxyUnavailableHint from '../components/AiProxyUnavailableHint';
@@ -336,7 +337,7 @@ const GoalConflictAndFeasibilitySection: React.FC<{
                           <>
                             <p>
                               We use the <strong>same schedule as Goal funding cockpit</strong>: saved toward each goal (linked assets, investments, receivables) in SAR, and{' '}
-                              <strong>months to deadline</strong> from the same formula as required monthly there. If the sum of those run-rates is much higher than your <strong>mapped</strong> monthly funding (linked budgets + investments), goals compete for the same explicit envelopes.
+                              <strong>months to deadline</strong> from the same formula as required monthly there. If the sum of those run-rates is much higher than your <strong>mapped</strong> monthly funding (linked budget per goal, or investment plan when no budget), goals compete for the same explicit envelopes.
                             </p>
                             <p className="text-slate-700">
                               <strong>Try:</strong> tag budgets to goals on Budgets, link portfolios or holdings on Investments, extend deadlines, or narrow targets. Unallocated surplus after goal budgets funds your emergency buffer, not goals.
@@ -607,7 +608,10 @@ const GoalCard: React.FC<{
                             {fundingEnvelope.assignedBudgetMonthly > 0 && fundingEnvelope.assignedInvestmentMonthly > 0 && ' · '}
                             {fundingEnvelope.assignedInvestmentMonthly > 0 && (
                                 <span>
-                                    Linked investment {fundingEnvelope.assignedInvestmentSource === 'plan' ? 'plan budget' : 'deposits'}:{' '}
+                                    {fundingEnvelope.assignedBudgetMonthly > 0
+                                        ? 'Also linked (not in envelope): '
+                                        : ''}
+                                    investment {fundingEnvelope.assignedInvestmentSource === 'plan' ? 'plan budget' : 'deposits'}:{' '}
                                     {formatCurrencyString(fundingEnvelope.assignedInvestmentMonthly, { digits: 0 })}/mo
                                 </span>
                             )}
@@ -908,6 +912,17 @@ const Goals: React.FC<{
         return warnings;
     }, [data?.goals, data, data?.accounts, (data as any)?.personalAccounts, goalCurrentAmountByGoalId, averageMonthlySavings, sarPerUsd]);
 
+    const goalsWithDualFundingNames = useMemo(
+        () =>
+            (data?.goals ?? [])
+                .filter((g) => {
+                    const env = computeGoalMonthlyFundingEnvelopeSar({ goal: g, data: data ?? null, sarPerUsd });
+                    return env.assignedBudgetMonthly > 0 && env.assignedInvestmentMonthly > 0;
+                })
+                .map((g) => g.name),
+        [data, sarPerUsd],
+    );
+
   return (
     <PageLayout
       title="Goal Command Center"
@@ -936,6 +951,7 @@ const Goals: React.FC<{
         </div>
       }
     >
+      <GoalsFundingEnvelopeBanner goalNames={goalsWithDualFundingNames} />
       <div className="rounded-2xl border border-teal-100 bg-gradient-to-r from-teal-50/90 to-white px-4 py-3 text-sm text-slate-700 shadow-sm mb-6">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 tabular-nums">
           <div>
@@ -1044,7 +1060,7 @@ const Goals: React.FC<{
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-slate-900">Suggested monthly funding (per goal)</p>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Badge matches each goal card (mapped envelope vs required monthly pace). Suggested amounts cap at each goal&apos;s linked budget + investment envelope.
+                  Badge matches each goal card (mapped envelope vs required monthly pace). Suggested amounts cap at each goal&apos;s linked budget envelope, or investment plan/deposits when no budget is linked.
                         </p>
                     </div>
               <div className="flex flex-wrap gap-1.5">

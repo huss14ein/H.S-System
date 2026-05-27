@@ -1551,6 +1551,20 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 budgetCategory: category || 'all',
             }));
             clearPageAction?.();
+            return;
+        }
+        if (pageAction.startsWith('filter-plan-expense:')) {
+            const [, rawYear, rawMonth, ...catParts] = pageAction.split(':');
+            const year = Number(rawYear) || new Date().getFullYear();
+            const month = Math.min(12, Math.max(1, Number(rawMonth) || 1));
+            const category = decodeURIComponent(catParts.join(':') || '');
+            setFilters((prev) => ({
+                ...prev,
+                month: `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}`,
+                budgetCategory: category || 'all',
+                type: 'expense',
+            }));
+            clearPageAction?.();
         }
     }, [pageAction, clearPageAction]);
 

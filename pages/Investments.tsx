@@ -89,6 +89,7 @@ import { getInvestmentTransactionCashAmount } from '../utils/investmentTransacti
 import {
   computePlatformCardMetrics,
   computePortfolioMetricsBundle,
+  type SimulatedPriceMap,
 } from '../services/investmentPlatformCardMetrics';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { InvestmentsMetricsProvider, useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
@@ -96,6 +97,9 @@ import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 import { aggregateMonthlyBudgetAcrossPortfolios, getEffectivePlanForPortfolio } from '../utils/investmentPlanPerPortfolio';
 import { computeGoalMonthlyFundingEnvelopeSar } from '../services/goalProjectionFunding';
 import { computeGoalTimelineStatus } from '../services/goalMetrics';
+import { findHoldingsValueOutliers } from '../services/holdingsOutlierAudit';
+import PlatformHoldingsOutlierBanner from '../components/investments/PlatformHoldingsOutlierBanner';
+import InvestmentsQuoteStatusBanner from '../components/investments/InvestmentsQuoteStatusBanner';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { engineSleeveKeyToTickerStatus, inferEngineSleeveKeyFromHolding } from '../services/inferHoldingUniverseClassification';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
@@ -588,7 +592,7 @@ const RecordTradeModal: React.FC<{
     investmentAccounts: Account[];
     portfolios: InvestmentPortfolio[];
     /** Simulated/live quote by symbol — used to suggest price when the field is empty. */
-    simulatedPrices?: { [symbol: string]: { price: number; change: number; changePercent: number } };
+    simulatedPrices?: SimulatedPriceMap;
     initialData?: Partial<{
         tradeType: 'buy' | 'sell' | 'dividend';
         symbol: string;
@@ -2477,11 +2481,13 @@ const PlatformCard: React.FC<{
     onDeletePortfolio: (portfolio: InvestmentPortfolio) => void;
     onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number; }, portfolio: InvestmentPortfolio) => void;
     onEditHolding: (holding: Holding) => void;
-    simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
+    simulatedPrices: SimulatedPriceMap;
     isExpanded: boolean;
     onToggleExpanded: () => void;
+    holdingsOutliers?: import('../services/holdingsOutlierAudit').HoldingOutlierRow[];
+    setActivePage?: (page: Page) => void;
 }> = (props) => {
-    const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded } = props;
+    const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded, holdingsOutliers = [], setActivePage } = props;
     const { refreshPricesForPlatform, isRefreshing: quotesRefreshing, quotesRefreshUIScope } = useMarketData();
     const thisPlatformSyncing =
         quotesRefreshing &&
@@ -2523,7 +2529,7 @@ const PlatformCard: React.FC<{
                 availableCashByCurrency,
                 simulatedPrices,
                 platformCurrency,
-                unrealizedPnLBasis: portfoliosForMetrics.length === 1 ? 'holdings_cost' : 'net_capital',
+                unrealizedPnLBasis: 'net_capital',
             }),
         [portfoliosForMetrics, transactions, metricsTransactions, simulatedPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx?.accounts, investmentsForInfer],
     );
@@ -2599,8 +2605,18 @@ const PlatformCard: React.FC<{
     const metricsHoldingsCount = portfoliosForMetrics.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
     const availableCashSAR = tradableCashBucketToSAR(availableCashByCurrency, sarPerUsd);
 
+    const platformOutliers = useMemo(() => {
+        const names = new Set(portfolios.map((p) => String(p.name ?? p.id ?? '')));
+        return holdingsOutliers.filter((o) => names.has(o.portfolioName));
+    }, [holdingsOutliers, portfolios]);
+
     return (
         <article className="platform-card w-full max-w-full bg-white rounded-2xl shadow-md flex flex-col overflow-hidden border border-slate-200 hover:shadow-md transition-shadow duration-300 ease-in-out min-w-0">
+            <PlatformHoldingsOutlierBanner
+                outliers={platformOutliers}
+                platformName={platform.name}
+                setActivePage={setActivePage}
+            />
             {/* Platform Header — compact, professional */}
             <header className="platform-card-header bg-gradient-to-br from-slate-50 via-white to-slate-50/50 border-b border-slate-200 min-w-0">
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:justify-between sm:items-start">
@@ -2836,7 +2852,7 @@ const PlatformCard: React.FC<{
                                         {' — '}
                                         {sortedPortfolios.length === 1 ? (
                                           <>
-                                            Single portfolio on this account — <strong>Unrealized P/L</strong> and <strong>ROI</strong> use position cost (qty × avg) like the holdings table; <strong>Invested</strong> / <strong>Withdrawn</strong> are cash flows from the ledger (full list + pooled cash).
+                                            Platform <strong>Unrealized P/L</strong> and <strong>ROI</strong> are vs net deposits (invested − withdrawn). Per-holding rows still show qty × avg cost. <strong>Invested</strong> / <strong>Withdrawn</strong> are cash flows from the ledger.
                                           </>
                                         ) : (
                                           <>
@@ -3147,11 +3163,13 @@ const PlatformView: React.FC<{
     onDeletePortfolio: (portfolio: InvestmentPortfolio) => void;
     onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number; }, portfolio: InvestmentPortfolio) => void;
     onEditHolding: (holding: Holding) => void;
-    simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
+    simulatedPrices: SimulatedPriceMap;
 }> = (props) => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { sarPerUsd, platformsRollupSar } = useInvestmentsCanonicalMetrics();
     const { setActivePage, setActiveTab, onOpenAddPortfolio } = props;
+
+    const holdingsOutliersAll = useMemo(() => (data ? findHoldingsValueOutliers(data) : []), [data]);
 
     const platformsData = useMemo(() => {
         const accounts = getPersonalAccounts(data);
@@ -3353,6 +3371,8 @@ const PlatformView: React.FC<{
                         simulatedPrices={props.simulatedPrices}
                         isExpanded={platformExpanded[p.account.id] ?? false}
                         onToggleExpanded={() => setPlatformExpanded((prev) => ({ ...prev, [p.account.id]: !prev[p.account.id] }))}
+                        holdingsOutliers={holdingsOutliersAll}
+                        setActivePage={setActivePage}
                     />
                 ))}
             </div>
@@ -5011,7 +5031,8 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
     [recordTrade],
   );
   const { isAiAvailable, aiHealthChecked } = useAI();
-  const { simulatedPrices } = useMarketData();
+  const { isLive, lastUpdated } = useMarketData();
+  const { simulatedPrices } = useInvestmentsCanonicalMetrics();
   const { formatCurrencyString } = useFormatCurrency();
   const { trackAction } = useSelfLearning();
   const [activeTab, setActiveTabState] = useState<InvestmentSubPage>('Overview');
@@ -5459,6 +5480,8 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                 </div>
             </div>
         </header>
+
+        <InvestmentsQuoteStatusBanner isLive={isLive} lastUpdated={lastUpdated} />
 
         <section className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4" aria-label="Investment summary">
             <Card

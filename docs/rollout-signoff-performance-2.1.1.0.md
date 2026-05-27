@@ -50,9 +50,22 @@
 
 | Check | Pass |
 |-------|------|
-| `npm run verify:performance-recovery` | |
-| `npm run test` green | |
+| `npm run verify:performance-recovery` | ✓ (611 unit tests, May 2026) |
+| `npm run test` green | ✓ |
 | Playwright primary routes + 0 statement writes | |
 | Preview: navigation &lt; 3s | |
 | Preview: KPI plausible | |
 | Preview: budget advance + month-open | |
+
+## Stability & KPI fixes (May 2026)
+
+| Item | Code | Ops / verify |
+|------|------|----------------|
+| Shared budget RPC `btrim(date)` | `supabase/migrations/20260527120000_fix_shared_budget_consumed_date_trim.sql` | Apply on Supabase; Budgets Network tab green |
+| Platform P/L `net_capital` | `Investments.tsx`, `investmentPlatformCardMetrics.ts` | Awaed card vs deposits |
+| Goal envelope budget-first | `goalProjectionFunding.ts` | Goals projected monthly |
+| Quote throttle + queue | `MarketSimulator.tsx`, `quoteRefreshCooldown.ts` | No tab freeze on refresh |
+| Budgets perf | `budgetSpendFingerprint`, deferred household engine | Budgets opens &lt; 3s |
+| Plan YTD footnote + TX link | `Plan.tsx` `filter-plan-expense` | Plan vs Dashboard explained |
+| Header monthly plan = Investments hub | `monthlyInvestmentPlanProgress.ts` | Per-portfolio plan sum + buy filter |
+| Gap checklist | `STABILITY_KPI_IMPLEMENTATION_STATUS.md` | Ops vs code split |

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useContext, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useContext, useEffect, useRef, useCallback } from 'react';
 import { Page, Account } from '../types';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
@@ -38,6 +38,9 @@ import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesInte
 import { getPersonalTransactions, getPersonalAccounts } from '../utils/wealthScope';
 import { resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { buildAnnualPlanRows, formatAnnualPlanIncomeHint, type AnnualPlanRow } from '../services/annualPlanFromData';
+import { savePlanDashboardCompareContext } from '../services/planDashboardCompareContext';
+import { detectPlanExpenseOutliers } from '../services/planExpenseOutliers';
+import PlanExpenseSpikePanel from '../components/plan/PlanExpenseSpikePanel';
 import { goalsWithResolvedCurrentAmount } from '../services/goalResolvedTotals';
 import { computeGoalMonthlyFundingEnvelopeSar } from '../services/goalProjectionFunding';
 import {
@@ -63,12 +66,17 @@ const SCENARIO_PRESETS = [
     { name: 'Expense spike', income: 0, expense: 20, startMonth: 1, duration: 1, label: 'All expenses +20%' },
 ];
 
-const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
+const AnnualFinancialPlan: React.FC<{
+    setActivePage?: (page: Page) => void;
+    triggerPageAction?: (page: Page, action: string) => void;
+}> = ({ setActivePage, triggerPageAction }) => {
     const { data } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
-    const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
-    const { exchangeRate, currency: displayCurrency } = useCurrency();
-    const { sarPerUsd, liquidCashSar: dashboardLiquidCashSar } = useCanonicalFinancialMetrics();
+    const { formatCurrencyString, formatCurrency, formatSecondaryEquivalent } = useFormatCurrency();
+    const { currency: displayCurrency } = useCurrency();
+    const { sarPerUsd, liquidCashSar: dashboardLiquidCashSar, netWorth: dashboardNetWorthSar, kpiSnapshot: dashboardKpiSnapshot } =
+        useCanonicalFinancialMetrics();
+
     const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data]);
     const emergencyFund = useEmergencyFund(data);
     const planInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
@@ -243,7 +251,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             investments: data.investments ?? [],
             personalAccountIds,
             data,
-            exchangeRate,
+            exchangeRate: sarPerUsd,
             sarPerUsd,
             expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : undefined,
             householdOverrides,
@@ -257,7 +265,6 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         investmentPlan,
         investmentTransactions,
         accounts,
-        exchangeRate,
         sarPerUsd,
         expectedMonthlySalary,
         householdOverrides,
@@ -353,10 +360,26 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         };
     }, [processedPlanData, year, monthStartDay]);
 
+    const goToDashboardCompare = useCallback(() => {
+        savePlanDashboardCompareContext({
+            year,
+            planYtdActualNetSar: totals.ytdActualNet,
+            planYtdProjectedNetSar: totals.ytdProjectedNet,
+        });
+        if (triggerPageAction) {
+            triggerPageAction('Dashboard', 'plan-compare-dashboard');
+        } else if (setActivePage) {
+            setActivePage('Dashboard');
+            window.setTimeout(() => {
+                document.getElementById('dashboard-kpi-row')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 150);
+        }
+    }, [setActivePage, triggerPageAction, year, totals.ytdActualNet, totals.ytdProjectedNet]);
+
     /** Over-plan counts: one tick per (expense category × financial month). Scoped to the same period as the summary (YTD for the selected year when it is the current year; full year for past years; none for future years). */
     const insights = useMemo((): {
         monthsOverBudget: number;
-        worst: { category: string; month: string; pct: number } | null;
+        worst: { category: string; month: string; monthIndex: number; pct: number } | null;
         overBudgetPeriodLabel: string | null;
     } => {
         const curY = new Date().getFullYear();
@@ -367,7 +390,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         else endIdx = 11;
 
         let monthsOverBudget = 0;
-        let worst: { category: string; month: string; pct: number } | null = null;
+        let worst: { category: string; month: string; monthIndex: number; pct: number } | null = null;
 
         if (endIdx >= 0) {
             processedPlanData.filter((r: PlanRow) => r.type === 'expense').forEach((row: PlanRow) => {
@@ -386,7 +409,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                             monthStartDay === 1
                                 ? MONTHS[mi]
                                 : financialMonthLabel({ year, month: mi + 1 }, monthStartDay).split(' – ')[0];
-                        worst = { category: row.category, month: monthLabel, pct };
+                        worst = { category: row.category, month: monthLabel, monthIndex: mi, pct };
                     }
                 }
             });
@@ -533,7 +556,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
 
         const txs = getPersonalTransactions(data ?? null);
         const acc = getPersonalAccounts(data ?? null);
-        const { monthlyIncome: incomeByMonthSar } = accumulateHouseholdYearCashflowSar(data ?? null, txs, acc, year, exchangeRate);
+        const { monthlyIncome: incomeByMonthSar } = accumulateHouseholdYearCashflowSar(data ?? null, txs, acc, year, sarPerUsd);
         const withData = incomeByMonthSar.filter((v: number) => v > 0);
         const suggested =
             withData.length > 0 ? Math.round(withData.reduce((a: number, b: number) => a + b, 0) / withData.length) : 0;
@@ -567,7 +590,6 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         expectedMonthlySalary,
         data,
         sarPerUsd,
-        exchangeRate,
     ]);
 
     const { household: householdConstraints } = useFinancialEnginesIntegration();
@@ -619,6 +641,17 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         [planChartData],
     );
 
+    const { showHydrateBanner } = useContext(DataContext)!;
+    const planExpenseOutliers = useMemo(() => {
+        if (showHydrateBanner || !data) return [];
+        return detectPlanExpenseOutliers({
+            data,
+            year,
+            monthStartDay,
+            sarPerUsd,
+        });
+    }, [data, year, monthStartDay, sarPerUsd, showHydrateBanner]);
+
     const planValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
         if (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0) warnings.push('FX rate is invalid; investment actuals in SAR may be off.');
@@ -627,12 +660,18 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
         if (year === curY && totals && totals.ytdActualIncome < 1 && totals.ytdPlannedIncome > 100) {
             warnings.push('No income transactions YTD in this year—actual income is SAR 0 while planned uses salary/baseline. Add income on Transactions or set expected salary.');
         }
+        if (planExpenseOutliers.length > 0) {
+            const top = planExpenseOutliers[0];
+            warnings.push(
+                `Large expense: ${top.category} ${formatCurrencyString(top.amountSar, { inCurrency: 'SAR', digits: 0 })} (${top.monthLabel}) — may explain a YTD net spike. See "Large expenses affecting this plan" below.`,
+            );
+        }
         const hasUsdAccounts = accounts.some((a: Account) => a.currency === 'USD');
         if (hasUsdAccounts && (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0)) {
             warnings.push('USD accounts detected — confirm SAR per USD in the header so cash and plan actuals stay consistent.');
         }
         return warnings;
-    }, [sarPerUsd, processedPlanData.length, year, totals, accounts]);
+    }, [sarPerUsd, processedPlanData.length, year, totals, accounts, planExpenseOutliers, formatCurrencyString]);
     
     const renderCell = (value: number, limit: number) => {
         const percentage = limit > 0 ? (value / limit) * 100 : 0;
@@ -663,17 +702,18 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         <label className="flex items-center gap-1.5"><span className="text-sm text-gray-600">Year</span><InfoHint text="Plan and track by calendar year; actuals are filled from your transactions for this year." /><input type="number" value={year} onChange={e => setYear(parseInt(e.target.value))} className="input-base w-24 text-center font-semibold" /></label>
                         <button type="button" onClick={() => setYear(y => y + 1)} className="p-2 rounded-full hover:bg-slate-100 text-slate-600"><ChevronRightIcon className="h-5 w-5"/></button>
                     </div>
-                    {setActivePage && (
+                    {(setActivePage || triggerPageAction) && (
                         <PageActionsDropdown
                             ariaLabel="Plan quick links"
                             actions={[
-                                { value: 'accounts', label: 'Accounts', onClick: () => setActivePage('Accounts') },
-                                { value: 'budgets', label: 'Budgets', onClick: () => setActivePage('Budgets') },
-                                { value: 'goals', label: 'Goals', onClick: () => setActivePage('Goals') },
-                                { value: 'liabilities', label: 'Liabilities', onClick: () => setActivePage('Liabilities') },
-                                { value: 'transactions', label: 'Transactions', onClick: () => setActivePage('Transactions') },
-                                { value: 'investments', label: 'Investment Plan', onClick: () => setActivePage('Investment Plan') },
-                                { value: 'forecast', label: 'Forecast (long-range)', onClick: () => setActivePage('Forecast') },
+                                { value: 'dashboard-compare', label: 'Compare on Dashboard', onClick: goToDashboardCompare },
+                                { value: 'accounts', label: 'Accounts', onClick: () => setActivePage?.('Accounts') },
+                                { value: 'budgets', label: 'Budgets', onClick: () => setActivePage?.('Budgets') },
+                                { value: 'goals', label: 'Goals', onClick: () => setActivePage?.('Goals') },
+                                { value: 'liabilities', label: 'Liabilities', onClick: () => setActivePage?.('Liabilities') },
+                                { value: 'transactions', label: 'Transactions', onClick: () => setActivePage?.('Transactions') },
+                                { value: 'investments', label: 'Investment Plan', onClick: () => setActivePage?.('Investment Plan') },
+                                { value: 'forecast', label: 'Forecast (long-range)', onClick: () => setActivePage?.('Forecast') },
                             ]}
                         />
                     )}
@@ -916,6 +956,116 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                 );
             })()}
 
+            {totals && year <= new Date().getFullYear() && (
+                <SectionCard
+                    title="Plan vs Dashboard (different metrics)"
+                    className="mt-4 border-slate-200 bg-slate-50/60"
+                    collapsible
+                    collapsibleSummary="Cashflow plan here · balance-sheet KPIs on Dashboard"
+                    defaultExpanded
+                >
+                    <p className="text-sm text-slate-700 leading-relaxed">
+                        This page is <strong>household cashflow</strong> (income − expenses by financial month, same filters as Transactions).
+                        The Dashboard shows <strong>balance-sheet</strong> headline net worth and this month&apos;s P&amp;L — we do not merge those into Plan YTD.
+                    </p>
+                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+                        <div className="rounded-lg border border-slate-200 bg-white p-3 min-w-0">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Plan YTD net (this page)</p>
+                            <p className="text-lg font-bold tabular-nums text-slate-900 mt-1">
+                                {formatCurrencyString(totals.ytdActualNet ?? 0, { inCurrency: 'SAR', digits: 0 })}
+                            </p>
+                            <p className="text-[11px] text-slate-500 mt-1">Income − expenses, financial months in {year}</p>
+                        </div>
+                        <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-3 min-w-0">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-800">Dashboard net worth</p>
+                            <p className="text-lg font-bold tabular-nums text-indigo-950 mt-1">
+                                {formatCurrencyString(dashboardNetWorthSar ?? 0, { inCurrency: 'SAR', digits: 0 })}
+                            </p>
+                            <p className="text-[11px] text-indigo-800/80 mt-1">Headline balance sheet (live quotes)</p>
+                        </div>
+                        <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-3 min-w-0">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-800">Dashboard monthly P&amp;L</p>
+                            <p className="text-lg font-bold tabular-nums text-indigo-950 mt-1">
+                                {formatCurrency(dashboardKpiSnapshot?.monthlyPnL ?? 0)}
+                            </p>
+                            <p className="text-[11px] text-indigo-800/80 mt-1">Current financial month (KPI rules)</p>
+                        </div>
+                        <div className="rounded-lg border border-slate-200 bg-white p-3 min-w-0">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Dashboard liquid cash</p>
+                            <p className="text-lg font-bold tabular-nums text-slate-900 mt-1">
+                                {formatCurrencyString(dashboardLiquidCashSar ?? 0, { inCurrency: 'SAR', digits: 0 })}
+                            </p>
+                            <p className="text-[11px] text-slate-500 mt-1">Checking, savings, broker cash</p>
+                        </div>
+                    </div>
+                    {(setActivePage || triggerPageAction) && (
+                        <button
+                            type="button"
+                            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90"
+                            onClick={goToDashboardCompare}
+                        >
+                            Compare on Dashboard →
+                        </button>
+                    )}
+                </SectionCard>
+            )}
+
+            <SectionCard
+                title="How planned columns work in the grid"
+                className="mt-4"
+                collapsible
+                collapsibleSummary="Why planned amounts differ by row and month"
+                defaultExpanded={false}
+            >
+                <ul className="text-sm text-slate-700 space-y-2 list-disc pl-4 leading-relaxed">
+                    <li>
+                        <strong>Income row:</strong> planned salary/recurring/budget income uses expected salary, recurring income rules, and income-like budget categories — often flat or profile-driven across months.
+                    </li>
+                    <li>
+                        <strong>Expense rows:</strong> each category&apos;s planned amount comes from Budgets (monthly budgets apply to their budget month only; yearly/weekly/daily budgets are spread across all 12 columns).
+                    </li>
+                    <li>
+                        <strong>Investment row:</strong> planned outflow is your Investment Plan monthly budget; actuals are buy trades in that financial month.
+                    </li>
+                    <li>
+                        <strong>Not a bug:</strong> two expense categories can show different planned amounts in different months when budgets use different periods or start months — compare the same category across columns, not income planned vs expense planned as one number.
+                    </li>
+                </ul>
+            </SectionCard>
+
+            <SectionCard
+                title="What we still do not merge"
+                className="mt-4 border-dashed border-slate-300 bg-white/80"
+                collapsible
+                collapsibleSummary="Single YTD = net worth, Redis cluster cache"
+                defaultExpanded={false}
+            >
+                <p className="text-sm text-slate-600 leading-relaxed">
+                    Optional performance work that <strong>shipped</strong> in 2.1.1.0: Budget Intelligence panels extracted from{' '}
+                    <code className="text-xs">Budgets.tsx</code>, server-side quote cache on Netlify proxies (15m in-process), and{' '}
+                    <strong>Compare on Dashboard</strong> passes Plan YTD via session storage for a side-by-side banner.
+                </p>
+                <ul className="mt-2 text-sm text-slate-700 space-y-1.5 list-disc pl-4">
+                    <li>
+                        <strong>One combined “Plan YTD = Dashboard net worth”</strong> headline — still wrong metric family; use the comparison card and Dashboard banner instead.
+                    </li>
+                    <li>
+                        <strong>Redis / multi-instance quote cache</strong> — not deployed; warm Netlify instances cache per function only.
+                    </li>
+                </ul>
+            </SectionCard>
+
+            <PlanExpenseSpikePanel
+                year={year}
+                outliers={planExpenseOutliers}
+                formatCurrencyString={formatCurrencyString}
+                onViewInTransactions={
+                    triggerPageAction
+                        ? (action) => triggerPageAction('Transactions', action)
+                        : undefined
+                }
+            />
+
             {planValidationWarnings.length > 0 && (
                 <SectionCard title="Plan validation checks" collapsible collapsibleSummary="Data quality and wiring" defaultExpanded className="mt-4">
                     <ul className="space-y-1 text-sm text-amber-800">
@@ -1033,8 +1183,24 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                         </span>
                     )}
                     {insights.worst && insights.worst.pct > 0 && (
-                        <span className="text-sm text-gray-700">
-                            Largest overspend: <strong>{insights.worst.category}</strong> in {insights.worst.month} (+{insights.worst.pct.toFixed(0)}%)
+                        <span className="text-sm text-gray-700 inline-flex flex-wrap items-center gap-2">
+                            <span>
+                                Largest overspend: <strong>{insights.worst.category}</strong> in {insights.worst.month} (+{insights.worst.pct.toFixed(0)}%)
+                            </span>
+                            {triggerPageAction && (
+                                <button
+                                    type="button"
+                                    className="text-primary font-medium hover:underline text-xs"
+                                    onClick={() =>
+                                        triggerPageAction(
+                                            'Transactions',
+                                            `filter-plan-expense:${year}:${insights.worst!.monthIndex + 1}:${encodeURIComponent(insights.worst!.category)}`,
+                                        )
+                                    }
+                                >
+                                    View expenses in Transactions →
+                                </button>
+                            )}
                         </span>
                     )}
                 </div>
@@ -1065,7 +1231,7 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
             <div className="bg-white p-6 rounded-xl shadow border border-slate-200">
                 <h3 className="text-lg font-semibold text-dark mb-1 flex items-center gap-2">
                     <ScaleIcon className="h-5 w-5 text-primary" /> Goals & when you'll reach them
-                    <InfoHint text="Saved amounts include linked assets, investments, and active receivables (same as Goals). Status compares your envelope (linked budgets + deposits + allocation slice of planned surplus) to the monthly savings rate implied by the deadline." />
+                    <InfoHint text="Saved amounts include linked assets, investments, and active receivables (same as Goals). Status compares your envelope (linked budget when set, else investment plan/deposits) to the monthly savings rate implied by the deadline." />
                 </h3>
                 <p className="text-sm text-gray-500 mb-4">
                     Uses resolved balances from Goals and monthly funding from budgets, investment links, allocation % of this year&apos;s projected surplus, and required savings rate from the deadline.
@@ -1299,7 +1465,9 @@ const AnnualFinancialPlan: React.FC<{ setActivePage?: (page: Page) => void }> = 
                     <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 leading-relaxed">{incomePlannedHint}</p>
                 )}
                 <p className="text-xs text-slate-500">
-                    Grid (each month): <span className="text-gray-600">top</span> = actual (transactions &amp; investment buys, SAR eq.) · <span className="font-medium text-slate-700">bottom</span> = planned from Budgets, recurring rules, Investment Plan, and household profile. <span className="text-slate-600">You cannot type amounts here—edit source pages so the plan stays consistent everywhere.</span>
+                    Grid (each month): <span className="text-gray-600">top</span> = actual (transactions &amp; investment buys, SAR eq.) · <span className="font-medium text-slate-700">bottom</span> = planned from Budgets, recurring rules, Investment Plan, and household profile.{' '}
+                    <InfoHint text="Planned amounts vary by row type: income uses salary/recurring/budget rules; expenses use each budget period (monthly vs yearly spread); investment uses Investment Plan. See How planned columns work above." />{' '}
+                    <span className="text-slate-600">You cannot type amounts here—edit source pages so the plan stays consistent everywhere.</span>
                 </p>
                 <div className="bg-white shadow rounded-lg overflow-x-auto">
                 <table className="min-w-full text-sm">

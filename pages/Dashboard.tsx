@@ -78,6 +78,7 @@ import { reconcileDashboardVsSummaryKpis } from '../services/kpiReconciliation';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { logKpiReconciliationDrift } from '../services/kpiDriftTelemetry';
 import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
+import PlanCompareContextBanner from '../components/PlanCompareContextBanner';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useDashboardReconciliationPrefs } from '../hooks/useDashboardReconciliationPrefs';
@@ -418,7 +419,12 @@ const AI_SUMMARY_LANG_KEY = 'finova_dashboard_ai_summary_lang_v1';
 
 const SYSTEM_HEALTH_PAGE = 'System & APIs Health' as Page;
 
-const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
+const DashboardContent: React.FC<{
+    setActivePage: (page: Page) => void;
+    triggerPageAction?: (page: Page, action: string) => void;
+    pageAction?: string | null;
+    clearPageAction?: () => void;
+}> = ({ setActivePage, triggerPageAction, pageAction, clearPageAction }) => {
     const { data, getAvailableCashForAccount, showHydrateBanner } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
@@ -438,6 +444,16 @@ const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerP
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
     const lastTelemetrySignatureRef = React.useRef<string>('');
     const kpiDensity = 'compact' as const;
+
+    useEffect(() => {
+        if (pageAction !== 'plan-compare-dashboard') return;
+        const scrollToKpis = () => {
+            document.getElementById('dashboard-kpi-row')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        };
+        const t = window.setTimeout(scrollToKpis, 120);
+        clearPageAction?.();
+        return () => window.clearTimeout(t);
+    }, [pageAction, clearPageAction]);
     const todosOpt = useTodosOptional();
     const dashboardTasksPreview = useMemo(() => {
         const list = todosOpt?.todos;
@@ -754,13 +770,13 @@ const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerP
 
     const summaryModelForReconciliation = useMemo(() => {
         if (!strictReconciliationMode || !data || !getAvailableCashForAccount) return null;
-        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
-    }, [strictReconciliationMode, data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
+        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount, debouncedPrices);
+    }, [strictReconciliationMode, data, exchangeRate, getAvailableCashForAccount, debouncedPrices]);
 
     const summaryMonthlyKpisForReconciliation = useMemo(() => {
         if (!strictReconciliationMode || !data || !getAvailableCashForAccount) return null;
-        return computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
-    }, [strictReconciliationMode, data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
+        return computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, debouncedPrices);
+    }, [strictReconciliationMode, data, exchangeRate, getAvailableCashForAccount, debouncedPrices]);
 
     const kpiReconciliation = useMemo(() => {
         if (!strictReconciliationMode || !summaryModelForReconciliation || !summaryMonthlyKpisForReconciliation) return null;
@@ -865,6 +881,11 @@ const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerP
                     <p className="text-sm font-medium text-slate-700">Loading your dashboard…</p>
                 </div>
             )}
+            <PlanCompareContextBanner
+                dashboardNetWorthSar={headline.netWorth}
+                dashboardMonthlyPnLSar={kpiSnapshot?.monthlyPnL ?? 0}
+                onOpenPlan={() => setActivePage('Plan')}
+            />
             {isNewUser && (
                 <div className="mb-6 p-5 rounded-xl border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-white">
                     <h2 className="text-lg font-semibold text-slate-800">{PAGE_INTROS.Dashboard.title}</h2>
@@ -1156,6 +1177,7 @@ const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerP
                 </div>
             )}
 
+            <div id="dashboard-kpi-row" className="scroll-mt-20">
             <Suspense fallback={<LoadingSpinner className="min-h-[16rem]" message="Loading dashboard layout…" />}>
                 <DraggableResizableGrid
                     layoutKey="dashboard-kpi"
@@ -1178,6 +1200,7 @@ const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerP
                     rowHeight={72}
                 />
             </Suspense>
+            </div>
 
             {data?.accounts?.length > 0 && (
                 <div className="section-card border-l-4 border-primary/40">
@@ -1275,8 +1298,11 @@ const DashboardContent: React.FC<{ setActivePage: (page: Page) => void; triggerP
     );
 };
 
-const Dashboard: React.FC<{ setActivePage: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = (props) => (
-    <DashboardContent {...props} />
-);
+const Dashboard: React.FC<{
+    setActivePage: (page: Page) => void;
+    triggerPageAction?: (page: Page, action: string) => void;
+    pageAction?: string | null;
+    clearPageAction?: () => void;
+}> = (props) => <DashboardContent {...props} />;
 
 export default Dashboard;
