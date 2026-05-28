@@ -150,6 +150,8 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         investableCashBars,
         sarPerUsd: canonicalSarPerUsd,
         simulatedPrices: canonicalSimulatedPrices,
+        investmentsTotalSar,
+        liquidCashSar: canonicalLiquidCashSar,
     } = useCanonicalFinancialMetrics();
     const fxBanner = useMemo(() => {
         const w = Number(data?.wealthUltraConfig?.fxRate);
@@ -483,10 +485,8 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                     </div>
                     <div className="lg:col-span-2">
                         <MomCashflowTrendChart
-                            transactions={personalTransactions}
-                            accounts={personalAccounts}
                             data={data}
-                            uiExchangeRate={exchangeRate}
+                            uiExchangeRate={canonicalSarPerUsd}
                             startIso={suiteRange.startIso}
                             endIso={suiteRange.endIso}
                         />
@@ -498,32 +498,38 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                         budgets={data?.budgets ?? []}
                         transactions={personalTransactions}
                         accounts={personalAccounts}
-                        uiExchangeRate={exchangeRate}
+                        uiExchangeRate={canonicalSarPerUsd}
                     />
-                    <ExpenseDonutDrilldown transactions={personalTransactions} />
+                    <ExpenseDonutDrilldown
+                        data={data}
+                        transactions={personalTransactions}
+                        accounts={personalAccounts}
+                        uiExchangeRate={canonicalSarPerUsd}
+                    />
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                    <PortfolioHoldingsGrid portfolios={personalInvestments} simulatedPrices={canonicalSimulatedPrices ?? {}} />
+                    <PortfolioHoldingsGrid
+                        portfolios={personalInvestments}
+                        simulatedPrices={canonicalSimulatedPrices ?? {}}
+                        sarPerUsd={canonicalSarPerUsd}
+                    />
                     <CostAveragingCalculator portfolios={personalInvestments} />
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                    <Goals2030Timeline goals={data?.goals ?? []} onOpenGoals={() => setActivePage?.('Goals')} />
-                    <GoalProjectionAreaChart
-                        goals={data?.goals ?? []}
-                        transactions={personalTransactions}
-                        accounts={personalAccounts}
+                    <Goals2030Timeline
                         data={data}
-                        uiExchangeRate={exchangeRate}
+                        goals={data?.goals ?? []}
+                        sarPerUsd={canonicalSarPerUsd}
+                        onOpenGoals={() => setActivePage?.('Goals')}
                     />
+                    <GoalProjectionAreaChart data={data} goals={data?.goals ?? []} sarPerUsd={canonicalSarPerUsd} />
                 </div>
                 <WhatIfSandbox
-                    goals={data?.goals ?? []}
-                    transactions={personalTransactions}
-                    accounts={personalAccounts}
                     data={data}
-                    uiExchangeRate={exchangeRate}
-                    liquidCashSar={kpiSnapshot?.liquidCashSar ?? 0}
-                    investedSar={Math.max(0, headline.buckets?.investments ?? 0)}
+                    goals={data?.goals ?? []}
+                    sarPerUsd={canonicalSarPerUsd}
+                    liquidCashSar={canonicalLiquidCashSar}
+                    investmentsTotalSar={investmentsTotalSar}
                 />
             </div>
 

@@ -1,9 +1,11 @@
 import React, { useMemo, useState } from 'react';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { useLanguage } from '../../context/LanguageContext';
-import type { Transaction } from '../../types';
+import type { Account, FinancialData, Transaction } from '../../types';
 import { countsAsExpenseForCashflowKpi, isInternalTransferTransaction } from '../../services/transactionFilters';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
+import { expenseAmountSarForBudget } from '../../services/budgetSpendMath';
+import { getTransactionBudgetAllocations } from '../../services/transactionBudgetAllocations';
 
 const STORAGE_KEY = 'finova_expense_intel_mapping_v1';
 
@@ -33,20 +35,31 @@ function saveMapping(m: Mapping) {
 type Slice = { name: string; value: number; color: string };
 
 export const ExpenseDonutDrilldown: React.FC<{
+  data: FinancialData | null | undefined;
   transactions: Transaction[];
-}> = ({ transactions }) => {
+  accounts: Account[];
+  uiExchangeRate: number;
+}> = ({ data, transactions, accounts, uiExchangeRate }) => {
   const { t, dir } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
   const [mapping, setMapping] = useState<Mapping>(() => loadMapping());
   const [isConfigOpen, setIsConfigOpen] = useState(false);
+
+  const accountCurrencyById = useMemo(
+    () => new Map<string, 'SAR' | 'USD'>(accounts.map((a) => [a.id, a.currency === 'USD' ? 'USD' : 'SAR'])),
+    [accounts],
+  );
 
   const expenseCats = useMemo(() => {
     const set = new Set<string>();
     (transactions ?? []).forEach((tx) => {
       if (!tx) return;
       if (!countsAsExpenseForCashflowKpi(tx) || isInternalTransferTransaction(tx)) return;
-      const cat = String(tx.budgetCategory ?? tx.category ?? '').trim();
-      if (cat) set.add(cat);
+      if ((tx.status ?? 'Approved') !== 'Approved') return;
+      getTransactionBudgetAllocations(tx).forEach((a) => {
+        const cat = String(a.category ?? '').trim();
+        if (cat) set.add(cat);
+      });
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [transactions]);
@@ -63,14 +76,24 @@ export const ExpenseDonutDrilldown: React.FC<{
     for (const tx of transactions ?? []) {
       if (!tx) continue;
       if (!countsAsExpenseForCashflowKpi(tx) || isInternalTransferTransaction(tx)) continue;
-      const amt = Math.abs(Number(tx.amount) || 0);
+      if ((tx.status ?? 'Approved') !== 'Approved') continue;
       const nature = String(tx.transactionNature ?? '').toLowerCase();
-      if (nature === 'fixed') fixed += amt;
-      else variable += amt;
-      const cat = String(tx.budgetCategory ?? tx.category ?? '').trim();
-      if (cat && spouseSet.has(cat)) spouse += amt;
-      else if (cat && eduSet.has(cat)) education += amt;
-      else other += amt;
+      const allocations = getTransactionBudgetAllocations(tx);
+      for (const allocation of allocations) {
+        const amtSar = expenseAmountSarForBudget(
+          { ...tx, amount: allocation.amount },
+          accountCurrencyById,
+          data,
+          uiExchangeRate,
+        );
+        if (!(amtSar > 0)) continue;
+        if (nature === 'fixed') fixed += amtSar;
+        else variable += amtSar;
+        const cat = String(allocation.category ?? '').trim();
+        if (cat && spouseSet.has(cat)) spouse += amtSar;
+        else if (cat && eduSet.has(cat)) education += amtSar;
+        else other += amtSar;
+      }
     }
 
     return {
@@ -84,7 +107,7 @@ export const ExpenseDonutDrilldown: React.FC<{
         { name: t('apply') === 'تطبيق' ? 'أخرى' : 'Other', value: other, color: '#94a3b8' },
       ].filter((s) => s.value > 0.01),
     };
-  }, [mapping.educationCats, mapping.spouseCats, t, transactions]);
+  }, [accountCurrencyById, data, mapping.educationCats, mapping.spouseCats, t, transactions, uiExchangeRate]);
 
   const toggle = (kind: keyof Mapping, cat: string) => {
     const next: Mapping = { ...mapping, [kind]: mapping[kind].includes(cat) ? mapping[kind].filter((c) => c !== cat) : [...mapping[kind], cat] };
@@ -192,4 +215,3 @@ export const ExpenseDonutDrilldown: React.FC<{
     </div>
   );
 };
-

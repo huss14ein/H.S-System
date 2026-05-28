@@ -1,19 +1,21 @@
 import React, { useMemo, useState } from 'react';
 import { useLanguage } from '../../context/LanguageContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
-import type { Holding, InvestmentPortfolio } from '../../types';
-import { lookupLiveQuoteForSymbol } from '../../services/finnhubService';
+import type { Holding, InvestmentPortfolio, TradeCurrency } from '../../types';
+import { effectiveHoldingUnitPriceInBookCurrency, effectiveHoldingValueInBookCurrency } from '../../utils/holdingValuation';
+import { resolveInvestmentPortfolioCurrency } from '../../utils/investmentPortfolioCurrency';
+import { toSAR } from '../../utils/currencyMath';
 
 type Row = {
   key: string;
   symbol: string;
   name: string;
   shares: number;
-  avgEntry: number;
-  marketPrice: number | null;
-  marketValue: number;
+  avgEntrySar: number;
+  marketPriceSar: number | null;
+  marketValueSar: number;
   roi: number | null;
-  gainLoss: number | null;
+  gainLossSar: number | null;
 };
 
 function safeNum(n: unknown): number {
@@ -24,7 +26,8 @@ function safeNum(n: unknown): number {
 export const PortfolioHoldingsGrid: React.FC<{
   portfolios: InvestmentPortfolio[];
   simulatedPrices: Record<string, { price: number; change?: number; changePercent?: number }>;
-}> = ({ portfolios, simulatedPrices }) => {
+  sarPerUsd: number;
+}> = ({ portfolios, simulatedPrices, sarPerUsd }) => {
   const { t, dir } = useLanguage();
   const { formatCurrencyString, formatCurrency } = useFormatCurrency();
   const [query, setQuery] = useState('');
@@ -32,27 +35,30 @@ export const PortfolioHoldingsGrid: React.FC<{
   const rows = useMemo((): Row[] => {
     const out: Row[] = [];
     for (const p of portfolios ?? []) {
+      const book = resolveInvestmentPortfolioCurrency(p) as TradeCurrency;
       for (const h of (p.holdings ?? []) as Holding[]) {
         const sym = String(h.symbol ?? '').trim().toUpperCase();
         if (!sym) continue;
         const qty = safeNum(h.quantity);
-        const avg = safeNum(h.avgCost);
-        const live = lookupLiveQuoteForSymbol(simulatedPrices as any, sym);
-        const px = live?.price != null && Number.isFinite(Number(live.price)) ? Number(live.price) : null;
-        const mv = px != null ? px * qty : safeNum(h.currentValue);
-        const cost = avg * qty;
-        const gainLoss = px != null ? mv - cost : null;
-        const roi = px != null && cost > 1e-6 ? gainLoss! / cost : null;
+        const avgBook = safeNum(h.avgCost);
+        const avgEntrySar = toSAR(avgBook, book, sarPerUsd);
+        const valueBook = effectiveHoldingValueInBookCurrency(h, book, simulatedPrices, sarPerUsd);
+        const marketValueSar = toSAR(valueBook, book, sarPerUsd);
+        const unitBook = effectiveHoldingUnitPriceInBookCurrency(h, book, simulatedPrices, sarPerUsd);
+        const marketPriceSar = unitBook > 0 ? toSAR(unitBook, book, sarPerUsd) : null;
+        const costSar = avgEntrySar * qty;
+        const gainLossSar = marketPriceSar != null ? marketValueSar - costSar : null;
+        const roi = gainLossSar != null && costSar > 1e-6 ? gainLossSar / costSar : null;
         out.push({
           key: `${p.id}:${h.id}`,
           symbol: sym,
           name: String(h.name ?? p.name ?? sym),
           shares: qty,
-          avgEntry: avg,
-          marketPrice: px,
-          marketValue: mv,
+          avgEntrySar,
+          marketPriceSar,
+          marketValueSar,
           roi,
-          gainLoss,
+          gainLossSar,
         });
       }
     }
@@ -60,8 +66,8 @@ export const PortfolioHoldingsGrid: React.FC<{
     const filtered = q
       ? out.filter((r) => r.symbol.includes(q) || r.name.toUpperCase().includes(q))
       : out;
-    return filtered.sort((a, b) => (b.marketValue || 0) - (a.marketValue || 0)).slice(0, 50);
-  }, [portfolios, query, simulatedPrices]);
+    return filtered.sort((a, b) => b.marketValueSar - a.marketValueSar).slice(0, 50);
+  }, [portfolios, query, sarPerUsd, simulatedPrices]);
 
   return (
     <div dir={dir} className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4">
@@ -95,7 +101,7 @@ export const PortfolioHoldingsGrid: React.FC<{
           </thead>
           <tbody>
             {rows.map((r) => {
-              const pl = r.gainLoss;
+              const pl = r.gainLossSar;
               const roi = r.roi;
               const plCls = pl == null ? 'text-slate-500' : pl >= 0 ? 'text-emerald-700' : 'text-rose-700';
               return (
@@ -105,11 +111,11 @@ export const PortfolioHoldingsGrid: React.FC<{
                     <div className="text-xs text-slate-500 truncate max-w-[320px]">{r.name}</div>
                   </td>
                   <td className="px-3 py-2 tabular-nums">{r.shares.toFixed(r.shares % 1 === 0 ? 0 : 2)}</td>
-                  <td className="px-3 py-2 tabular-nums">{formatCurrencyString(r.avgEntry, { digits: 2, inCurrency: 'SAR' as any })}</td>
+                  <td className="px-3 py-2 tabular-nums">{formatCurrencyString(r.avgEntrySar, { digits: 2 })}</td>
                   <td className="px-3 py-2 tabular-nums">
-                    {r.marketPrice == null ? '—' : formatCurrencyString(r.marketPrice, { digits: 2, inCurrency: 'SAR' as any })}
+                    {r.marketPriceSar == null ? '—' : formatCurrencyString(r.marketPriceSar, { digits: 2 })}
                   </td>
-                  <td className="px-3 py-2 tabular-nums">{formatCurrencyString(r.marketValue, { digits: 0 })}</td>
+                  <td className="px-3 py-2 tabular-nums">{formatCurrencyString(r.marketValueSar, { digits: 0 })}</td>
                   <td className={`px-3 py-2 tabular-nums font-semibold ${plCls}`}>
                     {pl == null ? '—' : formatCurrency(pl, { colorize: true })}
                   </td>
@@ -125,4 +131,3 @@ export const PortfolioHoldingsGrid: React.FC<{
     </div>
   );
 };
-

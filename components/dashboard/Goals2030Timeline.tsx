@@ -1,7 +1,8 @@
 import React, { useMemo } from 'react';
 import { useLanguage } from '../../context/LanguageContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
-import type { Goal } from '../../types';
+import type { FinancialData, Goal } from '../../types';
+import { computeGoalResolvedAmountsSar } from '../../services/goalResolvedTotals';
 
 function yearFromDeadline(deadline: string): number | null {
   const d = new Date(deadline);
@@ -14,24 +15,27 @@ function clamp01(n: number): number {
 }
 
 export const Goals2030Timeline: React.FC<{
+  data: FinancialData | null | undefined;
   goals: Goal[];
+  sarPerUsd: number;
   onOpenGoals?: () => void;
-}> = ({ goals, onOpenGoals }) => {
+}> = ({ data, goals, sarPerUsd, onOpenGoals }) => {
   const { t, dir } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
 
   const goalRows = useMemo(() => {
+    const resolved = computeGoalResolvedAmountsSar(data, sarPerUsd);
     const list = (goals ?? [])
-      .filter((g) => (yearFromDeadline(g.deadline) ?? 0) >= 2029) // include 2030-ish
+      .filter((g) => (yearFromDeadline(g.deadline) ?? 0) >= 2029)
       .map((g) => {
         const target = Math.max(0, Number(g.targetAmount) || 0);
-        const current = Math.max(0, Number(g.currentAmount) || 0);
+        const current = Math.max(0, resolved.get(g.id) ?? (Number(g.currentAmount) || 0));
         const pct = target > 0 ? clamp01(current / target) : 0;
         return { id: g.id, name: g.name, deadline: g.deadline, target, current, pct };
       })
       .sort((a, b) => a.deadline.localeCompare(b.deadline));
     return list.slice(0, 6);
-  }, [goals]);
+  }, [data, goals, sarPerUsd]);
 
   return (
     <div dir={dir} className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4">
@@ -80,4 +84,3 @@ export const Goals2030Timeline: React.FC<{
     </div>
   );
 };
-

@@ -2,11 +2,12 @@ import React, { useMemo } from 'react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useLanguage } from '../../context/LanguageContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
-import type { Account, Goal, Transaction } from '../../types';
-import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi, isInternalTransferTransaction } from '../../services/transactionFilters';
-import { getSarPerUsdForCalendarDay } from '../../services/fxDailySeries';
-import { toSAR } from '../../utils/currencyMath';
-import { accountBookCurrency } from '../../utils/cashAccountDisplay';
+import type { FinancialData, Goal } from '../../types';
+import {
+  averageRollingMonthlyNetSurplus,
+  computeGoalResolvedAmountsSar,
+  GOAL_NET_CASHFLOW_LOOKBACK_MONTHS,
+} from '../../services/goalResolvedTotals';
 
 type Point = { month: string; projected: number; targetTotal: number };
 
@@ -17,50 +18,39 @@ function addMonths(base: Date, delta: number): Date {
 }
 
 export const GoalProjectionAreaChart: React.FC<{
+  data: FinancialData | null | undefined;
   goals: Goal[];
-  transactions: Transaction[];
-  accounts: Account[];
-  data: any;
-  uiExchangeRate: number;
-}> = ({ goals, transactions, accounts, data, uiExchangeRate }) => {
+  sarPerUsd: number;
+}> = ({ data, goals, sarPerUsd }) => {
   const { t, dir, language } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
 
   const model = useMemo(() => {
     const g = (goals ?? []).filter((x) => Number(x.targetAmount) > 0);
-    if (!g.length) return { points: [] as Point[], monthlyNetSar: 0, targetTotal: 0 };
+    if (!g.length || !data) return { points: [] as Point[], monthlyNetSar: 0, targetTotal: 0 };
 
-    // Average net cashflow over the last 6 calendar months (SAR), using dated FX where available.
-    const now = new Date();
-    const start = addMonths(new Date(now.getFullYear(), now.getMonth(), 1), -6);
-    const accById = new Map(accounts.map((a) => [a.id, a]));
-    let income = 0;
-    let expenses = 0;
-    for (const tx of transactions ?? []) {
-      if (!tx?.date) continue;
-      const ts = new Date(tx.date).getTime();
-      if (!Number.isFinite(ts) || ts < start.getTime()) continue;
-      if (isInternalTransferTransaction(tx)) continue;
-      const day = String(tx.date).slice(0, 10);
-      const rate = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, uiExchangeRate) : uiExchangeRate;
-      const cur = accountBookCurrency(accById.get(tx.accountId) as any) as 'SAR' | 'USD';
-      const amtSar = toSAR(Math.abs(Number(tx.amount) || 0), cur, rate);
-      if (countsAsIncomeForCashflowKpi(tx)) income += amtSar;
-      if (countsAsExpenseForCashflowKpi(tx)) expenses += amtSar;
-    }
-    const monthlyNetSar = (income - expenses) / 6;
-
-    const currentTotal = g.reduce((s, x) => s + Math.max(0, Number(x.currentAmount) || 0), 0);
+    const monthlyNetSar = averageRollingMonthlyNetSurplus(
+      data,
+      GOAL_NET_CASHFLOW_LOOKBACK_MONTHS,
+      sarPerUsd,
+    );
+    const resolved = computeGoalResolvedAmountsSar(data, sarPerUsd);
+    const currentTotal = g.reduce((s, x) => s + Math.max(0, resolved.get(x.id) ?? (Number(x.currentAmount) || 0)), 0);
     const targetTotal = g.reduce((s, x) => s + Math.max(0, Number(x.targetAmount) || 0), 0);
 
+    const now = new Date();
     const points: Point[] = [];
     for (let i = 0; i <= 36; i++) {
       const m = addMonths(new Date(now.getFullYear(), now.getMonth(), 1), i);
       const projected = Math.max(0, currentTotal + monthlyNetSar * i);
-      points.push({ month: m.toLocaleDateString(language === 'ar' ? 'ar-SA' : 'en-US', { month: 'short', year: '2-digit' }), projected, targetTotal });
+      points.push({
+        month: m.toLocaleDateString(language === 'ar' ? 'ar-SA' : 'en-US', { month: 'short', year: '2-digit' }),
+        projected,
+        targetTotal,
+      });
     }
     return { points, monthlyNetSar, targetTotal };
-  }, [accounts, data, goals, language, transactions, uiExchangeRate]);
+  }, [data, goals, language, sarPerUsd]);
 
   return (
     <div dir={dir} className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4">
@@ -69,8 +59,8 @@ export const GoalProjectionAreaChart: React.FC<{
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t('projection')}</p>
           <p className="mt-1 text-sm text-slate-700">
             {t('apply') === 'تطبيق'
-              ? 'توقع مساهمة شهرية مبنية على متوسط صافي التدفق النقدي (آخر 6 أشهر).'
-              : 'Monthly projection based on average net cashflow (last 6 months).'}
+              ? `توقع مساهمة شهرية مبنية على متوسط صافي التدفق (${GOAL_NET_CASHFLOW_LOOKBACK_MONTHS} أشهر — نفس صفحة الأهداف).`
+              : `Monthly projection from rolling net cashflow (${GOAL_NET_CASHFLOW_LOOKBACK_MONTHS} mo avg — same as Goals page).`}
           </p>
         </div>
         <div className="text-xs text-slate-500 tabular-nums">
@@ -117,4 +107,3 @@ export const GoalProjectionAreaChart: React.FC<{
     </div>
   );
 };
-

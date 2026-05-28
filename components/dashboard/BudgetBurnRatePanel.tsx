@@ -1,12 +1,10 @@
 import React, { useMemo } from 'react';
 import { useLanguage } from '../../context/LanguageContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
-import type { Account, Budget, Transaction } from '../../types';
+import type { Account, Budget, FinancialData, Transaction } from '../../types';
 import { resolveMonthStartDayFromData, financialMonthRange } from '../../utils/financialMonth';
-import { countsAsExpenseForCashflowKpi, isInternalTransferTransaction } from '../../services/transactionFilters';
-import { getSarPerUsdForCalendarDay } from '../../services/fxDailySeries';
-import { toSAR } from '../../utils/currencyMath';
-import { accountBookCurrency } from '../../utils/cashAccountDisplay';
+import { aggregatePersonalBudgetCategorySpendSar } from '../../services/budgetSpendMath';
+import { budgetMonthlyEquivalentSar } from '../../services/goalProjectionFunding';
 
 type BurnRow = { key: string; label: string; spentSar: number; limitSar: number; pct: number };
 
@@ -21,7 +19,7 @@ function statusForPct(pct: number): 'ok' | 'near' | 'over' {
 }
 
 export const BudgetBurnRatePanel: React.FC<{
-  data: any;
+  data: FinancialData | null | undefined;
   budgets: Budget[];
   transactions: Transaction[];
   accounts: Account[];
@@ -36,34 +34,29 @@ export const BudgetBurnRatePanel: React.FC<{
     const { start, end, key } = financialMonthRange(new Date(), monthStartDay);
     const activeBudgets = (budgets ?? []).filter((b) => Number(b.month) === key.month && Number(b.year) === key.year);
     if (!activeBudgets.length) return [];
-    const accById = new Map(accounts.map((a) => [a.id, a]));
 
-    const spentByBudgetCat = new Map<string, number>();
-    for (const tx of transactions ?? []) {
-      if (!tx?.date) continue;
-      const ts = new Date(tx.date).getTime();
-      if (!Number.isFinite(ts) || ts < start.getTime() || ts > end.getTime()) continue;
-      if (!countsAsExpenseForCashflowKpi(tx) || isInternalTransferTransaction(tx)) continue;
-      const cat = String(tx.budgetCategory ?? tx.category ?? 'Other').trim() || 'Other';
-      const day = String(tx.date).slice(0, 10);
-      const rate = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, uiExchangeRate) : uiExchangeRate;
-      const cur = accountBookCurrency(accById.get(tx.accountId) as any) as 'SAR' | 'USD';
-      const amtSar = toSAR(Math.abs(Number(tx.amount) || 0), cur, rate);
-      spentByBudgetCat.set(cat, (spentByBudgetCat.get(cat) ?? 0) + amtSar);
-    }
+    const accountCurrencyById = new Map<string, 'SAR' | 'USD'>(
+      accounts.map((a) => [a.id, a.currency === 'USD' ? 'USD' : 'SAR']),
+    );
+    const spentByBudgetCat = aggregatePersonalBudgetCategorySpendSar(
+      transactions,
+      start,
+      end,
+      accountCurrencyById,
+      data,
+      uiExchangeRate,
+    );
 
-    const out = activeBudgets
+    return activeBudgets
       .map((b) => {
         const cat = String(b.category ?? '').trim() || 'Other';
         const spent = spentByBudgetCat.get(cat) ?? 0;
-        const lim = Math.max(0, Number(b.limit) || 0);
+        const lim = Math.max(0, budgetMonthlyEquivalentSar(b));
         const pct = lim > 0 ? spent / lim : 0;
         return { key: b.id ?? cat, label: cat, spentSar: spent, limitSar: lim, pct };
       })
       .sort((a, b) => b.pct - a.pct)
       .slice(0, 10);
-
-    return out;
   }, [accounts, budgets, data, transactions, uiExchangeRate]);
 
   return (
@@ -127,4 +120,3 @@ export const BudgetBurnRatePanel: React.FC<{
     </div>
   );
 };
-

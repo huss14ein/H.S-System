@@ -2,17 +2,10 @@ import React, { useMemo } from 'react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useLanguage } from '../../context/LanguageContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
-import type { Account, Transaction } from '../../types';
-import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi, isInternalTransferTransaction } from '../../services/transactionFilters';
-import { getSarPerUsdForCalendarDay } from '../../services/fxDailySeries';
-import { toSAR } from '../../utils/currencyMath';
-import { accountBookCurrency } from '../../utils/cashAccountDisplay';
+import type { FinancialData } from '../../types';
+import { personalMonthlyInflowOutflowByFinancialMonthSar } from '../../services/financeMetrics';
 
 type Row = { key: string; label: string; inflow: number; outflow: number; net: number };
-
-function monthKey(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
 
 function monthLabel(key: string, lang: 'en' | 'ar'): string {
   const [y, m] = key.split('-').map(Number);
@@ -20,53 +13,37 @@ function monthLabel(key: string, lang: 'en' | 'ar'): string {
   return d.toLocaleDateString(lang === 'ar' ? 'ar-SA' : 'en-US', { month: 'short', year: '2-digit' });
 }
 
-function inRange(iso: string, start?: string, end?: string): boolean {
-  const day = (iso || '').slice(0, 10);
-  if (start && day < start) return false;
-  if (end && day > end) return false;
+function inRange(monthKey: string, start?: string, end?: string): boolean {
+  if (start && monthKey < start.slice(0, 7)) return false;
+  if (end && monthKey > end.slice(0, 7)) return false;
   return true;
 }
 
 export const MomCashflowTrendChart: React.FC<{
-  transactions: Transaction[];
-  accounts: Account[];
-  data: any;
+  data: FinancialData | null | undefined;
   uiExchangeRate: number;
   startIso?: string;
   endIso?: string;
-}> = ({ transactions, accounts, data, uiExchangeRate, startIso, endIso }) => {
+}> = ({ data, uiExchangeRate, startIso, endIso }) => {
   const { t, dir, language } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
 
   const rows = useMemo(() => {
-    const accById = new Map(accounts.map((a) => [a.id, a]));
-    const bucket = new Map<string, { inflow: number; outflow: number }>();
-    const push = (k: string, inflow: number, outflow: number) => {
-      const prev = bucket.get(k) ?? { inflow: 0, outflow: 0 };
-      bucket.set(k, { inflow: prev.inflow + inflow, outflow: prev.outflow + outflow });
-    };
-
-    for (const tx of transactions) {
-      if (!tx?.date) continue;
-      if (!inRange(tx.date, startIso, endIso)) continue;
-      if (isInternalTransferTransaction(tx)) continue;
-      const key = monthKey(new Date(tx.date));
-      const day = String(tx.date).slice(0, 10);
-      const rate = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, uiExchangeRate) : uiExchangeRate;
-      const cur = accountBookCurrency(accById.get(tx.accountId) as any) as 'SAR' | 'USD';
-      const amtSar = toSAR(Math.abs(Number(tx.amount) || 0), cur, rate);
-      if (countsAsIncomeForCashflowKpi(tx)) push(key, amtSar, 0);
-      if (countsAsExpenseForCashflowKpi(tx)) push(key, 0, amtSar);
-    }
-
-    const keys = Array.from(bucket.keys()).sort((a, b) => a.localeCompare(b)).slice(-12);
-    const out: Row[] = keys.map((k) => {
-      const v = bucket.get(k)!;
-      const net = v.inflow - v.outflow;
-      return { key: k, label: monthLabel(k, language), inflow: v.inflow, outflow: v.outflow, net };
+    if (!data) return [] as Row[];
+    const series = personalMonthlyInflowOutflowByFinancialMonthSar(data, uiExchangeRate, 12);
+    const out: Row[] = [];
+    series.monthKeys.forEach((key, i) => {
+      if (!inRange(key, startIso, endIso)) return;
+      out.push({
+        key,
+        label: monthLabel(key, language),
+        inflow: series.inflow[i] ?? 0,
+        outflow: series.outflow[i] ?? 0,
+        net: series.net[i] ?? 0,
+      });
     });
-    return out;
-  }, [accounts, data, language, startIso, endIso, transactions, uiExchangeRate]);
+    return out.slice(-12);
+  }, [data, endIso, language, startIso, uiExchangeRate]);
 
   const maxVal = useMemo(() => {
     const m = rows.reduce((mx, r) => Math.max(mx, r.inflow, r.outflow), 0);
@@ -126,4 +103,3 @@ export const MomCashflowTrendChart: React.FC<{
     </div>
   );
 };
-

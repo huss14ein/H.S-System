@@ -2,11 +2,14 @@ import React, { useMemo, useState } from 'react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useLanguage } from '../../context/LanguageContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
-import type { Account, Goal, Transaction } from '../../types';
-import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi, isInternalTransferTransaction } from '../../services/transactionFilters';
-import { getSarPerUsdForCalendarDay } from '../../services/fxDailySeries';
-import { toSAR } from '../../utils/currencyMath';
-import { accountBookCurrency } from '../../utils/cashAccountDisplay';
+import type { FinancialData, Goal, Transaction } from '../../types';
+import {
+  averageRollingMonthlyNetSurplus,
+  computeGoalResolvedAmountsSar,
+  GOAL_NET_CASHFLOW_LOOKBACK_MONTHS,
+} from '../../services/goalResolvedTotals';
+import { normalizedMonthlyExpenseSar } from '../../services/financeMetrics';
+import { getPersonalAccounts } from '../../utils/wealthScope';
 
 type Point = { month: string; base: number; scenario: number };
 
@@ -17,14 +20,12 @@ function addMonths(base: Date, delta: number): Date {
 }
 
 export const WhatIfSandbox: React.FC<{
+  data: FinancialData | null | undefined;
   goals: Goal[];
-  transactions: Transaction[];
-  accounts: Account[];
-  data: any;
-  uiExchangeRate: number;
+  sarPerUsd: number;
   liquidCashSar: number;
-  investedSar: number;
-}> = ({ goals, transactions, accounts, data, uiExchangeRate, liquidCashSar, investedSar }) => {
+  investmentsTotalSar: number;
+}> = ({ data, goals, sarPerUsd, liquidCashSar, investmentsTotalSar }) => {
   const { t, dir, language } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
 
@@ -32,55 +33,35 @@ export const WhatIfSandbox: React.FC<{
   const [eduBumpPct, setEduBumpPct] = useState(0);
 
   const baseMonthlyNetSar = useMemo(() => {
-    const now = new Date();
-    const start = addMonths(new Date(now.getFullYear(), now.getMonth(), 1), -6);
-    const accById = new Map(accounts.map((a) => [a.id, a]));
-    let income = 0;
-    let expenses = 0;
-    for (const tx of transactions ?? []) {
-      if (!tx?.date) continue;
-      const ts = new Date(tx.date).getTime();
-      if (!Number.isFinite(ts) || ts < start.getTime()) continue;
-      if (isInternalTransferTransaction(tx)) continue;
-      const day = String(tx.date).slice(0, 10);
-      const rate = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, uiExchangeRate) : uiExchangeRate;
-      const cur = accountBookCurrency(accById.get(tx.accountId) as any) as 'SAR' | 'USD';
-      const amtSar = toSAR(Math.abs(Number(tx.amount) || 0), cur, rate);
-      if (countsAsIncomeForCashflowKpi(tx)) income += amtSar;
-      if (countsAsExpenseForCashflowKpi(tx)) expenses += amtSar;
-    }
-    return (income - expenses) / 6;
-  }, [accounts, data, transactions, uiExchangeRate]);
+    if (!data) return 0;
+    return averageRollingMonthlyNetSurplus(data, GOAL_NET_CASHFLOW_LOOKBACK_MONTHS, sarPerUsd);
+  }, [data, sarPerUsd]);
 
   const eduExpenseMonthly = useMemo(() => {
-    const now = new Date();
-    const start = addMonths(new Date(now.getFullYear(), now.getMonth(), 1), -1);
-    const end = new Date();
-    const accById = new Map(accounts.map((a) => [a.id, a]));
-    let edu = 0;
-    for (const tx of transactions ?? []) {
-      if (!tx?.date) continue;
-      const ts = new Date(tx.date).getTime();
-      if (!Number.isFinite(ts) || ts < start.getTime() || ts > end.getTime()) continue;
-      if (!countsAsExpenseForCashflowKpi(tx) || isInternalTransferTransaction(tx)) continue;
+    if (!data) return 0;
+    const accounts = getPersonalAccounts(data);
+    const txs = ((data as { personalTransactions?: Transaction[] }).personalTransactions ??
+      data.transactions ??
+      []) as Transaction[];
+    const avg = normalizedMonthlyExpenseSar(txs, accounts, sarPerUsd, { monthsLookback: 1 });
+    const eduTagged = txs.filter((tx) => {
       const cat = String(tx.budgetCategory ?? tx.category ?? '').toLowerCase();
-      if (!/(edu|school|tuition|university|college|kids|child)/i.test(cat)) continue;
-      const day = String(tx.date).slice(0, 10);
-      const rate = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, uiExchangeRate) : uiExchangeRate;
-      const cur = accountBookCurrency(accById.get(tx.accountId) as any) as 'SAR' | 'USD';
-      edu += toSAR(Math.abs(Number(tx.amount) || 0), cur, rate);
-    }
-    return edu;
-  }, [accounts, data, transactions, uiExchangeRate]);
+      return /(edu|school|tuition|university|college|kids|child)/i.test(cat);
+    });
+    if (!eduTagged.length) return avg * 0.15;
+    return avg;
+  }, [data, sarPerUsd]);
 
   const scenarioMonthlyNetSar = useMemo(() => {
     const bump = (eduExpenseMonthly * Math.max(0, eduBumpPct)) / 100;
-    return baseMonthlyNetSar - bump;
+    return Math.max(0, baseMonthlyNetSar - bump);
   }, [baseMonthlyNetSar, eduBumpPct, eduExpenseMonthly]);
 
   const chart = useMemo(() => {
+    if (!data) return [] as Point[];
     const g = (goals ?? []).filter((x) => Number(x.targetAmount) > 0);
-    const currentTotal = g.reduce((s, x) => s + Math.max(0, Number(x.currentAmount) || 0), 0);
+    const resolved = computeGoalResolvedAmountsSar(data, sarPerUsd);
+    const currentTotal = g.reduce((s, x) => s + Math.max(0, resolved.get(x.id) ?? (Number(x.currentAmount) || 0)), 0);
 
     const alloc = Math.max(0, Math.min(100, allocPct)) / 100;
     const shiftToInvest = liquidCashSar * alloc;
@@ -96,7 +77,7 @@ export const WhatIfSandbox: React.FC<{
       out.push({ month: label, base, scenario });
     }
     return out;
-  }, [allocPct, baseMonthlyNetSar, goals, language, liquidCashSar, scenarioMonthlyNetSar]);
+  }, [allocPct, baseMonthlyNetSar, data, goals, language, liquidCashSar, sarPerUsd, scenarioMonthlyNetSar]);
 
   return (
     <div dir={dir} className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4">
@@ -110,7 +91,7 @@ export const WhatIfSandbox: React.FC<{
           </p>
         </div>
         <div className="text-xs text-slate-500 tabular-nums">
-          {t('investedCapital')}: {formatCurrencyString(investedSar, { digits: 0 })}
+          {t('investedCapital')}: {formatCurrencyString(investmentsTotalSar, { digits: 0 })}
         </div>
       </div>
 

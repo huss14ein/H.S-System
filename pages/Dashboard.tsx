@@ -909,10 +909,8 @@ const DashboardContent: React.FC<{
                     </div>
                     <div className="lg:col-span-2">
                         <MomCashflowTrendChart
-                            transactions={((data as any)?.personalTransactions ?? data?.transactions ?? [])}
-                            accounts={((data as any)?.personalAccounts ?? data?.accounts ?? [])}
                             data={data}
-                            uiExchangeRate={exchangeRate}
+                            uiExchangeRate={canonicalSarPerUsd}
                             startIso={suiteRange.startIso}
                             endIso={suiteRange.endIso}
                         />
@@ -924,39 +922,40 @@ const DashboardContent: React.FC<{
                         budgets={data?.budgets ?? []}
                         transactions={((data as any)?.personalTransactions ?? data?.transactions ?? [])}
                         accounts={((data as any)?.personalAccounts ?? data?.accounts ?? [])}
-                        uiExchangeRate={exchangeRate}
+                        uiExchangeRate={canonicalSarPerUsd}
                     />
                     <ExpenseDonutDrilldown
+                        data={data}
                         transactions={((data as any)?.personalTransactions ?? data?.transactions ?? [])}
+                        accounts={((data as any)?.personalAccounts ?? data?.accounts ?? [])}
+                        uiExchangeRate={canonicalSarPerUsd}
                     />
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                     <PortfolioHoldingsGrid
                         portfolios={((data as any)?.personalInvestments ?? data?.investments ?? [])}
                         simulatedPrices={simulatedPrices ?? {}}
+                        sarPerUsd={canonicalSarPerUsd}
                     />
                     <CostAveragingCalculator
                         portfolios={((data as any)?.personalInvestments ?? data?.investments ?? [])}
                     />
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                    <Goals2030Timeline goals={data?.goals ?? []} onOpenGoals={() => setActivePage('Goals')} />
-                    <GoalProjectionAreaChart
-                        goals={data?.goals ?? []}
-                        transactions={((data as any)?.personalTransactions ?? data?.transactions ?? [])}
-                        accounts={((data as any)?.personalAccounts ?? data?.accounts ?? [])}
+                    <Goals2030Timeline
                         data={data}
-                        uiExchangeRate={exchangeRate}
+                        goals={data?.goals ?? []}
+                        sarPerUsd={canonicalSarPerUsd}
+                        onOpenGoals={() => setActivePage('Goals')}
                     />
+                    <GoalProjectionAreaChart data={data} goals={data?.goals ?? []} sarPerUsd={canonicalSarPerUsd} />
                 </div>
                 <WhatIfSandbox
-                    goals={data?.goals ?? []}
-                    transactions={((data as any)?.personalTransactions ?? data?.transactions ?? [])}
-                    accounts={((data as any)?.personalAccounts ?? data?.accounts ?? [])}
                     data={data}
-                    uiExchangeRate={exchangeRate}
+                    goals={data?.goals ?? []}
+                    sarPerUsd={canonicalSarPerUsd}
                     liquidCashSar={kpiSnapshot?.liquidCashSar ?? 0}
-                    investedSar={Math.max(0, headline.buckets?.investments ?? 0)}
+                    investmentsTotalSar={Math.max(0, headline.buckets?.investments ?? 0)}
                 />
             </div>
 

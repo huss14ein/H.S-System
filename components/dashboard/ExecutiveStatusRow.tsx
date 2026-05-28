@@ -45,8 +45,10 @@ export const ExecutiveStatusRow: React.FC<{
   const { formatCurrencyString } = useFormatCurrency();
 
   const cards = useMemo(() => {
+    /** Headline path: `computePersonalHeadlineNetWorthSar` + `computeDashboardKpiSnapshot`. */
     const netWorthSar = metrics.headline.netWorth ?? 0;
     const liquidSar = metrics.kpiSnapshot?.liquidCashSar ?? 0;
+    /** Same as Investments hub `totalExposureSar` (live quotes + platform cash). */
     const investedSar = Math.max(0, metrics.headline.buckets?.investments ?? 0);
     return [
       {

@@ -1,7 +1,9 @@
-import type { FinancialData } from '../types';
+import type { FinancialData, Transaction } from '../types';
 import { getSarPerUsdForCalendarDay } from './fxDailySeries';
 import { toSAR } from '../utils/currencyMath';
 import { calendarDayStartMs } from '../utils/financialMonth';
+import { countsAsExpenseForCashflowKpi } from './transactionFilters';
+import { getTransactionBudgetAllocations } from './transactionBudgetAllocations';
 
 /** Inclusive calendar-day range check (avoids UTC shift on `YYYY-MM-DD` strings). */
 export function transactionDateInSpendWindow(
@@ -41,4 +43,36 @@ export function expenseAmountSarForBudget(
       ? getSarPerUsdForCalendarDay(day, data, uiExchangeRate)
       : uiExchangeRate;
   return toSAR(raw, cur, rate);
+}
+
+/**
+ * Personal-scope budget category spend in SAR for a date window — same rules as Budgets page cards
+ * (approved expenses, split allocations, transaction-dated FX).
+ */
+export function aggregatePersonalBudgetCategorySpendSar(
+  transactions: Transaction[],
+  rangeStart: Date,
+  rangeEnd: Date,
+  accountCurrencyById: Map<string, 'SAR' | 'USD'>,
+  data: FinancialData | null | undefined,
+  uiExchangeRate: number,
+): Map<string, number> {
+  const spending = new Map<string, number>();
+  for (const t of transactions ?? []) {
+    if (!countsAsExpenseForCashflowKpi(t) || (t.status ?? 'Approved') !== 'Approved') continue;
+    const allocations = getTransactionBudgetAllocations(t);
+    for (const allocation of allocations) {
+      if (!transactionDateInSpendWindow(t.date, rangeStart, rangeEnd)) continue;
+      const amount = expenseAmountSarForBudget(
+        { ...t, amount: allocation.amount },
+        accountCurrencyById,
+        data,
+        uiExchangeRate,
+      );
+      if (!(amount > 0)) continue;
+      const cat = String(allocation.category ?? '').trim() || 'Other';
+      spending.set(cat, (spending.get(cat) ?? 0) + amount);
+    }
+  }
+  return spending;
 }
