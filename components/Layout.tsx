@@ -46,10 +46,18 @@ const Layout: React.FC<LayoutProps> = ({
   const { cancelQuoteRefresh } = useMarketData();
   const navigatePage = useCallback(
     (page: Page) => {
-      const fromInvestments =
-        activePage === 'Investments' || INVESTMENT_SUB_NAV_PAGE_NAMES.includes(activePage);
-      const toInvestments = page === 'Investments' || INVESTMENT_SUB_NAV_PAGE_NAMES.includes(page);
-      if (fromInvestments && !toInvestments) cancelQuoteRefresh();
+      const fromQuoteHeavy =
+        activePage === 'Dashboard' ||
+        activePage === 'Summary' ||
+        activePage === 'Investments' ||
+        INVESTMENT_SUB_NAV_PAGE_NAMES.includes(activePage);
+      const toQuoteHeavy =
+        page === 'Dashboard' ||
+        page === 'Summary' ||
+        page === 'Investments' ||
+        INVESTMENT_SUB_NAV_PAGE_NAMES.includes(page);
+      // Prevent quote refresh work from starving navigation/UI thread.
+      if (fromQuoteHeavy && !toQuoteHeavy) cancelQuoteRefresh();
       setActivePage(page);
     },
     [activePage, setActivePage, cancelQuoteRefresh],

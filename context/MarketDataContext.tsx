@@ -1,6 +1,7 @@
 
 import React, { createContext, useState, useCallback, ReactNode, useContext, useEffect, useRef, useMemo } from 'react';
 import { cacheRowsToSimulatedMap, loadQuoteCacheRows } from '../services/quotePriceCache';
+import { isQuoteRefreshInCooldown, quoteRefreshCooldownRemainingMs } from '../services/quoteRefreshCooldown';
 
 interface SimulatedPrices {
     [symbol: string]: { price: number; change: number; changePercent: number };
@@ -53,6 +54,10 @@ interface MarketDataContextType {
   cancelQuoteRefresh: () => void;
   /** When true, MarketSimulator should stop processing further refresh scopes. */
   isQuoteRefreshCancelled: () => boolean;
+  /** Current queued quote refresh scopes (for SystemHealth telemetry). */
+  quoteRefreshQueueLength: () => number;
+  /** Remaining cooldown ms after rate-limit/quota (for SystemHealth telemetry). */
+  quoteRefreshCooldownRemainingMs: () => number;
 }
 
 export const MarketDataContext = createContext<MarketDataContextType | null>(null);
@@ -113,6 +118,14 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         return refreshQueueRef.current.length > 0;
     }, []);
 
+    const quoteRefreshQueueLength = useCallback((): number => {
+        return refreshQueueRef.current.length;
+    }, []);
+
+    const quoteRefreshCooldownRemainingMsSafe = useCallback((): number => {
+        return quoteRefreshCooldownRemainingMs();
+    }, []);
+
     const notifyQueuedPriceRefresh = useCallback(() => {
         if (refreshQueueRef.current.length > 0) {
             setRefreshTrigger((prev) => prev + 1);
@@ -121,6 +134,12 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
 
     const bumpPriceRefresh = useCallback((scope: PriceRefreshScope = { kind: 'all' }) => {
         quoteRefreshAbortRef.current = false;
+        // Hard gate live refresh enqueues while cooling down after 429/quota.
+        if (isQuoteRefreshInCooldown()) {
+            const scopedForce = scope.forceFetch === true;
+            // Allow non-forced refreshes (cache/simulated tick) but prevent forced live fetch storms.
+            if (scopedForce) return;
+        }
         refreshQueueRef.current.push(scope);
         setRefreshTrigger((prev) => prev + 1);
     }, []);
@@ -139,9 +158,14 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
     const refreshPrices = useCallback(async (options?: { forceFetch?: boolean }) => {
         setQuotesRefreshUIScope({ mode: 'all' });
         setIsRefreshing(true);
+        // If cooling down, skip forced live fetch and leave UI in a consistent idle state.
+        if (isQuoteRefreshInCooldown() && options?.forceFetch === true) {
+            finishQuotesRefresh();
+            return;
+        }
         bumpPriceRefresh({ kind: 'all', forceFetch: options?.forceFetch === true });
         // MarketSimulator performs fetch + calls finishQuotesRefresh when done
-    }, [bumpPriceRefresh]);
+    }, [bumpPriceRefresh, finishQuotesRefresh]);
 
     const refreshPricesForPlatform = useCallback(
         async (platformId: string) => {
@@ -149,9 +173,13 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             const id = platformId.trim();
             setQuotesRefreshUIScope({ mode: 'platform', accountId: id });
             setIsRefreshing(true);
+            if (isQuoteRefreshInCooldown()) {
+                finishQuotesRefresh();
+                return;
+            }
             bumpPriceRefresh({ kind: 'platform', platformId: id, forceFetch: true });
         },
-        [bumpPriceRefresh],
+        [bumpPriceRefresh, finishQuotesRefresh],
     );
 
     const value = useMemo(
@@ -177,6 +205,8 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             touchQuoteTimestamps,
             cancelQuoteRefresh,
             isQuoteRefreshCancelled,
+            quoteRefreshQueueLength,
+            quoteRefreshCooldownRemainingMs: quoteRefreshCooldownRemainingMsSafe,
         }),
         [
             simulatedPrices,
@@ -196,6 +226,8 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             touchQuoteTimestamps,
             cancelQuoteRefresh,
             isQuoteRefreshCancelled,
+            quoteRefreshQueueLength,
+            quoteRefreshCooldownRemainingMsSafe,
         ],
     );
 

@@ -171,6 +171,20 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   const appDataCtx = useContext(DataContext);
   const marketDataCtx = useContext(MarketDataContext);
   const { exchangeRate } = useCurrency();
+  const [quoteCooldownSec, setQuoteCooldownSec] = useState<number>(0);
+  const [quoteQueueLen, setQuoteQueueLen] = useState<number>(0);
+
+  useEffect(() => {
+    if (!marketDataCtx) return;
+    const tick = () => {
+      const ms = marketDataCtx.quoteRefreshCooldownRemainingMs?.() ?? 0;
+      setQuoteCooldownSec(ms > 0 ? Math.ceil(ms / 1000) : 0);
+      setQuoteQueueLen(marketDataCtx.quoteRefreshQueueLength?.() ?? 0);
+    };
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [marketDataCtx]);
 
   const runHealthChecks = useCallback(async (_trigger: 'manual' | 'auto' = 'manual') => {
     setIsLoading(true);
@@ -784,6 +798,20 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
             Automated probes for Supabase, AI proxy (no full LLM on each tick), and Finnhub. Data checks use your <strong>personal</strong> ledger. FX reference for the app:{' '}
             <span className="font-mono tabular-nums">1 USD = {sarPerUsdHealth.toFixed(4)} SAR</span>.
           </p>
+          {marketDataCtx && (quoteCooldownSec > 0 || quoteQueueLen > 0) && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+              {quoteCooldownSec > 0 && (
+                <span className="px-2 py-1 rounded-full border border-amber-200 bg-amber-50 text-amber-800">
+                  Quotes cooldown: {quoteCooldownSec}s
+                </span>
+              )}
+              {quoteQueueLen > 0 && (
+                <span className="px-2 py-1 rounded-full border border-slate-200 bg-white text-slate-700">
+                  Quote queue: {quoteQueueLen}
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs px-2 py-1 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700">Auto refresh in {nextRefreshIn}s</span>

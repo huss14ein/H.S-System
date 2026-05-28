@@ -3101,6 +3101,9 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
             return await getSahmkLivePrices(syms);
         } catch (e) {
             console.warn('SAHMK live prices skipped:', e);
+            // Bubble up rate-limit/quota so callers (MarketSimulator) can enter cooldown.
+            const msg = e instanceof Error ? e.message : String(e ?? '');
+            if (/429|rate.?limit|throttl|quota/i.test(msg)) throw e;
             return {};
         }
     };

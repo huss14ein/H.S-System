@@ -1,4 +1,4 @@
-import React, { useEffect, useContext, useRef } from 'react';
+import React, { useEffect, useContext, useRef, startTransition } from 'react';
 import { DataContext } from '../context/DataContext';
 import { PriceAlert } from '../types';
 import type { InvestmentPortfolio } from '../types';
@@ -43,6 +43,18 @@ const yieldToMain = (): Promise<void> =>
             setTimeout(resolve, 0);
         }
     });
+
+const applyPricesInBackground = (apply: () => void) => {
+    try {
+        if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(() => startTransition(apply), { timeout: 200 });
+            return;
+        }
+    } catch {
+        // fall through
+    }
+    setTimeout(() => startTransition(apply), 0);
+};
 
 const MarketSimulator: React.FC = () => {
     const dataContext = useContext(DataContext);
@@ -336,16 +348,55 @@ const MarketSimulator: React.FC = () => {
                 }
             });
             
-            if (scopeIsPlatform) {
-                setSimulatedPrices((prev) => ({ ...prev, ...newPrices }));
-            } else {
-                setSimulatedPrices(newPrices);
-                setIsLive(liveStatus);
-            }
-            touchQuoteTimestamps(Object.keys(newPrices));
-            // Only bump the global "last updated" clock on a full refresh.
-            // Platform-scoped refreshes intentionally update a subset of symbols and must not make the header look fresh.
-            if (!scopeIsPlatform && liveStatus && setLastUpdated) setLastUpdated(new Date());
+            const newKeys = Object.keys(newPrices);
+            // Apply quote updates at low priority (idle + transition) to avoid blocking navigation/typing.
+            applyPricesInBackground(() => {
+                if (marketContext.isQuoteRefreshCancelled()) return;
+                if (scopeIsPlatform) {
+                    setSimulatedPrices((prev) => {
+                        let changed = false;
+                        const next = { ...prev };
+                        for (const k of newKeys) {
+                            const nextRow = newPrices[k];
+                            const prevRow = prev[k];
+                            if (
+                                !prevRow ||
+                                prevRow.price !== nextRow.price ||
+                                prevRow.change !== nextRow.change ||
+                                prevRow.changePercent !== nextRow.changePercent
+                            ) {
+                                next[k] = nextRow;
+                                changed = true;
+                            }
+                        }
+                        return changed ? next : prev;
+                    });
+                } else {
+                    setSimulatedPrices((prev) => {
+                        let changed = false;
+                        const next = { ...prev };
+                        for (const k of newKeys) {
+                            const nextRow = newPrices[k];
+                            const prevRow = prev[k];
+                            if (
+                                !prevRow ||
+                                prevRow.price !== nextRow.price ||
+                                prevRow.change !== nextRow.change ||
+                                prevRow.changePercent !== nextRow.changePercent
+                            ) {
+                                next[k] = nextRow;
+                                changed = true;
+                            }
+                        }
+                        return changed ? next : prev;
+                    });
+                    setIsLive(liveStatus);
+                    // Only bump the global "last updated" clock on a full refresh.
+                    // Platform-scoped refreshes intentionally update a subset of symbols and must not make the header look fresh.
+                    if (liveStatus && setLastUpdated) setLastUpdated(new Date());
+                }
+                touchQuoteTimestamps(newKeys);
+            });
 
             // Persist market value only from trusted (cache/API) quotes. RNG `simulateSymbol` fills must not
             // overwrite `currentValue` — that caused inflated/wrong platform totals when live feeds failed.

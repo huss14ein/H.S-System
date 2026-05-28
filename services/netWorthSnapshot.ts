@@ -189,6 +189,27 @@ export function listNetWorthSnapshots(): NetWorthSnapshot[] {
   }
 }
 
+/**
+ * Return the snapshot for `dayIso` (YYYY-MM-DD) if present; otherwise return the most recent snapshot
+ * strictly before that day. This prevents “missing today snapshot” from breaking charts and comparisons.
+ */
+export function getSnapshotForDayOrLastBefore(
+  dayIso: string,
+  snapshots?: NetWorthSnapshot[],
+): NetWorthSnapshot | null {
+  const day = String(dayIso ?? '').slice(0, 10);
+  if (day.length !== 10) return null;
+  const snaps = snapshots ?? listNetWorthSnapshots();
+  if (!snaps.length) return null;
+  // `listNetWorthSnapshots()` is newest-first. Find first snapshot with day <= target.
+  for (const s of snaps) {
+    const d = snapshotDayFromAt(s.at);
+    if (d === day) return s;
+    if (d < day) return s;
+  }
+  return null;
+}
+
 /** Create a snapshot (e.g. month-end); same as pushNetWorthSnapshot. */
 export function createMonthlySnapshot(
   netWorth: number,
@@ -205,8 +226,8 @@ export function compareSnapshots(
   fromDate: string,
   toDate: string
 ): { fromNw: number; toNw: number; change: number } | null {
-  const from = snapshots.find((s) => s.at.slice(0, 10) === fromDate.slice(0, 10));
-  const to = snapshots.find((s) => s.at.slice(0, 10) === toDate.slice(0, 10));
+  const from = getSnapshotForDayOrLastBefore(fromDate, snapshots);
+  const to = getSnapshotForDayOrLastBefore(toDate, snapshots);
   if (!from || !to) return null;
   return { fromNw: from.netWorth, toNw: to.netWorth, change: to.netWorth - from.netWorth };
 }
