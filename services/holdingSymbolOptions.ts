@@ -37,13 +37,26 @@ function holdingDisplayName(h: Holding): string {
 /**
  * Flatten personal portfolios into pick-list rows (one row per holding instance).
  */
+/** Holdings pick-list for one portfolio only (Record Trade sell/dividend). */
+export function filterHoldingSymbolOptionsByPortfolio(
+  options: HoldingSymbolOption[],
+  portfolioId: string | null | undefined,
+): HoldingSymbolOption[] {
+  const pid = String(portfolioId ?? '').trim();
+  if (!pid) return [];
+  return options.filter((o) => o.portfolioId === pid);
+}
+
 export function buildHoldingSymbolOptions(
   portfolios: InvestmentPortfolio[],
+  portfolioId?: string | null,
 ): HoldingSymbolOption[] {
+  const scopePid = String(portfolioId ?? '').trim();
   const rows: HoldingSymbolOption[] = [];
   for (const p of portfolios) {
     const portfolioId = String(p.id ?? '').trim();
     if (!portfolioId) continue;
+    if (scopePid && portfolioId !== scopePid) continue;
     const portfolioName = (p.name || 'Portfolio').trim();
     const accountId = String(p.accountId ?? '').trim();
     const bookCurrency = resolveInvestmentPortfolioCurrency(p);

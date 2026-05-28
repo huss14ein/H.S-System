@@ -51,4 +51,11 @@ describe('holdingSymbolOptions', () => {
     expect(holdingSymbolIsOwned(opts, 'AAPL', 'pf2')).toBe(false);
     expect(holdingSymbolIsOwned(opts, 'TSLA')).toBe(false);
   });
+
+  it('scopes options to one portfolio when portfolioId is passed', () => {
+    const pf1Only = buildHoldingSymbolOptions(portfolios, 'pf1');
+    expect(pf1Only).toHaveLength(2);
+    expect(pf1Only.every((o) => o.portfolioId === 'pf1')).toBe(true);
+    expect(buildHoldingSymbolOptions(portfolios, 'pf2')).toHaveLength(1);
+  });
 });

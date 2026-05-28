@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback, useContext, useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useMemo, useState, useCallback, useContext, useEffect, useRef, lazy, Suspense, startTransition } from 'react';
 import { DataContext } from '../context/DataContext';
 import {
     getAIStockAnalysis,
@@ -671,8 +671,11 @@ const RecordTradeModal: React.FC<{
 
     const portfoliosForAccount = useMemo(() => accountId ? portfolios.filter(p => p.accountId === accountId) : [], [accountId, portfolios]);
 
-    const holdingSymbolOptions = useMemo(() => buildHoldingSymbolOptions(portfolios), [portfolios]);
     const requiresHoldingPick = type === 'sell' || type === 'dividend';
+    const holdingSymbolOptionsForPick = useMemo(
+        () => (portfolioId ? buildHoldingSymbolOptions(portfolios, portfolioId) : []),
+        [portfolioId, portfolios],
+    );
 
     const applyHoldingOption = useCallback((opt: HoldingSymbolOption | null) => {
         if (!opt) {
@@ -806,6 +809,20 @@ const RecordTradeModal: React.FC<{
             setTradeCurrency((portfolio?.currency as TradeCurrency) || 'USD');
         }
     }, [portfolioId, portfolios]);
+
+    useEffect(() => {
+        if (!requiresHoldingPick || !portfolioId) return;
+        if (!holdingOptionKey) return;
+        const stillValid = holdingSymbolOptionsForPick.some((o) => o.optionKey === holdingOptionKey);
+        if (stillValid) return;
+        const key = resolveHoldingOptionKeyFromSymbol(holdingSymbolOptionsForPick, symbol, portfolioId);
+        if (key) {
+            const opt = holdingSymbolOptionsForPick.find((o) => o.optionKey === key);
+            if (opt) applyHoldingOption(opt);
+        } else {
+            applyHoldingOption(null);
+        }
+    }, [portfolioId, requiresHoldingPick, holdingSymbolOptionsForPick, holdingOptionKey, symbol, applyHoldingOption]);
 
     /** Snapshot of `initialData` when this open started — used so we do not overwrite a plan/deeplink company name until the user changes symbol. */
     const initialDataWhenOpenedRef = useRef<typeof initialData>(null);
@@ -969,7 +986,12 @@ const RecordTradeModal: React.FC<{
         }
         const normalized = symbol.toUpperCase().trim();
         const recentBuys = (data.investmentTransactions as InvestmentTransaction[])
-            .filter(t => t.type === 'buy' && (t.symbol ?? '').toUpperCase().trim() === normalized);
+            .filter((t) => {
+                if (t.type !== 'buy') return false;
+                if ((t.symbol ?? '').toUpperCase().trim() !== normalized) return false;
+                if (portfolioId && t.portfolioId && t.portfolioId !== portfolioId) return false;
+                return true;
+            });
         let pendingBuyAmount = 0;
         let latestSettleDate = '';
         for (const buy of recentBuys) {
@@ -987,7 +1009,7 @@ const RecordTradeModal: React.FC<{
             ? `T+1 settlement: You bought ${normalized} recently. Funds settle ${settlementState!.pendingSettleDate}. Ensure you have other settled cash before selling.`
             : null;
         return { t1SettlementWarning: msg };
-    }, [type, symbol, data?.investmentTransactions]);
+    }, [type, symbol, portfolioId, data?.investmentTransactions]);
 
     const monthlyNetLast30d = useMemo(() => {
         const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
@@ -1101,7 +1123,7 @@ const RecordTradeModal: React.FC<{
         const parsedQuantity = parseFloat(quantity);
         const parsedPrice = parseFloat(price);
         if (!symbol.trim()) return requiresHoldingPick ? 'Select a holding from your portfolios.' : 'Symbol is required.';
-        if (requiresHoldingPick && !holdingSymbolIsOwned(holdingSymbolOptions, symbol, portfolioId)) {
+        if (requiresHoldingPick && !holdingSymbolIsOwned(holdingSymbolOptionsForPick, symbol, portfolioId)) {
             return 'Select a holding you currently own in the chosen portfolio.';
         }
         if (type === 'dividend') {
@@ -1161,7 +1183,7 @@ const RecordTradeModal: React.FC<{
             }
         }
         return null;
-    }, [portfolioId, quantity, price, dividendAmount, symbol, type, isNewHolding, holdingName, manualValuation, manualCurrentValue, isManualExisting, tradeCurrency, portfolios, availableCashInLedgerCurrency, availableCashByCurrency.SAR, availableCashByCurrency.USD, sarPerUsd, formatCurrencyString, feeAmount, requiresHoldingPick, holdingSymbolOptions, data, date, accountId, investmentAccounts]);
+    }, [portfolioId, quantity, price, dividendAmount, symbol, type, isNewHolding, holdingName, manualValuation, manualCurrentValue, isManualExisting, tradeCurrency, portfolios, availableCashInLedgerCurrency, availableCashByCurrency.SAR, availableCashByCurrency.USD, sarPerUsd, formatCurrencyString, feeAmount, requiresHoldingPick, holdingSymbolOptionsForPick, data, date, accountId, investmentAccounts]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -1244,7 +1266,9 @@ const RecordTradeModal: React.FC<{
             trackFormDefault('record-trade', 'portfolioId', portfolioId);
             trackFormDefault('record-trade', 'type', type);
             trackFormDefault('record-trade', 'tradeCurrency', tradeCurrency);
-            onClose();
+            startTransition(() => {
+                onClose();
+            });
         } catch (error) {
             setSubmitError(error instanceof Error ? error.message : String(error));
         } finally {
@@ -1337,7 +1361,20 @@ const RecordTradeModal: React.FC<{
                     </div>
                     <div>
                         <label htmlFor="portfolio-id" className="block text-sm font-medium text-gray-700">Portfolio</label>
-                        <select id="portfolio-id" value={portfolioId} onChange={e => setPortfolioId(e.target.value)} required disabled={portfoliosForAccount.length === 0} className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary disabled:bg-gray-100">
+                        <select
+                            id="portfolio-id"
+                            value={portfolioId}
+                            onChange={(e) => {
+                                const next = e.target.value;
+                                setPortfolioId(next);
+                                if (type === 'sell' || type === 'dividend') {
+                                    applyHoldingOption(null);
+                                }
+                            }}
+                            required
+                            disabled={portfoliosForAccount.length === 0}
+                            className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary disabled:bg-gray-100"
+                        >
                              <option value="" disabled>Select Portfolio</option>
                             {portfoliosForAccount.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                         </select>
@@ -1346,8 +1383,8 @@ const RecordTradeModal: React.FC<{
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex flex-wrap gap-x-4 gap-y-1">
                         <label className="flex items-center"><input type="radio" value="buy" checked={type === 'buy'} onChange={() => setType('buy')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Buy</span></label>
-                        <label className="flex items-center"><input type="radio" value="sell" checked={type === 'sell'} onChange={() => { setType('sell'); const key = resolveHoldingOptionKeyFromSymbol(holdingSymbolOptions, symbol, portfolioId); if (key) { const opt = holdingSymbolOptions.find((o) => o.optionKey === key); if (opt) applyHoldingOption(opt); } else { applyHoldingOption(null); } }} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Sell</span></label>
-                        <label className="flex items-center"><input type="radio" value="dividend" checked={type === 'dividend'} onChange={() => { setType('dividend'); const key = resolveHoldingOptionKeyFromSymbol(holdingSymbolOptions, symbol, portfolioId); if (key) { const opt = holdingSymbolOptions.find((o) => o.optionKey === key); if (opt) applyHoldingOption(opt); } else { applyHoldingOption(null); } }} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Dividend</span></label>
+                        <label className="flex items-center"><input type="radio" value="sell" checked={type === 'sell'} onChange={() => { setType('sell'); const key = resolveHoldingOptionKeyFromSymbol(holdingSymbolOptionsForPick, symbol, portfolioId); if (key) { const opt = holdingSymbolOptionsForPick.find((o) => o.optionKey === key); if (opt) applyHoldingOption(opt); } else { applyHoldingOption(null); } }} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Sell</span></label>
+                        <label className="flex items-center"><input type="radio" value="dividend" checked={type === 'dividend'} onChange={() => { setType('dividend'); const key = resolveHoldingOptionKeyFromSymbol(holdingSymbolOptionsForPick, symbol, portfolioId); if (key) { const opt = holdingSymbolOptionsForPick.find((o) => o.optionKey === key); if (opt) applyHoldingOption(opt); } else { applyHoldingOption(null); } }} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Dividend</span></label>
                     </div>
                     <div className="flex items-center gap-2">
                         <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Currency</span>
@@ -1394,13 +1431,25 @@ const RecordTradeModal: React.FC<{
                         <div className="mt-1">
                             <HoldingSymbolSelect
                                 id="holding-symbol-select"
-                                options={holdingSymbolOptions}
+                                options={holdingSymbolOptionsForPick}
                                 value={holdingOptionKey}
                                 onChange={applyHoldingOption}
                                 className="w-full p-2 border border-gray-300 rounded-md"
-                                emptyLabel="Select from your portfolios…"
+                                showPortfolioInLabel={false}
+                                disabled={!portfolioId}
+                                emptyLabel={
+                                    !portfolioId
+                                        ? 'Select a portfolio first…'
+                                        : holdingSymbolOptionsForPick.length === 0
+                                          ? 'No holdings in this portfolio'
+                                          : 'Select a holding…'
+                                }
+                                hint={
+                                    selectedPortfolio
+                                        ? `Holdings in “${selectedPortfolio.name}” only · symbol and portfolio are set from your pick.`
+                                        : null
+                                }
                             />
-                            <p className="mt-1 text-xs text-slate-500">Symbol and portfolio are filled from your holdings — no manual ticker entry.</p>
                         </div>
                     ) : (
                         <>

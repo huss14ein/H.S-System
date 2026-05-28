@@ -10,6 +10,8 @@ export interface HoldingSymbolSelectProps {
   disabled?: boolean;
   className?: string;
   emptyLabel?: string;
+  /** When true (default), option text includes portfolio name — omit when list is already scoped to one portfolio. */
+  showPortfolioInLabel?: boolean;
   /** Shown under the control when a holding is selected. */
   hint?: string | null;
 }
@@ -23,6 +25,7 @@ const HoldingSymbolSelect: React.FC<HoldingSymbolSelectProps> = ({
   disabled = false,
   className = 'w-full min-h-[44px] px-4 py-2.5 text-base sm:text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent',
   emptyLabel = 'Select a holding you own…',
+  showPortfolioInLabel = true,
   hint,
 }) => {
   const selected = useMemo(
@@ -52,7 +55,8 @@ const HoldingSymbolSelect: React.FC<HoldingSymbolSelectProps> = ({
         {options.map((o) => (
           <option key={o.optionKey} value={o.optionKey}>
             {o.symbol}
-            {o.name && o.name !== o.symbol ? ` — ${o.name}` : ''} · {o.portfolioName} · qty {o.quantity}
+            {o.name && o.name !== o.symbol ? ` — ${o.name}` : ''}
+            {showPortfolioInLabel ? ` · ${o.portfolioName}` : ''} · qty {o.quantity}
           </option>
         ))}
       </select>
