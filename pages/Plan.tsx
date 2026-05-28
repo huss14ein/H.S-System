@@ -1061,7 +1061,7 @@ const AnnualFinancialPlan: React.FC<{
                 formatCurrencyString={formatCurrencyString}
                 onViewInTransactions={
                     triggerPageAction
-                        ? (action) => triggerPageAction('Transactions', action)
+                        ? (action: string) => triggerPageAction('Transactions', action)
                         : undefined
                 }
             />

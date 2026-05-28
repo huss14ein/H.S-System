@@ -103,10 +103,8 @@ describe('goalResolvedTotals', () => {
   });
 
   it('averageRollingMonthlyNetSurplus converts USD account flows to SAR before averaging', () => {
-    const today = new Date();
-    const y = today.getFullYear();
-    const m = String(today.getMonth() + 1).padStart(2, '0');
-    const day = `${y}-${m}-15`;
+    const now = new Date();
+    const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const data = {
       goals: [],
       assets: [],
@@ -120,7 +118,7 @@ describe('goalResolvedTotals', () => {
           date: day,
           accountId: 'usd-check',
           amount: 100,
-          type: 'Income',
+          type: 'income',
           category: 'Salary',
         },
       ],
