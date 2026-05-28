@@ -34,7 +34,7 @@ function saveMapping(m: Mapping) {
 
 type Slice = { name: string; value: number; color: string };
 
-export const ExpenseDonutDrilldown: React.FC<{
+const ExpenseDonutDrilldownInner: React.FC<{
   data: FinancialData | null | undefined;
   transactions: Transaction[];
   accounts: Account[];
@@ -128,6 +128,12 @@ export const ExpenseDonutDrilldown: React.FC<{
       </div>
 
       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+        {!slices.fixedVar.length && !slices.household.length ? (
+          <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+            {t('apply') === 'تطبيق' ? 'لا توجد مصروفات معتمدة لعرضها.' : 'No approved expenses to display.'}
+          </div>
+        ) : (
+          <>
         <div className="h-[240px] rounded-xl border border-slate-200 bg-slate-50/40">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
@@ -177,6 +183,8 @@ export const ExpenseDonutDrilldown: React.FC<{
             </PieChart>
           </ResponsiveContainer>
         </div>
+          </>
+        )}
       </div>
 
       {isConfigOpen && (
@@ -215,3 +223,5 @@ export const ExpenseDonutDrilldown: React.FC<{
     </div>
   );
 };
+
+export const ExpenseDonutDrilldown = React.memo(ExpenseDonutDrilldownInner);

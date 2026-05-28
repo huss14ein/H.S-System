@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useLanguage } from '../../context/LanguageContext';
+import { formatDashboardRangeLabel } from './chartLayout';
 
 export type DashboardDateRangePreset = '1M' | '3M' | '6M' | '1Y' | 'All' | 'Custom';
 
@@ -25,6 +26,28 @@ function rangeForPreset(preset: DashboardDateRangePreset): { startIso?: string; 
   if (preset === '6M') start.setDate(start.getDate() - 186);
   if (preset === '1Y') start.setDate(start.getDate() - 365);
   return { startIso: toIsoDate(start), endIso: toIsoDate(end) };
+}
+
+export function createDashboardDateRange(
+  preset: Exclude<DashboardDateRangePreset, 'Custom'>,
+): DashboardDateRange {
+  return { preset, ...rangeForPreset(preset) };
+}
+
+/** Financial months to load for cashflow chart (buffer month on each side). */
+export function dashboardSuiteMonthsBack(range: DashboardDateRange): number {
+  if (range.preset === '1M') return 3;
+  if (range.preset === '3M') return 5;
+  if (range.preset === '6M') return 8;
+  if (range.preset === '1Y') return 14;
+  if (range.preset === 'All') return 24;
+  if (range.startIso && range.endIso) {
+    const [sy, sm] = range.startIso.slice(0, 7).split('-').map(Number);
+    const [ey, em] = range.endIso.slice(0, 7).split('-').map(Number);
+    const span = (ey - sy) * 12 + (em - sm) + 2;
+    return Math.min(24, Math.max(3, span));
+  }
+  return 12;
 }
 
 export const DateRangePicker: React.FC<{
@@ -54,7 +77,7 @@ export const DateRangePicker: React.FC<{
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t('dateRange')}</p>
           <p className="mt-0.5 text-sm text-slate-700">
             {value.preset === 'Custom'
-              ? `${value.startIso ?? '—'} → ${value.endIso ?? '—'}`
+              ? formatDashboardRangeLabel(value.startIso ?? '—', value.endIso ?? '—')
               : value.preset}
           </p>
         </div>
@@ -113,7 +136,7 @@ export const DateRangePicker: React.FC<{
           <button
             type="button"
             onClick={() => onChange({ preset: 'Custom', startIso: customStart || undefined, endIso: customEnd || undefined })}
-            className="btn-primary sm:ml-2"
+            className="btn-primary sm:ms-2 sm:self-end"
           >
             {t('apply')}
           </button>

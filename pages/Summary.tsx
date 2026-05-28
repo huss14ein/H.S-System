@@ -54,7 +54,12 @@ import AiProxyUnavailableHint from '../components/AiProxyUnavailableHint';
 import { useLanguage } from '../context/LanguageContext';
 import { ExecutiveStatusRow } from '../components/dashboard/ExecutiveStatusRow';
 import { MomCashflowTrendChart } from '../components/dashboard/MomCashflowTrendChart';
-import { DateRangePicker, type DashboardDateRange } from '../components/dashboard/DateRangePicker';
+import {
+  createDashboardDateRange,
+  dashboardSuiteMonthsBack,
+  DateRangePicker,
+  type DashboardDateRange,
+} from '../components/dashboard/DateRangePicker';
 import { BudgetBurnRatePanel } from '../components/dashboard/BudgetBurnRatePanel';
 import { ExpenseDonutDrilldown } from '../components/dashboard/ExpenseDonutDrilldown';
 import { PortfolioHoldingsGrid } from '../components/dashboard/PortfolioHoldingsGrid';
@@ -62,7 +67,7 @@ import { CostAveragingCalculator } from '../components/dashboard/CostAveragingCa
 import { Goals2030Timeline } from '../components/dashboard/Goals2030Timeline';
 import { GoalProjectionAreaChart } from '../components/dashboard/GoalProjectionAreaChart';
 import { WhatIfSandbox } from '../components/dashboard/WhatIfSandbox';
-import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
+import { useDashboardSuiteScope } from '../hooks/useDashboardSuiteScope';
 
 function householdStressStyles(level: string) {
     const L = (level || '').toLowerCase();
@@ -197,13 +202,9 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
 
     const { maskBalance } = usePrivacyMask();
     const { dir } = useLanguage();
-    const [suiteRange, setSuiteRange] = useState<DashboardDateRange>({ preset: '6M' });
-    const personalTransactions = useMemo(
-        () => ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[],
-        [data],
-    );
-    const personalAccounts = useMemo(() => getPersonalAccounts(data), [data]);
-    const personalInvestments = useMemo(() => getPersonalInvestments(data), [data]);
+    const [suiteRange, setSuiteRange] = useState<DashboardDateRange>(() => createDashboardDateRange('6M'));
+    const suiteMonthsBack = useMemo(() => dashboardSuiteMonthsBack(suiteRange), [suiteRange]);
+    const { personalTransactions, personalAccounts, personalInvestments } = useDashboardSuiteScope(data);
 
     const nwSnapshotInsight = useMemo(() => {
         const snaps = listNetWorthSnapshots();
@@ -489,6 +490,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                             uiExchangeRate={canonicalSarPerUsd}
                             startIso={suiteRange.startIso}
                             endIso={suiteRange.endIso}
+                            monthsBack={suiteMonthsBack}
                         />
                     </div>
                 </div>

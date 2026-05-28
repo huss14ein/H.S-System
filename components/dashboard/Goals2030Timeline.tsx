@@ -19,8 +19,8 @@ export const Goals2030Timeline: React.FC<{
   goals: Goal[];
   sarPerUsd: number;
   onOpenGoals?: () => void;
-}> = ({ data, goals, sarPerUsd, onOpenGoals }) => {
-  const { t, dir } = useLanguage();
+}> = React.memo(function Goals2030Timeline({ data, goals, sarPerUsd, onOpenGoals }) {
+  const { t, dir, language } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
 
   const goalRows = useMemo(() => {
@@ -46,7 +46,7 @@ export const Goals2030Timeline: React.FC<{
         </div>
         {onOpenGoals && (
           <button type="button" onClick={onOpenGoals} className="text-xs font-semibold text-primary hover:underline">
-            {t('apply') === 'تطبيق' ? 'فتح الأهداف →' : 'Open Goals →'}
+            {language === 'ar' ? 'فتح الأهداف ←' : 'Open Goals →'}
           </button>
         )}
       </div>
@@ -83,4 +83,4 @@ export const Goals2030Timeline: React.FC<{
       )}
     </div>
   );
-};
+});

@@ -84,7 +84,7 @@ export const ExecutiveStatusRow: React.FC<{
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-slate-500">{t('language')}</span>
-          <div className="rounded-full border border-slate-200 bg-white p-1 shadow-sm">
+          <div className="rounded-full border border-slate-200 bg-white p-1 shadow-sm" dir="ltr">
             <button
               type="button"
               onClick={() => setLanguage('en')}

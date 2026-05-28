@@ -86,7 +86,12 @@ import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
 import { useFinancialEnhancementInsights } from '../hooks/useFinancialEnhancementInsights';
 import { ExecutiveStatusRow } from '../components/dashboard/ExecutiveStatusRow';
 import { MomCashflowTrendChart } from '../components/dashboard/MomCashflowTrendChart';
-import { DateRangePicker, type DashboardDateRange } from '../components/dashboard/DateRangePicker';
+import {
+  createDashboardDateRange,
+  dashboardSuiteMonthsBack,
+  DateRangePicker,
+  type DashboardDateRange,
+} from '../components/dashboard/DateRangePicker';
 import { useLanguage } from '../context/LanguageContext';
 import { BudgetBurnRatePanel } from '../components/dashboard/BudgetBurnRatePanel';
 import { ExpenseDonutDrilldown } from '../components/dashboard/ExpenseDonutDrilldown';
@@ -95,6 +100,7 @@ import { CostAveragingCalculator } from '../components/dashboard/CostAveragingCa
 import { Goals2030Timeline } from '../components/dashboard/Goals2030Timeline';
 import { GoalProjectionAreaChart } from '../components/dashboard/GoalProjectionAreaChart';
 import { WhatIfSandbox } from '../components/dashboard/WhatIfSandbox';
+import { useDashboardSuiteScope } from '../hooks/useDashboardSuiteScope';
 
 interface ExtendedBudget extends Budget {
     spent: number;
@@ -453,7 +459,9 @@ const DashboardContent: React.FC<{
     const emergencyFund = useEmergencyFund(data);
     const { maskBalance } = usePrivacyMask();
     const { dir } = useLanguage();
-    const [suiteRange, setSuiteRange] = useState<DashboardDateRange>({ preset: '6M' });
+    const { personalTransactions, personalAccounts, personalInvestments } = useDashboardSuiteScope(data);
+    const [suiteRange, setSuiteRange] = useState<DashboardDateRange>(() => createDashboardDateRange('6M'));
+    const suiteMonthsBack = useMemo(() => dashboardSuiteMonthsBack(suiteRange), [suiteRange]);
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
     const lastTelemetrySignatureRef = React.useRef<string>('');
     const kpiDensity = 'compact' as const;
@@ -913,6 +921,7 @@ const DashboardContent: React.FC<{
                             uiExchangeRate={canonicalSarPerUsd}
                             startIso={suiteRange.startIso}
                             endIso={suiteRange.endIso}
+                            monthsBack={suiteMonthsBack}
                         />
                     </div>
                 </div>
@@ -920,26 +929,24 @@ const DashboardContent: React.FC<{
                     <BudgetBurnRatePanel
                         data={data}
                         budgets={data?.budgets ?? []}
-                        transactions={((data as any)?.personalTransactions ?? data?.transactions ?? [])}
-                        accounts={((data as any)?.personalAccounts ?? data?.accounts ?? [])}
+                        transactions={personalTransactions}
+                        accounts={personalAccounts}
                         uiExchangeRate={canonicalSarPerUsd}
                     />
                     <ExpenseDonutDrilldown
                         data={data}
-                        transactions={((data as any)?.personalTransactions ?? data?.transactions ?? [])}
-                        accounts={((data as any)?.personalAccounts ?? data?.accounts ?? [])}
+                        transactions={personalTransactions}
+                        accounts={personalAccounts}
                         uiExchangeRate={canonicalSarPerUsd}
                     />
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                     <PortfolioHoldingsGrid
-                        portfolios={((data as any)?.personalInvestments ?? data?.investments ?? [])}
-                        simulatedPrices={simulatedPrices ?? {}}
+                        portfolios={personalInvestments}
+                        simulatedPrices={dashboardDebouncedPrices ?? {}}
                         sarPerUsd={canonicalSarPerUsd}
                     />
-                    <CostAveragingCalculator
-                        portfolios={((data as any)?.personalInvestments ?? data?.investments ?? [])}
-                    />
+                    <CostAveragingCalculator portfolios={personalInvestments} />
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                     <Goals2030Timeline
@@ -969,7 +976,7 @@ const DashboardContent: React.FC<{
                             <li key={step.page} className="flex items-center gap-3 text-sm">
                                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/20 text-primary font-semibold">{i + 1}</span>
                                 <span className="text-slate-600">{step.label}</span>
-                                <button type="button" onClick={() => setActivePage(step.page)} className="ml-auto text-primary font-medium hover:underline shrink-0">
+                                <button type="button" onClick={() => setActivePage(step.page)} className="ms-auto text-primary font-medium hover:underline shrink-0">
                                     {step.action} →
                                 </button>
                             </li>

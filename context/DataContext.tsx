@@ -1,4 +1,4 @@
-import React, { createContext, useState, ReactNode, useEffect, useContext, useRef, useMemo, useCallback } from 'react';
+import React, { createContext, useState, ReactNode, useEffect, useContext, useRef, useMemo, useCallback, startTransition } from 'react';
 import { flushSync } from 'react-dom';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
@@ -2875,14 +2875,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (error) { console.error("Error adding holding:", error); throw error; }
         if (newHolding) {
             const normalized = normalizeHoldingFromRow(newHolding);
-            setData(prev => ({
-                ...prev,
-                investments: prev.investments.map(p =>
-                    p.id === (newHolding.portfolio_id ?? (newHolding as any).portfolioId)
-                        ? { ...p, holdings: [...p.holdings, normalized] }
-                        : p
-                )
-            }));
+            startTransition(() => {
+                setData((prev) => ({
+                    ...prev,
+                    investments: prev.investments.map((p) =>
+                        p.id === (newHolding.portfolio_id ?? (newHolding as any).portfolioId)
+                            ? { ...p, holdings: [...p.holdings, normalized] }
+                            : p,
+                    ),
+                }));
+            });
         }
     };
     const updateHolding = async (holding: Holding) => {
@@ -2900,8 +2902,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const db = supabase;
         const row = holdingToRow(holding);
         const { error } = await db.from('holdings').update(row).match({ id: holding.id, user_id: auth.user.id });
-        if(error) { console.error(error); throw error; }
-        else setData(prev => ({ ...prev, investments: prev.investments.map(p => ({ ...p, holdings: p.holdings.map(h => h.id === holding.id ? holding : h) })) }));
+        if (error) {
+            console.error(error);
+            throw error;
+        } else {
+            startTransition(() => {
+                setData((prev) => ({
+                    ...prev,
+                    investments: prev.investments.map((p) => ({
+                        ...p,
+                        holdings: p.holdings.map((h) => (h.id === holding.id ? holding : h)),
+                    })),
+                }));
+            });
+        }
     };
     const deleteHolding = async (holdingId: string) => {
         if (!supabase || !auth?.user) return;
@@ -3281,7 +3295,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (txError) { console.error("Error recording transaction:", txError); throw txError; }
         if (newTransaction) {
             const normalizedInserted = normalizeInvestmentTransaction(newTransaction);
-            setData(prev => ({ ...prev, investmentTransactions: [normalizedInserted, ...prev.investmentTransactions] }));
+            startTransition(() => {
+                setData((prev) => ({
+                    ...prev,
+                    investmentTransactions: [normalizedInserted, ...prev.investmentTransactions],
+                }));
+            });
             await applyInvestmentAccountDeltaForTrade(accountIdForInsert, investmentBalanceDelta, { includeTransaction: normalizedInserted });
             recomputed = true;
             insertedInvestmentTransactionId = String(normalizedInserted.id || '');

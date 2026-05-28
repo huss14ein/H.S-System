@@ -18,7 +18,7 @@ function statusForPct(pct: number): 'ok' | 'near' | 'over' {
   return 'ok';
 }
 
-export const BudgetBurnRatePanel: React.FC<{
+const BudgetBurnRatePanelInner: React.FC<{
   data: FinancialData | null | undefined;
   budgets: Budget[];
   transactions: Transaction[];
@@ -120,3 +120,5 @@ export const BudgetBurnRatePanel: React.FC<{
     </div>
   );
 };
+
+export const BudgetBurnRatePanel = React.memo(BudgetBurnRatePanelInner);

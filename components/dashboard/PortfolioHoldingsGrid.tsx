@@ -23,7 +23,7 @@ function safeNum(n: unknown): number {
   return Number.isFinite(v) ? v : 0;
 }
 
-export const PortfolioHoldingsGrid: React.FC<{
+const PortfolioHoldingsGridInner: React.FC<{
   portfolios: InvestmentPortfolio[];
   simulatedPrices: Record<string, { price: number; change?: number; changePercent?: number }>;
   sarPerUsd: number;
@@ -89,37 +89,44 @@ export const PortfolioHoldingsGrid: React.FC<{
       <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
         <table className="min-w-[760px] w-full text-sm">
           <thead className="bg-slate-50">
-            <tr className="text-left text-xs font-semibold text-slate-600">
-              <th className="px-3 py-2">{t('holdings')}</th>
-              <th className="px-3 py-2">{t('shares')}</th>
-              <th className="px-3 py-2">{t('avgEntry')}</th>
-              <th className="px-3 py-2">{t('marketPrice')}</th>
-              <th className="px-3 py-2">{t('investedCapital')}</th>
-              <th className="px-3 py-2">{t('gainLoss')}</th>
-              <th className="px-3 py-2">{t('roi')}</th>
+            <tr className="text-xs font-semibold text-slate-600">
+              <th className="px-3 py-2 text-start">{t('holdings')}</th>
+              <th className="px-3 py-2 text-end">{t('shares')}</th>
+              <th className="px-3 py-2 text-end">{t('avgEntry')}</th>
+              <th className="px-3 py-2 text-end">{t('marketPrice')}</th>
+              <th className="px-3 py-2 text-end">{t('investedCapital')}</th>
+              <th className="px-3 py-2 text-end">{t('gainLoss')}</th>
+              <th className="px-3 py-2 text-end">{t('roi')}</th>
             </tr>
           </thead>
           <tbody>
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-3 py-6 text-center text-sm text-slate-500">
+                  {t('apply') === 'تطبيق' ? 'لا توجد مقتنيات لعرضها.' : 'No holdings to display.'}
+                </td>
+              </tr>
+            )}
             {rows.map((r) => {
               const pl = r.gainLossSar;
               const roi = r.roi;
               const plCls = pl == null ? 'text-slate-500' : pl >= 0 ? 'text-emerald-700' : 'text-rose-700';
               return (
                 <tr key={r.key} className="border-t border-slate-200 hover:bg-slate-50/60 transition-colors">
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-2 text-start">
                     <div className="font-semibold text-slate-800">{r.symbol}</div>
                     <div className="text-xs text-slate-500 truncate max-w-[320px]">{r.name}</div>
                   </td>
-                  <td className="px-3 py-2 tabular-nums">{r.shares.toFixed(r.shares % 1 === 0 ? 0 : 2)}</td>
-                  <td className="px-3 py-2 tabular-nums">{formatCurrencyString(r.avgEntrySar, { digits: 2 })}</td>
-                  <td className="px-3 py-2 tabular-nums">
+                  <td className="px-3 py-2 text-end tabular-nums">{r.shares.toFixed(r.shares % 1 === 0 ? 0 : 2)}</td>
+                  <td className="px-3 py-2 text-end tabular-nums">{formatCurrencyString(r.avgEntrySar, { digits: 2 })}</td>
+                  <td className="px-3 py-2 text-end tabular-nums">
                     {r.marketPriceSar == null ? '—' : formatCurrencyString(r.marketPriceSar, { digits: 2 })}
                   </td>
-                  <td className="px-3 py-2 tabular-nums">{formatCurrencyString(r.marketValueSar, { digits: 0 })}</td>
-                  <td className={`px-3 py-2 tabular-nums font-semibold ${plCls}`}>
+                  <td className="px-3 py-2 text-end tabular-nums">{formatCurrencyString(r.marketValueSar, { digits: 0 })}</td>
+                  <td className={`px-3 py-2 text-end tabular-nums font-semibold ${plCls}`}>
                     {pl == null ? '—' : formatCurrency(pl, { colorize: true })}
                   </td>
-                  <td className={`px-3 py-2 tabular-nums font-semibold ${roi == null ? 'text-slate-500' : roi >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  <td className={`px-3 py-2 text-end tabular-nums font-semibold ${roi == null ? 'text-slate-500' : roi >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                     {roi == null ? '—' : `${(roi * 100).toFixed(1)}%`}
                   </td>
                 </tr>
@@ -131,3 +138,5 @@ export const PortfolioHoldingsGrid: React.FC<{
     </div>
   );
 };
+
+export const PortfolioHoldingsGrid = React.memo(PortfolioHoldingsGridInner);

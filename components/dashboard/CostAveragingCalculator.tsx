@@ -12,7 +12,7 @@ function safeNum(n: unknown): number {
 
 export const CostAveragingCalculator: React.FC<{
   portfolios: InvestmentPortfolio[];
-}> = ({ portfolios }) => {
+}> = React.memo(function CostAveragingCalculator({ portfolios }) {
   const { t, dir } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
 
@@ -57,6 +57,12 @@ export const CostAveragingCalculator: React.FC<{
         </div>
       </div>
 
+      {!options.length ? (
+        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          {t('apply') === 'تطبيق' ? 'لا توجد مقتنيات لحساب متوسط التكلفة.' : 'No holdings available for cost averaging.'}
+        </div>
+      ) : (
+      <>
       <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
         <div className="sm:col-span-1">
           <label className="block text-xs font-medium text-slate-600">{t('holdings')}</label>
@@ -95,7 +101,9 @@ export const CostAveragingCalculator: React.FC<{
           <p className="mt-1 text-xs text-violet-700 tabular-nums">{t('shares')}: {(calc.q0 + calc.q1).toFixed((calc.q0 + calc.q1) % 1 === 0 ? 0 : 2)}</p>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
-};
+});
 

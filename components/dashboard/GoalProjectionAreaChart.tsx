@@ -8,6 +8,7 @@ import {
   computeGoalResolvedAmountsSar,
   GOAL_NET_CASHFLOW_LOOKBACK_MONTHS,
 } from '../../services/goalResolvedTotals';
+import { dashboardChartMargin } from './chartLayout';
 
 type Point = { month: string; projected: number; targetTotal: number };
 
@@ -21,7 +22,7 @@ export const GoalProjectionAreaChart: React.FC<{
   data: FinancialData | null | undefined;
   goals: Goal[];
   sarPerUsd: number;
-}> = ({ data, goals, sarPerUsd }) => {
+}> = React.memo(function GoalProjectionAreaChart({ data, goals, sarPerUsd }) {
   const { t, dir, language } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
 
@@ -73,7 +74,7 @@ export const GoalProjectionAreaChart: React.FC<{
 
       <div className="mt-3 h-[260px] w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={model.points} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+          <AreaChart data={model.points} margin={dashboardChartMargin(dir)}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#64748b' }} interval={5} />
             <YAxis
@@ -106,4 +107,4 @@ export const GoalProjectionAreaChart: React.FC<{
       </div>
     </div>
   );
-};
+});

@@ -4,6 +4,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import type { FinancialData } from '../../types';
 import { personalMonthlyInflowOutflowByFinancialMonthSar } from '../../services/financeMetrics';
+import { dashboardChartMargin, formatDashboardRangeLabel } from './chartLayout';
 
 type Row = { key: string; label: string; inflow: number; outflow: number; net: number };
 
@@ -19,18 +20,19 @@ function inRange(monthKey: string, start?: string, end?: string): boolean {
   return true;
 }
 
-export const MomCashflowTrendChart: React.FC<{
+const MomCashflowTrendChartInner: React.FC<{
   data: FinancialData | null | undefined;
   uiExchangeRate: number;
   startIso?: string;
   endIso?: string;
-}> = ({ data, uiExchangeRate, startIso, endIso }) => {
+  monthsBack?: number;
+}> = ({ data, uiExchangeRate, startIso, endIso, monthsBack = 12 }) => {
   const { t, dir, language } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
 
   const rows = useMemo(() => {
     if (!data) return [] as Row[];
-    const series = personalMonthlyInflowOutflowByFinancialMonthSar(data, uiExchangeRate, 12);
+    const series = personalMonthlyInflowOutflowByFinancialMonthSar(data, uiExchangeRate, monthsBack);
     const out: Row[] = [];
     series.monthKeys.forEach((key, i) => {
       if (!inRange(key, startIso, endIso)) return;
@@ -43,7 +45,7 @@ export const MomCashflowTrendChart: React.FC<{
       });
     });
     return out.slice(-12);
-  }, [data, endIso, language, startIso, uiExchangeRate]);
+  }, [data, endIso, language, monthsBack, startIso, uiExchangeRate]);
 
   const maxVal = useMemo(() => {
     const m = rows.reduce((mx, r) => Math.max(mx, r.inflow, r.outflow), 0);
@@ -60,13 +62,13 @@ export const MomCashflowTrendChart: React.FC<{
           </p>
         </div>
         <div className="text-xs text-slate-500 tabular-nums">
-          {rows.length ? `${rows[0]!.label} → ${rows[rows.length - 1]!.label}` : '—'}
+          {rows.length ? formatDashboardRangeLabel(rows[0]!.label, rows[rows.length - 1]!.label) : '—'}
         </div>
       </div>
 
       <div className="mt-3 h-[260px] w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={rows} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+          <BarChart data={rows} margin={dashboardChartMargin(dir)}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
             <YAxis
@@ -103,3 +105,5 @@ export const MomCashflowTrendChart: React.FC<{
     </div>
   );
 };
+
+export const MomCashflowTrendChart = React.memo(MomCashflowTrendChartInner);

@@ -10,6 +10,7 @@ import {
 } from '../../services/goalResolvedTotals';
 import { normalizedMonthlyExpenseSar } from '../../services/financeMetrics';
 import { getPersonalAccounts } from '../../utils/wealthScope';
+import { dashboardChartMargin } from './chartLayout';
 
 type Point = { month: string; base: number; scenario: number };
 
@@ -19,7 +20,7 @@ function addMonths(base: Date, delta: number): Date {
   return d;
 }
 
-export const WhatIfSandbox: React.FC<{
+const WhatIfSandboxInner: React.FC<{
   data: FinancialData | null | undefined;
   goals: Goal[];
   sarPerUsd: number;
@@ -131,7 +132,7 @@ export const WhatIfSandbox: React.FC<{
 
       <div className="mt-3 h-[260px] w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chart} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+          <AreaChart data={chart} margin={dashboardChartMargin(dir)}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#64748b' }} interval={5} />
             <YAxis
@@ -164,3 +165,5 @@ export const WhatIfSandbox: React.FC<{
     </div>
   );
 };
+
+export const WhatIfSandbox = React.memo(WhatIfSandboxInner);
