@@ -5,6 +5,7 @@ import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import type { FinancialData } from '../../types';
 import { personalMonthlyInflowOutflowByFinancialMonthSar } from '../../services/financeMetrics';
 import { dashboardChartMargin, formatDashboardRangeLabel } from './chartLayout';
+import { DashboardVisualCard } from './DashboardVisualCard';
 
 type Row = { key: string; label: string; inflow: number; outflow: number; net: number };
 
@@ -53,20 +54,18 @@ const MomCashflowTrendChartInner: React.FC<{
   }, [rows]);
 
   return (
-    <div dir={dir} className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t('cashflowTrend')}</p>
-          <p className="mt-1 text-sm text-slate-700">
-            {t('inflow')} vs {t('outflow')} ({t('executiveStatus')})
-          </p>
-        </div>
-        <div className="text-xs text-slate-500 tabular-nums">
+    <DashboardVisualCard
+      dir={dir}
+      accent="sky"
+      title={t('cashflowTrend')}
+      subtitle={`${t('inflow')} vs ${t('outflow')}`}
+      action={
+        <span className="text-xs text-slate-500 tabular-nums">
           {rows.length ? formatDashboardRangeLabel(rows[0]!.label, rows[rows.length - 1]!.label) : '—'}
-        </div>
-      </div>
-
-      <div className="mt-3 h-[260px] w-full">
+        </span>
+      }
+    >
+      <div className="h-[260px] w-full">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={rows} margin={dashboardChartMargin(dir)}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -102,7 +101,7 @@ const MomCashflowTrendChartInner: React.FC<{
           </BarChart>
         </ResponsiveContainer>
       </div>
-    </div>
+    </DashboardVisualCard>
   );
 };
 

@@ -10,13 +10,12 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
-import { useMarketData } from '../context/MarketDataContext';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { quoteNotionalInBookCurrency, toSAR } from '../utils/currencyMath';
 import { holdingUsesLiveQuote } from '../utils/holdingValuation';
 import { getPersonalInvestments } from '../utils/wealthScope';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import type { InvestmentPortfolio } from '../types';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import type { HeadlineAllocationRow } from '../services/headlineInvestmentAllocation';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import {
@@ -50,7 +49,7 @@ function holdingValueInBookCurrency(
 const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => void }> = ({ setActiveTab }) => {
     const { data } = useContext(DataContext)!;
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
-    const { simulatedPrices } = useMarketData();
+    const { simulatedPrices } = useCanonicalFinancialMetrics();
     const {
         sarPerUsd,
         investmentsTotalSar,

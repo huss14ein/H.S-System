@@ -1,10 +1,10 @@
-import React, { createContext, useContext, useMemo } from 'react';
+import React, { createContext, useContext, useMemo, useDeferredValue } from 'react';
 import { DataContext } from './DataContext';
 import { useCurrency } from './CurrencyContext';
 import { useMarketData } from './MarketDataContext';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
-import { computeDashboardCanonicalMetrics, type DashboardCanonicalMetrics } from '../services/canonicalFinancialMetrics';
+import { pickDashboardCanonicalMetrics, type DashboardCanonicalMetrics } from '../services/canonicalFinancialMetrics';
 import {
   buildCanonicalFinancialMetricsResult,
   type UseCanonicalFinancialMetricsResult,
@@ -31,33 +31,30 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
   const { exchangeRate } = useCurrency();
   const { simulatedPrices } = useMarketData();
   const debouncedPrices = useDebouncedValue(simulatedPrices, 1500);
-  useHydrateSarPerUsdDailySeries(data, exchangeRate);
+  const deferredPrices = useDeferredValue(debouncedPrices);
+  const deferredData = useDeferredValue(showHydrateBanner ? null : data);
+  useHydrateSarPerUsdDailySeries(deferredData, exchangeRate);
 
   const value = useMemo((): CanonicalFinancialMetricsContextValue => {
     const full = buildCanonicalFinancialMetricsResult({
-      data,
+      data: deferredData,
       exchangeRate,
       getAvailableCashForAccount,
-      debouncedPrices,
+      debouncedPrices: deferredPrices,
       showHydrateBanner,
     });
-    const dashboardCore = computeDashboardCanonicalMetrics({
-      data: showHydrateBanner ? null : data,
-      exchangeRate,
-      getAvailableCashForAccount: showHydrateBanner ? undefined : getAvailableCashForAccount,
-      simulatedPrices: showHydrateBanner ? {} : debouncedPrices,
-    });
+    const dashboardCore = pickDashboardCanonicalMetrics(full);
     return {
       full,
       dashboard: {
         ...dashboardCore,
-        data,
+        data: deferredData,
         exchangeRate,
-        simulatedPrices: debouncedPrices,
+        simulatedPrices: deferredPrices,
         getAvailableCashForAccount,
       },
     };
-  }, [data, exchangeRate, getAvailableCashForAccount, debouncedPrices, showHydrateBanner]);
+  }, [deferredData, exchangeRate, getAvailableCashForAccount, deferredPrices, showHydrateBanner]);
 
   return (
     <CanonicalFinancialMetricsContext.Provider value={value}>{children}</CanonicalFinancialMetricsContext.Provider>

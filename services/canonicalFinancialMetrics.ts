@@ -138,6 +138,20 @@ export function computeDashboardCanonicalMetrics(
   };
 }
 
+/** Derive dashboard bundle from full canonical metrics (avoids duplicate headline/KPI compute). */
+export function pickDashboardCanonicalMetrics(full: CanonicalFinancialMetrics): DashboardCanonicalMetrics {
+  return {
+    headline: full.headline,
+    kpiSnapshot: full.kpiSnapshot,
+    todaySnapshot: full.todaySnapshot,
+    investableCashBars: full.investableCashBars,
+    sarPerUsd: full.sarPerUsd,
+    netWorth: full.netWorth,
+    liquidCashSar: full.liquidCashSar,
+    nwOptions: full.nwOptions,
+  };
+}
+
 export function computeCanonicalFinancialMetrics(
   input: CanonicalFinancialMetricsInput,
 ): CanonicalFinancialMetrics {

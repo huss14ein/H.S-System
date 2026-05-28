@@ -11,6 +11,7 @@ import AiProxyUnavailableHint from '../components/AiProxyUnavailableHint';
 import { getTargetAllocationForProfile, meanVarianceOptimization } from '../services/portfolioConstruction';
 import type { Holding, Page } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
+import { useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
@@ -35,7 +36,8 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab: _o
   const { data, getAvailableCashForAccount } = useContext(DataContext)!;
   const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
   const { trackAction } = useSelfLearning();
-  const { simulatedPrices, symbolQuoteUpdatedAt } = useMarketData();
+  const { simulatedPrices } = useInvestmentsCanonicalMetrics();
+  const { symbolQuoteUpdatedAt } = useMarketData();
   const { exchangeRate } = useCurrency();
   const { formatCurrencyString } = useFormatCurrency();
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>('');

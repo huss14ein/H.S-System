@@ -76,6 +76,7 @@ function endOfUtcDayFromYmd(ymd: string): Date {
  * `transactionFilters.ts`), so offering them here would suggest income that never appears in KPIs.
  */
 const INCOME_CATEGORIES = ['Salary', 'Bonus', 'Investment Income', 'Freelance', 'Rental Income', 'Other Income'];
+const TRANSACTIONS_LIST_PAGE_SIZE = 80;
 
 /** Map AI/local strings onto a real category from `allowed` (exact, case-insensitive, then substring fuzzy). */
 function matchToAllowedCategory(suggested: string, allowed: string[]): string | null {
@@ -1180,6 +1181,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         expenseType: 'all' as 'all' | 'Core' | 'Discretionary',
         budgetCategory: 'all' as 'all' | string,
     });
+    const [transactionsVisibleCount, setTransactionsVisibleCount] = useState(TRANSACTIONS_LIST_PAGE_SIZE);
+
+    useEffect(() => {
+        setTransactionsVisibleCount(TRANSACTIONS_LIST_PAGE_SIZE);
+    }, [filters.accountId, filters.month, filters.nature, filters.expenseType, filters.budgetCategory]);
 
     useEffect(() => {
         setFilters((f) => ({ ...f, month: financialMonthIso(new Date(), monthStartDay) }));
@@ -1414,6 +1420,12 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         });
         return sortByNewestFirst(filtered);
     }, [data?.transactions, (data as any)?.personalTransactions, filters, userRole, permittedBudgetCategories, sharedBudgetCategories, monthStartDay]);
+
+    const visibleTransactions = useMemo(
+        () => filteredTransactions.slice(0, transactionsVisibleCount),
+        [filteredTransactions, transactionsVisibleCount],
+    );
+    const hasMoreTransactions = filteredTransactions.length > visibleTransactions.length;
 
     const filteredTransactionsForExport = useMemo(() => {
         const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
@@ -2151,7 +2163,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     </p>
                 </div>
                 <ul className="divide-y divide-slate-100">
-                    {filteredTransactions.map((transaction: Transaction) => (
+                    {visibleTransactions.map((transaction: Transaction) => (
                         <li key={transaction.id} className="list-row flex-col items-start sm:flex-row sm:items-center">
                             <div className="flex-1 min-w-0">
                                 <p className="font-semibold text-dark">{transaction.description}</p>
@@ -2184,6 +2196,17 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                             </div>
                         </li>
                     ))}
+                    {hasMoreTransactions && (
+                        <li className="py-4 text-center">
+                            <button
+                                type="button"
+                                className="btn-secondary text-sm"
+                                onClick={() => setTransactionsVisibleCount((n) => n + TRANSACTIONS_LIST_PAGE_SIZE)}
+                            >
+                                Show more ({filteredTransactions.length - visibleTransactions.length} remaining)
+                            </button>
+                        </li>
+                    )}
                     {filteredTransactions.length === 0 && (
                         <li className="empty-state flex flex-col items-center gap-2 py-6">
                             <span>No transactions found for the selected period.</span>

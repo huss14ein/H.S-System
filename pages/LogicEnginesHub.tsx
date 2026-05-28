@@ -51,12 +51,12 @@ import { monthlyProvisionNeeded } from '../services/provisionEngine';
 import { computeLiquidityRunwayFromData } from '../services/liquidityRunwayEngine';
 import { netCashFlowForFinancialMonthSarDated } from '../services/financeMetrics';
 import { financialMonthKey, resolveMonthStartDayFromData } from '../utils/financialMonth';
-import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { debtStressScore } from '../services/debtEngines';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useCurrency } from '../context/CurrencyContext';
 import { useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
 import { toSAR } from '../utils/currencyMath';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { getPersonalInvestments } from '../utils/wealthScope';
@@ -130,6 +130,7 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
   const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
   const { exchangeRate, currency: displayCurrency } = useCurrency();
   const { sarPerUsd, netWorth } = useDashboardCanonicalMetrics();
+  useHydrateSarPerUsdDailySeries(data, exchangeRate);
 
   const scoped = useMemo(() => getScopedData(data ?? null), [data]);
   const goalResolvedMap = useMemo(() => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd), [data, sarPerUsd]);
@@ -188,7 +189,6 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
     [ef.emergencyCash, ef.targetAmount, netWorth]
   );
   const monthlyCashflowSar = useMemo(() => {
-    if (data) hydrateSarPerUsdDailySeries(data, exchangeRate);
     return netCashFlowForFinancialMonthSarDated(scoped.txs, scoped.accounts, new Date(), data ?? null, exchangeRate);
   }, [scoped.txs, scoped.accounts, data, exchangeRate]);
   const bucketAllocInput = useMemo(() => {

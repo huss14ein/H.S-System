@@ -33,6 +33,7 @@ import { MarketDataContext } from '../context/MarketDataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import type { Page, Transaction } from '../types';
 import { useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
 import { personalInvestmentTerminalValueSAR } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
@@ -87,6 +88,7 @@ const RiskTradingHub: React.FC<{
 
   const { exchangeRate } = useCurrency();
   const { sarPerUsd, netWorth: currentNetWorth, liquidCashSar } = useDashboardCanonicalMetrics();
+  useHydrateSarPerUsdDailySeries(data, exchangeRate);
   const personalInvestments = useMemo(() => getPersonalInvestments(data ?? null), [data]);
   const personalInvestmentAccountIds = useMemo(
     () => getPersonalAccounts(data ?? null).filter((a) => a.type === 'Investment').map((a) => a.id),
@@ -125,7 +127,6 @@ const RiskTradingHub: React.FC<{
 
   const mwrr = useMemo(() => {
     if (!data) return null;
-    hydrateSarPerUsdDailySeries(data, exchangeRate);
     const txs = data.investmentTransactions ?? [];
     const flows = flowsFromInvestmentTransactionsInSARWithDatedFx(txs, data, exchangeRate);
     const tv = personalInvestmentTerminalValueSAR({
@@ -140,7 +141,6 @@ const RiskTradingHub: React.FC<{
 
   const perfSnapshot = useMemo(() => {
     if (!data) return null;
-    hydrateSarPerUsdDailySeries(data, exchangeRate);
     const endVal = personalInvestmentTerminalValueSAR({
       portfolios: personalInvestments,
       investmentAccountIds: personalInvestmentAccountIds,

@@ -7,7 +7,9 @@ import type { FinancialData } from '../types';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 import { useDebouncedValue } from './useDebouncedValue';
 import { useHydrateSarPerUsdDailySeries } from './useHydrateSarPerUsdDailySeries';
-import { computeDashboardCanonicalMetrics, type DashboardCanonicalMetrics } from '../services/canonicalFinancialMetrics';
+import type { DashboardCanonicalMetrics } from '../services/canonicalFinancialMetrics';
+import { pickDashboardCanonicalMetrics } from '../services/canonicalFinancialMetrics';
+import type { SimulatedPriceMap } from '../services/investmentPlatformCardMetrics';
 import {
   buildCanonicalFinancialMetricsResult,
   type UseCanonicalFinancialMetricsResult,
@@ -16,6 +18,18 @@ import {
 export type { CanonicalFinancialMetrics } from '../services/canonicalFinancialMetrics';
 export type { UseCanonicalFinancialMetricsResult } from './canonicalFinancialMetricsBundle';
 export { buildCanonicalFinancialMetricsResult } from './canonicalFinancialMetricsBundle';
+
+/**
+ * Debounced live quotes from the shell provider (or local fallback).
+ * Prefer over `useMarketData().simulatedPrices` on pages that already use canonical KPIs.
+ */
+export function useCanonicalSimulatedPrices(): SimulatedPriceMap {
+  const shell = useCanonicalFinancialMetricsContext();
+  const { simulatedPrices } = useMarketData();
+  const debounced = useDebouncedValue(simulatedPrices, 1500);
+  if (shell) return shell.full.simulatedPrices;
+  return debounced;
+}
 
 /**
  * Headline SAR/USD spot only (hydrates daily FX series). Use in Header / notifications
@@ -80,18 +94,19 @@ export function useDashboardCanonicalMetricsLocal(): DashboardCanonicalMetrics &
   useHydrateSarPerUsdDailySeries(data, exchangeRate);
 
   return useMemo(() => {
-    const metrics = computeDashboardCanonicalMetrics({
-      data: showHydrateBanner ? null : data,
+    const full = buildCanonicalFinancialMetricsResult({
+      data,
       exchangeRate,
-      getAvailableCashForAccount: showHydrateBanner ? undefined : getAvailableCashForAccount,
-      simulatedPrices: showHydrateBanner ? {} : debouncedPrices,
+      getAvailableCashForAccount,
+      debouncedPrices,
+      showHydrateBanner,
     });
     return {
       data,
       exchangeRate,
       simulatedPrices: debouncedPrices,
       getAvailableCashForAccount,
-      ...metrics,
+      ...pickDashboardCanonicalMetrics(full),
     };
   }, [data, exchangeRate, getAvailableCashForAccount, debouncedPrices, showHydrateBanner]);
 }

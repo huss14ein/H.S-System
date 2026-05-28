@@ -2180,7 +2180,7 @@ const HoldingDetailModal: React.FC<{
 
 const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (holding: Holding) => void, holding: Holding | null }> = ({ isOpen, onClose, onSave, holding }) => {
     const { data } = useContext(DataContext)!;
-    const { simulatedPrices } = useMarketData();
+    const { simulatedPrices } = useInvestmentsCanonicalMetrics();
     const { formatCurrencyString } = useFormatCurrency();
     const [name, setName] = useState('');
     const [zakahClass, setZakahClass] = useState<'Zakatable' | 'Non-Zakatable'>('Zakatable');
@@ -3463,7 +3463,7 @@ const InvestmentPlan: React.FC<{
     const { formatCurrencyString } = useFormatCurrency();
     const { isAiAvailable, aiHealthChecked } = useAI();
     const sarPerUsd = useCanonicalSpotFx();
-    const { simulatedPrices } = useMarketData();
+    const { simulatedPrices } = useInvestmentsCanonicalMetrics();
 
     const planFromData = data?.investmentPlan;
     const planWithAnalystDefaults: InvestmentPlanSettings = useMemo(() => ({

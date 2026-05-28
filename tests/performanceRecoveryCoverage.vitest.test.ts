@@ -97,7 +97,10 @@ describe('performance recovery E2E wiring', () => {
   it('shell canonical metrics provider dedupes compute app-wide', () => {
     expect(read('components/AuthenticatedAppShell.tsx')).toContain('CanonicalFinancialMetricsProvider');
     expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('buildCanonicalFinancialMetricsResult');
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('pickDashboardCanonicalMetrics');
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).not.toContain('computeDashboardCanonicalMetrics');
     expect(read('hooks/useCanonicalFinancialMetrics.ts')).toContain('useCanonicalFinancialMetricsContext');
+    expect(read('hooks/useCanonicalFinancialMetrics.ts')).toContain('useCanonicalSimulatedPrices');
   });
 
   it('MarketSimulator filters no-op holding updates', () => {
@@ -182,6 +185,12 @@ describe('performance recovery E2E wiring', () => {
     expect(read('components/Layout.tsx')).toContain('useDebouncedMarketPrices');
     expect(read('pages/Summary.tsx')).not.toContain('useMarketData');
     expect(read('pages/Investments.tsx')).toContain('const { simulatedPrices } = useInvestmentsCanonicalMetrics()');
+    expect(read('pages/Dashboard.tsx')).toContain('useCanonicalSimulatedPrices');
+    expect(read('pages/Forecast.tsx')).not.toMatch(/useMarketData\(\)[\s\S]{0,120}simulatedPrices/);
+    expect(read('pages/Analysis.tsx')).not.toMatch(/useMemo\([\s\S]*hydrateSarPerUsdDailySeries/);
+    expect(read('components/HoldingSymbolSelect.tsx')).not.toContain('<select');
+    expect(read('pages/Transactions.tsx')).toContain('TRANSACTIONS_LIST_PAGE_SIZE');
+    expect(read('context/DataContext.tsx')).toMatch(/startTransition\(\(\)\s*=>\s*\{[\s\S]*setData\(/);
     expect(read('utils/lazyPages.tsx')).toContain("'Analysis'");
     expect(read('utils/lazyPages.tsx')).toContain("'Notifications'");
   });

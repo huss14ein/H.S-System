@@ -1,4 +1,4 @@
-import React, { useMemo, useContext, useState, useCallback, useEffect, Suspense, lazy } from 'react';
+import React, { useMemo, useContext, useState, useCallback, useEffect, Suspense, lazy, useDeferredValue } from 'react';
 import Card from '../components/Card';
 import LoadingSpinner from '../components/LoadingSpinner';
 
@@ -33,8 +33,7 @@ import { GoldBarIcon } from '../components/icons/GoldBarIcon';
 import { UsersIcon } from '../components/icons/UsersIcon';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
-import { useCanonicalSpotFx, useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
-import { useDebouncedValue } from '../hooks/useDebouncedValue';
+import { useCanonicalSpotFx, useDashboardCanonicalMetrics, useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
@@ -80,26 +79,11 @@ import { logKpiReconciliationDrift } from '../services/kpiDriftTelemetry';
 import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
 import PlanCompareContextBanner from '../components/PlanCompareContextBanner';
 import { useSelfLearning } from '../context/SelfLearningContext';
-import { useMarketData } from '../context/MarketDataContext';
 import { useDashboardReconciliationPrefs } from '../hooks/useDashboardReconciliationPrefs';
 import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
 import { useFinancialEnhancementInsights } from '../hooks/useFinancialEnhancementInsights';
-import { ExecutiveStatusRow } from '../components/dashboard/ExecutiveStatusRow';
-import { MomCashflowTrendChart } from '../components/dashboard/MomCashflowTrendChart';
-import {
-  createDashboardDateRange,
-  dashboardSuiteMonthsBack,
-  DateRangePicker,
-  type DashboardDateRange,
-} from '../components/dashboard/DateRangePicker';
+import { DashboardOperationsCockpit } from '../components/dashboard/DashboardOperationsCockpit';
 import { useLanguage } from '../context/LanguageContext';
-import { BudgetBurnRatePanel } from '../components/dashboard/BudgetBurnRatePanel';
-import { ExpenseDonutDrilldown } from '../components/dashboard/ExpenseDonutDrilldown';
-import { PortfolioHoldingsGrid } from '../components/dashboard/PortfolioHoldingsGrid';
-import { CostAveragingCalculator } from '../components/dashboard/CostAveragingCalculator';
-import { Goals2030Timeline } from '../components/dashboard/Goals2030Timeline';
-import { GoalProjectionAreaChart } from '../components/dashboard/GoalProjectionAreaChart';
-import { WhatIfSandbox } from '../components/dashboard/WhatIfSandbox';
 import { useDashboardSuiteScope } from '../hooks/useDashboardSuiteScope';
 
 interface ExtendedBudget extends Budget {
@@ -111,7 +95,7 @@ interface ExtendedBudget extends Budget {
 const AIExecutiveSummary: React.FC = () => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
-    const { simulatedPrices } = useMarketData();
+    const simulatedPrices = useCanonicalSimulatedPrices();
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { trackAction } = useSelfLearning();
     const [summary, setSummary] = useState<string>('');
@@ -445,8 +429,6 @@ const DashboardContent: React.FC<{
     const { data, getAvailableCashForAccount, showHydrateBanner } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
-    const { simulatedPrices } = useMarketData();
-    const debouncedPrices = useDebouncedValue(simulatedPrices, 400);
     const {
         headline,
         kpiSnapshot,
@@ -459,9 +441,8 @@ const DashboardContent: React.FC<{
     const emergencyFund = useEmergencyFund(data);
     const { maskBalance } = usePrivacyMask();
     const { dir } = useLanguage();
-    const { personalTransactions, personalAccounts, personalInvestments } = useDashboardSuiteScope(data);
-    const [suiteRange, setSuiteRange] = useState<DashboardDateRange>(() => createDashboardDateRange('6M'));
-    const suiteMonthsBack = useMemo(() => dashboardSuiteMonthsBack(suiteRange), [suiteRange]);
+    const { personalTransactions, personalAccounts } = useDashboardSuiteScope(data);
+    const deferredData = useDeferredValue(showHydrateBanner ? null : data);
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
     const lastTelemetrySignatureRef = React.useRef<string>('');
     const kpiDensity = 'compact' as const;
@@ -535,23 +516,23 @@ const DashboardContent: React.FC<{
 
     const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions, projectedCash30d, currentCash } = useMemo(() => {
         try {
-            if (!data || showHydrateBanner || !kpiSnapshot) {
+            if (!deferredData || showHydrateBanner || !kpiSnapshot) {
                 return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
             }
 
             const sarPerUsd = canonicalSarPerUsd;
 
             const now = new Date();
-            const monthStartDay = resolveMonthStartDayFromData(data);
+            const monthStartDay = resolveMonthStartDayFromData(deferredData);
             const currentFinMonth = financialMonthRange(now, monthStartDay);
-            const d = data as any;
-            const rawTransactions = d?.personalTransactions ?? data?.transactions ?? [];
+            const d = deferredData as any;
+            const rawTransactions = d?.personalTransactions ?? deferredData?.transactions ?? [];
             const transactions = (rawTransactions as Array<Transaction & { account_id?: string; budget_category?: string }>).map((t) => ({
                 ...t,
                 accountId: t.accountId ?? t.account_id ?? '',
                 budgetCategory: t.budgetCategory ?? t.budget_category ?? '',
             }));
-            const accounts = d?.personalAccounts ?? data?.accounts ?? [];
+            const accounts = d?.personalAccounts ?? deferredData?.accounts ?? [];
             const accountsById = new Map(accounts.map((a: Account) => [a.id, a]));
             const txCashflowSar = (t: { accountId?: string; amount?: number; date: string }) => {
                 const acc = accountsById.get(t.accountId ?? '') as Account | undefined;
@@ -559,7 +540,7 @@ const DashboardContent: React.FC<{
                 const raw = Math.abs(Number(t.amount) || 0);
                 if (c === 'SAR') return raw;
                 const day = t.date.slice(0, 10);
-                const r = getSarPerUsdForCalendarDay(day, data, exchangeRate);
+                const r = getSarPerUsdForCalendarDay(day, deferredData, exchangeRate);
                 return toSAR(raw, 'USD', r);
             };
 
@@ -569,7 +550,7 @@ const DashboardContent: React.FC<{
                 return d0 >= currentFinMonth.start && d0 <= currentFinMonth.end;
             });
             const budgetToMonthly = (b: { limit: number; period?: string }) => b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
-            const currentMonthBudgets = (data?.budgets ?? []).filter(
+            const currentMonthBudgets = (deferredData?.budgets ?? []).filter(
                 (b) => b.month === currentFinMonth.key.month && b.year === currentFinMonth.key.year,
             );
             const snap = kpiSnapshot;
@@ -588,7 +569,7 @@ const DashboardContent: React.FC<{
                 investmentCapitalSource,
             } = snap;
 
-            const investmentTreemapData = buildPersonalInvestmentTreemapRows(data, sarPerUsd, debouncedPrices);
+            const investmentTreemapData = buildPersonalInvestmentTreemapRows(deferredData, sarPerUsd, dashboardDebouncedPrices);
             const monthlySpending = new Map<string, number>();
             monthlyTransactions
                 .filter((t: { type?: string }) => countsAsExpenseForCashflowKpi(t))
@@ -646,7 +627,9 @@ const DashboardContent: React.FC<{
                 return allocations.length === 0;
             });
 
-            const recentTransactions = [...transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            const recentTransactions = [...transactions]
+                .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                .slice(0, 40);
 
             // 30-day projected cash: canonical KPI liquid cash (bank + platform tradable cash).
             const currentCash = liquidCashSar;
@@ -692,7 +675,7 @@ const DashboardContent: React.FC<{
             console.error("Dashboard calculation error:", e);
             return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
         }
-    }, [data, exchangeRate, getAvailableCashForAccount, kpiSnapshot, canonicalSarPerUsd, debouncedPrices, showHydrateBanner]);
+    }, [deferredData, exchangeRate, getAvailableCashForAccount, kpiSnapshot, canonicalSarPerUsd, dashboardDebouncedPrices, showHydrateBanner]);
 
     useEffect(() => {
         if (!auth?.user?.id || !data || showHydrateBanner) return;
@@ -791,13 +774,13 @@ const DashboardContent: React.FC<{
 
     const summaryModelForReconciliation = useMemo(() => {
         if (!strictReconciliationMode || !data || !getAvailableCashForAccount) return null;
-        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount, debouncedPrices);
-    }, [strictReconciliationMode, data, exchangeRate, getAvailableCashForAccount, debouncedPrices]);
+        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount, dashboardDebouncedPrices);
+    }, [strictReconciliationMode, data, exchangeRate, getAvailableCashForAccount, dashboardDebouncedPrices]);
 
     const summaryMonthlyKpisForReconciliation = useMemo(() => {
         if (!strictReconciliationMode || !data || !getAvailableCashForAccount) return null;
-        return computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, debouncedPrices);
-    }, [strictReconciliationMode, data, exchangeRate, getAvailableCashForAccount, debouncedPrices]);
+        return computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, dashboardDebouncedPrices);
+    }, [strictReconciliationMode, data, exchangeRate, getAvailableCashForAccount, dashboardDebouncedPrices]);
 
     const kpiReconciliation = useMemo(() => {
         if (!strictReconciliationMode || !summaryModelForReconciliation || !summaryMonthlyKpisForReconciliation) return null;
@@ -908,63 +891,16 @@ const DashboardContent: React.FC<{
                 onOpenPlan={() => setActivePage('Plan')}
             />
 
-            {/* Dashboard suite: executive status + interactive range */}
-            <div className="mb-6 space-y-3">
-                <ExecutiveStatusRow metrics={{ headline, kpiSnapshot }} />
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-                    <div className="lg:col-span-1">
-                        <DateRangePicker value={suiteRange} onChange={setSuiteRange} />
-                    </div>
-                    <div className="lg:col-span-2">
-                        <MomCashflowTrendChart
-                            data={data}
-                            uiExchangeRate={canonicalSarPerUsd}
-                            startIso={suiteRange.startIso}
-                            endIso={suiteRange.endIso}
-                            monthsBack={suiteMonthsBack}
-                        />
-                    </div>
-                </div>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                    <BudgetBurnRatePanel
-                        data={data}
-                        budgets={data?.budgets ?? []}
-                        transactions={personalTransactions}
-                        accounts={personalAccounts}
-                        uiExchangeRate={canonicalSarPerUsd}
-                    />
-                    <ExpenseDonutDrilldown
-                        data={data}
-                        transactions={personalTransactions}
-                        accounts={personalAccounts}
-                        uiExchangeRate={canonicalSarPerUsd}
-                    />
-                </div>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                    <PortfolioHoldingsGrid
-                        portfolios={personalInvestments}
-                        simulatedPrices={dashboardDebouncedPrices ?? {}}
-                        sarPerUsd={canonicalSarPerUsd}
-                    />
-                    <CostAveragingCalculator portfolios={personalInvestments} />
-                </div>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                    <Goals2030Timeline
-                        data={data}
-                        goals={data?.goals ?? []}
-                        sarPerUsd={canonicalSarPerUsd}
-                        onOpenGoals={() => setActivePage('Goals')}
-                    />
-                    <GoalProjectionAreaChart data={data} goals={data?.goals ?? []} sarPerUsd={canonicalSarPerUsd} />
-                </div>
-                <WhatIfSandbox
-                    data={data}
-                    goals={data?.goals ?? []}
-                    sarPerUsd={canonicalSarPerUsd}
-                    liquidCashSar={kpiSnapshot?.liquidCashSar ?? 0}
-                    investmentsTotalSar={Math.max(0, headline.buckets?.investments ?? 0)}
-                />
-            </div>
+            <DashboardOperationsCockpit
+                data={data}
+                personalTransactions={personalTransactions}
+                personalAccounts={personalAccounts}
+                budgets={data?.budgets ?? []}
+                goals={data?.goals ?? []}
+                sarPerUsd={canonicalSarPerUsd}
+                liquidCashSar={kpiSnapshot?.liquidCashSar ?? 0}
+                investmentsTotalSar={Math.max(0, headline.buckets?.investments ?? 0)}
+            />
 
             {isNewUser && (
                 <div className="mb-6 p-5 rounded-xl border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-white">

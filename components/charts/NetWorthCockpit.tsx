@@ -1,4 +1,4 @@
-import { useContext, useMemo, useState } from 'react';
+import { useContext, useMemo, useState, memo } from 'react';
 import {
   Area,
   AreaChart,
@@ -23,7 +23,8 @@ import type { SimulatedPriceMap } from '../../services/investmentPlatformCardMet
 import { toSAR } from '../../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency } from '../../utils/holdingValuation';
 import { resolveInvestmentPortfolioCurrency } from '../../utils/investmentPortfolioCurrency';
-import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from '../../services/fxDailySeries';
+import { getSarPerUsdForCalendarDay } from '../../services/fxDailySeries';
+import { useHydrateSarPerUsdDailySeries } from '../../hooks/useHydrateSarPerUsdDailySeries';
 import { listNetWorthSnapshots } from '../../services/netWorthSnapshot';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../../utils/wealthScope';
 import type { Account, Transaction } from '../../types';
@@ -214,6 +215,7 @@ function NetWorthCockpitContent(
   const { headline, todaySnapshot, investableCashBars, sarPerUsd, simulatedPrices } = metrics;
   const { data } = useContext(DataContext)!;
   const { exchangeRate } = useCurrency();
+  useHydrateSarPerUsdDailySeries(data, exchangeRate);
   const { formatCurrencyString } = useFormatCurrency();
   const [period, setPeriod] = useState<TimePeriod>('6M');
   const buckets = headline.buckets;
@@ -240,8 +242,6 @@ function NetWorthCockpitContent(
         movers: [] as Array<{ symbol: string; name: string; valueSar: number; gainLossSar: number; gainLossPct: number }>,
       };
     }
-
-    hydrateSarPerUsdDailySeries(data, exchangeRate, { horizonDays: 4000 });
 
     const snaps = listNetWorthSnapshots();
     const cutoff = cutoffFor(period);
@@ -889,10 +889,12 @@ function NetWorthCockpitContent(
   );
 }
 
+const MemoNetWorthCockpitContent = memo(NetWorthCockpitContent);
+
 function NetWorthCockpitFromCanonical(shell: NetWorthCockpitShellProps) {
   const { headline, todaySnapshot, investableCashBars, sarPerUsd, simulatedPrices } = useCanonicalFinancialMetrics();
   return (
-    <NetWorthCockpitContent
+    <MemoNetWorthCockpitContent
       {...shell}
       metrics={{ headline, todaySnapshot, investableCashBars, sarPerUsd, simulatedPrices }}
     />
@@ -905,7 +907,7 @@ export default function NetWorthCockpit(
   const { metricsOverride, ...shell } = props;
   if (metricsOverride) {
     return (
-      <NetWorthCockpitContent
+      <MemoNetWorthCockpitContent
         {...shell}
         metrics={{
           ...metricsOverride,

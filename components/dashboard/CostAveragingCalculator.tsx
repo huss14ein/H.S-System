@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useLanguage } from '../../context/LanguageContext';
+import { SearchableSymbolPicker } from './SearchableSymbolPicker';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import type { Holding, InvestmentPortfolio } from '../../types';
 
@@ -34,6 +35,10 @@ export const CostAveragingCalculator: React.FC<{
   }, [portfolios]);
 
   const [symbol, setSymbol] = useState(options[0]?.symbol ?? '');
+  const pickerOptions = useMemo(
+    () => options.map((o) => ({ symbol: o.symbol, label: `${o.symbol} — ${o.name}` })),
+    [options],
+  );
   const base = useMemo(() => options.find((o) => o.symbol === symbol) ?? null, [options, symbol]);
   const [addQty, setAddQty] = useState('0');
   const [addPrice, setAddPrice] = useState('');
@@ -66,13 +71,14 @@ export const CostAveragingCalculator: React.FC<{
       <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
         <div className="sm:col-span-1">
           <label className="block text-xs font-medium text-slate-600">{t('holdings')}</label>
-          <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="mt-1 input-base w-full">
-            {options.map((o) => (
-              <option key={o.symbol} value={o.symbol}>
-                {o.symbol} — {o.name}
-              </option>
-            ))}
-          </select>
+          <div className="mt-1">
+            <SearchableSymbolPicker
+              options={pickerOptions}
+              value={symbol}
+              onChange={setSymbol}
+              placeholder={t('apply') === 'تطبيق' ? 'بحث بالرمز…' : 'Search symbol…'}
+            />
+          </div>
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-600">{t('shares')}</label>

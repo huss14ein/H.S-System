@@ -49,6 +49,16 @@ const DICT: Dict = {
   whatIf: { en: 'Decision sandbox (what-if)', ar: 'مختبر القرار (ماذا لو)' },
   allocationToInvestments: { en: 'Allocation to investments', ar: 'تخصيص للاستثمارات' },
   educationExpenseBump: { en: 'Education expenses (+%)', ar: 'زيادة مصروفات التعليم (+٪)' },
+
+  dashboardCockpitTitle: { en: 'Monthly cockpit', ar: 'لوحة الشهر' },
+  dashboardCockpitSubtitle: { en: 'Cashflow, budgets, and spending — your day-to-day financial pulse.', ar: 'التدفقات والميزانية والمصروفات — نبضك المالي اليومي.' },
+  summaryAtlasTitle: { en: 'Wealth atlas', ar: 'خريطة الثروة' },
+  summaryAtlasSubtitle: { en: 'How your net worth is built, allocated, and tracking toward 2030 — charts only on this page.', ar: 'كيف تُبنى ثروتك وتُوزَّع وتتجه نحو 2030 — رسوم بيانية خاصة بهذه الصفحة.' },
+  wealthComposition: { en: 'Wealth composition', ar: 'تركيبة الثروة' },
+  wealthCompositionHint: { en: 'Asset buckets that sum to headline net worth (same as Dashboard KPI).', ar: 'سلال الأصول التي تُجمع لصافي الثروة (نفس لوحة التحكم).' },
+  allocationRings: { en: 'Allocation rings', ar: 'حلقات التوزيع' },
+  holdingsMap: { en: 'Holdings heat map', ar: 'خريطة المقتنيات' },
+  goalsRoadmapHint: { en: 'Milestone rings on the road to 2030.', ar: 'محطات على طريق 2030.' },
 };
 
 export type LanguageContextValue = {

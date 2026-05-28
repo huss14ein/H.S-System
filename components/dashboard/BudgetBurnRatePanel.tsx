@@ -1,22 +1,15 @@
 import React, { useMemo } from 'react';
+import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useLanguage } from '../../context/LanguageContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import type { Account, Budget, FinancialData, Transaction } from '../../types';
 import { resolveMonthStartDayFromData, financialMonthRange } from '../../utils/financialMonth';
 import { aggregatePersonalBudgetCategorySpendSar } from '../../services/budgetSpendMath';
 import { budgetMonthlyEquivalentSar } from '../../services/goalProjectionFunding';
+import { DashboardVisualCard } from './DashboardVisualCard';
+import { dashboardChartMargin } from './chartLayout';
 
-type BurnRow = { key: string; label: string; spentSar: number; limitSar: number; pct: number };
-
-function clamp01(n: number): number {
-  return Math.max(0, Math.min(1, n));
-}
-
-function statusForPct(pct: number): 'ok' | 'near' | 'over' {
-  if (pct >= 1) return 'over';
-  if (pct >= 0.85) return 'near';
-  return 'ok';
-}
+type ChartRow = { label: string; spent: number; remaining: number; pct: number; status: 'ok' | 'near' | 'over' };
 
 const BudgetBurnRatePanelInner: React.FC<{
   data: FinancialData | null | undefined;
@@ -28,7 +21,7 @@ const BudgetBurnRatePanelInner: React.FC<{
   const { t, dir } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
 
-  const rows = useMemo((): BurnRow[] => {
+  const rows = useMemo((): ChartRow[] => {
     if (!data) return [];
     const monthStartDay = resolveMonthStartDayFromData(data);
     const { start, end, key } = financialMonthRange(new Date(), monthStartDay);
@@ -53,71 +46,59 @@ const BudgetBurnRatePanelInner: React.FC<{
         const spent = spentByBudgetCat.get(cat) ?? 0;
         const lim = Math.max(0, budgetMonthlyEquivalentSar(b));
         const pct = lim > 0 ? spent / lim : 0;
-        return { key: b.id ?? cat, label: cat, spentSar: spent, limitSar: lim, pct };
+        const status = pct >= 1 ? 'over' : pct >= 0.85 ? 'near' : 'ok';
+        return {
+          label: cat.length > 14 ? `${cat.slice(0, 14)}…` : cat,
+          spent,
+          remaining: Math.max(0, lim - spent),
+          pct,
+          status: status as ChartRow['status'],
+        };
       })
       .sort((a, b) => b.pct - a.pct)
-      .slice(0, 10);
+      .slice(0, 8);
   }, [accounts, budgets, data, transactions, uiExchangeRate]);
 
-  return (
-    <div dir={dir} className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t('burnRate')}</p>
-          <p className="mt-1 text-sm text-slate-700">{t('budgetIntel')}</p>
-        </div>
-      </div>
+  const statusColor = (s: ChartRow['status']) => (s === 'over' ? '#f43f5e' : s === 'near' ? '#f59e0b' : '#10b981');
 
+  return (
+    <DashboardVisualCard dir={dir} accent="rose" title={t('burnRate')} subtitle={t('budgetIntel')}>
       {!rows.length ? (
-        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-          {t('budgetIntel')} — {t('apply') === 'تطبيق' ? 'لا توجد ميزانيات لهذا الشهر.' : 'No budgets for this month.'}
-        </div>
+        <p className="text-sm text-slate-500 py-6 text-center">
+          {t('apply') === 'تطبيق' ? 'لا توجد ميزانيات لهذا الشهر.' : 'No budgets for this month.'}
+        </p>
       ) : (
-        <div className="mt-3 space-y-3">
-          {rows.map((r) => {
-            const s = statusForPct(r.pct);
-            const bar = clamp01(r.pct);
-            const color =
-              s === 'over' ? 'bg-rose-500' : s === 'near' ? 'bg-amber-500' : 'bg-emerald-500';
-            const badge =
-              s === 'over'
-                ? { text: t('overLimit'), cls: 'border-rose-200 bg-rose-50 text-rose-800' }
-                : s === 'near'
-                  ? { text: t('nearLimit'), cls: 'border-amber-200 bg-amber-50 text-amber-800' }
-                  : null;
-            return (
-              <div
-                key={r.key}
-                className={`rounded-xl border p-3 transition-shadow hover:shadow-sm ${
-                  s === 'over'
-                    ? 'border-rose-200 bg-rose-50/30'
-                    : s === 'near'
-                      ? 'border-amber-200 bg-amber-50/30'
-                      : 'border-slate-200 bg-white'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-slate-800 truncate">{r.label}</p>
-                    <p className="text-xs text-slate-500 tabular-nums">
-                      {formatCurrencyString(r.spentSar, { digits: 0 })} / {formatCurrencyString(r.limitSar, { digits: 0 })}
-                    </p>
-                  </div>
-                  {badge && (
-                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${badge.cls}`}>
-                      {badge.text}
-                    </span>
-                  )}
-                </div>
-                <div className="mt-2 h-2.5 w-full rounded-full bg-slate-100 overflow-hidden">
-                  <div className={`h-full ${color}`} style={{ width: `${Math.min(100, bar * 100)}%` }} />
-                </div>
-              </div>
-            );
-          })}
+        <div className="h-[280px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={rows} layout="vertical" margin={dashboardChartMargin(dir)}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
+              <XAxis type="number" hide />
+              <YAxis type="category" dataKey="label" width={72} tick={{ fontSize: 10, fill: '#475569' }} />
+              <Tooltip
+                content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null;
+                  const spent = Number(payload.find((p) => p.dataKey === 'spent')?.value ?? 0);
+                  const rem = Number(payload.find((p) => p.dataKey === 'remaining')?.value ?? 0);
+                  return (
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg">
+                      <p className="font-semibold text-slate-800">{label}</p>
+                      <p className="text-rose-700 tabular-nums">{t('burnRate')}: {formatCurrencyString(spent, { digits: 0 })}</p>
+                      <p className="text-emerald-700 tabular-nums">{formatCurrencyString(rem, { digits: 0 })} left</p>
+                    </div>
+                  );
+                }}
+              />
+              <Bar dataKey="spent" stackId="a" radius={[0, 0, 0, 0]}>
+                {rows.map((r) => (
+                  <Cell key={`s-${r.label}`} fill={statusColor(r.status)} />
+                ))}
+              </Bar>
+              <Bar dataKey="remaining" stackId="a" fill="#e2e8f0" radius={[0, 6, 6, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       )}
-    </div>
+    </DashboardVisualCard>
   );
 };
 

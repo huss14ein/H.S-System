@@ -52,21 +52,7 @@ import Modal from '../components/Modal';
 import { useAI } from '../context/AiContext';
 import AiProxyUnavailableHint from '../components/AiProxyUnavailableHint';
 import { useLanguage } from '../context/LanguageContext';
-import { ExecutiveStatusRow } from '../components/dashboard/ExecutiveStatusRow';
-import { MomCashflowTrendChart } from '../components/dashboard/MomCashflowTrendChart';
-import {
-  createDashboardDateRange,
-  dashboardSuiteMonthsBack,
-  DateRangePicker,
-  type DashboardDateRange,
-} from '../components/dashboard/DateRangePicker';
-import { BudgetBurnRatePanel } from '../components/dashboard/BudgetBurnRatePanel';
-import { ExpenseDonutDrilldown } from '../components/dashboard/ExpenseDonutDrilldown';
-import { PortfolioHoldingsGrid } from '../components/dashboard/PortfolioHoldingsGrid';
-import { CostAveragingCalculator } from '../components/dashboard/CostAveragingCalculator';
-import { Goals2030Timeline } from '../components/dashboard/Goals2030Timeline';
-import { GoalProjectionAreaChart } from '../components/dashboard/GoalProjectionAreaChart';
-import { WhatIfSandbox } from '../components/dashboard/WhatIfSandbox';
+import { SummaryWealthAtlas } from '../components/dashboard/SummaryWealthAtlas';
 import { useDashboardSuiteScope } from '../hooks/useDashboardSuiteScope';
 
 function householdStressStyles(level: string) {
@@ -156,7 +142,8 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         sarPerUsd: canonicalSarPerUsd,
         simulatedPrices: canonicalSimulatedPrices,
         investmentsTotalSar,
-        liquidCashSar: canonicalLiquidCashSar,
+        investmentAllocation,
+        buckets,
     } = useCanonicalFinancialMetrics();
     const fxBanner = useMemo(() => {
         const w = Number(data?.wealthUltraConfig?.fxRate);
@@ -202,9 +189,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
 
     const { maskBalance } = usePrivacyMask();
     const { dir } = useLanguage();
-    const [suiteRange, setSuiteRange] = useState<DashboardDateRange>(() => createDashboardDateRange('6M'));
-    const suiteMonthsBack = useMemo(() => dashboardSuiteMonthsBack(suiteRange), [suiteRange]);
-    const { personalTransactions, personalAccounts, personalInvestments } = useDashboardSuiteScope(data);
+    const { personalInvestments } = useDashboardSuiteScope(data);
 
     const nwSnapshotInsight = useMemo(() => {
         const snaps = listNetWorthSnapshots();
@@ -478,62 +463,19 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                 )
             }
         >
-            <div dir={dir} className="mb-6 space-y-3">
-                <ExecutiveStatusRow metrics={{ headline, kpiSnapshot }} />
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-                    <div className="lg:col-span-1">
-                        <DateRangePicker value={suiteRange} onChange={setSuiteRange} />
-                    </div>
-                    <div className="lg:col-span-2">
-                        <MomCashflowTrendChart
-                            data={data}
-                            uiExchangeRate={canonicalSarPerUsd}
-                            startIso={suiteRange.startIso}
-                            endIso={suiteRange.endIso}
-                            monthsBack={suiteMonthsBack}
-                        />
-                    </div>
-                </div>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                    <BudgetBurnRatePanel
-                        data={data}
-                        budgets={data?.budgets ?? []}
-                        transactions={personalTransactions}
-                        accounts={personalAccounts}
-                        uiExchangeRate={canonicalSarPerUsd}
-                    />
-                    <ExpenseDonutDrilldown
-                        data={data}
-                        transactions={personalTransactions}
-                        accounts={personalAccounts}
-                        uiExchangeRate={canonicalSarPerUsd}
-                    />
-                </div>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                    <PortfolioHoldingsGrid
-                        portfolios={personalInvestments}
-                        simulatedPrices={canonicalSimulatedPrices ?? {}}
-                        sarPerUsd={canonicalSarPerUsd}
-                    />
-                    <CostAveragingCalculator portfolios={personalInvestments} />
-                </div>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                    <Goals2030Timeline
-                        data={data}
-                        goals={data?.goals ?? []}
-                        sarPerUsd={canonicalSarPerUsd}
-                        onOpenGoals={() => setActivePage?.('Goals')}
-                    />
-                    <GoalProjectionAreaChart data={data} goals={data?.goals ?? []} sarPerUsd={canonicalSarPerUsd} />
-                </div>
-                <WhatIfSandbox
-                    data={data}
-                    goals={data?.goals ?? []}
-                    sarPerUsd={canonicalSarPerUsd}
-                    liquidCashSar={canonicalLiquidCashSar}
-                    investmentsTotalSar={investmentsTotalSar}
-                />
-            </div>
+            <SummaryWealthAtlas
+                dir={dir}
+                buckets={buckets}
+                netWorthSar={headline?.netWorth ?? 0}
+                investmentAllocation={investmentAllocation}
+                investmentsTotalSar={investmentsTotalSar}
+                personalInvestments={personalInvestments}
+                simulatedPrices={canonicalSimulatedPrices ?? {}}
+                sarPerUsd={canonicalSarPerUsd}
+                data={data}
+                goals={data?.goals ?? []}
+                onOpenGoals={() => setActivePage?.('Goals')}
+            />
 
             <Modal isOpen={isPrintOptionsOpen} onClose={() => setIsPrintOptionsOpen(false)} title="Choose what to include in the HTML report">
                 <div className="space-y-3 text-sm text-slate-700">

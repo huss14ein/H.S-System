@@ -8,6 +8,7 @@ import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { RocketLaunchIcon } from '../components/icons/RocketLaunchIcon';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
+import { useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
@@ -966,7 +967,8 @@ const InvestmentPlanView: React.FC<{
     const { aiActionsEnabled } = useAI();
     const { data, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker, getAvailableCashForAccount } = useContext(DataContext)!;
     const { trackAction, trackSuggestionFeedback } = useSelfLearning();
-    const { simulatedPrices, symbolQuoteUpdatedAt } = useMarketData();
+    const { simulatedPrices } = useInvestmentsCanonicalMetrics();
+    const { symbolQuoteUpdatedAt } = useMarketData();
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useCanonicalSpotFx();
     const emergencyFund = useEmergencyFund(data ?? null);

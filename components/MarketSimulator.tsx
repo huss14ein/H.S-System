@@ -440,7 +440,7 @@ const MarketSimulator: React.FC = () => {
                 !isQuoteRefreshInCooldown() &&
                 marketContext
             ) {
-                marketContext.bumpPriceRefresh({ kind: 'all', forceFetch: priceScope.forceFetch === true });
+                marketContext.bumpPriceRefresh({ kind: 'all', forceFetch: false });
             }
         };
 

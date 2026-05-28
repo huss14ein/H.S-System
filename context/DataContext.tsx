@@ -1128,6 +1128,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 }
             }
 
+            startTransition(() => {
             setData({
                 accounts: ownedAccounts,
                 assets: filterOwnedRows(assets.data as any[]).map(normalizeAssetRow),
@@ -1206,6 +1207,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 ),
                 allTransactions: [],
                 allBudgets: [],
+            });
             });
 
             // Post due Sukuk payouts after first paint (was blocking setData for up to 5s).
@@ -1320,7 +1322,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }, [auth?.user?.id]);
 
     /** Keep a dense SAR/USD point per calendar day for charts/KPIs (spot + snapshot seed + forward-fill). */
+    const fxHydrateKeyRef = useRef<number | null>(null);
     useEffect(() => {
+        if (!data) return;
+        if (fxHydrateKeyRef.current === dataResetKey) return;
+        fxHydrateKeyRef.current = dataResetKey;
         hydrateSarPerUsdDailySeries(data, DEFAULT_SAR_PER_USD);
     }, [data, dataResetKey]);
 
@@ -2930,7 +2936,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }));
     };
     const batchUpdateHoldingValues = (updates: { id: string; currentValue: number }[]) => {
-      setData(prevData => {
+      startTransition(() => {
+        setData(prevData => {
             const updatesMap = new Map(updates.map(u => [u.id, u.currentValue]));
             return {
                 ...prevData,
@@ -2940,6 +2947,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 }))
             };
         });
+      });
     };
     const recordTrade = async (
         trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string, transferGroupId?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number },
@@ -3682,6 +3690,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             console.error("Error batch updating commodity values:", failed.error);
             return;
         }
+        startTransition(() => {
         setData(prevData => {
             const updatesMap = new Map(safeUpdates.map(u => [u.id, u.currentValue]));
             return {
@@ -3690,6 +3699,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     updatesMap.has(h.id) ? { ...h, currentValue: updatesMap.get(h.id)! } : h
                 )
             };
+        });
         });
     };
 
@@ -4033,7 +4043,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const totalDeployableCash = useMemo(() => {
         if (!data) return 0;
-        hydrateSarPerUsdDailySeries(data as FinancialData, DEFAULT_SAR_PER_USD);
         const sarPerUsd = resolveSarPerUsd(data as FinancialData, DEFAULT_SAR_PER_USD);
         return sumTradableCashSarFromInvestmentAccounts(
             accountsForDeployable.filter((a: Account) => a.type === 'Investment'),

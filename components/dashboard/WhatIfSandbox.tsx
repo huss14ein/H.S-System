@@ -11,6 +11,7 @@ import {
 import { normalizedMonthlyExpenseSar } from '../../services/financeMetrics';
 import { getPersonalAccounts } from '../../utils/wealthScope';
 import { dashboardChartMargin } from './chartLayout';
+import { DashboardVisualCard } from './DashboardVisualCard';
 
 type Point = { month: string; base: number; scenario: number };
 
@@ -81,22 +82,18 @@ const WhatIfSandboxInner: React.FC<{
   }, [allocPct, baseMonthlyNetSar, data, goals, language, liquidCashSar, sarPerUsd, scenarioMonthlyNetSar]);
 
   return (
-    <div dir={dir} className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t('whatIf')}</p>
-          <p className="mt-1 text-sm text-slate-700">
-            {language === 'ar'
-              ? 'اضبط التخصيص والمصروفات لرؤية الأثر على مسار الأهداف.'
-              : 'Adjust allocation and expenses to see impact on your goal trajectory.'}
-          </p>
-        </div>
-        <div className="text-xs text-slate-500 tabular-nums">
+    <DashboardVisualCard
+      dir={dir}
+      accent="violet"
+      title={t('whatIf')}
+      subtitle={language === 'ar' ? 'اضبط التخصيص والمصروفات لرؤية الأثر على مسار الأهداف.' : 'Slide allocation & expenses to see goal trajectory impact.'}
+      action={
+        <span className="text-xs text-slate-500 tabular-nums">
           {t('investedCapital')}: {formatCurrencyString(investmentsTotalSar, { digits: 0 })}
-        </div>
-      </div>
-
-      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+        </span>
+      }
+    >
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
           <label className="text-xs font-semibold text-slate-700">{t('allocationToInvestments')}</label>
           <input
@@ -162,7 +159,7 @@ const WhatIfSandboxInner: React.FC<{
           </AreaChart>
         </ResponsiveContainer>
       </div>
-    </div>
+    </DashboardVisualCard>
   );
 };
 

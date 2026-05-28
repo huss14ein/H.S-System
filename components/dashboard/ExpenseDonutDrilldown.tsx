@@ -6,6 +6,7 @@ import { countsAsExpenseForCashflowKpi, isInternalTransferTransaction } from '..
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { expenseAmountSarForBudget } from '../../services/budgetSpendMath';
 import { getTransactionBudgetAllocations } from '../../services/transactionBudgetAllocations';
+import { DashboardVisualCard } from './DashboardVisualCard';
 
 const STORAGE_KEY = 'finova_expense_intel_mapping_v1';
 
@@ -50,21 +51,7 @@ const ExpenseDonutDrilldownInner: React.FC<{
     [accounts],
   );
 
-  const expenseCats = useMemo(() => {
-    const set = new Set<string>();
-    (transactions ?? []).forEach((tx) => {
-      if (!tx) return;
-      if (!countsAsExpenseForCashflowKpi(tx) || isInternalTransferTransaction(tx)) return;
-      if ((tx.status ?? 'Approved') !== 'Approved') return;
-      getTransactionBudgetAllocations(tx).forEach((a) => {
-        const cat = String(a.category ?? '').trim();
-        if (cat) set.add(cat);
-      });
-    });
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [transactions]);
-
-  const slices = useMemo((): { fixedVar: Slice[]; household: Slice[] } => {
+  const slices = useMemo((): { fixedVar: Slice[]; household: Slice[]; categories: string[] } => {
     let fixed = 0;
     let variable = 0;
     let spouse = 0;
@@ -72,6 +59,7 @@ const ExpenseDonutDrilldownInner: React.FC<{
     let other = 0;
     const spouseSet = new Set(mapping.spouseCats);
     const eduSet = new Set(mapping.educationCats);
+    const categorySet = new Set<string>();
 
     for (const tx of transactions ?? []) {
       if (!tx) continue;
@@ -90,6 +78,7 @@ const ExpenseDonutDrilldownInner: React.FC<{
         if (nature === 'fixed') fixed += amtSar;
         else variable += amtSar;
         const cat = String(allocation.category ?? '').trim();
+        if (cat) categorySet.add(cat);
         if (cat && spouseSet.has(cat)) spouse += amtSar;
         else if (cat && eduSet.has(cat)) education += amtSar;
         else other += amtSar;
@@ -106,6 +95,7 @@ const ExpenseDonutDrilldownInner: React.FC<{
         { name: t('educationKids'), value: education, color: '#0ea5e9' },
         { name: t('apply') === 'تطبيق' ? 'أخرى' : 'Other', value: other, color: '#94a3b8' },
       ].filter((s) => s.value > 0.01),
+      categories: Array.from(categorySet).sort((a, b) => a.localeCompare(b)),
     };
   }, [accountCurrencyById, data, mapping.educationCats, mapping.spouseCats, t, transactions, uiExchangeRate]);
 
@@ -116,17 +106,17 @@ const ExpenseDonutDrilldownInner: React.FC<{
   };
 
   return (
-    <div dir={dir} className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t('fixedVsVariable')}</p>
-          <p className="mt-1 text-sm text-slate-700">{t('budgetIntel')}</p>
-        </div>
+    <DashboardVisualCard
+      dir={dir}
+      accent="emerald"
+      title={t('fixedVsVariable')}
+      subtitle={t('budgetIntel')}
+      action={
         <button type="button" onClick={() => setIsConfigOpen((v) => !v)} className="text-xs font-semibold text-primary hover:underline">
           {t('apply') === 'تطبيق' ? 'تخصيص' : 'Configure'}
         </button>
-      </div>
-
+      }
+    >
       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
         {!slices.fixedVar.length && !slices.household.length ? (
           <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
@@ -198,7 +188,7 @@ const ExpenseDonutDrilldownInner: React.FC<{
             <div>
               <p className="text-xs font-semibold text-slate-600">{t('spouse')}</p>
               <div className="mt-1 max-h-36 overflow-auto rounded-lg border border-slate-200 p-2 space-y-1">
-                {expenseCats.map((cat) => (
+                {slices.categories.map((cat) => (
                   <label key={`s:${cat}`} className="flex items-center gap-2 text-xs text-slate-700">
                     <input type="checkbox" checked={mapping.spouseCats.includes(cat)} onChange={() => toggle('spouseCats', cat)} />
                     <span className="truncate">{cat}</span>
@@ -209,7 +199,7 @@ const ExpenseDonutDrilldownInner: React.FC<{
             <div>
               <p className="text-xs font-semibold text-slate-600">{t('educationKids')}</p>
               <div className="mt-1 max-h-36 overflow-auto rounded-lg border border-slate-200 p-2 space-y-1">
-                {expenseCats.map((cat) => (
+                {slices.categories.map((cat) => (
                   <label key={`e:${cat}`} className="flex items-center gap-2 text-xs text-slate-700">
                     <input type="checkbox" checked={mapping.educationCats.includes(cat)} onChange={() => toggle('educationCats', cat)} />
                     <span className="truncate">{cat}</span>
@@ -220,7 +210,7 @@ const ExpenseDonutDrilldownInner: React.FC<{
           </div>
         </div>
       )}
-    </div>
+    </DashboardVisualCard>
   );
 };
 

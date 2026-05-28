@@ -177,7 +177,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
                 finishQuotesRefresh();
                 return;
             }
-            bumpPriceRefresh({ kind: 'platform', platformId: id, forceFetch: true });
+            bumpPriceRefresh({ kind: 'platform', platformId: id, forceFetch: false });
         },
         [bumpPriceRefresh, finishQuotesRefresh],
     );

@@ -21,12 +21,11 @@ import {
 import { salaryToExpenseCoverageSar } from '../services/salaryExpenseCoverage';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
-import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { computeAllNetWorthChartBucketsSAR } from '../services/personalNetWorth';
-import { useCanonicalFinancialMetrics, useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalFinancialMetrics, useCanonicalSpotFx, useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
+import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
-import { useMarketData } from '../context/MarketDataContext';
 import { detectBudgetDrift } from '../services/budgetDrift';
 import { computeIncomeStability } from '../services/incomeStability';
 import {
@@ -134,7 +133,7 @@ const IncomeExpenseTrendChart: React.FC = () => {
 
 const AssetLiabilityChart: React.FC = () => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-    const { simulatedPrices } = useMarketData();
+    const simulatedPrices = useCanonicalSimulatedPrices();
     const { formatCurrencyString } = useFormatCurrency();
     const toFiniteMoney = (value: unknown): number => {
         const n = Number(value);
@@ -193,7 +192,8 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const { aiHealthChecked, isAiAvailable } = useAI();
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate, currency: displayCurrency } = useCurrency();
-    const { simulatedPrices } = useMarketData();
+    const simulatedPrices = useCanonicalSimulatedPrices();
+    useHydrateSarPerUsdDailySeries(data, exchangeRate);
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const {
         sarPerUsd: headlineFx,
@@ -206,8 +206,6 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const contextData = useMemo(() => {
         const transactions = data?.transactions ?? [];
         const accounts = data?.accounts ?? [];
-
-        hydrateSarPerUsdDailySeries(data, exchangeRate);
 
         const spendingData = expenseTotalsByBudgetCategorySar(transactions as Transaction[], accounts, headlineFx);
 

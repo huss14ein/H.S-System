@@ -9,6 +9,7 @@ import {
   GOAL_NET_CASHFLOW_LOOKBACK_MONTHS,
 } from '../../services/goalResolvedTotals';
 import { dashboardChartMargin } from './chartLayout';
+import { DashboardVisualCard } from './DashboardVisualCard';
 
 type Point = { month: string; projected: number; targetTotal: number };
 
@@ -54,25 +55,22 @@ export const GoalProjectionAreaChart: React.FC<{
   }, [data, goals, language, sarPerUsd]);
 
   return (
-    <div dir={dir} className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t('projection')}</p>
-          <p className="mt-1 text-sm text-slate-700">
-            {t('apply') === 'تطبيق'
-              ? `توقع مساهمة شهرية مبنية على متوسط صافي التدفق (${GOAL_NET_CASHFLOW_LOOKBACK_MONTHS} أشهر — نفس صفحة الأهداف).`
-              : `Monthly projection from rolling net cashflow (${GOAL_NET_CASHFLOW_LOOKBACK_MONTHS} mo avg — same as Goals page).`}
-          </p>
-        </div>
-        <div className="text-xs text-slate-500 tabular-nums">
-          {t('apply') === 'تطبيق' ? 'متوسط صافي شهري' : 'Avg monthly net'}:{' '}
-          <span className={model.monthlyNetSar >= 0 ? 'text-emerald-700 font-semibold' : 'text-rose-700 font-semibold'}>
-            {formatCurrencyString(model.monthlyNetSar, { digits: 0 })}
-          </span>
-        </div>
-      </div>
-
-      <div className="mt-3 h-[260px] w-full">
+    <DashboardVisualCard
+      dir={dir}
+      accent="violet"
+      title={t('projection')}
+      subtitle={
+        language === 'ar'
+          ? `متوسط صافي ${GOAL_NET_CASHFLOW_LOOKBACK_MONTHS} أشهر — نفس صفحة الأهداف`
+          : `${GOAL_NET_CASHFLOW_LOOKBACK_MONTHS}-month rolling net — same as Goals`
+      }
+      action={
+        <span className={`text-xs tabular-nums font-semibold ${model.monthlyNetSar >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+          {formatCurrencyString(model.monthlyNetSar, { digits: 0 })}/mo
+        </span>
+      }
+    >
+      <div className="h-[260px] w-full">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={model.points} margin={dashboardChartMargin(dir)}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -105,6 +103,6 @@ export const GoalProjectionAreaChart: React.FC<{
           </AreaChart>
         </ResponsiveContainer>
       </div>
-    </div>
+    </DashboardVisualCard>
   );
 });

@@ -11,8 +11,8 @@ import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import { useCurrency } from '../context/CurrencyContext';
-import { useMarketData } from '../context/MarketDataContext';
 import { useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
 import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
 import type { Page, Transaction } from '../types';
 import { normalizedMonthlyExpenseSar, personalMonthlyNetByMonthKeySar, savingsRateSarFinancialMonth } from '../services/financeMetrics';
@@ -22,7 +22,6 @@ import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryRepo
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import { projectForecastSeries, downsampleForecastRows, type ForecastMonthRow } from '../services/forecastProjection';
-import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
@@ -32,7 +31,8 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate, currency: displayCurrency } = useCurrency();
-    const { simulatedPrices } = useMarketData();
+    const { simulatedPrices } = useDashboardCanonicalMetrics();
+    useHydrateSarPerUsdDailySeries(data, exchangeRate);
     const [stressJobLossM, setStressJobLossM] = useState(3);
     const [stressMarketDrop, setStressMarketDrop] = useState(15);
     const [stressMedical, setStressMedical] = useState(8000);
@@ -47,7 +47,6 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 incomeGrowthSuggestion: 3,
             };
         }
-        hydrateSarPerUsdDailySeries(data, exchangeRate);
         const { values } = personalMonthlyNetByMonthKeySar(data, exchangeRate, 12);
         if (values.length === 0 || values.every((v) => v === 0)) {
             return {

@@ -28,7 +28,7 @@ import {
 } from '../services/reportingEngine';
 import { useCurrency } from '../context/CurrencyContext';
 import { useLanguage } from '../context/LanguageContext';
-import { useMarketData } from '../context/MarketDataContext';
+import { useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
 import { useNotifications } from '../context/NotificationsContext';
 import { toSAR } from '../utils/currencyMath';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
@@ -79,7 +79,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     const auth = useContext(AuthContext)!;
     const { exchangeRate, currency, setCurrency } = useCurrency();
     const { language, setLanguage, t } = useLanguage();
-    const { simulatedPrices } = useMarketData();
+    const simulatedPrices = useCanonicalSimulatedPrices();
     const notifCtx = useNotifications();
     const [localSettings, setLocalSettings] = useState(data?.settings ?? {});
     const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
