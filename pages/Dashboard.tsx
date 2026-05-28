@@ -84,6 +84,17 @@ import { useMarketData } from '../context/MarketDataContext';
 import { useDashboardReconciliationPrefs } from '../hooks/useDashboardReconciliationPrefs';
 import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
 import { useFinancialEnhancementInsights } from '../hooks/useFinancialEnhancementInsights';
+import { ExecutiveStatusRow } from '../components/dashboard/ExecutiveStatusRow';
+import { MomCashflowTrendChart } from '../components/dashboard/MomCashflowTrendChart';
+import { DateRangePicker, type DashboardDateRange } from '../components/dashboard/DateRangePicker';
+import { useLanguage } from '../context/LanguageContext';
+import { BudgetBurnRatePanel } from '../components/dashboard/BudgetBurnRatePanel';
+import { ExpenseDonutDrilldown } from '../components/dashboard/ExpenseDonutDrilldown';
+import { PortfolioHoldingsGrid } from '../components/dashboard/PortfolioHoldingsGrid';
+import { CostAveragingCalculator } from '../components/dashboard/CostAveragingCalculator';
+import { Goals2030Timeline } from '../components/dashboard/Goals2030Timeline';
+import { GoalProjectionAreaChart } from '../components/dashboard/GoalProjectionAreaChart';
+import { WhatIfSandbox } from '../components/dashboard/WhatIfSandbox';
 
 interface ExtendedBudget extends Budget {
     spent: number;
@@ -441,6 +452,8 @@ const DashboardContent: React.FC<{
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
     const { maskBalance } = usePrivacyMask();
+    const { dir } = useLanguage();
+    const [suiteRange, setSuiteRange] = useState<DashboardDateRange>({ preset: '6M' });
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
     const lastTelemetrySignatureRef = React.useRef<string>('');
     const kpiDensity = 'compact' as const;
@@ -869,7 +882,7 @@ const DashboardContent: React.FC<{
     const isNewUser = accounts.length === 0 || (accounts.length <= 1 && recentTransactions.length === 0 && goals.length === 0);
 
     return (
-        <div className="page-container">
+        <div className="page-container" dir={dir}>
             {showHydrateBanner && (
                 <div
                     className="mb-4 flex items-center gap-3 rounded-xl border border-slate-200 bg-white/90 px-4 py-3 shadow-sm"
@@ -886,6 +899,67 @@ const DashboardContent: React.FC<{
                 dashboardMonthlyPnLSar={kpiSnapshot?.monthlyPnL ?? 0}
                 onOpenPlan={() => setActivePage('Plan')}
             />
+
+            {/* Dashboard suite: executive status + interactive range */}
+            <div className="mb-6 space-y-3">
+                <ExecutiveStatusRow metrics={{ headline, kpiSnapshot }} />
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                    <div className="lg:col-span-1">
+                        <DateRangePicker value={suiteRange} onChange={setSuiteRange} />
+                    </div>
+                    <div className="lg:col-span-2">
+                        <MomCashflowTrendChart
+                            transactions={((data as any)?.personalTransactions ?? data?.transactions ?? [])}
+                            accounts={((data as any)?.personalAccounts ?? data?.accounts ?? [])}
+                            data={data}
+                            uiExchangeRate={exchangeRate}
+                            startIso={suiteRange.startIso}
+                            endIso={suiteRange.endIso}
+                        />
+                    </div>
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    <BudgetBurnRatePanel
+                        data={data}
+                        budgets={data?.budgets ?? []}
+                        transactions={((data as any)?.personalTransactions ?? data?.transactions ?? [])}
+                        accounts={((data as any)?.personalAccounts ?? data?.accounts ?? [])}
+                        uiExchangeRate={exchangeRate}
+                    />
+                    <ExpenseDonutDrilldown
+                        transactions={((data as any)?.personalTransactions ?? data?.transactions ?? [])}
+                    />
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    <PortfolioHoldingsGrid
+                        portfolios={((data as any)?.personalInvestments ?? data?.investments ?? [])}
+                        simulatedPrices={simulatedPrices ?? {}}
+                    />
+                    <CostAveragingCalculator
+                        portfolios={((data as any)?.personalInvestments ?? data?.investments ?? [])}
+                    />
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    <Goals2030Timeline goals={data?.goals ?? []} onOpenGoals={() => setActivePage('Goals')} />
+                    <GoalProjectionAreaChart
+                        goals={data?.goals ?? []}
+                        transactions={((data as any)?.personalTransactions ?? data?.transactions ?? [])}
+                        accounts={((data as any)?.personalAccounts ?? data?.accounts ?? [])}
+                        data={data}
+                        uiExchangeRate={exchangeRate}
+                    />
+                </div>
+                <WhatIfSandbox
+                    goals={data?.goals ?? []}
+                    transactions={((data as any)?.personalTransactions ?? data?.transactions ?? [])}
+                    accounts={((data as any)?.personalAccounts ?? data?.accounts ?? [])}
+                    data={data}
+                    uiExchangeRate={exchangeRate}
+                    liquidCashSar={kpiSnapshot?.liquidCashSar ?? 0}
+                    investedSar={Math.max(0, headline.buckets?.investments ?? 0)}
+                />
+            </div>
+
             {isNewUser && (
                 <div className="mb-6 p-5 rounded-xl border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-white">
                     <h2 className="text-lg font-semibold text-slate-800">{PAGE_INTROS.Dashboard.title}</h2>

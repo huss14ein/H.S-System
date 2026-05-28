@@ -22,6 +22,7 @@ import { SelfLearningProvider } from '../context/SelfLearningContext';
 import { PAGE_DISPLAY_NAMES, INVESTMENT_SUB_NAV_PAGE_NAMES } from '../constants';
 import { PAGE_MODULES, prefetchCommonPagesIdle, prefetchPage, resolveShellPage } from '../utils/lazyPages';
 import { CanonicalFinancialMetricsProvider } from '../context/CanonicalFinancialMetricsContext';
+import { LanguageProvider } from '../context/LanguageContext';
 
 const VALID_PAGES: Page[] = [
   'Dashboard', 'Summary', 'Accounts', 'Goals', 'Liabilities', 'Transactions',
@@ -226,47 +227,49 @@ const AuthenticatedAppShell: React.FC = () => {
       <ConfirmActionProvider>
       <SelfLearningProvider>
         <AiProvider>
-          <DataProvider>
-            <CurrencyProvider>
-              <ExchangeRateSync />
-              <MarketDataProvider>
-                <CanonicalFinancialMetricsProvider>
-                <TodosProvider>
-                  <NotificationsProvider>
-                    <StatementProcessingProvider>
-                      <AIProvider>
-                        <ReconciliationProvider>
-                          <MultiBankProvider>
-                            <PrivacyProvider>
-                              <MarketSimulator />
-                              <Layout
-                                activePage={activePage}
-                                setActivePage={setActivePage}
-                                triggerPageAction={triggerPageAction}
-                                triggerPageActionPair={triggerPageAction}
-                                contentMaxClass={
-                                  activePage === 'Dashboard' || activePage === 'Summary' ? 'max-w-screen-2xl' : 'max-w-7xl'
-                                }
-                              >
-                                <AppRouteHost
+          <LanguageProvider>
+            <DataProvider>
+              <CurrencyProvider>
+                <ExchangeRateSync />
+                <MarketDataProvider>
+                  <CanonicalFinancialMetricsProvider>
+                  <TodosProvider>
+                    <NotificationsProvider>
+                      <StatementProcessingProvider>
+                        <AIProvider>
+                          <ReconciliationProvider>
+                            <MultiBankProvider>
+                              <PrivacyProvider>
+                                <MarketSimulator />
+                                <Layout
                                   activePage={activePage}
-                                  pageAction={pageAction}
                                   setActivePage={setActivePage}
                                   triggerPageAction={triggerPageAction}
-                                  clearPageAction={clearPageAction}
-                                />
-                              </Layout>
-                            </PrivacyProvider>
-                          </MultiBankProvider>
-                        </ReconciliationProvider>
-                      </AIProvider>
-                    </StatementProcessingProvider>
-                  </NotificationsProvider>
-                </TodosProvider>
-                </CanonicalFinancialMetricsProvider>
-              </MarketDataProvider>
-            </CurrencyProvider>
-          </DataProvider>
+                                  triggerPageActionPair={triggerPageAction}
+                                  contentMaxClass={
+                                    activePage === 'Dashboard' || activePage === 'Summary' ? 'max-w-screen-2xl' : 'max-w-7xl'
+                                  }
+                                >
+                                  <AppRouteHost
+                                    activePage={activePage}
+                                    pageAction={pageAction}
+                                    setActivePage={setActivePage}
+                                    triggerPageAction={triggerPageAction}
+                                    clearPageAction={clearPageAction}
+                                  />
+                                </Layout>
+                              </PrivacyProvider>
+                            </MultiBankProvider>
+                          </ReconciliationProvider>
+                        </AIProvider>
+                      </StatementProcessingProvider>
+                    </NotificationsProvider>
+                  </TodosProvider>
+                  </CanonicalFinancialMetricsProvider>
+                </MarketDataProvider>
+              </CurrencyProvider>
+            </DataProvider>
+          </LanguageProvider>
         </AiProvider>
       </SelfLearningProvider>
       </ConfirmActionProvider>

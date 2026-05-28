@@ -1,0 +1,130 @@
+import React, { useMemo } from 'react';
+import { useLanguage } from '../../context/LanguageContext';
+import { useFormatCurrency } from '../../hooks/useFormatCurrency';
+import type { Account, Budget, Transaction } from '../../types';
+import { resolveMonthStartDayFromData, financialMonthRange } from '../../utils/financialMonth';
+import { countsAsExpenseForCashflowKpi, isInternalTransferTransaction } from '../../services/transactionFilters';
+import { getSarPerUsdForCalendarDay } from '../../services/fxDailySeries';
+import { toSAR } from '../../utils/currencyMath';
+import { accountBookCurrency } from '../../utils/cashAccountDisplay';
+
+type BurnRow = { key: string; label: string; spentSar: number; limitSar: number; pct: number };
+
+function clamp01(n: number): number {
+  return Math.max(0, Math.min(1, n));
+}
+
+function statusForPct(pct: number): 'ok' | 'near' | 'over' {
+  if (pct >= 1) return 'over';
+  if (pct >= 0.85) return 'near';
+  return 'ok';
+}
+
+export const BudgetBurnRatePanel: React.FC<{
+  data: any;
+  budgets: Budget[];
+  transactions: Transaction[];
+  accounts: Account[];
+  uiExchangeRate: number;
+}> = ({ data, budgets, transactions, accounts, uiExchangeRate }) => {
+  const { t, dir } = useLanguage();
+  const { formatCurrencyString } = useFormatCurrency();
+
+  const rows = useMemo((): BurnRow[] => {
+    if (!data) return [];
+    const monthStartDay = resolveMonthStartDayFromData(data);
+    const { start, end, key } = financialMonthRange(new Date(), monthStartDay);
+    const activeBudgets = (budgets ?? []).filter((b) => Number(b.month) === key.month && Number(b.year) === key.year);
+    if (!activeBudgets.length) return [];
+    const accById = new Map(accounts.map((a) => [a.id, a]));
+
+    const spentByBudgetCat = new Map<string, number>();
+    for (const tx of transactions ?? []) {
+      if (!tx?.date) continue;
+      const ts = new Date(tx.date).getTime();
+      if (!Number.isFinite(ts) || ts < start.getTime() || ts > end.getTime()) continue;
+      if (!countsAsExpenseForCashflowKpi(tx) || isInternalTransferTransaction(tx)) continue;
+      const cat = String(tx.budgetCategory ?? tx.category ?? 'Other').trim() || 'Other';
+      const day = String(tx.date).slice(0, 10);
+      const rate = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, uiExchangeRate) : uiExchangeRate;
+      const cur = accountBookCurrency(accById.get(tx.accountId) as any) as 'SAR' | 'USD';
+      const amtSar = toSAR(Math.abs(Number(tx.amount) || 0), cur, rate);
+      spentByBudgetCat.set(cat, (spentByBudgetCat.get(cat) ?? 0) + amtSar);
+    }
+
+    const out = activeBudgets
+      .map((b) => {
+        const cat = String(b.category ?? '').trim() || 'Other';
+        const spent = spentByBudgetCat.get(cat) ?? 0;
+        const lim = Math.max(0, Number(b.limit) || 0);
+        const pct = lim > 0 ? spent / lim : 0;
+        return { key: b.id ?? cat, label: cat, spentSar: spent, limitSar: lim, pct };
+      })
+      .sort((a, b) => b.pct - a.pct)
+      .slice(0, 10);
+
+    return out;
+  }, [accounts, budgets, data, transactions, uiExchangeRate]);
+
+  return (
+    <div dir={dir} className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t('burnRate')}</p>
+          <p className="mt-1 text-sm text-slate-700">{t('budgetIntel')}</p>
+        </div>
+      </div>
+
+      {!rows.length ? (
+        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          {t('budgetIntel')} — {t('apply') === 'تطبيق' ? 'لا توجد ميزانيات لهذا الشهر.' : 'No budgets for this month.'}
+        </div>
+      ) : (
+        <div className="mt-3 space-y-3">
+          {rows.map((r) => {
+            const s = statusForPct(r.pct);
+            const bar = clamp01(r.pct);
+            const color =
+              s === 'over' ? 'bg-rose-500' : s === 'near' ? 'bg-amber-500' : 'bg-emerald-500';
+            const badge =
+              s === 'over'
+                ? { text: t('overLimit'), cls: 'border-rose-200 bg-rose-50 text-rose-800' }
+                : s === 'near'
+                  ? { text: t('nearLimit'), cls: 'border-amber-200 bg-amber-50 text-amber-800' }
+                  : null;
+            return (
+              <div
+                key={r.key}
+                className={`rounded-xl border p-3 transition-shadow hover:shadow-sm ${
+                  s === 'over'
+                    ? 'border-rose-200 bg-rose-50/30'
+                    : s === 'near'
+                      ? 'border-amber-200 bg-amber-50/30'
+                      : 'border-slate-200 bg-white'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-800 truncate">{r.label}</p>
+                    <p className="text-xs text-slate-500 tabular-nums">
+                      {formatCurrencyString(r.spentSar, { digits: 0 })} / {formatCurrencyString(r.limitSar, { digits: 0 })}
+                    </p>
+                  </div>
+                  {badge && (
+                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${badge.cls}`}>
+                      {badge.text}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-2 h-2.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                  <div className={`h-full ${color}`} style={{ width: `${Math.min(100, bar * 100)}%` }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+

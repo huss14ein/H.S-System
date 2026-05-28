@@ -27,6 +27,7 @@ import {
     type WealthSummaryReportInput,
 } from '../services/reportingEngine';
 import { useCurrency } from '../context/CurrencyContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useMarketData } from '../context/MarketDataContext';
 import { useNotifications } from '../context/NotificationsContext';
 import { toSAR } from '../utils/currencyMath';
@@ -77,6 +78,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     const { showToast } = useToast();
     const auth = useContext(AuthContext)!;
     const { exchangeRate, currency, setCurrency } = useCurrency();
+    const { language, setLanguage, t } = useLanguage();
     const { simulatedPrices } = useMarketData();
     const notifCtx = useNotifications();
     const [localSettings, setLocalSettings] = useState(data?.settings ?? {});
@@ -612,6 +614,24 @@ const hasData = accountsForEmptyCheck.length > 0;
                                     className={`px-3 py-2 text-sm font-semibold rounded-md transition-all ${currency === c ? 'bg-white shadow text-primary' : 'text-slate-600 hover:bg-white/50'}`}
                                 >
                                     {c}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 p-3 bg-slate-50/80">
+                        <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
+                            {t('language')}
+                            <InfoHint text="Dashboard and Wealth Summary interactive modules (charts, budget intelligence, what-if sandbox). Stored in this browser only." />
+                        </label>
+                        <div className="grid grid-cols-2 gap-2 rounded-xl bg-slate-100 p-1 max-w-xs">
+                            {(['en', 'ar'] as const).map((lang) => (
+                                <button
+                                    key={lang}
+                                    type="button"
+                                    onClick={() => setLanguage(lang)}
+                                    className={`px-3 py-2 text-sm font-semibold rounded-md transition-all ${language === lang ? 'bg-white shadow text-primary' : 'text-slate-600 hover:bg-white/50'}`}
+                                >
+                                    {lang === 'en' ? t('english') : t('arabic')}
                                 </button>
                             ))}
                         </div>

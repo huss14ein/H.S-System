@@ -51,6 +51,18 @@ import { useSelfLearning } from '../context/SelfLearningContext';
 import Modal from '../components/Modal';
 import { useAI } from '../context/AiContext';
 import AiProxyUnavailableHint from '../components/AiProxyUnavailableHint';
+import { useLanguage } from '../context/LanguageContext';
+import { ExecutiveStatusRow } from '../components/dashboard/ExecutiveStatusRow';
+import { MomCashflowTrendChart } from '../components/dashboard/MomCashflowTrendChart';
+import { DateRangePicker, type DashboardDateRange } from '../components/dashboard/DateRangePicker';
+import { BudgetBurnRatePanel } from '../components/dashboard/BudgetBurnRatePanel';
+import { ExpenseDonutDrilldown } from '../components/dashboard/ExpenseDonutDrilldown';
+import { PortfolioHoldingsGrid } from '../components/dashboard/PortfolioHoldingsGrid';
+import { CostAveragingCalculator } from '../components/dashboard/CostAveragingCalculator';
+import { Goals2030Timeline } from '../components/dashboard/Goals2030Timeline';
+import { GoalProjectionAreaChart } from '../components/dashboard/GoalProjectionAreaChart';
+import { WhatIfSandbox } from '../components/dashboard/WhatIfSandbox';
+import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 
 function householdStressStyles(level: string) {
     const L = (level || '').toLowerCase();
@@ -182,6 +194,14 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     }, [auth?.user?.id]);
 
     const { maskBalance } = usePrivacyMask();
+    const { dir } = useLanguage();
+    const [suiteRange, setSuiteRange] = useState<DashboardDateRange>({ preset: '6M' });
+    const personalTransactions = useMemo(
+        () => ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[],
+        [data],
+    );
+    const personalAccounts = useMemo(() => getPersonalAccounts(data), [data]);
+    const personalInvestments = useMemo(() => getPersonalInvestments(data), [data]);
 
     const nwSnapshotInsight = useMemo(() => {
         const snaps = listNetWorthSnapshots();
@@ -455,6 +475,58 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                 )
             }
         >
+            <div dir={dir} className="mb-6 space-y-3">
+                <ExecutiveStatusRow metrics={{ headline, kpiSnapshot }} />
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                    <div className="lg:col-span-1">
+                        <DateRangePicker value={suiteRange} onChange={setSuiteRange} />
+                    </div>
+                    <div className="lg:col-span-2">
+                        <MomCashflowTrendChart
+                            transactions={personalTransactions}
+                            accounts={personalAccounts}
+                            data={data}
+                            uiExchangeRate={exchangeRate}
+                            startIso={suiteRange.startIso}
+                            endIso={suiteRange.endIso}
+                        />
+                    </div>
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    <BudgetBurnRatePanel
+                        data={data}
+                        budgets={data?.budgets ?? []}
+                        transactions={personalTransactions}
+                        accounts={personalAccounts}
+                        uiExchangeRate={exchangeRate}
+                    />
+                    <ExpenseDonutDrilldown transactions={personalTransactions} />
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    <PortfolioHoldingsGrid portfolios={personalInvestments} simulatedPrices={canonicalSimulatedPrices ?? {}} />
+                    <CostAveragingCalculator portfolios={personalInvestments} />
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    <Goals2030Timeline goals={data?.goals ?? []} onOpenGoals={() => setActivePage?.('Goals')} />
+                    <GoalProjectionAreaChart
+                        goals={data?.goals ?? []}
+                        transactions={personalTransactions}
+                        accounts={personalAccounts}
+                        data={data}
+                        uiExchangeRate={exchangeRate}
+                    />
+                </div>
+                <WhatIfSandbox
+                    goals={data?.goals ?? []}
+                    transactions={personalTransactions}
+                    accounts={personalAccounts}
+                    data={data}
+                    uiExchangeRate={exchangeRate}
+                    liquidCashSar={kpiSnapshot?.liquidCashSar ?? 0}
+                    investedSar={Math.max(0, headline.buckets?.investments ?? 0)}
+                />
+            </div>
+
             <Modal isOpen={isPrintOptionsOpen} onClose={() => setIsPrintOptionsOpen(false)} title="Choose what to include in the HTML report">
                 <div className="space-y-3 text-sm text-slate-700">
                     <p className="text-slate-600">Pick sections for export. This helps non-financial users print only what they need.</p>
