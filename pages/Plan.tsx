@@ -15,6 +15,7 @@ import PageActionsDropdown from '../components/PageActionsDropdown';
 import SectionCard from '../components/SectionCard';
 import { useCurrency } from '../context/CurrencyContext';
 import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from '../components/charts/chartTheme';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
@@ -71,6 +72,8 @@ const AnnualFinancialPlan: React.FC<{
     triggerPageAction?: (page: Page, action: string) => void;
 }> = ({ setActivePage, triggerPageAction }) => {
     const { data } = useContext(DataContext)!;
+    const { computeData } = usePageDeferredData();
+    const engineData = computeData ?? data;
     const auth = useContext(AuthContext);
     const { formatCurrencyString, formatCurrency, formatSecondaryEquivalent } = useFormatCurrency();
     const { currency: displayCurrency } = useCurrency();
@@ -229,7 +232,7 @@ const AnnualFinancialPlan: React.FC<{
 
     /** Annual plan rows: single source of truth in `services/annualPlanFromData.ts` (fed from Budgets, Transactions, recurring, Investment Plan, household profile). */
     const basePlanResult = useMemo(() => {
-        if (!data) {
+        if (!engineData) {
             return {
                 rows: [] as PlanRow[],
                 incomeMeta: {
@@ -248,16 +251,16 @@ const AnnualFinancialPlan: React.FC<{
             investmentPlan,
             investmentTransactions,
             accounts: accounts as Account[],
-            investments: data.investments ?? [],
+            investments: engineData.investments ?? [],
             personalAccountIds,
-            data,
+            data: engineData,
             exchangeRate: sarPerUsd,
             sarPerUsd,
             expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : undefined,
             householdOverrides,
         });
     }, [
-        data,
+        engineData,
         year,
         budgets,
         transactions,
@@ -554,9 +557,9 @@ const AnnualFinancialPlan: React.FC<{
             .filter((r: PlanRow) => r.type === 'expense')
             .reduce((sum: number, row: PlanRow) => sum + Number(row.monthly_actual?.[i] || 0), 0));
 
-        const txs = getPersonalTransactions(data ?? null);
-        const acc = getPersonalAccounts(data ?? null);
-        const { monthlyIncome: incomeByMonthSar } = accumulateHouseholdYearCashflowSar(data ?? null, txs, acc, year, sarPerUsd);
+        const txs = getPersonalTransactions(engineData ?? null);
+        const acc = getPersonalAccounts(engineData ?? null);
+        const { monthlyIncome: incomeByMonthSar } = accumulateHouseholdYearCashflowSar(engineData ?? null, txs, acc, year, sarPerUsd);
         const withData = incomeByMonthSar.filter((v: number) => v > 0);
         const suggested =
             withData.length > 0 ? Math.round(withData.reduce((a: number, b: number) => a + b, 0) / withData.length) : 0;
@@ -573,7 +576,7 @@ const AnnualFinancialPlan: React.FC<{
                 kids: householdKids,
                 profile: engineProfile,
                 monthlyOverrides: householdOverrides,
-                financialData: data ?? null,
+                financialData: engineData ?? null,
                 sarPerUsd,
             }
         );
@@ -588,7 +591,7 @@ const AnnualFinancialPlan: React.FC<{
         householdOverrides,
         engineProfile,
         expectedMonthlySalary,
-        data,
+        engineData,
         sarPerUsd,
     ]);
 

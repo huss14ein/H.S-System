@@ -26,7 +26,7 @@ import MiniPriceChart from '../components/charts/MiniPriceChart';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
-import { useMarketData } from '../context/MarketDataContext';
+import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import { useCurrency } from '../context/CurrencyContext';
 import { useAI } from '../context/AiContext';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
@@ -2537,7 +2537,7 @@ const PlatformCard: React.FC<{
     setActivePage?: (page: Page) => void;
 }> = (props) => {
     const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded, holdingsOutliers = [], setActivePage } = props;
-    const { refreshPricesForPlatform, isRefreshing: quotesRefreshing, quotesRefreshUIScope } = useMarketData();
+    const { refreshPricesForPlatform, isRefreshing: quotesRefreshing, quotesRefreshUIScope } = useMarketQuoteMeta();
     const thisPlatformSyncing =
         quotesRefreshing &&
         (quotesRefreshUIScope.mode === 'all' ||
@@ -5080,7 +5080,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
     [recordTrade],
   );
   const { isAiAvailable, aiHealthChecked } = useAI();
-  const { isLive, lastUpdated } = useMarketData();
+  const { isLive, lastUpdated } = useMarketQuoteMeta();
   const { simulatedPrices } = useInvestmentsCanonicalMetrics();
   const { formatCurrencyString } = useFormatCurrency();
   const { trackAction } = useSelfLearning();

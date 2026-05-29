@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useContext, useEffect, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
-import { useMarketData } from '../context/MarketDataContext';
+import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useCurrency } from '../context/CurrencyContext';
 import InfoHint from '../components/InfoHint';
@@ -105,7 +105,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const { exchangeRate } = useCurrency();
   const { trackAction } = useSelfLearning();
   const { simulatedPrices } = useInvestmentsCanonicalMetrics();
-  const { symbolQuoteUpdatedAt } = useMarketData();
+  const { symbolQuoteUpdatedAt } = useMarketQuoteMeta();
   const { formatCurrencyString } = useFormatCurrency();
   const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
   const aiOptimizeDisabled = !aiActionsEnabled;

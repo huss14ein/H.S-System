@@ -176,12 +176,17 @@ describe('performance recovery E2E wiring', () => {
     expect(read('utils/pageActions.ts')).toContain('plan-compare-dashboard');
     expect(read('context/NotificationsContext.tsx')).toContain('priceTriggeredPlanNotifications');
     expect(read('components/MarketSimulator.tsx')).toContain('pendingLiveFetchSymbolsRef');
+    expect(read('components/MarketSimulator.tsx')).toContain("kind: 'symbols'");
+    expect(read('components/MarketSimulator.tsx')).toContain('getLivePricesDeduped');
+    expect(read('context/MarketDataContext.tsx')).toContain('mergePriceRefreshScope');
+    expect(read('services/quoteRefreshQueue.ts')).toContain('mergePriceRefreshScope');
+    expect(read('services/sahmkQuote.ts')).toContain('codeToDisplaySymbols');
   });
 
   it('system performance: idle enhancement insights, debounced quotes, expanded prefetch', () => {
     expect(read('hooks/useFinancialEnhancementInsights.ts')).toContain('scheduleIdleWork');
     expect(read('hooks/useEnhancementSignals.ts')).toMatch(/showHydrateBanner/);
-    expect(read('hooks/useDebouncedMarketPrices.ts')).toContain('useDebouncedValue');
+    expect(read('hooks/useDebouncedMarketPrices.ts')).toContain('MarketDebouncedPricesContext');
     expect(read('components/Layout.tsx')).toContain('useDebouncedMarketPrices');
     expect(read('pages/Summary.tsx')).not.toContain('useMarketData');
     expect(read('pages/Investments.tsx')).toContain('const { simulatedPrices } = useInvestmentsCanonicalMetrics()');
@@ -191,6 +196,12 @@ describe('performance recovery E2E wiring', () => {
     expect(read('components/HoldingSymbolSelect.tsx')).not.toContain('<select');
     expect(read('pages/Transactions.tsx')).toContain('TRANSACTIONS_LIST_PAGE_SIZE');
     expect(read('context/DataContext.tsx')).toMatch(/startTransition\(\(\)\s*=>\s*\{[\s\S]*setData\(/);
+    expect(read('utils/backgroundWorkGate.ts')).toContain('pauseBackgroundWork');
+    expect(read('components/Layout.tsx')).toContain('pauseBackgroundWork');
+    expect(read('components/Layout.tsx')).toContain('startTransition');
+    expect(read('components/Layout.tsx')).toContain('useFinancialEnginesIntegration({ eager: false })');
+    expect(read('components/MarketSimulator.tsx')).toContain('isBackgroundWorkPaused');
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('isBackgroundWorkPaused');
     expect(read('utils/lazyPages.tsx')).toContain("'Analysis'");
     expect(read('utils/lazyPages.tsx')).toContain("'Notifications'");
   });

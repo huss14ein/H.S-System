@@ -3,7 +3,8 @@ import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
 import { Page, Transaction } from '../types';
 import { DataContext } from './DataContext';
-import { useMarketData } from './MarketDataContext';
+import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
+import { useMarketDebouncedPrices } from '../hooks/useDebouncedMarketPrices';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import {
   reconcileCashAccountBalance,
@@ -92,8 +93,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const auth = useContext(AuthContext);
   const todosOpt = useTodosOptional();
   const sarPerUsd = useCanonicalSpotFx();
-  const { simulatedPrices, lastUpdated, isLive, symbolQuoteUpdatedAt } = useMarketData();
-  const [debouncedPrices, setDebouncedPrices] = useState(simulatedPrices);
+  const { lastUpdated, isLive, symbolQuoteUpdatedAt } = useMarketQuoteMeta();
+  const { debouncedPrices } = useMarketDebouncedPrices();
   const staleQuoteScanAtRef = useRef(0);
   const enhancementSignals = useEnhancementSignals();
   const notificationsDataFingerprint = useMemo(
@@ -111,10 +112,6 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   );
   const [readIds, setReadIds] = useState<Set<string>>(loadReadIds);
 
-  useEffect(() => {
-    const t = window.setTimeout(() => setDebouncedPrices(simulatedPrices), 2500);
-    return () => window.clearTimeout(t);
-  }, [simulatedPrices]);
   const [pendingBudgetRequestCount, setPendingBudgetRequestCount] = useState(0);
   const [pendingTransactionApprovalCount, setPendingTransactionApprovalCount] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);

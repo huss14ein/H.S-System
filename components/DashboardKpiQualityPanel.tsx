@@ -7,11 +7,10 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { reconcileDashboardVsSummaryKpis } from '../services/kpiReconciliation';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalFinancialMetrics, useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
 import { computeDashboardValidationWarnings } from '../services/dashboardKpiSnapshot';
 import { listRecentKpiReconciliationDrift, type KpiDriftEvent } from '../services/kpiDriftTelemetry';
 import { useDashboardReconciliationPrefs } from '../hooks/useDashboardReconciliationPrefs';
-import { useMarketData } from '../context/MarketDataContext';
 
 /**
  * Dashboard validation, KPI reconciliation, and drift diagnostics — shown on System & APIs Health.
@@ -20,7 +19,7 @@ const DashboardKpiQualityPanel: React.FC = () => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
-    const { simulatedPrices } = useMarketData();
+    const simulatedPrices = useCanonicalSimulatedPrices();
     const { formatCurrencyString } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
     const { strictReconciliationMode, setStrictReconciliationMode, hardBlockOnMismatch, setHardBlockOnMismatch } =

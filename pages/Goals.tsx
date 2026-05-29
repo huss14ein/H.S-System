@@ -25,6 +25,7 @@ import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmer
 import { toSAR } from '../utils/currencyMath';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import { financialMonthNetCashflowSar } from '../services/dashboardKpiSnapshot';
 import { personalMonthlyNetByMonthKeySar } from '../services/financeMetrics';
 import { computeGoalFundingPlan, GOAL_NO_DEADLINE_AMORTIZATION_MONTHS } from '../services/goalFundingRouter';
@@ -709,6 +710,8 @@ const Goals: React.FC<{
   triggerPageAction?: (page: Page, action: string) => void;
 }> = ({ setActivePage, pageAction, clearPageAction, triggerPageAction }) => {
     const { data, addGoal, updateGoal, deleteGoal } = useContext(DataContext)!;
+    const { computeData } = usePageDeferredData();
+    const engineData = computeData ?? data;
     const { aiHealthChecked, isAiAvailable } = useAI();
     const { trackAction } = useSelfLearning();
     const { currency: displayCurrency } = useCurrency();
@@ -771,7 +774,7 @@ const Goals: React.FC<{
         return `${fmt(currentRange.start)} – ${fmt(currentRange.end)}`;
     }, [data, exchangeRate]);
 
-    const resolvedGoalTotalsMap = useMemo(() => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd), [data, sarPerUsd]);
+    const resolvedGoalTotalsMap = useMemo(() => computeGoalResolvedAmountsSar(engineData ?? null, sarPerUsd), [engineData, sarPerUsd]);
 
     const { totalTargetAmount, totalCurrentAmount, goalCurrentAmountByGoalId } = useMemo(() => {
         let totalTarget = 0;
@@ -792,15 +795,15 @@ const Goals: React.FC<{
     const overallProgress = totalTargetAmount > 0 ? (totalCurrentAmount / totalTargetAmount) * 100 : 0;
 
     const fundingPlan = useMemo(
-        () => computeGoalFundingPlan(data, rollingAnnualNetSar, sarPerUsd),
-        [data, rollingAnnualNetSar, sarPerUsd],
+        () => computeGoalFundingPlan(engineData, rollingAnnualNetSar, sarPerUsd),
+        [engineData, rollingAnnualNetSar, sarPerUsd],
     );
 
     /** One status per goal for cards + funding list — `computeGoalTimelineStatus` (envelope vs required pace). */
     const goalTimelineByGoalId = useMemo(() => {
         const m = new Map<string, ReturnType<typeof computeGoalTimelineStatus>>();
-        (data?.goals ?? []).forEach((g) => {
-            const env = computeGoalMonthlyFundingEnvelopeSar({ goal: g, data: data ?? null, sarPerUsd });
+        (engineData?.goals ?? []).forEach((g) => {
+            const env = computeGoalMonthlyFundingEnvelopeSar({ goal: g, data: engineData ?? null, sarPerUsd });
             m.set(
                 g.id,
                 computeGoalTimelineStatus({
@@ -811,7 +814,7 @@ const Goals: React.FC<{
             );
         });
         return m;
-    }, [data?.goals, data, sarPerUsd, goalCurrentAmountByGoalId]);
+    }, [engineData?.goals, engineData, sarPerUsd, goalCurrentAmountByGoalId]);
 
     const goalsByPriority = useMemo(() => {
         const rank = { High: 0, Medium: 1, Low: 2 } as const;

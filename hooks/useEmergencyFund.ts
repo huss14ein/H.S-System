@@ -7,6 +7,7 @@ import { resolveSarPerUsd, toSAR, totalLiquidCashSARFromAccounts } from '../util
 import { getSarPerUsdForCalendarDay, hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { useCurrency } from '../context/CurrencyContext';
 import { useCanonicalSpotFx } from './useCanonicalFinancialMetrics';
+import { useHydrateSarPerUsdDailySeries } from './useHydrateSarPerUsdDailySeries';
 
 /** Recommended months of expenses to hold as emergency cash (3–6 is common; 6 is conservative). */
 export const EMERGENCY_FUND_TARGET_MONTHS = 6;
@@ -86,6 +87,8 @@ export function computeEmergencyFundMetrics(
         sarPerUsd?: number;
         exchangeRate?: number;
         getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number };
+        /** When true, caller already hydrated FX series (React effect hook). */
+        skipHydrate?: boolean;
     }
 ): EmergencyFundMetrics {
     const defaultResult: EmergencyFundMetrics = {
@@ -228,12 +231,14 @@ export function useEmergencyFund(data: FinancialData | null | undefined): Emerge
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useCanonicalSpotFx();
     const { getAvailableCashForAccount } = useContext(DataContext)!;
+    useHydrateSarPerUsdDailySeries(data, exchangeRate);
     return useMemo(
         () =>
             computeEmergencyFundMetrics(data, {
                 exchangeRate,
                 sarPerUsd,
                 getAvailableCashForAccount,
+                skipHydrate: true,
             }),
         [data, exchangeRate, sarPerUsd, getAvailableCashForAccount]
     );

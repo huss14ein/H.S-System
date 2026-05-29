@@ -5,7 +5,7 @@ import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from './chartTheme';
 import ChartContainer from './ChartContainer';
 import { useCurrency } from '../../context/CurrencyContext';
-import { hydrateSarPerUsdDailySeries } from '../../services/fxDailySeries';
+import { useHydrateSarPerUsdDailySeries } from '../../hooks/useHydrateSarPerUsdDailySeries';
 import { useCanonicalFinancialMetrics } from '../../hooks/useCanonicalFinancialMetrics';
 import {
     listNetWorthSnapshots,
@@ -197,19 +197,24 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
         }
     });
 
-    const chartData = useMemo(() => {
-        if (!data) return [];
+    const oldestSnapshotDay = useMemo(() => {
         const snapshots = listNetWorthSnapshots();
-        const oldestDay = snapshots.reduce<string | undefined>((min, s) => {
+        return snapshots.reduce<string | undefined>((min, s) => {
             const d = typeof s.at === 'string' ? s.at.slice(0, 10) : '';
             if (d.length !== 10) return min;
             if (!min || d < min) return d;
             return min;
         }, undefined);
-        hydrateSarPerUsdDailySeries(data, exchangeRate, {
-            horizonDays: 4000,
-            earliestCalendarDay: oldestDay,
-        });
+    }, [data]);
+
+    useHydrateSarPerUsdDailySeries(data, exchangeRate, {
+        horizonDays: 4000,
+        earliestCalendarDay: oldestSnapshotDay,
+    });
+
+    const chartData = useMemo(() => {
+        if (!data) return [];
+        const snapshots = listNetWorthSnapshots();
         const buckets = liveBucketsFromHook;
         const byLocalDay = new Map<string, {
             date: string;

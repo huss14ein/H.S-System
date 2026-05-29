@@ -4,7 +4,7 @@ import { Page } from '../types';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { useMarketData } from '../context/MarketDataContext';
+import { useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
 import { supabase } from '../services/supabaseClient';
 import { captureExtendedNetWorthSnapshot } from '../services/netWorthSnapshotExtended';
 import { buildReviewPack, downloadReviewPackMarkdown } from '../services/reviewPack';
@@ -30,7 +30,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
-    const { simulatedPrices } = useMarketData();
+    const simulatedPrices = useCanonicalSimulatedPrices();
     const { getTopPages, trackAction } = useSelfLearning();
     const topPages = getTopPages(5);
 

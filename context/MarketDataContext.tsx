@@ -2,6 +2,9 @@
 import React, { createContext, useState, useCallback, ReactNode, useContext, useEffect, useRef, useMemo } from 'react';
 import { cacheRowsToSimulatedMap, loadQuoteCacheRows } from '../services/quotePriceCache';
 import { isQuoteRefreshInCooldown, quoteRefreshCooldownRemainingMs } from '../services/quoteRefreshCooldown';
+import { mergePriceRefreshScope } from '../services/quoteRefreshQueue';
+import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 interface SimulatedPrices {
     [symbol: string]: { price: number; change: number; changePercent: number };
@@ -13,7 +16,9 @@ export type SymbolQuoteTimestamps = Record<string, string>;
 /** `all` = every tracked symbol (header refresh). `platform` = one investment account’s holdings only (saves API quota). */
 export type PriceRefreshScope =
     | { kind: 'all'; forceFetch?: boolean }
-    | { kind: 'platform'; platformId: string; forceFetch?: boolean };
+    | { kind: 'platform'; platformId: string; forceFetch?: boolean }
+    /** Pending overflow / targeted drain — fetches only listed symbols (no full portfolio rescan). */
+    | { kind: 'symbols'; symbols: string[]; forceFetch?: boolean };
 
 /** Drives spinners: full refresh updates header + every platform card; platform refresh only touches one card + omits header “Updating…”. */
 export type QuotesRefreshUIScope =
@@ -21,45 +26,46 @@ export type QuotesRefreshUIScope =
     | { mode: 'all' }
     | { mode: 'platform'; accountId: string };
 
-interface MarketDataContextType {
+export type MarketPricesContextType = {
   simulatedPrices: SimulatedPrices;
   setSimulatedPrices: React.Dispatch<React.SetStateAction<SimulatedPrices>>;
+};
+
+export type MarketDebouncedPricesContextType = {
+  debouncedPrices: SimulatedPrices;
+};
+
+export type MarketDataControlContextType = {
   isRefreshing: boolean;
   setIsRefreshing: (v: boolean) => void;
-  /** Which UX surfaces should show busy state while `isRefreshing` is true. */
   quotesRefreshUIScope: QuotesRefreshUIScope;
-  /** Clears refreshing state and UI scope (call when a quote tick completes). */
   finishQuotesRefresh: () => void;
   refreshPrices: (options?: { forceFetch?: boolean }) => Promise<void>;
-  /** Refresh live quotes for holdings under one investment platform only (skips watchlist, planned trades, commodities). */
   refreshPricesForPlatform: (platformId: string) => Promise<void>;
-  /** Increment refresh counter so MarketSimulator runs a live/simulated price pass. */
   bumpPriceRefresh: (scope?: PriceRefreshScope) => void;
-  /** Dequeue the next refresh scope (FIFO). Returns null when the queue is empty. */
   consumePriceRefreshScope: () => PriceRefreshScope | null;
-  /** True when more refresh scopes are waiting after the current tick. */
   hasQueuedPriceRefresh: () => boolean;
-  /** Re-run MarketSimulator when scopes were enqueued during an in-flight tick (does not add a scope). */
   notifyQueuedPriceRefresh: () => void;
   lastUpdated: Date | null;
-  /** Set last updated time (e.g. when live fetch completes). */
   setLastUpdated: (date: Date | null) => void;
   isLive: boolean;
   setIsLive: (isLive: boolean) => void;
   refreshTrigger: number;
   symbolQuoteUpdatedAt: SymbolQuoteTimestamps;
-  /** Mark symbols as freshly quoted (call after each price tick). */
   touchQuoteTimestamps: (symbols: string[]) => void;
-  /** Drop queued/in-flight quote work (e.g. navigate away from Investments). */
   cancelQuoteRefresh: () => void;
-  /** When true, MarketSimulator should stop processing further refresh scopes. */
   isQuoteRefreshCancelled: () => boolean;
-  /** Current queued quote refresh scopes (for SystemHealth telemetry). */
   quoteRefreshQueueLength: () => number;
-  /** Remaining cooldown ms after rate-limit/quota (for SystemHealth telemetry). */
   quoteRefreshCooldownRemainingMs: () => number;
-}
+};
 
+/** @deprecated Prefer `useMarketPrices` / `useMarketQuoteMeta` to avoid quote-tick re-renders. */
+export type MarketDataContextType = MarketPricesContextType & MarketDataControlContextType;
+
+export const MarketPricesContext = createContext<MarketPricesContextType | null>(null);
+export const MarketDebouncedPricesContext = createContext<MarketDebouncedPricesContextType | null>(null);
+export const MarketDataControlContext = createContext<MarketDataControlContextType | null>(null);
+/** Combined context — re-renders on every quote tick. */
 export const MarketDataContext = createContext<MarketDataContextType | null>(null);
 
 export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -75,6 +81,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         }
         return out;
     });
+    const debouncedPrices = useDebouncedValue(simulatedPrices, 1500);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [quotesRefreshUIScope, setQuotesRefreshUIScope] = useState<QuotesRefreshUIScope>({ mode: 'idle' });
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -134,14 +141,18 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
 
     const bumpPriceRefresh = useCallback((scope: PriceRefreshScope = { kind: 'all' }) => {
         quoteRefreshAbortRef.current = false;
-        // Hard gate live refresh enqueues while cooling down after 429/quota.
+        if (isBackgroundWorkPaused() && scope.forceFetch !== true) {
+            return;
+        }
         if (isQuoteRefreshInCooldown()) {
             const scopedForce = scope.forceFetch === true;
-            // Allow non-forced refreshes (cache/simulated tick) but prevent forced live fetch storms.
             if (scopedForce) return;
         }
-        refreshQueueRef.current.push(scope);
-        setRefreshTrigger((prev) => prev + 1);
+        const merged = mergePriceRefreshScope(refreshQueueRef.current, scope);
+        refreshQueueRef.current = merged.queue;
+        if (merged.changed) {
+            setRefreshTrigger((prev) => prev + 1);
+        }
     }, []);
 
     const finishQuotesRefresh = useCallback(() => {
@@ -158,13 +169,11 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
     const refreshPrices = useCallback(async (options?: { forceFetch?: boolean }) => {
         setQuotesRefreshUIScope({ mode: 'all' });
         setIsRefreshing(true);
-        // If cooling down, skip forced live fetch and leave UI in a consistent idle state.
         if (isQuoteRefreshInCooldown() && options?.forceFetch === true) {
             finishQuotesRefresh();
             return;
         }
         bumpPriceRefresh({ kind: 'all', forceFetch: options?.forceFetch === true });
-        // MarketSimulator performs fetch + calls finishQuotesRefresh when done
     }, [bumpPriceRefresh, finishQuotesRefresh]);
 
     const refreshPricesForPlatform = useCallback(
@@ -173,19 +182,28 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             const id = platformId.trim();
             setQuotesRefreshUIScope({ mode: 'platform', accountId: id });
             setIsRefreshing(true);
-            if (isQuoteRefreshInCooldown()) {
-                finishQuotesRefresh();
-                return;
-            }
             bumpPriceRefresh({ kind: 'platform', platformId: id, forceFetch: false });
         },
-        [bumpPriceRefresh, finishQuotesRefresh],
+        [bumpPriceRefresh],
     );
 
-    const value = useMemo(
-        (): MarketDataContextType => ({
+    const pricesValue = useMemo(
+        (): MarketPricesContextType => ({
             simulatedPrices,
             setSimulatedPrices,
+        }),
+        [simulatedPrices],
+    );
+
+    const debouncedValue = useMemo(
+        (): MarketDebouncedPricesContextType => ({
+            debouncedPrices,
+        }),
+        [debouncedPrices],
+    );
+
+    const controlValue = useMemo(
+        (): MarketDataControlContextType => ({
             isRefreshing,
             setIsRefreshing,
             quotesRefreshUIScope,
@@ -209,7 +227,6 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             quoteRefreshCooldownRemainingMs: quoteRefreshCooldownRemainingMsSafe,
         }),
         [
-            simulatedPrices,
             isRefreshing,
             quotesRefreshUIScope,
             finishQuotesRefresh,
@@ -231,12 +248,40 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         ],
     );
 
+    const combinedValue = useMemo(
+        (): MarketDataContextType => ({
+            ...pricesValue,
+            ...controlValue,
+        }),
+        [pricesValue, controlValue],
+    );
+
     return (
-        <MarketDataContext.Provider value={value}>
-            {children}
-        </MarketDataContext.Provider>
+        <MarketDataControlContext.Provider value={controlValue}>
+            <MarketPricesContext.Provider value={pricesValue}>
+                <MarketDebouncedPricesContext.Provider value={debouncedValue}>
+                    <MarketDataContext.Provider value={combinedValue}>{children}</MarketDataContext.Provider>
+                </MarketDebouncedPricesContext.Provider>
+            </MarketPricesContext.Provider>
+        </MarketDataControlContext.Provider>
     );
 };
+
+export function useMarketPrices(): MarketPricesContextType {
+    const context = useContext(MarketPricesContext);
+    if (!context) {
+        throw new Error('useMarketPrices must be used within a MarketDataProvider');
+    }
+    return context;
+}
+
+export function useMarketDebouncedPrices(): MarketDebouncedPricesContextType {
+    const context = useContext(MarketDebouncedPricesContext);
+    if (!context) {
+        throw new Error('useMarketDebouncedPrices must be used within a MarketDataProvider');
+    }
+    return context;
+}
 
 export const useMarketData = () => {
     const context = useContext(MarketDataContext);

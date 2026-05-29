@@ -4,12 +4,11 @@ import type { FunctionDeclaration, Content, Part, FunctionCall } from '@google/g
 import { SchemaType } from '../services/geminiSchemaTypes';
 import { DataContext } from '../context/DataContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalFinancialMetrics, useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
 import { formatGoalsProgressForPrompt } from '../services/goalResolvedTotals';
 import { buildAiPersonalWealthGrounding } from '../services/aiPersonalWealthGrounding';
 import { computeCapitalDeployment } from '../services/capitalDeploymentOrchestrator';
 import { getPersonalLiabilities } from '../utils/wealthScope';
-import { useMarketData } from '../context/MarketDataContext';
 import { invokeAI, formatAiError, buildLiveAdvisorSystemInstruction } from '../services/geminiService';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { financialMonthRange, resolveMonthStartDayFromData } from '../utils/financialMonth';
@@ -23,7 +22,7 @@ const ADVISOR_LANG_KEY = 'finova_default_ai_lang_v1';
 const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({ isOpen, onClose }) => {
     const { data, addWatchlistItem, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate } = useCurrency();
-    const { simulatedPrices } = useMarketData();
+    const simulatedPrices = useCanonicalSimulatedPrices();
     const [history, setHistory] = useState<Content[]>([]);
     const [userInput, setUserInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);

@@ -30,7 +30,8 @@ import {
     financialMonthRangeFromKey,
     resolveMonthStartDayFromData,
 } from '../utils/financialMonth';
-import { getSarPerUsdForCalendarDay, hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
+import { getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
+import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
 import { buildDividendTrackerModel, type MarketFundDividend } from '../services/dividendTrackerModel';
 import DividendTrackerWorkspace from '../components/DividendTrackerWorkspace';
 import { migrateLocalDividendOverridesToHoldings } from '../services/dividendPlanMigration';
@@ -52,6 +53,7 @@ const DividendTrackerView: React.FC<{
     const confirmAction = useConfirmAction();
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useCanonicalSpotFx();
+    useHydrateSarPerUsdDailySeries(data, exchangeRate);
     const { formatCurrencyString } = useFormatCurrency();
     const { showToast } = useToast();
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
@@ -280,7 +282,6 @@ const DividendTrackerView: React.FC<{
                     sarPerUsd,
                     sarPerUsdForDay: (dayKey: string) => {
                         try {
-                            hydrateSarPerUsdDailySeries(data, exchangeRate);
                             return getSarPerUsdForCalendarDay(dayKey, data, exchangeRate);
                         } catch {
                             return sarPerUsd;

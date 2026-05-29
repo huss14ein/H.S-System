@@ -110,30 +110,48 @@ export async function getSahmkLivePrices(
   if (symbols.length === 0) return {};
   const out: Record<string, SahmkQuoteTick> = {};
 
+  const codeToDisplaySymbols = new Map<string, string[]>();
   for (const rawSymbol of symbols) {
     const code = extractTadawulCodeForSahmk(rawSymbol);
     if (!code) continue;
+    const list = codeToDisplaySymbols.get(code) ?? [];
+    list.push(rawSymbol);
+    codeToDisplaySymbols.set(code, list);
+  }
 
+  let rateLimitHits = 0;
+
+  for (const [code, displaySymbols] of codeToDisplaySymbols) {
     try {
       const quote = await fetchSahmkTickByCode(code);
       if (!quote) continue;
 
-      const rawUpper = (rawSymbol || '').trim().toUpperCase();
-      const fhTad = rawUpper.match(/^TADAWUL:([A-Z0-9]{1,8})$/);
-      const displayKey = fhTad ? `${fhTad[1]}.SR` : rawUpper;
-      const keys = new Set<string>([displayKey, rawUpper, `${code}.SR`, `${code}.SA`, `${code}.SE`, code].filter(Boolean));
-      const tad = displayKey.match(/^([0-9]{4,6})\.SR$/);
-      if (tad) {
-        keys.add(`${tad[1]}.SA`);
-        keys.add(`${tad[1]}.SE`);
+      for (const rawSymbol of displaySymbols) {
+        const rawUpper = (rawSymbol || '').trim().toUpperCase();
+        const fhTad = rawUpper.match(/^TADAWUL:([A-Z0-9]{1,8})$/);
+        const displayKey = fhTad ? `${fhTad[1]}.SR` : rawUpper;
+        const keys = new Set<string>([displayKey, rawUpper, `${code}.SR`, `${code}.SA`, `${code}.SE`, code].filter(Boolean));
+        const tad = displayKey.match(/^([0-9]{4,6})\.SR$/);
+        if (tad) {
+          keys.add(`${tad[1]}.SA`);
+          keys.add(`${tad[1]}.SE`);
+        }
+        for (const k of keys) out[k] = quote;
       }
-      for (const k of keys) out[k] = quote;
-    } catch {
-      /* proxy down or quota — skip symbol */
+    } catch (err) {
+      if (/429|rate.?limit|throttl|quota/i.test(err instanceof Error ? err.message : String(err ?? ''))) {
+        rateLimitHits += 1;
+      }
     }
 
-    // Gentle spacing for free-tier daily limits when many Saudi names refresh at once
     await new Promise((r) => setTimeout(r, 350));
+  }
+
+  if (rateLimitHits > 0 && Object.keys(out).length === 0) {
+    throw new Error('SAHMK rate limit (429). Wait before retrying live quotes.');
+  }
+  if (rateLimitHits >= 2) {
+    throw new Error('SAHMK rate limit (429). Wait before retrying live quotes.');
   }
 
   return out;

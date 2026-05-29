@@ -94,6 +94,7 @@ import { getPersonalTransactions } from '../utils/wealthScope';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { toSAR } from '../utils/currencyMath';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
+import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import {
     budgetAppliesToFinancialView,
     dedupeBudgetRowsForFinancialView,
@@ -411,6 +412,8 @@ interface BudgetsProps {
 
 const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pageAction, clearPageAction }) => {
     const { data, dataResetKey, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth } = useContext(DataContext)!;
+    const { computeData } = usePageDeferredData();
+    const engineData = computeData ?? data;
     const auth = useContext(AuthContext);
     const { trackSuggestionFeedback } = useSelfLearning();
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
@@ -853,10 +856,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
     const householdBudgetEngine = useMemo(() => {
         if (!householdEngineReady) return EMPTY_HOUSEHOLD_BUDGET_PLAN;
-        const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
-        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const transactions = (engineData as any)?.personalTransactions ?? engineData?.transactions ?? [];
+        const accounts = (engineData as any)?.personalAccounts ?? engineData?.accounts ?? [];
         const { monthlyIncome } = accumulateHouseholdYearCashflowSar(
-            data ?? null,
+            engineData ?? null,
             transactions,
             accounts,
             currentYear,
@@ -870,7 +873,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const input = buildHouseholdEngineInputFromData(
             transactions as Array<{ date: string; type?: string; amount?: number; accountId?: string; category?: string }>,
             accounts as Array<{ type?: string; balance?: number; id?: string; currency?: string }>,
-            (data?.goals ?? []) as any[],
+            (engineData?.goals ?? []) as any[],
             {
                 year: currentYear,
                 expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : (suggested > 0 ? suggested : undefined),
@@ -878,7 +881,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 kids: householdKids,
                 profile: engineProfile,
                 monthlyOverrides: householdOverrides,
-                financialData: data ?? null,
+                financialData: engineData ?? null,
                 sarPerUsd,
                 uiExchangeRate: exchangeRate,
                 monthStartDay,
@@ -887,12 +890,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const result = buildHouseholdBudgetPlan(input);
         return result;
     }, [
-        data?.transactions,
-        data?.accounts,
-        (data as any)?.personalTransactions,
-        (data as any)?.personalAccounts,
-        data?.goals,
-        data,
+        engineData?.transactions,
+        engineData?.accounts,
+        (engineData as any)?.personalTransactions,
+        (engineData as any)?.personalAccounts,
+        engineData?.goals,
+        engineData,
         sarPerUsd,
         exchangeRate,
         currentYear,

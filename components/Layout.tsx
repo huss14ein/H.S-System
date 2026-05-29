@@ -1,7 +1,6 @@
 
 
-import React, { useState, useEffect, useRef, useContext, useCallback } from 'react';
-import { INVESTMENT_SUB_NAV_PAGE_NAMES } from '../constants';
+import React, { useState, useEffect, useRef, useContext, useCallback, startTransition } from 'react';
 import Header from './Header';
 import { Page } from '../types';
 import QuickActionsSidebar from './QuickActionsSidebar';
@@ -14,10 +13,13 @@ import FinancialDataHydrateBanner from './FinancialDataHydrateBanner';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { useMarketData } from '../context/MarketDataContext';
+import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import { useDebouncedMarketPrices } from '../hooks/useDebouncedMarketPrices';
 import { supabase } from '../services/supabaseClient';
 import { runAutoNetWorthSnapshotIfDue } from '../services/scheduledNetWorthSnapshot';
+import { pauseBackgroundWork } from '../utils/backgroundWorkGate';
+import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { PageDeferredDataProvider } from '../context/PageDeferredDataContext';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -42,30 +44,23 @@ const Layout: React.FC<LayoutProps> = ({
   const dataCtx = useContext(DataContext);
   const auth = useContext(AuthContext);
   const { exchangeRate } = useCurrency();
-  const debouncedPrices = useDebouncedMarketPrices(1500);
-  const { cancelQuoteRefresh } = useMarketData();
+  const debouncedPrices = useDebouncedMarketPrices();
+  const { cancelQuoteRefresh } = useMarketQuoteMeta();
   const navigatePage = useCallback(
     (page: Page) => {
-      const fromQuoteHeavy =
-        activePage === 'Dashboard' ||
-        activePage === 'Summary' ||
-        activePage === 'Investments' ||
-        INVESTMENT_SUB_NAV_PAGE_NAMES.includes(activePage);
-      const toQuoteHeavy =
-        page === 'Dashboard' ||
-        page === 'Summary' ||
-        page === 'Investments' ||
-        INVESTMENT_SUB_NAV_PAGE_NAMES.includes(page);
-      // Prevent quote refresh work from starving navigation/UI thread.
-      if (fromQuoteHeavy && !toQuoteHeavy) cancelQuoteRefresh();
-      setActivePage(page);
+      // Pause background quote/metrics work so route paint and input stay responsive.
+      pauseBackgroundWork();
+      cancelQuoteRefresh();
+      startTransition(() => {
+        setActivePage(page);
+      });
     },
-    [activePage, setActivePage, cancelQuoteRefresh],
+    [setActivePage, cancelQuoteRefresh],
   );
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isLiveAdvisorOpen, setIsLiveAdvisorOpen] = useState(false);
   const mainContentRef = useRef<HTMLElement>(null);
-  const { ready, analysis, actionQueue } = useFinancialEnginesIntegration();
+  const { ready, analysis, actionQueue } = useFinancialEnginesIntegration({ eager: false });
 
   const skipToMainContent = () => {
     mainContentRef.current?.focus();
@@ -76,14 +71,16 @@ const Layout: React.FC<LayoutProps> = ({
     const uid = auth?.user?.id;
     const data = dataCtx?.data;
     if (!uid || !data || dataCtx?.showHydrateBanner || !dataCtx.getAvailableCashForAccount) return;
-    void runAutoNetWorthSnapshotIfDue({
-      userId: uid,
-      data,
-      exchangeRate,
-      getAvailableCashForAccount: dataCtx.getAvailableCashForAccount,
-      simulatedPrices: debouncedPrices,
-      supabase,
-    });
+    return scheduleIdleWork(() => {
+      void runAutoNetWorthSnapshotIfDue({
+        userId: uid,
+        data,
+        exchangeRate,
+        getAvailableCashForAccount: dataCtx.getAvailableCashForAccount,
+        simulatedPrices: debouncedPrices,
+        supabase,
+      });
+    }, 4000);
   }, [auth?.user?.id, dataCtx?.showHydrateBanner, dataCtx?.data, exchangeRate, debouncedPrices, dataCtx?.getAvailableCashForAccount]);
 
   useEffect(() => {
@@ -138,7 +135,7 @@ const Layout: React.FC<LayoutProps> = ({
               triggerPageAction={triggerPageAction}
             />
           )}
-          {children}
+          <PageDeferredDataProvider>{children}</PageDeferredDataProvider>
         </div>
       </main>
 

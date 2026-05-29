@@ -10,6 +10,7 @@ import { computeIncomeStability } from '../services/incomeStability';
 import { computeMonthlyCashflowKpisSar } from '../services/financeTruth';
 import { getPersonalTransactions } from '../utils/wealthScope';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
 import type { CapitalDeploymentAnswer } from '../services/capitalDeploymentOrchestrator';
 
 const EF_TARGET = 6;
@@ -48,6 +49,7 @@ export function useFinancialEnhancementInsights(emergencyFundMonths = 0): Financ
     }
 
     return scheduleIdleWork(() => {
+      if (isBackgroundWorkPaused()) return;
       const txs = getPersonalTransactions(data);
       const cf = computeMonthlyCashflowKpisSar({
         data,

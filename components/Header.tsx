@@ -14,7 +14,7 @@ import { Bars3Icon } from './icons/Bars3Icon';
 import { XMarkIcon } from './icons/XMarkIcon';
 import { HeadsetIcon } from './icons/HeadsetIcon';
 import { CheckIcon } from './icons/CheckIcon';
-import { useMarketData } from '../context/MarketDataContext';
+import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import { useNotifications } from '../context/NotificationsContext';
 import { useTodosOptional } from '../context/TodosContext';
 import { ClipboardDocumentListIcon } from './icons/ClipboardDocumentListIcon';
@@ -45,7 +45,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const auth = useContext(AuthContext);
   const { data } = useContext(DataContext)!;
   const { currency, setCurrency } = useCurrency();
-  const { refreshPrices, isRefreshing, quotesRefreshUIScope, lastUpdated, isLive } = useMarketData();
+  const { refreshPrices, isRefreshing, quotesRefreshUIScope, lastUpdated, isLive } = useMarketQuoteMeta();
   const headerRefreshing = isRefreshing && quotesRefreshUIScope.mode === 'all';
   const [quoteCooldownSec, setQuoteCooldownSec] = useState(0);
   const [pricesStatusLabel, setPricesStatusLabel] = useState('');

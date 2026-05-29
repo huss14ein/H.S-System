@@ -1,8 +1,13 @@
-import { useMarketData } from '../context/MarketDataContext';
-import { useDebouncedValue } from './useDebouncedValue';
+import { useContext } from 'react';
+import { MarketDebouncedPricesContext, useMarketDebouncedPrices as useMarketDebouncedPricesFromContext } from '../context/MarketDataContext';
 
-/** Live quotes debounced to match shell canonical metrics (default 1500ms). */
-export function useDebouncedMarketPrices(delayMs = 1500): Record<string, { price: number; change?: number; changePercent?: number }> {
-  const { simulatedPrices } = useMarketData();
-  return useDebouncedValue(simulatedPrices, delayMs);
+/** Shell-debounced live quotes (1500ms) — does not re-render on every raw quote tick. */
+export function useDebouncedMarketPrices(): Record<string, { price: number; change?: number; changePercent?: number }> {
+  const ctx = useContext(MarketDebouncedPricesContext);
+  if (!ctx) {
+    throw new Error('useDebouncedMarketPrices must be used within MarketDataProvider');
+  }
+  return ctx.debouncedPrices;
 }
+
+export { useMarketDebouncedPricesFromContext as useMarketDebouncedPrices };

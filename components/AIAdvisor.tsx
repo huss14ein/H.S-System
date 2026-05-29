@@ -36,7 +36,7 @@ import { LightBulbIcon } from './icons/LightBulbIcon';
 import { FinancialData, type Holding } from '../types';
 import { useAI } from '../context/AiContext';
 import AiProxyUnavailableHint from './AiProxyUnavailableHint';
-import { useMarketData } from '../context/MarketDataContext';
+import { useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import type { AiInsightOptions } from '../services/geminiService';
 
@@ -311,7 +311,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
     const [translateError, setTranslateError] = useState<string | null>(null);
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const sarPerUsd = useCanonicalSpotFx();
-    const { simulatedPrices } = useMarketData();
+    const simulatedPrices = useCanonicalSimulatedPrices();
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
 
     const insightSource = useMemo(() => {

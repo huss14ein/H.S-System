@@ -1,7 +1,7 @@
 import { useContext, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { useMarketData } from '../context/MarketDataContext';
+import { useMarketPrices } from '../context/MarketDataContext';
 import { useCanonicalFinancialMetricsContext } from '../context/CanonicalFinancialMetricsContext';
 import type { FinancialData } from '../types';
 import { resolveSarPerUsd } from '../utils/currencyMath';
@@ -25,7 +25,7 @@ export { buildCanonicalFinancialMetricsResult } from './canonicalFinancialMetric
  */
 export function useCanonicalSimulatedPrices(): SimulatedPriceMap {
   const shell = useCanonicalFinancialMetricsContext();
-  const { simulatedPrices } = useMarketData();
+  const { simulatedPrices } = useMarketPrices();
   const debounced = useDebouncedValue(simulatedPrices, 1500);
   if (shell) return shell.full.simulatedPrices;
   return debounced;
@@ -53,7 +53,7 @@ export function useCanonicalFinancialMetricsLocal(): UseCanonicalFinancialMetric
   const showHydrateBanner = ctx?.showHydrateBanner ?? false;
   const getAvailableCashForAccount = ctx?.getAvailableCashForAccount;
   const { exchangeRate } = useCurrency();
-  const { simulatedPrices } = useMarketData();
+  const { simulatedPrices } = useMarketPrices();
   const debouncedPrices = useDebouncedValue(simulatedPrices, 400);
   useHydrateSarPerUsdDailySeries(data, exchangeRate);
 
@@ -89,7 +89,7 @@ export function useDashboardCanonicalMetricsLocal(): DashboardCanonicalMetrics &
   const showHydrateBanner = ctx?.showHydrateBanner ?? false;
   const getAvailableCashForAccount = ctx?.getAvailableCashForAccount;
   const { exchangeRate } = useCurrency();
-  const { simulatedPrices } = useMarketData();
+  const { simulatedPrices } = useMarketPrices();
   const debouncedPrices = useDebouncedValue(simulatedPrices, 400);
   useHydrateSarPerUsdDailySeries(data, exchangeRate);
 

@@ -10,14 +10,17 @@ import { DataContext } from '../context/DataContext';
 export function useHydrateSarPerUsdDailySeries(
   data: FinancialData | null | undefined,
   uiExchangeRate: number,
+  opts?: { horizonDays?: number; earliestCalendarDay?: string },
 ): void {
   const dataResetKey = useContext(DataContext)?.dataResetKey ?? 0;
-  const lastHydratedKeyRef = useRef<number | null>(null);
+  const lastHydratedKeyRef = useRef<string | null>(null);
+  const optsKey = opts ? `${opts.horizonDays ?? ''}:${opts.earliestCalendarDay ?? ''}` : '';
 
   useEffect(() => {
     if (data == null) return;
-    if (lastHydratedKeyRef.current === dataResetKey) return;
-    lastHydratedKeyRef.current = dataResetKey;
-    hydrateSarPerUsdDailySeries(data, uiExchangeRate);
-  }, [data, uiExchangeRate, dataResetKey]);
+    const hydrateKey = `${dataResetKey}:${optsKey}`;
+    if (lastHydratedKeyRef.current === hydrateKey) return;
+    lastHydratedKeyRef.current = hydrateKey;
+    hydrateSarPerUsdDailySeries(data, uiExchangeRate, opts);
+  }, [data, uiExchangeRate, dataResetKey, optsKey, opts]);
 }

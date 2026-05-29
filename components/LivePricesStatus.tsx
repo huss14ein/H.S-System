@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext, useMemo } from 'react';
-import { useMarketData } from '../context/MarketDataContext';
+import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import { DataContext } from '../context/DataContext';
 import { collectTrackedSymbols, getStaleQuoteSymbols } from '../services/dataQuality';
 import { getExchangeMarketStatus } from '../services/finnhubService';
@@ -25,7 +25,7 @@ interface LivePricesStatusProps {
  * Use on Watchlist, Investments, and anywhere prices are shown.
  */
 const LivePricesStatus: React.FC<LivePricesStatusProps> = ({ variant = 'inline', className = '' }) => {
-  const { isLive, lastUpdated, isRefreshing, quotesRefreshUIScope, symbolQuoteUpdatedAt } = useMarketData();
+  const { isLive, lastUpdated, isRefreshing, quotesRefreshUIScope, symbolQuoteUpdatedAt } = useMarketQuoteMeta();
   const inlineRefreshing = isRefreshing && quotesRefreshUIScope.mode === 'all';
   const dataCtx = useContext(DataContext);
   const staleSymbols = useMemo(() => {

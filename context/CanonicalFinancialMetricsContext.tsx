@@ -1,10 +1,11 @@
-import React, { createContext, useContext, useMemo, useDeferredValue } from 'react';
+import React, { createContext, useContext, useMemo, useDeferredValue, useRef } from 'react';
 import { DataContext } from './DataContext';
 import { useCurrency } from './CurrencyContext';
-import { useMarketData } from './MarketDataContext';
+import { useMarketPrices } from './MarketDataContext';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
 import { pickDashboardCanonicalMetrics, type DashboardCanonicalMetrics } from '../services/canonicalFinancialMetrics';
+import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
 import {
   buildCanonicalFinancialMetricsResult,
   type UseCanonicalFinancialMetricsResult,
@@ -29,13 +30,18 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
   const showHydrateBanner = ctx?.showHydrateBanner ?? false;
   const getAvailableCashForAccount = ctx?.getAvailableCashForAccount;
   const { exchangeRate } = useCurrency();
-  const { simulatedPrices } = useMarketData();
+  const { simulatedPrices } = useMarketPrices();
   const debouncedPrices = useDebouncedValue(simulatedPrices, 1500);
   const deferredPrices = useDeferredValue(debouncedPrices);
   const deferredData = useDeferredValue(showHydrateBanner ? null : data);
   useHydrateSarPerUsdDailySeries(deferredData, exchangeRate);
 
+  const cachedValueRef = useRef<CanonicalFinancialMetricsContextValue | null>(null);
+
   const value = useMemo((): CanonicalFinancialMetricsContextValue => {
+    if (isBackgroundWorkPaused() && cachedValueRef.current) {
+      return cachedValueRef.current;
+    }
     const full = buildCanonicalFinancialMetricsResult({
       data: deferredData,
       exchangeRate,
@@ -44,7 +50,7 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
       showHydrateBanner,
     });
     const dashboardCore = pickDashboardCanonicalMetrics(full);
-    return {
+    const next: CanonicalFinancialMetricsContextValue = {
       full,
       dashboard: {
         ...dashboardCore,
@@ -54,6 +60,8 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
         getAvailableCashForAccount,
       },
     };
+    cachedValueRef.current = next;
+    return next;
   }, [deferredData, exchangeRate, getAvailableCashForAccount, deferredPrices, showHydrateBanner]);
 
   return (

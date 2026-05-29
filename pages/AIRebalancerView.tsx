@@ -12,7 +12,7 @@ import { getTargetAllocationForProfile, meanVarianceOptimization } from '../serv
 import type { Holding, Page } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
-import { useMarketData } from '../context/MarketDataContext';
+import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import { useCurrency } from '../context/CurrencyContext';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
@@ -37,7 +37,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab: _o
   const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
   const { trackAction } = useSelfLearning();
   const { simulatedPrices } = useInvestmentsCanonicalMetrics();
-  const { symbolQuoteUpdatedAt } = useMarketData();
+  const { symbolQuoteUpdatedAt } = useMarketQuoteMeta();
   const { exchangeRate } = useCurrency();
   const { formatCurrencyString } = useFormatCurrency();
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>('');

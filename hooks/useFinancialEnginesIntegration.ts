@@ -4,13 +4,9 @@
  * Consumable by Plan, Budgets, Wealth Ultra, and Investment Plan for consistent cash/risk/household constraints.
  */
 
-import { useMemo, useContext } from 'react';
+import { useMemo, useContext, useEffect, useState, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
-import { getPersonalTransactions, getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import {
-  buildUnifiedFinancialContext,
-  runCrossEngineAnalysis,
-  generatePrioritizedActionQueue,
   validateInvestmentAction,
   type UnifiedFinancialContext,
   type CrossEngineAnalysis,
@@ -18,48 +14,13 @@ import {
   type RiskConstraints,
   type HouseholdConstraints,
 } from '../services/engineIntegration';
-import type { Holding, InvestmentPortfolio, Page } from '../types';
-
-function mapInvestmentsForContext(
-  investments: InvestmentPortfolio[]
-): Array<{
-  id: string;
-  symbol: string;
-  quantity: number;
-  shares: number;
-  averageCost: number;
-  avgCost: number;
-  currentPrice: number;
-  type: string;
-}> {
-  const out: Array<{
-    id: string;
-    symbol: string;
-    quantity: number;
-    shares: number;
-    averageCost: number;
-    avgCost: number;
-    currentPrice: number;
-    type: string;
-  }> = [];
-  (investments ?? []).forEach((port) => {
-    (port.holdings ?? []).forEach((h: Holding) => {
-      const q = Number(h.quantity ?? 0);
-      const price = Number(h.currentValue ?? 0) / (q || 1) || Number(h.avgCost ?? 0);
-      out.push({
-        id: h.id ?? `${port.id}-${h.symbol}`,
-        symbol: h.symbol ?? '',
-        quantity: q,
-        shares: q,
-        averageCost: Number(h.avgCost ?? 0),
-        avgCost: Number(h.avgCost ?? 0),
-        currentPrice: price,
-        type: 'stock',
-      });
-    });
-  });
-  return out;
-}
+import type { Page } from '../types';
+import {
+  computeFinancialEnginesIntegration,
+  EMPTY_FINANCIAL_ENGINES_SNAPSHOT,
+} from '../services/financialEnginesIntegrationCompute';
+import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
 
 export interface UseFinancialEnginesIntegrationResult {
   /** Unified context (cash, risk, household) from all engines */
@@ -87,65 +48,61 @@ export interface UseFinancialEnginesIntegrationResult {
   ready: boolean;
 }
 
+type Options = {
+  /** When false, compute on idle time (Layout shell banner — keeps navigation snappy). */
+  eager?: boolean;
+};
+
 /**
  * Build unified financial context and run cross-engine analysis from DataContext.
  * Use in Plan, Budgets, Wealth Ultra, and Investment Plan for shared constraints and alerts.
  */
-export function useFinancialEnginesIntegration(): UseFinancialEnginesIntegrationResult {
+export function useFinancialEnginesIntegration(options?: Options): UseFinancialEnginesIntegrationResult {
+  const eager = options?.eager !== false;
   const { data, showHydrateBanner } = useContext(DataContext)!;
+  const [idleSnapshot, setIdleSnapshot] = useState(EMPTY_FINANCIAL_ENGINES_SNAPSHOT);
 
-  const result = useMemo(() => {
-    /** Avoid cross-engine alerts from stale `initialData` while Supabase fetch is in flight — fixes banner flash then disappearance. */
-    if (!data || showHydrateBanner) {
-      return {
-        context: null,
-        analysis: null,
-        actionQueue: [],
-        cash: null,
-        risk: null,
-        household: null,
-        ready: false,
-      };
+  const dataFingerprint = useMemo(
+    () =>
+      [
+        showHydrateBanner ? '1' : '0',
+        data?.transactions?.length ?? 0,
+        data?.accounts?.length ?? 0,
+        data?.budgets?.length ?? 0,
+        data?.goals?.length ?? 0,
+        data?.investments?.length ?? 0,
+        (data as { personalTransactions?: unknown[] })?.personalTransactions?.length ?? 0,
+        (data as { personalAccounts?: unknown[] })?.personalAccounts?.length ?? 0,
+        (data as { personalInvestments?: unknown[] })?.personalInvestments?.length ?? 0,
+      ].join(':'),
+    [data, showHydrateBanner],
+  );
+
+  const cachedSyncRef = useRef(EMPTY_FINANCIAL_ENGINES_SNAPSHOT);
+
+  const syncResult = useMemo(() => {
+    if (!eager) return EMPTY_FINANCIAL_ENGINES_SNAPSHOT;
+    if (isBackgroundWorkPaused() && cachedSyncRef.current.ready) {
+      return cachedSyncRef.current;
     }
+    const next = computeFinancialEnginesIntegration(data, showHydrateBanner);
+    if (next.ready) cachedSyncRef.current = next;
+    return next;
+  }, [eager, data, showHydrateBanner, dataFingerprint]);
 
-    const transactions = getPersonalTransactions(data);
-    const accounts = getPersonalAccounts(data);
-    const budgets = data.budgets ?? [];
-    const goals = data.goals ?? [];
-    const investments = getPersonalInvestments(data);
-    const investmentsFlat = mapInvestmentsForContext(investments);
+  useEffect(() => {
+    if (eager) return;
+    if (!data || showHydrateBanner) {
+      setIdleSnapshot(EMPTY_FINANCIAL_ENGINES_SNAPSHOT);
+      return;
+    }
+    return scheduleIdleWork(() => {
+      if (isBackgroundWorkPaused()) return;
+      setIdleSnapshot(computeFinancialEnginesIntegration(data, showHydrateBanner));
+    }, 2500);
+  }, [eager, data, showHydrateBanner, dataFingerprint]);
 
-    const context = buildUnifiedFinancialContext(
-      transactions,
-      accounts,
-      budgets,
-      goals,
-      investmentsFlat
-    );
-
-    const analysis = runCrossEngineAnalysis(context);
-    const actionQueue = generatePrioritizedActionQueue(analysis);
-
-    return {
-      context,
-      analysis,
-      actionQueue,
-      cash: context.cash,
-      risk: context.risk,
-      household: context.household,
-      ready: true,
-    };
-  }, [
-    showHydrateBanner,
-    data?.transactions,
-    data?.accounts,
-    data?.budgets,
-    data?.goals,
-    data?.investments,
-    (data as { personalTransactions?: unknown })?.personalTransactions,
-    (data as { personalAccounts?: unknown })?.personalAccounts,
-    (data as { personalInvestments?: unknown })?.personalInvestments,
-  ]);
+  const result = eager ? syncResult : idleSnapshot;
 
   const validateAction = useMemo(() => {
     return (action: { type: 'buy' | 'sell'; symbol: string; amount: number }) => {

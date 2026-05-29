@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, startTransition } from 'react';
 import Layout from './Layout';
 import { Page } from '../types';
 import { DataProvider } from '../context/DataContext';
@@ -21,6 +21,7 @@ import { ConfirmActionProvider } from '../hooks/useConfirmAction';
 import { SelfLearningProvider } from '../context/SelfLearningContext';
 import { PAGE_DISPLAY_NAMES, INVESTMENT_SUB_NAV_PAGE_NAMES } from '../constants';
 import { PAGE_MODULES, prefetchCommonPagesIdle, prefetchPage, resolveShellPage } from '../utils/lazyPages';
+import { pauseBackgroundWork } from '../utils/backgroundWorkGate';
 import { CanonicalFinancialMetricsProvider } from '../context/CanonicalFinancialMetricsContext';
 import { LanguageProvider } from '../context/LanguageContext';
 
@@ -162,21 +163,24 @@ const AuthenticatedAppShell: React.FC = () => {
 
   const setActivePage = useCallback((page: Page) => {
     prefetchPage(page);
-    if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(page)) {
-      setActivePageState('Investments');
-      setPageAction(`investment-tab:${page}`);
+    pauseBackgroundWork();
+    startTransition(() => {
+      if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(page)) {
+        setActivePageState('Investments');
+        setPageAction(`investment-tab:${page}`);
+        try {
+          const hash = '#' + encodeURIComponent('Investments');
+          if (window.location.hash !== hash) window.location.hash = hash;
+        } catch (_) {}
+        return;
+      }
+      setActivePageState(page);
+      setPageAction(null);
       try {
-        const hash = '#' + encodeURIComponent('Investments');
+        const hash = '#' + encodeURIComponent(page);
         if (window.location.hash !== hash) window.location.hash = hash;
       } catch (_) {}
-      return;
-    }
-    setActivePageState(page);
-    setPageAction(null);
-    try {
-      const hash = '#' + encodeURIComponent(page);
-      if (window.location.hash !== hash) window.location.hash = hash;
-    } catch (_) {}
+    });
   }, []);
 
   useEffect(() => {
@@ -194,17 +198,20 @@ const AuthenticatedAppShell: React.FC = () => {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const onHashChange = () => {
-      const decoded = decodeHashPage();
-      if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(decoded as Page)) {
-        prefetchPage(decoded as Page);
-        setActivePageState('Investments');
-        setPageAction(`investment-tab:${decoded}`);
-        return;
-      }
-      setPageAction(null);
-      const page = getPageFromHash();
-      if (page) prefetchPage(page);
-      setActivePageState(page ?? 'Dashboard');
+      pauseBackgroundWork();
+      startTransition(() => {
+        const decoded = decodeHashPage();
+        if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(decoded as Page)) {
+          prefetchPage(decoded as Page);
+          setActivePageState('Investments');
+          setPageAction(`investment-tab:${decoded}`);
+          return;
+        }
+        setPageAction(null);
+        const page = getPageFromHash();
+        if (page) prefetchPage(page);
+        setActivePageState(page ?? 'Dashboard');
+      });
     };
     window.addEventListener('hashchange', onHashChange);
     if (!window.location.hash) window.location.replace('#Dashboard');
@@ -213,12 +220,15 @@ const AuthenticatedAppShell: React.FC = () => {
 
   const triggerPageAction = useCallback((page: Page, action: string) => {
     prefetchPage(page);
-    setActivePageState(resolveShellPage(page));
-    setPageAction(action);
-    try {
-      const hash = '#' + encodeURIComponent(resolveShellPage(page));
-      if (window.location.hash !== hash) window.location.hash = hash;
-    } catch (_) {}
+    pauseBackgroundWork();
+    startTransition(() => {
+      setActivePageState(resolveShellPage(page));
+      setPageAction(action);
+      try {
+        const hash = '#' + encodeURIComponent(resolveShellPage(page));
+        if (window.location.hash !== hash) window.location.hash = hash;
+      } catch (_) {}
+    });
   }, []);
   const clearPageAction = () => setPageAction(null);
 

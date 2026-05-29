@@ -11,6 +11,12 @@ import { getSahmkLivePrices } from './sahmkQuote';
 import { fetchGeminiProxyHealthStatus, getGeminiProxyEndpoints } from './aiProxyEndpoints';
 import { getAiProxyAuthorizationHeader } from './aiProxyAuth';
 import { isTadawulQuoteSymbol, isUsEquityQuoteSymbol, uniqueQuoteSymbols } from './marketQuoteRouting';
+import { isRateLimitError } from './quoteRefreshCooldown';
+import {
+    buildRateLimitBatchError,
+    noteProviderRateLimitError,
+    shouldAbortBatchForRateLimit,
+} from './quoteProviderRateLimit';
 import { computeGoalResolvedAmountsSar, resolvedGoalAmountsFingerprint } from './goalResolvedTotals';
 import { appendSarGroundingNotice, auditSarGrounding, flattenAiContentsForGrounding } from '../utils/aiSarGroundingAudit';
 import {
@@ -395,12 +401,17 @@ const getFinnhubLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
     if (usSymbols.length === 0) return {};
     const token = getFinnhubApiKey();
     const mapped: { [symbol: string]: { price: number; change: number; changePercent: number } } = {};
+    let rateLimitHits = 0;
 
     for (const rawSymbol of usSymbols) {
         const candidateSymbols = getFinnhubQuoteCandidates(rawSymbol);
         for (const finnhubSymbol of candidateSymbols) {
             try {
                 const response = await finnhubFetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(finnhubSymbol)}&token=${encodeURIComponent(token)}`);
+                if (response.status === 429) {
+                    rateLimitHits += 1;
+                    break;
+                }
                 if (!response.ok) continue;
                 const row = await response.json();
                 const price = resolveQuotePrice(row ?? {});
@@ -427,6 +438,10 @@ const getFinnhubLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
                 for (const k of keys) mapped[k] = quote;
                 break;
             } catch (error) {
+                if (noteProviderRateLimitError(error)) {
+                    rateLimitHits += 1;
+                    break;
+                }
                 if (isFinnhub403(error)) {
                     if (!warnedFinnhub403InGeminiService) {
                         warnedFinnhub403InGeminiService = true;
@@ -437,6 +452,13 @@ const getFinnhubLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
                 }
             }
         }
+        if (shouldAbortBatchForRateLimit(rateLimitHits, Object.keys(mapped).length)) {
+            throw buildRateLimitBatchError('Finnhub');
+        }
+    }
+
+    if (shouldAbortBatchForRateLimit(rateLimitHits, Object.keys(mapped).length)) {
+        throw buildRateLimitBatchError('Finnhub');
     }
 
     return mapped;
@@ -3086,6 +3108,7 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
         try {
             return await getFinnhubLivePrices(syms);
         } catch (e) {
+            if (isRateLimitError(e)) throw e;
             console.warn('Finnhub live batch failed:', e);
             return {};
         }
@@ -3109,7 +3132,9 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
     };
 
     const mergeFinnhubStooqAndSahmk = async (): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {
-        const [finnhub, sahmk] = await Promise.all([tryFinnhub(usSymbols), trySahmk(tadawulSymbols)]);
+        // Sequential provider calls reduce parallel proxy/API pressure during large refreshes.
+        const finnhub = await tryFinnhub(usSymbols);
+        const sahmk = await trySahmk(tadawulSymbols);
         const missingUs = usSymbols.filter((s) => {
             const u = (s || '').trim().toUpperCase();
             const canon = canonicalQuoteLookupKey(s);
