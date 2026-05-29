@@ -11,6 +11,8 @@ describe('wealth analytics end-to-end wiring', () => {
         expect(read('utils/lazyPages.tsx')).toMatch(/'Wealth Analytics':\s*lazyPage/);
         expect(read('components/AuthenticatedAppShell.tsx')).toContain("'Wealth Analytics'");
         expect(read('components/AuthenticatedAppShell.tsx')).toContain("case 'Wealth Analytics':");
+        const header = read('components/Header.tsx');
+        expect(header).toMatch(/Overview.*Wealth Analytics/s);
     });
 
     it('Wealth Analytics page uses canonical metrics and advanced widgets', () => {

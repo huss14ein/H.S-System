@@ -168,7 +168,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   }, [todosOpt?.todos]);
 
   const navGroups = useMemo(() => [
-    { name: 'Overview', items: ['Dashboard', 'Summary', 'Analysis', 'Forecast'] },
+    { name: 'Overview', items: ['Dashboard', 'Summary', 'Wealth Analytics', 'Analysis', 'Forecast'] },
     { name: 'Management', items: ['Transactions', 'Statement Upload', 'Accounts', 'Budgets', 'Goals', 'Zakat'] },
     {
       name: 'Strategy',
