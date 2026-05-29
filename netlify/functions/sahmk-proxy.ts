@@ -2,6 +2,7 @@ import './loadNetlifyFunctionEnv';
 import type { Handler, HandlerEvent } from '@netlify/functions';
 import { accessControlOriginHeader, assertBrowserOriginAllowed } from './corsAllowlist';
 import { assertProxySupabaseJwt } from './proxySupabaseJwt';
+import { getQuoteEdgeCached, quoteEdgeCacheKey, setQuoteEdgeCached } from './quoteEdgeCache';
 
 /**
  * Proxy for SAHMK (sahmk.sa) Tadawul quotes — browsers must not hold the API key.
@@ -19,6 +20,8 @@ function corsHeaders(event: HandlerEvent): Record<string, string> {
 }
 
 const SAHMK_BASE = 'https://app.sahmk.sa/api/v1';
+const CACHE_429_TTL_MS = 20_000;
+const CACHE_5XX_TTL_MS = 10_000;
 
 /** Allow Tadawul / Nomu symbol codes (numeric or alnum, no injection). */
 function isAllowedSymbol(raw: string): boolean {
@@ -75,6 +78,20 @@ const handler: Handler = async (event: HandlerEvent) => {
     };
   }
 
+  const cacheKey = quoteEdgeCacheKey('sahmk', code);
+  const cached = getQuoteEdgeCached(cacheKey);
+  if (cached) {
+    return {
+      statusCode: cached.status,
+      headers: {
+        ...corsHeaders(event),
+        'Content-Type': cached.contentType,
+        'X-Quote-Cache': 'HIT',
+      },
+      body: cached.body,
+    };
+  }
+
   try {
     const url = `${SAHMK_BASE}/quote/${encodeURIComponent(code)}/`;
     const res = await fetch(url, {
@@ -84,11 +101,29 @@ const handler: Handler = async (event: HandlerEvent) => {
       },
     });
     const body = await res.text();
+    const contentType = res.headers.get('Content-Type') ?? 'application/json; charset=utf-8';
+    const retryAfter = res.headers.get('Retry-After') ?? undefined;
+    const shouldCache =
+      res.ok || res.status === 429 || (res.status >= 500 && res.status <= 599);
+    if (shouldCache) {
+      const ttl =
+        res.ok ? undefined : res.status === 429 ? CACHE_429_TTL_MS : CACHE_5XX_TTL_MS;
+      setQuoteEdgeCached(cacheKey, { status: res.status, body, contentType }, ttl);
+    }
     return {
       statusCode: res.status,
       headers: {
         ...corsHeaders(event),
-        'Content-Type': res.headers.get('Content-Type') ?? 'application/json; charset=utf-8',
+        'Content-Type': contentType,
+        ...(retryAfter ? { 'Retry-After': retryAfter } : {}),
+        'X-Quote-Cache': 'MISS',
+        ...(res.ok
+          ? {}
+          : res.status === 429
+            ? { 'X-Quote-Cache-TTL': String(Math.round(CACHE_429_TTL_MS / 1000)) }
+            : res.status >= 500 && res.status <= 599
+              ? { 'X-Quote-Cache-TTL': String(Math.round(CACHE_5XX_TTL_MS / 1000)) }
+              : {}),
       },
       body,
     };

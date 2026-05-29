@@ -1,4 +1,4 @@
-import React, { useContext, useEffect } from 'react';
+import React, { useContext, useEffect, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { resolveSarPerUsd, DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
@@ -9,11 +9,15 @@ import { resolveSarPerUsd, DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
  */
 const ExchangeRateSync: React.FC = () => {
   const { data, dataResetKey } = useContext(DataContext)!;
-  const { setExchangeRate } = useCurrency();
+  const { exchangeRate, setExchangeRate } = useCurrency();
+  const lastSyncedRef = useRef(exchangeRate);
 
   useEffect(() => {
     const r = resolveSarPerUsd(data ?? null, DEFAULT_SAR_PER_USD);
-    setExchangeRate(r);
+    if (Math.abs(lastSyncedRef.current - r) > 1e-6) {
+      lastSyncedRef.current = r;
+      setExchangeRate(r);
+    }
   }, [data, dataResetKey, setExchangeRate]);
 
   return null;

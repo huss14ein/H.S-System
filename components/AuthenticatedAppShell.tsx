@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, Suspense, lazy } from 'react';
+import React, { useState, useCallback, useEffect, startTransition } from 'react';
 import Layout from './Layout';
 import { Page } from '../types';
 import { DataProvider } from '../context/DataContext';
@@ -9,8 +9,8 @@ import { NotificationsProvider } from '../context/NotificationsContext';
 import { TodosProvider } from '../context/TodosContext';
 import MarketSimulator from './MarketSimulator';
 import { AiProvider } from '../context/AiContext';
-import LoadingSpinner from './LoadingSpinner';
 import AppErrorBoundary from './AppErrorBoundary';
+import PageRouteSuspense from './PageRouteSuspense';
 import { StatementProcessingProvider } from '../context/StatementProcessingContext';
 import { AIProvider } from '../context/TransactionAIContext';
 import { ReconciliationProvider } from '../context/ReconciliationContext';
@@ -20,32 +20,13 @@ import { ToastProvider } from '../context/ToastContext';
 import { ConfirmActionProvider } from '../hooks/useConfirmAction';
 import { SelfLearningProvider } from '../context/SelfLearningContext';
 import { PAGE_DISPLAY_NAMES, INVESTMENT_SUB_NAV_PAGE_NAMES } from '../constants';
-/** Eager: avoids a second dynamic chunk fetch (often 404 after deploy when index.html is cached but hashed assets changed). */
-import WealthUltraDashboard from '../pages/WealthUltraDashboard';
-import Dashboard from '../pages/Dashboard';
-const Summary = lazy(() => import('../pages/Summary'));
-const Accounts = lazy(() => import('../pages/Accounts'));
-const Liabilities = lazy(() => import('../pages/Liabilities'));
-const Transactions = lazy(() => import('../pages/Transactions'));
-const Budgets = lazy(() => import('../pages/Budgets'));
-const Goals = lazy(() => import('../pages/Goals'));
-const Forecast = lazy(() => import('../pages/Forecast'));
-const Analysis = lazy(() => import('../pages/Analysis'));
-const Zakat = lazy(() => import('../pages/Zakat'));
-const Notifications = lazy(() => import('../pages/Notifications'));
-const Settings = lazy(() => import('../pages/Settings'));
-const Investments = lazy(() => import('../pages/Investments'));
-const Plan = lazy(() => import('../pages/Plan'));
-const Assets = lazy(() => import('../pages/Assets'));
-const MarketEvents = lazy(() => import('../pages/MarketEvents'));
-const SystemHealth = lazy(() => import('../pages/SystemHealth'));
-const StatementUpload = lazy(() => import('../pages/StatementUpload'));
-const StatementHistoryView = lazy(() => import('../pages/StatementHistoryView'));
-const EnginesAndToolsHub = lazy(() => import('../pages/EnginesAndToolsHub'));
-const Installments = lazy(() => import('../pages/Installments'));
+import { PAGE_MODULES, prefetchCommonPagesIdle, prefetchPage, resolveShellPage } from '../utils/lazyPages';
+import { pauseBackgroundWork } from '../utils/backgroundWorkGate';
+import { CanonicalFinancialMetricsProvider } from '../context/CanonicalFinancialMetricsContext';
+import { LanguageProvider } from '../context/LanguageContext';
 
 const VALID_PAGES: Page[] = [
-  'Dashboard', 'Summary', 'Accounts', 'Goals', 'Liabilities', 'Transactions',
+  'Dashboard', 'Summary', 'Wealth Analytics', 'Accounts', 'Goals', 'Liabilities', 'Transactions',
   'Budgets', 'Analysis', 'Forecast', 'Zakat', 'Notifications', 'Settings',
   'Investments', 'Plan', 'Wealth Ultra', 'Market Events', 'Recovery Plan',
   'Investment Plan', 'Dividend Tracker', 'AI Rebalancer', 'Watchlist',
@@ -89,26 +70,119 @@ function getInitialPage(): Page {
   return 'Dashboard';
 }
 
+function investmentTabAction(page: Page): string | null {
+  return INVESTMENT_SUB_NAV_PAGE_NAMES.includes(page) ? `investment-tab:${page}` : null;
+}
+
+type AppRouteHostProps = {
+  activePage: Page;
+  pageAction: string | null;
+  setActivePage: (page: Page) => void;
+  triggerPageAction: (page: Page, action: string) => void;
+  clearPageAction: () => void;
+};
+
+const AppRouteHost: React.FC<AppRouteHostProps> = ({
+  activePage,
+  pageAction,
+  setActivePage,
+  triggerPageAction,
+  clearPageAction,
+}) => {
+  const renderPage = () => {
+    const shell = resolveShellPage(activePage);
+    const Lazy = PAGE_MODULES[shell]?.Lazy ?? PAGE_MODULES.Dashboard!.Lazy;
+    const routeKey = `${shell}:${pageAction ?? ''}`;
+    const tabAction = investmentTabAction(activePage);
+    const effectivePageAction = tabAction ?? pageAction;
+    const actionProps = { pageAction: effectivePageAction, clearPageAction };
+    const nav = { setActivePage, triggerPageAction };
+
+    switch (shell) {
+      case 'Dashboard':
+        return <Lazy key={routeKey} {...nav} {...actionProps} />;
+      case 'Summary':
+        return <Lazy key={routeKey} {...nav} />;
+      case 'Wealth Analytics':
+        return <Lazy key={routeKey} {...nav} />;
+      case 'Accounts':
+        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+      case 'Liabilities':
+        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+      case 'Transactions':
+        return <Lazy key={routeKey} {...actionProps} {...nav} />;
+      case 'Budgets':
+        return <Lazy key={routeKey} {...actionProps} triggerPageAction={triggerPageAction} setActivePage={setActivePage} />;
+      case 'Goals':
+        return <Lazy key={routeKey} setActivePage={setActivePage} pageAction={pageAction} clearPageAction={clearPageAction} triggerPageAction={triggerPageAction} />;
+      case 'Forecast':
+        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+      case 'Analysis':
+        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+      case 'Zakat':
+        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+      case 'Notifications':
+        return <Lazy key={routeKey} setActivePage={setActivePage} {...actionProps} triggerPageAction={triggerPageAction} />;
+      case 'Settings':
+        return <Lazy key={routeKey} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
+      case 'Investments':
+        return <Lazy key={routeKey} {...actionProps} {...nav} />;
+      case 'Plan':
+        return <Lazy key={routeKey} {...nav} />;
+      case 'Assets':
+        return <Lazy key={routeKey} {...actionProps} setActivePage={setActivePage} />;
+      case 'Commodities':
+        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+      case 'Statement Upload':
+        return <Lazy key={routeKey} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
+      case 'Statement History':
+        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+      case 'Market Events':
+        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+      case 'System & APIs Health':
+        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+      case 'Wealth Ultra':
+        return <Lazy key={routeKey} {...nav} />;
+      case 'Engines & Tools':
+        return <Lazy key={routeKey} {...nav} {...actionProps} />;
+      case 'Installments':
+        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+      default:
+        return <Lazy key={routeKey} {...nav} />;
+    }
+  };
+
+  return (
+    <AppErrorBoundary pageLabel={activePage} onRecover={() => setActivePage('Dashboard')}>
+      <PageRouteSuspense activePage={activePage}>{renderPage()}</PageRouteSuspense>
+    </AppErrorBoundary>
+  );
+};
+
 const AuthenticatedAppShell: React.FC = () => {
   const [activePage, setActivePageState] = useState<Page>(getInitialPage);
   const [pageAction, setPageAction] = useState<string | null>(getInitialPageActionFromHash);
 
   const setActivePage = useCallback((page: Page) => {
-    if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(page)) {
-      setActivePageState('Investments');
-      setPageAction(`investment-tab:${page}`);
+    prefetchPage(page);
+    pauseBackgroundWork();
+    startTransition(() => {
+      if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(page)) {
+        setActivePageState('Investments');
+        setPageAction(`investment-tab:${page}`);
+        try {
+          const hash = '#' + encodeURIComponent('Investments');
+          if (window.location.hash !== hash) window.location.hash = hash;
+        } catch (_) {}
+        return;
+      }
+      setActivePageState(page);
+      setPageAction(null);
       try {
-        const hash = '#' + encodeURIComponent('Investments');
+        const hash = '#' + encodeURIComponent(page);
         if (window.location.hash !== hash) window.location.hash = hash;
       } catch (_) {}
-      return;
-    }
-    setActivePageState(page);
-    setPageAction(null);
-    try {
-      const hash = '#' + encodeURIComponent(page);
-      if (window.location.hash !== hash) window.location.hash = hash;
-    } catch (_) {}
+    });
   }, []);
 
   useEffect(() => {
@@ -119,17 +193,27 @@ const AuthenticatedAppShell: React.FC = () => {
   }, [activePage]);
 
   useEffect(() => {
+    prefetchPage(getInitialPage());
+    prefetchCommonPagesIdle();
+  }, []);
+
+  useEffect(() => {
     if (typeof window === 'undefined') return;
     const onHashChange = () => {
-      const decoded = decodeHashPage();
-      if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(decoded as Page)) {
-        setActivePageState('Investments');
-        setPageAction(`investment-tab:${decoded}`);
-        return;
-      }
-      setPageAction(null);
-      const page = getPageFromHash();
-      setActivePageState(page ?? 'Dashboard');
+      pauseBackgroundWork();
+      startTransition(() => {
+        const decoded = decodeHashPage();
+        if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(decoded as Page)) {
+          prefetchPage(decoded as Page);
+          setActivePageState('Investments');
+          setPageAction(`investment-tab:${decoded}`);
+          return;
+        }
+        setPageAction(null);
+        const page = getPageFromHash();
+        if (page) prefetchPage(page);
+        setActivePageState(page ?? 'Dashboard');
+      });
     };
     window.addEventListener('hashchange', onHashChange);
     if (!window.location.hash) window.location.replace('#Dashboard');
@@ -137,87 +221,67 @@ const AuthenticatedAppShell: React.FC = () => {
   }, []);
 
   const triggerPageAction = useCallback((page: Page, action: string) => {
-    setActivePageState(page);
-    setPageAction(action);
-    try {
-      const hash = '#' + encodeURIComponent(page);
-      if (window.location.hash !== hash) window.location.hash = hash;
-    } catch (_) {}
+    prefetchPage(page);
+    pauseBackgroundWork();
+    startTransition(() => {
+      setActivePageState(resolveShellPage(page));
+      setPageAction(action);
+      try {
+        const hash = '#' + encodeURIComponent(resolveShellPage(page));
+        if (window.location.hash !== hash) window.location.hash = hash;
+      } catch (_) {}
+    });
   }, []);
   const clearPageAction = () => setPageAction(null);
-
-  const renderPage = () => {
-    const actionProps = { pageAction, clearPageAction };
-    switch (activePage) {
-      case 'Dashboard': return <Dashboard setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
-      case 'Summary': return <Summary setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
-      case 'Accounts': return <Accounts setActivePage={setActivePage} />;
-      case 'Liabilities': return <Liabilities setActivePage={setActivePage} />;
-      case 'Transactions': return <Transactions {...actionProps} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
-      case 'Budgets': return <Budgets {...actionProps} triggerPageAction={triggerPageAction} setActivePage={setActivePage} />;
-      case 'Goals': return <Goals setActivePage={setActivePage} pageAction={pageAction} clearPageAction={clearPageAction} triggerPageAction={triggerPageAction} />;
-      case 'Forecast': return <Forecast setActivePage={setActivePage} />;
-      case 'Analysis': return <Analysis setActivePage={setActivePage} />;
-      case 'Zakat': return <Zakat setActivePage={setActivePage} />;
-      case 'Notifications': return <Notifications setActivePage={setActivePage} pageAction={pageAction} clearPageAction={clearPageAction} triggerPageAction={triggerPageAction} />;
-      case 'Settings': return <Settings setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
-      case 'Investments': return <Investments {...actionProps} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
-      case 'Plan': return <Plan setActivePage={setActivePage} />;
-      case 'Assets': return <Assets {...actionProps} setActivePage={setActivePage} />;
-      case 'Commodities': return <Assets {...actionProps} setActivePage={setActivePage} />;
-      case 'Statement Upload': return <StatementUpload setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
-      case 'Statement History': return <StatementHistoryView setActivePage={setActivePage} />;
-      case 'Market Events': return <MarketEvents setActivePage={setActivePage} />;
-      case 'System & APIs Health': return <SystemHealth setActivePage={setActivePage} />;
-      case 'Wealth Ultra': return <WealthUltraDashboard setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
-      case 'Engines & Tools': return <EnginesAndToolsHub setActivePage={setActivePage} triggerPageAction={triggerPageAction} pageAction={pageAction} clearPageAction={clearPageAction} />;
-      case 'Installments': return <Installments setActivePage={setActivePage} />;
-      default: return <Dashboard setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
-    }
-  };
 
   return (
     <ToastProvider>
       <ConfirmActionProvider>
       <SelfLearningProvider>
         <AiProvider>
-          <DataProvider>
-            <CurrencyProvider>
-              <ExchangeRateSync />
-              <MarketDataProvider>
-                <TodosProvider>
-                  <NotificationsProvider>
-                    <StatementProcessingProvider>
-                      <AIProvider>
-                        <ReconciliationProvider>
-                          <MultiBankProvider>
-                            <PrivacyProvider>
-                              <MarketSimulator />
-                              <Layout
-                                activePage={activePage}
-                                setActivePage={setActivePage}
-                                triggerPageAction={triggerPageAction}
-                                triggerPageActionPair={triggerPageAction}
-                                contentMaxClass={
-                                  activePage === 'Dashboard' || activePage === 'Summary' ? 'max-w-screen-2xl' : 'max-w-7xl'
-                                }
-                              >
-                                <AppErrorBoundary pageLabel={activePage} onRecover={() => setActivePage('Dashboard')}>
-                                  <Suspense fallback={<LoadingSpinner className="min-h-[24rem]" />}>
-                                    {renderPage()}
-                                  </Suspense>
-                                </AppErrorBoundary>
-                              </Layout>
-                            </PrivacyProvider>
-                          </MultiBankProvider>
-                        </ReconciliationProvider>
-                      </AIProvider>
-                    </StatementProcessingProvider>
-                  </NotificationsProvider>
-                </TodosProvider>
-              </MarketDataProvider>
-            </CurrencyProvider>
-          </DataProvider>
+          <LanguageProvider>
+            <DataProvider>
+              <CurrencyProvider>
+                <ExchangeRateSync />
+                <MarketDataProvider>
+                  <CanonicalFinancialMetricsProvider>
+                  <TodosProvider>
+                    <NotificationsProvider>
+                      <StatementProcessingProvider>
+                        <AIProvider>
+                          <ReconciliationProvider>
+                            <MultiBankProvider>
+                              <PrivacyProvider>
+                                <MarketSimulator />
+                                <Layout
+                                  activePage={activePage}
+                                  setActivePage={setActivePage}
+                                  triggerPageAction={triggerPageAction}
+                                  triggerPageActionPair={triggerPageAction}
+                                  contentMaxClass={
+                                    activePage === 'Dashboard' || activePage === 'Summary' ? 'max-w-screen-2xl' : 'max-w-7xl'
+                                  }
+                                >
+                                  <AppRouteHost
+                                    activePage={activePage}
+                                    pageAction={pageAction}
+                                    setActivePage={setActivePage}
+                                    triggerPageAction={triggerPageAction}
+                                    clearPageAction={clearPageAction}
+                                  />
+                                </Layout>
+                              </PrivacyProvider>
+                            </MultiBankProvider>
+                          </ReconciliationProvider>
+                        </AIProvider>
+                      </StatementProcessingProvider>
+                    </NotificationsProvider>
+                  </TodosProvider>
+                  </CanonicalFinancialMetricsProvider>
+                </MarketDataProvider>
+              </CurrencyProvider>
+            </DataProvider>
+          </LanguageProvider>
         </AiProvider>
       </SelfLearningProvider>
       </ConfirmActionProvider>

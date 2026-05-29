@@ -1,4 +1,5 @@
 import type { Budget } from '../types';
+import { budgetRowViewMatchScore, financialMonthKey, type FinancialMonthKey } from '../utils/financialMonth';
 
 /** Stored limit → normalized monthly SAR equivalent (matches Budgets.tsx / household engine). */
 export function monthlyEquivalentStoredLimit(b: Pick<Budget, 'limit' | 'period'>): number {
@@ -10,12 +11,62 @@ export function monthlyEquivalentStoredLimit(b: Pick<Budget, 'limit' | 'period'>
 }
 
 /**
+ * Collapse overlapping legacy rows (e.g. calendar month 5 + financial index 4) into one row per financial month.
+ */
+export function dedupeBudgetRowsByFinancialMonthInYear<T extends Budget>(
+  rows: T[],
+  year: number,
+  monthStartDay: unknown,
+): T[] {
+  const byFinMonth = new Map<string, T>();
+  for (const r of rows) {
+    if (Number(r.year) !== year) continue;
+    const month = Number(r.month);
+    if (!Number.isFinite(month)) continue;
+    const anchor = new Date(year, month - 1, 15);
+    const finKey = financialMonthKey(anchor, monthStartDay);
+    const fk = `${finKey.year}::${finKey.month}`;
+    const viewKey: FinancialMonthKey = { year: finKey.year, month: finKey.month };
+    const prev = byFinMonth.get(fk);
+    if (!prev) {
+      byFinMonth.set(fk, r);
+      continue;
+    }
+    if (r.period === 'yearly' && prev.period !== 'yearly') {
+      byFinMonth.set(fk, r);
+      continue;
+    }
+    if (prev.period === 'yearly' && r.period !== 'yearly') {
+      continue;
+    }
+    const scoreR = budgetRowViewMatchScore(r, viewKey, monthStartDay);
+    const scorePrev = budgetRowViewMatchScore(prev, viewKey, monthStartDay);
+    if (
+      scoreR > scorePrev ||
+      (scoreR === scorePrev && Number(r.limit) > Number(prev.limit))
+    ) {
+      byFinMonth.set(fk, r);
+    }
+  }
+  return Array.from(byFinMonth.values());
+}
+
+/**
  * Total annual envelope for a category in a calendar year: sum of monthly-equivalent limits
- * across all budget rows. If a **yearly** row exists, its `limit` is the full-year cap (dominates).
+ * across distinct financial months. If a **yearly** row exists, its `limit` is the full-year cap (dominates).
  * If only **one monthly** row exists (typical copy-one-month workflow), extrapolate ×12.
  */
-export function annualEnvelopeLimitForCategory(category: string, year: number, budgets: Budget[]): number {
-  const rows = budgets.filter((b) => b.category === category && b.year === year);
+export function annualEnvelopeLimitForCategory(
+  category: string,
+  year: number,
+  budgets: Budget[],
+  monthStartDay: unknown = 1,
+): number {
+  const rows = dedupeBudgetRowsByFinancialMonthInYear(
+    budgets.filter((b) => b.category === category && b.year === year),
+    year,
+    monthStartDay,
+  );
   if (rows.length === 0) return 0;
 
   const yearlyRows = rows.filter((r) => r.period === 'yearly');

@@ -1,12 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { budgetProgressGradient, budgetTierTopHairline, budgetCardOrbTop } from '../services/budgetCardVisuals';
+import {
+  budgetProgressGradient,
+  budgetTierTopHairline,
+  budgetUtilizationBadgeClasses,
+} from '../services/budgetCardVisuals';
 
 describe('budgetCardVisuals', () => {
-    it('returns non-empty tailwind class strings for all variants', () => {
-        expect(budgetProgressGradient('Healthy')).toContain('gradient');
-        expect(budgetProgressGradient('Watch')).toContain('gradient');
-        expect(budgetProgressGradient('Critical')).toContain('gradient');
-        expect(budgetTierTopHairline('Core')).toContain('from-');
-        expect(budgetCardOrbTop('Healthy')).toContain('gradient');
-    });
+  it('returns solid status classes (no heavy multi-stop gradients)', () => {
+    expect(budgetProgressGradient('Healthy')).toMatch(/^bg-/);
+    expect(budgetProgressGradient('Healthy')).not.toContain('via-');
+    expect(budgetProgressGradient('Watch')).toBe('bg-amber-500');
+    expect(budgetProgressGradient('Critical')).toBe('bg-rose-500');
+    expect(budgetTierTopHairline('Healthy')).toContain('from-');
+    expect(budgetUtilizationBadgeClasses('Healthy')).toContain('emerald');
+  });
 });

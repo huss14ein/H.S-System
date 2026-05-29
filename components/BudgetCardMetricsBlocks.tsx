@@ -74,8 +74,13 @@ export type BudgetCardMetricsModel = {
     annualUtilizationLabel?: 'Healthy' | 'Watch' | 'Critical';
     colorClass: string;
     utilizationLabel?: 'Healthy' | 'Watch' | 'Critical';
+    periodSpendCap?: number;
     trendDelta?: number;
     trendDirection?: 'up' | 'down' | 'flat';
+    nextMonthAvailableSar?: number;
+    borrowedInSar?: number;
+    lentOutSar?: number;
+    effectiveMonthlyLimitSar?: number;
 };
 
 const BudgetCardMetricsBlocks: React.FC<{
@@ -110,10 +115,12 @@ const BudgetCardMetricsBlocks: React.FC<{
               ? budgetMonthlyConsumedSegmentGradient()
               : budgetConsumedSegmentGradient(util);
 
-    const defaultPeriodCap = budgetView === 'Yearly' ? budget.limit ?? 1 : budget.monthlyLimit ?? 1;
+    const defaultPeriodCap =
+        budget.periodSpendCap ??
+        budget.primaryBarMax ??
+        (budgetView === 'Yearly' ? budget.limit ?? 1 : budget.monthlyLimit ?? 1);
     const defaultPeriodSpent = budget.spent;
-    const defaultPeriodRem =
-        budgetView === 'Yearly' ? (budget.limit ?? 0) - budget.spent : budget.monthlyLimit - budget.spent;
+    const defaultPeriodRem = defaultPeriodCap - defaultPeriodSpent;
 
     const periodLimitSuffix =
         budgetView === 'Yearly'
@@ -128,26 +135,48 @@ const BudgetCardMetricsBlocks: React.FC<{
 
     return (
         <div className="mt-5 flex min-h-0 flex-1 flex-col gap-0">
+            {budgetView === 'Monthly' &&
+                budget.nextMonthAvailableSar != null &&
+                budget.nextMonthAvailableSar > 0 && (
+                    <p className="mb-2 text-xs text-indigo-800/90 font-medium">
+                        Next month available:{' '}
+                        <span className="tabular-nums">
+                            {formatCurrencyString(budget.nextMonthAvailableSar, { digits: 0 })}
+                        </span>
+                    </p>
+                )}
+            {budgetView === 'Monthly' && (budget.borrowedInSar ?? 0) > 0 && (
+                <p className="mb-2 text-xs text-violet-800/90 font-medium">
+                    Effective limit includes{' '}
+                    <span className="tabular-nums">{formatCurrencyString(budget.borrowedInSar!, { digits: 0 })}</span>{' '}
+                    borrowed from next month
+                </p>
+            )}
+            {budgetView === 'Monthly' && (budget.lentOutSar ?? 0) > 0 && (
+                <p className="mb-2 text-xs text-amber-800/90 font-medium">
+                    <span className="tabular-nums">{formatCurrencyString(budget.lentOutSar!, { digits: 0 })}</span>{' '}
+                    moved to a prior month
+                </p>
+            )}
             <div className="shrink-0 space-y-3">
                 {showDual ? (
                     <>
-                        <div className="rounded-2xl border-2 border-violet-300/90 bg-gradient-to-br from-violet-50 via-white to-fuchsia-50/80 p-4 shadow-[0_8px_24px_-12px_rgba(109,40,217,0.35)] ring-1 ring-violet-200/60">
-                                
+                        <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
                             <div className="flex justify-between items-baseline gap-2 mb-1">
-                                <span className="text-[11px] font-extrabold uppercase tracking-wide text-violet-900">This month</span>
-                                <span className="text-sm font-bold text-violet-950 tabular-nums">
+                                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">This month</span>
+                                <span className="text-sm font-bold text-slate-900 tabular-nums">
                                     {formatCurrencyString(secondaryVal, { digits: 0 })} / {formatCurrencyString(secondaryMax, { digits: 0 })}
                                 </span>
                             </div>
                             {periodWindowLabel ? (
-                                <p className="text-[10px] text-violet-800/75 mb-2 tabular-nums">{periodWindowLabel}</p>
+                                <p className="text-[10px] text-slate-500 mb-2 tabular-nums">{periodWindowLabel}</p>
                             ) : null}
                             <BudgetSpentRemainingLegend
                                 spent={secondaryVal}
                                 cap={secondaryMax}
                                 formatCurrencyString={formatCurrencyString}
                                 spentDotClass={budgetMonthlyConsumedSegmentGradient()}
-                                spentChipClass="bg-violet-100/90 ring-violet-300/80"
+                                spentChipClass="bg-slate-100 ring-slate-200"
                             />
                             <BudgetSplitProgressBar
                                 value={secondaryVal}
@@ -156,27 +185,20 @@ const BudgetCardMetricsBlocks: React.FC<{
                                 remainingClassName={budgetRemainingSegmentClasses()}
                                 heightClass="h-4"
                             />
-                            <p className="mt-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                                <span className="text-violet-700">Consumed</span>
-                                <span className="mx-1 text-slate-400" aria-hidden>
-                                    ·
-                                </span>
-                                <span className="text-emerald-700">Remaining</span>
-                            </p>
                             <p
-                                className={`text-right text-sm mt-2 font-semibold tabular-nums ${
-                                    secondaryMax - secondaryVal >= 0 ? "text-emerald-700" : "text-rose-600"
+                                className={`text-right text-sm mt-2 font-medium tabular-nums ${
+                                    secondaryMax - secondaryVal >= 0 ? 'text-emerald-700' : 'text-rose-600'
                                 }`}
                             >
                                 {secondaryMax - secondaryVal >= 0
                                     ? `${formatCurrencyString(secondaryMax - secondaryVal, { digits: 0 })} left this month`
                                     : `${formatCurrencyString(Math.abs(secondaryMax - secondaryVal), { digits: 0 })} over this month`}
                             </p>
-                            <p className="mt-2 text-center text-xs font-bold uppercase tracking-wider text-violet-800/90 tabular-nums">
+                            <p className="mt-1 text-right text-xs font-semibold text-slate-600 tabular-nums">
                                 {Math.round(budget.percentage)}% of monthly plan
                             </p>
                         </div>
-                        <div className="rounded-2xl border border-slate-200/90 bg-white/55 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] backdrop-blur-sm">
+                        <div className="rounded-xl border border-slate-200 bg-white p-3.5">
                             <div className="flex justify-between items-baseline gap-2 mb-2">
                                 <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Annual envelope</span>
                                 <span className="text-xs font-medium text-slate-600 tabular-nums">
@@ -206,13 +228,6 @@ const BudgetCardMetricsBlocks: React.FC<{
                                 remainingClassName={budgetRemainingSegmentClasses()}
                                 heightClass="h-3"
                             />
-                            <p className="mt-1 text-center text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                                <span className="text-amber-800">YTD consumed</span>
-                                <span className="mx-1 text-slate-400" aria-hidden>
-                                    ·
-                                </span>
-                                <span className="text-emerald-700">Annual headroom</span>
-                            </p>
                             <p
                                 className={`text-right text-xs mt-2 font-medium tabular-nums ${
                                     primaryRem >= 0 ? "text-emerald-700" : "text-rose-600"

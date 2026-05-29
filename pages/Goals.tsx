@@ -25,6 +25,8 @@ import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmer
 import { toSAR } from '../utils/currencyMath';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { getPersonalAccounts } from '../utils/wealthScope';
+import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import { financialMonthNetCashflowSar } from '../services/dashboardKpiSnapshot';
 import { personalMonthlyNetByMonthKeySar } from '../services/financeMetrics';
 import { computeGoalFundingPlan, GOAL_NO_DEADLINE_AMORTIZATION_MONTHS } from '../services/goalFundingRouter';
@@ -46,6 +48,7 @@ import {
     monthlySurplusForEmergencyFund,
     sumAllGoalMonthlyFundingEnvelopesSar,
 } from '../services/goalProjectionFunding';
+import GoalsFundingEnvelopeBanner from '../components/goals/GoalsFundingEnvelopeBanner';
 import { toast } from '../context/ToastContext';
 import { useAI } from '../context/AiContext';
 import AiProxyUnavailableHint from '../components/AiProxyUnavailableHint';
@@ -336,7 +339,7 @@ const GoalConflictAndFeasibilitySection: React.FC<{
                           <>
                             <p>
                               We use the <strong>same schedule as Goal funding cockpit</strong>: saved toward each goal (linked assets, investments, receivables) in SAR, and{' '}
-                              <strong>months to deadline</strong> from the same formula as required monthly there. If the sum of those run-rates is much higher than your <strong>mapped</strong> monthly funding (linked budgets + investments), goals compete for the same explicit envelopes.
+                              <strong>months to deadline</strong> from the same formula as required monthly there. If the sum of those run-rates is much higher than your <strong>mapped</strong> monthly funding (linked budget per goal, or investment plan when no budget), goals compete for the same explicit envelopes.
                             </p>
                             <p className="text-slate-700">
                               <strong>Try:</strong> tag budgets to goals on Budgets, link portfolios or holdings on Investments, extend deadlines, or narrow targets. Unallocated surplus after goal budgets funds your emergency buffer, not goals.
@@ -607,7 +610,10 @@ const GoalCard: React.FC<{
                             {fundingEnvelope.assignedBudgetMonthly > 0 && fundingEnvelope.assignedInvestmentMonthly > 0 && ' · '}
                             {fundingEnvelope.assignedInvestmentMonthly > 0 && (
                                 <span>
-                                    Linked investment {fundingEnvelope.assignedInvestmentSource === 'plan' ? 'plan budget' : 'deposits'}:{' '}
+                                    {fundingEnvelope.assignedBudgetMonthly > 0
+                                        ? 'Also linked (not in envelope): '
+                                        : ''}
+                                    investment {fundingEnvelope.assignedInvestmentSource === 'plan' ? 'plan budget' : 'deposits'}:{' '}
                                     {formatCurrencyString(fundingEnvelope.assignedInvestmentMonthly, { digits: 0 })}/mo
                                 </span>
                             )}
@@ -704,7 +710,9 @@ const Goals: React.FC<{
   clearPageAction?: () => void;
   triggerPageAction?: (page: Page, action: string) => void;
 }> = ({ setActivePage, pageAction, clearPageAction, triggerPageAction }) => {
-    const { data, showBlockingLoader, addGoal, updateGoal, deleteGoal } = useContext(DataContext)!;
+    const { data, addGoal, updateGoal, deleteGoal } = useContext(DataContext)!;
+    const { computeData } = usePageDeferredData();
+    const engineData = computeData ?? data;
     const { aiHealthChecked, isAiAvailable } = useAI();
     const { trackAction } = useSelfLearning();
     const { currency: displayCurrency } = useCurrency();
@@ -767,7 +775,7 @@ const Goals: React.FC<{
         return `${fmt(currentRange.start)} – ${fmt(currentRange.end)}`;
     }, [data, exchangeRate]);
 
-    const resolvedGoalTotalsMap = useMemo(() => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd), [data, sarPerUsd]);
+    const resolvedGoalTotalsMap = useMemo(() => computeGoalResolvedAmountsSar(engineData ?? null, sarPerUsd), [engineData, sarPerUsd]);
 
     const { totalTargetAmount, totalCurrentAmount, goalCurrentAmountByGoalId } = useMemo(() => {
         let totalTarget = 0;
@@ -788,15 +796,15 @@ const Goals: React.FC<{
     const overallProgress = totalTargetAmount > 0 ? (totalCurrentAmount / totalTargetAmount) * 100 : 0;
 
     const fundingPlan = useMemo(
-        () => computeGoalFundingPlan(data, rollingAnnualNetSar, sarPerUsd),
-        [data, rollingAnnualNetSar, sarPerUsd],
+        () => computeGoalFundingPlan(engineData, rollingAnnualNetSar, sarPerUsd),
+        [engineData, rollingAnnualNetSar, sarPerUsd],
     );
 
     /** One status per goal for cards + funding list — `computeGoalTimelineStatus` (envelope vs required pace). */
     const goalTimelineByGoalId = useMemo(() => {
         const m = new Map<string, ReturnType<typeof computeGoalTimelineStatus>>();
-        (data?.goals ?? []).forEach((g) => {
-            const env = computeGoalMonthlyFundingEnvelopeSar({ goal: g, data: data ?? null, sarPerUsd });
+        (engineData?.goals ?? []).forEach((g) => {
+            const env = computeGoalMonthlyFundingEnvelopeSar({ goal: g, data: engineData ?? null, sarPerUsd });
             m.set(
                 g.id,
                 computeGoalTimelineStatus({
@@ -807,7 +815,7 @@ const Goals: React.FC<{
             );
         });
         return m;
-    }, [data?.goals, data, sarPerUsd, goalCurrentAmountByGoalId]);
+    }, [engineData?.goals, engineData, sarPerUsd, goalCurrentAmountByGoalId]);
 
     const goalsByPriority = useMemo(() => {
         const rank = { High: 0, Medium: 1, Low: 2 } as const;
@@ -901,20 +909,23 @@ const Goals: React.FC<{
         if (noMappedFunding > 0) warnings.push(`${noMappedFunding} active goal(s) have no linked budget or investment monthly envelope.`);
         if (!Number.isFinite(averageMonthlySavings)) warnings.push('Average monthly savings calculation is invalid.');
         if (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0) warnings.push('Exchange rate is invalid — USD-linked balances may mis-state goal progress.');
-        const hasUsd = ((data as any)?.personalAccounts ?? data?.accounts ?? []).some((a: { currency?: string }) => a.currency === 'USD');
+        const hasUsd = getPersonalAccounts(data).some((a) => a.currency === 'USD');
         if (hasUsd && (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0)) {
             warnings.push('USD accounts detected — set SAR per USD in the header or Wealth Ultra for accurate goal totals.');
         }
         return warnings;
-    }, [data?.goals, data, data?.accounts, (data as any)?.personalAccounts, goalCurrentAmountByGoalId, averageMonthlySavings, sarPerUsd]);
+    }, [data?.goals, data, goalCurrentAmountByGoalId, averageMonthlySavings, sarPerUsd]);
 
-    if (showBlockingLoader) {
-        return (
-            <div className="flex justify-center items-center h-96" aria-busy="true">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading goals" />
-            </div>
-        );
-    }
+    const goalsWithDualFundingNames = useMemo(
+        () =>
+            (data?.goals ?? [])
+                .filter((g) => {
+                    const env = computeGoalMonthlyFundingEnvelopeSar({ goal: g, data: data ?? null, sarPerUsd });
+                    return env.assignedBudgetMonthly > 0 && env.assignedInvestmentMonthly > 0;
+                })
+                .map((g) => g.name),
+        [data, sarPerUsd],
+    );
 
   return (
     <PageLayout
@@ -944,6 +955,7 @@ const Goals: React.FC<{
         </div>
       }
     >
+      <GoalsFundingEnvelopeBanner goalNames={goalsWithDualFundingNames} />
       <div className="rounded-2xl border border-teal-100 bg-gradient-to-r from-teal-50/90 to-white px-4 py-3 text-sm text-slate-700 shadow-sm mb-6">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 tabular-nums">
           <div>
@@ -1052,7 +1064,7 @@ const Goals: React.FC<{
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-slate-900">Suggested monthly funding (per goal)</p>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Badge matches each goal card (mapped envelope vs required monthly pace). Suggested amounts cap at each goal&apos;s linked budget + investment envelope.
+                  Badge matches each goal card (mapped envelope vs required monthly pace). Suggested amounts cap at each goal&apos;s linked budget envelope, or investment plan/deposits when no budget is linked.
                         </p>
                     </div>
               <div className="flex flex-wrap gap-1.5">

@@ -4,7 +4,7 @@
 
 The engine uses **your existing data** (transactions, accounts, goals) to project monthly cash flow and how much you can put toward goals. It is designed to be **fully automated with minimal manual entry**.
 
-- **Income & expense**: Taken from transactions for the selected year (by month).
+- **Income & expense**: Taken from transactions for the selected **plan year**, bucketed into 12 **financial months** using your settings **month start day** (same as Plan grid and Budget cards — not calendar Jan–Dec when start day ≠ 1).
 - **Liquid / reserve**: From Checking and Savings accounts.
 - **Goals**: From your goals list; surplus is auto-routed to the highest-priority goal.
 - **Salary for future months**: If a month has no income yet, the engine uses your optional "expected monthly salary" or the **average of actual income** so far.
@@ -39,7 +39,7 @@ No manual buckets, no long tables. Advanced users can still open "Advanced: mont
 
 ## Technical
 
-- **Auto input (transactions)**: `buildHouseholdEngineInputFromData(transactions, accounts, goals, options)` — income/expense from transactions; optional `expectedMonthlySalary`, `adults`, `kids`, `profile`, `monthlyOverrides`, `inferObligationsFromHistory` (default true).
+- **Auto input (transactions)**: `buildHouseholdEngineInputFromData(transactions, accounts, goals, options)` — income/expense from transactions via `accumulateHouseholdYearCashflowSar` (`financialMonthColumnIndexForDate` + `resolveMonthStartDayFromData`); optional `expectedMonthlySalary`, `adults`, `kids`, `profile`, `monthlyOverrides`, `monthStartDay`, `inferObligationsFromHistory` (default true).
 - **Auto input (Plan)**: `buildHouseholdEngineInputFromPlanData(monthlyIncomePlanned, monthlyIncomeActual, monthlyExpenseActual, accounts, goals, options)` — same options, for Plan page data.
 - **Helpers**: `suggestProfileFromIncomeVariance(monthlyActualIncome)` returns `'Conservative'` when variance is high; `inferObligationsFromTransactions(transactions, year)` returns partial config for obligations/required expenses.
 - **Presets**: `HOUSEHOLD_ENGINE_PROFILES` (Conservative, Moderate, Growth).

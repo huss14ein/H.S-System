@@ -1,6 +1,6 @@
 /**
- * Wealth pages must gate on DataContext.showBlockingLoader, not `loading || !data`
- * (background refetch must not blank the whole page).
+ * Wealth pages must not full-page block on `loading || !data` or `showBlockingLoader`.
+ * Hydration feedback is global (Layout FinancialDataHydrateBanner + showHydrateBanner).
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -8,6 +8,7 @@ import { join } from 'node:path';
 
 const PAGES_DIR = join(process.cwd(), 'pages');
 const CONTEXT_DIR = join(process.cwd(), 'context');
+const COMPONENTS_DIR = join(process.cwd(), 'components');
 
 /** No personal Supabase hydrate gate (auth, local-only, or diagnostics). */
 const PAGE_EXEMPT = new Set([
@@ -31,35 +32,46 @@ describe('page loading gate coverage', () => {
         offenders.push(file);
       }
     }
-    expect(offenders, `Use showBlockingLoader from DataContext in: ${offenders.join(', ')}`).toEqual([]);
+    expect(offenders, `Do not block on loading || !data in: ${offenders.join(', ')}`).toEqual([]);
   });
 
-  it('DataContext pages with full-page loading UI use showBlockingLoader', () => {
+  it('wealth pages do not early-return full-page spinners on showBlockingLoader', () => {
     const offenders: string[] = [];
     for (const file of readdirSync(PAGES_DIR).filter((f) => f.endsWith('.tsx'))) {
       if (PAGE_EXEMPT.has(file)) continue;
       const src = readFileSync(join(PAGES_DIR, file), 'utf8');
-      if (!src.includes('useContext(DataContext)')) continue;
-      const hasFullPageBlock =
-        /if\s*\([^)]*\bshowBlockingLoader\b/.test(src) ||
-        /\{\s*showBlockingLoader\s*\?/.test(src) ||
-        /FinancialDataPageGate/.test(src);
-      const hasLegacySpinner =
-        /aria-busy=["']true["']/.test(src) &&
-        (/min-h-\[(?:20|24)rem\]|className="[^"]*h-96/.test(src) || /PageLoading/.test(src));
-      if (hasLegacySpinner && !hasFullPageBlock) {
+      if (
+        src.includes('showBlockingLoader') &&
+        /if\s*\(\s*showBlockingLoader\s*\)\s*\{[\s\S]{0,1200}?return\s*\([\s\S]{0,2500}?(?:min-h-\[(?:20|24)rem\]|(?:^|[^-])h-96)/.test(
+          src,
+        )
+      ) {
         offenders.push(file);
       }
     }
-    expect(offenders, `Add showBlockingLoader gate in: ${offenders.join(', ')}`).toEqual([]);
+    expect(offenders, `Remove full-page showBlockingLoader return in: ${offenders.join(', ')}`).toEqual([]);
   });
 
-  it('DataContext resets per-user hydrate flag when auth user id changes', () => {
+  it('index.css loads from entry, not lazy AuthenticatedAppShell', () => {
+    const entry = readFileSync(join(process.cwd(), 'index.tsx'), 'utf8');
+    const shell = readFileSync(join(COMPONENTS_DIR, 'AuthenticatedAppShell.tsx'), 'utf8');
+    expect(entry).toMatch(/import\s+['"]\.\/index\.css['"]/);
+    expect(shell).not.toMatch(/import\s+['"]\.\.\/index\.css['"]/);
+  });
+
+  it('Layout shows global hydrate banner', () => {
+    const layout = readFileSync(join(COMPONENTS_DIR, 'Layout.tsx'), 'utf8');
+    expect(layout).toContain('FinancialDataHydrateBanner');
+    expect(layout).toContain('showHydrateBanner');
+  });
+
+  it('DataContext exposes showHydrateBanner and does not block pages via showBlockingLoader', () => {
     const src = readFileSync(join(CONTEXT_DIR, 'DataContext.tsx'), 'utf8');
+    expect(src).toContain('showHydrateBanner');
+    expect(src).toMatch(/const showHydrateBanner = awaitingInitialHydrate/);
+    expect(src).toMatch(/const showBlockingLoader = false/);
     expect(src).toContain('financialDataLoadedRef.current = false');
     expect(src).toMatch(/\[auth\?\.user\?\.id\][\s\S]*financialDataLoadedRef\.current = false/);
-    expect(src).toContain('setAwaitingInitialHydrate(true)');
-    expect(src).toMatch(/const showBlockingLoader = awaitingInitialHydrate/);
   });
 
   it('DataContext side effects skip while loading or awaiting initial hydrate', () => {
@@ -68,9 +80,9 @@ describe('page loading gate coverage', () => {
     expect(src).toMatch(/loading\s*\|\|[\s\S]*awaitingInitialHydrate[\s\S]*duplicateHoldingsReconcileInFlightRef/);
   });
 
-  it('NotificationsContext skips digest while showBlockingLoader', () => {
+  it('NotificationsContext skips digest while showHydrateBanner', () => {
     const src = readFileSync(join(CONTEXT_DIR, 'NotificationsContext.tsx'), 'utf8');
-    expect(src).toContain('showBlockingLoader');
-    expect(src).toMatch(/if\s*\(\s*!data\s*\|\|\s*showBlockingLoader\s*\)/);
+    expect(src).toContain('showHydrateBanner');
+    expect(src).toMatch(/if\s*\(\s*!data\s*\|\|\s*showHydrateBanner\s*\)/);
   });
 });

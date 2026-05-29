@@ -1,4 +1,4 @@
-import React, { createContext, useState, ReactNode, useEffect, useContext, useRef, useMemo, useCallback } from 'react';
+import React, { createContext, useState, ReactNode, useEffect, useContext, useRef, useMemo, useCallback, startTransition } from 'react';
 import { flushSync } from 'react-dom';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
@@ -50,6 +50,8 @@ import { normalizePlannedTradeRow, plannedTradeToDbInsert, plannedTradeToDbUpdat
 import {
     dateInRange,
     effectiveMonthStartDate,
+    addMonthsToKey,
+    budgetAppliesToFinancialView,
     financialMonthRange,
     financialMonthRangeFromKey,
     resolveMonthStartDayFromData,
@@ -58,6 +60,7 @@ import { sortByNewestFirst, sortPlannedTradesNewestFirst } from '../utils/sortRe
 import { normalizeWatchlistRow, watchlistToDbRow } from '../utils/watchlistDb';
 import { recomputeTrancheAfterFill } from '../services/plannedTradeTranches';
 import { guardRecordWrite, type RecordWriteOptions } from '../services/recordConfirmBridge';
+import { bindStableActions } from '../utils/stableActionBindings';
 import {
     summarizeBudgetForConfirm,
     summarizeCommodityForConfirm,
@@ -113,7 +116,9 @@ const HOLDING_QUANTITY_EPSILON = 0.00001;
 interface DataContextType {
   data: FinancialData;
   loading: boolean;
-  /** Full-screen gate: true only on first load before any personal rows exist (background refetch does not block). */
+  /** True during first Supabase hydrate — use for inline hints only (Layout banner). Never full-page block. */
+  showHydrateBanner: boolean;
+  /** @deprecated Always false — pages must not early-return on this; use showHydrateBanner + Layout banner. */
   showBlockingLoader: boolean;
   /** Force a reload from the backend (non-destructive). */
   refreshData: () => Promise<void>;
@@ -205,6 +210,71 @@ interface DataContextType {
 }
 
 export const DataContext = createContext<DataContextType | null>(null);
+
+const DATA_CONTEXT_ACTION_KEYS = [
+  'refreshData',
+  'addAsset',
+  'updateAsset',
+  'deleteAsset',
+  'addGoal',
+  'updateGoal',
+  'deleteGoal',
+  'updateGoalAllocations',
+  'addLiability',
+  'updateLiability',
+  'deleteLiability',
+  'addBudget',
+  'updateBudget',
+  'deleteBudget',
+  'copyBudgetsFromPreviousMonth',
+  'addTransaction',
+  'updateTransaction',
+  'deleteTransaction',
+  'addTransfer',
+  'addRecurringTransaction',
+  'updateRecurringTransaction',
+  'deleteRecurringTransaction',
+  'applyRecurringForMonth',
+  'applyRecurringRuleForMonth',
+  'applyRecurringDueToday',
+  'addPlatform',
+  'updatePlatform',
+  'deletePlatform',
+  'addPortfolio',
+  'updatePortfolio',
+  'deletePortfolio',
+  'addHolding',
+  'updateHolding',
+  'batchUpdateHoldingValues',
+  'recordTrade',
+  'updateInvestmentTransaction',
+  'deleteInvestmentTransaction',
+  'addWatchlistItem',
+  'updateWatchlistItem',
+  'deleteWatchlistItem',
+  'addZakatPayment',
+  'addPriceAlert',
+  'updatePriceAlert',
+  'deletePriceAlert',
+  'addPlannedTrade',
+  'updatePlannedTrade',
+  'deletePlannedTrade',
+  'saveInvestmentPlan',
+  'addUniverseTicker',
+  'updateUniverseTickerStatus',
+  'deleteUniverseTicker',
+  'addCommodityHolding',
+  'updateCommodityHolding',
+  'deleteCommodityHolding',
+  'batchUpdateCommodityHoldingValues',
+  'updateSettings',
+  'resetData',
+  'loadDemoData',
+  'restoreFromBackup',
+  'saveExecutionLog',
+] as const;
+
+type DataContextActions = Pick<DataContextType, (typeof DATA_CONTEXT_ACTION_KEYS)[number]>;
 
 function normalizeSettings(raw: any): Settings {
     if (!raw) return initialData.settings;
@@ -671,6 +741,7 @@ function investmentPlanOverridesToRow(plan: InvestmentPlanSettings): Record<stri
 }
 
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+    const dataActionsRef = useRef({} as DataContextActions);
     const [data, setData] = useState<FinancialData>(initialData);
     const [loading, setLoading] = useState(true);
     const [dataResetKey, setDataResetKey] = useState(0);
@@ -940,14 +1011,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const trySelectOptionalTable = <T,>(q: PromiseLike<any>) =>
         q.then((r: any) => r, () => ({ data: [] as T[], error: { code: 'PGRST205', message: 'Table not found' } }));
 
+    const FETCH_SETTLE_BUDGET_MS = 10_000;
+
     const fetchData = async () => {
         if (!auth?.user || !supabase) {
+            financialDataLoadedRef.current = true;
+            setAwaitingInitialHydrate(false);
             setLoading(false);
             return;
         }
         const db = supabase;
-        const showBlockingLoader = !financialDataLoadedRef.current;
-        if (showBlockingLoader) setLoading(true);
+        const isInitialHydrate = !financialDataLoadedRef.current;
+        if (isInitialHydrate) setLoading(true);
         try {
             // Optional tables: fetch so they never reject (migrations may not be run yet)
             const recurringPromise = trySelectOptionalTable<any>(db.from('recurring_transactions').select('*').eq('user_id', auth.user.id));
@@ -980,8 +1055,23 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 sukukEventsPromise,
             ];
             const keys = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'investments', 'investmentTransactions', 'budgets', 'watchlist', 'settings', 'zakatPayments', 'priceAlerts', 'commodityHoldings', 'plannedTrades', 'investmentPlan', 'portfolioUniverse', 'statusChangeLog', 'executionLogs', 'recurringTransactions', 'budgetRequests', 'sukukPayoutSchedules', 'sukukPayoutEvents'] as const;
-            const settled = await Promise.allSettled(fetchPromises);
             const emptyResult = (err?: any) => ({ data: null, error: err || { code: 'FETCH_FAILED' } });
+            const settled = await Promise.race([
+                Promise.allSettled(fetchPromises.map((p) => Promise.resolve(p))),
+                new Promise<PromiseSettledResult<{ data: unknown; error: unknown }>[]>((resolve) => {
+                    setTimeout(() => {
+                        console.warn(
+                            `Financial data fetch exceeded ${FETCH_SETTLE_BUDGET_MS}ms; continuing with partial workspace.`,
+                        );
+                        resolve(
+                            keys.map(() => ({
+                                status: 'fulfilled' as const,
+                                value: emptyResult({ code: 'TIMEOUT' }),
+                            })),
+                        );
+                    }, FETCH_SETTLE_BUDGET_MS);
+                }),
+            ]);
             const results = settled.map((s, i) => {
                 if (s.status === 'fulfilled') return s.value as any;
                 console.error(`Error fetching ${keys[i]}:`, s.reason);
@@ -1038,6 +1128,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 }
             }
 
+            startTransition(() => {
             setData({
                 accounts: ownedAccounts,
                 assets: filterOwnedRows(assets.data as any[]).map(normalizeAssetRow),
@@ -1116,6 +1207,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 ),
                 allTransactions: [],
                 allBudgets: [],
+            });
             });
 
             // Post due Sukuk payouts after first paint (was blocking setData for up to 5s).
@@ -1213,11 +1305,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setAwaitingInitialHydrate(true);
         void fetchData();
 
-        // Safety timeout to ensure loading state is cleared even if Supabase hangs
+        // Safety timeout: never leave hydrate banner up longer than 3s on slow Supabase / preview cold starts
         const timeoutId = setTimeout(() => {
+            financialDataLoadedRef.current = true;
             setAwaitingInitialHydrate(false);
             setLoading(false);
-        }, 8000);
+        }, 3000);
 
         return () => clearTimeout(timeoutId);
         // Use user id only: `user` object reference changes on TOKEN_REFRESHED; refetching then caused global loading flashes.
@@ -1229,7 +1322,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }, [auth?.user?.id]);
 
     /** Keep a dense SAR/USD point per calendar day for charts/KPIs (spot + snapshot seed + forward-fill). */
+    const fxHydrateKeyRef = useRef<number | null>(null);
     useEffect(() => {
+        if (!data) return;
+        if (fxHydrateKeyRef.current === dataResetKey) return;
+        fxHydrateKeyRef.current = dataResetKey;
         hydrateSarPerUsdDailySeries(data, DEFAULT_SAR_PER_USD);
     }, [data, dataResetKey]);
 
@@ -1344,6 +1441,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setLoading(false);
             return { ok: true };
         } catch (e) {
+            financialDataLoadedRef.current = true;
+            setAwaitingInitialHydrate(false);
             setLoading(false);
             const msg = e instanceof Error ? e.message : String(e);
             return { ok: false, error: msg };
@@ -1691,15 +1790,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const copyBudgetsFromPreviousMonth = async (targetYear: number, targetMonth: number) => {
         if (!supabase || !auth?.user) return;
-        const sourceDate = new Date(targetYear, targetMonth - 2, 1);
-        const sourceYear = sourceDate.getFullYear();
-        const sourceMonth = sourceDate.getMonth() + 1;
+        const monthStartDay = resolveMonthStartDayFromData(data);
+        const targetKey = { year: targetYear, month: targetMonth };
+        const sourceKey = addMonthsToKey(targetKey, -1);
 
-        const { data: sourceBudgets, error } = await supabase.from('budgets').select('*').match({ user_id: auth.user.id, year: sourceYear, month: sourceMonth });
+        const { data: allUserBudgets, error } = await supabase.from('budgets').select('*').eq('user_id', auth.user.id);
         if (error) { console.error("Error fetching source budgets:", error); toast("Could not fetch last month's budgets.", 'warning'); return; }
+        const sourceBudgets = (allUserBudgets ?? []).filter((b) =>
+            budgetAppliesToFinancialView(b, sourceKey, monthStartDay, 'Monthly'),
+        );
         if (!sourceBudgets || sourceBudgets.length === 0) { toast("No budgets found for the previous month to copy.", 'info'); return; }
 
-        const existingTargetCategories = new Set((data?.budgets ?? []).filter(b => b.year === targetYear && b.month === targetMonth).map(b => b.category));
+        const existingTargetCategories = new Set(
+            (data?.budgets ?? [])
+                .filter((b) => budgetAppliesToFinancialView(b, targetKey, monthStartDay, 'Monthly'))
+                .map((b) => b.category),
+        );
         
         const budgetsToInsert = sourceBudgets
             .filter((b: any) => !existingTargetCategories.has(b.category))
@@ -1945,7 +2051,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         if (newTx) {
             const normalized = normalizeTransaction(newTx);
-            setData(prev => ({ ...prev, transactions: [normalized, ...prev.transactions] }));
+            startTransition(() => {
+                setData((prev) => ({ ...prev, transactions: [normalized, ...prev.transactions] }));
+            });
             await syncSharedBudgetTransactionMirror(normalized as any);
             auditChangeLog({
                 action: 'create',
@@ -2175,7 +2283,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     const rank = (v: Transaction) => (v.transferRole === 'principal_out' ? 0 : v.transferRole === 'fee' ? 1 : 2);
                     return rank(a) - rank(b);
                 });
-            setData(prev => ({ ...prev, transactions: [...normalizedRows, ...prev.transactions] }));
+            startTransition(() => {
+                setData((prev) => ({ ...prev, transactions: [...normalizedRows, ...prev.transactions] }));
+            });
             for (const row of normalizedRows) {
                 await syncSharedBudgetTransactionMirror(row as any);
                 auditChangeLog({
@@ -2285,7 +2395,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     await applyLedgerAccountDeltaForTransaction(normalized.accountId, Number(normalized.amount) || 0);
                 }
             }
-            setData(prevState => ({ ...prevState, transactions: prevState.transactions.map(t => t.id === transaction.id ? normalized : t) }));
+            startTransition(() => {
+                setData((prevState) => ({
+                    ...prevState,
+                    transactions: prevState.transactions.map((t) => (t.id === transaction.id ? normalized : t)),
+                }));
+            });
             await syncSharedBudgetTransactionMirror(normalized as any);
             auditChangeLog({
                 action: 'update',
@@ -2338,7 +2453,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if(error) console.error("Error deleting transaction:", error);
         else {
             await applyLedgerAccountDeltaForTransaction(prevTx?.accountId, -(Number(prevTx?.amount) || 0));
-            setData(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.id !== transactionId) }));
+            startTransition(() => {
+                setData((prev) => ({ ...prev, transactions: prev.transactions.filter((t) => t.id !== transactionId) }));
+            });
             await removeSharedBudgetTransactionMirror(transactionId);
             auditChangeLog({
                 action: 'delete',
@@ -2775,14 +2892,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (error) { console.error("Error adding holding:", error); throw error; }
         if (newHolding) {
             const normalized = normalizeHoldingFromRow(newHolding);
-            setData(prev => ({
-                ...prev,
-                investments: prev.investments.map(p =>
-                    p.id === (newHolding.portfolio_id ?? (newHolding as any).portfolioId)
-                        ? { ...p, holdings: [...p.holdings, normalized] }
-                        : p
-                )
-            }));
+            startTransition(() => {
+                setData((prev) => ({
+                    ...prev,
+                    investments: prev.investments.map((p) =>
+                        p.id === (newHolding.portfolio_id ?? (newHolding as any).portfolioId)
+                            ? { ...p, holdings: [...p.holdings, normalized] }
+                            : p,
+                    ),
+                }));
+            });
         }
     };
     const updateHolding = async (holding: Holding) => {
@@ -2800,8 +2919,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const db = supabase;
         const row = holdingToRow(holding);
         const { error } = await db.from('holdings').update(row).match({ id: holding.id, user_id: auth.user.id });
-        if(error) { console.error(error); throw error; }
-        else setData(prev => ({ ...prev, investments: prev.investments.map(p => ({ ...p, holdings: p.holdings.map(h => h.id === holding.id ? holding : h) })) }));
+        if (error) {
+            console.error(error);
+            throw error;
+        } else {
+            startTransition(() => {
+                setData((prev) => ({
+                    ...prev,
+                    investments: prev.investments.map((p) => ({
+                        ...p,
+                        holdings: p.holdings.map((h) => (h.id === holding.id ? holding : h)),
+                    })),
+                }));
+            });
+        }
     };
     const deleteHolding = async (holdingId: string) => {
         if (!supabase || !auth?.user) return;
@@ -2816,7 +2947,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }));
     };
     const batchUpdateHoldingValues = (updates: { id: string; currentValue: number }[]) => {
-      setData(prevData => {
+      startTransition(() => {
+        setData(prevData => {
             const updatesMap = new Map(updates.map(u => [u.id, u.currentValue]));
             return {
                 ...prevData,
@@ -2826,6 +2958,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 }))
             };
         });
+      });
     };
     const recordTrade = async (
         trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string, transferGroupId?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number },
@@ -3181,7 +3314,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (txError) { console.error("Error recording transaction:", txError); throw txError; }
         if (newTransaction) {
             const normalizedInserted = normalizeInvestmentTransaction(newTransaction);
-            setData(prev => ({ ...prev, investmentTransactions: [normalizedInserted, ...prev.investmentTransactions] }));
+            startTransition(() => {
+                setData((prev) => ({
+                    ...prev,
+                    investmentTransactions: [normalizedInserted, ...prev.investmentTransactions],
+                }));
+            });
             await applyInvestmentAccountDeltaForTrade(accountIdForInsert, investmentBalanceDelta, { includeTransaction: normalizedInserted });
             recomputed = true;
             insertedInvestmentTransactionId = String(normalizedInserted.id || '');
@@ -3563,6 +3701,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             console.error("Error batch updating commodity values:", failed.error);
             return;
         }
+        startTransition(() => {
         setData(prevData => {
             const updatesMap = new Map(safeUpdates.map(u => [u.id, u.currentValue]));
             return {
@@ -3571,6 +3710,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     updatesMap.has(h.id) ? { ...h, currentValue: updatesMap.get(h.id)! } : h
                 )
             };
+        });
         });
     };
 
@@ -3914,7 +4054,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const totalDeployableCash = useMemo(() => {
         if (!data) return 0;
-        hydrateSarPerUsdDailySeries(data as FinancialData, DEFAULT_SAR_PER_USD);
         const sarPerUsd = resolveSarPerUsd(data as FinancialData, DEFAULT_SAR_PER_USD);
         return sumTradableCashSarFromInvestmentAccounts(
             accountsForDeployable.filter((a: Account) => a.type === 'Investment'),
@@ -3923,11 +4062,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         );
     }, [accountsForDeployable, allAccountsForDeployableCanon, data]);
 
+    const showHydrateBanner = awaitingInitialHydrate;
+    const showBlockingLoader = false;
+
     // Auto-heal legacy duplicate holdings (same portfolio + symbol) once per unique snapshot.
     useEffect(() => {
         if (
             loading ||
             awaitingInitialHydrate ||
+            showHydrateBanner ||
             !financialDataHasHydrated(data) ||
             !auth?.user ||
             duplicateHoldingsReconcileInFlightRef.current
@@ -3955,6 +4098,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             .join('|');
         if (!signature || signature === duplicateHoldingsLastSignatureRef.current) return;
 
+        duplicateHoldingsLastSignatureRef.current = signature;
         duplicateHoldingsReconcileInFlightRef.current = true;
         (async () => {
             try {
@@ -3966,18 +4110,108 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         await deleteHolding(dup.id);
                     }
                 }
-                duplicateHoldingsLastSignatureRef.current = signature;
             } catch (error) {
                 console.warn('Duplicate holdings reconciliation skipped due to error:', error);
+                duplicateHoldingsLastSignatureRef.current = '';
             } finally {
                 duplicateHoldingsReconcileInFlightRef.current = false;
             }
         })();
-    }, [loading, awaitingInitialHydrate, data, auth?.user?.id, data.investments]);
+    }, [loading, awaitingInitialHydrate, showHydrateBanner, data, auth?.user?.id, data.investments]);
 
-    const showBlockingLoader = awaitingInitialHydrate;
+    dataActionsRef.current = {
+        refreshData,
+        addAsset,
+        updateAsset,
+        deleteAsset,
+        addGoal,
+        updateGoal,
+        deleteGoal,
+        updateGoalAllocations,
+        addLiability,
+        updateLiability,
+        deleteLiability,
+        addBudget,
+        updateBudget,
+        deleteBudget,
+        copyBudgetsFromPreviousMonth,
+        addTransaction,
+        updateTransaction,
+        deleteTransaction,
+        addTransfer,
+        addRecurringTransaction,
+        updateRecurringTransaction,
+        deleteRecurringTransaction,
+        applyRecurringForMonth,
+        applyRecurringRuleForMonth,
+        applyRecurringDueToday,
+        addPlatform,
+        updatePlatform,
+        deletePlatform,
+        addPortfolio,
+        updatePortfolio,
+        deletePortfolio,
+        addHolding,
+        updateHolding,
+        batchUpdateHoldingValues,
+        recordTrade,
+        updateInvestmentTransaction,
+        deleteInvestmentTransaction,
+        addWatchlistItem,
+        updateWatchlistItem,
+        deleteWatchlistItem,
+        addZakatPayment,
+        addPriceAlert,
+        updatePriceAlert,
+        deletePriceAlert,
+        addPlannedTrade,
+        updatePlannedTrade,
+        deletePlannedTrade,
+        saveInvestmentPlan,
+        addUniverseTicker,
+        updateUniverseTickerStatus,
+        deleteUniverseTicker,
+        addCommodityHolding,
+        updateCommodityHolding,
+        deleteCommodityHolding,
+        batchUpdateCommodityHoldingValues,
+        updateSettings,
+        resetData,
+        loadDemoData,
+        restoreFromBackup,
+        saveExecutionLog,
+    };
 
-    const value = { data: dataWithPersonal, loading, showBlockingLoader, dataResetKey, allTransactions: data?.transactions ?? [], allBudgets: data?.budgets ?? [], refreshData, addAsset, updateAsset, deleteAsset, addGoal, updateGoal, deleteGoal, updateGoalAllocations, addLiability, updateLiability, deleteLiability, addBudget, updateBudget, deleteBudget, copyBudgetsFromPreviousMonth, addTransaction, updateTransaction, deleteTransaction, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth, applyRecurringDueToday, addPlatform, updatePlatform, deletePlatform, addPortfolio, updatePortfolio, deletePortfolio, addHolding, updateHolding, batchUpdateHoldingValues, recordTrade, updateInvestmentTransaction, deleteInvestmentTransaction, addWatchlistItem, updateWatchlistItem, deleteWatchlistItem, addZakatPayment, addPriceAlert, updatePriceAlert, deletePriceAlert, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, updateSettings, resetData, loadDemoData, restoreFromBackup, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount, totalDeployableCash };
+    const stableDataActions = useMemo(
+        () => bindStableActions(dataActionsRef, DATA_CONTEXT_ACTION_KEYS),
+        [],
+    );
+
+    const value = useMemo(
+        (): DataContextType => ({
+            data: dataWithPersonal ?? initialData,
+            loading,
+            showHydrateBanner,
+            showBlockingLoader,
+            dataResetKey,
+            allTransactions: data?.transactions ?? [],
+            allBudgets: data?.budgets ?? [],
+            getAvailableCashForAccount,
+            totalDeployableCash,
+            ...stableDataActions,
+        }),
+        [
+            dataWithPersonal,
+            loading,
+            showHydrateBanner,
+            dataResetKey,
+            data?.transactions,
+            data?.budgets,
+            getAvailableCashForAccount,
+            totalDeployableCash,
+            stableDataActions,
+        ],
+    );
 
     return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 };

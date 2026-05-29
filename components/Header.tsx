@@ -1,5 +1,5 @@
 import React, { useState, useContext, useMemo, useRef, useEffect } from 'react';
-import { Page, TradeCurrency, Account } from '../types';
+import { Page } from '../types';
 import { NAVIGATION_ITEMS, PAGE_DISPLAY_NAMES } from '../constants';
 import { HSLogo } from './icons/HSLogo';
 import { AuthContext } from '../context/AuthContext';
@@ -14,18 +14,18 @@ import { Bars3Icon } from './icons/Bars3Icon';
 import { XMarkIcon } from './icons/XMarkIcon';
 import { HeadsetIcon } from './icons/HeadsetIcon';
 import { CheckIcon } from './icons/CheckIcon';
-import { useMarketData } from '../context/MarketDataContext';
+import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import { useNotifications } from '../context/NotificationsContext';
 import { useTodosOptional } from '../context/TodosContext';
 import { ClipboardDocumentListIcon } from './icons/ClipboardDocumentListIcon';
 import { ArrowPathIcon } from './icons/ArrowPathIcon';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
-import { inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
-import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
-import { financialMonthRange, resolveMonthStartDayFromData, dateInRange } from '../utils/financialMonth';
+import { quoteRefreshCooldownRemainingMs } from '../services/quoteRefreshCooldown';
+import { computeMonthlyInvestmentPlanProgress } from '../services/monthlyInvestmentPlanProgress';
 import { isSupportedPageAction } from '../utils/pageActions';
 import { INFOHINT_CLOSE_OTHERS } from './infoHintEvents';
+import { prefetchPage } from '../utils/lazyPages';
 interface HeaderProps {
   activePage: Page;
   setActivePage: (page: Page) => void;
@@ -45,8 +45,9 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const auth = useContext(AuthContext);
   const { data } = useContext(DataContext)!;
   const { currency, setCurrency } = useCurrency();
-  const { refreshPrices, isRefreshing, quotesRefreshUIScope, lastUpdated, isLive } = useMarketData();
+  const { refreshPrices, isRefreshing, quotesRefreshUIScope, lastUpdated, isLive } = useMarketQuoteMeta();
   const headerRefreshing = isRefreshing && quotesRefreshUIScope.mode === 'all';
+  const [quoteCooldownSec, setQuoteCooldownSec] = useState(0);
   const [pricesStatusLabel, setPricesStatusLabel] = useState('');
   const lastUpdatedRef = useRef(lastUpdated);
   lastUpdatedRef.current = lastUpdated;
@@ -67,6 +68,16 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
     }, 10000);
     return () => clearInterval(t);
   }, [lastUpdated, isLive]);
+
+  useEffect(() => {
+    const tick = () => {
+      const ms = quoteRefreshCooldownRemainingMs();
+      setQuoteCooldownSec(ms > 0 ? Math.ceil(ms / 1000) : 0);
+    };
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [headerRefreshing, isLive]);
   
   const profileRef = useClickOutside<HTMLDivElement>(() => setIsProfileOpen(false));
   const currencyRef = useClickOutside<HTMLDivElement>(() => setIsCurrencyOpen(false));
@@ -175,42 +186,10 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
 
   const headlineFx = useCanonicalSpotFx();
 
-  const investmentProgress = useMemo(() => {
-    if (!data?.investmentPlan) return { percent: 0, amount: 0, target: 0 };
-    const sarPerUsd = headlineFx;
-    const plan = data.investmentPlan;
-    const planCurrency: TradeCurrency = (plan.budgetCurrency as TradeCurrency) || 'SAR';
-    const convertAmount = (amount: number, from: TradeCurrency, to: TradeCurrency) => {
-      if (!Number.isFinite(amount) || amount <= 0) return 0;
-      if (from === to) return amount;
-      if (from === 'USD' && to === 'SAR') return amount * sarPerUsd;
-      if (from === 'SAR' && to === 'USD') return amount / sarPerUsd;
-      return amount;
-    };
-    const monthStartDay = resolveMonthStartDayFromData(data);
-    const finRange = financialMonthRange(new Date(), monthStartDay);
-    const finStart = finRange.start;
-    const finEnd = finRange.end;
-    const personalAccountIds = new Set(getPersonalAccounts(data).map((a: Account) => a.id));
-    const accounts = data?.accounts ?? [];
-    const investments = getPersonalInvestments(data);
-    const monthlyInvested = (data?.investmentTransactions ?? [])
-      .filter((t) => {
-        const aid = t.accountId ?? (t as { account_id?: string }).account_id ?? '';
-        if (!aid || !personalAccountIds.has(aid)) return false;
-        return dateInRange(t.date, finStart, finEnd) && t.type === 'buy';
-      })
-      .reduce((sum, t) => {
-        const c = inferInvestmentTransactionCurrency(t, accounts, investments);
-        return sum + convertAmount(t.total ?? 0, c, planCurrency);
-      }, 0);
-    const target = Math.max(0, Number(plan?.monthlyBudget) || 0);
-    return {
-      percent: target > 0 ? Math.min((monthlyInvested / target) * 100, 100) : 0,
-      amount: monthlyInvested,
-      target,
-    };
-  }, [data, headlineFx]);
+  const investmentProgress = useMemo(
+    () => computeMonthlyInvestmentPlanProgress(data, headlineFx),
+    [data, headlineFx],
+  );
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -258,6 +237,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                           return (
                             <button
                               key={itemName}
+                              onMouseEnter={() => prefetchPage(itemName as Page)}
+                              onFocus={() => prefetchPage(itemName as Page)}
                               onClick={() => { setActivePage(itemName as Page); setActiveGroup(null); }}
                               className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors ${
                                 activePage === itemName ? 'text-primary bg-primary/5 font-semibold' : 'text-gray-600 hover:bg-gray-50'
@@ -280,21 +261,26 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
             {/* Investment Plan Quick Status */}
             <div 
               className="hidden xl:flex flex-col items-end mr-4 cursor-pointer hover:opacity-80 transition-opacity"
+              onMouseEnter={() => prefetchPage('Investments')}
               onClick={() => setActivePage('Investments')}
-              title={investmentProgress.target > 0 ? `Invested ${investmentProgress.amount.toLocaleString()} of ${investmentProgress.target.toLocaleString()} this month` : 'Set monthly budget in Investments → Monthly Plan'}
+              title={
+                investmentProgress.hasBudgetTarget
+                  ? `Buys in current financial month (${investmentProgress.finStart}–${investmentProgress.finEnd}): ${investmentProgress.amount.toLocaleString()} of ${investmentProgress.target.toLocaleString()} ${investmentProgress.planCurrency} (sum of per-portfolio Investment Plan budgets; same rules as Investments hub)`
+                  : 'Set monthly budget in Investments → Investment Plan'
+              }
             >
               <div className="flex items-center space-x-2 mb-1">
                 <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
                   Monthly Plan
                 </span>
                 <span className="text-xs font-bold text-primary">
-                  {investmentProgress.target > 0 ? `${investmentProgress.percent.toFixed(0)}%` : '—'}
+                  {investmentProgress.hasBudgetTarget ? `${investmentProgress.percent.toFixed(0)}%` : '—'}
                 </span>
               </div>
               <div className="w-32 h-1.5 bg-gray-100 rounded-full overflow-hidden">
                 <div 
                   className="h-full bg-primary transition-all duration-1000" 
-                  style={{ width: `${investmentProgress.target > 0 ? investmentProgress.percent : 0}%` }}
+                  style={{ width: `${investmentProgress.hasBudgetTarget ? investmentProgress.percent : 0}%` }}
                 />
               </div>
             </div>
@@ -302,10 +288,18 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
             <div className="flex items-center space-x-0.5 sm:space-x-2">
               <div className="hidden sm:flex flex-col items-end mr-2 min-w-[126px]">
                 <button 
-                  onClick={refreshPrices} 
-                  disabled={headerRefreshing}
+                  onClick={(e) => void refreshPrices({ forceFetch: e.shiftKey })} 
+                  disabled={headerRefreshing || quoteCooldownSec > 0}
                   className={`p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all flex items-center justify-end gap-2 w-full ${headerRefreshing ? 'animate-pulse' : ''}`}
-                  title={isLive ? (lastUpdated ? `Live prices · Updated ${pricesStatusLabel.split('·')[1] ?? 'recently'}. Click to refresh.` : 'Live prices. Click to refresh.') : 'Simulated prices. Click to fetch live prices.'}
+                  title={
+                    quoteCooldownSec > 0
+                      ? `Rate limited — retry in ${quoteCooldownSec}s (uses cache meanwhile)`
+                      : isLive
+                        ? lastUpdated
+                          ? `Live prices · Updated ${pricesStatusLabel.split('·')[1] ?? 'recently'}. Click to refresh.`
+                          : 'Live prices. Click to refresh.'
+                        : 'Simulated prices. Click to fetch live prices.'
+                  }
                 >
                   <ArrowPathIcon className={`h-5 w-5 ${isRefreshing ? 'animate-spin' : ''}`} />
                   <div className="flex flex-col items-end text-right leading-tight">
@@ -316,9 +310,13 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                     </span>
                   </div>
                 </button>
-                {pricesStatusLabel && (
+                {(pricesStatusLabel || quoteCooldownSec > 0) && (
                   <span className="text-[10px] text-gray-400 mt-0.5 px-2 hidden xl:block text-right leading-tight" title={lastUpdated ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}>
-                    {headerRefreshing ? 'Updating…' : pricesStatusLabel}
+                    {quoteCooldownSec > 0
+                      ? `Rate limited · ${quoteCooldownSec}s`
+                      : headerRefreshing
+                        ? 'Updating…'
+                        : pricesStatusLabel}
                   </span>
                 )}
               </div>
@@ -526,7 +524,9 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                         const isActive = activePage === itemName;
                         return (
                           <button 
-                              key={itemName} 
+                              key={itemName}
+                              onMouseEnter={() => prefetchPage(itemName as Page)}
+                              onFocus={() => prefetchPage(itemName as Page)}
                               onClick={() => { setActivePage(itemName as Page); setIsMobileMenuOpen(false); }}
                               className={`w-full flex items-center px-4 py-3.5 text-sm font-semibold rounded-2xl transition-all ${
                                   isActive 

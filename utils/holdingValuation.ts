@@ -4,6 +4,15 @@ import { AVG_COST_DECIMALS } from './money';
 import { lookupLiveQuoteForSymbol } from '../services/finnhubService';
 import { isTadawulQuoteSymbol } from '../services/marketQuoteRouting';
 import { sanitizeLiveQuoteRow } from '../services/tadawulQuoteSanity';
+import { MAX_HOLDING_BOOK_NOTIONAL } from '../services/marketSimulatorHoldingPersist';
+
+/** Ignore corrupt stored notionals so platform P/L and NW are not driven by bad rows. */
+function clampStoredMarketValue(marketValue: number, costValue: number): number {
+  if (!Number.isFinite(marketValue) || marketValue <= 0) return marketValue;
+  if (marketValue > MAX_HOLDING_BOOK_NOTIONAL) return costValue > 0 ? costValue : 0;
+  if (costValue > 0 && marketValue > costValue * 50) return costValue;
+  return marketValue;
+}
 
 /** Decimal places for per-share / per-unit amounts (avg. cost, price per share, pullback prices). */
 export const HOLDING_PER_UNIT_DECIMALS = AVG_COST_DECIMALS;
@@ -45,7 +54,7 @@ export function effectiveHoldingValueInBookCurrency(
     if (priceInfo && Number.isFinite(priceInfo.price) && qty > 0) {
         return quoteNotionalInBookCurrency(priceInfo.price as number, qty, sym, bookCurrency, sarPerUsd);
     }
-    const marketValue = Number(h.currentValue || 0);
+    const marketValue = clampStoredMarketValue(Number(h.currentValue || 0), Number.isFinite(avgCost) && Number.isFinite(qty) ? avgCost * qty : 0);
     const costValue = Number.isFinite(avgCost) && Number.isFinite(qty) ? avgCost * qty : 0;
     if (marketValue > 0) return marketValue;
     if (costValue > 0) return costValue;

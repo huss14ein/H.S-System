@@ -4,7 +4,7 @@
 
 
 
-export type Page = 'Dashboard' | 'Summary' | 'Accounts' | 'Goals' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'Settings' | 'Investments' | 'Plan' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan' | 'Investment Plan' | 'Dividend Tracker' | 'AI Rebalancer' | 'Watchlist' | 'Assets' | 'System & APIs Health' | 'Statement Upload' | 'Statement History' | 'Commodities' | 'Engines & Tools' | 'Installments';
+export type Page = 'Dashboard' | 'Summary' | 'Wealth Analytics' | 'Accounts' | 'Goals' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'Settings' | 'Investments' | 'Plan' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan' | 'Investment Plan' | 'Dividend Tracker' | 'AI Rebalancer' | 'Watchlist' | 'Assets' | 'System & APIs Health' | 'Statement Upload' | 'Statement History' | 'Commodities' | 'Engines & Tools' | 'Installments';
 
 /** User tasks on the Notifications page (persisted per account). */
 export type TodoPriority = 'low' | 'medium' | 'high';

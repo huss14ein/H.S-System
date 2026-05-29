@@ -11,9 +11,10 @@ import AiProxyUnavailableHint from '../components/AiProxyUnavailableHint';
 import { getTargetAllocationForProfile, meanVarianceOptimization } from '../services/portfolioConstruction';
 import type { Holding, Page } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
-import { useMarketData } from '../context/MarketDataContext';
+import { useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
+import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import { useCurrency } from '../context/CurrencyContext';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { getPersonalInvestments } from '../utils/wealthScope';
@@ -31,11 +32,12 @@ interface AIRebalancerViewProps {
   setActivePage?: (page: Page) => void;
 }
 
-const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, onOpenWealthUltra, setActivePage: _setActivePage }) => {
-  const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
+const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab: _onNavigateToTab, onOpenWealthUltra, setActivePage: _setActivePage }) => {
+  const { data, getAvailableCashForAccount } = useContext(DataContext)!;
   const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
   const { trackAction } = useSelfLearning();
-  const { simulatedPrices, symbolQuoteUpdatedAt } = useMarketData();
+  const { simulatedPrices } = useInvestmentsCanonicalMetrics();
+  const { symbolQuoteUpdatedAt } = useMarketQuoteMeta();
   const { exchangeRate } = useCurrency();
   const { formatCurrencyString } = useFormatCurrency();
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>('');
@@ -57,7 +59,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
   const [isTranslatingRebal, setIsTranslatingRebal] = useState(false);
 
   const portfolios = useMemo(() => getPersonalInvestments(data), [data]);
-  const { sarPerUsd } = useCanonicalFinancialMetrics();
+  const sarPerUsd = useCanonicalSpotFx();
   const canonical = useMemo(
     () =>
       data
@@ -248,43 +250,6 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab, on
     const labels = holdings.map((h: Holding) => h.symbol ?? '');
     return { ...res, labels };
   }, [selectedPortfolio, simulatedPrices, sarPerUsd]);
-
-  if (showBlockingLoader) {
-    return (
-      <div className="page-container flex items-center justify-center min-h-[24rem]" aria-busy="true">
-        <div className="text-center">
-          <div
-            className="w-12 h-12 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"
-            aria-label="Loading AI Rebalancer"
-          />
-          <p className="text-sm text-slate-600">Loading portfolio data…</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!portfolios.length) {
-    return (
-      <div className="page-container space-y-6">
-        <section className="section-card p-6 sm:p-8 text-center">
-          <h2 className="page-title text-xl sm:text-2xl">AI Portfolio Rebalancer</h2>
-          <p className="text-slate-600 mt-2">You don&apos;t have any investment portfolios to analyze.</p>
-          <p className="text-sm text-slate-500 mt-1">
-            Add a platform and portfolio under <strong>Portfolios</strong>, then return here.
-          </p>
-          {onNavigateToTab && (
-            <button
-              type="button"
-              onClick={() => onNavigateToTab('Portfolios')}
-              className="mt-4 btn-primary"
-            >
-              Go to Portfolios
-            </button>
-          )}
-        </section>
-      </div>
-    );
-  }
 
   return (
     <div className="page-container space-y-6">

@@ -1,4 +1,4 @@
-import { useContext, useMemo, useState } from 'react';
+import { useContext, useMemo, useState, memo } from 'react';
 import {
   Area,
   AreaChart,
@@ -18,10 +18,13 @@ import { DataContext } from '../../context/DataContext';
 import { useCurrency } from '../../context/CurrencyContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { useCanonicalFinancialMetrics } from '../../hooks/useCanonicalFinancialMetrics';
+import type { DashboardCanonicalMetrics } from '../../services/canonicalFinancialMetrics';
+import type { SimulatedPriceMap } from '../../services/investmentPlatformCardMetrics';
 import { toSAR } from '../../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency } from '../../utils/holdingValuation';
 import { resolveInvestmentPortfolioCurrency } from '../../utils/investmentPortfolioCurrency';
-import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from '../../services/fxDailySeries';
+import { getSarPerUsdForCalendarDay } from '../../services/fxDailySeries';
+import { useHydrateSarPerUsdDailySeries } from '../../hooks/useHydrateSarPerUsdDailySeries';
 import { listNetWorthSnapshots } from '../../services/netWorthSnapshot';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../../utils/wealthScope';
 import type { Account, Transaction } from '../../types';
@@ -181,18 +184,38 @@ function netCashflowBetweenSarDated(args: {
   return { income, expenses, net: income - expenses };
 }
 
-export default function NetWorthCockpit(props: {
+export type NetWorthCockpitMetricsOverride = Pick<
+  DashboardCanonicalMetrics,
+  'headline' | 'todaySnapshot' | 'investableCashBars' | 'sarPerUsd'
+> & { simulatedPrices?: SimulatedPriceMap };
+
+type NetWorthCockpitShellProps = {
   title?: string;
   onOpenSummary?: () => void;
   onOpenInvestments?: () => void;
   onOpenAccounts?: () => void;
   onOpenAssets?: () => void;
   onOpenDataReconciliation?: () => void;
-}) {
-  const { title = 'Net worth', onOpenSummary, onOpenInvestments, onOpenAccounts, onOpenAssets, onOpenDataReconciliation } = props;
+};
+
+function NetWorthCockpitContent(
+  props: NetWorthCockpitShellProps & {
+    metrics: NetWorthCockpitMetricsOverride & { simulatedPrices: SimulatedPriceMap };
+  },
+) {
+  const {
+    title = 'Net worth',
+    onOpenSummary,
+    onOpenInvestments,
+    onOpenAccounts,
+    onOpenAssets,
+    onOpenDataReconciliation,
+    metrics,
+  } = props;
+  const { headline, todaySnapshot, investableCashBars, sarPerUsd, simulatedPrices } = metrics;
   const { data } = useContext(DataContext)!;
   const { exchangeRate } = useCurrency();
-  const { headline, todaySnapshot, investableCashBars, sarPerUsd, simulatedPrices } = useCanonicalFinancialMetrics();
+  useHydrateSarPerUsdDailySeries(data, exchangeRate);
   const { formatCurrencyString } = useFormatCurrency();
   const [period, setPeriod] = useState<TimePeriod>('6M');
   const buckets = headline.buckets;
@@ -219,8 +242,6 @@ export default function NetWorthCockpit(props: {
         movers: [] as Array<{ symbol: string; name: string; valueSar: number; gainLossSar: number; gainLossPct: number }>,
       };
     }
-
-    hydrateSarPerUsdDailySeries(data, exchangeRate, { horizonDays: 4000 });
 
     const snaps = listNetWorthSnapshots();
     const cutoff = cutoffFor(period);
@@ -868,3 +889,32 @@ export default function NetWorthCockpit(props: {
   );
 }
 
+const MemoNetWorthCockpitContent = memo(NetWorthCockpitContent);
+
+function NetWorthCockpitFromCanonical(shell: NetWorthCockpitShellProps) {
+  const { headline, todaySnapshot, investableCashBars, sarPerUsd, simulatedPrices } = useCanonicalFinancialMetrics();
+  return (
+    <MemoNetWorthCockpitContent
+      {...shell}
+      metrics={{ headline, todaySnapshot, investableCashBars, sarPerUsd, simulatedPrices }}
+    />
+  );
+}
+
+export default function NetWorthCockpit(
+  props: NetWorthCockpitShellProps & { metricsOverride?: NetWorthCockpitMetricsOverride },
+) {
+  const { metricsOverride, ...shell } = props;
+  if (metricsOverride) {
+    return (
+      <MemoNetWorthCockpitContent
+        {...shell}
+        metrics={{
+          ...metricsOverride,
+          simulatedPrices: metricsOverride.simulatedPrices ?? {},
+        }}
+      />
+    );
+  }
+  return <NetWorthCockpitFromCanonical {...shell} />;
+}

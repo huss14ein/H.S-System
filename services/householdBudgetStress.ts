@@ -8,6 +8,7 @@ import {
   type HouseholdEngineProfile,
   type HouseholdMonthlyOverride,
 } from './householdBudgetEngine';
+import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 
 export interface CashflowStressSignals {
   level: 'low' | 'medium' | 'high';
@@ -104,8 +105,8 @@ export function computeHouseholdStressFromData(
   const profile = options?.profile ?? 'Moderate';
   const overrides = options?.overrides ?? [];
 
-  const transactions = (data as any).personalTransactions ?? data.transactions ?? [];
-  const accounts = (data as any).personalAccounts ?? data.accounts ?? [];
+  const transactions = getPersonalTransactions(data);
+  const accounts = getPersonalAccounts(data);
 
   const sarPerUsd = resolveSarPerUsd(data, undefined);
   const { monthlyIncome } = accumulateHouseholdYearCashflowSar(data, transactions, accounts, year, sarPerUsd);

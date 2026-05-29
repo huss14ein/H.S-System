@@ -14,6 +14,9 @@ import {
   parseCalendarDateLocal,
   resolveMonthStartDayFromData,
   DEFAULT_FINANCIAL_MONTH_START_DAY,
+  budgetAppliesToFinancialView,
+  budgetRowViewMatchScore,
+  dedupeBudgetRowsForFinancialView,
 } from '../utils/financialMonth';
 
 describe('financialMonthRangeFromKey vs calendar reference', () => {
@@ -73,6 +76,56 @@ describe('financialMonthRangeFromKey vs calendar reference', () => {
     expect(headers[0]).toContain('–');
     expect(financialMonthKeysEndingAt(new Date('2026-05-10'), 3, 15)).toHaveLength(3);
     expect(financialMonthIsoKey({ year: 2026, month: 5 })).toBe('2026-05');
+  });
+});
+
+describe('budgetAppliesToFinancialView', () => {
+  const monthStartDay = 28;
+  const viewKey = { year: 2026, month: 4 };
+
+  it('includes legacy calendar-month rows that overlap the financial window', () => {
+    expect(
+      budgetAppliesToFinancialView({ year: 2026, month: 5, period: 'monthly' }, viewKey, monthStartDay, 'Monthly'),
+    ).toBe(true);
+  });
+
+  it('excludes non-overlapping calendar months', () => {
+    expect(
+      budgetAppliesToFinancialView({ year: 2026, month: 3, period: 'monthly' }, viewKey, monthStartDay, 'Monthly'),
+    ).toBe(false);
+  });
+
+  it('matches exact financial month index', () => {
+    expect(
+      budgetAppliesToFinancialView({ year: 2026, month: 4, period: 'monthly' }, viewKey, monthStartDay, 'Monthly'),
+    ).toBe(true);
+  });
+
+  it('yearly rows apply to the whole plan year in yearly view', () => {
+    expect(
+      budgetAppliesToFinancialView({ year: 2026, month: 1, period: 'yearly' }, viewKey, monthStartDay, 'Yearly'),
+    ).toBe(true);
+    expect(
+      budgetAppliesToFinancialView({ year: 2025, month: 1, period: 'yearly' }, viewKey, monthStartDay, 'Yearly'),
+    ).toBe(false);
+  });
+});
+
+describe('dedupeBudgetRowsForFinancialView', () => {
+  const monthStartDay = 28;
+  const viewKey = { year: 2026, month: 4 };
+
+  it('keeps one row per category, preferring financial-month index over overlap-only calendar row', () => {
+    const rows = [
+      { id: 'a', category: 'Transportation', year: 2026, month: 4, period: 'monthly' as const, limit: 600 },
+      { id: 'b', category: 'Transportation', year: 2026, month: 5, period: 'monthly' as const, limit: 800 },
+    ];
+    const deduped = dedupeBudgetRowsForFinancialView(rows, viewKey, monthStartDay, 'Monthly');
+    expect(deduped).toHaveLength(1);
+    expect(deduped[0].limit).toBe(600);
+    expect(budgetRowViewMatchScore(rows[0], viewKey, monthStartDay)).toBeGreaterThan(
+      budgetRowViewMatchScore(rows[1], viewKey, monthStartDay),
+    );
   });
 });
 

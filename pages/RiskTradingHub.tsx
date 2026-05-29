@@ -32,10 +32,11 @@ import { detectStaleMarketData } from '../services/dataQuality';
 import { MarketDataContext } from '../context/MarketDataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import type { Page, Transaction } from '../types';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
 import { personalInvestmentTerminalValueSAR } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
-import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
+import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions, getPersonalLiabilities } from '../utils/wealthScope';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 
 const RiskTradingHub: React.FC<{
@@ -44,7 +45,7 @@ const RiskTradingHub: React.FC<{
   /** When true, render without full-page chrome (e.g. inside Money Tools). */
   embedded?: boolean;
 }> = ({ setActivePage, triggerPageAction, embedded = false }) => {
-  const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
+  const { data, getAvailableCashForAccount } = useContext(DataContext)!;
   const auth = useContext(AuthContext);
   const marketData = useContext(MarketDataContext);
   const ef = useEmergencyFund(data ?? null);
@@ -86,7 +87,8 @@ const RiskTradingHub: React.FC<{
   }, [snaps, restoreDate]);
 
   const { exchangeRate } = useCurrency();
-  const { sarPerUsd, netWorth: currentNetWorth, liquidCashSar } = useCanonicalFinancialMetrics();
+  const { sarPerUsd, netWorth: currentNetWorth, liquidCashSar } = useDashboardCanonicalMetrics();
+  useHydrateSarPerUsdDailySeries(data, exchangeRate);
   const personalInvestments = useMemo(() => getPersonalInvestments(data ?? null), [data]);
   const personalInvestmentAccountIds = useMemo(
     () => getPersonalAccounts(data ?? null).filter((a) => a.type === 'Investment').map((a) => a.id),
@@ -94,12 +96,14 @@ const RiskTradingHub: React.FC<{
   );
 
   const reviewInputs = useMemo(() => {
-    const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
-    const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-    const liabilities = (data as any)?.personalLiabilities ?? data?.liabilities ?? [];
+    const txs = getPersonalTransactions(data) as Transaction[];
+    const accounts = getPersonalAccounts(data);
+    const liabilities = getPersonalLiabilities(data);
     const uncategorized = txs.filter((t) => countsAsExpenseForCashflowKpi(t) && !t.budgetCategory).length;
     const liquid = accounts.filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: { balance?: number }) => s + Math.max(0, a.balance ?? 0), 0);
-    const monthlyDebt = liabilities.filter((l: { status?: string }) => l.status === 'Active').reduce((s: number, l: { monthlyPayment?: number }) => s + (l.monthlyPayment ?? 0), 0);
+    const monthlyDebt = liabilities
+      .filter((l) => l.status === 'Active')
+      .reduce((s, l) => s + (l.minPayment ?? 0), 0);
     const sixMoAgo = new Date(); sixMoAgo.setMonth(sixMoAgo.getMonth() - 6);
     const incomeSum = txs
       .filter((t: Transaction) => countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= sixMoAgo)
@@ -125,7 +129,6 @@ const RiskTradingHub: React.FC<{
 
   const mwrr = useMemo(() => {
     if (!data) return null;
-    hydrateSarPerUsdDailySeries(data, exchangeRate);
     const txs = data.investmentTransactions ?? [];
     const flows = flowsFromInvestmentTransactionsInSARWithDatedFx(txs, data, exchangeRate);
     const tv = personalInvestmentTerminalValueSAR({
@@ -140,7 +143,6 @@ const RiskTradingHub: React.FC<{
 
   const perfSnapshot = useMemo(() => {
     if (!data) return null;
-    hydrateSarPerUsdDailySeries(data, exchangeRate);
     const endVal = personalInvestmentTerminalValueSAR({
       portfolios: personalInvestments,
       investmentAccountIds: personalInvestmentAccountIds,
@@ -155,7 +157,7 @@ const RiskTradingHub: React.FC<{
     if (snaps.length < 2) return null;
     const a = snaps[1];
     const b = snaps[0];
-    const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
+    const txs = getPersonalTransactions(data) as Transaction[];
     const flow = personalNetCashflowBetween(txs, a.at, b.at);
     return attributeNetWorthWithFlows({
       startNw: a.netWorth,
@@ -166,14 +168,6 @@ const RiskTradingHub: React.FC<{
 
   const buyS = buyScore({ emergencyFundMonths: ef.monthsCovered, runwayMonths: ef.monthsCovered });
   const sellS = sellScore({ aboveTargetWeightPct: 8, needCash: true });
-
-  if (showBlockingLoader) {
-    return (
-      <div className="flex justify-center py-24">
-        <div className="animate-spin h-10 w-10 border-2 border-primary border-t-transparent rounded-full" />
-      </div>
-    );
-  }
 
   const pageDescription =
     'Your safety checks and rules before buying or selling. See how much you have in reserve, your portfolio return, and when to review things.';

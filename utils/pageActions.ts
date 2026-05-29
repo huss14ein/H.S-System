@@ -7,6 +7,10 @@ import type { Page } from '../types';
 export function isSupportedPageAction(page: Page, action: string): boolean {
   if (!action || typeof action !== 'string') return false;
 
+  if (page === 'Dashboard') {
+    return action === 'plan-compare-dashboard';
+  }
+
   if (page === 'Notifications') {
     return action === 'notifications-tab:tasks' || action === 'notifications-tab:alerts';
   }
@@ -14,7 +18,8 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
   if (page === 'Transactions') {
     return (
       action === 'open-transaction-modal' ||
-      /^filter-by-budget:[^:]+:(monthly|weekly|daily|yearly):\d{4}:(?:[1-9]|1[0-2])$/.test(action)
+      /^filter-by-budget:[^:]+:(monthly|weekly|daily|yearly):\d{4}:(?:[1-9]|1[0-2])$/.test(action) ||
+      /^filter-plan-expense:\d{4}:(?:[1-9]|1[0-2]):.+$/.test(action)
     );
   }
 
@@ -27,7 +32,9 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
       action === 'budgets-focus-requests' ||
       action === 'budgets-focus-my-pending' ||
       action === 'budgets-open-request-form' ||
-      action === 'budgets-focus-admin-pending'
+      action === 'budgets-focus-admin-pending' ||
+      action === 'budgets-advance-from-next-month' ||
+      /^budgets-advance-from-next-month:.+/.test(action)
     );
   }
 

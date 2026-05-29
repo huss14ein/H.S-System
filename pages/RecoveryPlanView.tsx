@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useContext, useEffect, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
-import { useMarketData } from '../context/MarketDataContext';
+import { useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
+import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useCurrency } from '../context/CurrencyContext';
 import InfoHint from '../components/InfoHint';
@@ -62,7 +63,7 @@ import {
 } from '../services/positionRecyclingPersistence';
 import { validatePlannedTrade } from '../services/dataQuality/validation';
 import { computeCanonicalPlanningSnapshot } from '../services/canonicalPlanningEngine';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { getPersonalInvestments } from '../utils/wealthScope';
 import {
   buildHoldingSymbolOptions,
@@ -100,14 +101,15 @@ const deriveDynamicPositionConfig = (
 };
 function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActivePage, triggerPageAction }: RecoveryPlanViewProps) {
   const ctx = useContext(DataContext)!;
-  const { data, showBlockingLoader, getAvailableCashForAccount, addPlannedTrade } = ctx;
+  const { data, getAvailableCashForAccount, addPlannedTrade } = ctx;
   const { exchangeRate } = useCurrency();
   const { trackAction } = useSelfLearning();
-  const { simulatedPrices, symbolQuoteUpdatedAt } = useMarketData();
+  const { simulatedPrices } = useInvestmentsCanonicalMetrics();
+  const { symbolQuoteUpdatedAt } = useMarketQuoteMeta();
   const { formatCurrencyString } = useFormatCurrency();
   const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
   const aiOptimizeDisabled = !aiActionsEnabled;
-  const { sarPerUsd: headlineFx } = useCanonicalFinancialMetrics();
+  const headlineFx = useCanonicalSpotFx();
   const canonical = useMemo(
     () =>
       data
@@ -977,14 +979,6 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     handleGenerateUnifiedDrafts,
     handleGenerateRecoveryPlan,
   ]);
-
-  if (showBlockingLoader) {
-    return (
-      <div className="page-container flex justify-center items-center min-h-[24rem]" aria-busy="true">
-        <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading recovery plan" />
-      </div>
-    );
-  }
 
   return (
     <div className="page-container min-h-[40rem] space-y-8 sm:space-y-10">

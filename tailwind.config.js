@@ -2,7 +2,9 @@
 export default {
   content: [
     "./index.html",
-    "./{components,pages,hooks,App,context}/**/*.{js,ts,jsx,tsx}",
+    "./index.tsx",
+    "./App.tsx",
+    "./{components,pages,hooks,context,services,utils,wealth-ultra,constants}/**/*.{js,ts,jsx,tsx}",
   ],
   darkMode: 'class', // Enable dark mode class strategy
   theme: {

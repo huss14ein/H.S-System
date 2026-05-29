@@ -27,7 +27,8 @@ import {
     type WealthSummaryReportInput,
 } from '../services/reportingEngine';
 import { useCurrency } from '../context/CurrencyContext';
-import { useMarketData } from '../context/MarketDataContext';
+import { useLanguage } from '../context/LanguageContext';
+import { useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
 import { useNotifications } from '../context/NotificationsContext';
 import { toSAR } from '../utils/currencyMath';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
@@ -73,11 +74,12 @@ const FINANCIAL_PREFERENCE_PRESETS: Record<string, { riskProfile: RiskProfile; b
 };
 
 const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
-    const { data, showBlockingLoader, updateSettings, restoreFromBackup, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, updateSettings, restoreFromBackup, getAvailableCashForAccount } = useContext(DataContext)!;
     const { showToast } = useToast();
     const auth = useContext(AuthContext)!;
     const { exchangeRate, currency, setCurrency } = useCurrency();
-    const { simulatedPrices } = useMarketData();
+    const { language, setLanguage, t } = useLanguage();
+    const simulatedPrices = useCanonicalSimulatedPrices();
     const notifCtx = useNotifications();
     const [localSettings, setLocalSettings] = useState(data?.settings ?? {});
     const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
@@ -436,17 +438,9 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
     }, []);
 
-    const accountsForEmptyCheck = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-const hasData = accountsForEmptyCheck.length > 0;
+    const accountsForEmptyCheck = getPersonalAccounts(data);
+    const hasData = accountsForEmptyCheck.length > 0;
     const defaultWealthUltra = useMemo(() => ({ ...getDefaultWealthUltraConfig(), ...(data?.wealthUltraConfig || {}) }), [data?.wealthUltraConfig]);
-
-    if (showBlockingLoader) {
-        return (
-            <div className="page-container flex justify-center items-center min-h-[24rem]" aria-busy="true">
-                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading settings" />
-            </div>
-        );
-    }
 
     return (
         <div className="page-container relative">
@@ -620,6 +614,24 @@ const hasData = accountsForEmptyCheck.length > 0;
                                     className={`px-3 py-2 text-sm font-semibold rounded-md transition-all ${currency === c ? 'bg-white shadow text-primary' : 'text-slate-600 hover:bg-white/50'}`}
                                 >
                                     {c}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 p-3 bg-slate-50/80">
+                        <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
+                            {t('language')}
+                            <InfoHint text="Dashboard and Wealth Summary interactive modules (charts, budget intelligence, what-if sandbox). Stored in this browser only." />
+                        </label>
+                        <div className="grid grid-cols-2 gap-2 rounded-xl bg-slate-100 p-1 max-w-xs">
+                            {(['en', 'ar'] as const).map((lang) => (
+                                <button
+                                    key={lang}
+                                    type="button"
+                                    onClick={() => setLanguage(lang)}
+                                    className={`px-3 py-2 text-sm font-semibold rounded-md transition-all ${language === lang ? 'bg-white shadow text-primary' : 'text-slate-600 hover:bg-white/50'}`}
+                                >
+                                    {lang === 'en' ? t('english') : t('arabic')}
                                 </button>
                             ))}
                         </div>

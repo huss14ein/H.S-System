@@ -36,6 +36,8 @@ interface SectionCardProps {
   collapsibleSummary?: string;
   /** Kept for API compatibility; collapsible sections always mount expanded (user can collapse via header). */
   defaultExpanded?: boolean;
+  /** Fired when user expands or collapses (collapsible sections only). */
+  onExpandedChange?: (expanded: boolean) => void;
 }
 
 /**
@@ -59,8 +61,16 @@ const SectionCard: React.FC<SectionCardProps> = ({
   collapsible = false,
   collapsibleSummary,
   defaultExpanded: _defaultExpanded,
+  onExpandedChange,
 }) => {
   const [expanded, setExpanded] = useState(_defaultExpanded ?? true);
+  const toggleExpanded = () => {
+    setExpanded((prev) => {
+      const next = !prev;
+      onExpandedChange?.(next);
+      return next;
+    });
+  };
   const cardClass = hover || onClick ? 'section-card-hover' : 'section-card';
   const resolvedHint = resolveSectionInfoHint({
     title,
@@ -92,7 +102,7 @@ const SectionCard: React.FC<SectionCardProps> = ({
         <div className="flex items-center justify-between gap-3 w-full min-h-[44px] rounded-lg -mx-1 px-1 min-w-0 hover:bg-slate-50/80 transition-colors">
           <button
             type="button"
-            onClick={() => setExpanded((e) => !e)}
+            onClick={toggleExpanded}
             className="flex items-center gap-2 min-w-0 flex-1 text-left py-0.5 pr-1 cursor-pointer rounded-lg"
             aria-expanded={expanded}
           >
@@ -109,7 +119,7 @@ const SectionCard: React.FC<SectionCardProps> = ({
             {resolvedHint ? <InfoHint text={resolvedHint} popoverAlign="right" /> : null}
             <button
               type="button"
-              onClick={() => setExpanded((e) => !e)}
+              onClick={toggleExpanded}
               className="flex-shrink-0 p-1 rounded text-slate-400 hover:text-slate-600"
               aria-expanded={expanded}
               aria-label={expanded ? 'Collapse section' : 'Expand section'}

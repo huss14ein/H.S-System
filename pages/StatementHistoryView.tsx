@@ -10,6 +10,7 @@ import { StatementIcons, getStatementIcon } from '../constants/statementIcons';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { accountBookCurrency } from '../utils/cashAccountDisplay';
 import type { Account, Page } from '../types';
+import { getPersonalAccounts } from '../utils/wealthScope';
 
 interface StatementHistoryViewProps {
   setActivePage?: (page: Page) => void;
@@ -22,9 +23,9 @@ const StatementHistoryView: React.FC<StatementHistoryViewProps> = ({ setActivePa
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const { formatCurrencyString } = useFormatCurrency();
   const accountsById = useMemo(() => {
-    const list = (data as { personalAccounts?: Account[] } | undefined)?.personalAccounts ?? data?.accounts ?? [];
+    const list = getPersonalAccounts(data);
     return new Map<string, Account>(list.map((a) => [a.id, a]));
-  }, [data?.accounts, (data as { personalAccounts?: Account[] } | undefined)?.personalAccounts]);
+  }, [data]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'failed' | 'reviewing'>('all');
   const [isReconciliationModalOpen, setIsReconciliationModalOpen] = useState(false);

@@ -11,6 +11,12 @@ import { getSahmkLivePrices } from './sahmkQuote';
 import { fetchGeminiProxyHealthStatus, getGeminiProxyEndpoints } from './aiProxyEndpoints';
 import { getAiProxyAuthorizationHeader } from './aiProxyAuth';
 import { isTadawulQuoteSymbol, isUsEquityQuoteSymbol, uniqueQuoteSymbols } from './marketQuoteRouting';
+import { isRateLimitError } from './quoteRefreshCooldown';
+import {
+    buildRateLimitBatchError,
+    noteProviderRateLimitError,
+    shouldAbortBatchForRateLimit,
+} from './quoteProviderRateLimit';
 import { computeGoalResolvedAmountsSar, resolvedGoalAmountsFingerprint } from './goalResolvedTotals';
 import { appendSarGroundingNotice, auditSarGrounding, flattenAiContentsForGrounding } from '../utils/aiSarGroundingAudit';
 import {
@@ -395,12 +401,17 @@ const getFinnhubLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
     if (usSymbols.length === 0) return {};
     const token = getFinnhubApiKey();
     const mapped: { [symbol: string]: { price: number; change: number; changePercent: number } } = {};
+    let rateLimitHits = 0;
 
     for (const rawSymbol of usSymbols) {
         const candidateSymbols = getFinnhubQuoteCandidates(rawSymbol);
         for (const finnhubSymbol of candidateSymbols) {
             try {
                 const response = await finnhubFetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(finnhubSymbol)}&token=${encodeURIComponent(token)}`);
+                if (response.status === 429) {
+                    rateLimitHits += 1;
+                    break;
+                }
                 if (!response.ok) continue;
                 const row = await response.json();
                 const price = resolveQuotePrice(row ?? {});
@@ -427,6 +438,10 @@ const getFinnhubLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
                 for (const k of keys) mapped[k] = quote;
                 break;
             } catch (error) {
+                if (noteProviderRateLimitError(error)) {
+                    rateLimitHits += 1;
+                    break;
+                }
                 if (isFinnhub403(error)) {
                     if (!warnedFinnhub403InGeminiService) {
                         warnedFinnhub403InGeminiService = true;
@@ -437,6 +452,13 @@ const getFinnhubLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
                 }
             }
         }
+        if (shouldAbortBatchForRateLimit(rateLimitHits, Object.keys(mapped).length)) {
+            throw buildRateLimitBatchError('Finnhub');
+        }
+    }
+
+    if (shouldAbortBatchForRateLimit(rateLimitHits, Object.keys(mapped).length)) {
+        throw buildRateLimitBatchError('Finnhub');
     }
 
     return mapped;
@@ -2393,7 +2415,7 @@ export const getGoalAIPlan = async (
             - **Currently Saved:** ${calculatedCurrentAmount.toLocaleString()} SAR
             - **Time Remaining:** ${monthsLeft} months
             - **Required Monthly Savings:** ${requiredMonthlyContribution.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/month
-            - **Projected Monthly Savings:** ${projectedMonthlyContribution.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/month (${typeof ov === 'number' && Number.isFinite(ov) ? 'linked budgets + linked investment plan/deposits only' : 'map budgets or investments to this goal — surplus after goal budgets funds emergency, not goals'})
+            - **Projected Monthly Savings:** ${projectedMonthlyContribution.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/month (${typeof ov === 'number' && Number.isFinite(ov) ? 'linked budget envelope when set, else linked investment plan/deposits only' : 'map budgets or investments to this goal — surplus after goal budgets funds emergency, not goals'})
 
             **Your Task:**
             1.  **Status Assessment:** In one friendly sentence, state if the goal is on track, needs attention, or is at risk based on the data. Be direct.
@@ -2439,7 +2461,7 @@ export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: n
         const { sumAllGoalMonthlyFundingEnvelopesSar, monthlySurplusForEmergencyFund } = await import('./goalProjectionFunding');
         const mappedGoalFunding = sumAllGoalMonthlyFundingEnvelopesSar(allData, sar);
         const emergencyCapacity = monthlySurplusForEmergencyFund(allData, sar);
-        const prompt = `You are Finova AI, a very clever expert financial advisor. Goal strategy data: rolling monthly net ${monthlySavings.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR; mapped goal envelopes ${mappedGoalFunding.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/mo (linked budgets + investments only); emergency-fund capacity after goal budgets ${emergencyCapacity.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/mo; ${goals.length} goals. Progress: ${goalDataWithProgress}. Return a short analysis in Markdown only (no HTML). Use ### for each section. Be direct.
+        const prompt = `You are Finova AI, a very clever expert financial advisor. Goal strategy data: rolling monthly net ${monthlySavings.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR; mapped goal envelopes ${mappedGoalFunding.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/mo (linked budget when present, else linked investment plan/deposits — not both summed); emergency-fund capacity after goal budgets ${emergencyCapacity.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/mo; ${goals.length} goals. Progress: ${goalDataWithProgress}. Return a short analysis in Markdown only (no HTML). Use ### for each section. Be direct.
 
 ### Overall Assessment
 One sentence: health of their goal strategy.
@@ -3086,6 +3108,7 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
         try {
             return await getFinnhubLivePrices(syms);
         } catch (e) {
+            if (isRateLimitError(e)) throw e;
             console.warn('Finnhub live batch failed:', e);
             return {};
         }
@@ -3101,12 +3124,17 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
             return await getSahmkLivePrices(syms);
         } catch (e) {
             console.warn('SAHMK live prices skipped:', e);
+            // Bubble up rate-limit/quota so callers (MarketSimulator) can enter cooldown.
+            const msg = e instanceof Error ? e.message : String(e ?? '');
+            if (/429|rate.?limit|throttl|quota/i.test(msg)) throw e;
             return {};
         }
     };
 
     const mergeFinnhubStooqAndSahmk = async (): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {
-        const [finnhub, sahmk] = await Promise.all([tryFinnhub(usSymbols), trySahmk(tadawulSymbols)]);
+        // Sequential provider calls reduce parallel proxy/API pressure during large refreshes.
+        const finnhub = await tryFinnhub(usSymbols);
+        const sahmk = await trySahmk(tadawulSymbols);
         const missingUs = usSymbols.filter((s) => {
             const u = (s || '').trim().toUpperCase();
             const canon = canonicalQuoteLookupKey(s);

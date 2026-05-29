@@ -1,30 +1,35 @@
 import { useContext, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { useMarketData } from '../context/MarketDataContext';
+import { useMarketPrices } from '../context/MarketDataContext';
+import { useCanonicalFinancialMetricsContext } from '../context/CanonicalFinancialMetricsContext';
 import type { FinancialData } from '../types';
 import { resolveSarPerUsd } from '../utils/currencyMath';
 import { useDebouncedValue } from './useDebouncedValue';
 import { useHydrateSarPerUsdDailySeries } from './useHydrateSarPerUsdDailySeries';
+import type { DashboardCanonicalMetrics } from '../services/canonicalFinancialMetrics';
+import { pickDashboardCanonicalMetrics } from '../services/canonicalFinancialMetrics';
+import type { SimulatedPriceMap } from '../services/investmentPlatformCardMetrics';
 import {
-  computeCanonicalFinancialMetrics,
-  computeDashboardCanonicalMetrics,
-  type CanonicalFinancialMetrics,
-  type DashboardCanonicalMetrics,
-} from '../services/canonicalFinancialMetrics';
+  buildCanonicalFinancialMetricsResult,
+  type UseCanonicalFinancialMetricsResult,
+} from './canonicalFinancialMetricsBundle';
 
 export type { CanonicalFinancialMetrics } from '../services/canonicalFinancialMetrics';
+export type { UseCanonicalFinancialMetricsResult } from './canonicalFinancialMetricsBundle';
+export { buildCanonicalFinancialMetricsResult } from './canonicalFinancialMetricsBundle';
 
-export type UseCanonicalFinancialMetricsResult = CanonicalFinancialMetrics & {
-  data: FinancialData | null;
-  exchangeRate: number;
-  simulatedPrices: Record<string, { price: number; change?: number; changePercent?: number }>;
-  getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number };
-  buckets: CanonicalFinancialMetrics['headline']['buckets'];
-  platformsRollupSar: number;
-  commoditiesValueSar: number;
-  sukukAssetsValueSar: number;
-};
+/**
+ * Debounced live quotes from the shell provider (or local fallback).
+ * Prefer over `useMarketData().simulatedPrices` on pages that already use canonical KPIs.
+ */
+export function useCanonicalSimulatedPrices(): SimulatedPriceMap {
+  const shell = useCanonicalFinancialMetricsContext();
+  const { simulatedPrices } = useMarketPrices();
+  const debounced = useDebouncedValue(simulatedPrices, 1500);
+  if (shell) return shell.full.simulatedPrices;
+  return debounced;
+}
 
 /**
  * Headline SAR/USD spot only (hydrates daily FX series). Use in Header / notifications
@@ -41,41 +46,39 @@ export function useCanonicalSpotFx(): number {
   }, [data, exchangeRate]);
 }
 
-/** Canonical personal NW + Dashboard KPI inputs (UI exchange rate + live quotes). */
-export function useCanonicalFinancialMetrics(): UseCanonicalFinancialMetricsResult {
+/** Isolated renders / unit tests without AuthenticatedAppShell. */
+export function useCanonicalFinancialMetricsLocal(): UseCanonicalFinancialMetricsResult {
   const ctx = useContext(DataContext);
   const data = ctx?.data ?? null;
+  const showHydrateBanner = ctx?.showHydrateBanner ?? false;
   const getAvailableCashForAccount = ctx?.getAvailableCashForAccount;
   const { exchangeRate } = useCurrency();
-  const { simulatedPrices } = useMarketData();
+  const { simulatedPrices } = useMarketPrices();
   const debouncedPrices = useDebouncedValue(simulatedPrices, 400);
   useHydrateSarPerUsdDailySeries(data, exchangeRate);
 
-  return useMemo((): UseCanonicalFinancialMetricsResult => {
-    const metrics = computeCanonicalFinancialMetrics({
-      data,
-      exchangeRate,
-      getAvailableCashForAccount,
-      simulatedPrices: debouncedPrices,
-    });
-    const parts = metrics.headlineExposureParts;
-    return {
-      data,
-      exchangeRate,
-      /** Same map passed into `computeCanonicalFinancialMetrics` (debounced live quotes). */
-      simulatedPrices: debouncedPrices,
-      getAvailableCashForAccount,
-      ...metrics,
-      buckets: metrics.headline.buckets,
-      platformsRollupSar: parts.platformsRollupSar,
-      commoditiesValueSar: parts.commoditiesValueSar,
-      sukukAssetsValueSar: parts.sukukAssetsValueSar,
-    };
-  }, [data, exchangeRate, getAvailableCashForAccount, debouncedPrices]);
+  return useMemo(
+    () =>
+      buildCanonicalFinancialMetricsResult({
+        data,
+        exchangeRate,
+        getAvailableCashForAccount,
+        debouncedPrices,
+        showHydrateBanner,
+      }),
+    [data, exchangeRate, getAvailableCashForAccount, debouncedPrices, showHydrateBanner],
+  );
 }
 
-/** Lighter than full canonical bundle — use on Dashboard to avoid wealth-summary work on every quote tick. */
-export function useDashboardCanonicalMetrics(): DashboardCanonicalMetrics & {
+/** Canonical personal NW + KPI — reads shell provider (one compute per quote tick). */
+export function useCanonicalFinancialMetrics(): UseCanonicalFinancialMetricsResult {
+  const shell = useCanonicalFinancialMetricsContext();
+  if (shell) return shell.full;
+  return useCanonicalFinancialMetricsLocal();
+}
+
+/** Isolated dashboard metrics without shell provider. */
+export function useDashboardCanonicalMetricsLocal(): DashboardCanonicalMetrics & {
   data: FinancialData | null;
   exchangeRate: number;
   simulatedPrices: Record<string, { price: number; change?: number; changePercent?: number }>;
@@ -83,25 +86,39 @@ export function useDashboardCanonicalMetrics(): DashboardCanonicalMetrics & {
 } {
   const ctx = useContext(DataContext);
   const data = ctx?.data ?? null;
+  const showHydrateBanner = ctx?.showHydrateBanner ?? false;
   const getAvailableCashForAccount = ctx?.getAvailableCashForAccount;
   const { exchangeRate } = useCurrency();
-  const { simulatedPrices } = useMarketData();
+  const { simulatedPrices } = useMarketPrices();
   const debouncedPrices = useDebouncedValue(simulatedPrices, 400);
   useHydrateSarPerUsdDailySeries(data, exchangeRate);
 
   return useMemo(() => {
-    const metrics = computeDashboardCanonicalMetrics({
+    const full = buildCanonicalFinancialMetricsResult({
       data,
       exchangeRate,
       getAvailableCashForAccount,
-      simulatedPrices: debouncedPrices,
+      debouncedPrices,
+      showHydrateBanner,
     });
     return {
       data,
       exchangeRate,
       simulatedPrices: debouncedPrices,
       getAvailableCashForAccount,
-      ...metrics,
+      ...pickDashboardCanonicalMetrics(full),
     };
-  }, [data, exchangeRate, getAvailableCashForAccount, debouncedPrices]);
+  }, [data, exchangeRate, getAvailableCashForAccount, debouncedPrices, showHydrateBanner]);
+}
+
+/** Dashboard-weight metrics — reads shell provider when available. */
+export function useDashboardCanonicalMetrics(): DashboardCanonicalMetrics & {
+  data: FinancialData | null;
+  exchangeRate: number;
+  simulatedPrices: Record<string, { price: number; change?: number; changePercent?: number }>;
+  getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number };
+} {
+  const shell = useCanonicalFinancialMetricsContext();
+  if (shell) return shell.dashboard;
+  return useDashboardCanonicalMetricsLocal();
 }

@@ -1,6 +1,5 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import PageLayout from '../components/PageLayout';
-import PageLoading from '../components/PageLoading';
 import { DataContext } from '../context/DataContext';
 import { getMarketCalendarCached, getMarketCalendarFresh, getMarketHolidays, type MarketCalendarLoadMode } from '../services/finnhubService';
 import { getStaticMarketHolidays, getStaticEconomicCalendar } from '../services/staticMarketCalendarService';
@@ -11,7 +10,7 @@ import { Bars3Icon } from '../components/icons/Bars3Icon';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { toSAR } from '../utils/currencyMath';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { getAIMarketEventInsight, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
@@ -316,7 +315,7 @@ function addMacroEventsForMonth(year: number, month: number): MarketEventItem[] 
 }
 
 const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
-  const { data, showBlockingLoader } = useContext(DataContext)!;
+  const { data } = useContext(DataContext)!;
   const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data]);
   const financialMonthBanner = useMemo(() => {
     const { start, end, key } = financialMonthRange(new Date(), monthStartDay);
@@ -342,7 +341,7 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiTranslateError, setAiTranslateError] = useState<string | null>(null);
 
-  const { sarPerUsd } = useCanonicalFinancialMetrics();
+  const sarPerUsd = useCanonicalSpotFx();
   const investmentAccounts = useMemo(() => (data?.accounts ?? []).filter((a) => a.type === 'Investment'), [data]);
   const investmentAccountIds = useMemo(() => new Set(investmentAccounts.map((a) => a.id)), [investmentAccounts]);
   const investmentPortfolios = useMemo(() => (data?.investments ?? []) as any[], [data]);
@@ -918,10 +917,6 @@ const MarketEvents: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     a.click();
     URL.revokeObjectURL(href);
   };
-
-  if (showBlockingLoader) {
-    return <PageLoading ariaLabel="Loading market events" message="Loading…" />;
-  }
 
   return (
     <PageLayout

@@ -14,7 +14,7 @@ export function budgetMonthlyEquivalentSar(b: Budget): number {
 
 /**
  * Monthly funding envelope for goal projections:
- * - Goal-linked budgets + linked investment plan or deposit run-rate only (explicit mapping).
+ * - Goal envelope: linked budget monthly when set; otherwise linked investment plan or deposit run-rate (not both summed).
  * - Rolling surplus after goal-linked budgets is **not** allocated to goals — it funds the emergency buffer.
  */
 /** Rolling surplus minus all budgets tagged to any goal — monthly capacity for emergency fund top-up. */
@@ -325,7 +325,9 @@ export function computeGoalMonthlyFundingEnvelopeSar(args: {
       : assignedInvestmentPlanMonthly >= assignedInvestmentDepositMonthly
         ? 'plan'
         : 'deposits';
-  const assignedEnvelopeMonthly = assignedBudgetMonthly + assignedInvestmentMonthly;
+  /** When a goal has a linked budget envelope, that is the funding source — do not add investment plan/deposits (duplicate path). */
+  const envelopeMonthly =
+    assignedBudgetMonthly > 0 ? assignedBudgetMonthly : assignedInvestmentMonthly;
   /** Legacy field — always 0; surplus after goal budgets funds emergency, not goals. */
   const allocationSliceMonthly = 0;
 
@@ -336,7 +338,7 @@ export function computeGoalMonthlyFundingEnvelopeSar(args: {
     assignedInvestmentMonthly,
     assignedInvestmentSource,
     allocationSliceMonthly,
-    envelopeMonthly: assignedEnvelopeMonthly,
+    envelopeMonthly,
     rollingSurplusMonthly,
     reservedByOtherGoalBudgets,
   };

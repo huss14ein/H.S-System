@@ -2,7 +2,6 @@ import React, { useState, useContext, useRef, useEffect, useMemo, useCallback } 
 import { DataContext } from '../context/DataContext';
 import { useStatementProcessing } from '../context/StatementProcessingContext';
 import PageLayout from '../components/PageLayout';
-import PageLoading from '../components/PageLoading';
 import SectionCard from '../components/SectionCard';
 import Modal from '../components/Modal';
 import { DocumentArrowUpIcon, CheckCircleIcon, ClockIcon } from '../components/icons';
@@ -20,7 +19,7 @@ import {
   planStatementImport,
   type StatementImportContext,
 } from '../services/statementImportPrepare';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { useConfirmAction } from '../hooks/useConfirmAction';
 import { summarizeStatementImportForConfirm } from '../utils/recordConfirmMessages';
 
@@ -30,11 +29,11 @@ interface StatementUploadProps {
 }
 
 const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, triggerPageAction }) => {
-  const { data, showBlockingLoader, addTransaction, recordTrade, addBudget } = useContext(DataContext)!;
+  const { data, addTransaction, recordTrade } = useContext(DataContext)!;
   const confirmAction = useConfirmAction();
   const { commitParsedStatementFromUpload } = useStatementProcessing();
   const { formatCurrencyString } = useFormatCurrency();
-  const { sarPerUsd } = useCanonicalFinancialMetrics();
+  const sarPerUsd = useCanonicalSpotFx();
   const [activeTab, setActiveTab] = useState<'bank' | 'sms' | 'trading'>('bank');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [smsText, setSmsText] = useState('');
@@ -162,40 +161,6 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
     return undefined;
   }, [data?.budgets, data?.transactions]);
 
-  const ensureBudgetRowExists = useCallback(
-    async (category: string) => {
-      const cat = String(category || '').trim();
-      if (!cat || !addBudget || !data) return;
-      const y = new Date().getFullYear();
-      const month = new Date().getMonth() + 1;
-      const exists = (data.budgets ?? []).some((b) => b.category === cat && b.year === y && b.month === month);
-      if (exists) return;
-      try {
-        await addBudget({
-          category: cat,
-          year: y,
-          month,
-          limit: 0,
-          period: 'monthly',
-        });
-      } catch {
-        // Race or offline — import still proceeds with category string
-      }
-    },
-    [addBudget, data],
-  );
-
-  const ensureBudgetsForMappedTransactions = useCallback(
-    async (rows: Transaction[]) => {
-      const cats = new Set<string>();
-      rows.forEach((t) => {
-        if (t.type === 'expense' && t.budgetCategory) cats.add(String(t.budgetCategory).trim());
-      });
-      await Promise.all(Array.from(cats).map((c) => ensureBudgetRowExists(c)));
-    },
-    [ensureBudgetRowExists],
-  );
-
   const enrichTransactionsWithBudgetMapping = useCallback((rows: Transaction[]): Transaction[] => {
     return rows.map((tx) => ({
       ...tx,
@@ -283,7 +248,6 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       } else {
         const result = await parseBankStatement(file, selectedAccount);
         transactions = enrichTransactionsWithBudgetMapping(result.transactions);
-        await ensureBudgetsForMappedTransactions(transactions);
         setExtractedTransactions(sortByNewestFirst(transactions));
         if (result.warnings) setValidationWarnings(result.warnings);
         if (result.errors) setValidationErrors(result.errors);
@@ -359,7 +323,6 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       setProcessingProgress(30);
       const result = await parseSMSTransactions(smsText, selectedAccount);
       const mapped = enrichTransactionsWithBudgetMapping(result.transactions);
-      await ensureBudgetsForMappedTransactions(mapped);
       setExtractedTransactions(sortByNewestFirst(mapped));
       setValidationWarnings(result.warnings ?? []);
       setValidationErrors(result.errors ?? []);
@@ -767,10 +730,6 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       }),
     );
   };
-
-  if (showBlockingLoader) {
-    return <PageLoading ariaLabel="Loading statement upload" message="Loading…" />;
-  }
 
   return (
     <PageLayout

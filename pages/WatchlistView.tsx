@@ -21,7 +21,7 @@ import PriceAlertModal from '../components/PriceAlertModal';
 import { BellAlertIcon } from '../components/icons/BellAlertIcon';
 import { BellIcon } from '../components/icons/BellIcon';
 import MiniPriceChart from '../components/charts/MiniPriceChart';
-import { useMarketData } from '../context/MarketDataContext';
+import { useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
 import LivePricesStatus from '../components/LivePricesStatus';
 import InfoHint from '../components/InfoHint';
 import { useAI } from '../context/AiContext';
@@ -31,7 +31,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { XMarkIcon } from '../components/icons';
 import { toSAR } from '../utils/currencyMath';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { rsi, rsiSignal, zScore, zScoreSignal, bollingerBands, shortTermCrossoverSignal } from '../services/technicalIndicators';
 import { rankWatchlistIdeas } from '../services/decisionEngine';
 import { computeBuyScore } from '../services/buyScore';
@@ -744,13 +744,13 @@ type WatchlistViewProps = {
 const WATCHLIST_AI_LANG_KEY = 'finova_default_ai_lang_v1';
 
 const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActivePage: _setActivePage, onCreatePlanFromWatchlist }) => {
-    const { data, showBlockingLoader, addWatchlistItem, updateWatchlistItem, deleteWatchlistItem, addPriceAlert, deletePriceAlert, getAvailableCashForAccount } =
+    const { data, addWatchlistItem, updateWatchlistItem, deleteWatchlistItem, addPriceAlert, deletePriceAlert, getAvailableCashForAccount } =
         useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const { exchangeRate } = useCurrency();
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
     const { formatCurrencyString } = useFormatCurrency();
-    const { simulatedPrices } = useMarketData();
+    const { simulatedPrices } = useInvestmentsCanonicalMetrics();
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const emergencyFund = useEmergencyFund(data ?? null);
     const buyScoreBySymbol = useMemo(() => {
@@ -1234,17 +1234,6 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
     };
-
-    if (showBlockingLoader) {
-        return (
-            <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50 flex items-center justify-center" aria-busy="true">
-                <div className="text-center">
-                    <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" aria-label="Loading watchlist" />
-                    <p className="text-sm text-slate-600">Loading watchlist data...</p>
-                </div>
-            </div>
-        );
-    }
 
     return (
         <div className="mt-6 space-y-6">

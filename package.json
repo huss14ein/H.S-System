@@ -8,7 +8,7 @@
     "dev:vite": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node scripts/verify-stability-module-files.mjs && tsc --noEmit",
     "lint": "node scripts/lint.js",
     "debug-log-server": "node scripts/debug-log-server.js",
     "test": "npm run lint && npm run typecheck && vitest run",
@@ -18,6 +18,7 @@
     "verify:regressions": "vitest run tests/investmentSarFlowMetrics.vitest.test.ts tests/householdBulkLimits.vitest.test.ts tests/investmentPlanAllocations.vitest.test.ts tests/regressionUserFixes.vitest.test.ts",
     "verify:atomic-workflows": "node scripts/verify-atomic-workflows.js",
     "test:e2e": "playwright test",
+    "verify:performance-recovery": "node scripts/verify-performance-recovery.mjs",
     "test:release": "npm run test && npm run build && npm run test:e2e"
   },
   "dependencies": {

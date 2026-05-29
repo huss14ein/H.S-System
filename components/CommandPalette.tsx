@@ -4,7 +4,7 @@ import { Page } from '../types';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { useMarketData } from '../context/MarketDataContext';
+import { useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
 import { supabase } from '../services/supabaseClient';
 import { captureExtendedNetWorthSnapshot } from '../services/netWorthSnapshotExtended';
 import { buildReviewPack, downloadReviewPackMarkdown } from '../services/reviewPack';
@@ -30,7 +30,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
-    const { simulatedPrices } = useMarketData();
+    const simulatedPrices = useCanonicalSimulatedPrices();
     const { getTopPages, trackAction } = useSelfLearning();
     const topPages = getTopPages(5);
 
@@ -151,6 +151,17 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
             },
             icon: ArrowDownTrayIcon,
         });
+        if (triggerPageAction) {
+            quick.push({
+                name: 'Borrow from next month (Budgets)',
+                action: () => {
+                    trackAction('budgets-advance', 'Budgets');
+                    triggerPageAction('Budgets', 'budgets-advance-from-next-month');
+                    setIsOpen(false);
+                },
+                icon: NAVIGATION_ITEMS.find((i) => i.name === 'Budgets')!.icon,
+            });
+        }
         quick.push({
             name: 'Open data reconciliation (System Health)',
             action: () => {

@@ -1,5 +1,6 @@
 import type { FinancialData } from '../types';
-import { computePersonalHeadlineNetWorthSar } from './personalNetWorth';
+import { computePersonalHeadlineNetWorthSar, sumPersonalSukukAssetsSar } from './personalNetWorth';
+import { bucketSumMatchesNetWorth } from './netWorthReconciliation';
 import { totalLiquidCashSARFromAccounts } from '../utils/currencyMath';
 import { debtStressScore } from './debtEngines';
 import { normalizedMonthlyExpenseSar, cashRunwayMonths } from './financeMetrics';
@@ -58,6 +59,7 @@ export function buildExtendedNetWorthSnapshot(
     riskScore: stress.score,
     allocationPct,
   };
+  const sukukAudit = sumPersonalSukukAssetsSar(data);
   const snap: NetWorthSnapshot = {
     at: new Date().toISOString(),
     netWorth: nw,
@@ -69,8 +71,15 @@ export function buildExtendedNetWorthSnapshot(
       physicalAndCommodities: buckets.physicalAndCommodities,
       receivables: buckets.receivables,
       liabilities: buckets.liabilities,
+      ...(sukukAudit > 0 ? { sukukSar: sukukAudit } : {}),
     },
   };
+  const balance = bucketSumMatchesNetWorth(snap);
+  if (!balance.matches && import.meta.env.DEV) {
+    console.warn(
+      `[Finova NW snapshot] Bucket sum drift ${balance.driftSar.toFixed(2)} SAR at capture (components ${balance.componentsSum.toFixed(0)} vs NW ${nw.toFixed(0)}).`,
+    );
+  }
   return { snap, meta };
 }
 
@@ -85,3 +94,6 @@ export function captureExtendedNetWorthSnapshot(
   pushNetWorthSnapshot(snap.netWorth, snap.buckets, snap.sarPerUsd, sync);
   return snap;
 }
+
+/** Alias — same canonical capture used by Summary, Command palette, and auto snapshot. */
+export const captureCanonicalNetWorthSnapshot = captureExtendedNetWorthSnapshot;

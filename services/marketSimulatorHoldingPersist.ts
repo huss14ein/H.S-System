@@ -35,6 +35,25 @@ export function buildEquityHoldingValueUpdatesFromTrustedSnapshot(
     return out;
 }
 
+/** Drop updates where book notional is unchanged (avoids redundant DataContext writes on quote ticks). */
+export function filterNoOpHoldingValueUpdates(
+    portfolios: InvestmentPortfolio[],
+    updates: { id: string; currentValue: number }[],
+    epsilon = 0.01,
+): { id: string; currentValue: number }[] {
+    const currentById = new Map<string, number>();
+    for (const p of portfolios) {
+        for (const h of p.holdings ?? []) {
+            if (h.id) currentById.set(h.id, Number(h.currentValue) || 0);
+        }
+    }
+    return updates.filter((u) => {
+        const prev = currentById.get(u.id);
+        if (prev == null) return true;
+        return Math.abs(prev - u.currentValue) > epsilon;
+    });
+}
+
 export function buildCommodityHoldingValueUpdatesFromTrustedSnapshot(
     commodities: { id?: string; symbol?: string; quantity?: number }[],
     trusted: Record<string, LiveQuoteRow>,

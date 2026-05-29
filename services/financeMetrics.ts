@@ -1,5 +1,9 @@
 import type { Account, FinancialData, Transaction } from '../types';
-import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
+import {
+  countsAsExpenseForCashflowKpi,
+  countsAsIncomeForCashflowKpi,
+  isInternalTransferTransaction,
+} from './transactionFilters';
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import {
   addMonthsToKey,
@@ -9,6 +13,7 @@ import {
   type FinancialMonthKey,
 } from '../utils/financialMonth';
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from './fxDailySeries';
+import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 
 export type TxLike = {
   date: string;
@@ -270,9 +275,8 @@ export function personalMonthlyNetByMonthKeySar(
 ): { monthKeys: string[]; values: number[]; byKey: Map<string, number> } {
   hydrateSarPerUsdDailySeries(data, uiExchangeRate);
   const spot = resolveSarPerUsd(data, uiExchangeRate);
-  const d = data as FinancialData & { personalTransactions?: Transaction[]; personalAccounts?: Account[] };
-  const transactions = (d.personalTransactions ?? data.transactions ?? []) as Transaction[];
-  const accounts = (d.personalAccounts ?? data.accounts ?? []) as Account[];
+  const transactions = getPersonalTransactions(data);
+  const accounts = getPersonalAccounts(data) as Account[];
   const accById = new Map(accounts.map((a) => [a.id, a]));
   const monthStartDay = resolveMonthStartDayFromData(data);
   const now = new Date();
@@ -303,4 +307,53 @@ export function personalMonthlyNetByMonthKeySar(
   const monthKeys = keys.map((k) => `${k.year}-${String(k.month).padStart(2, '0')}`);
   const values = monthKeys.map((k) => byKey.get(k) || 0);
   return { monthKeys, values, byKey };
+}
+
+/**
+ * Last `monthsBack` **financial** months of inflow / outflow in SAR (same filters + FX as {@link personalMonthlyNetByMonthKeySar}).
+ */
+export function personalMonthlyInflowOutflowByFinancialMonthSar(
+  data: FinancialData,
+  uiExchangeRate: number,
+  monthsBack = 12,
+): { monthKeys: string[]; inflow: number[]; outflow: number[]; net: number[]; byKey: Map<string, { inflow: number; outflow: number; net: number }> } {
+  hydrateSarPerUsdDailySeries(data, uiExchangeRate);
+  const spot = resolveSarPerUsd(data, uiExchangeRate);
+  const transactions = getPersonalTransactions(data);
+  const accounts = getPersonalAccounts(data) as Account[];
+  const accById = new Map(accounts.map((a) => [a.id, a]));
+  const monthStartDay = resolveMonthStartDayFromData(data);
+  const now = new Date();
+  const { key: currentKey } = financialMonthRange(now, monthStartDay);
+  const byKey = new Map<string, { inflow: number; outflow: number; net: number }>();
+  const keys: FinancialMonthKey[] = [];
+  for (let i = monthsBack - 1; i >= 0; i--) {
+    const k = addMonthsToKey(currentKey, -i);
+    const label = `${k.year}-${String(k.month).padStart(2, '0')}`;
+    keys.push(k);
+    byKey.set(label, { inflow: 0, outflow: 0, net: 0 });
+  }
+  for (const t of transactions) {
+    if (!t.date || isInternalTransferTransaction(t)) continue;
+    const fk = financialMonthKey(new Date(t.date), monthStartDay);
+    const label = `${fk.year}-${String(fk.month).padStart(2, '0')}`;
+    const row = byKey.get(label);
+    if (!row) continue;
+    const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
+    const day = t.date.slice(0, 10);
+    const r = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, uiExchangeRate) : spot;
+    const amt = toSAR(Math.abs(Number(t.amount) || 0), cur, r);
+    if (countsAsIncomeForCashflowKpi(t)) {
+      row.inflow += amt;
+      row.net += amt;
+    } else if (countsAsExpenseForCashflowKpi(t)) {
+      row.outflow += amt;
+      row.net -= amt;
+    }
+  }
+  const monthKeys = keys.map((k) => `${k.year}-${String(k.month).padStart(2, '0')}`);
+  const inflow = monthKeys.map((k) => byKey.get(k)?.inflow ?? 0);
+  const outflow = monthKeys.map((k) => byKey.get(k)?.outflow ?? 0);
+  const net = monthKeys.map((k) => byKey.get(k)?.net ?? 0);
+  return { monthKeys, inflow, outflow, net, byKey };
 }

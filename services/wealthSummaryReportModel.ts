@@ -121,9 +121,8 @@ export function computeMonthlyReportFinancialKpis(
     (b) => b.month === currentMonth && b.year === currentYear,
   );
 
-  const d = data as FinancialData & { personalTransactions?: Transaction[]; personalAccounts?: Account[] };
-  const transactions = (d.personalTransactions ?? getPersonalTransactions(data)) as Transaction[];
-  const accounts = (d.personalAccounts ?? getPersonalAccounts(data)) as Account[];
+  const transactions = getPersonalTransactions(data);
+  const accounts = getPersonalAccounts(data) as Account[];
   const accountsById = new Map(accounts.map((a) => [a.id, a]));
   const headlineForFx = computePersonalHeadlineNetWorthSar(data, uiExchangeRate, {
     getAvailableCashForAccount,
@@ -321,12 +320,8 @@ export function computeWealthSummaryReportModel(
   };
 
   const householdInput = buildHouseholdEngineInputFromData(
-    ((data as { personalTransactions?: { date: string; type?: string; amount?: number }[] }).personalTransactions ?? data.transactions ?? []) as {
-      date: string;
-      type?: string;
-      amount?: number;
-    }[],
-    ((data as { personalAccounts?: { type?: string; balance?: number }[] }).personalAccounts ?? data.accounts ?? []) as { type?: string; balance?: number }[],
+    getPersonalTransactions(data) as { date: string; type?: string; amount?: number }[],
+    getPersonalAccounts(data) as { type?: string; balance?: number }[],
     (data.goals ?? []) as Parameters<typeof buildHouseholdEngineInputFromData>[2],
     {
       year: new Date().getFullYear(),

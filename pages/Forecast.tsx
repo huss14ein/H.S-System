@@ -11,8 +11,9 @@ import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import { useCurrency } from '../context/CurrencyContext';
-import { useMarketData } from '../context/MarketDataContext';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
+import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
 import type { Page, Transaction } from '../types';
 import { normalizedMonthlyExpenseSar, personalMonthlyNetByMonthKeySar, savingsRateSarFinancialMonth } from '../services/financeMetrics';
@@ -22,7 +23,6 @@ import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryRepo
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import { projectForecastSeries, downsampleForecastRows, type ForecastMonthRow } from '../services/forecastProjection';
-import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
@@ -30,9 +30,10 @@ const TOOLTIP_STYLE = { backgroundColor: 'white', border: '1px solid #e2e8f0', b
 
 const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
-    const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate, currency: displayCurrency } = useCurrency();
-    const { simulatedPrices } = useMarketData();
+    const { simulatedPrices } = useDashboardCanonicalMetrics();
+    useHydrateSarPerUsdDailySeries(data, exchangeRate);
     const [stressJobLossM, setStressJobLossM] = useState(3);
     const [stressMarketDrop, setStressMarketDrop] = useState(15);
     const [stressMedical, setStressMedical] = useState(8000);
@@ -47,7 +48,6 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 incomeGrowthSuggestion: 3,
             };
         }
-        hydrateSarPerUsdDailySeries(data, exchangeRate);
         const { values } = personalMonthlyNetByMonthKeySar(data, exchangeRate, 12);
         if (values.length === 0 || values.every((v) => v === 0)) {
             return {
@@ -93,7 +93,8 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         setMonthlySavings(Math.max(0, savingsAnalytics.medianMonthlyNet));
     }, [savingsAnalytics.medianMonthlyNet, monthlySavingsTouched]);
 
-    const { netWorth: headlineNetWorth, sarPerUsd, investmentsTotalSar, liquidCashSar } = useCanonicalFinancialMetrics();
+    const { netWorth: headlineNetWorth, sarPerUsd, headline, liquidCashSar } = useDashboardCanonicalMetrics();
+    const investmentsTotalSar = headline.buckets.investments;
     const initialValues = useMemo(
         () => ({
             netWorth: headlineNetWorth,
@@ -235,8 +236,8 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     }, [data?.goals, initialValues.netWorth, goalResolvedSarById]);
 
     const stressInputs = useMemo(() => {
-        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-        const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const accounts = getPersonalAccounts(data);
+        const txs = getPersonalTransactions(data);
         const monthlyExpense = normalizedMonthlyExpenseSar(txs as Transaction[], accounts, sarPerUsd, { monthsLookback: 6 });
         return { liquidCash: liquidCashSar, monthlyExpense };
     }, [data, sarPerUsd, liquidCashSar]);
@@ -265,8 +266,8 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
 
     const currentSavingsRate = useMemo(() => {
         if (!data) return 0;
-        const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
-        const accounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []) as import('../types').Account[];
+        const txs = getPersonalTransactions(data) as Transaction[];
+        const accounts = getPersonalAccounts(data) as import('../types').Account[];
         return savingsRateSarFinancialMonth(txs, accounts, new Date(), data, exchangeRate);
     }, [data, exchangeRate]);
 
@@ -290,7 +291,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         if (liveProjection && Math.abs(liveProjection.nonInvestmentOpening + liveProjection.finalInvestmentValue - liveProjection.finalNetWorth) > 2) {
             warnings.push('Internal projection reconciliation failed — please report this.');
         }
-        const hasUsd = ((data as any)?.personalAccounts ?? data?.accounts ?? []).some((a: { currency?: string }) => a.currency === 'USD');
+        const hasUsd = getPersonalAccounts(data).some((a) => a.currency === 'USD');
         if (hasUsd && (!Number.isFinite(fx) || fx <= 0)) warnings.push('USD accounts detected — set SAR per USD in the header or Wealth Ultra.');
         return warnings;
     }, [
@@ -311,14 +312,6 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         setMonthlySavings(Math.max(0, savingsAnalytics.medianMonthlyNet));
         handleManualIncomeGrowthChange(Number(savingsAnalytics.incomeGrowthSuggestion.toFixed(1)));
     }, [savingsAnalytics.medianMonthlyNet, savingsAnalytics.incomeGrowthSuggestion]);
-
-    if (showBlockingLoader) {
-        return (
-            <div className="flex justify-center items-center h-96" aria-busy="true">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading forecast" />
-            </div>
-        );
-    }
 
     const aiForecastTrendSample = chartDisplayData.map((r) => ({
         name: r.name,

@@ -1,9 +1,10 @@
-import React, { useEffect, useContext, useRef } from 'react';
+import React, { useEffect, useContext, useRef, startTransition } from 'react';
 import { DataContext } from '../context/DataContext';
 import { PriceAlert } from '../types';
-import type { InvestmentPortfolio } from '../types';
+import type { InvestmentPortfolio, CommodityHolding } from '../types';
 import { MarketDataContext } from '../context/MarketDataContext';
-import { getLivePrices, getAICommodityPrices } from '../services/geminiService';
+import { getAICommodityPrices } from '../services/geminiService';
+import { getLivePricesDeduped } from '../services/quoteLiveFetchCoordinator';
 import {
     expandLiveQuotesForRequestedSymbols,
     lookupLiveQuoteForSymbol,
@@ -24,7 +25,41 @@ import { sanitizeLiveQuoteRow } from '../services/tadawulQuoteSanity';
 import {
     buildCommodityHoldingValueUpdatesFromTrustedSnapshot,
     buildEquityHoldingValueUpdatesFromTrustedSnapshot,
+    filterNoOpHoldingValueUpdates,
 } from '../services/marketSimulatorHoldingPersist';
+import {
+    isQuoteRefreshInCooldown,
+    isRateLimitError,
+    startQuoteRefreshCooldown,
+    setQuoteRefreshCooldownEndListener,
+} from '../services/quoteRefreshCooldown';
+import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
+import { scheduleIdleWork } from '../utils/runWhenIdle';
+
+const MAX_LIVE_FETCH_PER_TICK = 15;
+const PARTIAL_LIVE_RATIO = 0.8;
+const INTER_SCOPE_DELAY_MS = 400;
+
+const yieldToMain = (): Promise<void> =>
+    new Promise((resolve) => {
+        if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(() => resolve(), { timeout: 80 });
+        } else {
+            setTimeout(resolve, 0);
+        }
+    });
+
+const applyPricesInBackground = (apply: () => void) => {
+    try {
+        if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(() => startTransition(apply), { timeout: 200 });
+            return;
+        }
+    } catch {
+        // fall through
+    }
+    setTimeout(() => startTransition(apply), 0);
+};
 
 const MarketSimulator: React.FC = () => {
     const dataContext = useContext(DataContext);
@@ -37,11 +72,13 @@ const MarketSimulator: React.FC = () => {
     const previousPricesRef = useRef<Record<string, number>>({});
     const didInitialPricePassRef = useRef(false);
     const tickInFlightRef = useRef(false);
+    /** Symbols left after per-tick cap — drained via queued refresh scopes. */
+    const pendingLiveFetchSymbolsRef = useRef<string[]>([]);
 
-    /** When portfolio data first loads, run one price pass (live if API key present). */
+    /** When portfolio data first loads, run one price pass after hydrate + idle (non-blocking). */
     useEffect(() => {
-        const { data } = dataContext ?? {};
-        if (!data || !marketContext?.bumpPriceRefresh) return;
+        const { data, showHydrateBanner } = dataContext ?? {};
+        if (!data || showHydrateBanner || !marketContext?.bumpPriceRefresh) return;
         const inv = (data as any)?.personalInvestments ?? data?.investments ?? [];
         const holdings = inv.flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []);
         const refreshableHoldingSymbols = getRefreshableHoldingQuoteSymbols(
@@ -53,24 +90,50 @@ const MarketSimulator: React.FC = () => {
         const hasSymbols =
             refreshableHoldingSymbols.length > 0 || watch.length > 0 || planned.length > 0 || comm.length > 0;
         if (!hasSymbols || didInitialPricePassRef.current) return;
-        didInitialPricePassRef.current = true;
-        marketContext.bumpPriceRefresh();
-    }, [dataContext?.data, marketContext?.bumpPriceRefresh]);
+        return scheduleIdleWork(() => {
+            if (didInitialPricePassRef.current || isBackgroundWorkPaused()) return;
+            didInitialPricePassRef.current = true;
+            marketContext.bumpPriceRefresh();
+        }, 3000);
+    }, [dataContext?.data, dataContext?.showHydrateBanner, marketContext?.bumpPriceRefresh]);
+
+    /** Resume pending symbol batches after provider cooldown expires. */
+    useEffect(() => {
+        const bump = marketContext?.bumpPriceRefresh;
+        if (!bump) return;
+        setQuoteRefreshCooldownEndListener(() => {
+            if (pendingLiveFetchSymbolsRef.current.length === 0) return;
+            bump({
+                kind: 'symbols',
+                symbols: [...pendingLiveFetchSymbolsRef.current],
+                forceFetch: false,
+            });
+        });
+        return () => setQuoteRefreshCooldownEndListener(null);
+    }, [marketContext?.bumpPriceRefresh]);
 
     useEffect(() => {
         if (!marketContext) return;
         if (marketContext.refreshTrigger === 0) return;
         if (tickInFlightRef.current) return;
+        if (isBackgroundWorkPaused()) return;
 
         const runSimulationTick = async (priceScope: NonNullable<ReturnType<typeof marketContext.consumePriceRefreshScope>>) => {
             const { dataContext, marketContext } = contextRef.current;
-            if (!dataContext || !marketContext || !dataContext.data) {
+            if (
+                !dataContext ||
+                !marketContext ||
+                !dataContext.data ||
+                marketContext.isQuoteRefreshCancelled() ||
+                isBackgroundWorkPaused()
+            ) {
                 return;
             }
 
             const platformIdOnly =
                 priceScope.kind === 'platform' ? resolveCanonicalAccountId(priceScope.platformId, dataContext.data.accounts ?? []) : null;
             const scopeIsPlatform = platformIdOnly != null;
+            const scopeIsSymbolsOnly = priceScope.kind === 'symbols';
             const forceFetch = priceScope.forceFetch === true;
 
             const { data, batchUpdateHoldingValues, batchUpdateCommodityHoldingValues, updatePriceAlert } = dataContext;
@@ -82,21 +145,42 @@ const MarketSimulator: React.FC = () => {
             const portfoliosInScope = platformIdOnly
                 ? allInvestments.filter((p) => portfolioBelongsToAccount(p, { id: platformIdOnly }, accounts))
                 : allInvestments;
-            const allHoldings = portfoliosInScope.flatMap((p) => p.holdings ?? []);
-            const holdingSymbols = getRefreshableHoldingQuoteSymbols(
-                allHoldings as { symbol?: string; holdingType?: string; holding_type?: string }[],
-            );
-            const allWatchlistItems = scopeIsPlatform ? [] : (data?.watchlist ?? []);
-            const allPlannedTrades = scopeIsPlatform ? [] : (data?.plannedTrades ?? []);
-            const allCommodities = scopeIsPlatform
-                ? []
-                : ((data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? []);
-            
-            const uniqueSymbols = Array.from(new Set([
-                ...holdingSymbols,
-                ...allWatchlistItems.map((w: { symbol?: string }) => w.symbol).filter((s: string | undefined): s is string => s != null && s !== ''),
-                ...allPlannedTrades.map((t: { symbol?: string }) => t.symbol).filter((s: string | undefined): s is string => s != null && s !== '')
-            ]));
+
+            let uniqueSymbols: string[];
+            let allHoldings: unknown[];
+            let allWatchlistItems: { symbol?: string }[];
+            let allPlannedTrades: { symbol?: string }[];
+            let allCommodities: CommodityHolding[];
+
+            if (scopeIsSymbolsOnly) {
+                uniqueSymbols = Array.from(
+                    new Set(
+                        priceScope.symbols
+                            .map((s) => (s || '').trim())
+                            .filter(Boolean),
+                    ),
+                );
+                allHoldings = portfoliosInScope.flatMap((p) => p.holdings ?? []);
+                allWatchlistItems = [];
+                allPlannedTrades = [];
+                allCommodities = [];
+            } else {
+                allHoldings = portfoliosInScope.flatMap((p) => p.holdings ?? []);
+                const holdingSymbols = getRefreshableHoldingQuoteSymbols(
+                    allHoldings as { symbol?: string; holdingType?: string; holding_type?: string }[],
+                );
+                allWatchlistItems = scopeIsPlatform ? [] : (data?.watchlist ?? []);
+                allPlannedTrades = scopeIsPlatform ? [] : (data?.plannedTrades ?? []);
+                allCommodities = scopeIsPlatform
+                    ? []
+                    : (((data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? []) as CommodityHolding[]);
+
+                uniqueSymbols = Array.from(new Set([
+                    ...holdingSymbols,
+                    ...allWatchlistItems.map((w) => w.symbol).filter((s): s is string => s != null && s !== ''),
+                    ...allPlannedTrades.map((t) => t.symbol).filter((s): s is string => s != null && s !== ''),
+                ]));
+            }
 
             const commoditySymbols = (allCommodities as { symbol?: string }[]).map((c: { symbol?: string }) => c.symbol).filter((s: string | undefined): s is string => s != null && s !== '');
 
@@ -139,15 +223,25 @@ const MarketSimulator: React.FC = () => {
                         uniqueSymbols.length > 0
                             ? expandLiveQuotesForRequestedSymbols(uniqueSymbols, cacheForEquity)
                             : {};
-                    const toFetch = resolveSymbolsToLiveFetch(uniqueSymbols, cacheRows, { forceFetch });
+                    const toFetchAll = resolveSymbolsToLiveFetch(uniqueSymbols, cacheRows, { forceFetch });
+                    const mergedFetch = Array.from(
+                        new Set([...pendingLiveFetchSymbolsRef.current, ...toFetchAll]),
+                    );
+                    pendingLiveFetchSymbolsRef.current = [];
+                    const toFetch = mergedFetch.slice(0, MAX_LIVE_FETCH_PER_TICK);
+                    pendingLiveFetchSymbolsRef.current = mergedFetch.slice(MAX_LIVE_FETCH_PER_TICK);
+                    const rateLimited = isQuoteRefreshInCooldown();
 
                     /** Equity and commodities are independent: a thrown/rejected equity batch must not discard commodity quotes. */
                     const equityFetchPromise: Promise<Record<string, LiveQuoteRow>> =
-                        uniqueSymbols.length > 0 && toFetch.length > 0
-                            ? getLivePrices(toFetch)
+                        uniqueSymbols.length > 0 && toFetch.length > 0 && !rateLimited
+                            ? getLivePricesDeduped(toFetch).catch((err) => {
+                                  if (isRateLimitError(err)) startQuoteRefreshCooldown();
+                                  throw err;
+                              })
                             : Promise.resolve({} as Record<string, LiveQuoteRow>);
                     const commodityFetchPromise =
-                        allCommodities.length > 0
+                        !scopeIsSymbolsOnly && allCommodities.length > 0
                             ? getAICommodityPrices(allCommodities, { sarPerUsd })
                             : Promise.resolve({ prices: [], groundingChunks: [] as unknown[] });
 
@@ -155,6 +249,10 @@ const MarketSimulator: React.FC = () => {
                         equityFetchPromise,
                         commodityFetchPromise,
                     ]);
+
+                    if (marketContext.isQuoteRefreshCancelled() || isBackgroundWorkPaused()) {
+                        return;
+                    }
 
                     let rawApi: Record<string, LiveQuoteRow> = {};
                     if (equitySettled.status === 'fulfilled') {
@@ -206,14 +304,16 @@ const MarketSimulator: React.FC = () => {
                         if (uniqueSymbols.includes(symbol)) anyEquitySimulated = true;
                     }
 
-                    /** Live = equity quotes came from cache or API this pass, not RNG fallback. */
+                    const liveSymbolCount = uniqueSymbols.filter((s) => {
+                        const r = lookupLiveQuoteForSymbol(newPrices, s);
+                        return r != null && r.price > 0;
+                    }).length;
+                    /** Live when most holding symbols have real quotes (watchlist gaps may stay simulated). */
                     liveStatus =
                         uniqueSymbols.length === 0 ||
                         (!anyEquitySimulated &&
-                            uniqueSymbols.every((s) => {
-                                const r = lookupLiveQuoteForSymbol(newPrices, s);
-                                return r != null && r.price > 0;
-                            }));
+                            (liveSymbolCount / uniqueSymbols.length >= PARTIAL_LIVE_RATIO ||
+                                liveSymbolCount === uniqueSymbols.length));
                 } catch (error) {
                     console.error('Failed to fetch real prices, falling back to cache then simulation:', error);
                     const cacheRows = loadQuoteCacheRows();
@@ -252,13 +352,15 @@ const MarketSimulator: React.FC = () => {
                         if (uniqueSymbols.includes(symbol)) anyEquitySimulated = true;
                     }
 
+                    const liveSymbolCountFallback = uniqueSymbols.filter((s) => {
+                        const r = lookupLiveQuoteForSymbol(newPrices, s);
+                        return r != null && r.price > 0;
+                    }).length;
                     liveStatus =
                         uniqueSymbols.length === 0 ||
                         (!anyEquitySimulated &&
-                            uniqueSymbols.every((s) => {
-                                const r = lookupLiveQuoteForSymbol(newPrices, s);
-                                return r != null && r.price > 0;
-                            }));
+                            (liveSymbolCountFallback / uniqueSymbols.length >= PARTIAL_LIVE_RATIO ||
+                                liveSymbolCountFallback === uniqueSymbols.length));
                 }
             }
 
@@ -302,16 +404,55 @@ const MarketSimulator: React.FC = () => {
                 }
             });
             
-            if (scopeIsPlatform) {
-                setSimulatedPrices((prev) => ({ ...prev, ...newPrices }));
-            } else {
-                setSimulatedPrices(newPrices);
-                setIsLive(liveStatus);
-            }
-            touchQuoteTimestamps(Object.keys(newPrices));
-            // Only bump the global "last updated" clock on a full refresh.
-            // Platform-scoped refreshes intentionally update a subset of symbols and must not make the header look fresh.
-            if (!scopeIsPlatform && liveStatus && setLastUpdated) setLastUpdated(new Date());
+            const newKeys = Object.keys(newPrices);
+            // Apply quote updates at low priority (idle + transition) to avoid blocking navigation/typing.
+            applyPricesInBackground(() => {
+                if (marketContext.isQuoteRefreshCancelled()) return;
+                if (scopeIsPlatform) {
+                    setSimulatedPrices((prev) => {
+                        let changed = false;
+                        const next = { ...prev };
+                        for (const k of newKeys) {
+                            const nextRow = newPrices[k];
+                            const prevRow = prev[k];
+                            if (
+                                !prevRow ||
+                                prevRow.price !== nextRow.price ||
+                                prevRow.change !== nextRow.change ||
+                                prevRow.changePercent !== nextRow.changePercent
+                            ) {
+                                next[k] = nextRow;
+                                changed = true;
+                            }
+                        }
+                        return changed ? next : prev;
+                    });
+                } else {
+                    setSimulatedPrices((prev) => {
+                        let changed = false;
+                        const next = { ...prev };
+                        for (const k of newKeys) {
+                            const nextRow = newPrices[k];
+                            const prevRow = prev[k];
+                            if (
+                                !prevRow ||
+                                prevRow.price !== nextRow.price ||
+                                prevRow.change !== nextRow.change ||
+                                prevRow.changePercent !== nextRow.changePercent
+                            ) {
+                                next[k] = nextRow;
+                                changed = true;
+                            }
+                        }
+                        return changed ? next : prev;
+                    });
+                    setIsLive(liveStatus);
+                    // Only bump the global "last updated" clock on a full refresh.
+                    // Platform-scoped refreshes intentionally update a subset of symbols and must not make the header look fresh.
+                    if (liveStatus && setLastUpdated) setLastUpdated(new Date());
+                }
+                touchQuoteTimestamps(newKeys);
+            });
 
             // Persist market value only from trusted (cache/API) quotes. RNG `simulateSymbol` fills must not
             // overwrite `currentValue` — that caused inflated/wrong platform totals when live feeds failed.
@@ -325,17 +466,40 @@ const MarketSimulator: React.FC = () => {
                 ),
             );
             
-            if (holdingUpdates.length > 0) {
-                batchUpdateHoldingValues(holdingUpdates);
+            const holdingUpdatesFiltered = filterNoOpHoldingValueUpdates(portfoliosInScope, holdingUpdates);
+            if (holdingUpdatesFiltered.length > 0 && !marketContext.isQuoteRefreshCancelled() && !isBackgroundWorkPaused()) {
+                await yieldToMain();
+                if (marketContext.isQuoteRefreshCancelled() || isBackgroundWorkPaused()) return;
+                batchUpdateHoldingValues(holdingUpdatesFiltered);
             }
 
-            if (commodityUpdates.length > 0) {
-                batchUpdateCommodityHoldingValues(commodityUpdates);
+            const commodityPrevById = new Map(
+                (allCommodities as { id?: string; currentValue?: number }[])
+                    .filter((c) => c.id)
+                    .map((c) => [c.id!, Number(c.currentValue) || 0]),
+            );
+            const commodityUpdatesFiltered = commodityUpdates.filter((u) => {
+                const prev = commodityPrevById.get(u.id);
+                return prev == null || Math.abs(prev - u.currentValue) > 0.01;
+            });
+            if (commodityUpdatesFiltered.length > 0 && !marketContext.isQuoteRefreshCancelled() && !isBackgroundWorkPaused()) {
+                batchUpdateCommodityHoldingValues(commodityUpdatesFiltered);
             }
             
             if (triggeredAlerts.length > 0) {
                 const uniqueTriggered = Array.from(new Map(triggeredAlerts.map(a => [a.id, a])).values());
                 uniqueTriggered.forEach(alert => updatePriceAlert(alert));
+            }
+
+            if (
+                pendingLiveFetchSymbolsRef.current.length > 0 &&
+                !isQuoteRefreshInCooldown() &&
+                !isBackgroundWorkPaused() &&
+                marketContext
+            ) {
+                const pending = [...pendingLiveFetchSymbolsRef.current];
+                pendingLiveFetchSymbolsRef.current = [];
+                marketContext.bumpPriceRefresh({ kind: 'symbols', symbols: pending, forceFetch: false });
             }
         };
 
@@ -343,13 +507,18 @@ const MarketSimulator: React.FC = () => {
         void (async () => {
             const ctx = contextRef.current.marketContext;
             try {
-                while (ctx) {
+                while (ctx && !ctx.isQuoteRefreshCancelled()) {
+                    if (isBackgroundWorkPaused()) break;
                     const scope = ctx.consumePriceRefreshScope();
                     if (!scope) break;
                     try {
                         await runSimulationTick(scope);
                     } catch (e) {
                         console.error('MarketSimulator tick failed:', e);
+                    }
+                    if (ctx.isQuoteRefreshCancelled() || isBackgroundWorkPaused()) break;
+                    if (ctx.hasQueuedPriceRefresh()) {
+                        await new Promise((r) => setTimeout(r, INTER_SCOPE_DELAY_MS));
                     }
                 }
             } finally {

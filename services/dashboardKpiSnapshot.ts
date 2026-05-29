@@ -1,4 +1,5 @@
 import type { Account, FinancialData, Transaction } from '../types';
+import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { savingsRateSarFinancialMonth } from './financeMetrics';
 import { resolveMonthStartDayFromData } from '../utils/financialMonth';
@@ -50,13 +51,12 @@ export function financialMonthNetCashflowSar(
   const now = new Date();
   const monthStartDay = resolveMonthStartDayFromData(data);
   const currentRange = financialMonthRange(now, monthStartDay);
-  const d = data as FinancialData & { personalTransactions?: Transaction[]; personalAccounts?: Account[] };
-  const transactions = (d.personalTransactions ?? data.transactions ?? []) as Transaction[];
-  const accounts = (d.personalAccounts ?? data.accounts ?? []) as Account[];
+  const transactions = getPersonalTransactions(data);
+  const accounts = getPersonalAccounts(data) as Account[];
   const accountsById = new Map(accounts.map((a) => [a.id, a]));
 
   const txCashflowSar = (t: { accountId?: string; amount?: number; date: string }) => {
-    const acc = accountsById.get(t.accountId ?? '') as Account | undefined;
+    const acc = accountsById.get((t as Transaction).accountId ?? '') as Account | undefined;
     const c = acc?.currency === 'USD' ? 'USD' : 'SAR';
     const raw = Math.abs(Number(t.amount) || 0);
     if (c === 'SAR') return raw;
@@ -122,13 +122,12 @@ export function computeDashboardKpiSnapshot(
     /** Use `financialMonthRangeFromKey` — do not derive the period via `financialMonthRange(midCalendarDay)`; when `monthStartDay > 15`, a mid-month reference falls before the period start and maps to the wrong financial month. */
     const prevRange = financialMonthRangeFromKey(prevKey, monthStartDay);
 
-    const d = data as FinancialData & { personalTransactions?: Transaction[]; personalAccounts?: Account[] };
-    const transactions = (d.personalTransactions ?? data.transactions ?? []) as Transaction[];
-    const accounts = (d.personalAccounts ?? data.accounts ?? []) as Account[];
+    const transactions = getPersonalTransactions(data);
+    const accounts = getPersonalAccounts(data) as Account[];
     const accountsById = new Map(accounts.map((a) => [a.id, a]));
 
     const txCashflowSar = (t: { accountId?: string; amount?: number; date: string }) => {
-      const acc = accountsById.get(t.accountId ?? '') as Account | undefined;
+      const acc = accountsById.get((t as Transaction).accountId ?? '') as Account | undefined;
       const c = acc?.currency === 'USD' ? 'USD' : 'SAR';
       const raw = Math.abs(Number(t.amount) || 0);
       if (c === 'SAR') return raw;
@@ -232,10 +231,9 @@ export function computeDashboardValidationWarnings(
 ): string[] {
   const warnings: string[] = [];
   if (!data) return warnings;
-  const d = data as FinancialData & { personalTransactions?: Transaction[]; personalAccounts?: Account[] };
-  const txs = (d.personalTransactions ?? data.transactions ?? []) as Transaction[];
+  const txs = getPersonalTransactions(data);
   const budgets = data.budgets ?? [];
-  const accounts = (d.personalAccounts ?? data.accounts ?? []) as Account[];
+  const accounts = getPersonalAccounts(data) as Account[];
   const now = new Date();
   const monthStartDay = resolveMonthStartDayFromData(data);
   const { key } = financialMonthRange(now, monthStartDay);

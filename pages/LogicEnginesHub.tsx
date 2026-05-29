@@ -8,6 +8,12 @@ import AIAdvisor from '../components/AIAdvisor';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import type { LogicEnginesAiContext } from '../services/geminiService';
 import type { Account, Budget, FinancialData, Goal, Liability, Page, Transaction } from '../types';
+import {
+  getPersonalAccounts,
+  getPersonalInvestments,
+  getPersonalLiabilities,
+  getPersonalTransactions,
+} from '../utils/wealthScope';
 
 import {
   simpleReturn,
@@ -51,15 +57,14 @@ import { monthlyProvisionNeeded } from '../services/provisionEngine';
 import { computeLiquidityRunwayFromData } from '../services/liquidityRunwayEngine';
 import { netCashFlowForFinancialMonthSarDated } from '../services/financeMetrics';
 import { financialMonthKey, resolveMonthStartDayFromData } from '../utils/financialMonth';
-import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { debtStressScore } from '../services/debtEngines';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useCurrency } from '../context/CurrencyContext';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
 import { toSAR } from '../utils/currencyMath';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
-import { getPersonalInvestments } from '../utils/wealthScope';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import CrossEngineAlertsBanner from '../components/CrossEngineAlertsBanner';
 
@@ -88,28 +93,28 @@ function getScopedData(d: FinancialData | null) {
       investmentsFlat: [] as any[],
     };
   }
-  const dd = d as any;
-  const accounts: Account[] = dd.personalAccounts ?? d.accounts ?? [];
-  const txs: Transaction[] = dd.personalTransactions ?? d.transactions ?? [];
+  const accounts: Account[] = getPersonalAccounts(d);
+  const txs: Transaction[] = getPersonalTransactions(d);
   const budgets: Budget[] = d.budgets ?? [];
   const goals: Goal[] = d.goals ?? [];
-  const liabilities = dd.personalLiabilities ?? d.liabilities ?? [];
-  const portfolios = dd.personalInvestments ?? d.investments ?? [];
+  const liabilities = getPersonalLiabilities(d);
+  const portfolios = getPersonalInvestments(d);
   const investmentsFlat: any[] = [];
   for (const p of portfolios) {
     for (const h of p.holdings ?? []) {
-      const qty = Number(h.quantity ?? h.shares ?? 0);
-      const price = Number(h.currentPrice ?? 0);
-      const avg = Number(h.avgCost ?? h.averageCost ?? 0);
+      const row = h as typeof h & { shares?: number; currentPrice?: number; averageCost?: number; type?: string };
+      const qty = Number(row.quantity ?? row.shares ?? 0);
+      const price = Number(row.currentPrice ?? 0);
+      const avg = Number(row.avgCost ?? row.averageCost ?? 0);
       investmentsFlat.push({
-        id: String(h.id ?? `${p.id}-${h.symbol}`),
-        symbol: String(h.symbol ?? ''),
+        id: String(row.id ?? `${p.id}-${row.symbol}`),
+        symbol: String(row.symbol ?? ''),
         quantity: qty,
         shares: qty,
         averageCost: avg,
         avgCost: avg,
         currentPrice: price || avg,
-        type: String(h.type ?? 'Stock'),
+        type: String(row.type ?? 'Stock'),
       });
     }
   }
@@ -123,13 +128,14 @@ interface LogicEnginesHubProps {
 }
 
 const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, triggerPageAction, dataTick = 0 }) => {
-  const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
+  const { data, getAvailableCashForAccount } = useContext(DataContext)!;
   const { trackAction } = useSelfLearning();
   const engines = useFinancialEnginesIntegration();
   const ef = useEmergencyFund(data ?? null);
   const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
   const { exchangeRate, currency: displayCurrency } = useCurrency();
-  const { sarPerUsd, netWorth } = useCanonicalFinancialMetrics();
+  const { sarPerUsd, netWorth } = useDashboardCanonicalMetrics();
+  useHydrateSarPerUsdDailySeries(data, exchangeRate);
 
   const scoped = useMemo(() => getScopedData(data ?? null), [data]);
   const goalResolvedMap = useMemo(() => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd), [data, sarPerUsd]);
@@ -188,7 +194,6 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
     [ef.emergencyCash, ef.targetAmount, netWorth]
   );
   const monthlyCashflowSar = useMemo(() => {
-    if (data) hydrateSarPerUsdDailySeries(data, exchangeRate);
     return netCashFlowForFinancialMonthSarDated(scoped.txs, scoped.accounts, new Date(), data ?? null, exchangeRate);
   }, [scoped.txs, scoped.accounts, data, exchangeRate]);
   const bucketAllocInput = useMemo(() => {
@@ -625,18 +630,6 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
           { value: 'settings', label: 'Settings', onClick: () => { trackAction('logic-nav-settings', 'Engines & Tools'); setActivePage('Settings'); } },
         ]
       : [];
-
-  if (showBlockingLoader) {
-    return (
-      <PageLayout
-        title="Behind the numbers"
-        description="Plain-language view of how your numbers are calculated."
-        action={pageNavActions.length > 0 ? <PageActionsDropdown label="Go to" placeholder="Open related page…" ariaLabel="Navigate from Logic & Engines" actions={pageNavActions} /> : undefined}
-      >
-        <p className="text-gray-500">Loading…</p>
-      </PageLayout>
-    );
-  }
 
   return (
     <PageLayout

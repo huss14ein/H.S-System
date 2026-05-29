@@ -14,6 +14,8 @@ type Props = {
   budgetDrift?: BudgetDriftRow[];
   lifestyleHits?: LifestyleGuardrailHit[];
   compact?: boolean;
+  /** When set, budget drift rows are clickable (e.g. scroll to category on Budgets). */
+  onBudgetDriftCategoryClick?: (category: string) => void;
 };
 
 type InsightRow = {
@@ -49,6 +51,7 @@ const EnhancementInsightStrip: React.FC<Props> = ({
   budgetDrift = [],
   lifestyleHits = [],
   compact,
+  onBudgetDriftCategoryClick,
 }) => {
   const rows = useMemo((): InsightRow[] => {
     const list: InsightRow[] = [];
@@ -76,7 +79,7 @@ const EnhancementInsightStrip: React.FC<Props> = ({
         tone: Math.abs(d.driftPct) >= 50 ? 'warning' : 'neutral',
         icon: <ChartBarIcon className="h-4 w-4" />,
         title: d.category,
-        body: `Spend ${d.driftPct > 0 ? '+' : ''}${d.driftPct.toFixed(0)}% vs 3‑month baseline (${Math.round(d.currentSar).toLocaleString()} vs ${Math.round(d.baselineSar).toLocaleString()} SAR)`,
+        body: `Spend ${d.driftPct > 0 ? '+' : ''}${d.driftPct.toFixed(0)}% vs 3‑month baseline (${Math.round(d.currentSar).toLocaleString()} vs ${Math.round(d.baselineSar).toLocaleString()} SAR)${onBudgetDriftCategoryClick ? ' — tap to open category.' : ''}`,
       });
     });
     lifestyleHits.forEach((h) => {
@@ -89,7 +92,7 @@ const EnhancementInsightStrip: React.FC<Props> = ({
       });
     });
     return list;
-  }, [capitalDeployment, goalConflicts, budgetDrift, lifestyleHits]);
+  }, [capitalDeployment, goalConflicts, budgetDrift, lifestyleHits, onBudgetDriftCategoryClick]);
 
   if (rows.length === 0) return null;
 
@@ -107,10 +110,25 @@ const EnhancementInsightStrip: React.FC<Props> = ({
       <ul className="divide-y divide-slate-100">
         {rows.map((row) => {
           const tone = toneClasses(row.tone);
+          const driftCategory = row.id.startsWith('drift-') ? row.id.slice('drift-'.length) : null;
+          const driftClickable = driftCategory && onBudgetDriftCategoryClick;
           return (
             <li
               key={row.id}
-              className={`flex gap-3 border-l-[3px] px-4 py-3 ${tone.row} ${compact ? 'text-xs' : 'text-sm'}`}
+              className={`flex gap-3 border-l-[3px] px-4 py-3 ${tone.row} ${compact ? 'text-xs' : 'text-sm'}${driftClickable ? ' cursor-pointer hover:bg-white/60' : ''}`}
+              {...(driftClickable
+                ? {
+                    role: 'button' as const,
+                    tabIndex: 0,
+                    onClick: () => onBudgetDriftCategoryClick!(driftCategory!),
+                    onKeyDown: (e: React.KeyboardEvent) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onBudgetDriftCategoryClick!(driftCategory!);
+                      }
+                    },
+                  }
+                : {})}
             >
               <div
                 className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ${tone.icon}`}

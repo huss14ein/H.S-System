@@ -110,7 +110,7 @@ export function detectGoalConflict(args: {
     conflicts.push({
       goalIds: goals.filter((g) => targetAmount(g) > resolvedSaved(g, resolvedMap)).map((g) => g.id),
       reason: 'same_cash_source',
-      message: `Total required monthly (${Math.round(requiredTotal)}) exceeds mapped goal funding (${Math.round(totalEnvelope)}/mo from linked budgets and investments). Link budgets or investments on the Budgets and Investments pages.`,
+      message: `Total required monthly (${Math.round(requiredTotal)}) exceeds mapped goal funding (${Math.round(totalEnvelope)}/mo from linked budgets or investments). Link a budget on Budgets or an investment on Investments.`,
       requiredMonthlyTotal: requiredTotal,
       surplusMonthly: totalEnvelope,
     });

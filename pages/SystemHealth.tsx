@@ -27,6 +27,8 @@ import { reconcileCashAccountBalance, reconcileCreditAccountBalance, buildFinanc
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { reconcileHoldings, reconciliationExceptionReport } from '../services/reconciliationEngine';
 import { buildHoldingsDividendReconciliationReport } from '../services/holdingsDividendReconciliation';
+import { findHoldingsValueOutliers, type HoldingOutlierRow } from '../services/holdingsOutlierAudit';
+import type { HoldingsReconcileRow } from '../services/holdingsDividendReconciliation';
 import DashboardKpiQualityPanel from '../components/DashboardKpiQualityPanel';
 import {
   validateSystemIntegrity,
@@ -169,6 +171,20 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
   const appDataCtx = useContext(DataContext);
   const marketDataCtx = useContext(MarketDataContext);
   const { exchangeRate } = useCurrency();
+  const [quoteCooldownSec, setQuoteCooldownSec] = useState<number>(0);
+  const [quoteQueueLen, setQuoteQueueLen] = useState<number>(0);
+
+  useEffect(() => {
+    if (!marketDataCtx) return;
+    const tick = () => {
+      const ms = marketDataCtx.quoteRefreshCooldownRemainingMs?.() ?? 0;
+      setQuoteCooldownSec(ms > 0 ? Math.ceil(ms / 1000) : 0);
+      setQuoteQueueLen(marketDataCtx.quoteRefreshQueueLength?.() ?? 0);
+    };
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [marketDataCtx]);
 
   const runHealthChecks = useCallback(async (_trigger: 'manual' | 'auto' = 'manual') => {
     setIsLoading(true);
@@ -642,6 +658,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
     const queue = getExceptionQueue();
 
     const holdingsDividendReport = buildHoldingsDividendReconciliationReport(financialData);
+    const holdingsValueOutliers = findHoldingsValueOutliers(financialData);
 
     return {
       integrityOk: integrity.ok,
@@ -653,6 +670,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       reconciliation,
       investmentKpiReconciliation,
       holdingsDividendReport,
+      holdingsValueOutliers,
       repairSuggestions,
       queue,
       ledgerReport,
@@ -780,6 +798,20 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
             Automated probes for Supabase, AI proxy (no full LLM on each tick), and Finnhub. Data checks use your <strong>personal</strong> ledger. FX reference for the app:{' '}
             <span className="font-mono tabular-nums">1 USD = {sarPerUsdHealth.toFixed(4)} SAR</span>.
           </p>
+          {marketDataCtx && (quoteCooldownSec > 0 || quoteQueueLen > 0) && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+              {quoteCooldownSec > 0 && (
+                <span className="px-2 py-1 rounded-full border border-amber-200 bg-amber-50 text-amber-800">
+                  Quotes cooldown: {quoteCooldownSec}s
+                </span>
+              )}
+              {quoteQueueLen > 0 && (
+                <span className="px-2 py-1 rounded-full border border-slate-200 bg-white text-slate-700">
+                  Quote queue: {quoteQueueLen}
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs px-2 py-1 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700">Auto refresh in {nextRefreshIn}s</span>
@@ -1025,7 +1057,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
             <div className="mt-4 pt-4 border-t border-slate-200">
               <h4 className="text-sm font-semibold text-slate-800">Holdings &amp; dividend reconciliation</h4>
               <ul className="mt-2 text-sm text-slate-700 space-y-1 list-disc pl-5">
-                {integritySummary.holdingsDividendReport.rows.slice(0, 12).map((r) => (
+                {integritySummary.holdingsDividendReport.rows.slice(0, 12).map((r: HoldingsReconcileRow) => (
                   <li key={r.id}>
                     <span className={r.severity === 'fail' ? 'text-rose-800 font-medium' : 'text-amber-900'}>
                       [{r.category}] {r.symbol}: {r.message}
@@ -1039,6 +1071,22 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
                         Open {r.drillTarget}
                       </button>
                     )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {(integritySummary.holdingsValueOutliers?.length ?? 0) > 0 && (
+            <div className="mt-4 pt-4 border-t border-rose-200 bg-rose-50/40 rounded-lg p-3">
+              <h4 className="text-sm font-semibold text-rose-950">Holdings value outliers</h4>
+              <p className="text-xs text-rose-900/90 mt-1">
+                Stored <code className="text-[11px]">current_value</code> looks corrupt — fix in Supabase or re-record trades. Inflated values break net worth and ROI.
+              </p>
+              <ul className="mt-2 text-sm text-rose-950 space-y-1 list-disc pl-5">
+                {integritySummary.holdingsValueOutliers.slice(0, 8).map((r: HoldingOutlierRow) => (
+                  <li key={r.holdingId}>
+                    {r.symbol} ({r.portfolioName}): {formatSarFixed2(r.currentValue)} SAR — {r.reason}
                   </li>
                 ))}
               </ul>

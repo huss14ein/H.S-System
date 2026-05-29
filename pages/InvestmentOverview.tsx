@@ -10,13 +10,13 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
-import { useMarketData } from '../context/MarketDataContext';
+import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { quoteNotionalInBookCurrency, toSAR } from '../utils/currencyMath';
 import { holdingUsesLiveQuote } from '../utils/holdingValuation';
 import { getPersonalInvestments } from '../utils/wealthScope';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import type { InvestmentPortfolio } from '../types';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import type { HeadlineAllocationRow } from '../services/headlineInvestmentAllocation';
 import { useCompanyNames } from '../hooks/useSymbolCompanyName';
 import {
     ResolvedSymbolLabel,
@@ -47,9 +47,9 @@ function holdingValueInBookCurrency(
 }
 
 const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => void }> = ({ setActiveTab }) => {
-    const { data, showBlockingLoader } = useContext(DataContext)!;
+    const { data } = useContext(DataContext)!;
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
-    const { simulatedPrices } = useMarketData();
+    const { simulatedPrices } = useCanonicalFinancialMetrics();
     const {
         sarPerUsd,
         investmentsTotalSar,
@@ -141,8 +141,8 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
         const topAssetClassPct = totalValue > 0 && topAssetClass ? (topAssetClass.value / totalValue) * 100 : 0;
 
         const weights = allHoldingsWithGains
-            .map(h => (totalValue > 0 ? h.currentValue / totalValue : 0))
-            .filter(w => w > 0);
+            .map((h) => (totalValue > 0 ? h.currentValue / totalValue : 0))
+            .filter((w: number) => w > 0);
         const hhi = weights.reduce((acc, w) => acc + w * w, 0);
         const effectiveHoldings = hhi > 0 ? 1 / hhi : 0;
 
@@ -191,14 +191,6 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
             setIsAiLoading(false);
         }
     }, [allHoldingsWithGains, portfolioAllocation, assetClassAllocation, companyNameMap]);
-
-    if (showBlockingLoader) {
-        return (
-            <div className="flex justify-center items-center min-h-[20rem]" aria-busy="true">
-                <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading investment overview" />
-            </div>
-        );
-    }
 
     const hasNoPortfolios = portfolioAllocation.length === 0 && tradableCashSAR <= 0 && sukukAssetsSAR <= 0;
 
@@ -346,7 +338,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                     </div>
                     <div className="space-y-2">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Asset class exposure</p>
-                        {assetClassAllocation.slice(0, 5).map((a) => {
+                        {assetClassAllocation.slice(0, 5).map((a: HeadlineAllocationRow) => {
                             const pct = diversification.totalValue > 0 ? (a.value / diversification.totalValue) * 100 : 0;
                             return (
                                 <div key={a.name}>

@@ -28,6 +28,7 @@ import { ReceiptPercentIcon } from './components/icons/ReceiptPercentIcon';
 /** User-friendly display names for pages (nav, command palette, document title) */
 export const PAGE_DISPLAY_NAMES: Partial<Record<Page, string>> = {
   'Engines & Tools': 'Money Tools',
+  'Wealth Analytics': 'Wealth Analytics (charts & health)',
   Notifications: 'Tasks & alerts',
 };
 
@@ -57,6 +58,7 @@ export const NAVIGATION_ITEMS: { name: Page; icon: React.FC<React.SVGProps<SVGSV
   { name: 'Zakat', icon: ReceiptPercentIcon },
   { name: 'Plan', icon: ClipboardDocumentListIcon },
   { name: 'Summary', icon: UsersIcon },
+  { name: 'Wealth Analytics', icon: PresentationChartLineIcon },
   { name: 'Assets', icon: GoldBarIcon },
   { name: 'Liabilities', icon: ShieldCheckIcon },
   { name: 'Forecast', icon: AcademicCapIcon },

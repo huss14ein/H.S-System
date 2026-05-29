@@ -8,10 +8,17 @@ describe('isSupportedPageAction', () => {
     expect(isSupportedPageAction('Notifications', 'notifications-tab:tasks')).toBe(true);
   });
 
+  it('accepts Dashboard plan compare action', () => {
+    expect(isSupportedPageAction('Dashboard', 'plan-compare-dashboard')).toBe(true);
+    expect(isSupportedPageAction('Dashboard', 'plan-compare-dashboard-extra')).toBe(false);
+  });
+
   it('accepts known transaction and goal actions', () => {
     expect(isSupportedPageAction('Transactions', 'open-transaction-modal')).toBe(true);
     expect(isSupportedPageAction('Transactions', 'filter-by-budget:Food:monthly:2026:4')).toBe(true);
     expect(isSupportedPageAction('Transactions', 'filter-by-budget:Rent:yearly:2026:12')).toBe(true);
+    expect(isSupportedPageAction('Transactions', 'filter-plan-expense:2026:4:Housing')).toBe(true);
+    expect(isSupportedPageAction('Transactions', 'filter-plan-expense:2026:12:Food%20%26%20Dining')).toBe(true);
     expect(isSupportedPageAction('Goals', 'focus-goal:g-1')).toBe(true);
   });
 
@@ -37,6 +44,8 @@ describe('isSupportedPageAction', () => {
     expect(isSupportedPageAction('Assets', 'focus-goal:abc')).toBe(false);
     expect(isSupportedPageAction('Transactions', 'filter-by-budget:Food:invalid:2026:4')).toBe(false);
     expect(isSupportedPageAction('Transactions', 'filter-by-budget:Food:monthly:2026:13')).toBe(false);
+    expect(isSupportedPageAction('Transactions', 'filter-plan-expense:2026:0:Housing')).toBe(false);
+    expect(isSupportedPageAction('Transactions', 'filter-plan-expense:2026:13:Housing')).toBe(false);
     expect(isSupportedPageAction('Budgets', 'focus-goal:abc')).toBe(false);
   });
 

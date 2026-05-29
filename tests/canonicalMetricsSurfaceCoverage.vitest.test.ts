@@ -48,16 +48,25 @@ function componentFiles(): string[] {
 }
 
 describe('canonical metrics surface coverage', () => {
-  it('every wealth page imports useCanonicalFinancialMetrics', () => {
+  it('every wealth page uses a canonical metrics hook', () => {
     const missing: string[] = [];
     for (const file of pageFiles()) {
       if (PAGE_EXEMPT.has(file) || PAGE_NO_HEADLINE_METRICS.has(file)) continue;
       const src = readFileSync(join(PAGES_DIR, file), 'utf8');
-      if (!src.includes('useCanonicalFinancialMetrics')) {
+      const usesCanonical =
+        src.includes('useCanonicalFinancialMetrics') ||
+        src.includes('useDashboardCanonicalMetrics') ||
+        src.includes('useInvestmentsCanonicalMetrics') ||
+        src.includes('useCanonicalSpotFx') ||
+        src.includes('useEmergencyFund');
+      if (!usesCanonical) {
         missing.push(file);
       }
     }
-    expect(missing, `Add useCanonicalFinancialMetrics() to: ${missing.join(', ')}`).toEqual([]);
+    expect(
+      missing,
+      `Add useCanonicalFinancialMetrics(), useDashboardCanonicalMetrics(), or useInvestmentsCanonicalMetrics() to: ${missing.join(', ')}`,
+    ).toEqual([]);
   });
 
   it('wealth pages do not call resolveSarPerUsd directly', () => {

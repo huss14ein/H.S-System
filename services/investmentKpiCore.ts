@@ -23,6 +23,14 @@ import { brokerCashBucketsFromInvestmentAccount } from './investmentCashLedger';
 
 type GetAvailableCashFn = (accountId: string) => { SAR?: number; USD?: number } | null | undefined;
 
+/** Clamp absurd ROI from corrupt holdings (e.g. bad `current_value` in DB) for UI display. */
+export function sanitizeInvestmentRoiDecimal(roi: number): number {
+  if (!Number.isFinite(roi)) return 0;
+  if (roi > 10) return 10;
+  if (roi < -1) return -1;
+  return roi;
+}
+
 export type PersonalInvestmentKpisSar = {
   holdingsValueSar: number;
   brokerageCashSar: number;
@@ -215,7 +223,9 @@ export function computePersonalInvestmentKpiBreakdown(
 
   const netCapitalSar = Math.max(0, totalInvestedSar - totalWithdrawnSar);
   const totalGainLossSar = totalInvestmentsValueSar - netCapitalSar;
-  const roi = netCapitalSar > 0 ? totalGainLossSar / netCapitalSar : 0;
+  const roi = sanitizeInvestmentRoiDecimal(
+    netCapitalSar > 0 ? totalGainLossSar / netCapitalSar : 0,
+  );
 
   return {
     holdingsValueSar,
@@ -421,7 +431,9 @@ export function computeHeadlinePersonalInvestmentRoiDecimal(
   const platformNetForHeadline = Math.max(breakdown.netCapitalSar, economicDeployedSar);
   const netCapitalSar = Math.max(0, platformNetForHeadline + commodityCost + sukukAssetsCostSar);
   const totalGainLossSar = totalExposureSar - netCapitalSar;
-  const roi = netCapitalSar > 0 ? totalGainLossSar / netCapitalSar : 0;
+  const roi = sanitizeInvestmentRoiDecimal(
+    netCapitalSar > 0 ? totalGainLossSar / netCapitalSar : 0,
+  );
 
   return {
     totalGainLossSar,

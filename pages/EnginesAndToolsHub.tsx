@@ -8,7 +8,7 @@ import { Page } from '../types';
 import { DataContext } from '../context/DataContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { netCashFlowForFinancialMonthSarDated } from '../services/financeMetrics';
 import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
@@ -111,12 +111,12 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
   const [dataTick, setDataTick] = useState(0);
   const engines = useFinancialEnginesIntegration();
   const { trackAction } = useSelfLearning();
-  const { data, showBlockingLoader } = useContext(DataContext)!;
+  const { data } = useContext(DataContext)!;
   const emergencyFund = useEmergencyFund(data ?? null);
   const enhancementInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
   const { exchangeRate, currency: displayCurrency } = useCurrency();
   const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
-  const { headline: headlineMoneyTools } = useCanonicalFinancialMetrics();
+  const { headline: headlineMoneyTools } = useDashboardCanonicalMetrics();
 
   const moneyToolsKpis = useMemo(() => {
     if (!data) return null;
@@ -240,10 +240,6 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
 
   const tabIds = useMemo(() => Object.keys(TOOL_VISUAL) as EnginesSubTab[], []);
   const activeVisual = TOOL_VISUAL[activeTab];
-
-  if (showBlockingLoader) {
-    return <LoadingSpinner className="min-h-[24rem]" ariaLabel="Loading money tools" />;
-  }
 
   return (
     <div className="space-y-8">

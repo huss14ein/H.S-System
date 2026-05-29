@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback, useContext, useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useMemo, useState, useCallback, useContext, useEffect, useRef, lazy, Suspense, startTransition } from 'react';
 import { DataContext } from '../context/DataContext';
 import {
     getAIStockAnalysis,
@@ -16,10 +16,7 @@ import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
 import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { Squares2X2Icon } from '../components/icons/Squares2X2Icon';
 import { EyeIcon } from '../components/icons/EyeIcon';
-import AIRebalancerView from './AIRebalancerView';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
-import WatchlistView from './WatchlistView';
-import RecoveryPlanView from './RecoveryPlanView';
 import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
@@ -29,8 +26,7 @@ import MiniPriceChart from '../components/charts/MiniPriceChart';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
-import InvestmentOverview from './InvestmentOverview';
-import { useMarketData } from '../context/MarketDataContext';
+import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import { useCurrency } from '../context/CurrencyContext';
 import { useAI } from '../context/AiContext';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
@@ -58,7 +54,6 @@ import { summarizeInvestmentTradeForConfirm } from '../utils/recordConfirmMessag
 import { checkExtendedHoursGuardrail, getTIFLabel, getNBBOStub, getSORStub, getVWAPSlices, type TIF } from '../services/tradingExecution';
 import { getSettlementDate, isSettled } from '../services/riskCompliance';
 import { ClockIcon } from '../components/icons/ClockIcon';
-import ExecutionHistoryView from './ExecutionHistoryView';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { loadTradingPolicy, evaluateBuyAgainstPolicy } from '../services/tradingPolicy';
 import { EXECUTE_PLAN_STORAGE_KEY } from '../content/plainLanguage';
@@ -83,7 +78,7 @@ import {
     quoteDailyPnLInBookCurrency,
 } from '../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
-import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
+import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import {
     inferInvestmentTransactionCurrency,
     portfolioBelongsToAccount,
@@ -94,12 +89,17 @@ import { getInvestmentTransactionCashAmount } from '../utils/investmentTransacti
 import {
   computePlatformCardMetrics,
   computePortfolioMetricsBundle,
+  type SimulatedPriceMap,
 } from '../services/investmentPlatformCardMetrics';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
+import { InvestmentsMetricsProvider, useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 import { aggregateMonthlyBudgetAcrossPortfolios, getEffectivePlanForPortfolio } from '../utils/investmentPlanPerPortfolio';
 import { computeGoalMonthlyFundingEnvelopeSar } from '../services/goalProjectionFunding';
 import { computeGoalTimelineStatus } from '../services/goalMetrics';
+import { findHoldingsValueOutliers } from '../services/holdingsOutlierAudit';
+import PlatformHoldingsOutlierBanner from '../components/investments/PlatformHoldingsOutlierBanner';
+import InvestmentsQuoteStatusBanner from '../components/investments/InvestmentsQuoteStatusBanner';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { engineSleeveKeyToTickerStatus, inferEngineSleeveKeyFromHolding } from '../services/inferHoldingUniverseClassification';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
@@ -118,11 +118,41 @@ import {
 
 const DividendTrackerView = lazy(() => import('./DividendTrackerView'));
 const InvestmentPlanView = lazy(() => import('./InvestmentPlanView'));
-
-
-
+const InvestmentOverview = lazy(() => import('./InvestmentOverview'));
+const RecoveryPlanView = lazy(() => import('./RecoveryPlanView'));
+const AIRebalancerView = lazy(() => import('./AIRebalancerView'));
+const WatchlistView = lazy(() => import('./WatchlistView'));
+const ExecutionHistoryView = lazy(() => import('./ExecutionHistoryView'));
 
 type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
+
+function prefetchInvestmentTab(tab: InvestmentSubPage): void {
+  switch (tab) {
+    case 'Overview':
+      void import('./InvestmentOverview');
+      break;
+    case 'Investment Plan':
+      void import('./InvestmentPlanView');
+      break;
+    case 'Recovery Plan':
+      void import('./RecoveryPlanView');
+      break;
+    case 'Dividend Tracker':
+      void import('./DividendTrackerView');
+      break;
+    case 'AI Rebalancer':
+      void import('./AIRebalancerView');
+      break;
+    case 'Watchlist':
+      void import('./WatchlistView');
+      break;
+    case 'Execution History':
+      void import('./ExecutionHistoryView');
+      break;
+    default:
+      break;
+  }
+}
 
 class InvestmentTabErrorBoundary extends React.Component<
     { activeTab: InvestmentSubPage; onReset: () => void; children: React.ReactNode },
@@ -179,7 +209,7 @@ const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGP
 const PlanSummary: React.FC<{ onEditPlan?: () => void }> = ({ onEditPlan }) => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
 
     const investmentProgress = useMemo(() => {
         if (!data?.investmentPlan) {
@@ -380,7 +410,7 @@ const priorityRank = (p?: Goal['priority']) => (p === 'High' ? 0 : p === 'Medium
 const InvestmentGoalsStrip: React.FC<{ onOpenGoals?: () => void }> = ({ onOpenGoals }) => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
     const goalCurrentByIdSar = useMemo(() => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd), [data, sarPerUsd]);
     const sortedGoals = useMemo(() => {
         const normalized = (data?.goals ?? [])
@@ -562,7 +592,7 @@ const RecordTradeModal: React.FC<{
     investmentAccounts: Account[];
     portfolios: InvestmentPortfolio[];
     /** Simulated/live quote by symbol — used to suggest price when the field is empty. */
-    simulatedPrices?: { [symbol: string]: { price: number; change: number; changePercent: number } };
+    simulatedPrices?: SimulatedPriceMap;
     initialData?: Partial<{
         tradeType: 'buy' | 'sell' | 'dividend';
         symbol: string;
@@ -612,7 +642,7 @@ const RecordTradeModal: React.FC<{
 
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const efRunway = useEmergencyFund(data ?? null);
-    const { sarPerUsd, liquidCashSar: liquidCashSARForBuyPolicy } = useCanonicalFinancialMetrics();
+    const { sarPerUsd, liquidCashSar: liquidCashSARForBuyPolicy } = useInvestmentsCanonicalMetrics();
     const runwayMonthsForBuyPolicy = useMemo(() => {
         const exp = efRunway.monthlyCoreExpenses;
         if (exp > 0) return liquidCashSARForBuyPolicy / exp;
@@ -641,8 +671,11 @@ const RecordTradeModal: React.FC<{
 
     const portfoliosForAccount = useMemo(() => accountId ? portfolios.filter(p => p.accountId === accountId) : [], [accountId, portfolios]);
 
-    const holdingSymbolOptions = useMemo(() => buildHoldingSymbolOptions(portfolios), [portfolios]);
     const requiresHoldingPick = type === 'sell' || type === 'dividend';
+    const holdingSymbolOptionsForPick = useMemo(
+        () => (portfolioId ? buildHoldingSymbolOptions(portfolios, portfolioId) : []),
+        [portfolioId, portfolios],
+    );
 
     const applyHoldingOption = useCallback((opt: HoldingSymbolOption | null) => {
         if (!opt) {
@@ -776,6 +809,20 @@ const RecordTradeModal: React.FC<{
             setTradeCurrency((portfolio?.currency as TradeCurrency) || 'USD');
         }
     }, [portfolioId, portfolios]);
+
+    useEffect(() => {
+        if (!requiresHoldingPick || !portfolioId) return;
+        if (!holdingOptionKey) return;
+        const stillValid = holdingSymbolOptionsForPick.some((o) => o.optionKey === holdingOptionKey);
+        if (stillValid) return;
+        const key = resolveHoldingOptionKeyFromSymbol(holdingSymbolOptionsForPick, symbol, portfolioId);
+        if (key) {
+            const opt = holdingSymbolOptionsForPick.find((o) => o.optionKey === key);
+            if (opt) applyHoldingOption(opt);
+        } else {
+            applyHoldingOption(null);
+        }
+    }, [portfolioId, requiresHoldingPick, holdingSymbolOptionsForPick, holdingOptionKey, symbol, applyHoldingOption]);
 
     /** Snapshot of `initialData` when this open started — used so we do not overwrite a plan/deeplink company name until the user changes symbol. */
     const initialDataWhenOpenedRef = useRef<typeof initialData>(null);
@@ -939,7 +986,12 @@ const RecordTradeModal: React.FC<{
         }
         const normalized = symbol.toUpperCase().trim();
         const recentBuys = (data.investmentTransactions as InvestmentTransaction[])
-            .filter(t => t.type === 'buy' && (t.symbol ?? '').toUpperCase().trim() === normalized);
+            .filter((t) => {
+                if (t.type !== 'buy') return false;
+                if ((t.symbol ?? '').toUpperCase().trim() !== normalized) return false;
+                if (portfolioId && t.portfolioId && t.portfolioId !== portfolioId) return false;
+                return true;
+            });
         let pendingBuyAmount = 0;
         let latestSettleDate = '';
         for (const buy of recentBuys) {
@@ -957,10 +1009,10 @@ const RecordTradeModal: React.FC<{
             ? `T+1 settlement: You bought ${normalized} recently. Funds settle ${settlementState!.pendingSettleDate}. Ensure you have other settled cash before selling.`
             : null;
         return { t1SettlementWarning: msg };
-    }, [type, symbol, data?.investmentTransactions]);
+    }, [type, symbol, portfolioId, data?.investmentTransactions]);
 
     const monthlyNetLast30d = useMemo(() => {
-        const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
+        const txs = getPersonalTransactions(data) as Transaction[];
         const d0 = new Date();
         d0.setDate(d0.getDate() - 30);
         let net = 0;
@@ -1071,7 +1123,7 @@ const RecordTradeModal: React.FC<{
         const parsedQuantity = parseFloat(quantity);
         const parsedPrice = parseFloat(price);
         if (!symbol.trim()) return requiresHoldingPick ? 'Select a holding from your portfolios.' : 'Symbol is required.';
-        if (requiresHoldingPick && !holdingSymbolIsOwned(holdingSymbolOptions, symbol, portfolioId)) {
+        if (requiresHoldingPick && !holdingSymbolIsOwned(holdingSymbolOptionsForPick, symbol, portfolioId)) {
             return 'Select a holding you currently own in the chosen portfolio.';
         }
         if (type === 'dividend') {
@@ -1131,7 +1183,7 @@ const RecordTradeModal: React.FC<{
             }
         }
         return null;
-    }, [portfolioId, quantity, price, dividendAmount, symbol, type, isNewHolding, holdingName, manualValuation, manualCurrentValue, isManualExisting, tradeCurrency, portfolios, availableCashInLedgerCurrency, availableCashByCurrency.SAR, availableCashByCurrency.USD, sarPerUsd, formatCurrencyString, feeAmount, requiresHoldingPick, holdingSymbolOptions, data, date, accountId, investmentAccounts]);
+    }, [portfolioId, quantity, price, dividendAmount, symbol, type, isNewHolding, holdingName, manualValuation, manualCurrentValue, isManualExisting, tradeCurrency, portfolios, availableCashInLedgerCurrency, availableCashByCurrency.SAR, availableCashByCurrency.USD, sarPerUsd, formatCurrencyString, feeAmount, requiresHoldingPick, holdingSymbolOptionsForPick, data, date, accountId, investmentAccounts]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -1214,7 +1266,9 @@ const RecordTradeModal: React.FC<{
             trackFormDefault('record-trade', 'portfolioId', portfolioId);
             trackFormDefault('record-trade', 'type', type);
             trackFormDefault('record-trade', 'tradeCurrency', tradeCurrency);
-            onClose();
+            startTransition(() => {
+                onClose();
+            });
         } catch (error) {
             setSubmitError(error instanceof Error ? error.message : String(error));
         } finally {
@@ -1307,7 +1361,20 @@ const RecordTradeModal: React.FC<{
                     </div>
                     <div>
                         <label htmlFor="portfolio-id" className="block text-sm font-medium text-gray-700">Portfolio</label>
-                        <select id="portfolio-id" value={portfolioId} onChange={e => setPortfolioId(e.target.value)} required disabled={portfoliosForAccount.length === 0} className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary disabled:bg-gray-100">
+                        <select
+                            id="portfolio-id"
+                            value={portfolioId}
+                            onChange={(e) => {
+                                const next = e.target.value;
+                                setPortfolioId(next);
+                                if (type === 'sell' || type === 'dividend') {
+                                    applyHoldingOption(null);
+                                }
+                            }}
+                            required
+                            disabled={portfoliosForAccount.length === 0}
+                            className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary disabled:bg-gray-100"
+                        >
                              <option value="" disabled>Select Portfolio</option>
                             {portfoliosForAccount.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                         </select>
@@ -1316,8 +1383,8 @@ const RecordTradeModal: React.FC<{
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex flex-wrap gap-x-4 gap-y-1">
                         <label className="flex items-center"><input type="radio" value="buy" checked={type === 'buy'} onChange={() => setType('buy')} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Buy</span></label>
-                        <label className="flex items-center"><input type="radio" value="sell" checked={type === 'sell'} onChange={() => { setType('sell'); const key = resolveHoldingOptionKeyFromSymbol(holdingSymbolOptions, symbol, portfolioId); if (key) { const opt = holdingSymbolOptions.find((o) => o.optionKey === key); if (opt) applyHoldingOption(opt); } else { applyHoldingOption(null); } }} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Sell</span></label>
-                        <label className="flex items-center"><input type="radio" value="dividend" checked={type === 'dividend'} onChange={() => { setType('dividend'); const key = resolveHoldingOptionKeyFromSymbol(holdingSymbolOptions, symbol, portfolioId); if (key) { const opt = holdingSymbolOptions.find((o) => o.optionKey === key); if (opt) applyHoldingOption(opt); } else { applyHoldingOption(null); } }} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Dividend</span></label>
+                        <label className="flex items-center"><input type="radio" value="sell" checked={type === 'sell'} onChange={() => { setType('sell'); const key = resolveHoldingOptionKeyFromSymbol(holdingSymbolOptionsForPick, symbol, portfolioId); if (key) { const opt = holdingSymbolOptionsForPick.find((o) => o.optionKey === key); if (opt) applyHoldingOption(opt); } else { applyHoldingOption(null); } }} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Sell</span></label>
+                        <label className="flex items-center"><input type="radio" value="dividend" checked={type === 'dividend'} onChange={() => { setType('dividend'); const key = resolveHoldingOptionKeyFromSymbol(holdingSymbolOptionsForPick, symbol, portfolioId); if (key) { const opt = holdingSymbolOptionsForPick.find((o) => o.optionKey === key); if (opt) applyHoldingOption(opt); } else { applyHoldingOption(null); } }} className="form-radio h-4 w-4 text-primary"/> <span className="ml-2">Dividend</span></label>
                     </div>
                     <div className="flex items-center gap-2">
                         <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Currency</span>
@@ -1364,13 +1431,25 @@ const RecordTradeModal: React.FC<{
                         <div className="mt-1">
                             <HoldingSymbolSelect
                                 id="holding-symbol-select"
-                                options={holdingSymbolOptions}
+                                options={holdingSymbolOptionsForPick}
                                 value={holdingOptionKey}
                                 onChange={applyHoldingOption}
                                 className="w-full p-2 border border-gray-300 rounded-md"
-                                emptyLabel="Select from your portfolios…"
+                                showPortfolioInLabel={false}
+                                disabled={!portfolioId}
+                                emptyLabel={
+                                    !portfolioId
+                                        ? 'Select a portfolio first…'
+                                        : holdingSymbolOptionsForPick.length === 0
+                                          ? 'No holdings in this portfolio'
+                                          : 'Select a holding…'
+                                }
+                                hint={
+                                    selectedPortfolio
+                                        ? `Holdings in “${selectedPortfolio.name}” only · symbol and portfolio are set from your pick.`
+                                        : null
+                                }
                             />
-                            <p className="mt-1 text-xs text-slate-500">Symbol and portfolio are filled from your holdings — no manual ticker entry.</p>
                         </div>
                     ) : (
                         <>
@@ -1619,7 +1698,7 @@ const HoldingDetailModal: React.FC<{
 }> = ({ isOpen, onClose, holding, portfolio, onRecordSell }) => {
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [analystAr, setAnalystAr] = useState<string | null>(null);
     const [analystDisplayLang, setAnalystDisplayLang] = useState<'en' | 'ar'>(() => {
@@ -2101,7 +2180,7 @@ const HoldingDetailModal: React.FC<{
 
 const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (holding: Holding) => void, holding: Holding | null }> = ({ isOpen, onClose, onSave, holding }) => {
     const { data } = useContext(DataContext)!;
-    const { simulatedPrices } = useMarketData();
+    const { simulatedPrices } = useInvestmentsCanonicalMetrics();
     const { formatCurrencyString } = useFormatCurrency();
     const [name, setName] = useState('');
     const [zakahClass, setZakahClass] = useState<'Zakatable' | 'Non-Zakatable'>('Zakatable');
@@ -2451,12 +2530,14 @@ const PlatformCard: React.FC<{
     onDeletePortfolio: (portfolio: InvestmentPortfolio) => void;
     onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number; }, portfolio: InvestmentPortfolio) => void;
     onEditHolding: (holding: Holding) => void;
-    simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
+    simulatedPrices: SimulatedPriceMap;
     isExpanded: boolean;
     onToggleExpanded: () => void;
+    holdingsOutliers?: import('../services/holdingsOutlierAudit').HoldingOutlierRow[];
+    setActivePage?: (page: Page) => void;
 }> = (props) => {
-    const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded } = props;
-    const { refreshPricesForPlatform, isRefreshing: quotesRefreshing, quotesRefreshUIScope } = useMarketData();
+    const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded, holdingsOutliers = [], setActivePage } = props;
+    const { refreshPricesForPlatform, isRefreshing: quotesRefreshing, quotesRefreshUIScope } = useMarketQuoteMeta();
     const thisPlatformSyncing =
         quotesRefreshing &&
         (quotesRefreshUIScope.mode === 'all' ||
@@ -2497,7 +2578,7 @@ const PlatformCard: React.FC<{
                 availableCashByCurrency,
                 simulatedPrices,
                 platformCurrency,
-                unrealizedPnLBasis: portfoliosForMetrics.length === 1 ? 'holdings_cost' : 'net_capital',
+                unrealizedPnLBasis: 'net_capital',
             }),
         [portfoliosForMetrics, transactions, metricsTransactions, simulatedPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx?.accounts, investmentsForInfer],
     );
@@ -2573,8 +2654,18 @@ const PlatformCard: React.FC<{
     const metricsHoldingsCount = portfoliosForMetrics.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
     const availableCashSAR = tradableCashBucketToSAR(availableCashByCurrency, sarPerUsd);
 
+    const platformOutliers = useMemo(() => {
+        const names = new Set(portfolios.map((p) => String(p.name ?? p.id ?? '')));
+        return holdingsOutliers.filter((o) => names.has(o.portfolioName));
+    }, [holdingsOutliers, portfolios]);
+
     return (
         <article className="platform-card w-full max-w-full bg-white rounded-2xl shadow-md flex flex-col overflow-hidden border border-slate-200 hover:shadow-md transition-shadow duration-300 ease-in-out min-w-0">
+            <PlatformHoldingsOutlierBanner
+                outliers={platformOutliers}
+                platformName={platform.name}
+                setActivePage={setActivePage}
+            />
             {/* Platform Header — compact, professional */}
             <header className="platform-card-header bg-gradient-to-br from-slate-50 via-white to-slate-50/50 border-b border-slate-200 min-w-0">
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:justify-between sm:items-start">
@@ -2810,7 +2901,7 @@ const PlatformCard: React.FC<{
                                         {' — '}
                                         {sortedPortfolios.length === 1 ? (
                                           <>
-                                            Single portfolio on this account — <strong>Unrealized P/L</strong> and <strong>ROI</strong> use position cost (qty × avg) like the holdings table; <strong>Invested</strong> / <strong>Withdrawn</strong> are cash flows from the ledger (full list + pooled cash).
+                                            Platform <strong>Unrealized P/L</strong> and <strong>ROI</strong> are vs net deposits (invested − withdrawn). Per-holding rows still show qty × avg cost. <strong>Invested</strong> / <strong>Withdrawn</strong> are cash flows from the ledger.
                                           </>
                                         ) : (
                                           <>
@@ -3121,11 +3212,13 @@ const PlatformView: React.FC<{
     onDeletePortfolio: (portfolio: InvestmentPortfolio) => void;
     onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number; }, portfolio: InvestmentPortfolio) => void;
     onEditHolding: (holding: Holding) => void;
-    simulatedPrices: { [symbol: string]: { price: number; change: number; changePercent: number } };
+    simulatedPrices: SimulatedPriceMap;
 }> = (props) => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-    const { sarPerUsd, platformsRollupSar } = useCanonicalFinancialMetrics();
+    const { sarPerUsd, platformsRollupSar } = useInvestmentsCanonicalMetrics();
     const { setActivePage, setActiveTab, onOpenAddPortfolio } = props;
+
+    const holdingsOutliersAll = useMemo(() => (data ? findHoldingsValueOutliers(data) : []), [data]);
 
     const platformsData = useMemo(() => {
         const accounts = getPersonalAccounts(data);
@@ -3327,6 +3420,8 @@ const PlatformView: React.FC<{
                         simulatedPrices={props.simulatedPrices}
                         isExpanded={platformExpanded[p.account.id] ?? false}
                         onToggleExpanded={() => setPlatformExpanded((prev) => ({ ...prev, [p.account.id]: !prev[p.account.id] }))}
+                        holdingsOutliers={holdingsOutliersAll}
+                        setActivePage={setActivePage}
                     />
                 ))}
             </div>
@@ -3367,8 +3462,8 @@ const InvestmentPlan: React.FC<{
     const { data, saveInvestmentPlan, addUniverseTicker, updateUniverseTickerStatus, deleteUniverseTicker, saveExecutionLog, getAvailableCashForAccount } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
     const { isAiAvailable, aiHealthChecked } = useAI();
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
-    const { simulatedPrices } = useMarketData();
+    const sarPerUsd = useCanonicalSpotFx();
+    const { simulatedPrices } = useInvestmentsCanonicalMetrics();
 
     const planFromData = data?.investmentPlan;
     const planWithAnalystDefaults: InvestmentPlanSettings = useMemo(() => ({
@@ -4977,23 +5072,29 @@ interface InvestmentsProps {
   triggerPageAction?: (page: Page, action: string) => void;
 }
 
-const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
-  const { data, showBlockingLoader, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
+const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
+  const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
   const recordTradeConfirmed = useCallback(
     (trade: Parameters<typeof recordTrade>[0], executedPlanId?: string) =>
       recordTrade(trade, executedPlanId, { confirmed: true }),
     [recordTrade],
   );
   const { isAiAvailable, aiHealthChecked } = useAI();
-  const { simulatedPrices } = useMarketData();
+  const { isLive, lastUpdated } = useMarketQuoteMeta();
+  const { simulatedPrices } = useInvestmentsCanonicalMetrics();
   const { formatCurrencyString } = useFormatCurrency();
   const { trackAction } = useSelfLearning();
   const [activeTab, setActiveTabState] = useState<InvestmentSubPage>('Overview');
   const setActiveTab = useCallback((tab: InvestmentSubPage) => {
+    prefetchInvestmentTab(tab);
     trackAction(`tab-${tab.replace(/\s+/g, '-')}`, 'Investments');
     setActiveTabState(tab);
   }, [trackAction]);
-  
+
+  useEffect(() => {
+    prefetchInvestmentTab(activeTab);
+  }, [activeTab]);
+
   const [isHoldingModalOpen, setIsHoldingModalOpen] = useState(false);
   const [selectedHolding, setSelectedHolding] = useState<(Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number; }) | null>(null);
   const [selectedPortfolio, setSelectedPortfolio] = useState<InvestmentPortfolio | null>(null);
@@ -5025,7 +5126,7 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
   const [currentAccountId, setCurrentAccountId] = useState<string|null>(null);
 
   const { currency: appDisplayCurrency } = useCurrency();
-  const { investmentExposure } = useCanonicalFinancialMetrics();
+  const { investmentExposure } = useInvestmentsCanonicalMetrics();
   const { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage, platformsRollupSAR, commoditiesValueSAR, sukukAssetsValueSAR } = useMemo(() => {
     const h = investmentExposure;
     if (!h) {
@@ -5158,14 +5259,9 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     }
     if (pageAction?.startsWith('investment-tab:')) {
         const raw = pageAction.slice('investment-tab:'.length);
-        const allowed = new Set<InvestmentSubPage>([
-            'Investment Plan',
-            'Recovery Plan',
-            'Dividend Tracker',
-            'AI Rebalancer',
-            'Watchlist',
-        ]);
+        const allowed = new Set<InvestmentSubPage>(INVESTMENT_SUB_PAGES.map((t) => t.name));
         if (allowed.has(raw as InvestmentSubPage)) {
+            prefetchInvestmentTab(raw as InvestmentSubPage);
             setActiveTab(raw as InvestmentSubPage);
         }
         clearPageAction?.();
@@ -5406,14 +5502,6 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     }
   };
 
-  if (showBlockingLoader) {
-    return (
-      <div className="flex justify-center items-center min-h-[24rem] bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 rounded-2xl border border-slate-200" aria-busy="true">
-        <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Loading investments" />
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-8 sm:space-y-10">
         <header className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 via-white to-indigo-50 px-5 py-6 sm:px-6 shadow-sm">
@@ -5441,6 +5529,8 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
                 </div>
             </div>
         </header>
+
+        <InvestmentsQuoteStatusBanner isLive={isLive} lastUpdated={lastUpdated} />
 
         <section className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4" aria-label="Investment summary">
             <Card
@@ -5550,6 +5640,8 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
               {INVESTMENT_SUB_PAGES.map(tab => (
                 <button
                   key={tab.name}
+                  onMouseEnter={() => prefetchInvestmentTab(tab.name)}
+                  onFocus={() => prefetchInvestmentTab(tab.name)}
                   onClick={() => setActiveTab(tab.name)}
                   className={`inline-flex items-center gap-2 whitespace-nowrap py-2.5 px-4 rounded-xl font-medium text-sm transition-colors ${
                     activeTab === tab.name
@@ -5617,5 +5709,11 @@ const Investments: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, 
     </div>
   );
 };
+
+const Investments: React.FC<InvestmentsProps> = (props) => (
+  <InvestmentsMetricsProvider>
+    <InvestmentsPageBody {...props} />
+  </InvestmentsMetricsProvider>
+);
 
 export default Investments;

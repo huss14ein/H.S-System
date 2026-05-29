@@ -5,7 +5,7 @@ import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { toSAR } from '../utils/currencyMath';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { sellScore } from '../services/decisionEngine';
 import { thesisValidityCheck, type ThesisRecord } from '../services/thesisJournalEngine';
@@ -46,10 +46,10 @@ interface LiquidationPlannerProps {
 }
 
 const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, triggerPageAction, dataTick }) => {
-  const { data, showBlockingLoader } = useContext(DataContext)!;
+  const { data } = useContext(DataContext)!;
   const { trackAction } = useSelfLearning();
   const { formatCurrencyString } = useFormatCurrency();
-  const { sarPerUsd } = useCanonicalFinancialMetrics();
+  const sarPerUsd = useCanonicalSpotFx();
   const [theses, setTheses] = useState<ThesisRecord[]>([]);
 
   useEffect(() => {
@@ -117,14 +117,6 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
     [ranked],
   );
   const { names: liqCompanyNames } = useCompanyNames(liqSymbols);
-
-  if (showBlockingLoader) {
-    return (
-      <div className="flex justify-center py-24">
-        <div className="animate-spin h-10 w-10 border-2 border-primary border-t-transparent rounded-full" />
-      </div>
-    );
-  }
 
   return (
     <PageLayout

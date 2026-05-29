@@ -7,7 +7,12 @@ import { ChevronRightIcon } from './icons/ChevronRightIcon';
 import { PencilIcon } from './icons/PencilIcon';
 import { TrashIcon } from './icons/TrashIcon';
 import InfoHint from './InfoHint';
-import type { BudgetTierVisual, BudgetUtilizationLabel } from '../services/budgetCardVisuals';
+import {
+    budgetTierBadgeClasses,
+    budgetUtilizationBadgeClasses,
+    type BudgetTierVisual,
+    type BudgetUtilizationLabel,
+} from '../services/budgetCardVisuals';
 
 export type OwnPortfolioBudgetRow = Budget &
     BudgetCardMetricsModel & {
@@ -28,7 +33,9 @@ export type BudgetOwnPortfolioCardProps = {
     onToggleExpand: (id: string) => void;
     onEdit: (budget: OwnPortfolioBudgetRow) => void;
     onDelete: (budget: OwnPortfolioBudgetRow) => void;
+    onBorrowFromNextMonth?: (budget: OwnPortfolioBudgetRow) => void;
     canDelete: boolean;
+    dataBudgetCategory?: string;
 };
 
 const BudgetOwnPortfolioCard: React.FC<BudgetOwnPortfolioCardProps> = React.memo(function BudgetOwnPortfolioCard({
@@ -43,7 +50,9 @@ const BudgetOwnPortfolioCard: React.FC<BudgetOwnPortfolioCardProps> = React.memo
     onToggleExpand,
     onEdit,
     onDelete,
+    onBorrowFromNextMonth,
     canDelete,
+    dataBudgetCategory,
 }) {
     const utilLabel = (budget.utilizationLabel ?? 'Healthy') as BudgetUtilizationLabel;
     const periodBadge =
@@ -58,7 +67,8 @@ const BudgetOwnPortfolioCard: React.FC<BudgetOwnPortfolioCardProps> = React.memo
     return (
         <button
             type="button"
-            className={`group flex h-full min-h-0 w-full flex-col text-left rounded-3xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-indigo-500/90 transition-transform duration-300 hover:-translate-y-1 active:translate-y-0 active:scale-[0.995] ${expanded ? 'md:col-span-2' : ''}`}
+            data-budget-category={dataBudgetCategory ?? budget.category}
+            className={`group flex h-full min-h-0 w-full flex-col text-left rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary/80 transition-shadow duration-200 hover:shadow-md ${expanded ? 'md:col-span-2' : ''}`}
             onClick={() => onNavigateToTransactions(budget)}
         >
             <BudgetCardShell utilizationLabel={utilLabel} budgetTier={budget.budgetTier ?? 'Optional'}>
@@ -78,24 +88,12 @@ const BudgetOwnPortfolioCard: React.FC<BudgetOwnPortfolioCardProps> = React.memo
                                 </div>
                                 <div className="flex shrink-0 flex-row flex-wrap items-center justify-end gap-1.5">
                                     <span
-                                        className={`text-[10px] font-bold px-2.5 py-1 rounded-full border shadow-sm backdrop-blur-sm ${
-                                            (budget.budgetTier ?? 'Optional') === 'Core'
-                                                ? 'bg-indigo-100/90 text-indigo-950 border-indigo-200/80'
-                                                : (budget.budgetTier ?? 'Optional') === 'Supporting'
-                                                  ? 'bg-sky-100/90 text-sky-950 border-sky-200/80'
-                                                  : 'bg-slate-100/90 text-slate-800 border-slate-200/80'
-                                        }`}
+                                        className={`text-[10px] font-semibold px-2 py-0.5 rounded-md ${budgetTierBadgeClasses(budget.budgetTier ?? 'Optional')}`}
                                     >
                                         {budget.budgetTier ?? 'Optional'}
                                     </span>
                                     <span
-                                        className={`text-[10px] font-bold px-2.5 py-1 rounded-full shadow-md ${
-                                            utilLabel === 'Critical'
-                                                ? 'bg-gradient-to-r from-rose-600 to-orange-600 text-white'
-                                                : utilLabel === 'Watch'
-                                                  ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white'
-                                                  : 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white'
-                                        }`}
+                                        className={`text-[10px] font-semibold px-2 py-0.5 rounded-md ${budgetUtilizationBadgeClasses(utilLabel)}`}
                                     >
                                         {utilLabel}
                                     </span>
@@ -117,7 +115,22 @@ const BudgetOwnPortfolioCard: React.FC<BudgetOwnPortfolioCardProps> = React.memo
 
                     <div className="min-h-[1px] flex-1" aria-hidden />
 
-                    <div className="mt-auto flex shrink-0 justify-end items-center gap-1 border-t border-slate-200/50 pt-3">
+                    <div className="mt-auto flex shrink-0 flex-wrap justify-end items-center gap-1 border-t border-slate-200/50 pt-3">
+                        {budgetView === 'Monthly' &&
+                            (budget.nextMonthAvailableSar ?? 0) > 0 &&
+                            (budget.percentage ?? 0) >= 90 &&
+                            onBorrowFromNextMonth && (
+                                <button
+                                    type="button"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onBorrowFromNextMonth(budget);
+                                    }}
+                                    className="mr-auto px-2 py-1 text-[10px] font-semibold rounded-lg bg-indigo-50 text-indigo-900 border border-indigo-200 hover:bg-indigo-100"
+                                >
+                                    Borrow from next month
+                                </button>
+                            )}
                         <button
                             type="button"
                             onClick={(e) => {

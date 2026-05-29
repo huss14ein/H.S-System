@@ -21,12 +21,11 @@ import {
 import { salaryToExpenseCoverageSar } from '../services/salaryExpenseCoverage';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
-import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { computeAllNetWorthChartBucketsSAR } from '../services/personalNetWorth';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalFinancialMetrics, useCanonicalSpotFx, useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
+import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
-import { useMarketData } from '../context/MarketDataContext';
 import { detectBudgetDrift } from '../services/budgetDrift';
 import { computeIncomeStability } from '../services/incomeStability';
 import {
@@ -81,7 +80,7 @@ function buildTrendDataSar(
 const SpendingByCategoryChart: React.FC = () => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const { sarPerUsd: fx } = useCanonicalFinancialMetrics();
+    const fx = useCanonicalSpotFx();
     const chartData = useMemo(() => {
         const txs = data?.transactions ?? [];
         const accounts = data?.accounts ?? [];
@@ -107,7 +106,7 @@ const SpendingByCategoryChart: React.FC = () => {
 const IncomeExpenseTrendChart: React.FC = () => {
     const { data } = useContext(DataContext)!;
     const { formatCurrencyString } = useFormatCurrency();
-    const { sarPerUsd: fx } = useCanonicalFinancialMetrics();
+    const fx = useCanonicalSpotFx();
     const chartData = useMemo(() => {
         const monthStartDay = resolveMonthStartDayFromData(data);
         return buildTrendDataSar(data?.transactions ?? [], data?.accounts ?? [], fx, monthStartDay, 6);
@@ -134,7 +133,7 @@ const IncomeExpenseTrendChart: React.FC = () => {
 
 const AssetLiabilityChart: React.FC = () => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-    const { simulatedPrices } = useMarketData();
+    const simulatedPrices = useCanonicalSimulatedPrices();
     const { formatCurrencyString } = useFormatCurrency();
     const toFiniteMoney = (value: unknown): number => {
         const n = Number(value);
@@ -191,9 +190,10 @@ const AssetLiabilityChart: React.FC = () => {
 
 const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { aiHealthChecked, isAiAvailable } = useAI();
-    const { data, showBlockingLoader, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { exchangeRate, currency: displayCurrency } = useCurrency();
-    const { simulatedPrices } = useMarketData();
+    const simulatedPrices = useCanonicalSimulatedPrices();
+    useHydrateSarPerUsdDailySeries(data, exchangeRate);
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const {
         sarPerUsd: headlineFx,
@@ -206,8 +206,6 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const contextData = useMemo(() => {
         const transactions = data?.transactions ?? [];
         const accounts = data?.accounts ?? [];
-
-        hydrateSarPerUsdDailySeries(data, exchangeRate);
 
         const spendingData = expenseTotalsByBudgetCategorySar(transactions as Transaction[], accounts, headlineFx);
 
@@ -286,14 +284,6 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
 
     const budgetDriftRows = useMemo(() => detectBudgetDrift(data!, exchangeRate), [data, exchangeRate]);
     const incomeStability = useMemo(() => computeIncomeStability(data!), [data]);
-
-    if (showBlockingLoader) {
-        return (
-            <div className="flex justify-center items-center h-96" aria-busy="true">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-primary" aria-label="Loading analysis" />
-            </div>
-        );
-    }
 
     const cov = contextData.salaryCoverage;
     const coverageTone =

@@ -66,7 +66,7 @@ function plainLanguageExecutionNote(logDetails: string): { headline: string; tec
 }
 
 const ExecutionHistoryView: React.FC = () => {
-  const { data, showBlockingLoader } = useContext(DataContext)!;
+  const { data } = useContext(DataContext)!;
   const { formatCurrencyString } = useFormatCurrency();
   const [filterStatus, setFilterStatus] = useState<'All' | 'success' | 'failure'>('All');
 
@@ -165,17 +165,6 @@ const ExecutionHistoryView: React.FC = () => {
     }
     return { total: allExecutionLogs.length, success, failure };
   }, [allExecutionLogs]);
-
-  if (showBlockingLoader) {
-    return (
-      <div className="page-container flex items-center justify-center min-h-[24rem]" aria-busy="true">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin" aria-label="Loading execution history" />
-          <span className="text-sm text-slate-600">Loading execution history…</span>
-        </div>
-      </div>
-    );
-  }
 
   const fmtPlan = (n: number) => formatCurrencyString(n ?? 0, { digits: 0, inCurrency: planCurrency });
 

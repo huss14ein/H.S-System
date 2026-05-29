@@ -8,7 +8,8 @@ import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import { RocketLaunchIcon } from '../components/icons/RocketLaunchIcon';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
-import { useMarketData } from '../context/MarketDataContext';
+import { useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
+import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { computeHouseholdStressFromData } from '../services/householdBudgetStress';
@@ -35,7 +36,7 @@ import { ClockIcon, TargetIcon } from '../components/icons';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { convertBetweenTradeCurrencies, inferInstrumentCurrencyFromSymbol } from '../utils/currencyMath';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
 import CurrencyDualDisplay from '../components/CurrencyDualDisplay';
 import { fetchCompanyNameForSymbol } from '../hooks/useSymbolCompanyName';
@@ -111,10 +112,14 @@ const PlanTradeModal: React.FC<{
         return computeBuyScore(data, sym, exchangeRate, getAvailableCashForAccount, emergencyFund.monthsCovered, 6, wl);
     }, [data, symbol, tradeType, exchangeRate, getAvailableCashForAccount, emergencyFund.monthsCovered]);
     const planCcy = (budgetCurrency || 'SAR') as TradeCurrency;
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
     const instrumentCurrency = useMemo(() => inferInstrumentCurrencyFromSymbol(symbol), [symbol]);
     const portfolios = useMemo(() => getPersonalInvestments(data ?? null), [data]);
-    const holdingSymbolOptions = useMemo(() => buildHoldingSymbolOptions(portfolios), [portfolios]);
+    const holdingSymbolOptionsForSell = useMemo(() => {
+        if (tradeType !== 'sell') return [];
+        const pid = executionPortfolioId.trim();
+        return pid ? buildHoldingSymbolOptions(portfolios, pid) : [];
+    }, [tradeType, executionPortfolioId, portfolios]);
     const sellPortfolioOptions = useMemo(() => {
         const norm = (symbol || '').trim().toUpperCase();
         if (!norm) return [];
@@ -139,6 +144,20 @@ const PlanTradeModal: React.FC<{
     }, []);
 
     useEffect(() => {
+        if (tradeType !== 'sell' || !executionPortfolioId.trim()) return;
+        if (!holdingOptionKey) return;
+        const stillValid = holdingSymbolOptionsForSell.some((o) => o.optionKey === holdingOptionKey);
+        if (stillValid) return;
+        const key = resolveHoldingOptionKeyFromSymbol(holdingSymbolOptionsForSell, symbol, executionPortfolioId);
+        if (key) {
+            const opt = holdingSymbolOptionsForSell.find((o) => o.optionKey === key);
+            if (opt) applyHoldingOption(opt);
+        } else {
+            applyHoldingOption(null);
+        }
+    }, [tradeType, executionPortfolioId, holdingSymbolOptionsForSell, holdingOptionKey, symbol, applyHoldingOption]);
+
+    useEffect(() => {
         if (!isOpen) {
             skipUniverseAutofillRef.current = false;
         }
@@ -159,7 +178,11 @@ const PlanTradeModal: React.FC<{
             setExecutionPortfolioId(planToEdit.portfolioId ?? '');
             if (planToEdit.tradeType === 'sell') {
                 setHoldingOptionKey(
-                    resolveHoldingOptionKeyFromSymbol(holdingSymbolOptions, planToEdit.symbol, planToEdit.portfolioId),
+                    resolveHoldingOptionKeyFromSymbol(
+                        buildHoldingSymbolOptions(portfolios),
+                        planToEdit.symbol,
+                        planToEdit.portfolioId,
+                    ),
                 );
             } else {
                 setHoldingOptionKey('');
@@ -173,7 +196,7 @@ const PlanTradeModal: React.FC<{
             setTrancheCount('1');
             lastSymbolAtFocusRef.current = '';
         }
-    }, [planToEdit, isOpen, holdingSymbolOptions]);
+    }, [planToEdit, isOpen, portfolios]);
 
     // Apply one-shot prefill (Smart add, etc.): after base reset effects for new plans.
     useEffect(() => {
@@ -184,7 +207,7 @@ const PlanTradeModal: React.FC<{
         const tt = p.tradeType ?? 'buy';
         setTradeType(tt);
         if (tt === 'sell') {
-            setHoldingOptionKey(resolveHoldingOptionKeyFromSymbol(holdingSymbolOptions, p.symbol));
+            setHoldingOptionKey(resolveHoldingOptionKeyFromSymbol(buildHoldingSymbolOptions(portfolios), p.symbol));
         }
         setConditionType('price');
         if (p.targetPrice != null && Number.isFinite(p.targetPrice) && p.targetPrice > 0) {
@@ -244,7 +267,7 @@ const PlanTradeModal: React.FC<{
             toast(tradeType === 'sell' ? 'Select a holding to sell.' : 'Symbol is required.', 'error');
             return;
         }
-        if (tradeType === 'sell' && !holdingSymbolIsOwned(holdingSymbolOptions, symbol, executionPortfolioId)) {
+        if (tradeType === 'sell' && !holdingSymbolIsOwned(holdingSymbolOptionsForSell, symbol, executionPortfolioId)) {
             toast('Sell plans must use a symbol you currently hold.', 'error');
             return;
         }
@@ -520,9 +543,15 @@ const PlanTradeModal: React.FC<{
                         {tradeType === 'sell' ? (
                             <HoldingSymbolSelect
                                 id="plan-holding-select"
-                                options={holdingSymbolOptions}
+                                options={holdingSymbolOptionsForSell}
                                 value={holdingOptionKey}
                                 onChange={applyHoldingOption}
+                                showPortfolioInLabel={!executionPortfolioId.trim()}
+                                emptyLabel={
+                                    executionPortfolioId.trim()
+                                        ? 'No holdings in this portfolio'
+                                        : 'Select a holding (or choose portfolio below to narrow list)'
+                                }
                             />
                         ) : (
                             <input 
@@ -605,7 +634,15 @@ const PlanTradeModal: React.FC<{
                         <select
                             id="plan-execution-portfolio"
                             value={executionPortfolioId}
-                            onChange={(e) => setExecutionPortfolioId(e.target.value)}
+                            onChange={(e) => {
+                                const next = e.target.value;
+                                setExecutionPortfolioId(next);
+                                if (tradeType === 'sell') {
+                                    setHoldingOptionKey('');
+                                    setSymbol('');
+                                    setName('');
+                                }
+                            }}
                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
                         >
                             <option value="">{tradeType === 'sell' ? 'Select holding above' : 'Auto — infer from holdings or all platforms'}</option>
@@ -928,11 +965,12 @@ const InvestmentPlanView: React.FC<{
     onStagedAddOnPlannedHandled?: () => void;
 }> = ({ onExecutePlan, setActivePage: _setActivePage, triggerPageAction, embedded = false, stagedAddOnPlanned, onStagedAddOnPlannedHandled }) => {
     const { aiActionsEnabled } = useAI();
-    const { data, showBlockingLoader, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker, getAvailableCashForAccount } = useContext(DataContext)!;
     const { trackAction, trackSuggestionFeedback } = useSelfLearning();
-    const { simulatedPrices, symbolQuoteUpdatedAt } = useMarketData();
+    const { simulatedPrices } = useInvestmentsCanonicalMetrics();
+    const { symbolQuoteUpdatedAt } = useMarketQuoteMeta();
     const { exchangeRate } = useCurrency();
-    const { sarPerUsd } = useCanonicalFinancialMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
     const emergencyFund = useEmergencyFund(data ?? null);
     const canonicalPlan = useMemo(
         () =>
@@ -968,24 +1006,6 @@ const InvestmentPlanView: React.FC<{
         () => computeHouseholdStressFromData(data),
         [data]
     );
-
-    // Loading state
-    if (showBlockingLoader) {
-        const loadingInner = (
-            <div className="flex items-center justify-center py-12" aria-busy="true">
-                <div className="text-center">
-                    <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" aria-label="Loading trade plans" />
-                    <p className="text-sm text-slate-600">Loading trade plans…</p>
-                </div>
-            </div>
-        );
-        if (embedded) return loadingInner;
-        return (
-            <PageLayout title="Trade plans" description="Schedule future buys or sells. We’ll flag when your rule is met.">
-                {loadingInner}
-            </PageLayout>
-        );
-    }
 
     const handleSave = async (planData: PlanSavePayload | PlannedTrade) => {
         if ('id' in planData) {

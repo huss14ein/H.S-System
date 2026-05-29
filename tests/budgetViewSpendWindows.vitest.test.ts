@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   clampDateToFinancialMonthBounds,
   computeBudgetSpendWindows,
+  computeMonthlySpendWindowsForFinancialKey,
+  financialPlanYearYtdWindow,
   formatBudgetSpendWindowLabel,
 } from '../services/budgetViewSpendWindows';
 import { financialMonthRangeFromKey } from '../utils/financialMonth';
@@ -18,7 +20,7 @@ describe('clampDateToFinancialMonthBounds', () => {
 });
 
 describe('computeBudgetSpendWindows', () => {
-  it('Monthly: range matches financial month; YTD from Jan 1 through month end', () => {
+  it('Monthly: range matches financial month; YTD from plan-year month 1 through month end', () => {
     const w = computeBudgetSpendWindows({
       budgetView: 'Monthly',
       currentYear: 2026,
@@ -31,6 +33,41 @@ describe('computeBudgetSpendWindows', () => {
     expect(w.ytdStart?.getMonth()).toBe(0);
     expect(w.ytdStart?.getDate()).toBe(1);
     expect(w.ytdEnd?.getTime()).toBe(w.rangeEnd.getTime());
+  });
+
+  it('computeMonthlySpendWindowsForFinancialKey matches Monthly computeBudgetSpendWindows', () => {
+    const monthStartDay = 28;
+    const key = { year: 2026, month: 4 };
+    const anchor = new Date(2026, 3, 15);
+    const fromKey = computeMonthlySpendWindowsForFinancialKey(key, monthStartDay, anchor);
+    const fromView = computeBudgetSpendWindows({
+      budgetView: 'Monthly',
+      currentYear: key.year,
+      currentMonth: key.month,
+      monthStartDay,
+      anchorDate: anchor,
+    });
+    expect(fromKey.rangeStart.getTime()).toBe(fromView.rangeStart.getTime());
+    expect(fromKey.rangeEnd.getTime()).toBe(fromView.rangeEnd.getTime());
+    expect(fromKey.ytdStart?.getTime()).toBe(fromView.ytdStart?.getTime());
+    expect(fromKey.ytdEnd?.getTime()).toBe(fromView.ytdEnd?.getTime());
+    expect(fromKey.ytdStart?.getTime()).not.toBe(new Date(2026, 0, 1, 0, 0, 0, 0).getTime());
+  });
+
+  it('Monthly YTD start follows financial month 1 when monthStartDay > 1', () => {
+    const monthStartDay = 28;
+    const w = computeBudgetSpendWindows({
+      budgetView: 'Monthly',
+      currentYear: 2026,
+      currentMonth: 4,
+      monthStartDay,
+      anchorDate: new Date(2026, 3, 15),
+    });
+    const ytd = financialPlanYearYtdWindow(2026, 4, monthStartDay);
+    expect(w.ytdStart?.getTime()).toBe(ytd.ytdStart.getTime());
+    expect(w.ytdEnd?.getTime()).toBe(ytd.ytdEnd.getTime());
+    expect(w.ytdStart?.getDate()).toBe(28);
+    expect(w.ytdStart?.getTime()).not.toBe(new Date(2026, 0, 1, 0, 0, 0, 0).getTime());
   });
 
   it('Weekly: week contains anchor and lies inside April when anchor is mid-April', () => {
