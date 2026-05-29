@@ -21,6 +21,7 @@ import { CostAveragingCalculator } from '../components/dashboard/CostAveragingCa
 import { Goals2030Timeline } from '../components/dashboard/Goals2030Timeline';
 import { AIExecutiveSummary } from '../components/dashboard/AIExecutiveSummary';
 import { DeferredMount } from '../components/dashboard/DeferredMount';
+import { DashboardSectionHeader } from '../components/dashboard/DashboardSectionHeader';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { attributeNetWorthWithFlows } from '../services/portfolioAttribution';
@@ -166,97 +167,103 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
             title="Wealth Analytics"
             description="Deep-dive tools: cashflow trends, budget burn, goals map, resilience, and health score. All figures use the same canonical net worth and KPI engine as Dashboard and Summary."
         >
-            <div className="mb-4 rounded-xl border border-violet-100 bg-violet-50/60 px-4 py-3 text-sm text-slate-700 space-y-2">
-                <h2 className="text-lg font-semibold text-slate-900">{PAGE_INTROS['Wealth Analytics']?.title}</h2>
-                <p>{PAGE_INTROS['Wealth Analytics']?.description}</p>
-                <p className="text-xs text-slate-600">
-                    <strong>Single source of truth:</strong> net worth, liquid cash, and investment totals match Dashboard and Summary (
-                    {maskBalance(formatCurrencyString(headline.netWorth ?? 0, { digits: 0 }))} SAR).
-                </p>
-            </div>
+            <div dir={dir} className="flex flex-col gap-8 min-w-0">
+                <div className="rounded-xl border border-violet-100 bg-gradient-to-br from-violet-50/70 to-white px-4 py-4 sm:px-5 sm:py-4 text-sm text-slate-700 space-y-2">
+                    <h2 className="text-lg font-semibold text-slate-900">{PAGE_INTROS['Wealth Analytics']?.title}</h2>
+                    <p className="max-w-prose">{PAGE_INTROS['Wealth Analytics']?.description}</p>
+                    <p className="text-xs text-slate-600">
+                        <strong>Single source of truth:</strong> net worth, liquid cash, and investment totals match Dashboard and Summary (
+                        {maskBalance(formatCurrencyString(headline.netWorth ?? 0, { digits: 0 }))} SAR).
+                    </p>
+                </div>
 
-            <ExecutiveStatusRow
-                metrics={{
-                    headline: dashboardMetrics.headline,
-                    kpiSnapshot: dashboardMetrics.kpiSnapshot,
-                }}
-            />
-
-            <section className="mb-8" aria-label="Operations cockpit">
-                <h2 className="text-lg font-semibold text-slate-800 mb-1">Monthly operations</h2>
-                <p className="text-xs text-slate-500 mb-3">
-                    Cashflow trend, budget burn rate, spending breakdown, and what-if surplus — filtered to your personal accounts.
-                </p>
-                <DashboardOperationsCockpit
-                    data={data}
-                    personalTransactions={personalTransactions}
-                    personalAccounts={personalAccounts}
-                    budgets={budgets}
-                    goals={goals}
-                    sarPerUsd={sarPerUsd}
-                    liquidCashSar={kpiSnapshot?.liquidCashSar ?? 0}
-                    investmentsTotalSar={investmentsTotalSar}
+                <ExecutiveStatusRow
+                    className="min-w-0"
+                    showLanguageToggle
+                    metrics={{
+                        headline: dashboardMetrics.headline,
+                        kpiSnapshot: dashboardMetrics.kpiSnapshot,
+                    }}
                 />
-            </section>
 
-            <section className="mb-8" aria-label="Wealth atlas">
-                <h2 className="text-lg font-semibold text-slate-800 mb-1">Wealth composition &amp; goals</h2>
-                <p className="text-xs text-slate-500 mb-3">
-                    Net worth buckets, allocation rings, holdings bubble chart, and 2030 goals journey — scaled to canonical investment total.
-                </p>
-                <SummaryWealthAtlas
-                    dir={dir}
-                    buckets={headline.buckets}
-                    netWorthSar={headline.netWorth ?? 0}
-                    investmentAllocation={investmentAllocation}
-                    investmentsTotalSar={investmentsTotalSar}
-                    personalInvestments={personalInvestments}
-                    simulatedPrices={simulatedPrices}
-                    sarPerUsd={sarPerUsd}
-                    data={data}
-                    goals={goals}
-                    onOpenGoals={setActivePage ? () => setActivePage('Goals') : undefined}
-                />
-            </section>
-
-            <section className="mb-8 space-y-4" aria-label="Holdings and tools">
-                <h2 className="text-lg font-semibold text-slate-800">Holdings &amp; calculators</h2>
-                <p className="text-xs text-slate-500">
-                    Position-level ROI uses live quotes and the same SAR/USD rate as the Investments hub.
-                </p>
-                <DeferredMount minHeight="12rem">
-                    <PortfolioHoldingsGrid
-                        portfolios={personalInvestments}
-                        simulatedPrices={simulatedPrices}
-                        sarPerUsd={sarPerUsd}
-                    />
-                </DeferredMount>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <CostAveragingCalculator portfolios={personalInvestments} />
-                    <Goals2030Timeline
+                <section className="min-w-0" aria-label="Operations cockpit">
+                    <DashboardOperationsCockpit
                         data={data}
+                        personalTransactions={personalTransactions}
+                        personalAccounts={personalAccounts}
+                        budgets={budgets}
                         goals={goals}
                         sarPerUsd={sarPerUsd}
-                        onOpenGoals={setActivePage ? () => setActivePage('Goals') : undefined}
+                        liquidCashSar={kpiSnapshot?.liquidCashSar ?? 0}
+                        investmentsTotalSar={investmentsTotalSar}
+                        showLanguageToggle={false}
                     />
-                </div>
-            </section>
+                </section>
 
-            <WealthAnalyticsSummaryPanels
-                reportModel={reportModel}
-                maskBalance={maskBalance}
-                formatCurrencyString={formatCurrencyString}
-                nwSnapshotInsight={nwSnapshotInsight}
-                setActivePage={setActivePage}
-                triggerPageAction={triggerPageAction}
-            />
+                <section className="min-w-0" aria-label="Wealth atlas">
+                    <SummaryWealthAtlas
+                        dir={dir}
+                        buckets={headline.buckets}
+                        netWorthSar={headline.netWorth ?? 0}
+                        investmentAllocation={investmentAllocation}
+                        investmentsTotalSar={investmentsTotalSar}
+                        personalInvestments={personalInvestments}
+                        simulatedPrices={simulatedPrices}
+                        sarPerUsd={sarPerUsd}
+                        data={data}
+                        goals={goals}
+                        onOpenGoals={setActivePage ? () => setActivePage('Goals') : undefined}
+                        showLanguageToggle={false}
+                    />
+                </section>
 
-            <CollapsibleSection
-                title="Insights & health score"
-                summary="Suggested actions, capital gate, composite health"
-                defaultExpanded
-                className="mb-4"
-            >
+                <section className="min-w-0 space-y-4" aria-label="Holdings and tools">
+                    <DashboardSectionHeader
+                        titleKey="analyticsHoldingsTitle"
+                        subtitleKey="analyticsHoldingsSubtitle"
+                        showLanguageToggle={false}
+                    />
+                    <DeferredMount minHeight="12rem">
+                        <PortfolioHoldingsGrid
+                            portfolios={personalInvestments}
+                            simulatedPrices={simulatedPrices}
+                            sarPerUsd={sarPerUsd}
+                        />
+                    </DeferredMount>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
+                        <CostAveragingCalculator portfolios={personalInvestments} />
+                        <Goals2030Timeline
+                            data={data}
+                            goals={goals}
+                            sarPerUsd={sarPerUsd}
+                            onOpenGoals={setActivePage ? () => setActivePage('Goals') : undefined}
+                        />
+                    </div>
+                </section>
+
+                <section className="min-w-0 space-y-4" aria-label="Resilience and liquid wealth">
+                    <DashboardSectionHeader
+                        titleKey="analyticsResilienceTitle"
+                        subtitleKey="analyticsResilienceSubtitle"
+                        showLanguageToggle={false}
+                    />
+                    <WealthAnalyticsSummaryPanels
+                        reportModel={reportModel}
+                        maskBalance={maskBalance}
+                        formatCurrencyString={formatCurrencyString}
+                        nwSnapshotInsight={nwSnapshotInsight}
+                        setActivePage={setActivePage}
+                        triggerPageAction={triggerPageAction}
+                    />
+                </section>
+
+                <section className="min-w-0 space-y-4" aria-label="Insights and AI">
+                    <CollapsibleSection
+                        title="Insights & health score"
+                        summary="Suggested actions, capital gate, composite health"
+                        defaultExpanded
+                        className="mb-0"
+                    >
                 {strictReconciliationMode && kpiReconciliation && !kpiReconciliation.ok && (
                     <div className="mb-4 p-4 rounded-xl border border-rose-200 bg-rose-50 text-sm" role="alert">
                         <p className="font-semibold text-rose-950">KPI mismatch (strict mode)</p>
@@ -336,13 +343,15 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
                 )}
             </CollapsibleSection>
 
-            <CollapsibleSection title="AI executive summary" summary="On-demand narrative from canonical KPIs" defaultExpanded={false} className="mb-4">
-                <AIExecutiveSummary />
-            </CollapsibleSection>
+                    <CollapsibleSection title="AI executive summary" summary="On-demand narrative from canonical KPIs" defaultExpanded={false} className="mb-0">
+                        <AIExecutiveSummary />
+                    </CollapsibleSection>
 
-            <CollapsibleSection title="AI insights feed" summary="Automated signals (non-blocking)" defaultExpanded={false}>
-                <AIFeed />
-            </CollapsibleSection>
+                    <CollapsibleSection title="AI insights feed" summary="Automated signals (non-blocking)" defaultExpanded={false} className="mb-0">
+                        <AIFeed />
+                    </CollapsibleSection>
+                </section>
+            </div>
         </PageLayout>
     );
 };

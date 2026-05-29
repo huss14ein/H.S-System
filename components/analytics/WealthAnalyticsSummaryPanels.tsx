@@ -57,12 +57,12 @@ export const WealthAnalyticsSummaryPanels: React.FC<{
     const { householdStress, riskLane, liquidityRunway, discipline, shockDrill, liquidNw } = reportModel;
 
     return (
-        <>
+        <div className="space-y-4 min-w-0">
             <CollapsibleSection
                 title="Spendable-style wealth (liquid)"
                 summary={maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))}
                 defaultExpanded
-                className="border border-emerald-100 bg-gradient-to-br from-emerald-50/40 to-white"
+                className="border border-emerald-100 bg-gradient-to-br from-emerald-50/40 to-white mb-0"
             >
                 <p className="text-sm text-slate-600 mb-2 max-w-prose">
                     Quick-access wealth: cash, brokerage, Sukuk, commodities, receivables, minus cards and loans. Uses the same SAR/USD rate as Dashboard net worth.
@@ -142,7 +142,7 @@ export const WealthAnalyticsSummaryPanels: React.FC<{
                 title="Resilience & discipline"
                 summary="Household stress, runway, budget discipline"
                 defaultExpanded
-                className="mb-4 border border-slate-200"
+                className="mb-0 border border-slate-200"
             >
                 {householdStress && (() => {
                     const hs = householdStressStyles(householdStress.level);
@@ -190,7 +190,7 @@ export const WealthAnalyticsSummaryPanels: React.FC<{
                 title="Net worth change vs flows (saved snapshots)"
                 summary="Savings vs market moves"
                 defaultExpanded={false}
-                className="border border-violet-100 bg-violet-50/40"
+                className="mb-0 border border-violet-100 bg-violet-50/40"
             >
                 {nwSnapshotInsight.attr ? (
                     <>
@@ -213,7 +213,7 @@ export const WealthAnalyticsSummaryPanels: React.FC<{
                 )}
             </CollapsibleSection>
 
-            <CollapsibleSection title="Stress test (shock drill)" summary="Job-loss style scenario" defaultExpanded={false} className="mb-4">
+            <CollapsibleSection title="Stress test (shock drill)" summary="Job-loss style scenario" defaultExpanded={false} className="mb-0">
                 <p className="text-xs text-slate-500 mb-2">
                     Template: <span className="font-semibold">{SHOCK_TEMPLATES.find((t) => t.id === 'job_loss')?.label}</span>
                 </p>
@@ -248,6 +248,6 @@ export const WealthAnalyticsSummaryPanels: React.FC<{
                     </button>
                 )}
             </CollapsibleSection>
-        </>
+        </div>
     );
 };

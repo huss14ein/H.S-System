@@ -13,7 +13,7 @@ import { ExpenseDonutDrilldown } from './ExpenseDonutDrilldown';
 import { WhatIfSandbox } from './WhatIfSandbox';
 import { DeferredMount } from './DeferredMount';
 
-/** Dashboard-only: monthly operations — cashflow, budgets, spending sandbox. */
+/** Monthly operations — cashflow, budgets, spending sandbox (Wealth Analytics + legacy Dashboard). */
 export const DashboardOperationsCockpit: React.FC<{
   data: FinancialData | null | undefined;
   personalTransactions: Transaction[];
@@ -23,6 +23,9 @@ export const DashboardOperationsCockpit: React.FC<{
   sarPerUsd: number;
   liquidCashSar: number;
   investmentsTotalSar: number;
+  showSectionHeader?: boolean;
+  showLanguageToggle?: boolean;
+  className?: string;
 }> = ({
   data,
   personalTransactions,
@@ -32,18 +35,27 @@ export const DashboardOperationsCockpit: React.FC<{
   sarPerUsd,
   liquidCashSar,
   investmentsTotalSar,
+  showSectionHeader = true,
+  showLanguageToggle = true,
+  className = '',
 }) => {
   const [suiteRange, setSuiteRange] = useState<DashboardDateRange>(() => createDashboardDateRange('6M'));
   const suiteMonthsBack = useMemo(() => dashboardSuiteMonthsBack(suiteRange), [suiteRange]);
 
   return (
-    <div className="mb-6 space-y-4">
-      <DashboardSectionHeader titleKey="dashboardCockpitTitle" subtitleKey="dashboardCockpitSubtitle" />
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-        <div className="lg:col-span-1">
+    <div className={`space-y-4 ${className}`}>
+      {showSectionHeader && (
+        <DashboardSectionHeader
+          titleKey="dashboardCockpitTitle"
+          subtitleKey="dashboardCockpitSubtitle"
+          showLanguageToggle={showLanguageToggle}
+        />
+      )}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-stretch">
+        <div className="lg:col-span-1 flex">
           <DateRangePicker value={suiteRange} onChange={setSuiteRange} />
         </div>
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-2 min-w-0">
           <MomCashflowTrendChart
             data={data}
             uiExchangeRate={sarPerUsd}
