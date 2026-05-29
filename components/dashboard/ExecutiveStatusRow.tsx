@@ -40,7 +40,9 @@ const MetricCard: React.FC<MetricCardProps> = ({ title, value, sub, accent, icon
 
 export const ExecutiveStatusRow: React.FC<{
   metrics: Pick<DashboardCanonicalMetrics, 'headline' | 'kpiSnapshot'>;
-}> = ({ metrics }) => {
+  showLanguageToggle?: boolean;
+  className?: string;
+}> = ({ metrics, showLanguageToggle = true, className = '' }) => {
   const { t, dir, language, setLanguage } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
 
@@ -76,37 +78,39 @@ export const ExecutiveStatusRow: React.FC<{
   }, [formatCurrencyString, metrics.headline, metrics.kpiSnapshot, t]);
 
   return (
-    <div dir={dir} className="space-y-3">
+    <div dir={dir} className={`space-y-3 ${className}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h2 className="text-lg sm:text-xl font-bold text-slate-900">{t('executiveStatus')}</h2>
           <p className="text-sm text-slate-600">{t('cashflowTrend')}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-slate-500">{t('language')}</span>
-          <div className="rounded-full border border-slate-200 bg-white p-1 shadow-sm" dir="ltr">
-            <button
-              type="button"
-              onClick={() => setLanguage('en')}
-              className={`px-3 py-1 text-xs font-semibold rounded-full transition-colors ${
-                language === 'en' ? 'bg-primary text-white' : 'text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              EN
-            </button>
-            <button
-              type="button"
-              onClick={() => setLanguage('ar')}
-              className={`px-3 py-1 text-xs font-semibold rounded-full transition-colors ${
-                language === 'ar' ? 'bg-primary text-white' : 'text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              AR
-            </button>
+        {showLanguageToggle && (
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-xs font-semibold text-slate-500">{t('language')}</span>
+            <div className="rounded-full border border-slate-200 bg-white p-1 shadow-sm" dir="ltr">
+              <button
+                type="button"
+                onClick={() => setLanguage('en')}
+                className={`px-3 py-1 text-xs font-semibold rounded-full transition-colors ${
+                  language === 'en' ? 'bg-primary text-white' : 'text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                EN
+              </button>
+              <button
+                type="button"
+                onClick={() => setLanguage('ar')}
+                className={`px-3 py-1 text-xs font-semibold rounded-full transition-colors ${
+                  language === 'ar' ? 'bg-primary text-white' : 'text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                AR
+              </button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {cards.map((c) => (
           <MetricCard key={c.title} {...c} />
         ))}

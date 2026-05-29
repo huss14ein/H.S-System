@@ -38,7 +38,7 @@ export const Goals2030Timeline: React.FC<{
   }, [data, goals, sarPerUsd]);
 
   return (
-    <div dir={dir} className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4">
+    <div dir={dir} className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4 h-full flex flex-col">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t('goalsForecast')}</p>

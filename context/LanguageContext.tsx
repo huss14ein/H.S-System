@@ -59,6 +59,16 @@ const DICT: Dict = {
   allocationRings: { en: 'Allocation rings', ar: 'حلقات التوزيع' },
   holdingsMap: { en: 'Holdings heat map', ar: 'خريطة المقتنيات' },
   goalsRoadmapHint: { en: 'Milestone rings on the road to 2030.', ar: 'محطات على طريق 2030.' },
+  analyticsHoldingsTitle: { en: 'Holdings & calculators', ar: 'المقتنيات والحاسبات' },
+  analyticsHoldingsSubtitle: {
+    en: 'Position-level ROI with live quotes — same SAR/USD rate as the Investments hub.',
+    ar: 'عائد كل مركز بأسعار مباشرة — نفس سعر الصرف كمركز الاستثمار.',
+  },
+  analyticsResilienceTitle: { en: 'Resilience & liquid wealth', ar: 'المرونة والثروة السائلة' },
+  analyticsResilienceSubtitle: {
+    en: 'Spendable-style wealth, runway, stress tests — canonical numbers from the wealth summary model.',
+    ar: 'ثروة قابلة للصرف، مدى السيولة، اختبارات الضغط — أرقام موحدة من نموذج الملخص.',
+  },
 };
 
 export type LanguageContextValue = {

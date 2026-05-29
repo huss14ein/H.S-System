@@ -71,7 +71,7 @@ export const DateRangePicker: React.FC<{
   );
 
   return (
-    <div dir={dir} className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-3 sm:p-4">
+    <div dir={dir} className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-3 sm:p-4 w-full h-full flex flex-col justify-center">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t('dateRange')}</p>
