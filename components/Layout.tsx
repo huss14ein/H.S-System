@@ -20,6 +20,7 @@ import { runAutoNetWorthSnapshotIfDue } from '../services/scheduledNetWorthSnaps
 import { pauseBackgroundWork } from '../utils/backgroundWorkGate';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
 import { PageDeferredDataProvider } from '../context/PageDeferredDataContext';
+import { APP_VERSION, CANONICAL_VITE_APP_URL, getBuildSha } from '../utils/buildInfo';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -136,6 +137,14 @@ const Layout: React.FC<LayoutProps> = ({
             />
           )}
           <PageDeferredDataProvider>{children}</PageDeferredDataProvider>
+          <p className="mt-10 pt-4 border-t border-slate-200/80 text-[10px] text-slate-400 text-center" aria-hidden>
+            Finova {APP_VERSION} · build {getBuildSha()}
+            {typeof window !== 'undefined' && window.location.hostname.includes('netlify.app') && (
+              <span className="block mt-1 text-amber-600 font-medium">
+                Wrong host for this app — use {CANONICAL_VITE_APP_URL.replace('https://', '')}
+              </span>
+            )}
+          </p>
         </div>
       </main>
 

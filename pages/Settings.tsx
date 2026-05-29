@@ -33,6 +33,7 @@ import { useNotifications } from '../context/NotificationsContext';
 import { toSAR } from '../utils/currencyMath';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
+import { APP_VERSION, CANONICAL_VITE_APP_URL, getBuildSha, getBuildTimeIso, hasWealthAnalyticsRollout } from '../utils/buildInfo';
 import AIAdvisor from '../components/AIAdvisor';
 import Modal from '../components/Modal';
 import { clearAiProxySessionBlock } from '../services/geminiService';
@@ -489,6 +490,31 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                             <InfoHint text="Tap or hover this icon anywhere in Finova for a plain-language explanation of the row or KPI next to it." placement="bottom" />
                         </span>{' '}
                         icon — hover (or tap on mobile) to read a short explanation. No finance degree needed.
+                    </p>
+                </div>
+                <div
+                    className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
+                        hasWealthAnalyticsRollout()
+                            ? 'border-emerald-200 bg-emerald-50/80 text-emerald-950'
+                            : 'border-amber-200 bg-amber-50/80 text-amber-950'
+                    }`}
+                    role="status"
+                >
+                    <p className="font-semibold">App build (verify you are on the latest deploy)</p>
+                    <p className="mt-1 tabular-nums">
+                        Version {APP_VERSION} · commit <code className="text-xs bg-white/60 px-1 rounded">{getBuildSha()}</code>
+                        {getBuildTimeIso() ? ` · built ${new Date(getBuildTimeIso()).toLocaleString()}` : ''}
+                    </p>
+                    <p className="mt-1">
+                        Wealth Analytics rollout:{' '}
+                        <strong>{hasWealthAnalyticsRollout() ? 'included in this build' : 'not in this build — hard refresh or use the URL below'}</strong>
+                    </p>
+                    <p className="mt-2 text-xs opacity-90">
+                        This codebase (Vite + Supabase) deploys to{' '}
+                        <a href={CANONICAL_VITE_APP_URL} className="underline font-medium" target="_blank" rel="noopener noreferrer">
+                            {CANONICAL_VITE_APP_URL.replace('https://', '')}
+                        </a>
+                        . <strong>my-finova.netlify.app</strong> is a different Next.js app — merges here will not update that site.
                     </p>
                 </div>
             </div>
