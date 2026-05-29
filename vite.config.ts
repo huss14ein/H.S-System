@@ -26,11 +26,25 @@ function cssBeforeModuleScripts(): Plugin {
   };
 }
 
+const buildSha = (
+  process.env.VERCEL_GIT_COMMIT_SHA ??
+  process.env.COMMIT_REF ??
+  process.env.GITHUB_SHA ??
+  'dev'
+).slice(0, 7);
+
+const buildTimeIso = new Date().toISOString();
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   loadEnv(mode, process.cwd(), '');
 
   return {
+    define: {
+      __APP_BUILD_SHA__: JSON.stringify(buildSha),
+      __APP_BUILD_TIME__: JSON.stringify(buildTimeIso),
+      __WEALTH_ANALYTICS_V2__: JSON.stringify(true),
+    },
     // Emulates Netlify redirects (`/api/*` → functions). Functions read AI keys from Netlify Site env server-side only.
     plugins: [react(), netlify(), cssBeforeModuleScripts()],
     build: {
