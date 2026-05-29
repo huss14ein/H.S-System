@@ -2051,7 +2051,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         if (newTx) {
             const normalized = normalizeTransaction(newTx);
-            setData(prev => ({ ...prev, transactions: [normalized, ...prev.transactions] }));
+            startTransition(() => {
+                setData((prev) => ({ ...prev, transactions: [normalized, ...prev.transactions] }));
+            });
             await syncSharedBudgetTransactionMirror(normalized as any);
             auditChangeLog({
                 action: 'create',
@@ -2281,7 +2283,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     const rank = (v: Transaction) => (v.transferRole === 'principal_out' ? 0 : v.transferRole === 'fee' ? 1 : 2);
                     return rank(a) - rank(b);
                 });
-            setData(prev => ({ ...prev, transactions: [...normalizedRows, ...prev.transactions] }));
+            startTransition(() => {
+                setData((prev) => ({ ...prev, transactions: [...normalizedRows, ...prev.transactions] }));
+            });
             for (const row of normalizedRows) {
                 await syncSharedBudgetTransactionMirror(row as any);
                 auditChangeLog({
@@ -2391,7 +2395,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     await applyLedgerAccountDeltaForTransaction(normalized.accountId, Number(normalized.amount) || 0);
                 }
             }
-            setData(prevState => ({ ...prevState, transactions: prevState.transactions.map(t => t.id === transaction.id ? normalized : t) }));
+            startTransition(() => {
+                setData((prevState) => ({
+                    ...prevState,
+                    transactions: prevState.transactions.map((t) => (t.id === transaction.id ? normalized : t)),
+                }));
+            });
             await syncSharedBudgetTransactionMirror(normalized as any);
             auditChangeLog({
                 action: 'update',
@@ -2444,7 +2453,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if(error) console.error("Error deleting transaction:", error);
         else {
             await applyLedgerAccountDeltaForTransaction(prevTx?.accountId, -(Number(prevTx?.amount) || 0));
-            setData(prev => ({ ...prev, transactions: prev.transactions.filter(t => t.id !== transactionId) }));
+            startTransition(() => {
+                setData((prev) => ({ ...prev, transactions: prev.transactions.filter((t) => t.id !== transactionId) }));
+            });
             await removeSharedBudgetTransactionMirror(transactionId);
             auditChangeLog({
                 action: 'delete',

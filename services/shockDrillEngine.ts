@@ -1,5 +1,6 @@
 import type { FinancialData } from '../types';
 import { resolveSarPerUsd } from '../utils/currencyMath';
+import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import { buildHouseholdBudgetPlan, buildHouseholdEngineInputFromData } from './householdBudgetEngine';
 import { runWealthUltraEngine } from '../wealth-ultra';
 
@@ -34,9 +35,8 @@ export function runShockDrill(data: FinancialData | null | undefined, templateId
   if (!template) return null;
 
   const year = new Date().getFullYear();
-  const d = data as any;
-  const tx = d?.personalTransactions ?? data.transactions ?? [];
-  const accounts = d?.personalAccounts ?? data.accounts ?? [];
+  const tx = getPersonalTransactions(data);
+  const accounts = getPersonalAccounts(data);
   const goals = data.goals ?? [];
   const sarPerUsd = resolveSarPerUsd(data, undefined);
 

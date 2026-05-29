@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useContext } from 'react';
 import { DataContext } from '../context/DataContext';
 import { Account, Liability, Page } from '../types';
-import { isPersonalWealth } from '../utils/wealthScope';
+import { isPersonalWealth, getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import Card from '../components/Card';
 import Modal from '../components/Modal';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
@@ -362,7 +362,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
 
     /** Checking + savings only, SAR equivalent (mixed USD/SAR accounts). */
     const liquidCheckingSavingsSar = useMemo(() => {
-        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const accounts = getPersonalAccounts(data);
         return accounts
             .filter((a: Account) => a.type === 'Checking' || a.type === 'Savings')
             .reduce((s: number, a: Account) => {
@@ -409,7 +409,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
 
     const { liquidityRatioVal, debtServicePct } = useMemo(() => {
         const liq = liquidityRatio(liquidCheckingSavingsSar, totalDebt);
-        const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const txs = getPersonalTransactions(data);
         const now = new Date();
         const start = financialMonthLookbackStart(now, 6, monthStartDay);
         const incomes = txs.filter(
@@ -446,11 +446,10 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     }, [allDebts]);
 
     const debtStress = useMemo(() => {
-        const avgMonthlyIncome =
-            (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const allTxs = getPersonalTransactions(data);
         const now = new Date();
         const start = financialMonthLookbackStart(now, 6, monthStartDay);
-        const txs = (avgMonthlyIncome as { date: string; type?: string; category?: string; amount?: number }[]).filter(
+        const txs = allTxs.filter(
             (t) => countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= start
         );
         const byM = new Map<string, number>();
@@ -474,7 +473,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
         if (brokenLinks > 0) warnings.push(`${brokenLinks} liability goal link(s) are stale (goal was deleted).`);
         const emptyName = rows.filter((l) => !String(l.name ?? '').trim()).length;
         if (emptyName > 0) warnings.push(`${emptyName} manual liability row(s) have empty names.`);
-        const hasUsdCash = ((data as any)?.personalAccounts ?? data?.accounts ?? []).some(
+        const hasUsdCash = getPersonalAccounts(data).some(
             (a: Account) => (a.type === 'Checking' || a.type === 'Savings') && a.currency === 'USD',
         );
         if (hasUsdCash) warnings.push('Some cash accounts are in USD; liquidity uses SAR equivalent from your FX rate (header/settings).');
@@ -482,7 +481,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
             warnings.push('Debt service cannot be estimated without recent categorized income (last 6 months).');
         }
         return warnings;
-    }, [sarPerUsd, data?.goals, data?.liabilities, data?.accounts, (data as any)?.personalAccounts, totalDebt, debtServicePct]);
+    }, [sarPerUsd, data?.goals, data?.liabilities, totalDebt, debtServicePct]);
 
     const liabilitiesAiContext = useMemo(() => {
         const activeDebtsOnly = allDebts.filter((l) => (l.status ?? 'Active') === 'Active' && (l.amount ?? 0) < 0);

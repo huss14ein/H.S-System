@@ -80,10 +80,43 @@ export function getPersonalWealthData(data: FinancialData | null | undefined): P
   };
 }
 
+export function resolveTransactionAccountId(t: Transaction): string {
+  const raw = t as Transaction & { account_id?: string };
+  return String(raw.accountId ?? raw.account_id ?? '').trim();
+}
+
 /** Centralized accessors for personal data. Use instead of ad-hoc (data as any)?.personalX ?? data?.x. */
 export function getPersonalTransactions(data: FinancialData | null | undefined): Transaction[] {
   const p = getPersonalWealthData(data);
   return p.personalTransactions.length > 0 ? p.personalTransactions : (data?.transactions ?? []);
+}
+
+/** Alias for KPI / budget / cashflow engines — same rules as {@link getPersonalTransactions}. */
+export const getCashflowTransactions = getPersonalTransactions;
+
+/**
+ * Cash transactions for account-scoped UI (Transactions page, exports).
+ * Uses the full `data.transactions` ledger filtered by visible account ids so shared /
+ * household accounts are not dropped when the personal slice is non-empty but narrower.
+ */
+export function getScopedCashTransactions(
+  data: FinancialData | null | undefined,
+  accountIds?: Iterable<string>,
+): Transaction[] {
+  if (!data) return [];
+  if (!accountIds) return getPersonalTransactions(data);
+  const allowed = new Set(accountIds);
+  const pool = (data.transactions ?? []) as Transaction[];
+  if (pool.length === 0) {
+    return getPersonalTransactions(data).filter((t) => {
+      const id = resolveTransactionAccountId(t);
+      return id.length === 0 || allowed.has(id);
+    });
+  }
+  return pool.filter((t) => {
+    const id = resolveTransactionAccountId(t);
+    return id.length > 0 && allowed.has(id);
+  });
 }
 
 export function getPersonalAccounts(data: FinancialData | null | undefined): Account[] {

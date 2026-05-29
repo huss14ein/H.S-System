@@ -42,7 +42,7 @@ import { findCreditCardLiabilityForAccount } from '../services/creditCardLinking
 import { aggregateCreditCardStatementActivity, estimateMinimumCardPaymentDue } from '../services/creditCardLedger';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import AIAdvisor from '../components/AIAdvisor';
-import { getPersonalAccounts } from '../utils/wealthScope';
+import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import { brokerCashBucketsFromInvestmentAccount } from '../services/investmentCashLedger';
 import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
@@ -527,7 +527,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     }, [scheduledTransferPairs, transferFilterFrom, transferFilterTo, transferFilterStatus]);
 
     const transferHistory = useMemo((): TransferHistoryItem[] => {
-        const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const txs = getPersonalTransactions(data);
         const txsWithRoles = txs as Array<{
             id?: string;
             category?: string;
@@ -630,7 +630,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             .filter((v: TransferHistoryItem | null): v is TransferHistoryItem => v !== null);
         const merged = [...groupedPairs, ...pairs, ...investmentLinkedTransfers];
         return merged.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    }, [data?.transactions, (data as any)?.personalTransactions, data?.investmentTransactions, (data as any)?.personalInvestmentTransactions]);
+    }, [data?.transactions, data?.investmentTransactions, (data as any)?.personalInvestmentTransactions]);
 
     const filteredTransferHistory = useMemo(() => {
         const { start: monthStart, end: monthEnd } = financialMonthRangeFromIsoKey(
@@ -1548,7 +1548,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             </Modal>
             <AIAdvisor
                 pageContext="cashflow"
-                contextData={{ transactions: (data as any)?.personalTransactions ?? data?.transactions ?? [], budgets: data?.budgets ?? [] }}
+                contextData={{ transactions: getPersonalTransactions(data), budgets: data?.budgets ?? [] }}
                 title="Accounts AI Advisor"
                 subtitle="Cash positioning, transfer patterns, and account health insights."
                 buttonLabel="Get AI Insights"

@@ -2,7 +2,7 @@
  * Canonical Finova figures for AI prompts — headline NW, financial-month cashflow,
  * budgets, goals, holdings. Keeps model replies aligned with Dashboard KPIs.
  */
-import type { Budget, FinancialData, Holding, Transaction } from '../types';
+import type { Budget, FinancialData, Holding } from '../types';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
@@ -16,6 +16,7 @@ import {
 } from '../utils/financialMonth';
 import { countsAsExpenseForCashflowKpi } from './transactionFilters';
 import { sortByNewestFirst } from '../utils/sortRecency';
+import { getPersonalTransactions } from '../utils/wealthScope';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 
 export type AiGroundingBuildOptions = {
@@ -95,9 +96,7 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
   const snap = computeDashboardKpiSnapshot(data, exchangeRate, getCash ?? (() => ({ SAR: 0, USD: 0 })), simulatedPrices);
   const cf = financialMonthNetCashflowSar(data, exchangeRate);
 
-  const personalTx = sortByNewestFirst(
-    ((data as { personalTransactions?: Transaction[] }).personalTransactions ?? data.transactions ?? []) as Transaction[],
-  );
+  const personalTx = sortByNewestFirst(getPersonalTransactions(data));
   const monthlyTx = personalTx.filter((t) => {
     const d = new Date(t.date);
     return d >= finRange.start && d <= finRange.end;
@@ -176,9 +175,7 @@ export function buildCategorySuggestionGrounding(
 ): CategorySuggestionGrounding {
   const desc = description.trim();
   const descKey = desc.toLowerCase().slice(0, 80);
-  const txs = sortByNewestFirst(
-    ((data as { personalTransactions?: Transaction[] })?.personalTransactions ?? data?.transactions ?? []) as Transaction[],
-  );
+  const txs = sortByNewestFirst(getPersonalTransactions(data));
 
   const priorCounts = new Map<string, number>();
   for (const t of txs) {

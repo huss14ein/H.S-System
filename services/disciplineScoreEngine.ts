@@ -1,6 +1,7 @@
 import type { FinancialData, PlannedTrade, InvestmentTransaction } from '../types';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
+import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 
 export interface DisciplineScoreSummary {
   score: number; // 0-100
@@ -13,9 +14,9 @@ export function computeDisciplineScore(data: FinancialData | null | undefined): 
 
   const plannedTrades = (data.plannedTrades ?? []) as PlannedTrade[];
   const allTxs = (data.investmentTransactions ?? []) as InvestmentTransaction[];
-  const investments = ((data as any).personalInvestments ?? data.investments ?? []) as any[];
-  const accounts = ((data as any).personalAccounts ?? data.accounts ?? []) as any[];
-  const personalAccountIds = new Set(((data as any).personalAccounts ?? data.accounts ?? []).map((a: { id: string }) => a.id));
+  const investments = getPersonalInvestments(data) as any[];
+  const accounts = getPersonalAccounts(data) as any[];
+  const personalAccountIds = new Set(getPersonalAccounts(data).map((a) => a.id));
   const txs = personalAccountIds.size > 0
     ? allTxs.filter((t) => personalAccountIds.has(resolveInvestmentTransactionAccountId(t as any, accounts, investments)))
     : allTxs;

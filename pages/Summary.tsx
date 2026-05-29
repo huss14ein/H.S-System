@@ -11,7 +11,6 @@ import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import { ArrowTrendingDownIcon } from '../components/icons/ArrowTrendingDownIcon';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import Card from '../components/Card';
-import CollapsibleSection from '../components/CollapsibleSection';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import NetWorthCockpit from '../components/charts/NetWorthCockpit';
@@ -24,8 +23,8 @@ import { useCurrency } from '../context/CurrencyContext';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import type { Page } from '../types';
-import { SHOCK_TEMPLATES } from '../services/shockDrillEngine';
 import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { getPersonalAccounts } from '../utils/wealthScope';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import { buildReviewPack, downloadReviewPackMarkdown } from '../services/reviewPack';
@@ -36,11 +35,7 @@ import {
     markAutoNetWorthSnapshotCaptured,
     shouldThrottleAutoNetWorthSnapshot,
 } from '../services/netWorthSnapshotThrottle';
-import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
-import { attributeNetWorthWithFlows } from '../services/portfolioAttribution';
 import DashboardKpiQualityPanel from '../components/DashboardKpiQualityPanel';
-import { personalNetCashflowBetween } from '../services/netWorthPeriodFlows';
-import type { Transaction } from '../types';
 import {
     generateWealthSummaryReportCsv,
     generateWealthSummaryReportHtml,
@@ -51,45 +46,6 @@ import { useSelfLearning } from '../context/SelfLearningContext';
 import Modal from '../components/Modal';
 import { useAI } from '../context/AiContext';
 import AiProxyUnavailableHint from '../components/AiProxyUnavailableHint';
-import { useLanguage } from '../context/LanguageContext';
-import { SummaryWealthAtlas } from '../components/dashboard/SummaryWealthAtlas';
-import { useDashboardSuiteScope } from '../hooks/useDashboardSuiteScope';
-
-function householdStressStyles(level: string) {
-    const L = (level || '').toLowerCase();
-    if (L === 'high') {
-        return {
-            card: 'border-l-rose-500 bg-rose-50/50',
-            pill: 'bg-rose-100 text-rose-900 ring-1 ring-rose-200',
-            hint: 'High stress — pause optional spending and shore up cash.',
-        };
-    }
-    if (L === 'medium') {
-        return {
-            card: 'border-l-amber-500 bg-amber-50/50',
-            pill: 'bg-amber-100 text-amber-950 ring-1 ring-amber-200',
-            hint: 'Some pressure — keep flexibility and watch large purchases.',
-        };
-    }
-    return {
-        card: 'border-l-emerald-500 bg-emerald-50/40',
-        pill: 'bg-emerald-100 text-emerald-900 ring-1 ring-emerald-200',
-        hint: 'Comfortable room in the household plan.',
-    };
-}
-
-function runwayStyles(status: 'comfortable' | 'watch' | 'critical' | undefined) {
-    if (status === 'critical') return { card: 'border-l-rose-500 bg-rose-50/50', pill: 'bg-rose-100 text-rose-900' };
-    if (status === 'watch') return { card: 'border-l-amber-500 bg-amber-50/50', pill: 'bg-amber-100 text-amber-950' };
-    return { card: 'border-l-sky-500 bg-sky-50/40', pill: 'bg-sky-100 text-sky-900' };
-}
-
-function disciplineStyles(score: number) {
-    if (score >= 75) return { card: 'border-l-emerald-500 bg-emerald-50/40', pill: 'bg-emerald-100 text-emerald-900' };
-    if (score >= 45) return { card: 'border-l-amber-500 bg-amber-50/40', pill: 'bg-amber-100 text-amber-950' };
-    return { card: 'border-l-rose-500 bg-rose-50/50', pill: 'bg-rose-100 text-rose-900' };
-}
-
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
         case 'Excellent': return { bg: 'bg-green-100', text: 'text-green-800', border: 'border-green-500', icon: <CheckCircleIcon className="h-6 w-6 text-green-500" /> };
@@ -127,7 +83,7 @@ interface SummaryProps {
   triggerPageAction?: (page: Page, action: string) => void;
 }
 
-const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) => {
+const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
     const { aiActionsEnabled, aiHealthChecked, isAiAvailable } = useAI();
     const { data, getAvailableCashForAccount, showHydrateBanner } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
@@ -141,9 +97,6 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         investableCashBars,
         sarPerUsd: canonicalSarPerUsd,
         simulatedPrices: canonicalSimulatedPrices,
-        investmentsTotalSar,
-        investmentAllocation,
-        buckets,
     } = useCanonicalFinancialMetrics();
     const fxBanner = useMemo(() => {
         const w = Number(data?.wealthUltraConfig?.fxRate);
@@ -188,26 +141,6 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
     }, [auth?.user?.id]);
 
     const { maskBalance } = usePrivacyMask();
-    const { dir } = useLanguage();
-    const { personalInvestments } = useDashboardSuiteScope(data);
-
-    const nwSnapshotInsight = useMemo(() => {
-        const snaps = listNetWorthSnapshots();
-        if (snaps.length < 2) return { snaps, attr: null as ReturnType<typeof attributeNetWorthWithFlows> | null };
-        const a = snaps[1];
-        const b = snaps[0];
-        const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
-        const flow = personalNetCashflowBetween(txs, a.at, b.at);
-        return {
-            snaps,
-            attr: attributeNetWorthWithFlows({
-                startNw: a.netWorth,
-                endNw: b.netWorth,
-                externalCashflow: flow,
-            }),
-        };
-    }, [data, data?.transactions, data?.personalTransactions]);
-
     const handleGenerateAnalysis = useCallback(async () => {
         if (!aiActionsEnabled) {
             setError(
@@ -376,7 +309,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         const out: string[] = [];
         const fm = reportModel?.financialMetricsWithEf;
         if (!fm) return out;
-        const scopedAccounts = ((data as { personalAccounts?: { currency?: 'SAR' | 'USD' }[] })?.personalAccounts ?? data?.accounts ?? []) as { currency?: 'SAR' | 'USD' }[];
+        const scopedAccounts = getPersonalAccounts(data) as { currency?: 'SAR' | 'USD' }[];
         const hasUsdAccounts = scopedAccounts.some((a) => a.currency === 'USD');
         const rate = reportModel?.sarPerUsd;
         const fxLooksValid = Number.isFinite(rate) && (rate ?? 0) > 0;
@@ -424,12 +357,6 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         investmentTreemapData,
         managedWealthTotal,
         emergencyFund,
-        householdStress,
-        riskLane,
-        liquidityRunway,
-        discipline,
-        shockDrill,
-        liquidNw,
     } = reportModel;
 
     return (
@@ -451,6 +378,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                             },
                             { value: 'export-wealth-json', label: 'Export wealth summary (JSON)', onClick: handleExportWealthSummaryJson },
                             { value: 'export-wealth-csv', label: 'Export wealth summary (CSV)', onClick: handleExportWealthSummaryCsv },
+                            { value: 'wealth-analytics', label: 'Wealth Analytics (charts & health)', onClick: () => setActivePage('Wealth Analytics') },
                             { value: 'wealth-ultra', label: 'Wealth Ultra', onClick: () => setActivePage('Wealth Ultra') },
                             { value: 'market-events', label: 'Market Events', onClick: () => setActivePage('Market Events') },
                             { value: 'assets', label: 'Assets', onClick: () => setActivePage('Assets') },
@@ -463,20 +391,6 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                 )
             }
         >
-            <SummaryWealthAtlas
-                dir={dir}
-                buckets={buckets}
-                netWorthSar={headline?.netWorth ?? 0}
-                investmentAllocation={investmentAllocation}
-                investmentsTotalSar={investmentsTotalSar}
-                personalInvestments={personalInvestments}
-                simulatedPrices={canonicalSimulatedPrices ?? {}}
-                sarPerUsd={canonicalSarPerUsd}
-                data={data}
-                goals={data?.goals ?? []}
-                onOpenGoals={() => setActivePage?.('Goals')}
-            />
-
             <Modal isOpen={isPrintOptionsOpen} onClose={() => setIsPrintOptionsOpen(false)} title="Choose what to include in the HTML report">
                 <div className="space-y-3 text-sm text-slate-700">
                     <p className="text-slate-600">Pick sections for export. This helps non-financial users print only what they need.</p>
@@ -537,7 +451,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                 </div>
             </div>
 
-            {data && <DashboardKpiQualityPanel />}
+            {data && isAdmin && <DashboardKpiQualityPanel />}
 
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     <div
@@ -607,117 +521,30 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                 </div>
             )}
 
-            <CollapsibleSection title="Spendable-style wealth (liquid)" summary={maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))} className="border border-emerald-100 bg-gradient-to-br from-emerald-50/40 to-white">
-                <p className="text-sm text-slate-600 mb-2 max-w-prose">
-                    A simpler slice than full net worth: cash you can reach quickly, brokerage &amp; Sukuk, commodities, money owed to you, minus cards and loans.
-                    Homes and cars stay in <strong>full net worth</strong> above — they are slower to sell, so they are listed separately below for context.
-                </p>
-                <p className="text-2xl font-extrabold text-emerald-800 mb-4">{maskBalance(formatCurrencyString(liquidNw.liquidNetWorth, { digits: 0 }))}</p>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <div className="rounded-xl border border-white/80 bg-white/90 p-3 shadow-sm">
-                        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-2">Adds</p>
-                        <ul className="space-y-2 text-xs text-slate-700">
-                            <li className="flex justify-between gap-2 border-b border-slate-100 pb-1">
-                                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-sky-500" aria-hidden />Cash &amp; brokerage cash</span>
-                                <span className="tabular-nums font-medium">{maskBalance(formatCurrencyString(liquidNw.liquidCash, { digits: 0 }))}</span>
-                            </li>
-                            <li className="flex justify-between gap-2 border-b border-slate-100 pb-1">
-                                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-violet-500" aria-hidden />Stocks &amp; funds (portfolios)</span>
-                                <span className="tabular-nums font-medium">{maskBalance(formatCurrencyString(liquidNw.portfolioHoldingsSar, { digits: 0 }))}</span>
-                            </li>
-                            <li className="flex justify-between gap-2 border-b border-slate-100 pb-1">
-                                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-indigo-500" aria-hidden />Sukuk (from Assets)</span>
-                                <span className="tabular-nums font-medium">{maskBalance(formatCurrencyString(liquidNw.sukukSar, { digits: 0 }))}</span>
-                            </li>
-                            <li className="flex justify-between gap-2 border-b border-slate-100 pb-1">
-                                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-amber-500" aria-hidden />Commodities</span>
-                                <span className="tabular-nums font-medium">{maskBalance(formatCurrencyString(liquidNw.commodities, { digits: 0 }))}</span>
-                            </li>
-                            <li className="flex justify-between gap-2">
-                                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-teal-500" aria-hidden />Receivables (owed to you)</span>
-                                <span className="tabular-nums font-medium">{maskBalance(formatCurrencyString(liquidNw.receivables, { digits: 0 }))}</span>
-                            </li>
-                        </ul>
-                    </div>
-                    <div className="rounded-xl border border-white/80 bg-white/90 p-3 shadow-sm">
-                        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-2">Subtracts</p>
-                        <ul className="space-y-2 text-xs text-slate-700">
-                            <li className="flex justify-between gap-2 border-b border-slate-100 pb-1">
-                                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-rose-500" aria-hidden />Credit cards</span>
-                                <span className="tabular-nums font-medium text-rose-800">−{maskBalance(formatCurrencyString(liquidNw.creditCardDebtSar, { digits: 0 }))}</span>
-                            </li>
-                            <li className="flex justify-between gap-2 border-b border-slate-100 pb-1">
-                                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-red-700" aria-hidden />Mortgages &amp; loans</span>
-                                <span className="tabular-nums font-medium text-rose-900">−{maskBalance(formatCurrencyString(liquidNw.loanAndMortgageDebtSar, { digits: 0 }))}</span>
-                            </li>
-                            <li className="flex justify-between gap-2 pt-1 text-slate-800 font-semibold">
-                                <span>Total debt in this view</span>
-                                <span className="tabular-nums">−{maskBalance(formatCurrencyString(liquidNw.shortTermDebt, { digits: 0 }))}</span>
-                            </li>
-                        </ul>
-                        <p className="text-[11px] text-slate-500 mt-3 pt-2 border-t border-slate-100">
-                            Illiquid property &amp; similar on the Assets page (excl. Sukuk):{' '}
-                            <span className="font-semibold text-slate-700">{maskBalance(formatCurrencyString(liquidNw.illiquidPhysicalAssetsSar, { digits: 0 }))}</span>
-                        </p>
-                    </div>
+            <div className="cards-grid grid grid-cols-1 gap-4 mb-6">
+                <div className="section-card flex flex-col border-l-4 border-l-sky-500">
+                    <NetWorthCockpit
+                        title="Net worth (history + today)"
+                        metricsOverride={{
+                            headline,
+                            todaySnapshot,
+                            investableCashBars,
+                            sarPerUsd: canonicalSarPerUsd,
+                            simulatedPrices: canonicalSimulatedPrices,
+                        }}
+                        onOpenInvestments={setActivePage ? () => setActivePage('Investments') : undefined}
+                        onOpenAccounts={setActivePage ? () => setActivePage('Accounts') : undefined}
+                        onOpenAssets={setActivePage ? () => setActivePage('Assets') : undefined}
+                        onOpenDataReconciliation={() => {
+                            window.location.hash = 'data-reconciliation';
+                        }}
+                    />
                 </div>
-                <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-600">
-                    <span className="rounded-lg bg-slate-100 px-2 py-1">Last ~30 days net in/out (income − spending): {maskBalance(formatCurrencyString(liquidNw.contributionEstimate30d, { digits: 0 }))}</span>
-                    <InfoHint text="Rough cashflow hint from dated transactions; not a bank statement." hintId="summary-liquid-flow" hintPage="Summary" />
-                </div>
-                <p className="text-[11px] text-slate-500 mt-2">USD accounts and US-listed holdings are converted with the same SAR-per-USD rate as the rest of the app.</p>
-            </CollapsibleSection>
-
-            <CollapsibleSection title="Net worth change vs flows (saved snapshots)" summary="See savings vs market moves" className="border border-violet-100 bg-violet-50/40">
-                    {nwSnapshotInsight.attr ? (
-                        <>
-                            <p className="text-sm text-slate-700 mb-2">Uses your last two net worth snapshots from visiting the Dashboard — helpful to see how much of the change came from money in/out vs investments.</p>
-                            <ul className="text-sm text-slate-700 space-y-1 list-disc list-inside">
-                                {nwSnapshotInsight.attr.bullets.map((line, i) => (
-                                    <li key={i}>{line}</li>
-                                ))}
-                            </ul>
-                            <p className="text-xs text-slate-500 mt-2">
-                                More tools: <button type="button" className="text-primary font-medium" onClick={() => triggerPageAction ? triggerPageAction('Engines & Tools', 'openRiskTradingHub') : setActivePage?.('Engines & Tools')}>Safety &amp; rules →</button>
-                            </p>
-                        </>
-                    ) : (
-                        <p className="text-sm text-slate-600">
-                            Open <strong>Dashboard</strong> on two different days to store snapshots; then this section splits <strong>your own activity</strong> from market-style swings.{' '}
-                            {nwSnapshotInsight.snaps.length === 1 && (
-                                <span className="block mt-1 text-slate-500">One snapshot saved — visit Dashboard again another day.</span>
-                            )}
-                            {nwSnapshotInsight.snaps.length === 0 && (
-                                <span className="block mt-1 text-slate-500">No snapshots yet — open Dashboard once to create the first one.</span>
-                            )}
-                        </p>
-                    )}
-            </CollapsibleSection>
-            
-            <div className="cards-grid grid grid-cols-1 gap-4">
-                    <div className="section-card flex flex-col border-l-4 border-l-sky-500">
-                        <NetWorthCockpit
-                            title="Net worth (history + today)"
-                            metricsOverride={{
-                                headline,
-                                todaySnapshot,
-                                investableCashBars,
-                                sarPerUsd: canonicalSarPerUsd,
-                                simulatedPrices: canonicalSimulatedPrices,
-                            }}
-                            onOpenInvestments={setActivePage ? () => setActivePage('Investments') : undefined}
-                            onOpenAccounts={setActivePage ? () => setActivePage('Accounts') : undefined}
-                            onOpenAssets={setActivePage ? () => setActivePage('Assets') : undefined}
-                            onOpenDataReconciliation={() => {
-                                window.location.hash = 'data-reconciliation';
-                            }}
-                        />
-                    </div>
                 <div className="section-card flex flex-col min-h-[420px] h-[min(56vh,520px)]">
                     <div className="mb-2 sm:mb-4 space-y-1">
-                        <h3 className="section-title !mb-0">Investment Allocation &amp; Performance</h3>
+                        <h3 className="section-title !mb-0">Investment allocation &amp; performance</h3>
                         <p className="text-xs text-slate-500 max-w-prose">
-                            Tile area reflects position size; color reflects unrealized performance vs cost basis. The headline total matches the Investments hub (platforms + commodities + Sukuk); idle broker cash is included in the platform rollup, not as separate treemap tiles.
+                            Position size vs unrealized P&amp;L. Totals match the Investments hub.
                         </p>
                     </div>
                     <div className="flex-1 min-h-[320px] rounded-lg overflow-hidden border border-slate-100">
@@ -729,97 +556,13 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                     </div>
                 </div>
             </div>
-            
-            {householdStress && (() => {
-                const hs = householdStressStyles(householdStress.level);
-                return (
-                <div className={`section-card border-l-4 ${hs.card}`}>
-                    <div className="flex flex-wrap items-center gap-2 mb-2">
-                        <h3 className="section-title !mb-0">Household cashflow stress</h3>
-                        <span className={`text-[11px] font-bold uppercase tracking-wide rounded-full px-2 py-0.5 ${hs.pill}`}>{householdStress.level}</span>
-                    </div>
-                    <p className="text-xs text-slate-600 mb-2">{hs.hint}</p>
-                    <p className="text-sm text-slate-800 mb-2">{householdStress.summary}</p>
-                    {householdStress.flags.length > 0 && (
-                        <ul className="text-xs text-slate-600 list-disc pl-5 space-y-0.5">
-                            {householdStress.flags.slice(0, 4).map((flag: string) => (
-                                <li key={flag}>{flag}</li>
-                            ))}
-                        </ul>
-                    )}
-                </div>
-                );
-            })()}
 
-            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <div className="section-card border-l-4 border-l-violet-500 bg-violet-50/30">
-                    <h3 className="section-title mb-1">Investment risk lane</h3>
-                    <p className="text-xs text-slate-600 mb-2">How aggressive your current setup looks versus a calmer default — not a product recommendation.</p>
-                    <p className="text-sm text-slate-800">
-                        Where you are: <span className="font-semibold">{riskLane.lane}</span>
-                    </p>
-                    <p className="text-xs text-slate-600 mt-1">
-                        Gentler alternative to consider: <span className="font-semibold">{riskLane.suggestedProfile}</span>
-                    </p>
-                    <ul className="text-xs text-slate-600 list-disc pl-5 mt-2 space-y-0.5">
-                        {(riskLane.reasons ?? []).slice(0, 4).map((r, i) => <li key={r ?? i}>{r}</li>)}
-                    </ul>
-                </div>
-                <div className={`section-card border-l-4 ${liquidityRunway ? runwayStyles(liquidityRunway.status).card : 'border-l-slate-300'}`}>
-                    <div className="flex flex-wrap items-center gap-2 mb-1">
-                        <h3 className="section-title !mb-0">Cash runway</h3>
-                        {liquidityRunway && (
-                            <span className={`text-[10px] font-bold uppercase rounded-full px-2 py-0.5 ${runwayStyles(liquidityRunway.status).pill}`}>
-                                {liquidityRunway.status}
-                            </span>
-                        )}
-                    </div>
-                    <p className="text-xs text-slate-600 mb-2">How many months of typical spending your accessible cash might cover.</p>
-                    {liquidityRunway ? (
-                        <>
-                            <p className="text-lg font-bold text-slate-900 tabular-nums">
-                                {(liquidityRunway.monthsOfRunway ?? 0).toFixed(1)} <span className="text-sm font-semibold text-slate-600">months</span>
-                            </p>
-                            <p className="text-xs text-slate-500 mt-1">
-                                Portfolio drawdown (Wealth Ultra snapshots): <span className="font-semibold">{(liquidityRunway.drawdownPct ?? 0).toFixed(1)}%</span>
-                            </p>
-                            <ul className="text-xs text-slate-600 mt-2 space-y-0.5 list-disc pl-4">
-                                {(liquidityRunway.reasons ?? []).slice(0, 3).map((r, i) => <li key={`lr-${i}`}>{r}</li>)}
-                            </ul>
-                        </>
-                    ) : (
-                        <p className="text-sm text-slate-500">Add accounts and a few months of expenses to estimate runway.</p>
-                    )}
-                </div>
-                <div className={`section-card border-l-4 ${disciplineStyles(discipline?.score ?? 0).card}`}>
-                    <h3 className="section-title mb-1">Budget discipline</h3>
-                    <p className="text-xs text-slate-600 mb-2">How closely recent spending stayed inside the lines you set.</p>
-                    <p className="text-lg font-bold text-slate-900">
-                        {discipline?.score ?? 0}/100 <span className="text-sm font-semibold text-slate-600">({discipline?.label ?? '—'})</span>
-                    </p>
-                    <ul className="text-xs text-slate-600 list-disc pl-5 mt-2 space-y-0.5">
-                        {(discipline.reasons ?? []).slice(0, 4).map((r, i) => <li key={r ?? i}>{r}</li>)}
-                    </ul>
-                </div>
-            </div>
-
-            <div className="section-card">
-                <h3 className="section-title mb-2">Shock Drill (Auto)</h3>
-                <p className="text-xs text-slate-500 mb-2">
-                    Default template: <span className="font-semibold">{SHOCK_TEMPLATES.find(t => t.id === 'job_loss')?.label}</span>
-                </p>
-                {shockDrill ? (
-                    <>
-                        <p className="text-sm text-slate-700">
-                            Household year-end delta: <span className="font-semibold">{formatCurrencyString(shockDrill.householdProjectedYearEndDelta ?? 0, { digits: 0 })}</span>
-                        </p>
-                        <p className="text-sm text-slate-700 mt-1">
-                            Wealth Ultra value delta: <span className="font-semibold">{(shockDrill.wealthUltraPortfolioValueDeltaPct ?? 0).toFixed(1)}%</span>
-                        </p>
-                        <p className="text-xs text-slate-600 mt-2">{shockDrill.combinedRiskNote ?? '—'}</p>
-                    </>
-                ) : (
-                    <p className="text-sm text-slate-500">Not enough data to run a drill.</p>
+            <div className="mb-4 rounded-xl border border-violet-100 bg-violet-50/40 px-4 py-3 text-sm text-slate-700 flex flex-wrap items-center justify-between gap-2">
+                <span>Liquid wealth, resilience, shock drills, and snapshot attribution moved to <strong>Wealth Analytics</strong> (same canonical numbers).</span>
+                {setActivePage && (
+                    <button type="button" className="btn-outline text-sm shrink-0" onClick={() => setActivePage('Wealth Analytics')}>
+                        Open Wealth Analytics →
+                    </button>
                 )}
             </div>
 

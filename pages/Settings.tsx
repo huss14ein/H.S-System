@@ -438,8 +438,8 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
     }, []);
 
-    const accountsForEmptyCheck = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-const hasData = accountsForEmptyCheck.length > 0;
+    const accountsForEmptyCheck = getPersonalAccounts(data);
+    const hasData = accountsForEmptyCheck.length > 0;
     const defaultWealthUltra = useMemo(() => ({ ...getDefaultWealthUltraConfig(), ...(data?.wealthUltraConfig || {}) }), [data?.wealthUltraConfig]);
 
     return (

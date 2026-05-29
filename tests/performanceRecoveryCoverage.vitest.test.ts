@@ -72,8 +72,8 @@ describe('performance recovery E2E wiring', () => {
     expect(inv).toContain('</InvestmentsMetricsProvider>');
   });
 
-  it('KPI drift telemetry is logged from Dashboard', () => {
-    expect(read('pages/Dashboard.tsx')).toContain('logKpiReconciliationDrift');
+  it('KPI drift telemetry is available on Wealth Analytics (strict reconciliation)', () => {
+    expect(read('pages/WealthAnalytics.tsx')).toContain('reconcileDashboardVsSummaryKpis');
     expect(read('services/kpiDriftTelemetry.ts')).toContain('kpi_reconciliation_diagnostics');
   });
 
@@ -190,12 +190,14 @@ describe('performance recovery E2E wiring', () => {
     expect(read('components/Layout.tsx')).toContain('useDebouncedMarketPrices');
     expect(read('pages/Summary.tsx')).not.toContain('useMarketData');
     expect(read('pages/Investments.tsx')).toContain('const { simulatedPrices } = useInvestmentsCanonicalMetrics()');
-    expect(read('pages/Dashboard.tsx')).toContain('useCanonicalSimulatedPrices');
+    expect(read('pages/Dashboard.tsx')).toContain('useDashboardCanonicalMetrics');
     expect(read('pages/Forecast.tsx')).not.toMatch(/useMarketData\(\)[\s\S]{0,120}simulatedPrices/);
     expect(read('pages/Analysis.tsx')).not.toMatch(/useMemo\([\s\S]*hydrateSarPerUsdDailySeries/);
     expect(read('components/HoldingSymbolSelect.tsx')).not.toContain('<select');
     expect(read('pages/Transactions.tsx')).toContain('TRANSACTIONS_LIST_PAGE_SIZE');
-    expect(read('context/DataContext.tsx')).toMatch(/startTransition\(\(\)\s*=>\s*\{[\s\S]*setData\(/);
+    expect(read('context/DataContext.tsx')).toContain('startTransition(() => {');
+    expect(read('context/DataContext.tsx')).toContain('transactions: [normalized, ...prev.transactions]');
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('useDebouncedValue(showHydrateBanner ? null : data, 350)');
     expect(read('utils/backgroundWorkGate.ts')).toContain('pauseBackgroundWork');
     expect(read('components/Layout.tsx')).toContain('pauseBackgroundWork');
     expect(read('components/Layout.tsx')).toContain('startTransition');

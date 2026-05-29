@@ -2,14 +2,14 @@ import React, { useMemo, useState } from 'react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useLanguage } from '../../context/LanguageContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
-import type { FinancialData, Goal, Transaction } from '../../types';
+import type { FinancialData, Goal } from '../../types';
 import {
   averageRollingMonthlyNetSurplus,
   computeGoalResolvedAmountsSar,
   GOAL_NET_CASHFLOW_LOOKBACK_MONTHS,
 } from '../../services/goalResolvedTotals';
 import { normalizedMonthlyExpenseSar } from '../../services/financeMetrics';
-import { getPersonalAccounts } from '../../utils/wealthScope';
+import { getPersonalAccounts, getPersonalTransactions } from '../../utils/wealthScope';
 import { dashboardChartMargin } from './chartLayout';
 import { DashboardVisualCard } from './DashboardVisualCard';
 
@@ -42,9 +42,7 @@ const WhatIfSandboxInner: React.FC<{
   const eduExpenseMonthly = useMemo(() => {
     if (!data) return 0;
     const accounts = getPersonalAccounts(data);
-    const txs = ((data as { personalTransactions?: Transaction[] }).personalTransactions ??
-      data.transactions ??
-      []) as Transaction[];
+    const txs = getPersonalTransactions(data);
     const avg = normalizedMonthlyExpenseSar(txs, accounts, sarPerUsd, { monthsLookback: 1 });
     const eduTagged = txs.filter((tx) => {
       const cat = String(tx.budgetCategory ?? tx.category ?? '').toLowerCase();

@@ -78,7 +78,7 @@ import {
     quoteDailyPnLInBookCurrency,
 } from '../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
-import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
+import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import {
     inferInvestmentTransactionCurrency,
     portfolioBelongsToAccount,
@@ -1012,7 +1012,7 @@ const RecordTradeModal: React.FC<{
     }, [type, symbol, portfolioId, data?.investmentTransactions]);
 
     const monthlyNetLast30d = useMemo(() => {
-        const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
+        const txs = getPersonalTransactions(data) as Transaction[];
         const d0 = new Date();
         d0.setDate(d0.getDate() - 30);
         let net = 0;

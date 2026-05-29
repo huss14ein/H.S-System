@@ -36,7 +36,7 @@ import { useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetr
 import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
 import { personalInvestmentTerminalValueSAR } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
-import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
+import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions, getPersonalLiabilities } from '../utils/wealthScope';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 
 const RiskTradingHub: React.FC<{
@@ -96,12 +96,14 @@ const RiskTradingHub: React.FC<{
   );
 
   const reviewInputs = useMemo(() => {
-    const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
-    const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-    const liabilities = (data as any)?.personalLiabilities ?? data?.liabilities ?? [];
+    const txs = getPersonalTransactions(data) as Transaction[];
+    const accounts = getPersonalAccounts(data);
+    const liabilities = getPersonalLiabilities(data);
     const uncategorized = txs.filter((t) => countsAsExpenseForCashflowKpi(t) && !t.budgetCategory).length;
     const liquid = accounts.filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: { balance?: number }) => s + Math.max(0, a.balance ?? 0), 0);
-    const monthlyDebt = liabilities.filter((l: { status?: string }) => l.status === 'Active').reduce((s: number, l: { monthlyPayment?: number }) => s + (l.monthlyPayment ?? 0), 0);
+    const monthlyDebt = liabilities
+      .filter((l) => l.status === 'Active')
+      .reduce((s, l) => s + (l.minPayment ?? 0), 0);
     const sixMoAgo = new Date(); sixMoAgo.setMonth(sixMoAgo.getMonth() - 6);
     const incomeSum = txs
       .filter((t: Transaction) => countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= sixMoAgo)
@@ -155,7 +157,7 @@ const RiskTradingHub: React.FC<{
     if (snaps.length < 2) return null;
     const a = snaps[1];
     const b = snaps[0];
-    const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
+    const txs = getPersonalTransactions(data) as Transaction[];
     const flow = personalNetCashflowBetween(txs, a.at, b.at);
     return attributeNetWorthWithFlows({
       startNw: a.netWorth,

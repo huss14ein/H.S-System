@@ -8,7 +8,7 @@ import { useCanonicalFinancialMetrics, useCanonicalSimulatedPrices } from '../ho
 import { formatGoalsProgressForPrompt } from '../services/goalResolvedTotals';
 import { buildAiPersonalWealthGrounding } from '../services/aiPersonalWealthGrounding';
 import { computeCapitalDeployment } from '../services/capitalDeploymentOrchestrator';
-import { getPersonalLiabilities } from '../utils/wealthScope';
+import { getPersonalLiabilities, getPersonalTransactions } from '../utils/wealthScope';
 import { invokeAI, formatAiError, buildLiveAdvisorSystemInstruction } from '../services/geminiService';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { financialMonthRange, resolveMonthStartDayFromData } from '../utils/financialMonth';
@@ -98,7 +98,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         const now = new Date();
         const monthStartDay = resolveMonthStartDayFromData(data);
         const { start: firstDayOfMonth } = financialMonthRange(now, monthStartDay);
-        const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const transactions = getPersonalTransactions(data);
         const spent = transactions
             .filter((t: { type?: string; date: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && new Date(t.date) >= firstDayOfMonth && t.budgetCategory === budget.category)
             .reduce((sum: number, t: { amount?: number }) => sum + Math.abs(t.amount ?? 0), 0);
@@ -106,7 +106,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
     }, [data]);
     
      const getRecentTransactions_ = useCallback(({ limit }: { limit: number }) => {
-        const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const transactions = getPersonalTransactions(data);
         const sortedTransactions = [...transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
         return {
             transactions: sortedTransactions.slice(0, limit).map((t: { description?: string; amount?: number; date?: string; budgetCategory?: string; category?: string; type?: string }) => ({
@@ -174,7 +174,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
 
     const buildDeterministicAdvisorReply = useCallback((question: string): string => {
         const budgets = data?.budgets ?? [];
-        const tx = ((data as any)?.personalTransactions ?? data?.transactions ?? [])
+        const tx = getPersonalTransactions(data)
             .slice()
             .sort((a: { date: string }, b: { date: string }) => new Date(b.date).getTime() - new Date(a.date).getTime());
         const recent = tx.slice(0, 3);

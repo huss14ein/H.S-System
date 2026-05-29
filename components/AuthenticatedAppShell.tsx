@@ -26,7 +26,7 @@ import { CanonicalFinancialMetricsProvider } from '../context/CanonicalFinancial
 import { LanguageProvider } from '../context/LanguageContext';
 
 const VALID_PAGES: Page[] = [
-  'Dashboard', 'Summary', 'Accounts', 'Goals', 'Liabilities', 'Transactions',
+  'Dashboard', 'Summary', 'Wealth Analytics', 'Accounts', 'Goals', 'Liabilities', 'Transactions',
   'Budgets', 'Analysis', 'Forecast', 'Zakat', 'Notifications', 'Settings',
   'Investments', 'Plan', 'Wealth Ultra', 'Market Events', 'Recovery Plan',
   'Investment Plan', 'Dividend Tracker', 'AI Rebalancer', 'Watchlist',
@@ -102,6 +102,8 @@ const AppRouteHost: React.FC<AppRouteHostProps> = ({
       case 'Dashboard':
         return <Lazy key={routeKey} {...nav} {...actionProps} />;
       case 'Summary':
+        return <Lazy key={routeKey} {...nav} />;
+      case 'Wealth Analytics':
         return <Lazy key={routeKey} {...nav} />;
       case 'Accounts':
         return <Lazy key={routeKey} setActivePage={setActivePage} />;

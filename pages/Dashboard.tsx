@@ -9,7 +9,6 @@ import CashflowChart from '../components/charts/CashflowChart';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import NetWorthCockpit from '../components/charts/NetWorthCockpit';
-import AIFeed from '../components/AIFeed';
 import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
 import { CalendarDaysIcon } from '../components/icons/CalendarDaysIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -21,41 +20,29 @@ import { ScaleIcon } from '../components/icons/ScaleIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { PiggyBankIcon } from '../components/icons/PiggyBankIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
-import { getAIExecutiveSummary, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
-import { useAI } from '../context/AiContext';
-import AiProxyUnavailableHint from '../components/AiProxyUnavailableHint';
-import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import { CreditCardIcon } from '../components/icons/CreditCardIcon';
 import { DocumentArrowUpIcon } from '../components/icons/DocumentArrowUpIcon';
 import { GoldBarIcon } from '../components/icons/GoldBarIcon';
 import { UsersIcon } from '../components/icons/UsersIcon';
-import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
-import { useCanonicalSpotFx, useDashboardCanonicalMetrics, useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx, useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
 import { supabase } from '../services/supabaseClient';
-import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { captureExtendedNetWorthSnapshot } from '../services/netWorthSnapshotExtended';
 import { markAutoNetWorthSnapshotCaptured, shouldThrottleAutoNetWorthSnapshot } from '../services/netWorthSnapshotThrottle';
 import { subscriptionSpendMonthlySar } from '../services/transactionIntelligence';
 import InfoHint from '../components/InfoHint';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { resolveInvestmentTransactionAccountId, inferInvestmentTransactionCurrency } from '../utils/investmentLedgerCurrency';
-import { salaryToExpenseCoverage } from '../services/salaryExpenseCoverage';
-import { generateNextBestActions } from '../services/nextBestActionEngine';
 import { useTodosOptional } from '../context/TodosContext';
 import { computeTaskCounts, compareActionableTodos, isTaskSnoozed, todayIsoDate } from '../services/todoModel';
 import type { TodoItem } from '../types';
 import { usePrivacyMask } from '../context/PrivacyContext';
-import { savingsRateSarFinancialMonth } from '../services/financeMetrics';
-import { debtStressScore } from '../services/debtEngines';
-import { cashflowMomentumFromPnlTrend, personalFinanceHealthScore } from '../services/decisionScoringEngine';
-import { averageSavingsRateSarRolling } from '../services/dashboardKpiSnapshot';
 import type { InvestmentCapitalSource } from '../services/investmentKpiCore';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
@@ -68,169 +55,17 @@ import {
     resolveMonthStartDayFromData,
     dateInRange,
 } from '../utils/financialMonth';
-import {
-    buildPersonalInvestmentTreemapRows,
-    computeMonthlyReportFinancialKpis,
-    computeWealthSummaryReportModel,
-} from '../services/wealthSummaryReportModel';
-import { reconcileDashboardVsSummaryKpis } from '../services/kpiReconciliation';
-import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
-import { logKpiReconciliationDrift } from '../services/kpiDriftTelemetry';
+import { buildPersonalInvestmentTreemapRows } from '../services/wealthSummaryReportModel';
 import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
 import PlanCompareContextBanner from '../components/PlanCompareContextBanner';
-import { useSelfLearning } from '../context/SelfLearningContext';
-import { useDashboardReconciliationPrefs } from '../hooks/useDashboardReconciliationPrefs';
-import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
-import { useFinancialEnhancementInsights } from '../hooks/useFinancialEnhancementInsights';
-import { DashboardOperationsCockpit } from '../components/dashboard/DashboardOperationsCockpit';
+import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import { useLanguage } from '../context/LanguageContext';
-import { useDashboardSuiteScope } from '../hooks/useDashboardSuiteScope';
 
 interface ExtendedBudget extends Budget {
     spent: number;
     percentage: number;
     monthlyLimit?: number;
 }
-
-const AIExecutiveSummary: React.FC = () => {
-    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-    const { exchangeRate } = useCurrency();
-    const simulatedPrices = useCanonicalSimulatedPrices();
-    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
-    const { trackAction } = useSelfLearning();
-    const [summary, setSummary] = useState<string>('');
-    const [summaryEn, setSummaryEn] = useState<string>('');
-    const [summaryLanguage, setSummaryLanguage] = useState<'en' | 'ar'>(() => {
-        try {
-            const stored = localStorage.getItem(AI_SUMMARY_LANG_KEY);
-            return stored === 'ar' ? 'ar' : 'en';
-        } catch {
-            return 'en';
-        }
-    });
-    const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-
-    const handleGenerate = useCallback(async () => {
-        if (!data) return;
-        const preferredLang = summaryLanguage;
-        trackAction('generate-ai-summary', 'Dashboard');
-        setIsLoading(true);
-        setError(null);
-        setSummary('');
-        setSummaryEn('');
-        try {
-            const result = await getAIExecutiveSummary(data, {
-                exchangeRate,
-                getAvailableCashForAccount,
-                simulatedPrices,
-            });
-            const normalized = result ?? '';
-            setSummaryEn(normalized);
-            if (preferredLang === 'ar') {
-                const translated = await translateFinancialInsightToArabic(normalized);
-                setSummary(translated ?? normalized);
-                setSummaryLanguage('ar');
-            } else {
-                setSummary(normalized);
-                setSummaryLanguage('en');
-            }
-        } catch (err) {
-            setError(formatAiError(err));
-        }
-        setIsLoading(false);
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, trackAction, summaryLanguage]);
-
-    const handleTranslateToArabic = useCallback(async () => {
-        if (!summaryEn.trim()) return;
-        setIsLoading(true);
-        setError(null);
-        try {
-            const translated = await translateFinancialInsightToArabic(summaryEn);
-            setSummary(translated ?? summaryEn);
-            setSummaryLanguage('ar');
-            try { localStorage.setItem(AI_SUMMARY_LANG_KEY, 'ar'); } catch {}
-        } catch (err) {
-            setError(formatAiError(err));
-        }
-        setIsLoading(false);
-    }, [summaryEn]);
-
-    const handleShowEnglish = useCallback(() => {
-        if (!summaryEn.trim()) return;
-        setSummary(summaryEn);
-        setSummaryLanguage('en');
-        try { localStorage.setItem(AI_SUMMARY_LANG_KEY, 'en'); } catch {}
-    }, [summaryEn]);
-
-    return (
-        <div className="section-card border-t-4 border-secondary">
-            <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
-                <div className="flex flex-col">
-                    <div className="flex items-center space-x-3">
-                        <SparklesIcon className="h-7 w-7 text-secondary" />
-                        <h2 className="text-xl font-semibold text-dark">Executive Summary</h2>
-                    </div>
-                    <p className="text-xs text-slate-500 mt-0.5 ml-10">From your expert financial & investment advisor</p>
-                </div>
-                <button
-                    type="button"
-                    onClick={handleGenerate}
-                    disabled={!aiActionsEnabled || isLoading}
-                    title={!aiActionsEnabled ? "AI features are disabled or still checking" : "Generate a new summary"}
-                    className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-secondary text-white rounded-lg hover:bg-violet-700 disabled:bg-slate-400 disabled:cursor-not-allowed transition-colors"
-                >
-                    <ArrowPathIcon className={`h-5 w-5 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-                    {isLoading ? 'Summarizing...' : (summary ? 'Refresh Summary' : 'Generate Summary')}
-                </button>
-            </div>
-            
-            {isLoading && <div className="text-center p-8 text-slate-500">Analyzing your financial picture...</div>}
-            
-            {!isLoading && error && (
-                <div className="bg-red-50 border-l-4 border-red-400 text-red-800 p-4 rounded-r-lg">
-                    <h4 className="font-bold">Summary Error</h4>
-                    <SafeMarkdownRenderer content={error} />
-                    <button type="button" onClick={handleGenerate} className="mt-3 px-3 py-1.5 text-sm font-medium bg-red-100 text-red-800 rounded-lg hover:bg-red-200">Retry</button>
-                </div>
-            )}
-
-            {aiHealthChecked && !isAiAvailable ? (
-                <AiProxyUnavailableHint title="AI summary is off" />
-            ) : (
-                !summary && !isLoading && !error && (
-                    <div className="text-center p-8 text-slate-500">
-                        Click &quot;Generate Summary&quot; for a high-level overview and strategic advice from your expert advisor.
-                    </div>
-                )
-            )}
-            
-            {summary && !isLoading && !error && (
-                <div className="bg-violet-50/50 p-4 rounded-lg">
-                    <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
-                        <button
-                            type="button"
-                            onClick={handleShowEnglish}
-                            disabled={summaryLanguage === 'en' || !summaryEn.trim()}
-                            className="px-2.5 py-1 text-xs rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                        >
-                            English
-                        </button>
-                        <button
-                            type="button"
-                            onClick={handleTranslateToArabic}
-                            disabled={summaryLanguage === 'ar' || !summaryEn.trim() || isLoading}
-                            className="px-2.5 py-1 text-xs rounded border border-violet-300 bg-violet-100 text-violet-800 hover:bg-violet-200 disabled:opacity-50"
-                        >
-                            Translate to Arabic
-                        </button>
-                    </div>
-                    <SafeMarkdownRenderer content={summary} />
-                </div>
-            )}
-        </div>
-    );
-};
 
 const AccountsOverview: React.FC<{ accounts: Account[], onClick: () => void }> = ({ accounts, onClick }) => {
     const { formatCurrencyString } = useFormatCurrency();
@@ -266,9 +101,9 @@ const UpcomingBills: React.FC = () => {
     const formatDate = (date: Date) => date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
     const accountsById = useMemo(() => {
-        const list = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const list = getPersonalAccounts(data);
         return new Map<string, Account>(list.map((a: Account) => [a.id, a]));
-    }, [data?.accounts, (data as any)?.personalAccounts]);
+    }, [data]);
 
     const upcomingBills = useMemo(() => {
         const sarPerUsd = headlineFx;
@@ -276,8 +111,8 @@ const UpcomingBills: React.FC = () => {
         const now = new Date();
 
         // Find recurring fixed expenses from the last year (personal accounts only)
-        ((data as any)?.personalTransactions ?? data?.transactions ?? [])
-            .filter((t: { type?: string; transactionNature?: string; date: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && t.transactionNature === 'Fixed' && new Date(t.date) > new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()))
+        getPersonalTransactions(data)
+            .filter((t) => countsAsExpenseForCashflowKpi(t) && t.transactionNature === 'Fixed' && new Date(t.date) > new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()))
             .forEach((t: { description?: string; amount?: number; date: string; accountId?: string }) => {
                 const existing = recurringExpenses.get(t.description ?? '') || { totalSAR: 0, lastAmount: 0, lastDate: new Date(0), count: 0, lastAccountId: undefined as string | undefined };
                 const thisAmount = Math.abs(Number(t.amount) ?? 0);
@@ -306,7 +141,7 @@ const UpcomingBills: React.FC = () => {
             }
         }
         return bills.sort((a,b) => a.date.getTime() - b.date.getTime()).slice(0, 3);
-    }, [data, data?.transactions, (data as any)?.personalTransactions, accountsById, headlineFx]);
+    }, [data, accountsById, headlineFx]);
 
     return (
         <div className="section-card">
@@ -415,8 +250,7 @@ const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }>
 
 type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'emergencyFund' | 'budgetVariance' | 'investmentRoi' | 'investmentPlan' | 'wealthUltra' | 'marketEvents';
 
-const KPI_CARD_ORDER: KpiCardKey[] = ['netWorth', 'monthlyPnL', 'emergencyFund', 'budgetVariance', 'investmentRoi', 'investmentPlan', 'wealthUltra', 'marketEvents'];
-const AI_SUMMARY_LANG_KEY = 'finova_dashboard_ai_summary_lang_v1';
+const KPI_CARD_ORDER: KpiCardKey[] = ['netWorth', 'monthlyPnL', 'emergencyFund', 'budgetVariance', 'investmentRoi', 'investmentPlan'];
 
 const SYSTEM_HEALTH_PAGE = 'System & APIs Health' as Page;
 
@@ -441,10 +275,8 @@ const DashboardContent: React.FC<{
     const emergencyFund = useEmergencyFund(data);
     const { maskBalance } = usePrivacyMask();
     const { dir } = useLanguage();
-    const { personalTransactions, personalAccounts } = useDashboardSuiteScope(data);
     const deferredData = useDeferredValue(showHydrateBanner ? null : data);
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
-    const lastTelemetrySignatureRef = React.useRef<string>('');
     const kpiDensity = 'compact' as const;
 
     useEffect(() => {
@@ -471,7 +303,7 @@ const DashboardContent: React.FC<{
 
     /** Investment rows: tradable platform cash (Accounts balance → SAR), not holdings value. */
     const accountsForOverview = useMemo(() => {
-        const list = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const list = getPersonalAccounts(data);
         const sarPerUsd = canonicalSarPerUsd;
         return list.map((acc: Account) => {
             if (acc.type === 'Investment') {
@@ -488,8 +320,8 @@ const DashboardContent: React.FC<{
         const spotRate = canonicalSarPerUsd;
         const monthStartDay = resolveMonthStartDayFromData(data);
         const { start: finStart, end: finEnd } = financialMonthRange(new Date(), monthStartDay);
-        const accounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []) as Account[];
-        const investments = ((data as any)?.personalInvestments ?? data?.investments ?? []) as any[];
+        const accounts = getPersonalAccounts(data) as Account[];
+        const investments = getPersonalInvestments(data) as any[];
         const personalAccountIds = new Set(accounts.map((a: { id: string }) => a.id));
         const monthlyInvested = (data?.investmentTransactions ?? [])
             .filter((t: { date: string; type?: string; accountId?: string; account_id?: string; portfolioId?: string; portfolio_id?: string }) => {
@@ -525,14 +357,13 @@ const DashboardContent: React.FC<{
             const now = new Date();
             const monthStartDay = resolveMonthStartDayFromData(deferredData);
             const currentFinMonth = financialMonthRange(now, monthStartDay);
-            const d = deferredData as any;
-            const rawTransactions = d?.personalTransactions ?? deferredData?.transactions ?? [];
+            const rawTransactions = getPersonalTransactions(deferredData);
             const transactions = (rawTransactions as Array<Transaction & { account_id?: string; budget_category?: string }>).map((t) => ({
                 ...t,
                 accountId: t.accountId ?? t.account_id ?? '',
                 budgetCategory: t.budgetCategory ?? t.budget_category ?? '',
             }));
-            const accounts = d?.personalAccounts ?? deferredData?.accounts ?? [];
+            const accounts = getPersonalAccounts(deferredData);
             const accountsById = new Map(accounts.map((a: Account) => [a.id, a]));
             const txCashflowSar = (t: { accountId?: string; amount?: number; date: string }) => {
                 const acc = accountsById.get(t.accountId ?? '') as Account | undefined;
@@ -693,133 +524,14 @@ const DashboardContent: React.FC<{
 
     const subsIntel = useMemo(() => {
         if (!data) return { monthlyEstimate: 0, count: 0 };
-        const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
-        const accounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []) as Account[];
+        const txs = getPersonalTransactions(data);
+        const accounts = getPersonalAccounts(data) as Account[];
         const sarPerUsd = canonicalSarPerUsd;
         return subscriptionSpendMonthlySar(txs, accounts, sarPerUsd, 3);
     }, [data, exchangeRate, canonicalSarPerUsd]);
 
-    const { strictReconciliationMode } = useDashboardReconciliationPrefs(auth?.user?.id);
-
-    const enhancementInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
-    const capitalDeployment = enhancementInsights.capitalDeployment;
-
-    const nextBestActions = useMemo(() => {
-        const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
-        const salaryCov = salaryToExpenseCoverage(txs as import('../types').Transaction[], 6);
-        const goalAlerts = (data?.goals ?? []).map((g: { id: string; name: string; savingsAllocationPercent?: number }) => ({
-            goalId: g.id,
-            name: g.name,
-            allocPct: Number(g.savingsAllocationPercent) || 0,
-        }));
-        return generateNextBestActions({
-            emergencyFundMonths: emergencyFund.monthsCovered,
-            runwayMonths: emergencyFund.monthsCovered,
-            goalAlerts,
-            salaryCoverageRatio: salaryCov?.ratio ?? undefined,
-            nwSnapshotCount: listNetWorthSnapshots().length,
-        });
-    }, [data, emergencyFund.monthsCovered]);
-
-    const financialHealth = useMemo(() => {
-        if (!data) return { score: null as number | null, parts: null as Record<string, number> | null };
-        const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
-        const accounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []) as Account[];
-        const liabilities = (data as any)?.personalLiabilities ?? data?.liabilities ?? [];
-        const goals = data?.goals ?? [];
-        const goalTotalTarget = goals.reduce((s: number, g: { targetAmount?: number }) => s + (g.targetAmount ?? 0), 0);
-        const liquidCashSar = Number((kpiSummary as { liquidCashSar?: number }).liquidCashSar ?? 0);
-        const avgMonthlyIncomeSar6Mo = Number((kpiSummary as { avgMonthlyIncomeSar6Mo?: number }).avgMonthlyIncomeSar6Mo ?? 0);
-        const hasSufficientData = liquidCashSar > 0 || avgMonthlyIncomeSar6Mo > 0 || goalTotalTarget > 0;
-        if (!hasSufficientData) return { score: null, parts: null };
-
-        const liquidityScore = Math.min(100, (emergencyFund.monthsCovered / EMERGENCY_FUND_TARGET_MONTHS) * 100);
-        const sarPerUsd = canonicalSarPerUsd;
-        const goalResolved = computeGoalResolvedAmountsSar(data, sarPerUsd);
-        const now = new Date();
-        const savingsThisMonth = savingsRateSarFinancialMonth(txs, accounts, now, data, exchangeRate);
-        const savingsRolling = averageSavingsRateSarRolling(txs, accounts, data, exchangeRate, 3);
-        const savingsRatePct = (savingsThisMonth + savingsRolling) / 2;
-        const totalMonthlyDebt = liabilities.reduce((s: number, l: { monthlyPayment?: number }) => s + (l.monthlyPayment ?? 0), 0);
-        const grossMonthlyIncome = avgMonthlyIncomeSar6Mo > 0 ? avgMonthlyIncomeSar6Mo : 1;
-        const debtResult = debtStressScore(totalMonthlyDebt, grossMonthlyIncome, liquidCashSar);
-        const goalTotalCurrent = goals.reduce((s: number, g: { id?: string }) => {
-            const id = (g as { id?: string }).id;
-            const resolved = id ? goalResolved.get(id) ?? 0 : 0;
-            return s + resolved;
-        }, 0);
-        const goalProgressScore = goalTotalTarget > 0 ? Math.min(100, (goalTotalCurrent / goalTotalTarget) * 100) : 100;
-        const budgetVariance = (kpiSummary as { budgetVariance?: number }).budgetVariance ?? 0;
-        const expenseControlScore = budgetVariance >= 0 ? Math.min(100, 50 + budgetVariance / 100) : Math.max(0, 50 + budgetVariance / 100);
-        const pnlTrend = Number((kpiSummary as { pnlTrend?: number }).pnlTrend ?? 0);
-        const cashflowMomentumScore = cashflowMomentumFromPnlTrend(pnlTrend);
-        const score = personalFinanceHealthScore({
-            liquidityScore,
-            savingsRatePct,
-            debtPressureScore: debtResult.score,
-            goalProgressScore,
-            expenseControlScore: Number.isFinite(expenseControlScore) ? expenseControlScore : 50,
-            cashflowMomentumScore,
-        });
-        const parts = {
-            liquidity: Math.round(liquidityScore),
-            savings: Math.round(Math.max(0, Math.min(100, savingsRatePct * 2))),
-            debtRelief: Math.round(Math.max(0, Math.min(100, 100 - debtResult.score))),
-            goals: Math.round(goalProgressScore),
-            expenses: Math.round(Number.isFinite(expenseControlScore) ? expenseControlScore : 50),
-            momentum: Math.round(cashflowMomentumScore),
-        };
-        return { score, parts };
-    }, [data, emergencyFund.monthsCovered, kpiSummary, exchangeRate, canonicalSarPerUsd]);
-
-    const summaryModelForReconciliation = useMemo(() => {
-        if (!strictReconciliationMode || !data || !getAvailableCashForAccount) return null;
-        return computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount, dashboardDebouncedPrices);
-    }, [strictReconciliationMode, data, exchangeRate, getAvailableCashForAccount, dashboardDebouncedPrices]);
-
-    const summaryMonthlyKpisForReconciliation = useMemo(() => {
-        if (!strictReconciliationMode || !data || !getAvailableCashForAccount) return null;
-        return computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, dashboardDebouncedPrices);
-    }, [strictReconciliationMode, data, exchangeRate, getAvailableCashForAccount, dashboardDebouncedPrices]);
-
-    const kpiReconciliation = useMemo(() => {
-        if (!strictReconciliationMode || !summaryModelForReconciliation || !summaryMonthlyKpisForReconciliation) return null;
-        return reconcileDashboardVsSummaryKpis({
-            dashboard: {
-                netWorth: Number(kpiSummary.netWorth ?? 0),
-                monthlyPnL: Number(kpiSummary.monthlyPnL ?? 0),
-                budgetVariance: Number(kpiSummary.budgetVariance ?? 0),
-                roi: Number(kpiSummary.roi ?? 0),
-                emergencyFundMonths: Number(emergencyFund.monthsCovered ?? 0),
-            },
-            summaryMetrics: summaryModelForReconciliation.financialMetricsWithEf,
-            summaryMonthlyExtras: summaryMonthlyKpisForReconciliation,
-        });
-    }, [strictReconciliationMode, summaryModelForReconciliation, summaryMonthlyKpisForReconciliation, kpiSummary, emergencyFund.monthsCovered]);
-
     const getTrendString = (trend: number = 0) => trend.toFixed(1) + '%';
     const visibleKpiOrder: KpiCardKey[] = KPI_CARD_ORDER;
-    useEffect(() => {
-        if (!kpiReconciliation || kpiReconciliation.ok) return;
-        const day = new Date().toISOString().slice(0, 10);
-        const signature = `${day}:${kpiReconciliation.rows.filter((r) => !r.withinThreshold).map((r) => r.key).join(',')}:${kpiReconciliation.mismatchCount}`;
-        if (lastTelemetrySignatureRef.current === signature) return;
-        lastTelemetrySignatureRef.current = signature;
-        void logKpiReconciliationDrift({
-            page: 'Dashboard',
-            userId: auth?.user?.id ?? null,
-            strictMode: false,
-            hardBlock: false,
-            mismatchCount: kpiReconciliation.mismatchCount,
-            rows: kpiReconciliation.rows.map((r) => ({
-                key: r.key,
-                dashboardValue: r.dashboardValue,
-                summaryValue: r.summaryValue,
-                deltaAbs: r.deltaAbs,
-                deltaPct: r.deltaPct,
-            })),
-        });
-    }, [kpiReconciliation, auth?.user?.id]);
 
     const goToInvestmentKpiReconciliation = useCallback(() => {
         setActivePage(SYSTEM_HEALTH_PAGE);
@@ -868,7 +580,7 @@ const DashboardContent: React.FC<{
         };
     }, [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, emergencyFund, setActivePage, kpiDensity, maskBalance, goToInvestmentKpiReconciliation]);
     
-    const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+    const accounts = getPersonalAccounts(data);
     const goals = data?.goals ?? [];
     const isNewUser = accounts.length === 0 || (accounts.length <= 1 && recentTransactions.length === 0 && goals.length === 0);
 
@@ -891,17 +603,6 @@ const DashboardContent: React.FC<{
                 onOpenPlan={() => setActivePage('Plan')}
             />
 
-            <DashboardOperationsCockpit
-                data={data}
-                personalTransactions={personalTransactions}
-                personalAccounts={personalAccounts}
-                budgets={data?.budgets ?? []}
-                goals={data?.goals ?? []}
-                sarPerUsd={canonicalSarPerUsd}
-                liquidCashSar={kpiSnapshot?.liquidCashSar ?? 0}
-                investmentsTotalSar={Math.max(0, headline.buckets?.investments ?? 0)}
-            />
-
             {isNewUser && (
                 <div className="mb-6 p-5 rounded-xl border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-white">
                     <h2 className="text-lg font-semibold text-slate-800">{PAGE_INTROS.Dashboard.title}</h2>
@@ -920,7 +621,6 @@ const DashboardContent: React.FC<{
                     </ul>
                 </div>
             )}
-            <AIExecutiveSummary />
 
             {uncategorizedTransactions.length > 0 && (
                 <div 
@@ -971,183 +671,8 @@ const DashboardContent: React.FC<{
                 </div>
             )}
 
-            {capitalDeployment && (
-                <section
-                    className={`mb-4 overflow-hidden rounded-xl border shadow-sm ${
-                        capitalDeployment.canInvest
-                            ? 'border-emerald-200 bg-white'
-                            : 'border-amber-200 bg-white'
-                    }`}
-                    aria-label="Capital deployment"
-                >
-                    <div
-                        className={`flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-b ${
-                            capitalDeployment.canInvest
-                                ? 'bg-emerald-50/90 border-emerald-100'
-                                : 'bg-amber-50/90 border-amber-100'
-                        }`}
-                    >
-                        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">Can I invest?</h3>
-                        <span
-                            className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-md ${
-                                capitalDeployment.canInvest
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : 'bg-amber-100 text-amber-900'
-                            }`}
-                        >
-                            {capitalDeployment.canInvest ? 'Ready' : 'Gated'}
-                        </span>
-                    </div>
-                    <div className="px-4 py-3 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-                        <div className="rounded-lg bg-slate-50/80 px-3 py-2 ring-1 ring-slate-100">
-                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Investable surplus</p>
-                            <p className="text-base font-bold tabular-nums text-slate-900 mt-0.5">
-                                {formatCurrencyString(capitalDeployment.investableSurplusSar, { digits: 0 })}
-                            </p>
-                        </div>
-                        <div className="rounded-lg bg-slate-50/80 px-3 py-2 ring-1 ring-slate-100">
-                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Runway</p>
-                            <p className="text-base font-bold tabular-nums text-slate-900 mt-0.5">
-                                {capitalDeployment.runwayMonths.toFixed(1)} mo
-                            </p>
-                        </div>
-                        <div className="rounded-lg bg-slate-50/80 px-3 py-2 ring-1 ring-slate-100 sm:col-span-1">
-                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Free cash flow</p>
-                            <p className="text-base font-bold tabular-nums text-slate-900 mt-0.5">
-                                {formatCurrencyString(capitalDeployment.monthlyFreeCashFlowSar, { digits: 0 })}
-                            </p>
-                        </div>
-                    </div>
-                    {capitalDeployment.reasons.length > 0 && (
-                        <ul className="px-4 pb-3 text-xs text-slate-700 space-y-1.5 border-t border-slate-100 pt-2.5">
-                            {capitalDeployment.reasons.map((r, i) => (
-                                <li key={`cap-${i}`} className="flex gap-2 leading-relaxed">
-                                    <span className="text-slate-400 shrink-0">•</span>
-                                    <span>{r}</span>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
-                </section>
-            )}
-
-            <EnhancementInsightStrip
-                goalConflicts={enhancementInsights.goalConflicts}
-                budgetDrift={enhancementInsights.budgetDrift.slice(0, 2)}
-                lifestyleHits={enhancementInsights.lifestyleHits}
-                compact
-            />
-
-            {strictReconciliationMode && kpiReconciliation && !kpiReconciliation.ok && (
-                <div className="mb-4 p-4 rounded-xl border border-rose-200 bg-rose-50 text-sm" role="alert">
-                    <p className="font-semibold text-rose-950">KPI mismatch (strict mode)</p>
-                    <ul className="mt-2 space-y-1 text-rose-900 list-disc pl-4">
-                        {kpiReconciliation.rows.filter((r) => !r.withinThreshold).map((r) => (
-                            <li key={r.key}>
-                                {r.label}: Dashboard {r.dashboardValue.toFixed(2)} vs Summary {r.summaryValue.toFixed(2)} (Δ {r.deltaAbs.toFixed(2)})
-                            </li>
-                        ))}
-                    </ul>
-                    <button type="button" className="mt-2 text-xs font-semibold text-primary underline" onClick={() => setActivePage('System & APIs Health')}>
-                        Open System Health diagnostics →
-                    </button>
-                </div>
-            )}
-
-            {nextBestActions.length > 0 && (
-                <div className="mb-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
-                    <h3 className="text-sm font-semibold text-slate-800 mb-2">Suggested actions</h3>
-                    <ul className="space-y-2">
-                        {nextBestActions.slice(0, 5).map((action) => (
-                            <li key={action.id} className="flex flex-wrap items-start gap-2 text-sm">
-                                <span className="text-slate-700 flex-1 min-w-0">{action.title}</span>
-                                {action.link && (setActivePage || triggerPageAction) && (
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            const page = action.link as Page;
-                                            const subAction = (action as { data?: { action?: string } }).data?.action;
-                                            if (subAction && triggerPageAction) triggerPageAction(page, subAction);
-                                            else setActivePage?.(page);
-                                        }}
-                                        className="text-primary font-medium hover:underline shrink-0"
-                                    >
-                                        {action.linkLabel ?? action.link} →
-                                    </button>
-                                )}
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-            )}
-
-            <section className="mb-4 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm text-sm" aria-label="Financial health score">
-                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 bg-slate-50/80 px-4 py-3">
-                    <div className="min-w-0 flex-1">
-                        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 inline-flex items-center gap-1.5">
-                            Financial health
-                            <InfoHint text="Each ingredient is 0–100. Final score blends liquidity 22%, savings 18%, debt ease 18%, goals 18%, budget control 14%, P&amp;L momentum 10%." />
-                        </h3>
-                        <p className="text-xs text-slate-500 mt-1 max-w-xl leading-relaxed">
-                            Emergency liquidity, savings rate, debt pressure, goal progress, budget control, and cashflow momentum.
-                        </p>
-                    </div>
-                    {financialHealth.score != null ? (
-                        <div
-                            className={`shrink-0 flex flex-col items-center justify-center rounded-xl px-4 py-2 min-w-[4.5rem] ring-1 ${
-                                financialHealth.score >= 70
-                                    ? 'bg-emerald-50 text-emerald-800 ring-emerald-100'
-                                    : financialHealth.score >= 50
-                                      ? 'bg-amber-50 text-amber-800 ring-amber-100'
-                                      : 'bg-rose-50 text-rose-800 ring-rose-100'
-                            }`}
-                        >
-                            <span className="text-2xl font-bold tabular-nums leading-none">{financialHealth.score}</span>
-                            <span className="text-[10px] font-semibold uppercase tracking-wide opacity-80 mt-0.5">/ 100</span>
-                        </div>
-                    ) : (
-                        <p className="text-slate-500 text-xs shrink-0 max-w-[12rem]">Add balances, transactions, or goals to score.</p>
-                    )}
-                </div>
-                {financialHealth.parts && (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 p-3">
-                        {(
-                            [
-                                ['Liquidity', financialHealth.parts.liquidity, 'Months of essential expenses covered vs target.'],
-                                ['Savings', financialHealth.parts.savings, 'Savings rate (this month + 3-mo rolling).'],
-                                ['Debt ease', financialHealth.parts.debtRelief, 'Lower debt stress vs income scores higher.'],
-                                ['Goals', financialHealth.parts.goals, 'Progress toward goal targets in SAR.'],
-                                ['Budget', financialHealth.parts.expenses, 'Under-budget performance this month.'],
-                                ['Momentum', financialHealth.parts.momentum, 'P&amp;L trend vs prior financial month.'],
-                            ] as const
-                        ).map(([label, value, hint]) => (
-                            <div
-                                key={label}
-                                className="rounded-lg bg-slate-50/80 px-2.5 py-2 ring-1 ring-slate-100"
-                                title={hint}
-                            >
-                                <div className="flex items-center justify-between gap-1 mb-1">
-                                    <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 truncate">
-                                        {label}
-                                    </span>
-                                    <span className="text-xs font-bold tabular-nums text-slate-800">{value}</span>
-                                </div>
-                                <div className="h-1 rounded-full bg-slate-200/90 overflow-hidden">
-                                    <div
-                                        className={`h-full rounded-full transition-all ${
-                                            value >= 70 ? 'bg-emerald-500' : value >= 50 ? 'bg-amber-500' : 'bg-rose-500'
-                                        }`}
-                                        style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
-                                    />
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </section>
-
             <p className="text-xs text-slate-500 mb-1">
-                Drag cards to reorder them; click a card to open that page.
+                Key metrics first — drag cards to reorder; click a card to open that page.
             </p>
 
             {dashboardTasksPreview.open > 0 && (
@@ -1218,31 +743,12 @@ const DashboardContent: React.FC<{
             </Suspense>
             </div>
 
-            {data?.accounts?.length > 0 && (
-                <div className="section-card border-l-4 border-primary/40">
-                    <h3 className="section-title text-base">Cash & emergency fund</h3>
-                    <p className="text-2xl font-bold text-dark tabular-nums">{maskBalance(formatCurrencyString(projectedCash30d ?? currentCash ?? 0))}</p>
-                    <p className="text-xs text-slate-500 mt-1">Projected cash in 30 days (current liquid + average monthly net flow). Current liquid = bank balances + cash sitting on each investment platform (Accounts), same as headline KPI liquid cash.</p>
-                    <div className="mt-3 pt-3 border-t border-slate-200">
-                        <p className="text-sm text-slate-700"><strong>Emergency fund:</strong> {maskBalance(formatCurrencyString(emergencyFund.emergencyCash))} liquid cash (Checking, Savings, and idle broker cash per Investment account in Accounts — holdings/market value are separate)
-                            {emergencyFund.hasEssentialExpenseEstimate ? (
-                                <> = <strong>{emergencyFund.monthsCovered.toFixed(1)} months</strong> of essential expenses (target {EMERGENCY_FUND_TARGET_MONTHS} months). {emergencyFund.shortfall > 0 ? `Shortfall: ${maskBalance(formatCurrencyString(emergencyFund.shortfall))}.` : 'Target met.'}</>
-                            ) : (
-                                <>. Add essential expense categories or budgets to estimate months covered.</>
-                            )}
-                        </p>
-                    </div>
-                </div>
-            )}
-
-            <AIFeed />
-            
-            
-            <div className="cards-grid grid grid-cols-1 lg:grid-cols-3 gap-4">
-                <div className="lg:col-span-3 section-card flex flex-col min-h-[420px] overflow-hidden">
+            <section aria-label="Net worth" className="mb-6">
+                <div className="section-card flex flex-col min-h-[420px] overflow-hidden border-l-4 border-l-primary/30">
+                    <h2 className="section-title text-base mb-2">Net worth</h2>
                     <div className="flex-1 min-h-0">
                         <NetWorthCockpit
-                            title="Net worth"
+                            title="Balance sheet"
                             metricsOverride={{
                                 headline,
                                 todaySnapshot: dashboardTodaySnapshot,
@@ -1260,8 +766,26 @@ const DashboardContent: React.FC<{
                         />
                     </div>
                 </div>
-            </div>
+            </section>
 
+            {data?.accounts?.length > 0 && (
+                <div className="section-card border-l-4 border-primary/40">
+                    <h3 className="section-title text-base">Cash & emergency fund</h3>
+                    <p className="text-2xl font-bold text-dark tabular-nums">{maskBalance(formatCurrencyString(projectedCash30d ?? currentCash ?? 0))}</p>
+                    <p className="text-xs text-slate-500 mt-1">Projected cash in 30 days (current liquid + average monthly net flow). Current liquid = bank balances + cash sitting on each investment platform (Accounts), same as headline KPI liquid cash.</p>
+                    <div className="mt-3 pt-3 border-t border-slate-200">
+                        <p className="text-sm text-slate-700"><strong>Emergency fund:</strong> {maskBalance(formatCurrencyString(emergencyFund.emergencyCash))} liquid cash (Checking, Savings, and idle broker cash per Investment account in Accounts — holdings/market value are separate)
+                            {emergencyFund.hasEssentialExpenseEstimate ? (
+                                <> = <strong>{emergencyFund.monthsCovered.toFixed(1)} months</strong> of essential expenses (target {EMERGENCY_FUND_TARGET_MONTHS} months). {emergencyFund.shortfall > 0 ? `Shortfall: ${maskBalance(formatCurrencyString(emergencyFund.shortfall))}.` : 'Target met.'}</>
+                            ) : (
+                                <>. Add essential expense categories or budgets to estimate months covered.</>
+                            )}
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            <section aria-label="This month" className="mb-6 space-y-4">
             <div className="cards-grid grid grid-cols-1 gap-4">
                  <div className="section-card-hover flex flex-col min-h-[300px]" onClick={() => setActivePage('Transactions')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Transactions')}>
                     <h3 className="section-title">Monthly Cash Flow</h3>
@@ -1280,16 +804,19 @@ const DashboardContent: React.FC<{
                     </div>
                  </div>
             </div>
-            
+
+            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 gap-4">
+                <BudgetHealth budgets={monthlyBudgets} onClick={() => setActivePage('Budgets')} />
+                <RecentTransactions transactions={recentTransactions} accounts={getPersonalAccounts(data)} onClick={() => setActivePage('Transactions')} />
+            </div>
+            </section>
+
+            <section aria-label="Accounts and bills" className="mb-6">
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 gap-4">
                 <AccountsOverview accounts={accountsForOverview} onClick={() => setActivePage('Accounts')} />
                 <UpcomingBills />
             </div>
-
-            <div className="cards-grid grid grid-cols-1 md:grid-cols-2 gap-4">
-                <BudgetHealth budgets={monthlyBudgets} onClick={() => setActivePage('Budgets')} />
-                <RecentTransactions transactions={recentTransactions} accounts={(data as any)?.personalAccounts ?? data?.accounts ?? []} onClick={() => setActivePage('Transactions')} />
-            </div>
+            </section>
 
             {setActivePage && (
                 <div className="section-card border border-slate-200/80 bg-slate-50/50">
@@ -1299,7 +826,8 @@ const DashboardContent: React.FC<{
                         <li><button type="button" onClick={() => setActivePage('Statement Upload')} className="text-primary hover:underline font-medium inline-flex items-center gap-1.5"><DocumentArrowUpIcon className="h-4 w-4" />Import from statements</button> (bank, SMS, or trading)</li>
                         <li><button type="button" onClick={() => setActivePage('Assets')} className="text-primary hover:underline font-medium inline-flex items-center gap-1.5"><GoldBarIcon className="h-4 w-4" />Manage assets</button> (property, commodities, metals)</li>
                         <li><button type="button" onClick={() => setActivePage('Plan')} className="text-primary hover:underline font-medium inline-flex items-center gap-1.5"><ClipboardDocumentListIcon className="h-4 w-4" />Update your Plan</button> to reflect income and expenses</li>
-                        <li><button type="button" onClick={() => setActivePage('Summary')} className="text-primary hover:underline font-medium inline-flex items-center gap-1.5"><UsersIcon className="h-4 w-4" />View Summary</button> for AI persona and report card</li>
+                        <li><button type="button" onClick={() => setActivePage('Summary')} className="text-primary hover:underline font-medium inline-flex items-center gap-1.5"><UsersIcon className="h-4 w-4" />View Summary</button> for headline wealth &amp; advisor</li>
+                        <li><button type="button" onClick={() => setActivePage('Wealth Analytics')} className="text-primary hover:underline font-medium">Wealth Analytics</button> for deep charts, health score &amp; cashflow tools</li>
                     </ul>
                 </div>
             )}

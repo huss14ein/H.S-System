@@ -8,6 +8,7 @@ import { SparklesIcon } from './icons/SparklesIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { transactionBookCurrency } from '../utils/cashAccountDisplay';
 import Combobox from './Combobox';
+import { getPersonalAccounts } from '../utils/wealthScope';
 
 interface TransactionReviewModalProps {
     isOpen: boolean;
@@ -22,8 +23,7 @@ const TransactionReviewModal: React.FC<TransactionReviewModalProps> = ({ isOpen,
     const updateTransaction = dataContext?.updateTransaction;
     const { formatCurrencyString } = useFormatCurrency();
     const accountsById = useMemo(() => {
-        const list =
-            (dataContext?.data as { personalAccounts?: Account[] } | undefined)?.personalAccounts ?? dataContext?.data?.accounts ?? [];
+        const list = getPersonalAccounts(dataContext?.data ?? null);
         return new Map<string, Account>(list.map((a) => [a.id, a]));
     }, [dataContext?.data]);
     const [currentIndex, setCurrentIndex] = useState(0);

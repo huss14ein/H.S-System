@@ -13,6 +13,7 @@ import {
   type FinancialMonthKey,
 } from '../utils/financialMonth';
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from './fxDailySeries';
+import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 
 export type TxLike = {
   date: string;
@@ -274,9 +275,8 @@ export function personalMonthlyNetByMonthKeySar(
 ): { monthKeys: string[]; values: number[]; byKey: Map<string, number> } {
   hydrateSarPerUsdDailySeries(data, uiExchangeRate);
   const spot = resolveSarPerUsd(data, uiExchangeRate);
-  const d = data as FinancialData & { personalTransactions?: Transaction[]; personalAccounts?: Account[] };
-  const transactions = (d.personalTransactions ?? data.transactions ?? []) as Transaction[];
-  const accounts = (d.personalAccounts ?? data.accounts ?? []) as Account[];
+  const transactions = getPersonalTransactions(data);
+  const accounts = getPersonalAccounts(data) as Account[];
   const accById = new Map(accounts.map((a) => [a.id, a]));
   const monthStartDay = resolveMonthStartDayFromData(data);
   const now = new Date();
@@ -319,9 +319,8 @@ export function personalMonthlyInflowOutflowByFinancialMonthSar(
 ): { monthKeys: string[]; inflow: number[]; outflow: number[]; net: number[]; byKey: Map<string, { inflow: number; outflow: number; net: number }> } {
   hydrateSarPerUsdDailySeries(data, uiExchangeRate);
   const spot = resolveSarPerUsd(data, uiExchangeRate);
-  const d = data as FinancialData & { personalTransactions?: Transaction[]; personalAccounts?: Account[] };
-  const transactions = (d.personalTransactions ?? data.transactions ?? []) as Transaction[];
-  const accounts = (d.personalAccounts ?? data.accounts ?? []) as Account[];
+  const transactions = getPersonalTransactions(data);
+  const accounts = getPersonalAccounts(data) as Account[];
   const accById = new Map(accounts.map((a) => [a.id, a]));
   const monthStartDay = resolveMonthStartDayFromData(data);
   const now = new Date();

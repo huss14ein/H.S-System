@@ -90,7 +90,7 @@ import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
 import { useFinancialEnhancementInsights } from '../hooks/useFinancialEnhancementInsights';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { learnAndAutoAdjust } from '../services/aiBudgetAutomation';
-import { getPersonalTransactions } from '../utils/wealthScope';
+import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { toSAR } from '../utils/currencyMath';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
@@ -511,7 +511,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const sarPerUsd = useCanonicalSpotFx();
     const accountCurrencyById = useMemo(() => {
         const map = new Map<string, 'SAR' | 'USD'>();
-        (((data as any)?.personalAccounts ?? data?.accounts ?? []) as Array<{ id: string; currency?: string }>).forEach((a) => {
+        getPersonalAccounts(data).forEach((a) => {
             map.set(a.id, a.currency === 'USD' ? 'USD' : 'SAR');
         });
         return map;
@@ -856,8 +856,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
     const householdBudgetEngine = useMemo(() => {
         if (!householdEngineReady) return EMPTY_HOUSEHOLD_BUDGET_PLAN;
-        const transactions = (engineData as any)?.personalTransactions ?? engineData?.transactions ?? [];
-        const accounts = (engineData as any)?.personalAccounts ?? engineData?.accounts ?? [];
+        const transactions = getPersonalTransactions(engineData);
+        const accounts = getPersonalAccounts(engineData);
         const { monthlyIncome } = accumulateHouseholdYearCashflowSar(
             engineData ?? null,
             transactions,
@@ -892,8 +892,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     }, [
         engineData?.transactions,
         engineData?.accounts,
-        (engineData as any)?.personalTransactions,
-        (engineData as any)?.personalAccounts,
         engineData?.goals,
         engineData,
         sarPerUsd,
@@ -931,8 +929,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 setScenarios([]);
                 setSeasonalityPatterns([]);
             }
-            const txRows = (data as any)?.personalTransactions ?? data?.transactions ?? [];
-            const accRows = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+            const txRows = getPersonalTransactions(data);
+            const accRows = getPersonalAccounts(data);
             setAnomalies(
                 detectSpendingAnomaliesFromTransactions({
                     year: currentYear,
@@ -953,8 +951,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
     const suggestedMonthlySalary = useMemo(() => {
         if (!data) return 0;
-        const transactions = (data as any)?.personalTransactions ?? data?.transactions ?? [];
-        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
+        const transactions = getPersonalTransactions(data);
+        const accounts = getPersonalAccounts(data);
         const { monthlyIncome } = accumulateHouseholdYearCashflowSar(
             data,
             transactions,
@@ -970,11 +968,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const householdEngineValidationWarnings = useMemo(() => {
         const w: string[] = [];
         if (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0) w.push('Exchange rate is invalid — USD account balances and income may be mis-stated.');
-        const hasUsd = ((data as any)?.personalAccounts ?? data?.accounts ?? []).some((a: { currency?: string }) => a.currency === 'USD');
+        const hasUsd = getPersonalAccounts(data).some((a) => a.currency === 'USD');
         if (hasUsd && (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0)) {
             w.push('USD accounts detected — set SAR per USD in the header or Wealth Ultra.');
         }
-        if (!data?.transactions?.length && !(data as any)?.personalTransactions?.length) {
+        if (!getPersonalTransactions(data).length) {
             w.push('No transactions yet — engine uses salary override and modeled spending until you add history.');
         }
         return w;
@@ -982,13 +980,13 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
     const recurringBillsWithBenchmarks = useMemo(() => {
         if (!advancedHouseholdOpen && !recurringBillsOpen) return [];
-        const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Array<{ date: string; type?: string; amount?: number; description?: string }>;
+        const txs = getPersonalTransactions(data) as Array<{ date: string; type?: string; amount?: number; description?: string }>;
         const patterns = detectRecurringBillPatterns(txs as any, 2);
         return patterns.map((p) => addBenchmarkComparison(p));
-    }, [advancedHouseholdOpen, recurringBillsOpen, data?.transactions, (data as any)?.personalTransactions]);
+    }, [advancedHouseholdOpen, recurringBillsOpen, data]);
 
     const budgetSpendFingerprint = useMemo(() => {
-        const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Array<{
+        const txs = getPersonalTransactions(data) as Array<{
             date?: string;
             amount?: number;
             type?: string;
@@ -1010,8 +1008,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         ownerSharedTransactions.length,
         data?.budgets,
         data?.budgetRequests,
-        (data as any)?.personalTransactions,
-        data?.transactions,
+        data,
     ]);
 
     const { household: householdConstraints } = useFinancialEnginesIntegration();
@@ -1272,7 +1269,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
         const { rangeStart, rangeEnd, previousRangeStart, previousRangeEnd, ytdStart, ytdEnd } = budgetSpendWindows;
 
-        ((data as any)?.personalTransactions ?? data?.transactions ?? [])
+        getPersonalTransactions(data)
             .filter((t: { type?: string; status?: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && (t.status ?? 'Approved') === 'Approved')
             .forEach((t: { date: string; amount?: number; budgetCategory?: string; category?: string; splitLines?: { category: string; amount: number }[] }) => {
                 const allocations = getTransactionBudgetAllocations(t as any);
@@ -1541,7 +1538,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             }
         };
 
-        ((data as any)?.personalTransactions ?? data?.transactions ?? []).forEach(
+        getPersonalTransactions(data).forEach(
             (tx: {
                 date: string;
                 amount?: number;
@@ -1628,7 +1625,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     }, [
         data?.budgets,
         data?.transactions,
-        (data as any)?.personalTransactions,
         approvedOverviewMonth,
         approvedOverviewYear,
         monthStartDay,
@@ -2109,7 +2105,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         if (budgetInsightsRows.length > 0 && budgetInsightsRows.every((b) => (b.monthlyLimit ?? 0) <= 0)) {
             warnings.push('All visible budgets have zero limits.');
         }
-        const uncategorizedExpenses = ((data as any)?.personalTransactions ?? data?.transactions ?? [])
+        const uncategorizedExpenses = getPersonalTransactions(data)
             .filter((t: any) => countsAsExpenseForCashflowKpi(t) && (t.status ?? 'Approved') === 'Approved' && !String(t.budgetCategory ?? '').trim()).length;
         if (uncategorizedExpenses > 0) {
             warnings.push(`${uncategorizedExpenses} approved expense transaction(s) are not mapped to budget categories.`);
@@ -2122,7 +2118,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             warnings.push('Shared transaction month filter is invalid; defaulting to all months.');
         }
         return warnings;
-    }, [governanceReady, auth?.user?.id, budgetInsights, budgetData, budgetInsightsRows, data?.transactions, (data as any)?.personalTransactions, budgetRequests, isAdmin, sharedTxMonthFilter]);
+    }, [governanceReady, auth?.user?.id, budgetInsights, budgetData, budgetInsightsRows, data?.transactions, budgetRequests, isAdmin, sharedTxMonthFilter]);
 
     const updateMonthlyOverride = (month: number, patch: Partial<HouseholdMonthlyOverride>) => {
         setHouseholdOverrides((prev) => {
@@ -2135,11 +2131,29 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
     const criticalValidationCount = useMemo(() => householdBudgetEngine.months.reduce((sum, m) => sum + ((m.validationErrors?.length || 0) > 0 ? 1 : 0), 0), [householdBudgetEngine]);
 
+    /** Household owner can manage budgets; collaborators with category permissions use requests only. */
+    const isCollaborator = governanceReady && !isAdmin && permittedCategories.length > 0;
+    const canManageBudgets = Boolean(auth?.user?.id) && (isAdmin || !isCollaborator);
+
     const handleOpenModal = useCallback((budget: Budget | null = null) => {
-        if (!isAdmin) return;
+        if (!canManageBudgets) {
+            if (isCollaborator) {
+                alert('You cannot edit budgets directly. Submit a budget request for your admin to approve.');
+            }
+            return;
+        }
+        if (
+            budget &&
+            (String(budget.id).startsWith('synthetic-') || String(budget.id).startsWith('approved-request-'))
+        ) {
+            alert(
+                'This row is not a stored monthly budget yet. Use Add budget to create a limit for this category, or finalize the approved request into a real budget row.',
+            );
+            return;
+        }
         setBudgetToEdit(budget);
         setIsModalOpen(true);
-    }, [isAdmin]);
+    }, [canManageBudgets, isCollaborator]);
 
     const handleOwnPortfolioEdit = useCallback(
         (budget: BudgetRow) => {
@@ -2211,7 +2225,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     };
 
     const handleCopyBudgets = () => {
-        if (!isAdmin) return;
+        if (!canManageBudgets) return;
 
         if (window.confirm("This will copy budgets from the previous month for any categories that don't already have one this month. Continue?")) {
             copyBudgetsFromPreviousMonth(currentYear, currentMonth);
@@ -2219,14 +2233,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     };
 
     const handleSmartFillBudgets = () => {
-        if (!isAdmin) return;
+        if (!canManageBudgets) return;
         const segments = buildSmartFillThreeFinancialMonthSegments(currentYear, currentMonth, monthStartDay);
         if (segments.length === 0) {
             alert('No valid date window for smart-fill for this month. Pick a month that overlaps today or past spending.');
             return;
         }
-        const allTx = (data as any)?.personalTransactions ?? data?.transactions ?? [];
-        const totals = aggregateSmartFillSpendByCategorySar(segments, allTx, ownerSharedTransactions, sarPerUsd, accountCurrencyById);
+        const allTx = getPersonalTransactions(data);
+        const totals = aggregateSmartFillSpendByCategorySar(segments, allTx as unknown as Array<Record<string, unknown>>, ownerSharedTransactions, sarPerUsd, accountCurrencyById);
         const suggestions = monthlySuggestionsFromCategoryTotals(totals, segments.length);
 
         if (suggestions.length === 0) {
@@ -2259,19 +2273,22 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         toCreate.forEach((s) => {
             const tier: BudgetTier =
                 CORE_CATEGORIES.some((name) => s.category.toLowerCase().includes(name.toLowerCase())) ? 'Core' : 'Optional';
-            addBudget({
-                category: s.category,
-                limit: s.monthly,
-                month: currentMonth,
-                year: currentYear,
-                period: 'monthly',
-                tier,
-            } as any);
+            addBudget(
+                {
+                    category: s.category,
+                    limit: s.monthly,
+                    month: currentMonth,
+                    year: currentYear,
+                    period: 'monthly',
+                    tier,
+                } as any,
+                { confirmed: true },
+            );
         });
     };
 
     const handleSuggestBudgetAdjustments = async () => {
-        if (!isAdmin) return;
+        if (!canManageBudgets) return;
         const txs = getPersonalTransactions(data) as import('../types').Transaction[];
         const budgets = (data?.budgets ?? []) as Budget[];
         const adjusted = await learnAndAutoAdjust(txs, budgets, currentMonth, currentYear, {
@@ -2661,10 +2678,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     <PageActionsDropdown
                         ariaLabel="Budget actions"
                         actions={[
-                            { value: 'suggest-adjustments', label: 'Suggest budget adjustments', disabled: !isAdmin, onClick: handleSuggestBudgetAdjustments },
-                            { value: 'smart-fill', label: 'Smart-fill from history', disabled: !isAdmin, onClick: handleSmartFillBudgets },
-                            { value: 'copy-month', label: 'Copy last month', disabled: !isAdmin, onClick: handleCopyBudgets },
-                            { value: 'add-budget', label: 'Add budget', disabled: !isAdmin, onClick: handleOpenModal },
+                            { value: 'suggest-adjustments', label: 'Suggest budget adjustments', disabled: !canManageBudgets, onClick: handleSuggestBudgetAdjustments },
+                            { value: 'smart-fill', label: 'Smart-fill from history', disabled: !canManageBudgets, onClick: handleSmartFillBudgets },
+                            { value: 'copy-month', label: 'Copy last month', disabled: !canManageBudgets, onClick: handleCopyBudgets },
+                            { value: 'add-budget', label: 'Add budget', disabled: !canManageBudgets, onClick: () => handleOpenModal() },
                         ]}
                     />
                 </div>
@@ -2679,7 +2696,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             <BudgetMonthOpenBanner
                 hints={monthOpenHints}
                 monthKey={currentViewKey}
-                onCopyLastMonth={isAdmin ? handleCopyBudgets : undefined}
+                onCopyLastMonth={canManageBudgets ? handleCopyBudgets : undefined}
                 onReviewDrift={() => {
                     const el = document.getElementById('budget-category-cards');
                     el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2810,7 +2827,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
             <AIAdvisor
                 pageContext="cashflow"
-                contextData={{ transactions: (data as any)?.personalTransactions ?? data?.transactions ?? [], budgets: data?.budgets ?? [] }}
+                contextData={{ transactions: getPersonalTransactions(data), budgets: data?.budgets ?? [] }}
                 title="Budget AI Advisor"
                 subtitle="Budget drift, category pressure, and optimization insights."
                 buttonLabel="Get AI Budget Insights"
@@ -3590,9 +3607,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                     </div>
                                     <button
                                         type="button"
-                                        disabled={!isAdmin || bulkAddSelectedCategoriesNormalized.length === 0}
+                                        disabled={!canManageBudgets || bulkAddSelectedCategoriesNormalized.length === 0}
                                         onClick={async () => {
-                                            if (!isAdmin) { alert('Only admins can create budgets from the household engine.'); return; }
+                                            if (!canManageBudgets) { alert('You do not have permission to create budgets.'); return; }
                                             const salary = Number(bulkAddSalary);
                                             const fallback = (typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0) ? expectedMonthlySalary : suggestedMonthlySalary;
                                             const monthlySalary = Number.isFinite(salary) && salary > 0 ? salary : fallback;
@@ -3886,7 +3903,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                             const monthYear: number = Number((month as any).year) || currentYear;
                             const { start: rangeStart, end: rangeEnd } = financialMonthRangeFromKey({ year: monthYear, month: monthNum }, monthStartDay);
                             const categorySpending = new Map<string, number>();
-                            const sourceTxs: any[] = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as any[];
+                            const sourceTxs: any[] = getPersonalTransactions(data) as any[];
                             sourceTxs
                                 .filter((t: any) => countsAsExpenseForCashflowKpi(t) && (t.status ?? 'Approved') === 'Approved')
                                 .forEach((t: any) => {
@@ -4662,7 +4679,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         onEdit={handleOwnPortfolioEdit}
                         onDelete={handleOwnPortfolioDelete}
                         onBorrowFromNextMonth={handleBorrowFromNextMonth}
-                        canDelete={isAdmin}
+                        canDelete={canManageBudgets}
                     />
                 ))}
             </div>
@@ -4684,6 +4701,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
              {governanceReady && budgetData.length === 0 && (
                 <div className="text-center py-14 px-6 rounded-3xl border border-dashed border-slate-300/90 bg-gradient-to-b from-slate-50 via-white to-indigo-50/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
                     <p className="text-slate-600 font-medium">No budgets set for this month.</p>
+                    <p className="mt-1 text-sm text-slate-500">Budgets are never created automatically — use Add budget or Copy last month when you are ready.</p>
                     {setActivePage && (
                         <p className="mt-2 text-sm text-slate-600">
                             Add a budget above, or{' '}

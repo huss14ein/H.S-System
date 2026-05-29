@@ -25,6 +25,7 @@ import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmer
 import { toSAR } from '../utils/currencyMath';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { getPersonalAccounts } from '../utils/wealthScope';
 import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import { financialMonthNetCashflowSar } from '../services/dashboardKpiSnapshot';
 import { personalMonthlyNetByMonthKeySar } from '../services/financeMetrics';
@@ -908,12 +909,12 @@ const Goals: React.FC<{
         if (noMappedFunding > 0) warnings.push(`${noMappedFunding} active goal(s) have no linked budget or investment monthly envelope.`);
         if (!Number.isFinite(averageMonthlySavings)) warnings.push('Average monthly savings calculation is invalid.');
         if (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0) warnings.push('Exchange rate is invalid — USD-linked balances may mis-state goal progress.');
-        const hasUsd = ((data as any)?.personalAccounts ?? data?.accounts ?? []).some((a: { currency?: string }) => a.currency === 'USD');
+        const hasUsd = getPersonalAccounts(data).some((a) => a.currency === 'USD');
         if (hasUsd && (!Number.isFinite(sarPerUsd) || sarPerUsd <= 0)) {
             warnings.push('USD accounts detected — set SAR per USD in the header or Wealth Ultra for accurate goal totals.');
         }
         return warnings;
-    }, [data?.goals, data, data?.accounts, (data as any)?.personalAccounts, goalCurrentAmountByGoalId, averageMonthlySavings, sarPerUsd]);
+    }, [data?.goals, data, goalCurrentAmountByGoalId, averageMonthlySavings, sarPerUsd]);
 
     const goalsWithDualFundingNames = useMemo(
         () =>

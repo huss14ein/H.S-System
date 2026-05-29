@@ -11,6 +11,7 @@ import {
   transactionDateInFinancialPlanYear,
 } from '../utils/financialMonth';
 import { toSAR } from '../utils/currencyMath';
+import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import type { Account, FinancialData } from '../types';
 
 export type PlanExpenseOutlier = {
@@ -53,7 +54,7 @@ export function detectPlanExpenseOutliers(args: {
   const minAmountSar = args.minAmountSar ?? DEFAULT_MIN_SAR;
 
   const accounts =
-    ((data as { personalAccounts?: Account[] })?.personalAccounts ?? data?.accounts ?? []) as Account[];
+    getPersonalAccounts(data) as Account[];
   const accountsById = new Map(accounts.map((a) => [String(a.id ?? ''), a]));
   const txAmountSar = (t: { amount?: number; accountId?: string; account_id?: string }) => {
     const acc = accountsById.get(String(t.accountId ?? t.account_id ?? ''));
@@ -61,10 +62,7 @@ export function detectPlanExpenseOutliers(args: {
     return toSAR(Math.abs(Number(t.amount) || 0), cur, sarPerUsd);
   };
 
-  const txs =
-    ((data as { personalTransactions?: unknown[] })?.personalTransactions ??
-      data?.transactions ??
-      []) as Array<{
+  const txs = getPersonalTransactions(data) as Array<{
       id?: string;
       date: string;
       type?: string;

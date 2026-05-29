@@ -13,6 +13,7 @@ import CollapsibleSection from '../components/CollapsibleSection';
 import { useCurrency } from '../context/CurrencyContext';
 import { useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
+import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
 import type { Page, Transaction } from '../types';
 import { normalizedMonthlyExpenseSar, personalMonthlyNetByMonthKeySar, savingsRateSarFinancialMonth } from '../services/financeMetrics';
@@ -235,8 +236,8 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     }, [data?.goals, initialValues.netWorth, goalResolvedSarById]);
 
     const stressInputs = useMemo(() => {
-        const accounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
-        const txs = (data as any)?.personalTransactions ?? data?.transactions ?? [];
+        const accounts = getPersonalAccounts(data);
+        const txs = getPersonalTransactions(data);
         const monthlyExpense = normalizedMonthlyExpenseSar(txs as Transaction[], accounts, sarPerUsd, { monthsLookback: 6 });
         return { liquidCash: liquidCashSar, monthlyExpense };
     }, [data, sarPerUsd, liquidCashSar]);
@@ -265,8 +266,8 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
 
     const currentSavingsRate = useMemo(() => {
         if (!data) return 0;
-        const txs = ((data as any)?.personalTransactions ?? data?.transactions ?? []) as Transaction[];
-        const accounts = ((data as any)?.personalAccounts ?? data?.accounts ?? []) as import('../types').Account[];
+        const txs = getPersonalTransactions(data) as Transaction[];
+        const accounts = getPersonalAccounts(data) as import('../types').Account[];
         return savingsRateSarFinancialMonth(txs, accounts, new Date(), data, exchangeRate);
     }, [data, exchangeRate]);
 
@@ -290,7 +291,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         if (liveProjection && Math.abs(liveProjection.nonInvestmentOpening + liveProjection.finalInvestmentValue - liveProjection.finalNetWorth) > 2) {
             warnings.push('Internal projection reconciliation failed — please report this.');
         }
-        const hasUsd = ((data as any)?.personalAccounts ?? data?.accounts ?? []).some((a: { currency?: string }) => a.currency === 'USD');
+        const hasUsd = getPersonalAccounts(data).some((a) => a.currency === 'USD');
         if (hasUsd && (!Number.isFinite(fx) || fx <= 0)) warnings.push('USD accounts detected — set SAR per USD in the header or Wealth Ultra.');
         return warnings;
     }, [

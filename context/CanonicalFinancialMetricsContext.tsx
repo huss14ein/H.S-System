@@ -33,7 +33,8 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
   const { simulatedPrices } = useMarketPrices();
   const debouncedPrices = useDebouncedValue(simulatedPrices, 1500);
   const deferredPrices = useDeferredValue(debouncedPrices);
-  const deferredData = useDeferredValue(showHydrateBanner ? null : data);
+  const debouncedData = useDebouncedValue(showHydrateBanner ? null : data, 350);
+  const deferredData = useDeferredValue(debouncedData);
   useHydrateSarPerUsdDailySeries(deferredData, exchangeRate);
 
   const cachedValueRef = useRef<CanonicalFinancialMetricsContextValue | null>(null);

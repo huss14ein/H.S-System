@@ -4,6 +4,7 @@ import { computeHouseholdStressFromData } from './householdBudgetStress';
 import { getPerformanceSnapshots } from './wealthUltraPerformance';
 import { DEFAULT_SAR_PER_USD, resolveSarPerUsd, totalLiquidCashSARFromAccounts, toSAR } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries } from './fxDailySeries';
+import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 
 export interface LiquidityRunwaySummary {
   monthsOfRunway: number;
@@ -23,8 +24,8 @@ export function computeLiquidityRunwayFromData(
   if (!data) return null;
 
   const stress = computeHouseholdStressFromData(data);
-  const accounts = (data as any).personalAccounts ?? data.accounts ?? [];
-  const transactions = (data as any).personalTransactions ?? data.transactions ?? [];
+  const accounts = getPersonalAccounts(data);
+  const transactions = getPersonalTransactions(data);
   const rawUi = options?.exchangeRate;
   const uiExchangeRate = Number(rawUi) > 0 ? Number(rawUi) : DEFAULT_SAR_PER_USD;
   hydrateSarPerUsdDailySeries(data, uiExchangeRate);
