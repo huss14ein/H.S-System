@@ -82,7 +82,8 @@ expectContains(dataContext, "rpc('create_investment_cash_transfer_with_fee'", 'c
 const budgets = read('pages/Budgets.tsx');
 expectContains(budgets, "rpc('finalize_advance_budget_request'", 'pages/Budgets.tsx');
 expectContains(budgets, "rpc('get_shared_budgets_for_me'", 'pages/Budgets.tsx');
-expectContains(budgets, "rpc('get_shared_budget_consumed_for_me'", 'pages/Budgets.tsx');
+expectContains(read('services/sharedBudgetConsumedRpc.ts'), "rpc('get_shared_budget_consumed_for_me'", 'services/sharedBudgetConsumedRpc.ts');
+expectContains(budgets, 'fetchSharedConsumedMap', 'pages/Budgets.tsx');
 
 const accountsPage = read('pages/Accounts.tsx');
 expectContains(accountsPage, "rpc('get_shared_accounts_for_me'", 'pages/Accounts.tsx');

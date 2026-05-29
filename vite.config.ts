@@ -35,6 +35,24 @@ const buildSha = (
 
 const buildTimeIso = new Date().toISOString();
 
+/** Build stamp in index.html lets clients detect stale cached bundles vs live deploy. */
+function injectBuildMeta(): Plugin {
+  return {
+    name: 'inject-build-meta',
+    transformIndexHtml: {
+      order: 'pre',
+      handler(html) {
+        const meta = [
+          '<meta name="finova-app" content="hs-system-vite" />',
+          `<meta name="finova-build-sha" content="${buildSha}" />`,
+          `<meta name="finova-build-time" content="${buildTimeIso}" />`,
+        ].join('\n    ');
+        return html.replace('</head>', `    ${meta}\n  </head>`);
+      },
+    },
+  };
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   loadEnv(mode, process.cwd(), '');
@@ -46,7 +64,7 @@ export default defineConfig(({ mode }) => {
       __WEALTH_ANALYTICS_V2__: JSON.stringify(true),
     },
     // Emulates Netlify redirects (`/api/*` → functions). Functions read AI keys from Netlify Site env server-side only.
-    plugins: [react(), netlify(), cssBeforeModuleScripts()],
+    plugins: [react(), netlify(), injectBuildMeta(), cssBeforeModuleScripts()],
     build: {
       rollupOptions: {
         output: {

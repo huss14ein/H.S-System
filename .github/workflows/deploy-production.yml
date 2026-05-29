@@ -1,0 +1,75 @@
+name: Deploy Production
+
+# Builds and publishes dist/ on every main push. Netlify deploy runs when repository secrets are set.
+# One-time setup: GitHub → Settings → Secrets → NETLIFY_AUTH_TOKEN + NETLIFY_SITE_ID (my-finova site).
+# Vercel continues to deploy from its own GitHub integration on the same commits.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint, typecheck, and unit tests
+        run: npm test
+
+      - name: Build production bundle
+        run: npm run build
+        env:
+          COMMIT_REF: ${{ github.sha }}
+          GITHUB_SHA: ${{ github.sha }}
+
+      - name: Verify Wealth Analytics and build stamp in dist
+        run: |
+          test -f dist/index.html
+          grep -q 'name="finova-build-sha"' dist/index.html
+          grep -q 'name="finova-app"' dist/index.html
+          grep -rl 'Wealth Analytics' dist/assets/*.js > /dev/null
+          echo "Build stamp: $(grep -o 'content="[^"]*"' dist/index.html | head -1)"
+
+      - name: Deploy to Netlify production
+        id: netlify
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          if [ -z "${NETLIFY_AUTH_TOKEN:-}" ] || [ -z "${NETLIFY_SITE_ID:-}" ]; then
+            echo "::warning title=Netlify deploy skipped::Add NETLIFY_AUTH_TOKEN and NETLIFY_SITE_ID to GitHub repository secrets so main auto-deploys to my-finova.netlify.app. Until then use https://h-s-system.vercel.app (Vercel Git integration)."
+            echo "deployed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          npx netlify deploy --prod --dir=dist --message "Deploy ${GITHUB_SHA:0:7} from GitHub Actions"
+          echo "deployed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test Netlify production URL
+        if: steps.netlify.outputs.deployed == 'true'
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          SITE_URL=$(npx netlify api getSite --data "{\"site_id\":\"${NETLIFY_SITE_ID}\"}" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);console.log(j.ssl_url||j.url);});")
+          echo "Checking ${SITE_URL}"
+          HTML=$(curl -sfL "${SITE_URL}/?nocache=$(date +%s)")
+          echo "$HTML" | grep -q 'name="finova-app"'
+          echo "$HTML" | grep -q 'name="finova-build-sha"'
+          echo "Netlify production serves H.S-System Vite app at ${SITE_URL}"

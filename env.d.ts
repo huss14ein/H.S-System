@@ -18,6 +18,8 @@ interface ImportMetaEnv {
   readonly VITE_STOOQ_PROXY?: string;
   /** Optional deployed origin (https://…) prepended for AI proxy health/calls when the SPA is not served with functions. */
   readonly VITE_AI_PROXY_EXTRA_ORIGIN?: string;
+  /** Canonical production URL shown in Settings and deploy hints (https://…, no trailing slash). */
+  readonly VITE_CANONICAL_APP_URL?: string;
 }
 
 interface ImportMeta {

@@ -33,7 +33,14 @@ import { useNotifications } from '../context/NotificationsContext';
 import { toSAR } from '../utils/currencyMath';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
-import { APP_VERSION, CANONICAL_VITE_APP_URL, getBuildSha, getBuildTimeIso, hasWealthAnalyticsRollout } from '../utils/buildInfo';
+import {
+  APP_VERSION,
+  getBuildSha,
+  getBuildTimeIso,
+  getCanonicalAppUrl,
+  hasWealthAnalyticsRollout,
+  isOnCanonicalHost,
+} from '../utils/buildInfo';
 import AIAdvisor from '../components/AIAdvisor';
 import Modal from '../components/Modal';
 import { clearAiProxySessionBlock } from '../services/geminiService';
@@ -510,11 +517,21 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                         <strong>{hasWealthAnalyticsRollout() ? 'included in this build' : 'not in this build — hard refresh or use the URL below'}</strong>
                     </p>
                     <p className="mt-2 text-xs opacity-90">
-                        This codebase (Vite + Supabase) deploys to{' '}
-                        <a href={CANONICAL_VITE_APP_URL} className="underline font-medium" target="_blank" rel="noopener noreferrer">
-                            {CANONICAL_VITE_APP_URL.replace('https://', '')}
+                        Production URL:{' '}
+                        <a href={getCanonicalAppUrl()} className="underline font-medium" target="_blank" rel="noopener noreferrer">
+                            {getCanonicalAppUrl().replace('https://', '')}
                         </a>
-                        . <strong>my-finova.netlify.app</strong> is a different Next.js app — merges here will not update that site.
+                        . GitHub <code className="text-[10px]">main</code> auto-deploys via Vercel and (when{' '}
+                        <code className="text-[10px]">NETLIFY_AUTH_TOKEN</code> +{' '}
+                        <code className="text-[10px]">NETLIFY_SITE_ID</code> secrets are set) Netlify Actions.
+                        {typeof window !== 'undefined' && !isOnCanonicalHost() ? (
+                            <>
+                                {' '}
+                                This tab is on <strong>{window.location.hostname}</strong> — if features are missing, open the
+                                production URL above (bookmarks to my-finova.netlify.app may still show an old Next.js app until
+                                Netlify is linked to this repo).
+                            </>
+                        ) : null}
                     </p>
                 </div>
             </div>

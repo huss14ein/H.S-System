@@ -172,6 +172,7 @@ If deployment fails:
 
 ## Support & Troubleshooting
 
+- **Merged to main but UI unchanged:** Open **Settings → App build** and compare the commit sha to GitHub `main`. If the sha is old, hard-refresh or use the **Refresh now** banner. If you use **my-finova.netlify.app**, that site must be linked to `huss14ein/H.S-System` (or set GitHub secrets `NETLIFY_AUTH_TOKEN` + `NETLIFY_SITE_ID` so `.github/workflows/deploy-production.yml` publishes `dist/` on every main push). The live Vite app is also at **https://h-s-system.vercel.app**.
 - **Build fails:** Check `netlify.toml` and environment variables
 - **RLS errors:** Verify `rls_all_user_tables.sql` was applied
 - **AI not working:** Check `GEMINI_API_KEY` in Supabase secrets and Netlify env vars

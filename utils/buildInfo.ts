@@ -32,5 +32,22 @@ export function hasWealthAnalyticsRollout(): boolean {
   }
 }
 
-/** Where the Vite H.S-System app is deployed (not my-finova.netlify.app — that is a separate Next.js app). */
+/** Default production URL when VITE_CANONICAL_APP_URL is unset (Vercel Git integration). */
 export const CANONICAL_VITE_APP_URL = 'https://h-s-system.vercel.app';
+
+/** Preferred production URL (env override → default Vercel). Set on Netlify/Vercel after linking this repo. */
+export function getCanonicalAppUrl(): string {
+  const fromEnv = import.meta.env.VITE_CANONICAL_APP_URL?.trim();
+  const url = fromEnv || CANONICAL_VITE_APP_URL;
+  return url.replace(/\/$/, '');
+}
+
+/** True when the SPA hostname matches the configured canonical production host. */
+export function isOnCanonicalHost(): boolean {
+  if (import.meta.env.DEV || typeof window === 'undefined') return true;
+  try {
+    return window.location.hostname === new URL(getCanonicalAppUrl()).hostname;
+  } catch {
+    return true;
+  }
+}
