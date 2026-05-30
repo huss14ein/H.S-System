@@ -82,7 +82,7 @@ export const ExecutiveStatusRow: React.FC<{
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0 flex-1">
           <h2 className="text-lg sm:text-xl font-bold text-slate-900">{t('executiveStatus')}</h2>
-          <p className="text-sm text-slate-600">{t('cashflowTrend')}</p>
+          <p className="text-sm text-slate-600">{t('executiveStatusSubtitle')}</p>
         </div>
         {showLanguageToggle && (
           <div className="flex items-center gap-2 shrink-0">

@@ -80,6 +80,10 @@ import {
 import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import {
+  computePortfolioPeriodPnLSummary,
+  portfolioPeriodPnLMap,
+} from '../services/portfolioPeriodPnL';
+import {
     inferInvestmentTransactionCurrency,
     portfolioBelongsToAccount,
     resolveCanonicalAccountId,
@@ -2545,7 +2549,7 @@ const PlatformCard: React.FC<{
     const portfoliosForMetrics = metricsPortfolios ?? portfolios;
     const showPersonalScopeNote = portfolios.length > portfoliosForMetrics.length;
     const { formatCurrencyString } = useFormatCurrency();
-    const { data: dataCtx } = useContext(DataContext)!;
+    const { data: dataCtx, getAvailableCashForAccount } = useContext(DataContext)!;
     const [isTxnModalOpen, setIsTxnModalOpen] = useState(false);
     const investmentsForInfer = useMemo(() => {
         if (!dataCtx) return [] as InvestmentPortfolio[];
@@ -2649,6 +2653,20 @@ const PlatformCard: React.FC<{
             availableCashByCurrency,
         ],
     );
+
+    const portfolioPeriodPnLById = useMemo(() => {
+        if (!dataCtx || portfoliosForMetrics.length === 0) return new Map<string, import('../services/portfolioPeriodPnL').PortfolioPeriodPnLRow>();
+        const summary = computePortfolioPeriodPnLSummary({
+            data: dataCtx,
+            portfolios: portfoliosForMetrics,
+            accounts: getPersonalAccounts(dataCtx),
+            sarPerUsd,
+            simulatedPrices,
+            monthStartDay: resolveMonthStartDayFromData(dataCtx),
+            getAvailableCashForAccount,
+        });
+        return portfolioPeriodPnLMap(summary);
+    }, [dataCtx, portfoliosForMetrics, sarPerUsd, simulatedPrices, getAvailableCashForAccount]);
 
     const totalHoldings = portfolios.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
     const metricsHoldingsCount = portfoliosForMetrics.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
@@ -2848,6 +2866,7 @@ const PlatformCard: React.FC<{
                     const portfolioHoldings = holdingsWithGains(portfolio.holdings || [], portfolioCurrency);
                     const portfolioValue = portfolioHoldings.reduce((sum, h) => sum + h.currentValue, 0);
                     const pk = portfolioKpiBundle.metricsByPortfolioId.get(portfolio.id);
+                    const periodPnL = portfolioPeriodPnLById.get(portfolio.id);
                     const portfolioHeadlineValue = pk != null ? pk.totalValue : portfolioValue;
                     /** Same pooled ledger as the platform header — not split across portfolios. */
                     const portfolioCashSAR = tradableCashBucketToSAR(availableCashByCurrency, sarPerUsd);
@@ -2907,11 +2926,13 @@ const PlatformCard: React.FC<{
                                           <>
                                             <strong>Invested</strong> / <strong>Withdrawn</strong> include deposits &amp; withdrawals tied to this portfolio, plus a <strong>share of account-level transfers</strong> (no portfolio tag) split by position value.
                                             <strong> Unrealized P/L</strong> and <strong>ROI</strong> use position vs average cost like the holdings table. Idle cash is shared — <strong>Available cash</strong> matches the platform header.
+                                            {' '}
+                                            <strong>Week / Month P/L</strong> match the Wealth Analytics scoreboard (ledger + live quote estimate).
                                           </>
                                         )}
                                     </p>
                                     <dl
-                                        className="portfolio-inline-kpis grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 px-4 sm:px-5 py-4 bg-gradient-to-b from-white via-slate-50/30 to-teal-50/20 border-b border-slate-100 items-stretch"
+                                        className="portfolio-inline-kpis grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-9 gap-3 px-4 sm:px-5 py-4 bg-gradient-to-b from-white via-slate-50/30 to-teal-50/20 border-b border-slate-100 items-stretch"
                                         aria-label={`Portfolio metrics for ${portfolio.name ?? 'portfolio'}`}
                                     >
                                         <div className="rounded-2xl bg-gradient-to-b from-white to-teal-50/45 border border-teal-100/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
@@ -2978,6 +2999,32 @@ const PlatformCard: React.FC<{
                                                 <CurrencyDualDisplay value={pk.dailyPnLSAR} inCurrency="SAR" digits={0} size="base" colorize weight="bold" />
                                             </dd>
                                         </div>
+                                        {periodPnL != null && (
+                                            <>
+                                                <div className="rounded-2xl bg-gradient-to-b from-white to-indigo-50/40 border border-indigo-100/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
+                                                    <dt
+                                                        className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-indigo-700 uppercase tracking-[0.12em] leading-tight px-0.5"
+                                                        title="Last 7 days: ledger (sells, dividends, fees) + live quote move estimate."
+                                                    >
+                                                        Week P/L
+                                                    </dt>
+                                                    <dd className="metric-value flex flex-1 flex-col items-center justify-center mt-2 min-h-0">
+                                                        <CurrencyDualDisplay value={periodPnL.weekly.totalSar} inCurrency="SAR" digits={0} size="base" colorize weight="bold" />
+                                                    </dd>
+                                                </div>
+                                                <div className="rounded-2xl bg-gradient-to-b from-white to-violet-50/40 border border-violet-100/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
+                                                    <dt
+                                                        className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-violet-700 uppercase tracking-[0.12em] leading-tight px-0.5"
+                                                        title="Current financial month: ledger + live quote move estimate (same as Wealth Analytics scoreboard)."
+                                                    >
+                                                        Month P/L
+                                                    </dt>
+                                                    <dd className="metric-value flex flex-1 flex-col items-center justify-center mt-2 min-h-0">
+                                                        <CurrencyDualDisplay value={periodPnL.monthly.totalSar} inCurrency="SAR" digits={0} size="base" colorize weight="bold" />
+                                                    </dd>
+                                                </div>
+                                            </>
+                                        )}
                                         <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
                                             <dt
                                                 className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-[0.12em] leading-tight px-0.5"

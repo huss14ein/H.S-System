@@ -23,6 +23,7 @@ describe('wealth analytics end-to-end wiring', () => {
         expect(src).toContain('SummaryWealthAtlas');
         expect(src).toContain('WealthAnalyticsSummaryPanels');
         expect(src).toContain('PortfolioHoldingsGrid');
+        expect(src).toContain('PortfolioPeriodPnLPanel');
         expect(src).toContain('CostAveragingCalculator');
         expect(src).toContain('Goals2030Timeline');
         expect(src).toContain('AIExecutiveSummary');

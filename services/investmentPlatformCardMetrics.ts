@@ -287,12 +287,68 @@ function transactionPortfolioIdTrimmed(t: InvestmentTransaction): string {
   return String(t.portfolioId ?? (t as { portfolio_id?: string }).portfolio_id ?? '').trim();
 }
 
-/** Account-level deposits/withdrawals without `portfolioId` — allocate across siblings for KPI math. */
+export function getPortfolioAttributedTransactions(args: {
+  portfolioId: string;
+  portfolioIndex: number;
+  siblingPortfolios: InvestmentPortfolio[];
+  transactions: InvestmentTransaction[];
+  sarPerUsd: number;
+  simulatedPrices: SimulatedPriceMap;
+}): InvestmentTransaction[] {
+  const weights = portfolioSiblingAttributionWeights(
+    args.siblingPortfolios,
+    args.sarPerUsd,
+    args.simulatedPrices,
+  );
+  return transactionsAttributedToPortfolioForKpis({
+    portfolioId: args.portfolioId,
+    portfolioIndex: args.portfolioIndex,
+    transactions: args.transactions,
+    weights,
+    siblingPortfolios: args.siblingPortfolios,
+  });
+}
+
+/** Account-level rows without `portfolioId` — allocate across siblings (deposits, trades, dividends, fees). */
+function isOrphanPortfolioAttributedTx(t: InvestmentTransaction): boolean {
+  if (transactionPortfolioIdTrimmed(t)) return false;
+  return (
+    isInvestmentTransactionType(t.type, 'deposit') ||
+    isInvestmentTransactionType(t.type, 'withdrawal') ||
+    isInvestmentTransactionType(t.type, 'buy') ||
+    isInvestmentTransactionType(t.type, 'sell') ||
+    isInvestmentTransactionType(t.type, 'dividend') ||
+    isInvestmentTransactionType(t.type, 'fee') ||
+    isInvestmentTransactionType(t.type, 'vat')
+  );
+}
+
+/** @deprecated use isOrphanPortfolioAttributedTx */
 function isOrphanPortfolioCashFlowTx(t: InvestmentTransaction): boolean {
   if (transactionPortfolioIdTrimmed(t)) return false;
   return (
     isInvestmentTransactionType(t.type, 'deposit') || isInvestmentTransactionType(t.type, 'withdrawal')
   );
+}
+
+function orphanShareWeightForPortfolio(args: {
+  tx: InvestmentTransaction;
+  portfolioIndex: number;
+  siblingPortfolios: InvestmentPortfolio[];
+  weights: number[];
+}): number {
+  const { tx, portfolioIndex, siblingPortfolios, weights } = args;
+  const sym = String(tx.symbol ?? '').trim().toUpperCase();
+  if (sym && !isOrphanPortfolioCashFlowTx(tx)) {
+    const qtyPerPortfolio = siblingPortfolios.map((p) =>
+      (p.holdings ?? [])
+        .filter((h) => String(h.symbol ?? '').trim().toUpperCase() === sym)
+        .reduce((s, h) => s + Math.max(0, Number(h.quantity) || 0), 0),
+    );
+    const totalQty = qtyPerPortfolio.reduce((s, v) => s + v, 0);
+    if (totalQty > 0) return qtyPerPortfolio[portfolioIndex] / totalQty;
+  }
+  return weights[portfolioIndex] ?? 0;
 }
 
 /**
@@ -326,8 +382,9 @@ function transactionsAttributedToPortfolioForKpis(args: {
   portfolioIndex: number;
   transactions: InvestmentTransaction[];
   weights: number[];
+  siblingPortfolios?: InvestmentPortfolio[];
 }): InvestmentTransaction[] {
-  const { portfolioId, portfolioIndex, transactions, weights } = args;
+  const { portfolioId, portfolioIndex, transactions, weights, siblingPortfolios = [] } = args;
   const w = weights[portfolioIndex] ?? 0;
   const out: InvestmentTransaction[] = [];
 
@@ -339,16 +396,31 @@ function transactionsAttributedToPortfolioForKpis(args: {
     }
     if (pid) continue;
 
-    if (!isOrphanPortfolioCashFlowTx(t) || !(w > 0)) continue;
+    if (!isOrphanPortfolioAttributedTx(t)) continue;
+    const share =
+      siblingPortfolios.length > 0
+        ? orphanShareWeightForPortfolio({
+            tx: t,
+            portfolioIndex,
+            siblingPortfolios,
+            weights,
+          })
+        : w;
+    if (!(share > 0)) continue;
     const base = getInvestmentTransactionCashAmount(t as any);
     if (!(base > 0)) continue;
-    const scaled = base * w;
+    const scaled = base * share;
     if (!(scaled > 1e-12)) continue;
+    const scaledQty =
+      isInvestmentTransactionType(t.type, 'buy') || isInvestmentTransactionType(t.type, 'sell')
+        ? Math.abs(Number(t.quantity) || 0) * share
+        : Number(t.quantity) || 0;
     out.push({
       ...t,
       id: `${t.id}~kpiAlloc~${portfolioId}`,
       portfolioId,
       total: scaled,
+      quantity: scaledQty,
     } as InvestmentTransaction);
   }
 
@@ -425,6 +497,7 @@ export function computePortfolioMetricsBundle(args: {
       portfolioIndex: i,
       transactions,
       weights,
+      siblingPortfolios,
     });
     const pc = resolveInvestmentPortfolioCurrency(p);
     metricsByPortfolioId.set(

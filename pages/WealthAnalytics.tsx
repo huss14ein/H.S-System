@@ -17,12 +17,14 @@ import { DashboardOperationsCockpit } from '../components/dashboard/DashboardOpe
 import { SummaryWealthAtlas } from '../components/dashboard/SummaryWealthAtlas';
 import { WealthAnalyticsSummaryPanels } from '../components/analytics/WealthAnalyticsSummaryPanels';
 import { PortfolioHoldingsGrid } from '../components/dashboard/PortfolioHoldingsGrid';
+import { PortfolioPeriodPnLPanel } from '../components/dashboard/PortfolioPeriodPnLPanel';
 import { CostAveragingCalculator } from '../components/dashboard/CostAveragingCalculator';
 import { Goals2030Timeline } from '../components/dashboard/Goals2030Timeline';
 import { AIExecutiveSummary } from '../components/dashboard/AIExecutiveSummary';
 import { DeferredMount } from '../components/dashboard/DeferredMount';
 import { DashboardSectionHeader } from '../components/dashboard/DashboardSectionHeader';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
+import { resolveMonthStartDayFromData } from '../utils/financialMonth';
 import { listNetWorthSnapshots } from '../services/netWorthSnapshot';
 import { attributeNetWorthWithFlows } from '../services/portfolioAttribution';
 import { personalNetCashflowBetween } from '../services/netWorthPeriodFlows';
@@ -215,6 +217,21 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
                         onOpenGoals={setActivePage ? () => setActivePage('Goals') : undefined}
                         showLanguageToggle={false}
                     />
+                </section>
+
+                <section className="min-w-0" aria-label="Portfolio period performance">
+                    <DeferredMount minHeight="10rem">
+                        <PortfolioPeriodPnLPanel
+                            data={data}
+                            portfolios={personalInvestments}
+                            accounts={personalAccounts}
+                            sarPerUsd={sarPerUsd}
+                            simulatedPrices={simulatedPrices}
+                            monthStartDay={resolveMonthStartDayFromData(data)}
+                            getAvailableCashForAccount={getAvailableCashForAccount}
+                            setActivePage={setActivePage}
+                        />
+                    </DeferredMount>
                 </section>
 
                 <section className="min-w-0 space-y-4" aria-label="Holdings and tools">

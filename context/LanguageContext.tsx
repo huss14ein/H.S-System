@@ -18,6 +18,10 @@ const DICT: Dict = {
 
   // Dashboard suite
   executiveStatus: { en: 'Executive status', ar: 'الملخص التنفيذي' },
+  executiveStatusSubtitle: {
+    en: 'Headline net worth, liquid cash, and invested capital — same canonical path as Dashboard KPIs.',
+    ar: 'صافي الثروة والنقد السائل ورأس المال المستثمر — نفس مسار لوحة التحكم.',
+  },
   netWorth: { en: 'Net worth', ar: 'صافي الثروة' },
   liquidAssets: { en: 'Liquid assets', ar: 'الأصول السائلة' },
   investedCapital: { en: 'Invested capital', ar: 'رأس المال المستثمر' },
@@ -69,6 +73,28 @@ const DICT: Dict = {
     en: 'Spendable-style wealth, runway, stress tests — canonical numbers from the wealth summary model.',
     ar: 'ثروة قابلة للصرف، مدى السيولة، اختبارات الضغط — أرقام موحدة من نموذج الملخص.',
   },
+  portfolioPeriodPnLTitle: { en: 'Portfolio P/L scoreboard', ar: 'لوحة ربح/خسارة المحافظ' },
+  portfolioPeriodPnLSubtitle: {
+    en: 'Weekly (last 7 days) and financial-month P/L per portfolio — same ledger rules as Investments.',
+    ar: 'ربح/خسارة أسبوعية (آخر 7 أيام) وشهر مالي لكل محفظة — نفس قواعد دفتر الاستثمار.',
+  },
+  portfolioPeriodPnLHint: {
+    en: 'Ledger = realized sells (avg cost) + dividends − fees in the window. Market est. = today’s live quote P/L × trading days (no tick history stored). Totals in SAR.',
+    ar: 'الدفتر = مبيعات محققة + أرباح − رسوم في الفترة. تقدير السوق = ربح/خسارة اليوم من الأسعار × أيام التداول. المجموع بالريال.',
+  },
+  portfolioPeriodPnLEmpty: {
+    en: 'Add investment portfolios to see weekly and monthly P/L here.',
+    ar: 'أضف محافظ استثمارية لعرض الربح/الخسارة الأسبوعية والشهرية هنا.',
+  },
+  portfolioLabel: { en: 'Portfolio', ar: 'المحفظة' },
+  weekPnL: { en: 'Week P/L', ar: 'أسبوع' },
+  monthPnL: { en: 'Month P/L', ar: 'الشهر' },
+  todayPnL: { en: 'Today', ar: 'اليوم' },
+  weekLedgerShort: { en: 'Week · ledger', ar: 'أسبوع · دفتر' },
+  weekMarketShort: { en: 'Week · market est.', ar: 'أسبوع · سوق' },
+  monthLedgerShort: { en: 'Month · ledger', ar: 'شهر · دفتر' },
+  monthMarketShort: { en: 'Month · market est.', ar: 'شهر · سوق' },
+  openInvestmentsHub: { en: 'Open Investments hub', ar: 'فتح مركز الاستثمار' },
 };
 
 export type LanguageContextValue = {
