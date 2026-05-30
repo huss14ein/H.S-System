@@ -522,9 +522,9 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
             )}
 
             <div className="cards-grid grid grid-cols-1 gap-4 mb-6">
-                <div className="section-card flex flex-col border-l-4 border-l-sky-500">
-                    <NetWorthCockpit
-                        title="Net worth (history + today)"
+                    <div className="section-card flex flex-col border-l-4 border-l-sky-500">
+                        <NetWorthCockpit
+                            title="Net worth (history + today)"
                         metricsOverride={{
                             headline,
                             todaySnapshot,
@@ -532,14 +532,14 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                             sarPerUsd: canonicalSarPerUsd,
                             simulatedPrices: canonicalSimulatedPrices,
                         }}
-                        onOpenInvestments={setActivePage ? () => setActivePage('Investments') : undefined}
-                        onOpenAccounts={setActivePage ? () => setActivePage('Accounts') : undefined}
-                        onOpenAssets={setActivePage ? () => setActivePage('Assets') : undefined}
-                        onOpenDataReconciliation={() => {
-                            window.location.hash = 'data-reconciliation';
-                        }}
-                    />
-                </div>
+                            onOpenInvestments={setActivePage ? () => setActivePage('Investments') : undefined}
+                            onOpenAccounts={setActivePage ? () => setActivePage('Accounts') : undefined}
+                            onOpenAssets={setActivePage ? () => setActivePage('Assets') : undefined}
+                            onOpenDataReconciliation={() => {
+                                window.location.hash = 'data-reconciliation';
+                            }}
+                        />
+                    </div>
                 <div className="section-card flex flex-col min-h-[420px] h-[min(56vh,520px)]">
                     <div className="mb-2 sm:mb-4 space-y-1">
                         <h3 className="section-title !mb-0">Investment allocation &amp; performance</h3>
@@ -556,7 +556,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                     </div>
                 </div>
             </div>
-
+            
             <div className="mb-4 rounded-xl border border-violet-100 bg-violet-50/40 px-4 py-3 text-sm text-slate-700 flex flex-wrap items-center justify-between gap-2">
                 <span>Liquid wealth, resilience, shock drills, and snapshot attribution moved to <strong>Wealth Analytics</strong> (same canonical numbers).</span>
                 {setActivePage && (

@@ -174,56 +174,56 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
   const detailLoadInFlightRef = useRef<Set<string>>(new Set());
 
   const mapExtractedRow = useCallback((row: any): ExtractedTransaction => ({
-    id: row.id,
-    date: new Date(row.transaction_date),
-    description: row.description ?? '',
-    amount: Number(row.amount),
-    type: row.transaction_type as ExtractedTransaction['type'],
-    balance: row.balance != null ? Number(row.balance) : undefined,
-    category: row.category ?? undefined,
-    subcategory: row.subcategory ?? undefined,
-    tags: Array.isArray(row.tags) ? row.tags : [],
-    confidence: row.confidence ?? 0,
-    rawText: row.raw_text ?? '',
-    matchedTransaction: row.matched_transaction_id ?? undefined,
-    reconciliationStatus: (row.reconciliation_status || 'unmatched') as ExtractedTransaction['reconciliationStatus'],
+              id: row.id,
+              date: new Date(row.transaction_date),
+              description: row.description ?? '',
+              amount: Number(row.amount),
+              type: row.transaction_type as ExtractedTransaction['type'],
+              balance: row.balance != null ? Number(row.balance) : undefined,
+              category: row.category ?? undefined,
+              subcategory: row.subcategory ?? undefined,
+              tags: Array.isArray(row.tags) ? row.tags : [],
+              confidence: row.confidence ?? 0,
+              rawText: row.raw_text ?? '',
+              matchedTransaction: row.matched_transaction_id ?? undefined,
+              reconciliationStatus: (row.reconciliation_status || 'unmatched') as ExtractedTransaction['reconciliationStatus'],
   }), []);
 
   const mapDbStatementRow = useCallback(
     (s: any, transactions: ExtractedTransaction[]): FinancialStatement => ({
-      id: s.id,
-      fileName: s.file_name,
-      fileType: s.file_type as FinancialStatement['fileType'],
-      fileSize: s.file_size,
-      uploadedAt: new Date(s.uploaded_at),
-      processedAt: s.processed_at ? new Date(s.processed_at) : undefined,
-      status: s.status as FinancialStatement['status'],
-      bankName: s.bank_name,
-      accountNumber: s.account_number,
-      accountId: s.account_id ?? undefined,
-      accountType: s.account_type as FinancialStatement['accountType'],
-      statementPeriod: {
-        startDate: s.statement_period_start ? new Date(s.statement_period_start) : new Date(),
-        endDate: s.statement_period_end ? new Date(s.statement_period_end) : new Date(),
-      },
-      openingBalance: Number(s.opening_balance) || 0,
-      closingBalance: Number(s.closing_balance) || 0,
-      transactions,
-      summary: (s.summary as StatementSummary) || {
-        totalCredits: 0,
-        totalDebits: 0,
-        netChange: 0,
-        transactionCount: 0,
-        categories: {},
-        averageTransaction: 0,
-        largestTransaction: 0,
-        smallestTransaction: 0,
-        dailySpending: {},
-      },
-      confidence: s.confidence ?? 0,
-      errors: s.errors ? (Array.isArray(s.errors) ? s.errors : []) : [],
-      storageBucket: s.storage_bucket ?? undefined,
-      storagePath: s.storage_path ?? undefined,
+                id: s.id,
+                fileName: s.file_name,
+                fileType: s.file_type as FinancialStatement['fileType'],
+                fileSize: s.file_size,
+                uploadedAt: new Date(s.uploaded_at),
+                processedAt: s.processed_at ? new Date(s.processed_at) : undefined,
+                status: s.status as FinancialStatement['status'],
+                bankName: s.bank_name,
+                accountNumber: s.account_number,
+                accountId: s.account_id ?? undefined,
+                accountType: s.account_type as FinancialStatement['accountType'],
+                statementPeriod: {
+                  startDate: s.statement_period_start ? new Date(s.statement_period_start) : new Date(),
+                  endDate: s.statement_period_end ? new Date(s.statement_period_end) : new Date(),
+                },
+                openingBalance: Number(s.opening_balance) || 0,
+                closingBalance: Number(s.closing_balance) || 0,
+                transactions,
+                summary: (s.summary as StatementSummary) || {
+                  totalCredits: 0,
+                  totalDebits: 0,
+                  netChange: 0,
+                  transactionCount: 0,
+                  categories: {},
+                  averageTransaction: 0,
+                  largestTransaction: 0,
+                  smallestTransaction: 0,
+                  dailySpending: {},
+                },
+                confidence: s.confidence ?? 0,
+                errors: s.errors ? (Array.isArray(s.errors) ? s.errors : []) : [],
+                storageBucket: s.storage_bucket ?? undefined,
+                storagePath: s.storage_path ?? undefined,
     }),
     [],
   );
@@ -312,17 +312,17 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
           const statementData = JSON.parse(stored);
           setStatements(
             statementData.map((s: any) => ({
-              ...s,
-              uploadedAt: new Date(s.uploadedAt),
-              processedAt: s.processedAt ? new Date(s.processedAt) : undefined,
-              statementPeriod: {
-                ...s.statementPeriod,
-                startDate: new Date(s.statementPeriod.startDate),
+            ...s,
+            uploadedAt: new Date(s.uploadedAt),
+            processedAt: s.processedAt ? new Date(s.processedAt) : undefined,
+            statementPeriod: {
+              ...s.statementPeriod,
+              startDate: new Date(s.statementPeriod.startDate),
                 endDate: new Date(s.statementPeriod.endDate),
-              },
+            },
               transactions:
                 s.transactions?.map((t: any) => ({
-                  ...t,
+              ...t,
                   date: new Date(t.date),
                 })) || [],
             })),
@@ -341,11 +341,11 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
   useEffect(() => {
     if (!shouldPersistStatementsAfterHydrate(statementsHydratedRef.current, statements.length)) return;
     const t = window.setTimeout(() => {
-      try {
-        localStorage.setItem('financialStatements', JSON.stringify(statements));
-      } catch (error) {
-        console.error('Failed to save statements to localStorage:', error);
-      }
+    try {
+      localStorage.setItem('financialStatements', JSON.stringify(statements));
+    } catch (error) {
+      console.error('Failed to save statements to localStorage:', error);
+    }
     }, LOCAL_STORAGE_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
   }, [statements]);
@@ -423,8 +423,8 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
         : null;
       setStatements(prev =>
         prev.map(s =>
-          s.id === statementId
-            ? { ...s, status: 'failed', errors: [error instanceof Error ? error.message : 'Processing failed'] }
+        s.id === statementId 
+          ? { ...s, status: 'failed', errors: [error instanceof Error ? error.message : 'Processing failed'] }
             : s,
         ),
       );
@@ -1187,21 +1187,21 @@ Return ONLY valid JSON, no markdown or extra text.`;
 
   const value = useMemo<StatementProcessingContextType>(
     () => ({
-      statements,
-      currentStatement,
-      isProcessing,
-      uploadStatement,
-      commitParsedStatementFromUpload,
-      processStatement,
-      reviewStatement,
-      approveStatement,
-      rejectStatement,
-      deleteStatement,
-      reconcileTransactions,
-      exportTransactions,
-      getStatementDownloadUrl,
-      getStatementById,
-      getStatementsByAccount,
+    statements,
+    currentStatement,
+    isProcessing,
+    uploadStatement,
+    commitParsedStatementFromUpload,
+    processStatement,
+    reviewStatement,
+    approveStatement,
+    rejectStatement,
+    deleteStatement,
+    reconcileTransactions,
+    exportTransactions,
+    getStatementDownloadUrl,
+    getStatementById,
+    getStatementsByAccount,
       getProcessingStats,
     }),
     [
