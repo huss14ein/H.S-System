@@ -236,11 +236,26 @@ export function currentFinancialMonthIso(ref: Date, monthStartDay: unknown): str
 
 export type BudgetViewPeriod = 'Monthly' | 'Weekly' | 'Daily' | 'Yearly';
 
-function calendarMonthInterval(year: number, month1to12: number): { start: Date; end: Date } {
+export function calendarMonthInterval(year: number, month1to12: number): { start: Date; end: Date } {
   return {
     start: new Date(year, month1to12 - 1, 1, 0, 0, 0, 0),
     end: new Date(year, month1to12, 0, 23, 59, 59, 999),
   };
+}
+
+/** Parse `YYYY-MM` as calendar month (matches HTML `<input type="month">`). */
+export function calendarMonthRangeFromIsoKey(isoKey: string): { start: Date; end: Date } | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(isoKey ?? '').trim());
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
+  return calendarMonthInterval(year, month);
+}
+
+/** Current calendar month as `YYYY-MM`. */
+export function currentCalendarMonthIso(ref = new Date()): string {
+  return `${ref.getFullYear()}-${String(ref.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function dateRangesOverlap(

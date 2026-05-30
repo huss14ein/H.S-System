@@ -2,13 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getPersonalAccounts, getPersonalTransactions, getScopedCashTransactions } from '../utils/wealthScope';
+import { filterTransactionsForLedgerView } from '../utils/transactionLedgerFilters';
 import type { FinancialData, Transaction } from '../types';
 
 describe('transaction list scope', () => {
-    it('Transactions page uses getScopedCashTransactions (not empty personalTransactions ??)', () => {
+    it('Transactions page uses ledger view filter helper (no budget-permission list gate)', () => {
         const src = readFileSync(join(process.cwd(), 'pages/Transactions.tsx'), 'utf8');
-        expect(src).toContain('getScopedCashTransactions');
-        expect(src).not.toMatch(/personalTransactions\s*\?\?\s*data\?\.transactions/);
+        expect(src).toContain('filterTransactionsForLedgerView');
+        expect(src).not.toContain('isPermitted = userRole');
     });
 
     it('getPersonalTransactions falls back when personal slice is empty', () => {
@@ -68,5 +69,44 @@ describe('transaction list scope', () => {
             ],
         } as unknown as FinancialData;
         expect(getScopedCashTransactions(data, ['a1'])).toHaveLength(1);
+    });
+
+    it('filterTransactionsForLedgerView shows all scoped rows regardless of budget category permissions', () => {
+        const txs = [
+            { id: 't1', accountId: 'a1', amount: -50, date: '2026-05-10', description: 'Groceries', type: 'expense', category: 'Food', budgetCategory: 'Food' },
+            { id: 't2', accountId: 'a1', amount: 1000, date: '2026-05-01', description: 'Salary', type: 'income', category: 'Salary' },
+        ] as Transaction[];
+        const out = filterTransactionsForLedgerView(
+            txs,
+            {
+                accountId: 'all',
+                month: '2026-05',
+                allMonths: false,
+                nature: 'all',
+                expenseType: 'all',
+                budgetCategory: 'all',
+            },
+            28,
+        );
+        expect(out).toHaveLength(2);
+    });
+
+    it('filterTransactionsForLedgerView uses calendar month not fiscal month (day 28 start)', () => {
+        const txs = [
+            { id: 'early', accountId: 'a1', amount: -10, date: '2026-05-05', description: 'Early May', type: 'expense', category: 'Food' },
+            { id: 'late', accountId: 'a1', amount: -10, date: '2026-05-29', description: 'Late May', type: 'expense', category: 'Food' },
+            { id: 'june', accountId: 'a1', amount: -10, date: '2026-06-02', description: 'June', type: 'expense', category: 'Food' },
+        ] as Transaction[];
+        const may = filterTransactionsForLedgerView(
+            txs,
+            { accountId: 'all', month: '2026-05', allMonths: false, nature: 'all', expenseType: 'all', budgetCategory: 'all' },
+            28,
+        );
+        expect(may.map((t) => t.id).sort()).toEqual(['early', 'late']);
+        expect(filterTransactionsForLedgerView(
+            txs,
+            { accountId: 'all', month: '2026-05', allMonths: true, nature: 'all', expenseType: 'all', budgetCategory: 'all' },
+            28,
+        )).toHaveLength(3);
     });
 });

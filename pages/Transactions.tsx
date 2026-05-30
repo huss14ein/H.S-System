@@ -44,6 +44,7 @@ import { toSAR, fromSAR } from '../utils/currencyMath';
 import { useCanonicalSpotFx, useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { financialMonthNetCashflowSar } from '../services/dashboardKpiSnapshot';
 import { getPersonalAccounts, getScopedCashTransactions, resolveTransactionAccountId } from '../utils/wealthScope';
+import { filterTransactionsForLedgerView } from '../utils/transactionLedgerFilters';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { exportCashTransactionsToCsv } from '../services/reportingEngine';
 import { computeMonthlyCashflowKpisSar } from '../services/financeTruth';
@@ -51,16 +52,14 @@ import {
     financialMonthKey,
     financialMonthRangeFromKey,
     resolveMonthStartDayFromData,
+    calendarMonthRangeFromIsoKey,
+    currentCalendarMonthIso,
+    currentFinancialMonthIso,
+    dateInRange,
 } from '../utils/financialMonth';
 import { sortByNewestFirst } from '../utils/sortRecency';
 import { summarizeIncomeTaxonomy } from '../services/incomeTaxonomy';
 import { computeIncomeStability } from '../services/incomeStability';
-
-/** Financial month key as YYYY-MM (aligned with Budgets storage). */
-function financialMonthIso(date: Date, monthStartDay: number) {
-    const key = financialMonthKey(date, monthStartDay);
-    return `${key.year}-${String(key.month).padStart(2, '0')}`;
-}
 
 function startOfUtcDayFromYmd(ymd: string): Date {
     const [y, m, d] = ymd.split('-').map(Number);
@@ -1179,7 +1178,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
     const [filters, setFilters] = useState({ 
         accountId: 'all', 
-        month: financialMonthIso(new Date(), 1),
+        month: currentCalendarMonthIso(),
         allMonths: false,
         nature: 'all' as 'all' | 'Fixed' | 'Variable',
         expenseType: 'all' as 'all' | 'Core' | 'Discretionary',
@@ -1192,27 +1191,27 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [filters.accountId, filters.month, filters.allMonths, filters.nature, filters.expenseType, filters.budgetCategory]);
 
     useEffect(() => {
-        setFilters((f) => ({ ...f, month: financialMonthIso(new Date(), monthStartDay) }));
+        setFilters((f) => ({ ...f, month: currentCalendarMonthIso() }));
     }, [monthStartDay]);
 
     const defaultMonthDateBounds = useMemo(() => {
-        const [y, m] = filters.month.split('-').map(Number);
-        if (!Number.isFinite(y) || !Number.isFinite(m)) {
-            const { start, end } = financialMonthRangeFromKey(
-                financialMonthKey(new Date(), monthStartDay),
-                monthStartDay,
-            );
+        const range = calendarMonthRangeFromIsoKey(filters.month);
+        if (!range) {
+            const now = new Date();
+            const fallback = calendarMonthRangeFromIsoKey(currentCalendarMonthIso(now));
+            if (!fallback) {
+                return { from: '', to: '' };
+            }
             return {
-                from: start.toISOString().slice(0, 10),
-                to: end.toISOString().slice(0, 10),
+                from: `${fallback.start.getFullYear()}-${String(fallback.start.getMonth() + 1).padStart(2, '0')}-${String(fallback.start.getDate()).padStart(2, '0')}`,
+                to: `${fallback.end.getFullYear()}-${String(fallback.end.getMonth() + 1).padStart(2, '0')}-${String(fallback.end.getDate()).padStart(2, '0')}`,
             };
         }
-        const { start, end } = financialMonthRangeFromKey({ year: y, month: m }, monthStartDay);
         return {
-            from: start.toISOString().slice(0, 10),
-            to: end.toISOString().slice(0, 10),
+            from: `${range.start.getFullYear()}-${String(range.start.getMonth() + 1).padStart(2, '0')}-${String(range.start.getDate()).padStart(2, '0')}`,
+            to: `${range.end.getFullYear()}-${String(range.end.getMonth() + 1).padStart(2, '0')}-${String(range.end.getDate()).padStart(2, '0')}`,
         };
-    }, [filters.month, monthStartDay]);
+    }, [filters.month]);
 
     const [exportAccountId, setExportAccountId] = useState<string>('all');
     const [exportDateFrom, setExportDateFrom] = useState('');
@@ -1409,27 +1408,13 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     );
 
     const filteredTransactions = useMemo(() => {
-        const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
-        const [year, month] = filters.month.split('-').map(Number);
-        const { start: startDate, end: endDate } = Number.isFinite(year) && Number.isFinite(month)
-            ? financialMonthRangeFromKey({ year, month }, monthStartDay)
-            : financialMonthRangeFromKey(financialMonthKey(new Date(), monthStartDay), monthStartDay);
-
-        const filtered = scopedCashTransactions.filter((t) => {
-            const transactionDate = new Date(t.date);
-            const isMonthMatch =
-                filters.allMonths || (transactionDate >= startDate && transactionDate <= endDate);
-            const isAccountMatch =
-                filters.accountId === 'all' || resolveTransactionAccountId(t) === filters.accountId;
-            const isNatureMatch = filters.nature === 'all' || t.transactionNature === filters.nature;
-            const isExpenseTypeMatch = filters.expenseType === 'all' || t.expenseType === filters.expenseType;
-            const txBudget = String(t.budgetCategory ?? t.category ?? '').trim();
-            const isBudgetMatch = filters.budgetCategory === 'all' || txBudget === filters.budgetCategory;
-            const isPermitted = userRole === 'Admin' || !txBudget || allowedRestrictedCategories.has(txBudget);
-            return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isBudgetMatch && isPermitted;
-        });
+        const filtered = filterTransactionsForLedgerView(
+            scopedCashTransactions,
+            filters,
+            monthStartDay,
+        );
         return sortByNewestFirst(filtered);
-    }, [scopedCashTransactions, filters, userRole, permittedBudgetCategories, sharedBudgetCategories, monthStartDay]);
+    }, [scopedCashTransactions, filters, monthStartDay]);
 
     const visibleTransactions = useMemo(
         () => filteredTransactions.slice(0, transactionsVisibleCount),
@@ -1438,18 +1423,14 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     const hasMoreTransactions = filteredTransactions.length > visibleTransactions.length;
 
     const filteredTransactionsForExport = useMemo(() => {
-        const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
         const start = exportDateFrom ? startOfUtcDayFromYmd(exportDateFrom) : null;
         const end = exportDateTo ? endOfUtcDayFromYmd(exportDateTo) : null;
         const filtered = scopedCashTransactions.filter((t) => {
-            const transactionDate = new Date(t.date);
             const inPeriod =
-                start && end ? transactionDate >= start && transactionDate <= end : false;
+                start && end ? dateInRange(t.date, start, end) : false;
             const isAccountMatch =
                 exportAccountId === 'all' || resolveTransactionAccountId(t) === exportAccountId;
-            const txBudget = String(t.budgetCategory ?? t.category ?? '').trim();
-            const isPermitted = userRole === 'Admin' || !txBudget || allowedRestrictedCategories.has(txBudget);
-            return inPeriod && isAccountMatch && isPermitted;
+            return inPeriod && isAccountMatch;
         });
         return sortByNewestFirst(filtered);
     }, [
@@ -1457,9 +1438,6 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         exportAccountId,
         exportDateFrom,
         exportDateTo,
-        userRole,
-        permittedBudgetCategories,
-        sharedBudgetCategories,
     ]);
 
     const handleExportFilteredCsv = useCallback(() => {
@@ -1509,30 +1487,27 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [exportDateFrom, exportDateTo, filteredTransactionsForExport, accountsById, exportAccountId]);
 
     const currentFinancialMonthKey = useMemo(
-        () => financialMonthIso(new Date(), monthStartDay),
+        () => currentFinancialMonthIso(new Date(), monthStartDay),
         [monthStartDay],
     );
 
     const transactionsForMonthKpis = useMemo(() => {
         if (filters.allMonths) return [] as Transaction[];
-        const [year, month] = filters.month.split('-').map(Number);
-        if (!Number.isFinite(year) || !Number.isFinite(month)) return [] as Transaction[];
-        const { start, end } = financialMonthRangeFromKey({ year, month }, monthStartDay);
-        return scopedCashTransactions.filter((t) => {
-            const d = new Date(t.date);
-            return d >= start && d <= end;
-        });
-    }, [scopedCashTransactions, filters.month, filters.allMonths, monthStartDay]);
+        const range = calendarMonthRangeFromIsoKey(filters.month);
+        if (!range) return [] as Transaction[];
+        return scopedCashTransactions.filter((t) => dateInRange(t.date, range.start, range.end));
+    }, [scopedCashTransactions, filters.month, filters.allMonths]);
 
     const usesCanonicalFinancialMonthKpis = useMemo(
         () =>
+            monthStartDay === 1 &&
             filters.accountId === 'all' &&
             filters.nature === 'all' &&
             filters.expenseType === 'all' &&
             filters.budgetCategory === 'all' &&
             !filters.allMonths &&
             filters.month === currentFinancialMonthKey,
-        [filters, currentFinancialMonthKey],
+        [filters, currentFinancialMonthKey, monthStartDay],
     );
 
     const { monthlyIncome, monthlyExpenses, netCashflow, expenseBreakdown } = useMemo(() => {
@@ -2151,7 +2126,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     Ledger: <strong>{scopedCashTransactions.length}</strong> transaction(s) on your visible accounts
                     {filters.allMonths
                         ? ' (all months)'
-                        : ` · month ${filters.month}`}
+                        : ` · calendar month ${filters.month}`}
                     . Showing <strong>{filteredTransactions.length}</strong> after filters.
                     {usesCanonicalFinancialMonthKpis && (
                         <span className="block text-xs text-emerald-800 mt-1">
@@ -2298,8 +2273,10 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     {filteredTransactions.length === 0 && (
                         <li className="empty-state flex flex-col items-center gap-2 py-6">
                             <span>
-                                {scopedCashTransactions.length > 0 && !filters.allMonths
-                                    ? `No transactions in ${filters.month}. You have ${scopedCashTransactions.length} on file — try “All months” or another month.`
+                                {scopedCashTransactions.length > 0
+                                    ? filters.allMonths
+                                        ? `No transactions match the current filters (${scopedCashTransactions.length} on file). Set Nature and Type to “All”, or pick another account/month.`
+                                        : `No transactions in ${filters.month}. You have ${scopedCashTransactions.length} on file — try “All months” or another month.`
                                     : 'No transactions found for the selected period.'}
                             </span>
                             {setActivePage && (

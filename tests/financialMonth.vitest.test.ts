@@ -12,6 +12,7 @@ import {
   financialMonthIsoKey,
   dateInRange,
   parseCalendarDateLocal,
+  calendarMonthRangeFromIsoKey,
   resolveMonthStartDayFromData,
   DEFAULT_FINANCIAL_MONTH_START_DAY,
   budgetAppliesToFinancialView,
@@ -152,6 +153,16 @@ describe('parseCalendarDateLocal and dateInRange', () => {
     const { start, end } = financialMonthRangeFromKey({ year: 2026, month: 5 }, monthStartDay);
     expect(financialMonthColumnIndexForDate('2026-05-15', 2026, monthStartDay)).toBe(4);
     expect(dateInRange('2026-05-15', start, end)).toBe(true);
+  });
+
+  it('calendarMonthRangeFromIsoKey matches HTML month input semantics', () => {
+    const range = calendarMonthRangeFromIsoKey('2026-05');
+    expect(range).not.toBeNull();
+    expect(range!.start.getDate()).toBe(1);
+    expect(range!.start.getMonth()).toBe(4);
+    expect(range!.end.getDate()).toBe(31);
+    expect(dateInRange('2026-05-05', range!.start, range!.end)).toBe(true);
+    expect(dateInRange('2026-06-01', range!.start, range!.end)).toBe(false);
   });
 });
 
