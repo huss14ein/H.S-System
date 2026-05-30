@@ -43,8 +43,8 @@ import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, fromSAR } from '../utils/currencyMath';
 import { useCanonicalSpotFx, useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { financialMonthNetCashflowSar } from '../services/dashboardKpiSnapshot';
-import { getPersonalAccounts, getScopedCashTransactions, resolveTransactionAccountId } from '../utils/wealthScope';
-import { filterTransactionsForLedgerView, parseFilterByBudgetPageAction } from '../utils/transactionLedgerFilters';
+import { getPersonalAccounts, getScopedCashTransactions } from '../utils/wealthScope';
+import { filterTransactionsForLedgerView, filterTransactionsForLedgerExport, parseFilterByBudgetPageAction } from '../utils/transactionLedgerFilters';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { exportCashTransactionsToCsv } from '../services/reportingEngine';
 import { computeMonthlyCashflowKpisSar } from '../services/financeTruth';
@@ -1448,19 +1448,27 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     const filteredTransactionsForExport = useMemo(() => {
         const start = exportDateFrom ? startOfUtcDayFromYmd(exportDateFrom) : null;
         const end = exportDateTo ? endOfUtcDayFromYmd(exportDateTo) : null;
-        const filtered = scopedCashTransactions.filter((t) => {
-            const inPeriod =
-                start && end ? dateInRange(t.date, start, end) : false;
-            const isAccountMatch =
-                exportAccountId === 'all' || resolveTransactionAccountId(t) === exportAccountId;
-            return inPeriod && isAccountMatch;
-        });
+        if (!start || !end) return [] as Transaction[];
+        const filtered = filterTransactionsForLedgerExport(
+            scopedCashTransactions,
+            filters,
+            {
+                dateFrom: start,
+                dateTo: end,
+                accountId: exportAccountId,
+                visibilityScope: ledgerVisibilityScope,
+            },
+            monthStartDay,
+        );
         return sortByNewestFirst(filtered);
     }, [
         scopedCashTransactions,
+        filters,
         exportAccountId,
         exportDateFrom,
         exportDateTo,
+        monthStartDay,
+        ledgerVisibilityScope,
     ]);
 
     const handleExportFilteredCsv = useCallback(() => {

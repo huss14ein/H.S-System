@@ -82,8 +82,17 @@ expectContains(dataContext, "rpc('create_investment_cash_transfer_with_fee'", 'c
 const budgets = read('pages/Budgets.tsx');
 expectContains(budgets, "rpc('finalize_advance_budget_request'", 'pages/Budgets.tsx');
 expectContains(budgets, "rpc('get_shared_budgets_for_me'", 'pages/Budgets.tsx');
+expectContains(budgets, 'encodeURIComponent(budget.category)', 'pages/Budgets.tsx filter-by-budget');
+expectContains(budgets, 'handleOwnPortfolioNavigate', 'pages/Budgets.tsx budget drill-down');
 expectContains(read('services/sharedBudgetConsumedRpc.ts'), "rpc('get_shared_budget_consumed_for_me'", 'services/sharedBudgetConsumedRpc.ts');
 expectContains(budgets, 'fetchSharedConsumedMap', 'pages/Budgets.tsx');
+
+const transactionsPage = read('pages/Transactions.tsx');
+expectContains(transactionsPage, 'filterTransactionsForLedgerView', 'pages/Transactions.tsx');
+expectContains(transactionsPage, 'filterTransactionsForLedgerExport', 'pages/Transactions.tsx');
+expectContains(transactionsPage, 'ledgerVisibilityScope', 'pages/Transactions.tsx admin/collaborator scope');
+expectContains(transactionsPage, 'parseFilterByBudgetPageAction', 'pages/Transactions.tsx budget drill-down');
+expectContains(read('utils/transactionLedgerFilters.ts'), 'filterTransactionsForLedgerExport', 'utils/transactionLedgerFilters.ts');
 
 const accountsPage = read('pages/Accounts.tsx');
 expectContains(accountsPage, "rpc('get_shared_accounts_for_me'", 'pages/Accounts.tsx');

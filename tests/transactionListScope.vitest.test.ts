@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { getPersonalAccounts, getPersonalTransactions, getScopedCashTransactions } from '../utils/wealthScope';
 import {
     filterTransactionsForLedgerView,
+    filterTransactionsForLedgerExport,
     parseFilterByBudgetPageAction,
 } from '../utils/transactionLedgerFilters';
 import type { FinancialData, Transaction } from '../types';
@@ -158,5 +159,24 @@ describe('transaction list scope', () => {
             year: 2026,
             month: 5,
         });
+    });
+
+    it('filterTransactionsForLedgerExport respects collaborator visibility and budget filter', () => {
+        const txs = [
+            { id: 't1', accountId: 'a1', amount: -50, date: '2026-05-10', description: 'Groceries', type: 'expense', budgetCategory: 'Food' },
+            { id: 't2', accountId: 'a1', amount: -20, date: '2026-05-12', description: 'Private', type: 'expense', budgetCategory: 'Personal' },
+        ] as Transaction[];
+        const out = filterTransactionsForLedgerExport(
+            txs,
+            { accountId: 'all', month: '2026-05', allMonths: false, nature: 'all', expenseType: 'all', budgetCategory: 'Food' },
+            {
+                dateFrom: new Date(2026, 4, 1),
+                dateTo: new Date(2026, 4, 31, 23, 59, 59, 999),
+                accountId: 'all',
+                visibilityScope: { mode: 'collaborator', allowedBudgetCategories: ['Food'], governanceReady: true },
+            },
+            1,
+        );
+        expect(out.map((t) => t.id)).toEqual(['t1']);
     });
 });

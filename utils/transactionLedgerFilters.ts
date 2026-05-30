@@ -118,3 +118,29 @@ export function parseFilterByBudgetPageAction(action: string): {
   }
   return { category, period, year, month };
 }
+
+/** CSV export — same visibility + UI filters as the list, with an explicit date/account window. */
+export function filterTransactionsForLedgerExport(
+  transactions: Transaction[],
+  filters: TransactionLedgerFilters,
+  opts: {
+    dateFrom: Date;
+    dateTo: Date;
+    accountId: string;
+    visibilityScope?: TransactionLedgerVisibilityScope;
+  },
+  monthStartDay?: number,
+): Transaction[] {
+  const listFiltered = filterTransactionsForLedgerView(
+    transactions,
+    { ...filters, allMonths: true },
+    monthStartDay,
+    opts.visibilityScope,
+  );
+  return listFiltered.filter((t) => {
+    const inPeriod = dateInRange(t.date, opts.dateFrom, opts.dateTo);
+    const isAccountMatch =
+      opts.accountId === 'all' || resolveTransactionAccountId(t) === opts.accountId;
+    return inPeriod && isAccountMatch;
+  });
+}
