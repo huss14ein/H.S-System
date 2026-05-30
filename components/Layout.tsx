@@ -17,6 +17,7 @@ import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import { useDebouncedMarketPrices } from '../hooks/useDebouncedMarketPrices';
 import { supabase } from '../services/supabaseClient';
 import { runAutoNetWorthSnapshotIfDue } from '../services/scheduledNetWorthSnapshot';
+import { canAutoCaptureNetWorthSnapshot } from '../services/netWorthSnapshotReadiness';
 import { pauseBackgroundWork } from '../utils/backgroundWorkGate';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
 import { PageDeferredDataProvider } from '../context/PageDeferredDataContext';
@@ -47,7 +48,13 @@ const Layout: React.FC<LayoutProps> = ({
   const auth = useContext(AuthContext);
   const { exchangeRate } = useCurrency();
   const debouncedPrices = useDebouncedMarketPrices();
-  const { cancelQuoteRefresh } = useMarketQuoteMeta();
+  const {
+    cancelQuoteRefresh,
+    isRefreshing,
+    hasQueuedPriceRefresh,
+    symbolQuoteUpdatedAt,
+    isLive,
+  } = useMarketQuoteMeta();
   const navigatePage = useCallback(
     (page: Page) => {
       // Pause background quote/metrics work so route paint and input stay responsive.
@@ -72,7 +79,18 @@ const Layout: React.FC<LayoutProps> = ({
   useEffect(() => {
     const uid = auth?.user?.id;
     const data = dataCtx?.data;
-    if (!uid || !data || dataCtx?.showHydrateBanner || !dataCtx.getAvailableCashForAccount) return;
+    if (!uid || !data || !dataCtx.getAvailableCashForAccount) return;
+
+    const snapshotReady = canAutoCaptureNetWorthSnapshot({
+      showHydrateBanner: dataCtx.showHydrateBanner,
+      isRefreshing,
+      hasQueuedPriceRefresh,
+      symbolQuoteUpdatedAt,
+      isLive,
+      data,
+    });
+    if (!snapshotReady) return;
+
     return scheduleIdleWork(() => {
       void runAutoNetWorthSnapshotIfDue({
         userId: uid,
@@ -81,9 +99,27 @@ const Layout: React.FC<LayoutProps> = ({
         getAvailableCashForAccount: dataCtx.getAvailableCashForAccount,
         simulatedPrices: debouncedPrices,
         supabase,
+        snapshotReadiness: {
+          showHydrateBanner: dataCtx.showHydrateBanner,
+          isRefreshing,
+          hasQueuedPriceRefresh,
+          symbolQuoteUpdatedAt,
+          isLive,
+        },
       });
-    }, 4000);
-  }, [auth?.user?.id, dataCtx?.showHydrateBanner, dataCtx?.data, exchangeRate, debouncedPrices, dataCtx?.getAvailableCashForAccount]);
+    }, 500);
+  }, [
+    auth?.user?.id,
+    dataCtx?.showHydrateBanner,
+    dataCtx?.data,
+    exchangeRate,
+    debouncedPrices,
+    dataCtx?.getAvailableCashForAccount,
+    isRefreshing,
+    hasQueuedPriceRefresh,
+    symbolQuoteUpdatedAt,
+    isLive,
+  ]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

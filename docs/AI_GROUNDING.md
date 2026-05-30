@@ -36,6 +36,7 @@ Use this checklist when wiring or auditing AI features.
 | Zakat advisor | `getAIAnalysisPageInsights` via `AIAdvisor` (`pageContext="zakat"`) | Zakatable/deductible/outstanding + payment trend |
 | Assets advisor | `getAIAnalysisPageInsights` via `AIAdvisor` (`pageContext="assets"`) | Physical + commodity totals + composition |
 | Watchlist tips | `getAIWatchlistAdvice` | Symbols + names + holdings overlap + personal wealth grounding |
+| Multi-stock analysis | `getAIMultiStockAnalysis`, `buildMultiSymbolMarketGrounding`, `MultiStockAnalysisPanel` | Live quotes + 52w + watchlist fair value; Arabic/English batch compare table; `groundingAuditExtra` — never invent analyst targets |
 | Rebalancer | `getAIRebalancingPlan` | Holdings valued like **Portfolios** (`effectiveHoldingValueInBookCurrency` + `simulatedPrices`), **portfolio book currency** (USD/SAR), `sarPerUsd`, risk profile |
 | Statement / SMS / trading parse | `invokeAI` in parser paths | Extracted rows + user account mapping (no full PAN) |
 | Research / commodity / hybrid categorization | `geminiService.ts` | Varies by caller; prefer aggregates |

@@ -23,6 +23,7 @@ import {
     formatSymbolWithCompany,
     symbolsFromHoldings,
 } from '../components/SymbolWithCompanyName';
+import MultiStockAnalysisPanel from '../components/investments/MultiStockAnalysisPanel';
 
 type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
 
@@ -350,6 +351,8 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                     </div>
                 </div>
             </div>
+
+            <MultiStockAnalysisPanel />
 
             <div className="section-card">
                 <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center mb-4">

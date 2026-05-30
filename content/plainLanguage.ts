@@ -28,14 +28,14 @@ export const TERM_EXPLANATIONS: Record<string, string> = {
 export const PAGE_INTROS: Record<string, { title: string; description: string }> = {
   Dashboard: {
     title: 'Your financial overview',
-    description: 'See your net worth, accounts, emergency fund, and what to do next. Deep charts and health tools live under Wealth Analytics.',
+    description: 'See your net worth, accounts, emergency fund, and what to do next. Charts and health tools live under Wealth Analytics.',
   },
   Summary: {
     title: 'Wealth summary',
     description: 'Headline net worth, monthly cashflow, net worth history, and optional AI advisor — same numbers as the Dashboard KPI row.',
   },
   'Wealth Analytics': {
-    title: 'Deep wealth analytics',
+    title: 'Wealth analytics',
     description: 'Cashflow trends, budget burn, holdings grid, goals map, resilience checks, and health score. All figures match Dashboard and Summary.',
   },
   Accounts: {

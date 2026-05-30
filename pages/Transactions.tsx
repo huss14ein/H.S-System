@@ -44,7 +44,7 @@ import { toSAR, fromSAR } from '../utils/currencyMath';
 import { useCanonicalSpotFx, useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { financialMonthNetCashflowSar } from '../services/dashboardKpiSnapshot';
 import { getPersonalAccounts, getScopedCashTransactions } from '../utils/wealthScope';
-import { filterTransactionsForLedgerView, filterTransactionsForLedgerExport, parseFilterByBudgetPageAction } from '../utils/transactionLedgerFilters';
+import { filterTransactionsForLedgerView, filterTransactionsForLedgerExport, parseFilterByBudgetPageAction, ledgerDateRangeForFilters, formatLedgerDateYmd, budgetDrillDownDateRange } from '../utils/transactionLedgerFilters';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { exportCashTransactionsToCsv } from '../services/reportingEngine';
 import { computeMonthlyCashflowKpisSar } from '../services/financeTruth';
@@ -55,7 +55,6 @@ import {
     calendarMonthRangeFromIsoKey,
     currentCalendarMonthIso,
     currentFinancialMonthIso,
-    dateInRange,
 } from '../utils/financialMonth';
 import { sortByNewestFirst } from '../utils/sortRecency';
 import { summarizeIncomeTaxonomy } from '../services/incomeTaxonomy';
@@ -1146,7 +1145,7 @@ const RecurringModal: React.FC<{
 };
 
 const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
-    const { data, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth } = useContext(DataContext)!;
+    const { data, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth, transactionsLoadWarning } = useContext(DataContext)!;
     const confirmAction = useConfirmAction();
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useCanonicalSpotFx();
@@ -1183,22 +1182,25 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         accountId: 'all', 
         month: currentCalendarMonthIso(),
         allMonths: false,
+        monthMode: 'calendar' as 'calendar' | 'fiscal',
+        dateRangeOverride: undefined as { start: Date; end: Date } | undefined,
         nature: 'all' as 'all' | 'Fixed' | 'Variable',
         expenseType: 'all' as 'all' | 'Core' | 'Discretionary',
         budgetCategory: 'all' as 'all' | string,
     });
     const [transactionsVisibleCount, setTransactionsVisibleCount] = useState(TRANSACTIONS_LIST_PAGE_SIZE);
+    const transactionListRef = React.useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         setTransactionsVisibleCount(TRANSACTIONS_LIST_PAGE_SIZE);
     }, [filters.accountId, filters.month, filters.allMonths, filters.nature, filters.expenseType, filters.budgetCategory]);
 
     useEffect(() => {
-        setFilters((f) => ({ ...f, month: currentCalendarMonthIso() }));
+        setFilters((f) => ({ ...f, month: currentCalendarMonthIso(), monthMode: 'calendar', dateRangeOverride: undefined }));
     }, [monthStartDay]);
 
     const defaultMonthDateBounds = useMemo(() => {
-        const range = calendarMonthRangeFromIsoKey(filters.month);
+        const range = ledgerDateRangeForFilters(filters, monthStartDay);
         if (!range) {
             const now = new Date();
             const fallback = calendarMonthRangeFromIsoKey(currentCalendarMonthIso(now));
@@ -1206,15 +1208,15 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 return { from: '', to: '' };
             }
             return {
-                from: `${fallback.start.getFullYear()}-${String(fallback.start.getMonth() + 1).padStart(2, '0')}-${String(fallback.start.getDate()).padStart(2, '0')}`,
-                to: `${fallback.end.getFullYear()}-${String(fallback.end.getMonth() + 1).padStart(2, '0')}-${String(fallback.end.getDate()).padStart(2, '0')}`,
+                from: formatLedgerDateYmd(fallback.start),
+                to: formatLedgerDateYmd(fallback.end),
             };
         }
         return {
-            from: `${range.start.getFullYear()}-${String(range.start.getMonth() + 1).padStart(2, '0')}-${String(range.start.getDate()).padStart(2, '0')}`,
-            to: `${range.end.getFullYear()}-${String(range.end.getMonth() + 1).padStart(2, '0')}-${String(range.end.getDate()).padStart(2, '0')}`,
+            from: formatLedgerDateYmd(range.start),
+            to: formatLedgerDateYmd(range.end),
         };
-    }, [filters.month]);
+    }, [filters.month, filters.monthMode, filters.allMonths, filters.dateRangeOverride, monthStartDay]);
 
     const [exportAccountId, setExportAccountId] = useState<string>('all');
     const [exportDateFrom, setExportDateFrom] = useState('');
@@ -1304,19 +1306,27 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [auth?.user?.id]);
 
     const availableAccounts = useMemo(() => {
-        const personal = getPersonalAccounts(data) as Account[];
+        const base =
+            userRole === 'Admin'
+                ? ((data?.accounts ?? []) as Account[])
+                : (getPersonalAccounts(data) as Account[]);
         const map = new Map<string, Account>();
-        personal.forEach((a) => map.set(a.id, a));
+        base.forEach((a) => map.set(a.id, a));
         sharedAccounts.forEach((a) => {
             if (!map.has(a.id)) map.set(a.id, a);
         });
         return Array.from(map.values());
-    }, [data, sharedAccounts]);
+    }, [data, sharedAccounts, userRole]);
 
     const scopedCashTransactions = useMemo(
         () => getScopedCashTransactions(data, availableAccounts.map((a) => a.id)),
         [data, availableAccounts],
     );
+
+    const orphanTransactionCount = useMemo(() => {
+        const pool = (data?.transactions ?? []).length;
+        return Math.max(0, pool - scopedCashTransactions.length);
+    }, [data?.transactions, scopedCashTransactions.length]);
 
     useEffect(() => {
         const loadPendingTransactions = async () => {
@@ -1524,10 +1534,13 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
     const transactionsForMonthKpis = useMemo(() => {
         if (filters.allMonths) return [] as Transaction[];
-        const range = calendarMonthRangeFromIsoKey(filters.month);
-        if (!range) return [] as Transaction[];
-        return scopedCashTransactions.filter((t) => dateInRange(t.date, range.start, range.end));
-    }, [scopedCashTransactions, filters.month, filters.allMonths]);
+        return filterTransactionsForLedgerView(
+            scopedCashTransactions,
+            { ...filters, budgetCategory: 'all' },
+            monthStartDay,
+            ledgerVisibilityScope,
+        );
+    }, [scopedCashTransactions, filters, monthStartDay, ledgerVisibilityScope]);
 
     const usesCanonicalFinancialMonthKpis = useMemo(
         () =>
@@ -1622,17 +1635,34 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 return;
             }
             const { category, period, year, month } = parsed;
-            const monthIso = period === 'yearly'
-                ? `${year.toString().padStart(4, '0')}-01`
-                : `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}`;
-            setFilters({
-                accountId: 'all',
-                month: monthIso,
-                allMonths: false,
-                nature: 'all',
-                expenseType: 'all',
-                budgetCategory: category || 'all',
-            });
+            const monthIso = `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}`;
+            if (period === 'monthly') {
+                setFilters({
+                    accountId: 'all',
+                    month: monthIso,
+                    allMonths: false,
+                    monthMode: 'fiscal',
+                    dateRangeOverride: undefined,
+                    nature: 'all',
+                    expenseType: 'all',
+                    budgetCategory: category || 'all',
+                });
+            } else {
+                const range = budgetDrillDownDateRange(parsed, monthStartDay);
+                setFilters({
+                    accountId: 'all',
+                    month: monthIso,
+                    allMonths: false,
+                    monthMode: 'calendar',
+                    dateRangeOverride: range,
+                    nature: 'all',
+                    expenseType: 'all',
+                    budgetCategory: category || 'all',
+                });
+            }
+            window.setTimeout(() => {
+                transactionListRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 120);
             clearPageAction?.();
             return;
         }
@@ -1644,6 +1674,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             setFilters((prev) => ({
                 ...prev,
                 month: `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}`,
+                monthMode: 'calendar',
+                dateRangeOverride: undefined,
                 budgetCategory: category || 'all',
                 type: 'expense',
             }));
@@ -2157,15 +2189,36 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             </div>
 
             <SectionCard title="Transaction History" collapsible collapsibleSummary="List, filters" defaultExpanded>
+                <div ref={transactionListRef} />
+                {transactionsLoadWarning && (
+                    <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3" role="alert">
+                        {transactionsLoadWarning}
+                    </p>
+                )}
+                {userRole !== 'Admin' && !governanceReady && (
+                    <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 mb-3" role="status">
+                        Loading permissions…
+                    </p>
+                )}
+                {orphanTransactionCount > 0 && (
+                    <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3" role="status">
+                        {orphanTransactionCount} transaction(s) on file could not be matched to a visible account (missing or legacy account id).
+                    </p>
+                )}
                 <p className="text-sm text-slate-600 mb-3" role="status">
                     Ledger: <strong>{scopedCashTransactions.length}</strong> transaction(s) on your visible accounts
                     {filters.allMonths
                         ? ' (all months)'
-                        : ` · calendar month ${filters.month}`}
+                        : filters.monthMode === 'fiscal'
+                            ? ` · fiscal month ${filters.month}`
+                            : ` · calendar month ${filters.month}`}
                     . Showing <strong>{filteredTransactions.length}</strong> after filters.
                     {filters.budgetCategory !== 'all' && (
                         <span className="inline-flex items-center gap-1.5 ml-2">
                             <span className="badge-neutral">Budget: {filters.budgetCategory}</span>
+                            {filters.monthMode === 'fiscal' && (
+                                <span className="badge-neutral">Fiscal month</span>
+                            )}
                             <button
                                 type="button"
                                 className="text-xs font-medium text-primary hover:underline"
@@ -2191,7 +2244,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                         type="month"
                         value={filters.month}
                         disabled={filters.allMonths}
-                        onChange={(e) => setFilters({ ...filters, month: e.target.value, allMonths: false })}
+                        onChange={(e) => setFilters({ ...filters, month: e.target.value, allMonths: false, monthMode: 'calendar', dateRangeOverride: undefined })}
                         className="input-base w-auto min-w-[140px] disabled:opacity-50"
                     />
                     <label className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600 cursor-pointer">

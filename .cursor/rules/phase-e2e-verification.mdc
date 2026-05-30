@@ -1,0 +1,19 @@
+---
+description: After completing any plan phase, verify end-to-end wiring before marking done
+alwaysApply: true
+---
+
+# Phase completion — end-to-end verification
+
+When finishing a **phase** or **milestone** from a plan (e.g. Wealth Analytics A–I):
+
+1. **Trace the full path** — not just the changed file. Example: Transactions = `DataContext hydrate → scopedCashTransactions → filterTransactionsForLedgerView → visibleTransactions → export`.
+2. **Wire every entry point** — page actions, auto-effects, Layout idle jobs, command palette, exports must use the same helper/gate as the primary UI.
+3. **Add or extend E2E wiring tests** — prefer `tests/*Completion*.vitest.test.ts` or domain tests (`transactionListScope`, `wealthAnalyticsWiring`, `performanceRecoveryCoverage`) that assert **file content + behavior**, not only unit logic in isolation.
+4. **Run verification before claiming done:**
+   - `npm test`
+   - `npm run verify:atomic-workflows` (when touching budgets/transactions/actions)
+   - `npm run build` (when touching pages, constants, or build-visible strings)
+5. **Do not mark a phase complete** until tests pass and the checklist for that phase is satisfied. State honestly if manual deploy checks remain.
+
+If a phase spans UI + service + context, the deliverable is **working end-to-end**, not a partial helper with one call site.

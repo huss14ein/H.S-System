@@ -8,6 +8,7 @@ describe('wealth analytics end-to-end wiring', () => {
     it('is registered in types, nav, lazy pages, and shell routing', () => {
         expect(read('types.ts')).toContain("'Wealth Analytics'");
         expect(read('constants.tsx')).toMatch(/name:\s*'Wealth Analytics'/);
+        expect(read('constants.tsx')).not.toContain('charts & health');
         expect(read('utils/lazyPages.tsx')).toMatch(/'Wealth Analytics':\s*lazyPage/);
         expect(read('components/AuthenticatedAppShell.tsx')).toContain("'Wealth Analytics'");
         expect(read('components/AuthenticatedAppShell.tsx')).toContain("case 'Wealth Analytics':");
@@ -18,7 +19,10 @@ describe('wealth analytics end-to-end wiring', () => {
     it('Wealth Analytics page uses canonical metrics and advanced widgets', () => {
         const src = read('pages/WealthAnalytics.tsx');
         expect(src).toContain('useCanonicalFinancialMetrics');
-        expect(src).toContain('useDashboardCanonicalMetrics');
+        expect(src).toContain('ExecutiveKpiGrid');
+        expect(src).toContain('PortfolioPeriodPnLPanel');
+        expect(src).toContain('WealthAnalyticsExportMenu');
+        expect(src).toContain('WealthHealthIndicators');
         expect(src).toContain('DashboardOperationsCockpit');
         expect(src).toContain('SummaryWealthAtlas');
         expect(src).toContain('WealthAnalyticsSummaryPanels');
@@ -31,6 +35,15 @@ describe('wealth analytics end-to-end wiring', () => {
         expect(src).toContain('getPersonalTransactions');
         expect(src).not.toMatch(/personalTransactions\s*\?\?\s*data\?\.transactions/);
         expect(src).not.toMatch(/personalAccounts\s*\?\?\s*data\?\.accounts/);
+    });
+
+    it('Dashboard and Summary gate auto snapshots on quote readiness', () => {
+        const dashboard = read('pages/Dashboard.tsx');
+        const summary = read('pages/Summary.tsx');
+        expect(dashboard).toContain('canAutoCaptureNetWorthSnapshot');
+        expect(dashboard).toContain('dashboardDebouncedPrices');
+        expect(summary).toContain('canAutoCaptureNetWorthSnapshot');
+        expect(summary).toContain('quoteRefreshFingerprint');
     });
 
     it('Dashboard and Summary stay lean (heavy widgets on Wealth Analytics only)', () => {

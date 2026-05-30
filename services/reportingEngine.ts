@@ -5,6 +5,9 @@
  * UI/transport (PDF/Email) can be added in the automation/export layer.
  */
 
+import type { WealthAnalyticsReportModel, WealthMetricPassportKey } from './wealthAnalyticsReportModel';
+import { WEALTH_METRIC_PASSPORT_LABELS } from './wealthAnalyticsReportModel';
+
 export interface MonthlyReportInput {
   periodLabel: string;
   netWorth: number;
@@ -616,6 +619,164 @@ export function generateWealthSummaryReportHtml(
   </main>
 </body>
 </html>`;
+}
+
+const WEALTH_PRINT_STYLES = `
+    :root { --bg:#f8fafc; --surface:#ffffff; --ink:#0f172a; --muted:#475569; --line:#e2e8f0; --brand:#6366f1; --good:#16a34a; --warn:#d97706; --bad:#dc2626; --neutral:#334155; }
+    * { box-sizing: border-box; }
+    body { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; color: var(--ink); margin: 0; background: linear-gradient(180deg,#eef2ff 0%, var(--bg) 28%, var(--bg) 100%); }
+    .container { max-width: 1160px; margin: 0 auto; padding: 24px; }
+    .header { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; box-shadow: 0 8px 24px rgba(15,23,42,.05); }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .chip { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:4px 10px; background:#fff; }
+    .chip.live::before { content:''; width:7px; height:7px; border-radius:999px; background:var(--good); }
+    .chip.warn::before { content:''; width:7px; height:7px; border-radius:999px; background:var(--warn); }
+    h1 { margin: 0; font-size: clamp(1.25rem, 2.4vw, 1.7rem); }
+    h2 { margin: 20px 0 10px 0; font-size: 15px; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); }
+    h3 { margin: 0 0 8px 0; font-size: 14px; }
+    .section { margin-top: 14px; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+    .card { border: 1px solid var(--line); border-left: 5px solid var(--neutral); border-radius: 12px; padding: 12px; background: var(--surface); min-height: 78px; }
+    .k { font-size: 11px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .06em; }
+    .v { font-size: 20px; font-weight: 700; line-height: 1.25; }
+    .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .badge { display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; background:#eef2ff; color:#4338ca; }
+    .tone-good { border-left-color: var(--good); }
+    .tone-warn { border-left-color: var(--warn); }
+    .tone-bad { border-left-color: var(--bad); }
+    .passport-block { border:1px solid var(--line); border-radius:12px; padding:14px; background:#fff; margin-top:10px; }
+    .spark { font-size:11px; color:var(--muted); font-family: ui-monospace, monospace; word-break: break-all; }
+    .foot { margin-top: 18px; font-size: 12px; color: var(--muted); }
+    @media (max-width: 900px) { .grid, .grid-2 { grid-template-columns: 1fr; } .container { padding: 14px; } }
+    @media print { body { background: #fff; } .container { padding: 12px; max-width: none; } .header { box-shadow:none; } }
+`;
+
+function wealthMetricCard(kpi: WealthAnalyticsReportModel['executiveKpis'][number]): string {
+  return `<article class="card tone-neutral">
+    <div class="k">${escapeHtml(kpi.label)}</div>
+    <div class="v">${escapeHtml(kpi.valueDisplay)}</div>
+    <div class="sub">${escapeHtml(kpi.statusLabel)}${kpi.targetDisplay ? ` · Target ${escapeHtml(kpi.targetDisplay)}` : ''}</div>
+    ${kpi.sparkline.length >= 2 ? `<div style="margin-top:8px">${sparklineSvg(kpi.sparkline)}</div>` : ''}
+  </article>`;
+}
+
+function sparklineText(values: number[]): string {
+  if (!values.length) return '—';
+  return values.map((v) => (Number.isFinite(v) ? Math.round(v).toLocaleString() : '—')).join(' → ');
+}
+
+function sparklineSvg(values: number[], stroke = '#6366f1', height = 48, width = 220): string {
+  if (!values.length) return '<span class="sub">—</span>';
+  const finite = values.filter((v) => Number.isFinite(v));
+  if (finite.length < 2) return `<span class="sub">${escapeHtml(sparklineText(values))}</span>`;
+  const min = Math.min(...finite);
+  const max = Math.max(...finite);
+  const span = max - min || 1;
+  const pts = finite
+    .map((v, i) => {
+      const x = (i / (finite.length - 1)) * width;
+      const y = height - ((v - min) / span) * (height - 8) - 4;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" aria-hidden="true"><polyline fill="none" stroke="${stroke}" stroke-width="2.5" points="${pts}"/></svg>`;
+}
+
+function quoteChip(model: WealthAnalyticsReportModel): string {
+  if (model.quotesAsOfIso) {
+    const when = new Date(model.quotesAsOfIso).toLocaleString();
+    return `<span class="chip live">Quotes as of ${escapeHtml(when)}</span>`;
+  }
+  return `<span class="chip warn">${model.quotesLive ? 'Live quotes' : 'Cached quotes'}</span>`;
+}
+
+/** One-page executive KPI grid for Wealth Analytics PDF export. */
+export function generateWealthExecutiveSummaryHtml(model: WealthAnalyticsReportModel): string {
+  const n = (v: number) => (Number.isFinite(v) ? v : 0);
+  const money = (v: number) => `SAR ${n(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  return `<!doctype html>
+<html><head><meta charset="utf-8" /><title>Wealth Analytics — Executive Summary</title><style>${WEALTH_PRINT_STYLES}</style></head>
+<body><main class="container">
+  <header class="header">
+    <h1>Wealth Analytics — Executive Summary</h1>
+    <div class="meta">
+      <span class="chip">Generated ${escapeHtml(new Date(model.generatedAtIso).toLocaleString())}</span>
+      <span class="chip">FX ${escapeHtml(model.sarPerUsd.toFixed(4))} SAR/USD</span>
+      ${quoteChip(model)}
+    </div>
+  </header>
+  <section class="section"><h2>Headline KPIs</h2>
+    <div class="grid">${model.executiveKpis.map(wealthMetricCard).join('')}</div>
+  </section>
+  <section class="section"><h2>Portfolio P/L (live quotes)</h2>
+    <div class="grid-2">
+      <article class="card tone-neutral"><div class="k">Week P/L</div><div class="v">${money(model.weeklyPnLTotalSar)}</div>${model.weeklyPnLCumulative.length >= 2 ? `<div style="margin-top:8px">${sparklineSvg(model.weeklyPnLCumulative, '#06b6d4')}</div>` : ''}</article>
+      <article class="card tone-neutral"><div class="k">Month P/L</div><div class="v">${money(model.monthlyPnLTotalSar)}</div>${model.monthlyPnLCumulative.length >= 2 ? `<div style="margin-top:8px">${sparklineSvg(model.monthlyPnLCumulative, '#0ea5e9')}</div>` : ''}</article>
+    </div>
+  </section>
+  <section class="section"><h2>Health strip</h2>
+    <div class="grid-2">
+      <article class="card tone-neutral"><div class="k">Discipline</div><div class="v">${n(model.disciplineScore).toFixed(0)}/100</div></article>
+      <article class="card tone-neutral"><div class="k">Liquidity runway</div><div class="v">${n(model.liquidityRunwayMonths).toFixed(1)} mo</div></article>
+    </div>
+  </section>
+  <div class="foot">Numbers match on-screen Wealth Analytics (canonical KPI engine + live investment quotes). Prepared by Finova.</div>
+</main></body></html>`;
+}
+
+/** Per-metric passport — sections A (headline), B (trend), C (context). */
+export function generateWealthMetricPassportHtml(
+  model: WealthAnalyticsReportModel,
+  metric: WealthMetricPassportKey,
+): string {
+  const title = WEALTH_METRIC_PASSPORT_LABELS[metric];
+  const kpi = model.executiveKpis.find((k) => k.key === metric);
+  const n = (v: number) => (Number.isFinite(v) ? v : 0);
+  const money = (v: number) => `SAR ${n(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+
+  let sectionC = '';
+  if (metric === 'netWorth') {
+    sectionC = `Headline balance sheet net worth from computePersonalHeadlineNetWorthSar. Investments total ${money(model.investmentsTotalSar)}. Liquid cash ${money(model.liquidCashSar)}.`;
+  } else if (metric === 'monthlyPnL') {
+    sectionC = `Financial-month income minus expenses (transaction-dated FX). Portfolio week P/L ${money(model.weeklyPnLTotalSar)}; month P/L ${money(model.monthlyPnLTotalSar)} (ledger + live quote estimate).`;
+  } else if (metric === 'investmentRoi') {
+    sectionC = `Platform rollup + commodities + Sukuk vs net capital (computeHeadlinePersonalInvestmentRoiDecimal). Total exposure ${money(model.investmentsTotalSar)}.`;
+  } else if (metric === 'budgetVariance') {
+    sectionC = 'Positive = under budget this financial month. Same path as Dashboard KPI row.';
+  } else {
+    sectionC = `Target ${model.executiveKpis.find((k) => k.key === 'emergencyFund')?.targetDisplay ?? '6 mo'}. Liquid cash ${money(model.liquidCashSar)}.`;
+  }
+
+  const pnlSeries = metric === 'monthlyPnL' ? model.monthlyPnLCumulative : kpi?.sparkline ?? [];
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8" /><title>${escapeHtml(title)} — Metric Passport</title><style>${WEALTH_PRINT_STYLES}</style></head>
+<body><main class="container">
+  <header class="header">
+    <h1>${escapeHtml(title)}</h1>
+    <div class="meta">
+      <span class="chip">Wealth Analytics passport</span>
+      <span class="chip">${escapeHtml(new Date(model.generatedAtIso).toLocaleString())}</span>
+      ${quoteChip(model)}
+    </div>
+  </header>
+  <section class="passport-block">
+    <h3>A — Current reading</h3>
+    <div class="v">${escapeHtml(kpi?.valueDisplay ?? '—')}</div>
+    <p class="sub"><span class="badge">${escapeHtml(kpi?.statusLabel ?? '')}</span>${kpi?.targetDisplay ? ` · Target ${escapeHtml(kpi.targetDisplay)}` : ''}</p>
+  </section>
+  <section class="passport-block">
+    <h3>B — Trend series</h3>
+    <p class="spark">${escapeHtml(sparklineText(pnlSeries))}</p>
+  </section>
+  <section class="passport-block">
+    <h3>C — Definition &amp; reconciliation</h3>
+    <p class="sub">${escapeHtml(sectionC)}</p>
+    <p class="sub">FX ${escapeHtml(model.sarPerUsd.toFixed(4))} SAR/USD · Base report net worth ${money(model.base.netWorth)}</p>
+  </section>
+  <div class="foot">Metric passport — same canonical numbers as the live Wealth Analytics page.</div>
+</main></body></html>`;
 }
 
 /**

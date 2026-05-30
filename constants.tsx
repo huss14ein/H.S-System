@@ -28,7 +28,7 @@ import { ReceiptPercentIcon } from './components/icons/ReceiptPercentIcon';
 /** User-friendly display names for pages (nav, command palette, document title) */
 export const PAGE_DISPLAY_NAMES: Partial<Record<Page, string>> = {
   'Engines & Tools': 'Money Tools',
-  'Wealth Analytics': 'Wealth Analytics (charts & health)',
+  'Wealth Analytics': 'Wealth Analytics',
   Notifications: 'Tasks & alerts',
 };
 

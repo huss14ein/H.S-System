@@ -151,6 +151,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         const merged = mergePriceRefreshScope(refreshQueueRef.current, scope);
         refreshQueueRef.current = merged.queue;
         if (merged.changed) {
+            setIsRefreshing(true);
             setRefreshTrigger((prev) => prev + 1);
         }
     }, []);
