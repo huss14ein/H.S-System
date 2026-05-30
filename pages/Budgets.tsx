@@ -2063,7 +2063,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 const periodTag = budgetView.toLowerCase();
                 triggerPageAction(
                     'Transactions',
-                    `filter-by-budget:${budget.category}:${periodTag}:${budget.year || currentYear}:${budget.month || currentMonth}`,
+                    `filter-by-budget:${encodeURIComponent(budget.category)}:${periodTag}:${budget.year || currentYear}:${budget.month || currentMonth}`,
                 );
             }
         },
@@ -4164,9 +4164,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                             ? 'Daily'
                                             : 'Monthly';
                                 return (
-                                    <div
+                                    <button
                                         key={`shared-card-${budget.id}`}
-                                        className="group flex h-full min-h-0 w-full flex-col transition-transform duration-300 hover:-translate-y-1"
+                                        type="button"
+                                        className="group flex h-full min-h-0 w-full flex-col text-left transition-transform duration-300 hover:-translate-y-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary/80"
+                                        onClick={() => handleOwnPortfolioNavigate(budget)}
                                     >
                                         <BudgetCardShell utilizationLabel={utilLabel} budgetTier={budget.budgetTier ?? 'Optional'}>
                                             <div className="flex min-h-0 flex-1 flex-col">
@@ -4220,10 +4222,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                                 formatCurrencyString={formatCurrencyString}
                                                 periodWindowLabel={periodWindowLabel}
                                             />
-                                            <p className="mt-2 shrink-0 text-[10px] text-center text-slate-400 font-medium uppercase tracking-wider">Read-only · owner&apos;s budget</p>
+                                            <p className="mt-2 shrink-0 text-[10px] text-center text-slate-400 font-medium uppercase tracking-wider">Read-only · tap to view your transactions</p>
                                             </div>
                                         </BudgetCardShell>
-                                    </div>
+                                    </button>
                                 );
                             })}
                         </div>

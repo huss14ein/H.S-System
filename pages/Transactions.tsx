@@ -44,7 +44,7 @@ import { toSAR, fromSAR } from '../utils/currencyMath';
 import { useCanonicalSpotFx, useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { financialMonthNetCashflowSar } from '../services/dashboardKpiSnapshot';
 import { getPersonalAccounts, getScopedCashTransactions, resolveTransactionAccountId } from '../utils/wealthScope';
-import { filterTransactionsForLedgerView } from '../utils/transactionLedgerFilters';
+import { filterTransactionsForLedgerView, parseFilterByBudgetPageAction } from '../utils/transactionLedgerFilters';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { exportCashTransactionsToCsv } from '../services/reportingEngine';
 import { computeMonthlyCashflowKpisSar } from '../services/financeTruth';
@@ -1154,7 +1154,10 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     const recurringList = data?.recurringTransactions ?? [];
     const auth = useContext(AuthContext);
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
-    const [userRole, setUserRole] = useState<UserRole>('Restricted');
+    const [userRole, setUserRole] = useState<UserRole>(() =>
+        inferIsAdmin(auth?.user ?? null, null) ? 'Admin' : 'Restricted',
+    );
+    const [governanceReady, setGovernanceReady] = useState(false);
     const [permittedBudgetCategories, setPermittedBudgetCategories] = useState<string[]>([]);
     const [sharedBudgetCategories, setSharedBudgetCategories] = useState<string[]>([]);
     const [adminPendingTransactions, setAdminPendingTransactions] = useState<any[]>([]);
@@ -1228,7 +1231,12 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
     useEffect(() => {
         const loadGovernanceData = async () => {
-            if (!supabase || !auth?.user) return;
+            if (!supabase || !auth?.user) {
+                setGovernanceReady(true);
+                return;
+            }
+
+            setGovernanceReady(false);
 
             const { data: userRecord } = await supabase
                 .from('users')
@@ -1259,6 +1267,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 setPermittedBudgetCategories([]);
                 setSharedBudgetCategories([]);
             }
+
+            setGovernanceReady(true);
         };
 
         loadGovernanceData();
@@ -1407,14 +1417,27 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         [accountsById, formatCurrencyString],
     );
 
+    const ledgerVisibilityScope = useMemo(
+        () => ({
+            mode: userRole === 'Admin' ? 'owner' as const : 'collaborator' as const,
+            allowedBudgetCategories:
+                userRole === 'Admin'
+                    ? undefined
+                    : Array.from(new Set([...permittedBudgetCategories, ...sharedBudgetCategories])),
+            governanceReady: userRole === 'Admin' || governanceReady,
+        }),
+        [userRole, permittedBudgetCategories, sharedBudgetCategories, governanceReady],
+    );
+
     const filteredTransactions = useMemo(() => {
         const filtered = filterTransactionsForLedgerView(
             scopedCashTransactions,
             filters,
             monthStartDay,
+            ledgerVisibilityScope,
         );
         return sortByNewestFirst(filtered);
-    }, [scopedCashTransactions, filters, monthStartDay]);
+    }, [scopedCashTransactions, filters, monthStartDay, ledgerVisibilityScope]);
 
     const visibleTransactions = useMemo(
         () => filteredTransactions.slice(0, transactionsVisibleCount),
@@ -1585,19 +1608,23 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             return;
         }
         if (pageAction.startsWith('filter-by-budget:')) {
-            const [, rawCategory, rawPeriod, rawYear, rawMonth] = pageAction.split(':');
-            const category = rawCategory || '';
-            const period = String(rawPeriod || 'monthly').toLowerCase();
-            const year = Number(rawYear) || new Date().getFullYear();
-            const month = Math.min(12, Math.max(1, Number(rawMonth) || new Date().getMonth() + 1));
+            const parsed = parseFilterByBudgetPageAction(pageAction);
+            if (!parsed) {
+                clearPageAction?.();
+                return;
+            }
+            const { category, period, year, month } = parsed;
             const monthIso = period === 'yearly'
                 ? `${year.toString().padStart(4, '0')}-01`
                 : `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}`;
-            setFilters((prev) => ({
-                ...prev,
+            setFilters({
+                accountId: 'all',
                 month: monthIso,
+                allMonths: false,
+                nature: 'all',
+                expenseType: 'all',
                 budgetCategory: category || 'all',
-            }));
+            });
             clearPageAction?.();
             return;
         }
@@ -2128,6 +2155,23 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                         ? ' (all months)'
                         : ` · calendar month ${filters.month}`}
                     . Showing <strong>{filteredTransactions.length}</strong> after filters.
+                    {filters.budgetCategory !== 'all' && (
+                        <span className="inline-flex items-center gap-1.5 ml-2">
+                            <span className="badge-neutral">Budget: {filters.budgetCategory}</span>
+                            <button
+                                type="button"
+                                className="text-xs font-medium text-primary hover:underline"
+                                onClick={() => setFilters((prev) => ({ ...prev, budgetCategory: 'all' }))}
+                            >
+                                Clear budget filter
+                            </button>
+                        </span>
+                    )}
+                    {userRole !== 'Admin' && governanceReady && (
+                        <span className="block text-xs text-slate-500 mt-1">
+                            Shared/permitted budget view — only your transactions mapped to assigned categories.
+                        </span>
+                    )}
                     {usesCanonicalFinancialMonthKpis && (
                         <span className="block text-xs text-emerald-800 mt-1">
                             Income / expense cards above match Dashboard KPIs for this financial month.

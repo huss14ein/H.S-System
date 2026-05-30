@@ -2,13 +2,17 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getPersonalAccounts, getPersonalTransactions, getScopedCashTransactions } from '../utils/wealthScope';
-import { filterTransactionsForLedgerView } from '../utils/transactionLedgerFilters';
+import {
+    filterTransactionsForLedgerView,
+    parseFilterByBudgetPageAction,
+} from '../utils/transactionLedgerFilters';
 import type { FinancialData, Transaction } from '../types';
 
 describe('transaction list scope', () => {
-    it('Transactions page uses ledger view filter helper (no budget-permission list gate)', () => {
+    it('Transactions page uses ledger view filter helper with admin/collaborator visibility scope', () => {
         const src = readFileSync(join(process.cwd(), 'pages/Transactions.tsx'), 'utf8');
         expect(src).toContain('filterTransactionsForLedgerView');
+        expect(src).toContain('ledgerVisibilityScope');
         expect(src).not.toContain('isPermitted = userRole');
     });
 
@@ -71,24 +75,33 @@ describe('transaction list scope', () => {
         expect(getScopedCashTransactions(data, ['a1'])).toHaveLength(1);
     });
 
-    it('filterTransactionsForLedgerView shows all scoped rows regardless of budget category permissions', () => {
+    it('owner scope shows all scoped rows; collaborator scope filters by permitted categories', () => {
         const txs = [
             { id: 't1', accountId: 'a1', amount: -50, date: '2026-05-10', description: 'Groceries', type: 'expense', category: 'Food', budgetCategory: 'Food' },
-            { id: 't2', accountId: 'a1', amount: 1000, date: '2026-05-01', description: 'Salary', type: 'income', category: 'Salary' },
+            { id: 't2', accountId: 'a1', amount: -20, date: '2026-05-11', description: 'Private', type: 'expense', category: 'Personal', budgetCategory: 'Personal' },
+            { id: 't3', accountId: 'a1', amount: 1000, date: '2026-05-01', description: 'Salary', type: 'income', category: 'Salary' },
         ] as Transaction[];
-        const out = filterTransactionsForLedgerView(
-            txs,
-            {
-                accountId: 'all',
-                month: '2026-05',
-                allMonths: false,
-                nature: 'all',
-                expenseType: 'all',
-                budgetCategory: 'all',
-            },
-            28,
-        );
-        expect(out).toHaveLength(2);
+        const filters = {
+            accountId: 'all',
+            month: '2026-05',
+            allMonths: true,
+            nature: 'all' as const,
+            expenseType: 'all' as const,
+            budgetCategory: 'all' as const,
+        };
+        expect(
+            filterTransactionsForLedgerView(txs, filters, 28, {
+                mode: 'owner',
+                governanceReady: true,
+            }),
+        ).toHaveLength(3);
+        expect(
+            filterTransactionsForLedgerView(txs, filters, 28, {
+                mode: 'collaborator',
+                allowedBudgetCategories: ['Food'],
+                governanceReady: true,
+            }),
+        ).toEqual([txs[0], txs[2]]);
     });
 
     it('filterTransactionsForLedgerView uses calendar month not fiscal month (day 28 start)', () => {
@@ -101,12 +114,49 @@ describe('transaction list scope', () => {
             txs,
             { accountId: 'all', month: '2026-05', allMonths: false, nature: 'all', expenseType: 'all', budgetCategory: 'all' },
             28,
+            { mode: 'owner', governanceReady: true },
         );
         expect(may.map((t) => t.id).sort()).toEqual(['early', 'late']);
-        expect(filterTransactionsForLedgerView(
+    });
+
+    it('budget category filter matches split expense lines', () => {
+        const txs = [
+            {
+                id: 'split',
+                accountId: 'a1',
+                amount: -100,
+                date: '2026-05-10',
+                description: 'Split shop',
+                type: 'expense',
+                budgetCategory: 'Food',
+                splitLines: [
+                    { category: 'Food', amount: 40 },
+                    { category: 'Transport', amount: 60 },
+                ],
+            },
+        ] as Transaction[];
+        const foodOnly = filterTransactionsForLedgerView(
             txs,
-            { accountId: 'all', month: '2026-05', allMonths: true, nature: 'all', expenseType: 'all', budgetCategory: 'all' },
-            28,
-        )).toHaveLength(3);
+            { accountId: 'all', month: '2026-05', allMonths: true, nature: 'all', expenseType: 'all', budgetCategory: 'Food' },
+            1,
+            { mode: 'owner', governanceReady: true },
+        );
+        const transportOnly = filterTransactionsForLedgerView(
+            txs,
+            { accountId: 'all', month: '2026-05', allMonths: true, nature: 'all', expenseType: 'all', budgetCategory: 'Transport' },
+            1,
+            { mode: 'owner', governanceReady: true },
+        );
+        expect(foodOnly).toHaveLength(1);
+        expect(transportOnly).toHaveLength(1);
+    });
+
+    it('parseFilterByBudgetPageAction decodes encoded category names', () => {
+        expect(parseFilterByBudgetPageAction('filter-by-budget:Food%20%26%20Dining:monthly:2026:5')).toEqual({
+            category: 'Food & Dining',
+            period: 'monthly',
+            year: 2026,
+            month: 5,
+        });
     });
 });

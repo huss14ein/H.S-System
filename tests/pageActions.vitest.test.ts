@@ -17,6 +17,7 @@ describe('isSupportedPageAction', () => {
     expect(isSupportedPageAction('Transactions', 'open-transaction-modal')).toBe(true);
     expect(isSupportedPageAction('Transactions', 'filter-by-budget:Food:monthly:2026:4')).toBe(true);
     expect(isSupportedPageAction('Transactions', 'filter-by-budget:Rent:yearly:2026:12')).toBe(true);
+    expect(isSupportedPageAction('Transactions', 'filter-by-budget:Food%20%26%20Dining:monthly:2026:5')).toBe(true);
     expect(isSupportedPageAction('Transactions', 'filter-plan-expense:2026:4:Housing')).toBe(true);
     expect(isSupportedPageAction('Transactions', 'filter-plan-expense:2026:12:Food%20%26%20Dining')).toBe(true);
     expect(isSupportedPageAction('Goals', 'focus-goal:g-1')).toBe(true);
