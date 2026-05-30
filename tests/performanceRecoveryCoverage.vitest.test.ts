@@ -38,6 +38,16 @@ describe('performance recovery E2E wiring', () => {
     expect(read('components/charts/NetWorthCockpit.tsx')).toContain('NetWorthCockpitFromCanonical');
   });
 
+  it('auto NW snapshot waits for quote readiness on Dashboard, Summary, and Layout', () => {
+    expect(read('pages/Dashboard.tsx')).toContain('canAutoCaptureNetWorthSnapshot');
+    expect(read('pages/Dashboard.tsx')).toContain('dashboardDebouncedPrices');
+    expect(read('pages/Summary.tsx')).toContain('canAutoCaptureNetWorthSnapshot');
+    expect(read('pages/Summary.tsx')).toContain('quoteRefreshFingerprint');
+    expect(read('components/Layout.tsx')).toContain('canAutoCaptureNetWorthSnapshot');
+    expect(read('services/scheduledNetWorthSnapshot.ts')).toContain('snapshotReadiness');
+    expect(read('services/netWorthSnapshotReadiness.ts')).toContain('canAutoCaptureNetWorthSnapshot');
+  });
+
   it('auto NW snapshot throttle is used on Dashboard and Summary', () => {
     expect(read('pages/Dashboard.tsx')).toContain('shouldThrottleAutoNetWorthSnapshot');
     expect(read('pages/Summary.tsx')).toContain('shouldThrottleAutoNetWorthSnapshot');

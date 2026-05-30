@@ -4,13 +4,19 @@ import {
   calendarMonthRangeFromIsoKey,
   currentCalendarMonthIso,
   dateInRange,
+  financialMonthRangeFromKey,
 } from './financialMonth';
 import { resolveTransactionAccountId } from './wealthScope';
+import { computeBudgetSpendWindows, type BudgetViewMode } from '../services/budgetViewSpendWindows';
 
 export type TransactionLedgerFilters = {
   accountId: string;
   month: string;
   allMonths: boolean;
+  /** Calendar month (month picker) vs fiscal month (budget card drill-down). */
+  monthMode?: 'calendar' | 'fiscal';
+  /** Weekly/daily/yearly budget drill-down — exact window from Budgets cards. */
+  dateRangeOverride?: { start: Date; end: Date };
   nature: 'all' | 'Fixed' | 'Variable';
   expenseType: 'all' | 'Core' | 'Discretionary';
   budgetCategory: 'all' | string;
@@ -44,12 +50,21 @@ function transactionMatchesBudgetCategory(t: Transaction, category: string): boo
   return txBudgetLabel(t) === category;
 }
 
+function collaboratorCategoryLabels(t: Transaction): string[] {
+  const allocations = getTransactionBudgetAllocations(t);
+  if (allocations.length > 0) {
+    return allocations.map((line) => line.category);
+  }
+  const label = txBudgetLabel(t);
+  return label ? [label] : [];
+}
+
 function isVisibleForCollaborator(t: Transaction, allowedBudgetCategories: string[]): boolean {
   if (allowedBudgetCategories.length === 0) return false;
   if (t.type !== 'expense') return true;
-  const allocations = getTransactionBudgetAllocations(t);
-  if (allocations.length === 0) return false;
-  return allocations.some((line) => allowedBudgetCategories.includes(line.category));
+  const labels = collaboratorCategoryLabels(t);
+  if (labels.length === 0) return false;
+  return labels.some((label) => allowedBudgetCategories.includes(label));
 }
 
 function passesVisibilityScope(
@@ -57,29 +72,81 @@ function passesVisibilityScope(
   scope: TransactionLedgerVisibilityScope | undefined,
 ): boolean {
   if (!scope || scope.mode === 'owner') return true;
-  if (!scope.governanceReady) return false;
+  if (!scope.governanceReady) return true;
   return isVisibleForCollaborator(t, scope.allowedBudgetCategories ?? []);
 }
 
+function monthRangeForFilters(
+  filters: TransactionLedgerFilters,
+  monthStartDay: number,
+): { start: Date; end: Date } | null {
+  const monthIso = filters.month.trim() || currentCalendarMonthIso();
+  if (filters.monthMode === 'fiscal') {
+    const [year, month] = monthIso.split('-').map(Number);
+    if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+    return financialMonthRangeFromKey({ year, month }, monthStartDay);
+  }
+  return calendarMonthRangeFromIsoKey(monthIso);
+}
+
+/** Visible list + default export bounds for the active ledger filters. */
+export function ledgerDateRangeForFilters(
+  filters: TransactionLedgerFilters,
+  monthStartDay: number,
+): { start: Date; end: Date } | null {
+  if (filters.allMonths) return null;
+  if (filters.dateRangeOverride) return filters.dateRangeOverride;
+  return monthRangeForFilters(filters, monthStartDay);
+}
+
+export function formatLedgerDateYmd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Same spend window as Budgets card click (monthly fiscal / weekly / daily / yearly). */
+export function budgetDrillDownDateRange(
+  parsed: { period: string; year: number; month: number; anchorDate?: string },
+  monthStartDay: number,
+): { start: Date; end: Date } {
+  const view: BudgetViewMode =
+    parsed.period === 'weekly'
+      ? 'Weekly'
+      : parsed.period === 'daily'
+        ? 'Daily'
+        : parsed.period === 'yearly'
+          ? 'Yearly'
+          : 'Monthly';
+  const anchor = parsed.anchorDate
+    ? new Date(`${parsed.anchorDate}T12:00:00`)
+    : new Date();
+  const { rangeStart, rangeEnd } = computeBudgetSpendWindows({
+    budgetView: view,
+    currentYear: parsed.year,
+    currentMonth: parsed.month,
+    monthStartDay,
+    anchorDate: anchor,
+  });
+  return { start: rangeStart, end: rangeEnd };
+}
+
 /**
- * UI ledger filters — calendar month (`type="month"`), account, nature, type, budget category.
- * Collaborator visibility is applied here; budget-permission rules for create/edit stay on save paths.
+ * UI ledger filters — account, nature, type, budget category.
+ * Month picker uses calendar months; budget drill-down uses fiscal months when monthMode=fiscal.
  */
 export function filterTransactionsForLedgerView(
   transactions: Transaction[],
   filters: TransactionLedgerFilters,
-  _monthStartDay?: number,
+  monthStartDay = 1,
   visibilityScope?: TransactionLedgerVisibilityScope,
 ): Transaction[] {
-  const monthIso = filters.month.trim() || currentCalendarMonthIso();
-  const calendarRange = calendarMonthRangeFromIsoKey(monthIso);
+  const monthRange = ledgerDateRangeForFilters(filters, monthStartDay);
 
   return transactions.filter((t) => {
     if (!passesVisibilityScope(t, visibilityScope)) return false;
 
     const isMonthMatch =
       filters.allMonths ||
-      (calendarRange != null && dateInRange(t.date, calendarRange.start, calendarRange.end));
+      (monthRange != null && dateInRange(t.date, monthRange.start, monthRange.end));
     const isAccountMatch =
       filters.accountId === 'all' || resolveTransactionAccountId(t) === filters.accountId;
     const txNature = normalizeNature(t.transactionNature);
@@ -95,16 +162,17 @@ export function filterTransactionsForLedgerView(
   });
 }
 
-/** Parse `filter-by-budget:…` page actions (category may be URI-encoded). */
+/** Parse `filter-by-budget:…` page actions (category may be URI-encoded). Optional anchor YYYY-MM-DD. */
 export function parseFilterByBudgetPageAction(action: string): {
   category: string;
   period: string;
   year: number;
   month: number;
+  anchorDate?: string;
 } | null {
   if (!action.startsWith('filter-by-budget:')) return null;
   const rest = action.slice('filter-by-budget:'.length);
-  const match = rest.match(/^(.+):(monthly|weekly|daily|yearly):(\d{4}):([1-9]|1[0-2])$/i);
+  const match = rest.match(/^(.+):(monthly|weekly|daily|yearly):(\d{4}):([1-9]|1[0-2])(?::(\d{4}-\d{2}-\d{2}))?$/i);
   if (!match) return null;
   const period = match[2].toLowerCase();
   const year = Number(match[3]);
@@ -116,7 +184,8 @@ export function parseFilterByBudgetPageAction(action: string): {
   } catch {
     /* keep raw */
   }
-  return { category, period, year, month };
+  const anchorDate = match[5];
+  return { category, period, year, month, ...(anchorDate ? { anchorDate } : {}) };
 }
 
 /** CSV export — same visibility + UI filters as the list, with an explicit date/account window. */

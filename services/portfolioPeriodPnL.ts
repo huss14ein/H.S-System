@@ -306,3 +306,195 @@ export function computePortfolioPeriodPnLSummary(args: {
 export function portfolioPeriodPnLMap(summary: PortfolioPeriodPnLSummary): Map<string, PortfolioPeriodPnLRow> {
   return new Map(summary.rows.map((r) => [r.portfolioId, r]));
 }
+
+export type PortfolioPnLDailyPoint = {
+  day: string;
+  label: string;
+  ledgerSar: number;
+  marketEstimateSar: number;
+  totalSar: number;
+  cumulativeSar: number;
+};
+
+export type PortfolioPnLDailySeries = {
+  weekly: PortfolioPnLDailyPoint[];
+  monthly: PortfolioPnLDailyPoint[];
+  weeklyByPortfolioId: Map<string, PortfolioPnLDailyPoint[]>;
+};
+
+function eachCalendarDayIsoInRange(startMs: number, endMs: number): string[] {
+  const out: string[] = [];
+  const d = new Date(startMs);
+  d.setHours(0, 0, 0, 0);
+  const end = new Date(endMs);
+  end.setHours(0, 0, 0, 0);
+  while (d.getTime() <= end.getTime()) {
+    out.push(d.toISOString().slice(0, 10));
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
+
+function isTradingDayIso(dayIso: string): boolean {
+  const dow = new Date(`${dayIso}T12:00:00`).getDay();
+  return dow !== 0 && dow !== 6;
+}
+
+function dayBoundsMs(dayIso: string): { startMs: number; endMs: number } {
+  return {
+    startMs: new Date(`${dayIso}T00:00:00`).getTime(),
+    endMs: new Date(`${dayIso}T23:59:59.999`).getTime(),
+  };
+}
+
+function buildPortfolioDailySeriesInWindow(args: {
+  transactions: InvestmentTransaction[];
+  dailyPnLSar: number;
+  startMs: number;
+  endMs: number;
+  accounts: Account[];
+  portfolios: InvestmentPortfolio[];
+  data: FinancialData;
+  sarPerUsd: number;
+  locale?: string;
+}): PortfolioPnLDailyPoint[] {
+  const days = eachCalendarDayIsoInRange(args.startMs, args.endMs);
+  let cumulative = 0;
+  return days.map((day) => {
+    const { startMs, endMs } = dayBoundsMs(day);
+    const ledgerSar = computePortfolioLedgerPnLSarInRange({
+      transactions: args.transactions,
+      startMs,
+      endMs,
+      accounts: args.accounts,
+      portfolios: args.portfolios,
+      data: args.data,
+      sarPerUsd: args.sarPerUsd,
+    });
+    const marketEstimateSar = isTradingDayIso(day) ? args.dailyPnLSar : 0;
+    const totalSar = ledgerSar + marketEstimateSar;
+    cumulative += totalSar;
+    const label = new Date(`${day}T12:00:00`).toLocaleDateString(args.locale ?? 'en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
+    return { day, label, ledgerSar, marketEstimateSar, totalSar, cumulativeSar: cumulative };
+  });
+}
+
+function aggregateDailySeries(seriesList: PortfolioPnLDailyPoint[][]): PortfolioPnLDailyPoint[] {
+  if (seriesList.length === 0) return [];
+  const dayOrder = seriesList[0].map((p) => p.day);
+  const byDay = new Map<string, { ledgerSar: number; marketEstimateSar: number; totalSar: number; label: string }>();
+  for (const series of seriesList) {
+    for (const p of series) {
+      const prev = byDay.get(p.day) ?? { ledgerSar: 0, marketEstimateSar: 0, totalSar: 0, label: p.label };
+      byDay.set(p.day, {
+        label: p.label,
+        ledgerSar: prev.ledgerSar + p.ledgerSar,
+        marketEstimateSar: prev.marketEstimateSar + p.marketEstimateSar,
+        totalSar: prev.totalSar + p.totalSar,
+      });
+    }
+  }
+  let cumulative = 0;
+  return dayOrder.map((day) => {
+    const row = byDay.get(day)!;
+    cumulative += row.totalSar;
+    return {
+      day,
+      label: row.label,
+      ledgerSar: row.ledgerSar,
+      marketEstimateSar: row.marketEstimateSar,
+      totalSar: row.totalSar,
+      cumulativeSar: cumulative,
+    };
+  });
+}
+
+/** Daily cumulative P/L series for charts and sparklines (ledger + live quote estimate per day). */
+export function computePortfolioPnLDailySeries(args: {
+  data: FinancialData;
+  portfolios: InvestmentPortfolio[];
+  accounts: Account[];
+  sarPerUsd: number;
+  simulatedPrices: SimulatedPriceMap;
+  monthStartDay: number;
+  getAvailableCashForAccount?: (accountId: string) => { SAR?: number; USD?: number } | null | undefined;
+  now?: Date;
+  locale?: string;
+}): PortfolioPnLDailySeries {
+  const summary = computePortfolioPeriodPnLSummary(args);
+  const allTx = getPersonalInvestmentTransactionsForKpis(args.data);
+  const week = weekWindowMs(args.now ?? new Date());
+  const month = financialMonthWindowMs(args.now ?? new Date(), args.monthStartDay);
+
+  const weeklyByPortfolioId = new Map<string, PortfolioPnLDailyPoint[]>();
+  const weeklyParts: PortfolioPnLDailyPoint[][] = [];
+  const monthlyParts: PortfolioPnLDailyPoint[][] = [];
+
+  const byAccount = new Map<string, InvestmentPortfolio[]>();
+  for (const p of args.portfolios) {
+    const list = byAccount.get(p.accountId) ?? [];
+    list.push(p);
+    byAccount.set(p.accountId, list);
+  }
+
+  for (const [, siblings] of byAccount) {
+    const sorted = [...siblings].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const accountId = sorted[0]?.accountId ?? '';
+    const accountTx = allTx.filter(
+      (t) => resolveInvestmentTransactionAccountId(t, args.accounts, args.portfolios) === accountId,
+    );
+
+    for (let i = 0; i < sorted.length; i++) {
+      const p = sorted[i];
+      const row = summary.rows.find((r) => r.portfolioId === p.id);
+      if (!row) continue;
+      const txsForLedger =
+        sorted.length === 1
+          ? accountTx
+          : getPortfolioAttributedTransactions({
+              portfolioId: p.id,
+              portfolioIndex: i,
+              siblingPortfolios: sorted,
+              transactions: accountTx,
+              sarPerUsd: args.sarPerUsd,
+              simulatedPrices: args.simulatedPrices,
+            });
+
+      const weekly = buildPortfolioDailySeriesInWindow({
+        transactions: txsForLedger,
+        dailyPnLSar: row.dailyPnLSar,
+        startMs: week.startMs,
+        endMs: week.endMs,
+        accounts: args.accounts,
+        portfolios: args.portfolios,
+        data: args.data,
+        sarPerUsd: args.sarPerUsd,
+        locale: args.locale,
+      });
+      const monthly = buildPortfolioDailySeriesInWindow({
+        transactions: txsForLedger,
+        dailyPnLSar: row.dailyPnLSar,
+        startMs: month.startMs,
+        endMs: Math.min(month.endMs, (args.now ?? new Date()).getTime()),
+        accounts: args.accounts,
+        portfolios: args.portfolios,
+        data: args.data,
+        sarPerUsd: args.sarPerUsd,
+        locale: args.locale,
+      });
+      weeklyByPortfolioId.set(p.id, weekly);
+      weeklyParts.push(weekly);
+      monthlyParts.push(monthly);
+    }
+  }
+
+  return {
+    weekly: aggregateDailySeries(weeklyParts),
+    monthly: aggregateDailySeries(monthlyParts),
+    weeklyByPortfolioId,
+  };
+}

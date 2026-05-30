@@ -6,8 +6,13 @@ import {
     filterTransactionsForLedgerView,
     filterTransactionsForLedgerExport,
     parseFilterByBudgetPageAction,
+    ledgerDateRangeForFilters,
+    formatLedgerDateYmd,
+    budgetDrillDownDateRange,
 } from '../utils/transactionLedgerFilters';
 import type { FinancialData, Transaction } from '../types';
+import { financialMonthRangeFromKey } from '../utils/financialMonth';
+import { computeBudgetSpendWindows } from '../services/budgetViewSpendWindows';
 
 describe('transaction list scope', () => {
     it('Transactions page uses ledger view filter helper with admin/collaborator visibility scope', () => {
@@ -15,6 +20,14 @@ describe('transaction list scope', () => {
         expect(src).toContain('filterTransactionsForLedgerView');
         expect(src).toContain('ledgerVisibilityScope');
         expect(src).not.toContain('isPermitted = userRole');
+    });
+
+    it('Transactions page wires fiscal drill-down, governance loading, and hydrate warning', () => {
+        const src = readFileSync(join(process.cwd(), 'pages/Transactions.tsx'), 'utf8');
+        expect(src).toContain("monthMode: 'fiscal'");
+        expect(src).toContain('transactionsLoadWarning');
+        expect(src).toContain('orphanTransactionCount');
+        expect(src).toContain('governanceReady');
     });
 
     it('getPersonalTransactions falls back when personal slice is empty', () => {
@@ -120,6 +133,59 @@ describe('transaction list scope', () => {
         expect(may.map((t) => t.id).sort()).toEqual(['early', 'late']);
     });
 
+    it('filterTransactionsForLedgerView uses fiscal month when monthMode=fiscal (day 28 start)', () => {
+        const txs = [
+            { id: 'early', accountId: 'a1', amount: -10, date: '2026-05-05', description: 'Early May', type: 'expense', category: 'Food' },
+            { id: 'late', accountId: 'a1', amount: -10, date: '2026-05-29', description: 'Late May', type: 'expense', category: 'Food' },
+            { id: 'june', accountId: 'a1', amount: -10, date: '2026-06-02', description: 'June', type: 'expense', category: 'Food' },
+        ] as Transaction[];
+        const fiscalMay = filterTransactionsForLedgerView(
+            txs,
+            {
+                accountId: 'all',
+                month: '2026-05',
+                allMonths: false,
+                monthMode: 'fiscal',
+                nature: 'all',
+                expenseType: 'all',
+                budgetCategory: 'all',
+            },
+            28,
+            { mode: 'owner', governanceReady: true },
+        );
+        expect(fiscalMay.map((t) => t.id).sort()).toEqual(['june', 'late']);
+    });
+
+    it('collaborator scope passes all rows while governance is loading', () => {
+        const txs = [
+            { id: 't1', accountId: 'a1', amount: -50, date: '2026-05-10', description: 'Groceries', type: 'expense', category: 'Food' },
+            { id: 't2', accountId: 'a1', amount: -20, date: '2026-05-11', description: 'Private', type: 'expense', category: 'Personal' },
+        ] as Transaction[];
+        expect(
+            filterTransactionsForLedgerView(
+                txs,
+                { accountId: 'all', month: '2026-05', allMonths: true, nature: 'all', expenseType: 'all', budgetCategory: 'all' },
+                1,
+                { mode: 'collaborator', allowedBudgetCategories: ['Food'], governanceReady: false },
+            ),
+        ).toHaveLength(2);
+    });
+
+    it('collaborator scope matches category when budgetCategory is missing', () => {
+        const txs = [
+            { id: 't1', accountId: 'a1', amount: -50, date: '2026-05-10', description: 'Groceries', type: 'expense', category: 'Food' },
+            { id: 't2', accountId: 'a1', amount: -20, date: '2026-05-11', description: 'Private', type: 'expense', category: 'Personal' },
+        ] as Transaction[];
+        expect(
+            filterTransactionsForLedgerView(
+                txs,
+                { accountId: 'all', month: '2026-05', allMonths: true, nature: 'all', expenseType: 'all', budgetCategory: 'all' },
+                1,
+                { mode: 'collaborator', allowedBudgetCategories: ['Food'], governanceReady: true },
+            ),
+        ).toEqual([txs[0]]);
+    });
+
     it('budget category filter matches split expense lines', () => {
         const txs = [
             {
@@ -159,6 +225,51 @@ describe('transaction list scope', () => {
             year: 2026,
             month: 5,
         });
+    });
+
+    it('parseFilterByBudgetPageAction accepts optional anchor date', () => {
+        expect(parseFilterByBudgetPageAction('filter-by-budget:Food:weekly:2026:5:2026-05-15')).toEqual({
+            category: 'Food',
+            period: 'weekly',
+            year: 2026,
+            month: 5,
+            anchorDate: '2026-05-15',
+        });
+    });
+
+    it('ledgerDateRangeForFilters aligns fiscal list bounds with export sync', () => {
+        const expected = financialMonthRangeFromKey({ year: 2026, month: 5 }, 28);
+        const range = ledgerDateRangeForFilters(
+            {
+                accountId: 'all',
+                month: '2026-05',
+                allMonths: false,
+                monthMode: 'fiscal',
+                nature: 'all',
+                expenseType: 'all',
+                budgetCategory: 'all',
+            },
+            28,
+        );
+        expect(range).not.toBeNull();
+        expect(formatLedgerDateYmd(range!.start)).toBe(formatLedgerDateYmd(expected.start));
+        expect(formatLedgerDateYmd(range!.end)).toBe(formatLedgerDateYmd(expected.end));
+    });
+
+    it('budgetDrillDownDateRange weekly matches Budgets spend window helper', () => {
+        const expected = computeBudgetSpendWindows({
+            budgetView: 'Weekly',
+            currentYear: 2026,
+            currentMonth: 5,
+            monthStartDay: 28,
+            anchorDate: new Date('2026-05-15T12:00:00'),
+        });
+        const range = budgetDrillDownDateRange(
+            { period: 'weekly', year: 2026, month: 5, anchorDate: '2026-05-15' },
+            28,
+        );
+        expect(formatLedgerDateYmd(range.start)).toBe(formatLedgerDateYmd(expected.rangeStart));
+        expect(formatLedgerDateYmd(range.end)).toBe(formatLedgerDateYmd(expected.rangeEnd));
     });
 
     it('filterTransactionsForLedgerExport respects collaborator visibility and budget filter', () => {

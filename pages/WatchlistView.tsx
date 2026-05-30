@@ -27,6 +27,7 @@ import InfoHint from '../components/InfoHint';
 import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
+import MultiStockAnalysisPanel from '../components/investments/MultiStockAnalysisPanel';
 import { useCurrency } from '../context/CurrencyContext';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { XMarkIcon } from '../components/icons';
@@ -1500,6 +1501,11 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
                 {aiHealthChecked && !isAiAvailable && <p className="text-xs text-amber-700">AI is currently unavailable. Actions still run with deterministic fallback logic.</p>}<p className="text-[10px] text-slate-500">Not financial advice. For education only.</p>
             </div>
             </div>
+
+            <MultiStockAnalysisPanel
+                compact
+                initialSymbols={(data?.watchlist ?? []).map((w) => w.symbol).filter(Boolean)}
+            />
 
             <AddWatchlistItemModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onAdd={handleAddWatchlistItemWithBucket} onAddAlert={(sym, targetPrice, currency) => void addPriceAlert({ symbol: sym, targetPrice, currency: currency ?? 'USD' }, { confirmed: true })} />
             <DeleteConfirmationModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />

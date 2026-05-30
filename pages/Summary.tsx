@@ -32,9 +32,15 @@ import { sendReviewPackEmail } from '../services/reviewPackEmail';
 import { toast } from '../context/ToastContext';
 import { captureExtendedNetWorthSnapshot } from '../services/netWorthSnapshotExtended';
 import {
+    canAutoCaptureNetWorthSnapshot,
+    getTrackedQuoteSymbolsFromData,
+    quoteRefreshFingerprint,
+} from '../services/netWorthSnapshotReadiness';
+import {
     markAutoNetWorthSnapshotCaptured,
     shouldThrottleAutoNetWorthSnapshot,
 } from '../services/netWorthSnapshotThrottle';
+import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import DashboardKpiQualityPanel from '../components/DashboardKpiQualityPanel';
 import {
     generateWealthSummaryReportCsv,
@@ -98,6 +104,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         sarPerUsd: canonicalSarPerUsd,
         simulatedPrices: canonicalSimulatedPrices,
     } = useCanonicalFinancialMetrics();
+    const { isRefreshing, hasQueuedPriceRefresh, symbolQuoteUpdatedAt, isLive } = useMarketQuoteMeta();
     const fxBanner = useMemo(() => {
         const w = Number(data?.wealthUltraConfig?.fxRate);
         const hasWu = Number.isFinite(w) && w > 0;
@@ -263,10 +270,23 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
     }, [data, exchangeRate, getAvailableCashForAccount, auth?.user?.id, canonicalSimulatedPrices, trackAction]);
 
     useEffect(() => {
-        if (!auth?.user?.id || !data || showHydrateBanner) return;
+        if (!auth?.user?.id || !data) return;
         const nw = headline?.netWorth;
         if (typeof nw !== 'number' || !Number.isFinite(nw)) return;
-        if (shouldThrottleAutoNetWorthSnapshot(auth.user.id, nw)) return;
+        const snapshotReady = canAutoCaptureNetWorthSnapshot({
+            showHydrateBanner,
+            isRefreshing,
+            hasQueuedPriceRefresh,
+            symbolQuoteUpdatedAt,
+            isLive,
+            data,
+        });
+        if (!snapshotReady) return;
+        const quoteFp = quoteRefreshFingerprint(
+            getTrackedQuoteSymbolsFromData(data),
+            symbolQuoteUpdatedAt,
+        );
+        if (shouldThrottleAutoNetWorthSnapshot(auth.user.id, nw, undefined, quoteFp)) return;
         captureExtendedNetWorthSnapshot(
             data,
             exchangeRate,
@@ -274,8 +294,20 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
             supabase ? { supabase, userId: auth.user.id } : null,
             canonicalSimulatedPrices,
         );
-        markAutoNetWorthSnapshotCaptured(auth.user.id, nw);
-    }, [auth?.user?.id, data, headline?.netWorth, exchangeRate, getAvailableCashForAccount, showHydrateBanner, canonicalSimulatedPrices]);
+        markAutoNetWorthSnapshotCaptured(auth.user.id, nw, quoteFp);
+    }, [
+        auth?.user?.id,
+        data,
+        headline?.netWorth,
+        exchangeRate,
+        getAvailableCashForAccount,
+        showHydrateBanner,
+        canonicalSimulatedPrices,
+        isRefreshing,
+        hasQueuedPriceRefresh,
+        symbolQuoteUpdatedAt,
+        isLive,
+    ]);
 
     const handleExportWealthSummaryCsv = useCallback(() => {
         const payload = reportModel?.wealthSummaryReportPayload;
@@ -378,7 +410,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                             },
                             { value: 'export-wealth-json', label: 'Export wealth summary (JSON)', onClick: handleExportWealthSummaryJson },
                             { value: 'export-wealth-csv', label: 'Export wealth summary (CSV)', onClick: handleExportWealthSummaryCsv },
-                            { value: 'wealth-analytics', label: 'Wealth Analytics (charts & health)', onClick: () => setActivePage('Wealth Analytics') },
+                            { value: 'wealth-analytics', label: 'Wealth Analytics', onClick: () => setActivePage('Wealth Analytics') },
                             { value: 'wealth-ultra', label: 'Wealth Ultra', onClick: () => setActivePage('Wealth Ultra') },
                             { value: 'market-events', label: 'Market Events', onClick: () => setActivePage('Market Events') },
                             { value: 'assets', label: 'Assets', onClick: () => setActivePage('Assets') },

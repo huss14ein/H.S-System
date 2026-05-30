@@ -42,8 +42,8 @@ describe('netWorthSnapshotThrottle', () => {
     expect(shouldThrottleAutoNetWorthSnapshot(userId, 1_000_000)).toBe(true);
   });
 
-  it('allows capture when NW moves materially', () => {
-    markAutoNetWorthSnapshotCaptured(userId, 1_000_000);
-    expect(shouldThrottleAutoNetWorthSnapshot(userId, 1_006_000)).toBe(false);
+  it('allows capture when quote fingerprint changes despite throttle window', () => {
+    markAutoNetWorthSnapshotCaptured(userId, 1_000_000, 'AAPL:old');
+    expect(shouldThrottleAutoNetWorthSnapshot(userId, 1_000_000, undefined, 'AAPL:new')).toBe(false);
   });
 });

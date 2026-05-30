@@ -1,5 +1,6 @@
 import type { FinancialData } from '../types';
 import { captureExtendedNetWorthSnapshot } from './netWorthSnapshotExtended';
+import { canAutoCaptureNetWorthSnapshot } from './netWorthSnapshotReadiness';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 const AUTO_SNAP_KEY = 'finova_auto_nw_snapshot_v1';
@@ -49,8 +50,22 @@ export async function runAutoNetWorthSnapshotIfDue(input: {
   getAvailableCashForAccount: (id: string) => { SAR: number; USD: number };
   simulatedPrices?: Record<string, { price: number }>;
   supabase: SupabaseClient | null;
+  snapshotReadiness?: {
+    showHydrateBanner: boolean;
+    isRefreshing: boolean;
+    hasQueuedPriceRefresh: () => boolean;
+    symbolQuoteUpdatedAt: Record<string, string | undefined>;
+    isLive: boolean;
+  };
 }): Promise<boolean> {
   if (!shouldRunAutoSnapshot(input.userId) || !input.supabase) return false;
+  if (input.snapshotReadiness) {
+    const ready = canAutoCaptureNetWorthSnapshot({
+      ...input.snapshotReadiness,
+      data: input.data,
+    });
+    if (!ready) return false;
+  }
   try {
     await captureExtendedNetWorthSnapshot(
       input.data,

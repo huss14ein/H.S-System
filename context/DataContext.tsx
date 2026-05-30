@@ -118,6 +118,8 @@ interface DataContextType {
   loading: boolean;
   /** True during first Supabase hydrate — use for inline hints only (Layout banner). Never full-page block. */
   showHydrateBanner: boolean;
+  /** Non-null when the transactions table failed to load on hydrate (retry may follow). */
+  transactionsLoadWarning: string | null;
   /** @deprecated Always false — pages must not early-return on this; use showHydrateBanner + Layout banner. */
   showBlockingLoader: boolean;
   /** Force a reload from the backend (non-destructive). */
@@ -753,6 +755,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const financialDataLoadedRef = useRef(false);
     /** UI gate: true until first hydrate for this session/user completes (independent of background `loading`). */
     const [awaitingInitialHydrate, setAwaitingInitialHydrate] = useState(true);
+    const [transactionsLoadWarning, setTransactionsLoadWarning] = useState<string | null>(null);
     const recurringAutoApplyInFlightRef = useRef(false);
     const transactionsRef = useRef<FinancialData['transactions']>(data?.transactions ?? []);
     transactionsRef.current = data?.transactions ?? [];
@@ -1087,6 +1090,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const ownerId = auth.user.id;
             const filterOwnedRows = <T extends { user_id?: string }>(rows: T[] | null | undefined): T[] =>
                 ((rows || []) as T[]).filter((r) => r?.user_id === ownerId);
+            const normalizeCashTransactionRow = (row: any): Transaction => {
+                const norm = normalizeTransaction(row);
+                const resolved = resolveAccountId(norm.accountId, normalizedAccounts);
+                return resolved ? { ...norm, accountId: resolved } : norm;
+            };
+            const txFetchError = transactions?.error;
+            const txFetchTimedOut = txFetchError?.code === 'TIMEOUT';
             const normalizedInvestmentTransactions = filterOwnedRows(investmentTransactions.data as any[]).map((t: any) => {
                 const norm = normalizeInvestmentTransaction(t);
                 const resolved = resolveAccountId(norm.accountId, normalizedAccounts);
@@ -1139,7 +1149,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     b.id.localeCompare(a.id),
                 ),
                 transactions: sortByNewestFirst(
-                    filterOwnedRows(transactions.data as any[]).map(normalizeTransaction),
+                    filterOwnedRows(transactions.data as any[]).map(normalizeCashTransactionRow),
                 ),
                 // Portfolios: API uses goal_id / account_id; app + Portfolio modal use goalId / accountId (do not drop on refresh).
                 investments: filterOwnedRows((investments.data as any) || []).map((portfolio: any) => {
@@ -1209,6 +1219,36 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 allBudgets: [],
             });
             });
+
+            const initialTxCount = filterOwnedRows(transactions.data as any[]).length;
+            if (txFetchTimedOut || (txFetchError && txFetchError.code !== 'PGRST116' && initialTxCount === 0)) {
+                const retryUserId = auth.user?.id;
+                if (!retryUserId) return;
+                void (async () => {
+                    try {
+                        const retry = await db.from('transactions').select('*').eq('user_id', retryUserId);
+                        if (retry.error) {
+                            setTransactionsLoadWarning(
+                                'Transactions could not be loaded. Use Settings → Refresh data or reload the page.',
+                            );
+                            return;
+                        }
+                        setTransactionsLoadWarning(null);
+                        const retried = sortByNewestFirst(
+                            filterOwnedRows(retry.data as any[]).map(normalizeCashTransactionRow),
+                        );
+                        if (retried.length > 0 || !retry.error) {
+                            setData((prev) => ({ ...prev, transactions: retried }));
+                        }
+                    } catch {
+                        setTransactionsLoadWarning(
+                            'Transactions could not be loaded. Use Settings → Refresh data or reload the page.',
+                        );
+                    }
+                })();
+            } else {
+                setTransactionsLoadWarning(null);
+            }
 
             // Post due Sukuk payouts after first paint (was blocking setData for up to 5s).
             if (dueSukukEvents.length) {
@@ -1303,6 +1343,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // New session or switched user — must block UI until this user's rows hydrate (avoid showing prior user's shell).
         financialDataLoadedRef.current = false;
         setAwaitingInitialHydrate(true);
+        setTransactionsLoadWarning(null);
         void fetchData();
 
         // Safety timeout: never leave hydrate banner up longer than 3s on slow Supabase / preview cold starts
@@ -4192,6 +4233,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             data: dataWithPersonal ?? initialData,
             loading,
             showHydrateBanner,
+            transactionsLoadWarning,
             showBlockingLoader,
             dataResetKey,
             allTransactions: data?.transactions ?? [],
@@ -4204,6 +4246,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             dataWithPersonal,
             loading,
             showHydrateBanner,
+            transactionsLoadWarning,
             dataResetKey,
             data?.transactions,
             data?.budgets,

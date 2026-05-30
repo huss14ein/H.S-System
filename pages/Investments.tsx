@@ -81,8 +81,10 @@ import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote, HOLDING_PER_
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import {
   computePortfolioPeriodPnLSummary,
+  computePortfolioPnLDailySeries,
   portfolioPeriodPnLMap,
 } from '../services/portfolioPeriodPnL';
+import MiniPnLSparkline from '../components/analytics/MiniPnLSparkline';
 import {
     inferInvestmentTransactionCurrency,
     portfolioBelongsToAccount,
@@ -2668,6 +2670,22 @@ const PlatformCard: React.FC<{
         return portfolioPeriodPnLMap(summary);
     }, [dataCtx, portfoliosForMetrics, sarPerUsd, simulatedPrices, getAvailableCashForAccount]);
 
+    const portfolioWeeklySparklineById = useMemo(() => {
+        if (!dataCtx || portfoliosForMetrics.length === 0) {
+            return new Map<string, import('../services/portfolioPeriodPnL').PortfolioPnLDailyPoint[]>();
+        }
+        const series = computePortfolioPnLDailySeries({
+            data: dataCtx,
+            portfolios: portfoliosForMetrics,
+            accounts: getPersonalAccounts(dataCtx),
+            sarPerUsd,
+            simulatedPrices,
+            monthStartDay: resolveMonthStartDayFromData(dataCtx),
+            getAvailableCashForAccount,
+        });
+        return series.weeklyByPortfolioId;
+    }, [dataCtx, portfoliosForMetrics, sarPerUsd, simulatedPrices, getAvailableCashForAccount]);
+
     const totalHoldings = portfolios.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
     const metricsHoldingsCount = portfoliosForMetrics.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
     const availableCashSAR = tradableCashBucketToSAR(availableCashByCurrency, sarPerUsd);
@@ -2867,6 +2885,7 @@ const PlatformCard: React.FC<{
                     const portfolioValue = portfolioHoldings.reduce((sum, h) => sum + h.currentValue, 0);
                     const pk = portfolioKpiBundle.metricsByPortfolioId.get(portfolio.id);
                     const periodPnL = portfolioPeriodPnLById.get(portfolio.id);
+                    const weekSparkline = portfolioWeeklySparklineById.get(portfolio.id) ?? [];
                     const portfolioHeadlineValue = pk != null ? pk.totalValue : portfolioValue;
                     /** Same pooled ledger as the platform header — not split across portfolios. */
                     const portfolioCashSAR = tradableCashBucketToSAR(availableCashByCurrency, sarPerUsd);
@@ -3008,8 +3027,9 @@ const PlatformCard: React.FC<{
                                                     >
                                                         Week P/L
                                                     </dt>
-                                                    <dd className="metric-value flex flex-1 flex-col items-center justify-center mt-2 min-h-0">
+                                                    <dd className="metric-value flex flex-1 flex-col items-center justify-center mt-2 min-h-0 gap-1">
                                                         <CurrencyDualDisplay value={periodPnL.weekly.totalSar} inCurrency="SAR" digits={0} size="base" colorize weight="bold" />
+                                                        <MiniPnLSparkline points={weekSparkline} height={32} className="max-w-[88px]" />
                                                     </dd>
                                                 </div>
                                                 <div className="rounded-2xl bg-gradient-to-b from-white to-violet-50/40 border border-violet-100/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">

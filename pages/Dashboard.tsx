@@ -34,7 +34,13 @@ import { toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
 import { supabase } from '../services/supabaseClient';
 import { captureExtendedNetWorthSnapshot } from '../services/netWorthSnapshotExtended';
+import {
+    canAutoCaptureNetWorthSnapshot,
+    getTrackedQuoteSymbolsFromData,
+    quoteRefreshFingerprint,
+} from '../services/netWorthSnapshotReadiness';
 import { markAutoNetWorthSnapshotCaptured, shouldThrottleAutoNetWorthSnapshot } from '../services/netWorthSnapshotThrottle';
+import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import { subscriptionSpendMonthlySar } from '../services/transactionIntelligence';
 import InfoHint from '../components/InfoHint';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
@@ -271,6 +277,7 @@ const DashboardContent: React.FC<{
         sarPerUsd: canonicalSarPerUsd,
         simulatedPrices: dashboardDebouncedPrices,
     } = useDashboardCanonicalMetrics();
+    const { isRefreshing, hasQueuedPriceRefresh, symbolQuoteUpdatedAt, isLive } = useMarketQuoteMeta();
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
     const { maskBalance } = usePrivacyMask();
@@ -509,18 +516,45 @@ const DashboardContent: React.FC<{
     }, [deferredData, exchangeRate, getAvailableCashForAccount, kpiSnapshot, canonicalSarPerUsd, dashboardDebouncedPrices, showHydrateBanner]);
 
     useEffect(() => {
-        if (!auth?.user?.id || !data || showHydrateBanner) return;
+        if (!auth?.user?.id || !data) return;
         const nw = typeof headline.netWorth === 'number' && Number.isFinite(headline.netWorth) ? headline.netWorth : (kpiSummary as { netWorth?: number }).netWorth;
         if (typeof nw !== 'number' || !Number.isFinite(nw)) return;
-        if (shouldThrottleAutoNetWorthSnapshot(auth.user.id, nw)) return;
+        const snapshotReady = canAutoCaptureNetWorthSnapshot({
+            showHydrateBanner,
+            isRefreshing,
+            hasQueuedPriceRefresh,
+            symbolQuoteUpdatedAt,
+            isLive,
+            data,
+        });
+        if (!snapshotReady) return;
+        const quoteFp = quoteRefreshFingerprint(
+            getTrackedQuoteSymbolsFromData(data),
+            symbolQuoteUpdatedAt,
+        );
+        if (shouldThrottleAutoNetWorthSnapshot(auth.user.id, nw, undefined, quoteFp)) return;
         captureExtendedNetWorthSnapshot(
             data,
             exchangeRate,
             getAvailableCashForAccount,
             supabase ? { supabase, userId: auth.user.id } : null,
+            dashboardDebouncedPrices,
         );
-        markAutoNetWorthSnapshotCaptured(auth.user.id, nw);
-    }, [auth?.user?.id, data, headline.netWorth, exchangeRate, getAvailableCashForAccount, showHydrateBanner]);
+        markAutoNetWorthSnapshotCaptured(auth.user.id, nw, quoteFp);
+    }, [
+        auth?.user?.id,
+        data,
+        headline.netWorth,
+        kpiSummary,
+        exchangeRate,
+        getAvailableCashForAccount,
+        showHydrateBanner,
+        dashboardDebouncedPrices,
+        isRefreshing,
+        hasQueuedPriceRefresh,
+        symbolQuoteUpdatedAt,
+        isLive,
+    ]);
 
     const subsIntel = useMemo(() => {
         if (!data) return { monthlyEstimate: 0, count: 0 };
@@ -827,7 +861,7 @@ const DashboardContent: React.FC<{
                         <li><button type="button" onClick={() => setActivePage('Assets')} className="text-primary hover:underline font-medium inline-flex items-center gap-1.5"><GoldBarIcon className="h-4 w-4" />Manage assets</button> (property, commodities, metals)</li>
                         <li><button type="button" onClick={() => setActivePage('Plan')} className="text-primary hover:underline font-medium inline-flex items-center gap-1.5"><ClipboardDocumentListIcon className="h-4 w-4" />Update your Plan</button> to reflect income and expenses</li>
                         <li><button type="button" onClick={() => setActivePage('Summary')} className="text-primary hover:underline font-medium inline-flex items-center gap-1.5"><UsersIcon className="h-4 w-4" />View Summary</button> for headline wealth &amp; advisor</li>
-                        <li><button type="button" onClick={() => setActivePage('Wealth Analytics')} className="text-primary hover:underline font-medium">Wealth Analytics</button> for deep charts, health score &amp; cashflow tools</li>
+                        <li><button type="button" onClick={() => setActivePage('Wealth Analytics')} className="text-primary hover:underline font-medium">Wealth Analytics</button> for charts, health score &amp; cashflow tools</li>
                     </ul>
                 </div>
             )}

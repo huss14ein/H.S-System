@@ -2387,6 +2387,157 @@ Rules: educational only; no invented SAR figures; Markdown only.`;
     }
 };
 
+export type MultiStockAnalysisLang = 'ar' | 'en';
+
+export type MultiStockAnalysisOptions = {
+    lang?: MultiStockAnalysisLang;
+    grounding: import('./multiSymbolMarketGrounding').MultiSymbolGroundingResult;
+    wealthGrounding?: ReturnType<typeof buildAiPersonalWealthGrounding>;
+    forceRefresh?: boolean;
+};
+
+function buildFallbackMultiStockAnalysis(
+    symbols: string[],
+    grounding: import('./multiSymbolMarketGrounding').MultiSymbolGroundingResult,
+    lang: MultiStockAnalysisLang,
+): string {
+    const table = grounding.rows
+        .map((r) => {
+            const price = r.price != null ? r.price.toFixed(2) : 'N/A';
+            const range =
+                r.high52 != null && r.low52 != null ? `${r.low52.toFixed(2)}–${r.high52.toFixed(2)}` : 'N/A';
+            return `| ${r.symbol} | ${price} | ${range} | unavailable | watch |`;
+        })
+        .join('\n');
+    if (lang === 'ar') {
+        return `## تحليل متعدد الأسهم (بدون AI)
+
+الرموز: **${symbols.join(', ')}**
+
+> الخدمة غير متاحة حالياً. الجدول أدناه يعتمد على أسعار Finova/Finnhub فقط — بدون أهداف محللين.
+
+| الرمز | السعر | نطاق 52 أسبوع | Upside | المخاطرة | التوصية |
+|-------|-------|---------------|--------|----------|---------|
+${table}
+
+**ملاحظة:** أعد المحاولة لاحقاً للحصول على أخبار وتوصيات محللين مع مصادر.`;
+    }
+    return `## Multi-stock analysis (no AI)
+
+Symbols: **${symbols.join(', ')}**
+
+> AI service unavailable. Table uses Finova/Finnhub quotes only — no analyst targets.
+
+| Symbol | Price | 52w range | Upside | Risk | Rating |
+|--------|-------|-----------|--------|------|--------|
+${table}
+
+**Note:** Retry later for news and sourced analyst views.`;
+}
+
+/** Batch investment analysis grounded on live quotes + 52w; Arabic or English. Educational only. */
+export const getAIMultiStockAnalysis = async (
+    symbols: string[],
+    options: MultiStockAnalysisOptions,
+): Promise<{ content: string; groundingChunks: unknown[] }> => {
+    const normalized = symbols.map((s) => (s ?? '').trim().toUpperCase()).filter(Boolean).slice(0, 25);
+    if (!normalized.length) {
+        return { content: 'Add at least one ticker symbol.', groundingChunks: [] };
+    }
+
+    const lang = options.lang ?? 'en';
+    const { grounding } = options;
+    const dayKey = new Date().toISOString().slice(0, 10);
+    const priceSig = grounding.rows.map((r) => `${r.symbol}:${r.price ?? 'x'}`).join('|');
+    const cacheKey = `getAIMultiStockAnalysis:${lang}:${dayKey}:${priceSig.slice(0, 180)}`;
+    const cached = getFromCache(cacheKey);
+    if (!options.forceRefresh && cached) return cached;
+
+    const g = options.wealthGrounding;
+    const finnhubBrief = await buildFinnhubResearchBrief(normalized);
+    const symbolList = normalized.join(', ');
+
+    const sectionGuide =
+        lang === 'ar'
+            ? `لكل سهم (${symbolList}) قدّم:
+1. **السعر الحالي** — استخدم GROUND TRUTH فقط؛ إن وُجدت فروقات في البحث اذكرها مع المصدر والتاريخ.
+2. **نطاق 52 أسبوع** — من GROUND TRUTH.
+3. **أهداف المحللين** — متوسط/أعلى/أدنى **فقط** إذا وجدتها في Google Search مع ذكر المصدر؛ وإلا «غير متوفر».
+4. **توصية المحللين** — Buy/Hold/Sell مع المصدر أو «غير متوفر».
+5. **أفضل سعر للشراء** — Great/Best/Fair Value (تعليمي) بناءً على السعر الحالي ونطاق 52w وfair value من المستخدم إن وُجد.
+6. **Upside** — سيناريوهات (محافظ/أساسي/متفائل) **بدون اختراع أهداف**؛ إن لا مصدر فاذكر «تقدير تعليمي فقط».
+7. **أهم الأخبار** — 1–2 نقطة من البحث أو Finnhub.
+8. **المخاطر** — 1–2 نقطة.
+
+**في النهاية:** جدول مقارنة Markdown مرتب من الأفضل للأضعف: الرمز | السعر | Upside | المخاطرة | التوصية.
+
+**اللغة:** Modern Standard Arabic بالكامل؛ احتفظ برموز الأسهم Latin.`
+            : `For each symbol (${symbolList}) provide:
+1. **Current price** — GROUND TRUTH first; note search discrepancies with source + date if any.
+2. **52-week range** — from GROUND TRUTH.
+3. **Analyst targets** — avg/high/low **only** if found via Google Search with source; else "unavailable".
+4. **Analyst rating** — Buy/Hold/Sell with source or "unavailable".
+5. **Buy zone** — Great/Best/Fair Value (educational) using current price, 52w range, user fair value when present.
+6. **Upside** — conservative/base/optimistic scenarios; never invent targets — label estimates clearly.
+7. **Recent news** — 1–2 bullets from search or Finnhub digest.
+8. **Key risks** — 1–2 bullets.
+
+**End with:** Markdown comparison table ranked best→weakest: Symbol | Price | Upside | Risk | Rating.`;
+
+    const prompt = `You are Finova AI — senior investment research analyst. **Educational decision-support only** — not personalized buy/sell advice.
+
+${g ? `${g.promptBlock}\n` : ''}
+${grounding.promptBlock}
+
+${finnhubBrief ? `### Finnhub digest (reference)\n${finnhubBrief}\n` : ''}
+
+Use Google Search for recent analyst consensus and news when available.
+
+${sectionGuide}
+
+Rules:
+- Never invent analyst price targets or ratings without a cited source in this response.
+- Prefer GROUND TRUTH prices over search snippets when they conflict for "current price".
+- Markdown only (### headers, tables, bullets). No HTML.
+- Not financial advice disclaimer in one short line at the top.`;
+
+    const corpus = [g?.promptBlock ?? '', grounding.promptBlock, finnhubBrief].filter(Boolean).join('\n');
+
+    try {
+        const response = await invokeAI({
+            model: FAST_MODEL,
+            contents: prompt,
+            config: { tools: [{ googleSearch: {} }] },
+            groundingAuditExtra: corpus,
+        });
+        const content = response.text || buildFallbackMultiStockAnalysis(normalized, grounding, lang);
+        const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+        const result = { content, groundingChunks };
+        setToCache(cacheKey, result);
+        return result;
+    } catch (error) {
+        try {
+            const fallbackPrompt = `${prompt.replace('Use Google Search for recent analyst consensus and news when available.', 'Live search unavailable — use GROUND TRUTH and Finnhub digest only.')}\n\nDo NOT invent analyst targets. Mark unavailable where needed.`;
+            const retry = await invokeAI({
+                model: FAST_MODEL,
+                contents: fallbackPrompt,
+                groundingAuditExtra: corpus,
+            });
+            const retryResult = {
+                content: retry.text || buildFallbackMultiStockAnalysis(normalized, grounding, lang),
+                groundingChunks: [],
+            };
+            setToCache(cacheKey, retryResult);
+            return retryResult;
+        } catch {
+            return {
+                content: `${buildFallbackMultiStockAnalysis(normalized, grounding, lang)}\n\n> Analyst engine note: ${formatAiError(error)}`,
+                groundingChunks: [],
+            };
+        }
+    }
+};
+
 export const getGoalAIPlan = async (
     goal: Goal,
     monthlySavings: number,

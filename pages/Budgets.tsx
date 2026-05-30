@@ -2063,7 +2063,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 const periodTag = budgetView.toLowerCase();
                 triggerPageAction(
                     'Transactions',
-                    `filter-by-budget:${encodeURIComponent(budget.category)}:${periodTag}:${budget.year || currentYear}:${budget.month || currentMonth}`,
+                    `filter-by-budget:${encodeURIComponent(budget.category)}:${periodTag}:${budget.year || currentYear}:${budget.month || currentMonth}:${currentDate.toISOString().slice(0, 10)}`,
                 );
             }
         },
