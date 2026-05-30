@@ -75,4 +75,12 @@ describe('corsAllowlist', () => {
     expect(isOriginAllowed('http://100.100.45.12:5173')).toBe(true);
     expect(isOriginAllowed('http://100.50.1.2:5173')).toBe(false);
   });
+
+  it('respects Vercel deployment URLs and canonical app URL', () => {
+    process.env.VERCEL_URL = 'h-s-system.vercel.app';
+    expect(isOriginAllowed('https://h-s-system.vercel.app')).toBe(true);
+    process.env.VITE_CANONICAL_APP_URL = 'https://app.example.test';
+    expect(isOriginAllowed('https://app.example.test')).toBe(true);
+    expect(isOriginAllowed('https://other.vercel.app')).toBe(false);
+  });
 });

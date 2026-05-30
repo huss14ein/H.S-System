@@ -34,6 +34,20 @@ describe('proxySupabaseJwt', () => {
     expect(isProxyJwtVerificationEnabled()).toBe(true);
   });
 
+  it('isProxyJwtVerificationEnabled defaults on in production when JWT secret is set', () => {
+    delete process.env.PROXY_REQUIRE_SUPABASE_JWT;
+    process.env.CONTEXT = 'production';
+    process.env.SUPABASE_JWT_SECRET = 'prod-secret-at-least-32-characters-long';
+    expect(isProxyJwtVerificationEnabled()).toBe(true);
+  });
+
+  it('isProxyJwtVerificationEnabled can be disabled explicitly in production', () => {
+    process.env.CONTEXT = 'production';
+    process.env.SUPABASE_JWT_SECRET = 'prod-secret-at-least-32-characters-long';
+    process.env.PROXY_REQUIRE_SUPABASE_JWT = '0';
+    expect(isProxyJwtVerificationEnabled()).toBe(false);
+  });
+
   it('verifySupabaseAccessToken accepts HS256 token signed with JWT secret', async () => {
     process.env.SUPABASE_JWT_SECRET = 'unit-test-jwt-secret-at-least-32-chars-long';
     const key = new TextEncoder().encode(process.env.SUPABASE_JWT_SECRET);

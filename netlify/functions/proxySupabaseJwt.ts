@@ -10,9 +10,24 @@
 import type { HandlerEvent } from '@netlify/functions';
 import { jwtVerify, type JWTPayload } from 'jose';
 
+function isProductionRuntime(): boolean {
+  return (
+    process.env.CONTEXT === 'production' ||
+    process.env.VERCEL_ENV === 'production' ||
+    process.env.NODE_ENV === 'production'
+  );
+}
+
+/**
+ * JWT gate for Netlify proxies. Explicit opt-out: `PROXY_REQUIRE_SUPABASE_JWT=0`.
+ * Explicit opt-in: `PROXY_REQUIRE_SUPABASE_JWT=1`.
+ * Default in production: require JWT when `SUPABASE_JWT_SECRET` is configured.
+ */
 export function isProxyJwtVerificationEnabled(): boolean {
   const v = (process.env.PROXY_REQUIRE_SUPABASE_JWT || '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes';
+  if (v === '0' || v === 'false' || v === 'no') return false;
+  if (v === '1' || v === 'true' || v === 'yes') return true;
+  return isProductionRuntime() && Boolean(process.env.SUPABASE_JWT_SECRET?.trim());
 }
 
 export function extractBearerToken(event: HandlerEvent): string | null {

@@ -3,6 +3,7 @@
  * quota/cost abuse against AI or market-data proxies via credentialed or simple fetch.
  *
  * Configure production/preview origins via Netlify env: `URL`, `DEPLOY_PRIME_URL`, `DEPLOY_URL`, or
+ * Vercel env: `VERCEL_URL`, `VERCEL_BRANCH_URL`, `VITE_CANONICAL_APP_URL`, or
  * `ALLOWED_ORIGINS` (comma-separated full origins, e.g. `http://localhost:5173,https://app.example.com`).
  * Localhost / 127.0.0.1 / [::1] (any port) are always allowed for dev.
  *
@@ -115,6 +116,13 @@ export function deployedAllowedOrigins(): Set<string> {
     const v = process.env[key];
     if (!v?.trim()) continue;
     const o = canonicalOrigin(v.trim());
+    if (o) set.add(o);
+  }
+  // Vercel frontend (static app) calling Netlify-hosted `/api/*` proxies on another host.
+  for (const key of ['VERCEL_URL', 'VERCEL_BRANCH_URL', 'VITE_CANONICAL_APP_URL'] as const) {
+    const v = process.env[key]?.trim();
+    if (!v) continue;
+    const o = canonicalOrigin(v.startsWith('http') ? v : `https://${v}`);
     if (o) set.add(o);
   }
   return set;

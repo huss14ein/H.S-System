@@ -5,7 +5,7 @@
 [build.environment]
   NODE_VERSION = "20"
   # After linking this repo to the Netlify site, set to the site URL (e.g. https://my-finova.netlify.app).
-  VITE_CANONICAL_APP_URL = "https://my-finova.netlify.app"
+  VITE_CANONICAL_APP_URL = "https://h-s-system.vercel.app"
 
 [functions]
   directory = "netlify/functions"

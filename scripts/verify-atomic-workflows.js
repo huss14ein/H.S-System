@@ -5,6 +5,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 
 const root = process.cwd();
 const failures = [];
@@ -141,6 +142,16 @@ const shareUserDiscoveryMigration = read('supabase/migrations/20260328135000_add
 expectContains(shareUserDiscoveryMigration, 'create or replace function public.find_user_by_email', 'supabase/migrations/20260328135000_add_share_user_discovery_rpcs.sql');
 expectContains(shareUserDiscoveryMigration, 'create or replace function public.list_shareable_users', 'supabase/migrations/20260328135000_add_share_user_discovery_rpcs.sql');
 expectContains(shareUserDiscoveryMigration, 'au.email::text as email', 'supabase/migrations/20260328135000_add_share_user_discovery_rpcs.sql');
+
+// Secrets must never be committed — .env stays local only.
+try {
+  const trackedEnv = execSync('git ls-files .env', { encoding: 'utf8' }).trim();
+  if (trackedEnv) {
+    failures.push('.env must not be tracked in git (run: git rm --cached .env)');
+  }
+} catch {
+  failures.push('Could not verify .env is untracked');
+}
 
 if (failures.length > 0) {
   console.error('Critical atomic workflow verification failed:\n');
