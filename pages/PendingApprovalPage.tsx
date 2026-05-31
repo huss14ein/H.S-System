@@ -2,12 +2,15 @@ import React, { useContext, useEffect, useState } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { HSLogo } from '../components/icons/HSLogo';
 import { supabase } from '../services/supabaseClient';
+import { getCanonicalAppUrl, isOnCanonicalHost } from '../utils/buildInfo';
 
 const PendingApprovalPage: React.FC = () => {
   const auth = useContext(AuthContext);
   const rejected = auth?.isSignupRejected === true;
   const [checking, setChecking] = useState(false);
   const [profileHint, setProfileHint] = useState<string | null>(null);
+  const onCanonicalHost = isOnCanonicalHost();
+  const canonicalUrl = getCanonicalAppUrl();
 
   useEffect(() => {
     let alive = true;
@@ -18,13 +21,22 @@ const PendingApprovalPage: React.FC = () => {
       const role = String((data as { role?: string }).role ?? '').trim();
       const approved = Boolean((data as { approved?: boolean }).approved);
       if (role.toLowerCase() === 'admin' && !approved) {
-        setProfileHint('Your account is Admin but not marked approved yet. Use Check status below or ask another admin to approve you in Settings.');
+        setProfileHint('Your account is Admin but not marked approved yet. Tap Check status below or ask another admin to approve you in Settings.');
       } else if (!approved) {
         setProfileHint('An administrator must approve your signup before you can use Finova.');
       }
     })();
     return () => { alive = false; };
   }, [auth?.user?.id]);
+
+  // Poll while on this screen — helps mobile after admin approval without a full reload.
+  useEffect(() => {
+    if (rejected || !auth?.user?.id) return;
+    const id = window.setInterval(() => {
+      void auth?.refetchApprovalStatus();
+    }, 20_000);
+    return () => window.clearInterval(id);
+  }, [auth, rejected]);
 
   const handleLogout = async () => {
     await auth?.logout();
@@ -66,6 +78,16 @@ const PendingApprovalPage: React.FC = () => {
           <p className="text-xs text-slate-500 text-center mb-4">
             Signed in as <span className="font-medium text-slate-700">{auth.user.email}</span>
           </p>
+        )}
+        {!onCanonicalHost && (
+          <div className="text-xs text-blue-900 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-4" role="status">
+            This device may be using an older app link ({typeof window !== 'undefined' ? window.location.hostname : 'preview'}).
+            Open the latest app at{' '}
+            <a href={canonicalUrl} className="font-semibold underline">
+              {canonicalUrl.replace(/^https:\/\//, '')}
+            </a>
+            {' '}and sign in again. If you added Finova to your home screen, remove it and re-add from that URL.
+          </div>
         )}
         {profileHint && !rejected && (
           <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4" role="status">
