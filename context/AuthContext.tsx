@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { registerAiProxyAuth } from '../services/aiProxyAuth';
-import { approvalFlagsFromUserRow } from '../utils/userApproval';
+import { approvalFlagsFromSync, syncUserApprovalProfile } from '../services/syncUserApprovalProfile';
 import { inferIsAdmin } from '../utils/role';
 import { User, Session, AuthError } from '@supabase/supabase-js';
 
@@ -734,23 +734,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
     }, [supabase, session, user]);
 
-    const applyUserProfileRow = useCallback((row: Record<string, unknown> | null, authUser: User | null) => {
-        const flags = approvalFlagsFromUserRow(row);
-        if (!flags) {
-            setIsApproved(false);
-            setIsSignupRejected(false);
-            setUserRole(null);
-            setIsAdmin(false);
-            return;
-        }
-        setIsApproved(flags.approved);
-        setIsSignupRejected(flags.signupRejected);
-        const role = row ? String(row.role ?? '').trim() : '';
-        setUserRole(role || null);
-        setIsAdmin(inferIsAdmin(authUser, role || null));
-    }, []);
-
-    /** Never block auth init: if the query hangs or Netlify/RLS blocks REST, we time out and fail open (approved). */
     const fetchApprovalStatus = useCallback(async (userId: string, authUser: User | null) => {
         if (!supabase) {
             setIsApproved(true);
@@ -759,84 +742,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setIsAdmin(true);
             return;
         }
-        const client = supabase;
-        const APPROVAL_FETCH_MS = 8000;
         try {
-            await client.rpc('ensure_own_user_profile').maybeSingle();
-
-            // Use select() without a column list so Postgres returns all existing columns.
-            // If `approved` was never migrated, .select('approved') errors with 42703.
-            const query = client
-                .from('users')
-                .select()
-                .eq('id', userId)
-                .maybeSingle();
-
-            const timeout = new Promise<null>((resolve) => {
-                setTimeout(() => resolve(null), APPROVAL_FETCH_MS);
-            });
-
-            const result = await Promise.race([query, timeout]);
-            if (result === null) {
-                const row = await client.rpc('ensure_own_user_profile').maybeSingle();
-                if (row.data) {
-                    applyUserProfileRow(row.data as Record<string, unknown>, authUser);
-                } else {
-                    setIsApproved(true);
-                    setIsSignupRejected(false);
-                    setIsAdmin(inferIsAdmin(authUser, null));
-                }
-                return;
-            }
-            const { data, error } = result as { data: Record<string, unknown> | null; error: { message?: string } | null };
-            if (error) {
-                const row = await client.rpc('ensure_own_user_profile').maybeSingle();
-                if (row.data) {
-                    applyUserProfileRow(row.data as Record<string, unknown>, authUser);
-                } else {
-                    setIsApproved(true);
-                    setIsSignupRejected(false);
-                    setIsAdmin(inferIsAdmin(authUser, null));
-                }
-                return;
-            }
-
-            const tryEnsureProfile = async (): Promise<Record<string, unknown> | null> => {
-                const { data: ensured, error: ensureErr } = await client.rpc('ensure_own_user_profile').maybeSingle();
-                if (!ensureErr && ensured) return ensured as Record<string, unknown>;
-                const { data: retry } = await client.from('users').select().eq('id', userId).maybeSingle();
-                return (retry as Record<string, unknown> | null) ?? null;
-            };
-
-            if (data == null) {
-                const row = await tryEnsureProfile();
-                if (row) {
-                    applyUserProfileRow(row, authUser);
-                    return;
-                }
-                setIsApproved(false);
-                setIsSignupRejected(false);
-                setUserRole(null);
-                setIsAdmin(false);
-                return;
-            }
-
-            const initial = approvalFlagsFromUserRow(data);
-            if (initial && !initial.approved && !initial.signupRejected) {
-                const row = await tryEnsureProfile();
-                if (row) {
-                    applyUserProfileRow(row, authUser);
-                    return;
-                }
-            }
-
-            applyUserProfileRow(data, authUser);
+            const { row, failOpenApproved } = await syncUserApprovalProfile(supabase, userId, authUser);
+            const flags = approvalFlagsFromSync(row, failOpenApproved);
+            setIsApproved(flags.approved);
+            setIsSignupRejected(flags.signupRejected);
+            const role = row ? String(row.role ?? '').trim() : '';
+            setUserRole(role || null);
+            setIsAdmin(inferIsAdmin(authUser, role || null));
         } catch {
             setIsApproved(true);
             setIsSignupRejected(false);
             setIsAdmin(inferIsAdmin(authUser, null));
         }
-    }, [applyUserProfileRow]);
+    }, []);
 
     useEffect(() => {
         const currentSupabase = supabase;
@@ -1221,6 +1140,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const refetchApprovalStatus = useCallback(async () => {
         if (user?.id) await fetchApprovalStatus(user.id, user);
     }, [user, fetchApprovalStatus]);
+
+    // Mobile Safari: refetch approval when returning to the app (admin may have approved while backgrounded).
+    useEffect(() => {
+        if (isApproved !== false || !user?.id) return;
+        const onVisible = () => {
+            if (document.visibilityState === 'visible') {
+                void fetchApprovalStatus(user.id, user);
+            }
+        };
+        document.addEventListener('visibilitychange', onVisible);
+        window.addEventListener('pageshow', onVisible);
+        return () => {
+            document.removeEventListener('visibilitychange', onVisible);
+            window.removeEventListener('pageshow', onVisible);
+        };
+    }, [isApproved, user, fetchApprovalStatus]);
 
     const value = {
         isAuthenticated: !!user,
