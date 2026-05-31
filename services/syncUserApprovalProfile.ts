@@ -1,13 +1,11 @@
 import type { SupabaseClient, User } from '@supabase/supabase-js';
-import { approvalFlagsFromUserRow } from '../utils/userApproval';
-import { inferIsAdmin } from '../utils/role';
+import { approvalFlagsFromUserRow, resolveEffectiveAppAccess } from '../utils/userApproval';
 
 /** Mobile Safari cold starts need more retries than desktop. */
-const RETRY_DELAYS_MS = [0, 300, 800, 2000, 4000];
+const RETRY_DELAYS_MS = [0, 300, 800, 2000, 4000, 8000];
 
 export type SyncUserApprovalResult = {
   row: Record<string, unknown> | null;
-  /** When true, caller should treat the user as approved (network/legacy bootstrap). */
   failOpenApproved: boolean;
 };
 
@@ -23,7 +21,7 @@ async function refreshSessionForProfileSync(client: SupabaseClient): Promise<voi
     if (!session) return;
     await client.auth.refreshSession();
   } catch {
-    /* non-fatal — ensure_own_user_profile may still succeed */
+    /* non-fatal */
   }
 }
 
@@ -36,7 +34,7 @@ async function callEnsureOwnUserProfile(
     const rpcMissing =
       error.code === '42883' ||
       error.code === 'PGRST202' ||
-      /ensure_own_user_profile/.test(msg) && /does not exist|not found|could not find/i.test(msg);
+      (/ensure_own_user_profile/.test(msg) && /does not exist|not found|could not find/i.test(msg));
     return { row: null, rpcMissing };
   }
   return { row: (data as Record<string, unknown> | null) ?? null, rpcMissing: false };
@@ -51,14 +49,8 @@ async function readUsersRow(
   return (data as Record<string, unknown> | null) ?? null;
 }
 
-function rowGrantsAccess(row: Record<string, unknown> | null): boolean {
-  const flags = approvalFlagsFromUserRow(row);
-  return Boolean(flags?.approved);
-}
-
 /**
- * Resolve `public.users` for the signed-in user. `ensure_own_user_profile` is the source of truth
- * (bootstrap + admin auto-approve). Never trust a stale approved=false row without running ensure first.
+ * Resolve `public.users` for the signed-in user. `ensure_own_user_profile` is the source of truth.
  */
 export async function syncUserApprovalProfile(
   client: SupabaseClient,
@@ -68,6 +60,7 @@ export async function syncUserApprovalProfile(
   await refreshSessionForProfileSync(client);
 
   let rpcMissing = false;
+  let lastEnsuredRow: Record<string, unknown> | null = null;
 
   for (let i = 0; i < RETRY_DELAYS_MS.length; i++) {
     await sleep(RETRY_DELAYS_MS[i] ?? 0);
@@ -76,40 +69,36 @@ export async function syncUserApprovalProfile(
     }
     const { row, rpcMissing: missing } = await callEnsureOwnUserProfile(client);
     rpcMissing = rpcMissing || missing;
-    if (row && rowGrantsAccess(row)) {
-      return { row, failOpenApproved: false };
-    }
     if (row) {
-      // ensure ran but still pending (genuine Restricted signup awaiting admin).
-      return { row, failOpenApproved: false };
+      lastEnsuredRow = row;
+      const flags = approvalFlagsFromUserRow(row);
+      if (flags?.approved || flags?.signupRejected) {
+        return { row, failOpenApproved: false };
+      }
     }
   }
 
-  const fromTable = await readUsersRow(client, userId);
-  if (fromTable && rowGrantsAccess(fromTable)) {
-    return { row: fromTable, failOpenApproved: false };
+  if (lastEnsuredRow) {
+    return { row: lastEnsuredRow, failOpenApproved: false };
   }
+
+  const fromTable = await readUsersRow(client, userId);
   if (fromTable) {
     return { row: fromTable, failOpenApproved: false };
   }
 
-  // RPC not deployed yet or transient network failure — do not lock out verified owner sessions.
-  if (rpcMissing || inferIsAdmin(authUser, null)) {
-    return { row: null, failOpenApproved: true };
-  }
-  if (authUser?.email_confirmed_at) {
+  if (rpcMissing || inferIsAdmin(authUser, null) || authUser?.email_confirmed_at) {
     return { row: null, failOpenApproved: true };
   }
 
   return { row: null, failOpenApproved: false };
 }
 
-/** Apply sync result to access flags (Admin role always approved). */
+/** Apply sync result to access flags (verified email / Admin never hard-blocked by stale rows). */
 export function approvalFlagsFromSync(
   row: Record<string, unknown> | null,
   failOpenApproved: boolean,
-): { approved: boolean; signupRejected: boolean } {
-  const flags = approvalFlagsFromUserRow(row);
-  if (flags) return { approved: flags.approved, signupRejected: flags.signupRejected };
-  return { approved: failOpenApproved, signupRejected: false };
+  authUser: User | null,
+): { approved: boolean; signupRejected: boolean; hardBlockShell: boolean } {
+  return resolveEffectiveAppAccess(row, authUser, failOpenApproved);
 }

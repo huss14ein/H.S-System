@@ -5,7 +5,9 @@ import App from './App';
 import { AuthProvider } from './context/AuthContext';
 import { installChunkLoadRecovery } from './utils/chunkLoadRecovery';
 import { enforceCanonicalHostRedirect } from './utils/canonicalHostRedirect';
+import { clearStalePwaCaches } from './utils/pwaCacheBust';
 
+void clearStalePwaCaches();
 enforceCanonicalHostRedirect();
 installChunkLoadRecovery();
 
