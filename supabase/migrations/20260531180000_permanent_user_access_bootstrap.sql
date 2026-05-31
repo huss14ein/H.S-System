@@ -26,8 +26,9 @@ begin
     return;
   end if;
 
-  select count(*)::integer, min(id) into auth_count, only_id from auth.users;
-  if auth_count = 1 and only_id is not null then
+  select count(*)::integer into auth_count from auth.users;
+  if auth_count = 1 then
+    select id into only_id from auth.users limit 1;
     update public.users
     set approved = true, role = 'Admin', signup_rejected = false
     where id = only_id;
