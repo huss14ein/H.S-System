@@ -29,6 +29,14 @@
   to = "/.netlify/functions/:splat"
   status = 200
 
+# Permanent: Netlify deploy URLs (old bookmarks / home-screen shortcuts) → canonical Vercel app.
+# Functions stay on /api/* above; only the SPA shell redirects.
+[[redirects]]
+  from = "/*"
+  to = "https://h-s-system.vercel.app/:splat"
+  status = 301
+  force = true
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

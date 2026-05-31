@@ -18,7 +18,7 @@ describe('approvalFlagsFromSync', () => {
     expect(flags.approved).toBe(true);
   });
 
-  it('fail-opens when row missing and bootstrap says so', () => {
+  it('fail-opens when ensure RPC is missing on server', () => {
     expect(approvalFlagsFromSync(null, true).approved).toBe(true);
     expect(approvalFlagsFromSync(null, false).approved).toBe(false);
   });

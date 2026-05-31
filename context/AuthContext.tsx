@@ -779,7 +779,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 setUser(session?.user ?? null);
                 setIsEmailVerified(session?.user?.email_confirmed_at ? true : false);
                 if (session?.user?.id) {
-                    void fetchApprovalStatus(session.user.id, session.user);
+                    await fetchApprovalStatus(session.user.id, session.user);
                 } else {
                     setIsApproved(null);
                     setIsSignupRejected(false);
@@ -801,17 +801,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         void getSession();
     
         const { data: { subscription } } = currentSupabase.auth.onAuthStateChange((_event, session) => {
-            setSession(session);
-            setUser(session?.user ?? null);
-            setIsEmailVerified(session?.user?.email_confirmed_at ? true : false);
-            if (session?.user?.id) {
-                void fetchApprovalStatus(session.user.id, session.user);
-            } else {
-                setIsApproved(null);
-                setUserRole(null);
-                setIsAdmin(false);
-            }
-            setLoading(false);
+            void (async () => {
+                setSession(session);
+                setUser(session?.user ?? null);
+                setIsEmailVerified(session?.user?.email_confirmed_at ? true : false);
+                if (session?.user?.id) {
+                    await fetchApprovalStatus(session.user.id, session.user);
+                } else {
+                    setIsApproved(null);
+                    setUserRole(null);
+                    setIsAdmin(false);
+                }
+                setLoading(false);
+            })();
         });
     
         return () => subscription.unsubscribe();
@@ -861,6 +863,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 }
                 
                 logSecurityEvent('login_success', { userId: data.user.id, email, deviceFingerprint }, true);
+                await fetchApprovalStatus(data.user.id, data.user);
             }
 
             return { error: null, user: data.user };

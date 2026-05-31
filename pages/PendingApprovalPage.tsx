@@ -2,6 +2,7 @@ import React, { useContext, useEffect, useState } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { HSLogo } from '../components/icons/HSLogo';
 import { supabase } from '../services/supabaseClient';
+import { syncUserApprovalProfile } from '../services/syncUserApprovalProfile';
 import { getCanonicalAppUrl, isOnCanonicalHost } from '../utils/buildInfo';
 
 const PendingApprovalPage: React.FC = () => {
@@ -12,31 +13,34 @@ const PendingApprovalPage: React.FC = () => {
   const onCanonicalHost = isOnCanonicalHost();
   const canonicalUrl = getCanonicalAppUrl();
 
+  const runSync = async () => {
+    if (!supabase || !auth?.user?.id) return;
+    await auth.refetchApprovalStatus();
+    const { row } = await syncUserApprovalProfile(supabase, auth.user.id, auth.user);
+    if (!row) return;
+    const role = String(row.role ?? '').trim();
+    const approved = Boolean(row.approved);
+    if (role.toLowerCase() === 'admin' && !approved) {
+      setProfileHint('Your account is Admin but not marked approved yet. Tap Check status below or ask another admin to approve you in Settings.');
+    } else if (!approved) {
+      setProfileHint('An administrator must approve your signup before you can use Finova.');
+    } else {
+      setProfileHint(null);
+    }
+  };
+
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      if (!supabase || !auth?.user?.id) return;
-      const { data } = await supabase.from('users').select('role, approved, email').eq('id', auth.user.id).maybeSingle();
-      if (!alive || !data) return;
-      const role = String((data as { role?: string }).role ?? '').trim();
-      const approved = Boolean((data as { approved?: boolean }).approved);
-      if (role.toLowerCase() === 'admin' && !approved) {
-        setProfileHint('Your account is Admin but not marked approved yet. Tap Check status below or ask another admin to approve you in Settings.');
-      } else if (!approved) {
-        setProfileHint('An administrator must approve your signup before you can use Finova.');
-      }
-    })();
-    return () => { alive = false; };
+    void runSync();
   }, [auth?.user?.id]);
 
-  // Poll while on this screen — helps mobile after admin approval without a full reload.
+  // Aggressive poll on this screen — mobile often needs several ensure_own_user_profile attempts.
   useEffect(() => {
     if (rejected || !auth?.user?.id) return;
     const id = window.setInterval(() => {
-      void auth?.refetchApprovalStatus();
-    }, 20_000);
+      void runSync();
+    }, 5_000);
     return () => window.clearInterval(id);
-  }, [auth, rejected]);
+  }, [auth?.user?.id, rejected]);
 
   const handleLogout = async () => {
     await auth?.logout();
@@ -46,7 +50,7 @@ const PendingApprovalPage: React.FC = () => {
   const handleRecheck = async () => {
     setChecking(true);
     try {
-      await auth?.refetchApprovalStatus();
+      await runSync();
     } finally {
       setChecking(false);
     }
@@ -81,12 +85,12 @@ const PendingApprovalPage: React.FC = () => {
         )}
         {!onCanonicalHost && (
           <div className="text-xs text-blue-900 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-4" role="status">
-            This device may be using an older app link ({typeof window !== 'undefined' ? window.location.hostname : 'preview'}).
-            Open the latest app at{' '}
+            This device is using an old app link ({typeof window !== 'undefined' ? window.location.hostname : 'preview'}).
+            You will be redirected to{' '}
             <a href={canonicalUrl} className="font-semibold underline">
               {canonicalUrl.replace(/^https:\/\//, '')}
             </a>
-            {' '}and sign in again. If you added Finova to your home screen, remove it and re-add from that URL.
+            . If not redirected, open that URL, sign in, and remove any old home-screen shortcut first.
           </div>
         )}
         {profileHint && !rejected && (
@@ -103,6 +107,14 @@ const PendingApprovalPage: React.FC = () => {
           >
             {checking ? 'Checking…' : 'Check approval status'}
           </button>
+          {!onCanonicalHost && (
+            <a
+              href={canonicalUrl}
+              className="w-full flex justify-center py-2.5 px-4 border border-primary rounded-lg text-sm font-semibold text-primary bg-white hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
+            >
+              Open latest app
+            </a>
+          )}
           <button
             type="button"
             onClick={() => void handleLogout()}
