@@ -9,7 +9,7 @@ describe('dashboard suite canonical helpers', () => {
     const now = new Date();
     const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const data = {
-      settings: { financialMonthStartDay: 1 },
+      settings: { monthStartDay: 1 },
       accounts: [{ id: 'a1', type: 'Checking', currency: 'SAR', balance: 0 }],
       transactions: [
         { id: 't1', date: day, amount: 1000, type: 'income', category: 'Salary', accountId: 'a1', status: 'Approved' },
@@ -28,7 +28,7 @@ describe('dashboard suite canonical helpers', () => {
   });
 
   it('aggregatePersonalBudgetCategorySpendSar respects budget category splits', () => {
-    const data = { settings: { financialMonthStartDay: 1 } } as FinancialData;
+    const data = { settings: { monthStartDay: 1 } } as FinancialData;
     const accounts = [{ id: 'a1', type: 'Checking', currency: 'SAR' as const, balance: 0 }];
     const start = new Date(2026, 4, 1);
     const end = new Date(2026, 4, 31, 23, 59, 59, 999);
