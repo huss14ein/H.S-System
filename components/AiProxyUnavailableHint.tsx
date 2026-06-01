@@ -14,6 +14,8 @@ function defaultHeadline(reason: AiUnavailableReason): string {
       return 'This browser origin is blocked by the AI proxy';
     case 'spa_shell':
       return 'The AI proxy URL returned the web app instead of the function';
+    case 'functions_missing':
+      return 'Netlify functions are not deployed for this site';
     case 'network':
     default:
       return 'Cannot reach the AI proxy';
@@ -64,6 +66,17 @@ export const AiProxyUnavailableHint: React.FC<{
           </>
         );
       }
+      case 'functions_missing':
+        return (
+          <>
+            <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">/api/gemini-proxy</code> returned 404. Confirm{' '}
+            <strong>netlify/functions</strong> is deployed (check latest production deploy logs), then redeploy. Use{' '}
+            <a href="https://finova-hussein.netlify.app" className="font-semibold underline">
+              finova-hussein.netlify.app
+            </a>{' '}
+            for daily use.
+          </>
+        );
       case 'spa_shell':
         return (
           <>

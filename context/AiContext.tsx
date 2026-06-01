@@ -8,6 +8,8 @@ export type AiUnavailableReason =
     | 'origin_blocked'
     /** Got HTML/app shell instead of the function (wrong host or dev server without functions). */
     | 'spa_shell'
+    /** /api/gemini-proxy returned 404 — functions not deployed for this site/build. */
+    | 'functions_missing'
     | null;
 
 interface AiContextType {
@@ -57,6 +59,8 @@ export const AiProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
                     setAiUnavailableReason('origin_blocked');
                 } else if (r.unreachableReason === 'spa_shell') {
                     setAiUnavailableReason('spa_shell');
+                } else if (r.unreachableReason === 'functions_missing') {
+                    setAiUnavailableReason('functions_missing');
                 } else {
                     setAiUnavailableReason('network');
                 }

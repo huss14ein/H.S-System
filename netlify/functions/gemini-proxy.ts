@@ -1,15 +1,11 @@
 import "./loadNetlifyFunctionEnv";
 import type { Handler, HandlerEvent } from "@netlify/functions";
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
-import { accessControlOriginHeader, assertBrowserOriginAllowed } from "./corsAllowlist";
+import { assertBrowserOriginAllowed, geminiProxyCorsHeaders } from "./corsAllowlist";
 import { assertProxySupabaseJwt } from "./proxySupabaseJwt";
 
-function corsHeaders(event: HandlerEvent): Record<string, string> {
-  return {
-    ...accessControlOriginHeader(event),
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-  };
+function corsHeaders(event: HandlerEvent, mode: 'preflight' | 'health' | 'default' = 'default'): Record<string, string> {
+  return geminiProxyCorsHeaders(event, mode);
 }
 
 /** Fallback model if the requested one is unavailable (e.g. preview not enabled). */
@@ -291,10 +287,7 @@ const handler: Handler = async (event: HandlerEvent) => {
   const healthProbe = event.httpMethod === 'POST' && isHealthProbeBody(event.body);
 
   if (event.httpMethod === 'OPTIONS') {
-    if (!assertBrowserOriginAllowed(event)) {
-      return { statusCode: 403, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ error: 'Origin not allowed' }) };
-    }
-    return { statusCode: 200, headers: corsHeaders(event) };
+    return { statusCode: 204, headers: corsHeaders(event, 'preflight'), body: '' };
   }
 
   if (event.httpMethod !== 'POST') {
@@ -333,7 +326,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         geminiConfigured || anthropicConfigured || grokConfigured || openaiConfigured;
       return {
         statusCode: 200,
-        headers: { ...corsHeaders(event), "Content-Type": "application/json" },
+        headers: { ...corsHeaders(event, 'health'), "Content-Type": "application/json" },
         body: JSON.stringify({
           ok: true,
           anyProviderConfigured,

@@ -172,9 +172,56 @@ export function isOriginAllowed(origin: string): boolean {
   return deployedAllowedOrigins().has(origin);
 }
 
-export function isOriginAllowedForRequest(event: HandlerEvent, origin: string): boolean {
+/** Preview/production Netlify hosts for this site (slug from URL env + deploy permalink). */
+function isTrustedNetlifySiteOrigin(event: HandlerEvent, origin: string): boolean {
   if (isSameDeploymentOrigin(event, origin)) return true;
+  const host = requestHostFromEvent(event);
+  if (!host?.endsWith('.netlify.app')) return false;
+  try {
+    const originHost = new URL(origin).hostname.toLowerCase();
+    if (!originHost.endsWith('.netlify.app')) return false;
+    const ctxSlug = netlifySiteSlugFromContextEnv();
+    if (ctxSlug) {
+      const hostSlug = netlifySiteSlugFromHostname(host);
+      const originSlug = netlifySiteSlugFromHostname(originHost);
+      if (hostSlug === ctxSlug || originSlug === ctxSlug) return true;
+    }
+    for (const key of ['DEPLOY_URL', 'DEPLOY_PRIME_URL', 'URL'] as const) {
+      const v = process.env[key]?.trim();
+      if (!v) continue;
+      try {
+        const deployHost = new URL(v).hostname.toLowerCase();
+        if (deployHost === host || deployHost === originHost) return true;
+      } catch {
+        /* ignore */
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+export function isOriginAllowedForRequest(event: HandlerEvent, origin: string): boolean {
+  if (isTrustedNetlifySiteOrigin(event, origin)) return true;
   return isOriginAllowed(origin);
+}
+
+/** CORS headers for browser callers. `reflect` echoes `Origin` (OPTIONS preflight + health probes). */
+export function browserCorsHeaders(
+  event: HandlerEvent,
+  opts: { allowMethods: string; reflect?: boolean },
+): Record<string, string> {
+  const base: Record<string, string> = {
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': opts.allowMethods,
+  };
+  const origin = requestOrigin(event);
+  if (!origin) return base;
+  if (opts.reflect || isOriginAllowedForRequest(event, origin)) {
+    return { ...base, 'Access-Control-Allow-Origin': origin, Vary: 'Origin' };
+  }
+  return base;
 }
 
 /**
@@ -196,4 +243,15 @@ export function accessControlOriginHeader(event: HandlerEvent): Record<string, s
     'Access-Control-Allow-Origin': origin,
     Vary: 'Origin',
   };
+}
+
+/** Gemini proxy: permissive preflight + health (POST still gated except health body). */
+export function geminiProxyCorsHeaders(
+  event: HandlerEvent,
+  mode: 'preflight' | 'health' | 'default',
+): Record<string, string> {
+  return browserCorsHeaders(event, {
+    allowMethods: 'POST, OPTIONS',
+    reflect: mode === 'preflight' || mode === 'health',
+  });
 }

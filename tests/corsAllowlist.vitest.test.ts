@@ -119,4 +119,25 @@ describe('corsAllowlist', () => {
     } as HandlerEvent;
     expect(assertBrowserOriginAllowed(event)).toBe(true);
   });
+
+  it('allows deploy-id-only Netlify host when Origin matches Host', () => {
+    const event = {
+      headers: {
+        origin: 'https://6a1df5bbbf791a00088d929c.netlify.app',
+        host: '6a1df5bbbf791a00088d929c.netlify.app',
+      },
+    } as HandlerEvent;
+    expect(assertBrowserOriginAllowed(event)).toBe(true);
+  });
+
+  it('allows production Origin when Host is deploy preview for same site slug', () => {
+    process.env.URL = 'https://finova-hussein.netlify.app';
+    const event = {
+      headers: {
+        origin: 'https://finova-hussein.netlify.app',
+        host: 'abc123--finova-hussein.netlify.app',
+      },
+    } as HandlerEvent;
+    expect(assertBrowserOriginAllowed(event)).toBe(true);
+  });
 });

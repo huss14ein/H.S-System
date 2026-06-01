@@ -13,6 +13,8 @@
 
 [functions]
   directory = "netlify/functions"
+  # Netlify builds TypeScript handlers in netlify/functions/*.ts
+  node_bundler = "esbuild"
 
 # Dev server command for Netlify CLI; site Environment variables apply to functions when linked.
 [dev]
