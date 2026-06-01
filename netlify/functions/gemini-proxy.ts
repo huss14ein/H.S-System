@@ -277,7 +277,19 @@ async function callGrok(
   return { text, candidates: [], functionCalls: undefined };
 }
 
+function isHealthProbeBody(body: string | null | undefined): boolean {
+  if (!body) return false;
+  try {
+    const parsed = JSON.parse(body) as { health?: boolean; type?: string; mode?: string };
+    return parsed?.health === true || parsed?.type === 'health' || parsed?.mode === 'health';
+  } catch {
+    return false;
+  }
+}
+
 const handler: Handler = async (event: HandlerEvent) => {
+  const healthProbe = event.httpMethod === 'POST' && isHealthProbeBody(event.body);
+
   if (event.httpMethod === 'OPTIONS') {
     if (!assertBrowserOriginAllowed(event)) {
       return { statusCode: 403, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ error: 'Origin not allowed' }) };
@@ -293,7 +305,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     };
   }
 
-  if (!assertBrowserOriginAllowed(event)) {
+  if (!healthProbe && !assertBrowserOriginAllowed(event)) {
     return {
       statusCode: 403,
       headers: { "Content-Type": "application/json" },
@@ -307,7 +319,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     }
     const body = JSON.parse(event.body) as { model?: string; contents?: unknown; config?: unknown; health?: boolean; type?: string; mode?: string };
     const { model: requestedModel, contents, config } = body;
-    const healthMode = body?.health === true || body?.type === 'health' || body?.mode === 'health';
+    const healthMode = healthProbe;
     const primaryApiKey = process.env.GEMINI_API_KEY;
     const backupApiKey = process.env.GEMINI_API_KEY_BACKUP;
 

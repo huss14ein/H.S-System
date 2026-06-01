@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { isOriginAllowed, deployedAllowedOrigins } from '../netlify/functions/corsAllowlist';
+import type { HandlerEvent } from '@netlify/functions';
+import {
+  assertBrowserOriginAllowed,
+  isOriginAllowed,
+  deployedAllowedOrigins,
+  isSameDeploymentOrigin,
+} from '../netlify/functions/corsAllowlist';
 
 describe('corsAllowlist', () => {
   const origEnv = { ...process.env };
@@ -88,5 +94,29 @@ describe('corsAllowlist', () => {
     process.env.FINOVA_CANONICAL_APP_URL = 'https://finova-hussein.netlify.app';
     expect(isOriginAllowed('https://finova-hussein.netlify.app')).toBe(true);
     expect(isOriginAllowed('https://other.netlify.app')).toBe(false);
+  });
+
+  it('allows browser Origin when it matches the request Host (same deployment)', () => {
+    const event = {
+      headers: {
+        origin: 'https://finova-hussein.netlify.app',
+        host: 'finova-hussein.netlify.app',
+      },
+    } as HandlerEvent;
+    expect(isSameDeploymentOrigin(event, 'https://finova-hussein.netlify.app')).toBe(true);
+    expect(assertBrowserOriginAllowed(event)).toBe(true);
+    delete process.env.URL;
+    delete process.env.ALLOWED_ORIGINS;
+    expect(assertBrowserOriginAllowed(event)).toBe(true);
+  });
+
+  it('allows deploy-preview Origin when Host matches preview hostname', () => {
+    const event = {
+      headers: {
+        origin: 'https://abc123--finova-hussein.netlify.app',
+        'x-forwarded-host': 'abc123--finova-hussein.netlify.app',
+      },
+    } as HandlerEvent;
+    expect(assertBrowserOriginAllowed(event)).toBe(true);
   });
 });

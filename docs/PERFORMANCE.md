@@ -1,3 +1,17 @@
+# AI proxy (Executive Summary / gemini-proxy)
+
+Production uses same-host `/api/gemini-proxy` with CORS that **always allows the browser origin when it matches the request `Host`** (no manual `ALLOWED_ORIGINS` required for `finova-hussein.netlify.app`).
+
+If **AI summary is off** after deploy:
+
+1. Hard-refresh the app (or clear site data) so you are not on an old JS bundle.
+2. Netlify → **Environment variables** → add **`GEMINI_API_KEY`** (or `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) with scope **Functions** or **All**.
+3. **Trigger deploy** → Dashboard → **Retry connection check**.
+
+`netlify.toml` also sets `ALLOWED_ORIGINS` and `FINOVA_CANONICAL_APP_URL` for function runtime.
+
+---
+
 # Performance (Lighthouse / Core Web Vitals)
 
 ## Auditing the production URL

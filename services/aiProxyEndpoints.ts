@@ -5,18 +5,28 @@ import { getAiProxyAuthorizationHeader } from './aiProxyAuth';
  * Netlify Site → Environment variables (`process.env`), never in the client bundle.
  *
  * `netlify.toml` rewrites `/api/*` → `/.netlify/functions/:splat`.
- * Optional `VITE_AI_PROXY_EXTRA_ORIGIN`: try a deployed origin first (e.g. preview URL) when debugging cross-origin.
+ * Optional `VITE_AI_PROXY_EXTRA_ORIGIN`: absolute URLs appended after same-host `/api/*` (cross-host debugging only).
  */
 export function getGeminiProxyEndpoints(): string[] {
-    const paths = ['/api/gemini-proxy', '/.netlify/functions/gemini-proxy'];
+    const paths = ['/api/gemini-proxy'];
     try {
         const extra =
             typeof import.meta !== 'undefined' &&
             (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_AI_PROXY_EXTRA_ORIGIN;
         const origin = typeof extra === 'string' ? extra.replace(/\/$/, '').trim() : '';
-        if (origin && /^https?:\/\//i.test(origin)) {
-            return [...paths.map((p) => `${origin}${p}`), ...paths];
+        if (!origin || !/^https?:\/\//i.test(origin)) {
+            return paths;
         }
+        if (typeof window !== 'undefined' && window.location?.origin) {
+            try {
+                if (new URL(origin).origin === window.location.origin) {
+                    return paths;
+                }
+            } catch {
+                /* ignore */
+            }
+        }
+        return [...paths, ...paths.map((p) => `${origin}${p}`)];
     } catch {
         /* ignore */
     }
@@ -60,6 +70,7 @@ export async function fetchGeminiProxyHealthStatus(signal?: AbortSignal): Promis
     const maxRounds = 3;
     let sawOriginForbidden403 = false;
     let sawSpaShell = false;
+    const relativeEndpoints = endpoints.filter((u) => u.startsWith('/'));
 
     for (let round = 0; round < maxRounds; round++) {
         if (round > 0) {
@@ -77,7 +88,8 @@ export async function fetchGeminiProxyHealthStatus(signal?: AbortSignal): Promis
                 });
                 const raw = await res.text();
                 if (!res.ok) {
-                    if (res.status === 403) {
+                    const isRelative = endpoint.startsWith('/');
+                    if (res.status === 403 && isRelative) {
                         try {
                             const errJson = JSON.parse(raw) as { error?: string };
                             if (typeof errJson.error === 'string' && /origin not allowed/i.test(errJson.error)) {
@@ -120,7 +132,8 @@ export async function fetchGeminiProxyHealthStatus(signal?: AbortSignal): Promis
         }
     }
 
-    const unreachableReason: GeminiProxyUnreachableReason = sawOriginForbidden403
+    const unreachableReason: GeminiProxyUnreachableReason =
+        sawOriginForbidden403 && relativeEndpoints.length > 0
         ? 'origin_forbidden'
         : sawSpaShell
           ? 'spa_shell'

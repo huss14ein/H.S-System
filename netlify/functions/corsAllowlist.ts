@@ -140,12 +140,41 @@ function requestOrigin(event: HandlerEvent): string | undefined {
   return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
 }
 
+/** Host serving this function invocation (Netlify sets `x-forwarded-host` / `host`). */
+export function requestHostFromEvent(event: HandlerEvent): string | null {
+  const h = event.headers ?? {};
+  const raw = (h['x-forwarded-host'] ??
+    h['X-Forwarded-Host'] ??
+    h['host'] ??
+    h['Host']) as string | undefined;
+  if (!raw || typeof raw !== 'string') return null;
+  const host = raw.split(',')[0].trim().toLowerCase();
+  return host.replace(/:\d+$/, '') || null;
+}
+
+/** SPA and `/api/*` on the same Netlify site — always allow (no `ALLOWED_ORIGINS` env required). */
+export function isSameDeploymentOrigin(event: HandlerEvent, origin: string): boolean {
+  const host = requestHostFromEvent(event);
+  if (!host) return false;
+  try {
+    const originHost = new URL(origin).hostname.toLowerCase();
+    return originHost === host;
+  } catch {
+    return false;
+  }
+}
+
 export function isOriginAllowed(origin: string): boolean {
   if (LOCAL_ORIGIN_RE.test(origin)) return true;
   if (isPrivateOrLocalNetworkOrigin(origin)) return true;
   const ctxSlug = netlifySiteSlugFromContextEnv();
   if (ctxSlug && isNetlifyDeployOrProductionOriginForSite(origin, ctxSlug)) return true;
   return deployedAllowedOrigins().has(origin);
+}
+
+export function isOriginAllowedForRequest(event: HandlerEvent, origin: string): boolean {
+  if (isSameDeploymentOrigin(event, origin)) return true;
+  return isOriginAllowed(origin);
 }
 
 /**
@@ -156,13 +185,13 @@ export function isOriginAllowed(origin: string): boolean {
 export function assertBrowserOriginAllowed(event: HandlerEvent): boolean {
   const origin = requestOrigin(event);
   if (!origin) return true;
-  return isOriginAllowed(origin);
+  return isOriginAllowedForRequest(event, origin);
 }
 
 /** CORS response headers when origin is allowed; missing Origin → no ACAO (same-origin tooling). */
 export function accessControlOriginHeader(event: HandlerEvent): Record<string, string> {
   const origin = requestOrigin(event);
-  if (!origin || !isOriginAllowed(origin)) return {};
+  if (!origin || !isOriginAllowedForRequest(event, origin)) return {};
   return {
     'Access-Control-Allow-Origin': origin,
     Vary: 'Origin',
