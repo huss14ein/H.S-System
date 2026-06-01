@@ -1,5 +1,6 @@
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 import { approvalFlagsFromUserRow, resolveEffectiveAppAccess } from '../utils/userApproval';
+import { inferIsAdmin } from '../utils/role';
 
 /** Mobile Safari cold starts need more retries than desktop. */
 const RETRY_DELAYS_MS = [0, 300, 800, 2000, 4000, 8000];
