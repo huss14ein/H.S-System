@@ -13,6 +13,20 @@ function toneClasses(tone: IndicatorTone): string {
   return 'border-slate-200 bg-slate-50 text-slate-800';
 }
 
+function toneBadgeLabel(tone: IndicatorTone, t: (key: string) => string): string {
+  if (tone === 'good') return t('kpiStatusOnTrack');
+  if (tone === 'warn') return t('kpiStatusWatch');
+  if (tone === 'bad') return t('healthAtRisk');
+  return t('kpiStatusLiquid');
+}
+
+function toneBadgeClasses(tone: IndicatorTone): string {
+  if (tone === 'good') return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+  if (tone === 'warn') return 'bg-amber-100 text-amber-900 border-amber-200';
+  if (tone === 'bad') return 'bg-rose-100 text-rose-800 border-rose-200';
+  return 'bg-slate-100 text-slate-700 border-slate-200';
+}
+
 function allocationConcentrationPct(allocation: HeadlineInvestmentAllocationSlices): number {
   const rows = allocation.assetClassAllocation.filter((r) => r.value > 0);
   if (rows.length === 0) return 0;
@@ -83,18 +97,31 @@ export const WealthHealthIndicators: React.FC<{
   ]);
 
   return (
-    <div dir={dir} className="flex flex-wrap gap-2 min-w-0" aria-label={t('wealthHealthStripTitle')}>
-      {items.map((item) => (
-        <div
-          key={item.key}
-          className={`flex-1 min-w-[min(100%,14rem)] rounded-xl border px-3 py-2.5 ${toneClasses(item.tone)}`}
-        >
-          <p className="text-[10px] font-bold uppercase tracking-wider opacity-80">{item.label}</p>
-          <p className="mt-0.5 text-lg font-bold tabular-nums">{item.value}</p>
-          <p className="mt-0.5 text-xs opacity-90 line-clamp-2">{item.detail}</p>
-        </div>
-      ))}
-    </div>
+    <section dir={dir} className="min-w-0 space-y-3" aria-label={t('wealthHealthStripTitle')}>
+      <div>
+        <h2 className="text-lg sm:text-xl font-bold text-slate-900">{t('wealthHealthStripTitle')}</h2>
+        <p className="text-sm text-slate-600">{t('healthStripSubtitle')}</p>
+      </div>
+      <div className="flex flex-wrap gap-2 min-w-0">
+        {items.map((item) => (
+          <div
+            key={item.key}
+            className={`flex-1 min-w-[min(100%,14rem)] rounded-xl border px-3 py-2.5 shadow-sm ${toneClasses(item.tone)}`}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-[10px] font-bold uppercase tracking-wider opacity-80">{item.label}</p>
+              <span
+                className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${toneBadgeClasses(item.tone)}`}
+              >
+                {toneBadgeLabel(item.tone, t)}
+              </span>
+            </div>
+            <p className="mt-1 text-lg font-bold tabular-nums">{item.value}</p>
+            <p className="mt-0.5 text-xs opacity-90 line-clamp-2">{item.detail}</p>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 };
 

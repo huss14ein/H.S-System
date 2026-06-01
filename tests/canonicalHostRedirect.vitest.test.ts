@@ -6,14 +6,16 @@ describe('canonicalHostRedirect', () => {
     expect(isLocalDevHost('localhost')).toBe(true);
     expect(isLocalDevHost('127.0.0.1')).toBe(true);
     expect(isLocalDevHost('192.168.1.5')).toBe(true);
-    expect(isLocalDevHost('h-s-system.vercel.app')).toBe(false);
+    expect(isLocalDevHost('finova-hussein.netlify.app')).toBe(false);
   });
 
-  it('redirects netlify deploy hosts to canonical', () => {
+  it('redirects stale deploy hosts to canonical Netlify production', () => {
+    const canonical = 'finova-hussein.netlify.app';
     expect(
-      shouldRedirectToCanonicalHost('6a10e281--fancy-belekoy-8a5dff.netlify.app', 'h-s-system.vercel.app'),
+      shouldRedirectToCanonicalHost('6a10e281--fancy-belekoy-8a5dff.netlify.app', canonical),
     ).toBe(true);
-    expect(shouldRedirectToCanonicalHost('h-s-system.vercel.app', 'h-s-system.vercel.app')).toBe(false);
-    expect(shouldRedirectToCanonicalHost('localhost', 'h-s-system.vercel.app')).toBe(false);
+    expect(shouldRedirectToCanonicalHost('finova-hussein.netlify.app', canonical)).toBe(false);
+    expect(shouldRedirectToCanonicalHost('h-s-system.vercel.app', canonical)).toBe(true);
+    expect(shouldRedirectToCanonicalHost('localhost', canonical)).toBe(false);
   });
 });

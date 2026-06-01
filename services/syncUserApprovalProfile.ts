@@ -86,6 +86,15 @@ export async function syncUserApprovalProfile(
   }
 
   if (lastEnsuredRow) {
+    if (!rowIsTerminal(lastEnsuredRow)) {
+      await sleep(400);
+      await refreshSessionForProfileSync(client);
+      const retry = await callEnsureOwnUserProfile(client);
+      if (retry.row && rowIsTerminal(retry.row)) {
+        return { row: retry.row, rpcMissing, networkFailed: false };
+      }
+      if (retry.row) lastEnsuredRow = retry.row;
+    }
     return { row: lastEnsuredRow, rpcMissing, networkFailed: false };
   }
 

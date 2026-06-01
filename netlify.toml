@@ -4,8 +4,7 @@
 
 [build.environment]
   NODE_VERSION = "20"
-  # After linking this repo to the Netlify site, set to the site URL (e.g. https://my-finova.netlify.app).
-  VITE_CANONICAL_APP_URL = "https://h-s-system.vercel.app"
+  VITE_CANONICAL_APP_URL = "https://finova-hussein.netlify.app"
 
 [functions]
   directory = "netlify/functions"
@@ -29,14 +28,7 @@
   to = "/.netlify/functions/:splat"
   status = 200
 
-# Permanent: Netlify deploy URLs (old bookmarks / home-screen shortcuts) → canonical Vercel app.
-# Functions stay on /api/* above; only the SPA shell redirects.
-[[redirects]]
-  from = "/*"
-  to = "https://h-s-system.vercel.app/:splat"
-  status = 301
-  force = true
-
+# SPA client-side routing (Vite build). Preview deploy permalinks redirect to production via index.html script.
 [[redirects]]
   from = "/*"
   to = "/index.html"

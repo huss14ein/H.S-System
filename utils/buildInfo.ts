@@ -32,10 +32,10 @@ export function hasWealthAnalyticsRollout(): boolean {
   }
 }
 
-/** Default production URL when VITE_CANONICAL_APP_URL is unset (Vercel Git integration). */
-export const CANONICAL_VITE_APP_URL = 'https://h-s-system.vercel.app';
+/** Default production URL when VITE_CANONICAL_APP_URL is unset. */
+export const CANONICAL_VITE_APP_URL = 'https://finova-hussein.netlify.app';
 
-/** Preferred production URL (env override → default Vercel). Set on Netlify/Vercel after linking this repo. */
+/** Preferred production URL (env override → default Netlify). Set in netlify.toml / site env after linking this repo. */
 export function getCanonicalAppUrl(): string {
   const fromEnv = import.meta.env.VITE_CANONICAL_APP_URL?.trim();
   const url = fromEnv || CANONICAL_VITE_APP_URL;

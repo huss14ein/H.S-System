@@ -18,13 +18,14 @@ export function shouldRedirectToCanonicalHost(hostname: string, canonicalHostnam
   const canonical = canonicalHostname.trim().toLowerCase();
   if (!host || !canonical || host === canonical) return false;
   if (isLocalDevHost(host)) return false;
-  // Old bookmarks / PWA shortcuts often point at Netlify deploy permalinks.
+  // Stale deploy previews (Netlify permalinks) and old Vercel URLs → canonical production host.
   if (host.endsWith('.netlify.app')) return true;
+  if (host.endsWith('.vercel.app')) return true;
   return false;
 }
 
 /**
- * Redirect stale deploy hosts (Netlify previews) to the canonical Vercel app before React boots.
+ * Redirect stale deploy hosts to the canonical production app before React boots.
  * Preserves path, query, and hash so deep links survive.
  */
 export function enforceCanonicalHostRedirect(): void {

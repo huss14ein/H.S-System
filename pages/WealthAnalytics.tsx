@@ -14,6 +14,7 @@ import CollapsibleSection from '../components/CollapsibleSection';
 import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
 import AIFeed from '../components/AIFeed';
 import { ExecutiveKpiGrid } from '../components/analytics/ExecutiveKpiGrid';
+import { WealthAnalyticsHero } from '../components/analytics/WealthAnalyticsHero';
 import { WealthHealthIndicators } from '../components/analytics/WealthHealthIndicators';
 import { WealthAnalyticsExportMenu } from '../components/analytics/WealthAnalyticsExportMenu';
 import { DashboardOperationsCockpit } from '../components/dashboard/DashboardOperationsCockpit';
@@ -210,6 +211,14 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
             action={exportAction}
         >
             <div dir={dir} className="flex flex-col gap-6 min-w-0">
+                <WealthAnalyticsHero
+                    netWorthDisplay={maskBalance(formatCurrencyString(headline.netWorth ?? 0, { digits: 0 }))}
+                    monthlyPnLDisplay={maskBalance(formatCurrencyString(kpiSnapshot?.monthlyPnL ?? 0, { digits: 0 }))}
+                    monthlyPnLPositive={(kpiSnapshot?.monthlyPnL ?? 0) >= 0}
+                    roiDisplay={`${((kpiSnapshot?.roi ?? 0) * 100).toFixed(1)}%`}
+                    roiPositive={(kpiSnapshot?.roi ?? 0) >= 0}
+                />
+
                 <ExecutiveKpiGrid
                     headline={headline}
                     kpiSnapshot={kpiSnapshot}

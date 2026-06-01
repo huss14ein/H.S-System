@@ -24,9 +24,10 @@ describe('user approval security', () => {
     expect(src).toMatch(/fetchApprovalStatus[\s\S]*?} catch \{[\s\S]*?import\.meta\.env\.DEV[\s\S]*?setApprovalSyncIssue\('network'\)/);
   });
 
-  it('App blocks unapproved users at the shell', () => {
+  it('App blocks unapproved users at the shell via approvalHardBlock', () => {
     const src = readFileSync(path.join(root, 'App.tsx'), 'utf8');
-    expect(src).toMatch(/!isApproved/);
+    expect(src).toContain('approvalHardBlock');
+    expect(src).not.toMatch(/!\s*isApproved/);
     expect(src).toContain('PendingApprovalPage');
   });
 });

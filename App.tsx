@@ -35,20 +35,20 @@ const App: React.FC = () => {
     );
   }
 
-  if (isSignupRejected || approvalHardBlock || approvalSyncIssue || !isApproved) {
-    return (
-      <ThemeProvider>
-        <PendingApprovalPage />
-      </ThemeProvider>
-    );
-  }
-
-  if (isApproved === null) {
+  if (isApproved === null && !isSignupRejected && !approvalSyncIssue) {
     return (
       <ThemeProvider>
         <div className="flex justify-center items-center min-h-screen bg-gray-50">
           <div className="animate-spin rounded-full h-12 w-12 border-2 border-primary border-t-transparent" aria-label="Checking access" />
         </div>
+      </ThemeProvider>
+    );
+  }
+
+  if (isSignupRejected || approvalSyncIssue || approvalHardBlock) {
+    return (
+      <ThemeProvider>
+        <PendingApprovalPage />
       </ThemeProvider>
     );
   }

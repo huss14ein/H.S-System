@@ -137,8 +137,8 @@ export const ExecutiveKpiGrid: React.FC<{
   ]);
 
   return (
-    <section aria-label={t('executiveKpiGridTitle')} className="space-y-3 min-w-0">
-      <div>
+    <section aria-label={t('executiveKpiGridTitle')} className="space-y-3 min-w-0 rounded-2xl border border-slate-200/80 bg-white p-4 sm:p-5 shadow-sm">
+      <div className="border-b border-indigo-100 pb-3">
         <h2 className="text-lg sm:text-xl font-bold text-slate-900">{t('executiveKpiGridTitle')}</h2>
         <p className="text-sm text-slate-600">{t('executiveKpiGridSubtitle')}</p>
       </div>

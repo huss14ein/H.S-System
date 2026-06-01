@@ -49,8 +49,8 @@ function injectBuildMeta(): Plugin {
         ].join('\n    ');
         const canonical =
           process.env.VITE_CANONICAL_APP_URL?.trim().replace(/\/$/, '') ||
-          'https://h-s-system.vercel.app';
-        const redirectScript = `<script>(function(){try{var c=${JSON.stringify(canonical)};var h=location.hostname.toLowerCase();var ch=new URL(c).hostname.toLowerCase();if(h===ch||h==='localhost'||h==='127.0.0.1'||/^10\\.|^192\\.168\\.|^172\\.(1[6-9]|2\\d|3[01])\\./.test(h))return;if(h.slice(-12)==='.netlify.app'){location.replace(c+location.pathname+location.search+location.hash);}}catch(e){}})();</script>`;
+          'https://finova-hussein.netlify.app';
+        const redirectScript = `<script>(function(){try{var c=${JSON.stringify(canonical)};var h=location.hostname.toLowerCase();var ch=new URL(c).hostname.toLowerCase();if(h===ch||h==='localhost'||h==='127.0.0.1'||/^10\\.|^192\\.168\\.|^172\\.(1[6-9]|2\\d|3[01])\\./.test(h))return;if(h.slice(-12)==='.netlify.app'||h.slice(-11)==='.vercel.app'){location.replace(c+location.pathname+location.search+location.hash);}}catch(e){}})();</script>`;
         return html
           .replace('</head>', `    ${meta}\n    ${redirectScript}\n  </head>`);
       },

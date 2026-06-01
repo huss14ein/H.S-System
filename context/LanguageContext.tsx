@@ -128,6 +128,11 @@ const DICT: Dict = {
   kpiStatusLoss: { en: 'Loss', ar: 'خسارة' },
   kpiStatusLiquid: { en: 'Liquid', ar: 'سائل' },
   wealthHealthStripTitle: { en: 'Wealth health indicators', ar: 'مؤشرات صحة الثروة' },
+  healthStripSubtitle: {
+    en: 'Discipline, liquidity runway, and allocation concentration at a glance.',
+    ar: 'الانضباط ومدى السيولة وتركّز التوزيع في لمحة.',
+  },
+  healthAtRisk: { en: 'At risk', ar: 'معرّض للخطر' },
   healthDiscipline: { en: 'Discipline', ar: 'الانضباط' },
   healthDisciplineDetail: { en: 'Budget adherence score', ar: 'درجة الالتزام بالميزانية' },
   healthRunway: { en: 'Runway', ar: 'مدى السيولة' },

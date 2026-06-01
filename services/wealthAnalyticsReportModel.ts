@@ -14,6 +14,7 @@ import {
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import { resolveMonthStartDayFromData } from '../utils/financialMonth';
+import { wealthKpiAccent, wealthKpiToneFromStatus, type WealthKpiTone } from './wealthReportPresentation';
 
 export type WealthMetricPassportKey =
   | 'netWorth'
@@ -28,6 +29,8 @@ export type WealthExecutiveKpiRow = {
   valueDisplay: string;
   targetDisplay?: string;
   statusLabel: string;
+  tone: WealthKpiTone;
+  accentColor: string;
   sparkline: number[];
   numericValue: number;
   targetNumeric?: number;
@@ -116,6 +119,8 @@ export function buildWealthAnalyticsReportModel(input: {
       valueDisplay: fmtSar(netWorth),
       targetDisplay: fmtSar(impliedMonthStart),
       statusLabel: statusLabelForSigned(input.kpiSnapshot?.netWorthTrend ?? monthlyPnL, 'On track', 'Watch'),
+      tone: wealthKpiToneFromStatus(statusLabelForSigned(input.kpiSnapshot?.netWorthTrend ?? monthlyPnL, 'On track', 'Watch')),
+      accentColor: wealthKpiAccent('netWorth'),
       sparkline: nwSpark.length >= 2 ? nwSpark : twoPointTrend(netWorth, impliedMonthStart),
       numericValue: netWorth,
       targetNumeric: impliedMonthStart,
@@ -126,6 +131,8 @@ export function buildWealthAnalyticsReportModel(input: {
       valueDisplay: fmtSar(monthlyPnL),
       targetDisplay: fmtSar(0),
       statusLabel: statusLabelForSigned(monthlyPnL, 'Surplus', 'Deficit'),
+      tone: wealthKpiToneFromStatus(statusLabelForSigned(monthlyPnL, 'Surplus', 'Deficit')),
+      accentColor: wealthKpiAccent('monthlyPnL'),
       sparkline: twoPointTrend(monthlyPnL, 0),
       numericValue: monthlyPnL,
       targetNumeric: 0,
@@ -137,6 +144,10 @@ export function buildWealthAnalyticsReportModel(input: {
       targetDisplay: `${EMERGENCY_FUND_TARGET_MONTHS} mo`,
       statusLabel:
         efMonths >= EMERGENCY_FUND_TARGET_MONTHS ? 'Funded' : efMonths >= EMERGENCY_FUND_TARGET_MONTHS / 2 ? 'Building' : 'Gap',
+      tone: wealthKpiToneFromStatus(
+        efMonths >= EMERGENCY_FUND_TARGET_MONTHS ? 'Funded' : efMonths >= EMERGENCY_FUND_TARGET_MONTHS / 2 ? 'Building' : 'Gap',
+      ),
+      accentColor: wealthKpiAccent('emergencyFund'),
       sparkline: twoPointTrend(efMonths, EMERGENCY_FUND_TARGET_MONTHS),
       numericValue: efMonths,
       targetNumeric: EMERGENCY_FUND_TARGET_MONTHS,
@@ -147,6 +158,8 @@ export function buildWealthAnalyticsReportModel(input: {
       valueDisplay: fmtSar(budgetVariance),
       targetDisplay: fmtSar(0),
       statusLabel: statusLabelForSigned(budgetVariance, 'Under budget', 'Over budget'),
+      tone: wealthKpiToneFromStatus(statusLabelForSigned(budgetVariance, 'Under budget', 'Over budget')),
+      accentColor: wealthKpiAccent('budgetVariance'),
       sparkline: twoPointTrend(budgetVariance, 0),
       numericValue: budgetVariance,
       targetNumeric: 0,
@@ -157,6 +170,8 @@ export function buildWealthAnalyticsReportModel(input: {
       valueDisplay: `${(roi * 100).toFixed(1)}%`,
       targetDisplay: '0%',
       statusLabel: statusLabelForSigned(roi, 'Gain', 'Loss'),
+      tone: wealthKpiToneFromStatus(statusLabelForSigned(roi, 'Gain', 'Loss')),
+      accentColor: wealthKpiAccent('investmentRoi'),
       sparkline: twoPointTrend(roi * 100, 0),
       numericValue: roi * 100,
       targetNumeric: 0,
@@ -167,6 +182,8 @@ export function buildWealthAnalyticsReportModel(input: {
       valueDisplay: fmtSar(pnlSummary.weeklyTotalSar),
       targetDisplay: fmtSar(0),
       statusLabel: statusLabelForSigned(pnlSummary.weeklyTotalSar, 'Gain', 'Loss'),
+      tone: wealthKpiToneFromStatus(statusLabelForSigned(pnlSummary.weeklyTotalSar, 'Gain', 'Loss')),
+      accentColor: wealthKpiAccent('weeklyPnL'),
       sparkline:
         pnlDaily.weekly.length >= 2
           ? pnlDaily.weekly.map((p) => p.cumulativeSar)

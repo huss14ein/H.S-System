@@ -13,6 +13,12 @@ const PendingApprovalPage: React.FC = () => {
   const canonicalUrl = getCanonicalAppUrl();
   const buildSha = getBuildSha();
 
+  useEffect(() => {
+    if (onCanonicalHost) return;
+    const target = `${canonicalUrl}${window.location.pathname}${window.location.search}${window.location.hash}`;
+    window.location.replace(target);
+  }, [onCanonicalHost, canonicalUrl]);
+
   const handleRecheck = async () => {
     setChecking(true);
     try {
@@ -29,7 +35,7 @@ const PendingApprovalPage: React.FC = () => {
     }
     if (syncIssue === 'rpc_missing') {
       setProfileHint(
-        'Database setup is incomplete: run migrations 20260531180000 and 20260531200000 in Supabase SQL Editor, then tap Check status.',
+        'Database setup is incomplete: run migrations 20260531180000, 20260531200000, and 20260601180000 in Supabase SQL Editor, then tap Check status.',
       );
       return;
     }

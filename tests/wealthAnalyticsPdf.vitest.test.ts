@@ -107,8 +107,12 @@ describe('wealth analytics PDF exports', () => {
     const html = generateWealthExecutiveSummaryHtml(model);
     expect(html).toContain('Executive Summary');
     expect(html).toContain('Headline KPIs');
+    expect(html).toContain('Wealth health indicators');
     expect(html).toContain('Quotes as of');
     expect(html).toContain('500,000');
+    expect(html).toContain('badge-good');
+    expect(html).toContain('tone-good');
+    expect(html).toContain('<svg');
   });
 
   it('metric passport HTML renders A/B/C sections for each metric', () => {
@@ -140,6 +144,7 @@ describe('wealth analytics PDF exports', () => {
       expect(html).toContain('A — Current reading');
       expect(html).toContain('B — Trend series');
       expect(html).toContain('C — Definition');
+      expect(html).toMatch(/badge-(good|warn|bad|neutral)/);
     }
   });
 });
