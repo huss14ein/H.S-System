@@ -611,6 +611,8 @@ interface AuthContextType {
   isSignupRejected: boolean;
   /** When true, show the pending/rejected shell (only with VITE_ENFORCE_SIGNUP_APPROVAL or rejected signup). */
   approvalHardBlock: boolean;
+  /** Profile sync failed (missing RPC or network) — show pending with setup hint, not full app. */
+  approvalSyncIssue: 'rpc_missing' | 'network' | null;
   user: User | null;
   session: Session | null;
   login: (email: string, password: string) => Promise<{ error: AuthError | null; user?: User | null }>;
@@ -647,6 +649,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [isApproved, setIsApproved] = useState<boolean | null>(null);
     const [isSignupRejected, setIsSignupRejected] = useState(false);
     const [approvalHardBlock, setApprovalHardBlock] = useState(false);
+    const [approvalSyncIssue, setApprovalSyncIssue] = useState<'rpc_missing' | 'network' | null>(null);
     const [userRole, setUserRole] = useState<string | null>(null);
     const [isAdmin, setIsAdmin] = useState(false);
     const [isEmailVerified, setIsEmailVerified] = useState(false);
@@ -742,25 +745,55 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setIsApproved(true);
             setIsSignupRejected(false);
             setApprovalHardBlock(false);
+            setApprovalSyncIssue(null);
             setUserRole('Admin');
             setIsAdmin(true);
             return;
         }
         setIsApproved(null);
+        setApprovalSyncIssue(null);
         try {
-            const { row, failOpenApproved } = await syncUserApprovalProfile(supabase, userId, authUser);
-            const flags = approvalFlagsFromSync(row, failOpenApproved, authUser);
+            const sync = await syncUserApprovalProfile(supabase, userId);
+            if (sync.rpcMissing) {
+                setIsApproved(false);
+                setIsSignupRejected(false);
+                setApprovalHardBlock(false);
+                setApprovalSyncIssue('rpc_missing');
+                setUserRole(null);
+                setIsAdmin(inferIsAdmin(authUser, null));
+                return;
+            }
+            if (sync.networkFailed && !sync.row) {
+                setIsApproved(false);
+                setIsSignupRejected(false);
+                setApprovalHardBlock(false);
+                setApprovalSyncIssue('network');
+                setUserRole(null);
+                setIsAdmin(inferIsAdmin(authUser, null));
+                return;
+            }
+            const flags = approvalFlagsFromSync(sync.row, authUser);
             setIsApproved(flags.approved);
             setIsSignupRejected(flags.signupRejected);
             setApprovalHardBlock(flags.hardBlockShell);
-            const role = row ? String(row.role ?? '').trim() : '';
+            setApprovalSyncIssue(null);
+            const role = sync.row ? String(sync.row.role ?? '').trim() : '';
             setUserRole(role || null);
             setIsAdmin(inferIsAdmin(authUser, role || null));
         } catch {
-            setIsApproved(true);
-            setIsSignupRejected(false);
-            setApprovalHardBlock(false);
-            setIsAdmin(inferIsAdmin(authUser, null));
+            if (import.meta.env.DEV) {
+                setIsApproved(true);
+                setIsSignupRejected(false);
+                setApprovalHardBlock(false);
+                setApprovalSyncIssue(null);
+                setIsAdmin(inferIsAdmin(authUser, null));
+            } else {
+                setIsApproved(false);
+                setIsSignupRejected(false);
+                setApprovalHardBlock(false);
+                setApprovalSyncIssue('network');
+                setIsAdmin(false);
+            }
         }
     }, []);
 
@@ -775,6 +808,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setIsApproved(true);
             setIsSignupRejected(false);
             setApprovalHardBlock(false);
+            setApprovalSyncIssue(null);
             setUserRole('Admin');
             setIsAdmin(true);
             return;
@@ -1154,7 +1188,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     // Mobile Safari: refetch approval when returning to the app (admin may have approved while backgrounded).
     useEffect(() => {
-        if (approvalHardBlock || isSignupRejected || !user?.id) return;
+        if (approvalHardBlock || isSignupRejected || approvalSyncIssue || !user?.id) return;
         const onVisible = () => {
             if (document.visibilityState === 'visible') {
                 void fetchApprovalStatus(user.id, user);
@@ -1166,13 +1200,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             document.removeEventListener('visibilitychange', onVisible);
             window.removeEventListener('pageshow', onVisible);
         };
-    }, [approvalHardBlock, isSignupRejected, user, fetchApprovalStatus]);
+    }, [approvalHardBlock, isSignupRejected, approvalSyncIssue, user, fetchApprovalStatus]);
 
     const value = {
         isAuthenticated: !!user,
         isApproved,
         isSignupRejected,
         approvalHardBlock,
+        approvalSyncIssue,
         userRole,
         isAdmin,
         user,

@@ -49,4 +49,11 @@ describe('security wiring', () => {
     expect(src).toContain('x-weekly-digest-secret');
     expect(src).toContain('WEEKLY_DIGEST_SECRET');
   });
+
+  it('signup approval uses server profile sync without client email bypass', () => {
+    const approval = read('utils/userApproval.ts');
+    const fn = approval.slice(approval.indexOf('export function resolveEffectiveAppAccess'));
+    expect(fn).not.toMatch(/email_confirmed_at/);
+    expect(read('services/syncUserApprovalProfile.ts')).toContain('ensure_own_user_profile');
+  });
 });

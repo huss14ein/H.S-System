@@ -1,13 +1,15 @@
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 import { approvalFlagsFromUserRow, resolveEffectiveAppAccess } from '../utils/userApproval';
-import { inferIsAdmin } from '../utils/role';
 
 /** Mobile Safari cold starts need more retries than desktop. */
 const RETRY_DELAYS_MS = [0, 300, 800, 2000, 4000, 8000];
 
 export type SyncUserApprovalResult = {
   row: Record<string, unknown> | null;
-  failOpenApproved: boolean;
+  /** Set when ensure_own_user_profile is missing (run DB migrations). */
+  rpcMissing: boolean;
+  /** Set when all retries failed without a profile row (transient network). */
+  networkFailed: boolean;
 };
 
 async function sleep(ms: number): Promise<void> {
@@ -15,7 +17,7 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((r) => setTimeout(r, ms));
 }
 
-/** Always refresh session before RLS reads — mobile often resumes with a stale access token. */
+/** Refresh session before RLS reads — mobile often resumes with a stale access token. */
 async function refreshSessionForProfileSync(client: SupabaseClient): Promise<void> {
   try {
     const { data: { session } } = await client.auth.getSession();
@@ -50,13 +52,18 @@ async function readUsersRow(
   return (data as Record<string, unknown> | null) ?? null;
 }
 
+function rowIsTerminal(row: Record<string, unknown>): boolean {
+  const flags = approvalFlagsFromUserRow(row);
+  return Boolean(flags && (flags.approved || flags.signupRejected));
+}
+
 /**
- * Resolve `public.users` for the signed-in user. `ensure_own_user_profile` is the source of truth.
+ * Resolve `public.users` for the signed-in user. Server RPC `ensure_own_user_profile` is the
+ * source of truth (auto-approves Admin / single-tenant / verified email per migrations).
  */
 export async function syncUserApprovalProfile(
   client: SupabaseClient,
   userId: string,
-  authUser: User | null,
 ): Promise<SyncUserApprovalResult> {
   await refreshSessionForProfileSync(client);
 
@@ -72,34 +79,28 @@ export async function syncUserApprovalProfile(
     rpcMissing = rpcMissing || missing;
     if (row) {
       lastEnsuredRow = row;
-      const flags = approvalFlagsFromUserRow(row);
-      if (flags?.approved || flags?.signupRejected) {
-        return { row, failOpenApproved: false };
+      if (rowIsTerminal(row)) {
+        return { row, rpcMissing, networkFailed: false };
       }
     }
   }
 
   if (lastEnsuredRow) {
-    return { row: lastEnsuredRow, failOpenApproved: false };
+    return { row: lastEnsuredRow, rpcMissing, networkFailed: false };
   }
 
   const fromTable = await readUsersRow(client, userId);
   if (fromTable) {
-    return { row: fromTable, failOpenApproved: false };
+    return { row: fromTable, rpcMissing, networkFailed: false };
   }
 
-  if (rpcMissing || inferIsAdmin(authUser, null) || authUser?.email_confirmed_at) {
-    return { row: null, failOpenApproved: true };
-  }
-
-  return { row: null, failOpenApproved: false };
+  return { row: null, rpcMissing, networkFailed: !rpcMissing };
 }
 
-/** Apply sync result to access flags (verified email / Admin never hard-blocked by stale rows). */
+/** Map sync result → shell access flags (no client-side approval bypass). */
 export function approvalFlagsFromSync(
   row: Record<string, unknown> | null,
-  failOpenApproved: boolean,
   authUser: User | null,
-): { approved: boolean; signupRejected: boolean; hardBlockShell: boolean } {
-  return resolveEffectiveAppAccess(row, authUser, failOpenApproved);
+): ReturnType<typeof resolveEffectiveAppAccess> {
+  return resolveEffectiveAppAccess(row, authUser);
 }

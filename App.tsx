@@ -14,7 +14,7 @@ const App: React.FC = () => {
     return null; // Or a loading spinner
   }
 
-  const { isAuthenticated, isApproved, isSignupRejected, approvalHardBlock } = auth;
+  const { isAuthenticated, isApproved, isSignupRejected, approvalHardBlock, approvalSyncIssue } = auth;
   
   const [authHash, setAuthHash] = useState(() =>
     typeof window !== 'undefined' ? window.location.hash : ''
@@ -35,7 +35,7 @@ const App: React.FC = () => {
     );
   }
 
-  if (isSignupRejected || approvalHardBlock) {
+  if (isSignupRejected || approvalHardBlock || approvalSyncIssue || !isApproved) {
     return (
       <ThemeProvider>
         <PendingApprovalPage />

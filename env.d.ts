@@ -20,7 +20,7 @@ interface ImportMetaEnv {
   readonly VITE_AI_PROXY_EXTRA_ORIGIN?: string;
   /** Canonical production URL shown in Settings and deploy hints (https://…, no trailing slash). */
   readonly VITE_CANONICAL_APP_URL?: string;
-  /** When 'true', unapproved signups stay on the pending-approval shell even with verified email. */
+  /** When 'true', require admin approval for new signups in dev. Production enforces unless set to 'false'. */
   readonly VITE_ENFORCE_SIGNUP_APPROVAL?: string;
 }
 

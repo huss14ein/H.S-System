@@ -1,60 +1,60 @@
 import React, { useContext, useEffect, useState } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { HSLogo } from '../components/icons/HSLogo';
-import { supabase } from '../services/supabaseClient';
-import { syncUserApprovalProfile } from '../services/syncUserApprovalProfile';
-import { getCanonicalAppUrl, isOnCanonicalHost } from '../utils/buildInfo';
+import { getBuildSha, getCanonicalAppUrl, isOnCanonicalHost } from '../utils/buildInfo';
 
 const PendingApprovalPage: React.FC = () => {
   const auth = useContext(AuthContext);
   const rejected = auth?.isSignupRejected === true;
+  const syncIssue = auth?.approvalSyncIssue;
   const [checking, setChecking] = useState(false);
   const [profileHint, setProfileHint] = useState<string | null>(null);
   const onCanonicalHost = isOnCanonicalHost();
   const canonicalUrl = getCanonicalAppUrl();
-
-  const runSync = async () => {
-    if (!supabase || !auth?.user?.id) return;
-    await auth.refetchApprovalStatus();
-    const { row } = await syncUserApprovalProfile(supabase, auth.user.id, auth.user);
-    if (!row) return;
-    const role = String(row.role ?? '').trim();
-    const approved = Boolean(row.approved);
-    if (role.toLowerCase() === 'admin' && !approved) {
-      setProfileHint('Your account is Admin but not marked approved yet. Tap Check status below or ask another admin to approve you in Settings.');
-    } else if (!approved) {
-      setProfileHint('An administrator must approve your signup before you can use Finova.');
-    } else {
-      setProfileHint(null);
-    }
-  };
-
-  useEffect(() => {
-    void runSync();
-  }, [auth?.user?.id]);
-
-  // Aggressive poll on this screen — mobile often needs several ensure_own_user_profile attempts.
-  useEffect(() => {
-    if (rejected || !auth?.user?.id) return;
-    const id = window.setInterval(() => {
-      void runSync();
-    }, 5_000);
-    return () => window.clearInterval(id);
-  }, [auth?.user?.id, rejected]);
-
-  const handleLogout = async () => {
-    await auth?.logout();
-    window.location.hash = '';
-  };
+  const buildSha = getBuildSha();
 
   const handleRecheck = async () => {
     setChecking(true);
     try {
-      await runSync();
+      await auth?.refetchApprovalStatus();
     } finally {
       setChecking(false);
     }
   };
+
+  useEffect(() => {
+    if (rejected) {
+      setProfileHint(null);
+      return;
+    }
+    if (syncIssue === 'rpc_missing') {
+      setProfileHint(
+        'Database setup is incomplete: run migrations 20260531180000 and 20260531200000 in Supabase SQL Editor, then tap Check status.',
+      );
+      return;
+    }
+    if (syncIssue === 'network') {
+      setProfileHint('Could not reach the server. Check mobile data or Wi‑Fi, then tap Check status.');
+      return;
+    }
+    setProfileHint('An administrator must approve your signup before you can use Finova.');
+  }, [rejected, syncIssue]);
+
+  useEffect(() => {
+    if (rejected || !auth?.user?.id) return;
+    const id = window.setInterval(() => {
+      void auth.refetchApprovalStatus();
+    }, 5_000);
+    return () => window.clearInterval(id);
+  }, [auth, rejected]);
+
+  const title = rejected
+    ? 'Signup not approved'
+    : syncIssue === 'rpc_missing'
+      ? 'Setup required'
+      : syncIssue === 'network'
+        ? 'Connection issue'
+        : 'Account pending approval';
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center p-4">
@@ -62,15 +62,17 @@ const PendingApprovalPage: React.FC = () => {
         <div className="flex justify-center mb-6">
           <HSLogo className="h-12 w-12 text-primary" />
         </div>
-        <h2 className="text-2xl font-bold text-slate-900 mb-2 text-center">
-          {rejected ? 'Signup not approved' : 'Account pending approval'}
-        </h2>
+        <h2 className="text-2xl font-bold text-slate-900 mb-2 text-center">{title}</h2>
         <p className="text-slate-600 mb-4 text-center text-sm leading-relaxed">
           {rejected ? (
             <>
               An administrator declined this signup. Sign out and use a different account, or contact support if this
               was a mistake.
             </>
+          ) : syncIssue === 'rpc_missing' ? (
+            <>The approval service is not available until Supabase migrations are applied for this project.</>
+          ) : syncIssue === 'network' ? (
+            <>We could not load your account profile. This is usually temporary on mobile networks.</>
           ) : (
             <>
               You are signed in, but full access is not enabled yet. Once an administrator approves your account, you
@@ -79,18 +81,18 @@ const PendingApprovalPage: React.FC = () => {
           )}
         </p>
         {auth?.user?.email && (
-          <p className="text-xs text-slate-500 text-center mb-4">
+          <p className="text-xs text-slate-500 text-center mb-2">
             Signed in as <span className="font-medium text-slate-700">{auth.user.email}</span>
           </p>
         )}
+        <p className="text-[10px] text-slate-400 text-center mb-4 font-mono">Build {buildSha}</p>
         {!onCanonicalHost && (
           <div className="text-xs text-blue-900 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-4" role="status">
-            This device is using an old app link ({typeof window !== 'undefined' ? window.location.hostname : 'preview'}).
-            You will be redirected to{' '}
+            Use the latest app at{' '}
             <a href={canonicalUrl} className="font-semibold underline">
               {canonicalUrl.replace(/^https:\/\//, '')}
             </a>
-            . If not redirected, open that URL, sign in, and remove any old home-screen shortcut first.
+            {' '}and remove any old home-screen shortcut.
           </div>
         )}
         {profileHint && !rejected && (
@@ -117,7 +119,7 @@ const PendingApprovalPage: React.FC = () => {
           )}
           <button
             type="button"
-            onClick={() => void handleLogout()}
+            onClick={() => void auth?.logout()}
             className="w-full flex justify-center py-2.5 px-4 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
           >
             Sign out
