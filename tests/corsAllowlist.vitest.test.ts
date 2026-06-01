@@ -83,4 +83,10 @@ describe('corsAllowlist', () => {
     expect(isOriginAllowed('https://app.example.test')).toBe(true);
     expect(isOriginAllowed('https://other.vercel.app')).toBe(false);
   });
+
+  it('respects FINOVA_CANONICAL_APP_URL on functions runtime', () => {
+    process.env.FINOVA_CANONICAL_APP_URL = 'https://finova-hussein.netlify.app';
+    expect(isOriginAllowed('https://finova-hussein.netlify.app')).toBe(true);
+    expect(isOriginAllowed('https://other.netlify.app')).toBe(false);
+  });
 });

@@ -52,11 +52,13 @@ describe('page loading gate coverage', () => {
     expect(offenders, `Remove full-page showBlockingLoader return in: ${offenders.join(', ')}`).toEqual([]);
   });
 
-  it('index.css loads from entry, not lazy AuthenticatedAppShell', () => {
+  it('index.css loads lazily for authenticated shell, not from entry', () => {
     const entry = readFileSync(join(process.cwd(), 'index.tsx'), 'utf8');
     const shell = readFileSync(join(COMPONENTS_DIR, 'AuthenticatedAppShell.tsx'), 'utf8');
-    expect(entry).toMatch(/import\s+['"]\.\/index\.css['"]/);
+    const loader = readFileSync(join(process.cwd(), 'utils/loadAppStyles.ts'), 'utf8');
+    expect(entry).not.toMatch(/import\s+['"]\.\/index\.css['"]/);
     expect(shell).not.toMatch(/import\s+['"]\.\.\/index\.css['"]/);
+    expect(loader).toMatch(/import\s*\(\s*['"]\.\.\/index\.css['"]\s*\)/);
   });
 
   it('Layout shows global hydrate banner', () => {

@@ -58,7 +58,7 @@ function parseHealthJsonPayload(raw: string): { anyProviderConfigured?: boolean 
 export async function fetchGeminiProxyHealthStatus(signal?: AbortSignal): Promise<GeminiProxyHealthResult> {
     const endpoints = getGeminiProxyEndpoints();
     const maxRounds = 3;
-    let saw403 = false;
+    let sawOriginForbidden403 = false;
     let sawSpaShell = false;
 
     for (let round = 0; round < maxRounds; round++) {
@@ -77,7 +77,16 @@ export async function fetchGeminiProxyHealthStatus(signal?: AbortSignal): Promis
                 });
                 const raw = await res.text();
                 if (!res.ok) {
-                    if (res.status === 403) saw403 = true;
+                    if (res.status === 403) {
+                        try {
+                            const errJson = JSON.parse(raw) as { error?: string };
+                            if (typeof errJson.error === 'string' && /origin not allowed/i.test(errJson.error)) {
+                                sawOriginForbidden403 = true;
+                            }
+                        } catch {
+                            if (/origin not allowed/i.test(raw)) sawOriginForbidden403 = true;
+                        }
+                    }
                     continue;
                 }
 
@@ -111,7 +120,7 @@ export async function fetchGeminiProxyHealthStatus(signal?: AbortSignal): Promis
         }
     }
 
-    const unreachableReason: GeminiProxyUnreachableReason = saw403
+    const unreachableReason: GeminiProxyUnreachableReason = sawOriginForbidden403
         ? 'origin_forbidden'
         : sawSpaShell
           ? 'spa_shell'

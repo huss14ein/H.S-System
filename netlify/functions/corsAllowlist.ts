@@ -118,8 +118,14 @@ export function deployedAllowedOrigins(): Set<string> {
     const o = canonicalOrigin(v.trim());
     if (o) set.add(o);
   }
-  // Vercel frontend (static app) calling Netlify-hosted `/api/*` proxies on another host.
-  for (const key of ['VERCEL_URL', 'VERCEL_BRANCH_URL', 'VITE_CANONICAL_APP_URL'] as const) {
+  // Canonical production URL — set on functions via netlify.toml `[context.*.environment]` (not only `[build.environment]`).
+  for (const key of [
+    'FINOVA_CANONICAL_APP_URL',
+    'CANONICAL_APP_URL',
+    'VITE_CANONICAL_APP_URL',
+    'VERCEL_URL',
+    'VERCEL_BRANCH_URL',
+  ] as const) {
     const v = process.env[key]?.trim();
     if (!v) continue;
     const o = canonicalOrigin(v.startsWith('http') ? v : `https://${v}`);

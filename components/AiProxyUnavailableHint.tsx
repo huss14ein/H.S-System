@@ -55,10 +55,14 @@ export const AiProxyUnavailableHint: React.FC<{
           typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'your app origin';
         return (
           <>
-            Add <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">{origin}</code> to{' '}
-            <strong>Site → Environment variables</strong> as{' '}
-            <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">ALLOWED_ORIGINS</code> (comma-separated full origins). Redeploy, then{' '}
-            <strong>Retry connection check</strong>.
+            The AI proxy rejected this browser origin (HTTP 403). After the next deploy,{' '}
+            <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify.toml</code> should allow{' '}
+            <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">{origin}</code> automatically. If this
+            persists, add that URL to <strong>Site → Environment variables</strong> as{' '}
+            <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">ALLOWED_ORIGINS</code> (comma-separated
+            origins, not paths), confirm{' '}
+            <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">GEMINI_API_KEY</code> (or another
+            provider key) is set for <strong>Functions</strong>, redeploy, then <strong>Retry connection check</strong>.
           </>
         );
       }
