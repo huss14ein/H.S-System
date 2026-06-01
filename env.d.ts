@@ -27,3 +27,8 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+declare module '*.css' {
+  const css: string;
+  export default css;
+}

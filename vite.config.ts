@@ -1,7 +1,19 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import netlify from '@netlify/vite-plugin';
+import { execSync } from 'node:child_process';
 import process from 'process';
+
+function buildAuthShellCss(): Plugin {
+  return {
+    name: 'build-auth-shell-css',
+    buildStart() {
+      execSync('npx tailwindcss -i ./auth-shell.css -o ./public/auth-shell.css --minify', {
+        stdio: 'inherit',
+      });
+    },
+  };
+}
 
 /** Stylesheets and modulepreload hints before entry script — avoids CSS chaining behind JS parse. */
 function cssBeforeModuleScripts(): Plugin {
@@ -69,7 +81,7 @@ export default defineConfig(({ mode }) => {
       __WEALTH_ANALYTICS_V2__: JSON.stringify(true),
     },
     // Emulates Netlify redirects (`/api/*` → functions). Functions read AI keys from Netlify Site env server-side only.
-    plugins: [react(), netlify(), injectBuildMeta(), cssBeforeModuleScripts()],
+    plugins: [buildAuthShellCss(), react(), netlify(), injectBuildMeta(), cssBeforeModuleScripts()],
     build: {
       rollupOptions: {
         output: {

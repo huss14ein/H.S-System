@@ -5,6 +5,7 @@ import PendingApprovalPage from './pages/PendingApprovalPage';
 import { AuthContext } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import LoadingSpinner from './components/LoadingSpinner';
+import AppStylesGate from './components/AppStylesGate';
 const AuthenticatedAppShell = lazy(() => import('./components/AuthenticatedAppShell'));
 
 const App: React.FC = () => {
@@ -55,9 +56,11 @@ const App: React.FC = () => {
 
   return (
     <ThemeProvider>
-      <Suspense fallback={<LoadingSpinner className="min-h-screen" />}>
-        <AuthenticatedAppShell />
-      </Suspense>
+      <AppStylesGate>
+        <Suspense fallback={<LoadingSpinner className="min-h-screen" />}>
+          <AuthenticatedAppShell />
+        </Suspense>
+      </AppStylesGate>
     </ThemeProvider>
   );
 };

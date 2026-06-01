@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:vite": "vite",
+    "build:auth-shell": "tailwindcss -i ./auth-shell.css -o ./public/auth-shell.css --minify",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "typecheck": "node scripts/verify-stability-module-files.mjs && tsc --noEmit",
