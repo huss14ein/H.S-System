@@ -172,10 +172,17 @@ If deployment fails:
 
 ## Support & Troubleshooting
 
-- **Merged to main but UI unchanged:** Open **Settings → App build** and compare the commit sha to GitHub `main`. If the sha is old, hard-refresh or use the **Refresh now** banner. If you use **my-finova.netlify.app**, that site must be linked to `huss14ein/H.S-System` (or set GitHub secrets `NETLIFY_AUTH_TOKEN` + `NETLIFY_SITE_ID` so `.github/workflows/deploy-production.yml` publishes `dist/` on every main push). The live Vite app is also at **https://h-s-system.vercel.app**.
+- **Merged to main but UI unchanged:** Open **Settings → App build** and compare the commit sha to GitHub `main`. If the sha is old, hard-refresh or use the **Refresh now** banner. **Wealth Analytics** lives under **Overview → Wealth Analytics** (hash `#Wealth%20Analytics`). If the nav item is missing, you are on a stale bundle or wrong host. Use **https://h-s-system.vercel.app** (Vercel mirror) or **https://finova-hussein.netlify.app** once Netlify is linked to this repo (`NETLIFY_AUTH_TOKEN` + `NETLIFY_SITE_ID` in GitHub secrets). Do **not** use **my-finova.netlify.app** — that is a legacy Next.js app.
 - **Build fails:** Check `netlify.toml` and environment variables
 - **RLS errors:** Verify `rls_all_user_tables.sql` was applied
-- **AI not working:** Check `GEMINI_API_KEY` in Supabase secrets and Netlify env vars
+- **AI not working:** Keys live in **Netlify → Environment variables** (`GEMINI_API_KEY`, etc.) for **Functions** scope — not in the browser bundle. Health check: `POST /api/gemini-proxy` with body `{"health":true}`. After deploy, CI runs the same probe **with an `Origin` header** (see `.github/workflows/deploy-production.yml`). If Executive Summary shows “AI summary is off” with HTTP 403, redeploy **latest `main`** (must include `corsAllowlist` same-host + health bypass). Manual check:
+  ```bash
+  ORIGIN="https://YOUR-SITE.netlify.app"
+  curl -sf -X POST "$ORIGIN/api/gemini-proxy" \
+    -H "Content-Type: application/json" -H "Origin: $ORIGIN" \
+    -d '{"health":true}' | grep anyProviderConfigured
+  ```
+  `finova-hussein.netlify.app` must serve the app (not 404) — confirm Netlify site is linked to this repo and production branch is `main`. Branch `149` fixes ahead of an old `main` merge will not apply until merged and redeployed.
 - **Weekly emails not sending:** Check Edge Function logs, verify cron job, test function manually with curl
 
 ---

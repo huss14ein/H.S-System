@@ -1,14 +1,25 @@
 import "./loadNetlifyFunctionEnv";
 import type { Handler, HandlerEvent } from "@netlify/functions";
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
-import { accessControlOriginHeader, assertBrowserOriginAllowed } from "./corsAllowlist";
+import { accessControlOriginHeader, assertBrowserOriginAllowed, getRequestOrigin } from "./corsAllowlist";
 import { assertProxySupabaseJwt } from "./proxySupabaseJwt";
 
-function corsHeaders(event: HandlerEvent): Record<string, string> {
+function corsHeaders(event: HandlerEvent, opts?: { health?: boolean }): Record<string, string> {
+  const origin = getRequestOrigin(event);
+  const base = {
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  };
+  if (opts?.health && origin) {
+    return {
+      ...base,
+      'Access-Control-Allow-Origin': origin,
+      Vary: 'Origin',
+    };
+  }
   return {
     ...accessControlOriginHeader(event),
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    ...base,
   };
 }
 
@@ -277,12 +288,25 @@ async function callGrok(
   return { text, candidates: [], functionCalls: undefined };
 }
 
+function isHealthProbeBody(body: string | null | undefined): boolean {
+  if (!body) return false;
+  try {
+    const parsed = JSON.parse(body) as { health?: boolean; type?: string; mode?: string };
+    return parsed?.health === true || parsed?.type === 'health' || parsed?.mode === 'health';
+  } catch {
+    return false;
+  }
+}
+
 const handler: Handler = async (event: HandlerEvent) => {
+  const healthProbe = event.httpMethod === 'POST' && isHealthProbeBody(event.body);
+
   if (event.httpMethod === 'OPTIONS') {
-    if (!assertBrowserOriginAllowed(event)) {
+    const origin = getRequestOrigin(event);
+    if (origin && !assertBrowserOriginAllowed(event)) {
       return { statusCode: 403, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ error: 'Origin not allowed' }) };
     }
-    return { statusCode: 200, headers: corsHeaders(event) };
+    return { statusCode: 200, headers: corsHeaders(event, origin ? { health: true } : undefined) };
   }
 
   if (event.httpMethod !== 'POST') {
@@ -307,7 +331,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     }
     const body = JSON.parse(event.body) as { model?: string; contents?: unknown; config?: unknown; health?: boolean; type?: string; mode?: string };
     const { model: requestedModel, contents, config } = body;
-    const healthMode = body?.health === true || body?.type === 'health' || body?.mode === 'health';
+    const healthMode = healthProbe;
     const primaryApiKey = process.env.GEMINI_API_KEY;
     const backupApiKey = process.env.GEMINI_API_KEY_BACKUP;
 
@@ -321,7 +345,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         geminiConfigured || anthropicConfigured || grokConfigured || openaiConfigured;
       return {
         statusCode: 200,
-        headers: { ...corsHeaders(event), "Content-Type": "application/json" },
+        headers: { ...corsHeaders(event, { health: true }), "Content-Type": "application/json" },
         body: JSON.stringify({
           ok: true,
           anyProviderConfigured,

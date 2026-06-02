@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { isOriginAllowed, deployedAllowedOrigins } from '../netlify/functions/corsAllowlist';
+import type { HandlerEvent } from '@netlify/functions';
+import {
+  assertBrowserOriginAllowed,
+  isOriginAllowed,
+  deployedAllowedOrigins,
+  isSameDeploymentOrigin,
+} from '../netlify/functions/corsAllowlist';
 
 describe('corsAllowlist', () => {
   const origEnv = { ...process.env };
@@ -26,9 +32,9 @@ describe('corsAllowlist', () => {
 
   it('respects ALLOWED_ORIGINS when set', () => {
     process.env.ALLOWED_ORIGINS = 'https://app.example.test, https://staging.example.test';
-    // Re-evaluate closure: deployedAllowedOrigins reads env at call time in current impl
     expect(deployedAllowedOrigins().has('https://app.example.test')).toBe(true);
     expect(deployedAllowedOrigins().has('https://staging.example.test')).toBe(true);
+    expect(deployedAllowedOrigins().has('https://finova-hussein.netlify.app')).toBe(true);
     expect(isOriginAllowed('https://app.example.test')).toBe(true);
     expect(isOriginAllowed('https://evil.test')).toBe(false);
   });
@@ -88,5 +94,47 @@ describe('corsAllowlist', () => {
     process.env.FINOVA_CANONICAL_APP_URL = 'https://finova-hussein.netlify.app';
     expect(isOriginAllowed('https://finova-hussein.netlify.app')).toBe(true);
     expect(isOriginAllowed('https://other.netlify.app')).toBe(false);
+  });
+
+  it('allows Vercel mirror origin from ALLOWED_ORIGINS (netlify.toml)', () => {
+    process.env.ALLOWED_ORIGINS =
+      'https://finova-hussein.netlify.app,https://h-s-system.vercel.app,http://localhost:5173';
+    expect(isOriginAllowed('https://h-s-system.vercel.app')).toBe(true);
+  });
+
+  it('allows browser Origin when it matches the request Host (same deployment)', () => {
+    const event = {
+      headers: {
+        origin: 'https://finova-hussein.netlify.app',
+        host: 'finova-hussein.netlify.app',
+      },
+    } as HandlerEvent;
+    expect(isSameDeploymentOrigin(event, 'https://finova-hussein.netlify.app')).toBe(true);
+    expect(assertBrowserOriginAllowed(event)).toBe(true);
+    delete process.env.URL;
+    delete process.env.ALLOWED_ORIGINS;
+    expect(assertBrowserOriginAllowed(event)).toBe(true);
+  });
+
+  it('allows deploy-preview Origin when Host matches preview hostname', () => {
+    const event = {
+      headers: {
+        origin: 'https://abc123--finova-hussein.netlify.app',
+        'x-forwarded-host': 'abc123--finova-hussein.netlify.app',
+      },
+    } as HandlerEvent;
+    expect(assertBrowserOriginAllowed(event)).toBe(true);
+  });
+
+  it('allows unique Netlify deploy-id host via request Host (no ALLOWED_ORIGINS env)', () => {
+    const event = {
+      headers: {
+        origin: 'https://6a1df5bbbf791a00088d929c.netlify.app',
+        host: '6a1df5bbbf791a00088d929c.netlify.app',
+      },
+    } as HandlerEvent;
+    delete process.env.URL;
+    delete process.env.ALLOWED_ORIGINS;
+    expect(assertBrowserOriginAllowed(event)).toBe(true);
   });
 });

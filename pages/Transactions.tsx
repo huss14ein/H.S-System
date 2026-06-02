@@ -44,14 +44,16 @@ import { toSAR, fromSAR } from '../utils/currencyMath';
 import { useCanonicalSpotFx, useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { financialMonthNetCashflowSar } from '../services/dashboardKpiSnapshot';
 import { getPersonalAccounts, getScopedCashTransactions } from '../utils/wealthScope';
-import { filterTransactionsForLedgerView, filterTransactionsForLedgerExport, parseFilterByBudgetPageAction, ledgerDateRangeForFilters, formatLedgerDateYmd, budgetDrillDownDateRange } from '../utils/transactionLedgerFilters';
+import { filterTransactionsForLedgerView, filterTransactionsForLedgerExport, parseFilterByBudgetPageAction, ledgerDateRangeForFilters, formatLedgerDateYmd, budgetDrillDownDateRange, defaultLedgerMonthMode, initialLedgerMonthIso } from '../utils/transactionLedgerFilters';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { exportCashTransactionsToCsv } from '../services/reportingEngine';
 import { computeMonthlyCashflowKpisSar } from '../services/financeTruth';
 import {
     financialMonthKey,
     financialMonthRangeFromKey,
+    financialMonthLabel,
     resolveMonthStartDayFromData,
+    DEFAULT_FINANCIAL_MONTH_START_DAY,
     calendarMonthRangeFromIsoKey,
     currentCalendarMonthIso,
     currentFinancialMonthIso,
@@ -1180,9 +1182,9 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
     const [filters, setFilters] = useState({ 
         accountId: 'all', 
-        month: currentCalendarMonthIso(),
+        month: initialLedgerMonthIso(DEFAULT_FINANCIAL_MONTH_START_DAY),
         allMonths: false,
-        monthMode: 'calendar' as 'calendar' | 'fiscal',
+        monthMode: defaultLedgerMonthMode(DEFAULT_FINANCIAL_MONTH_START_DAY) as 'calendar' | 'fiscal',
         dateRangeOverride: undefined as { start: Date; end: Date } | undefined,
         nature: 'all' as 'all' | 'Fixed' | 'Variable',
         expenseType: 'all' as 'all' | 'Core' | 'Discretionary',
@@ -1196,14 +1198,37 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [filters.accountId, filters.month, filters.allMonths, filters.nature, filters.expenseType, filters.budgetCategory]);
 
     useEffect(() => {
-        setFilters((f) => ({ ...f, month: currentCalendarMonthIso(), monthMode: 'calendar', dateRangeOverride: undefined }));
+        setFilters((f) => ({
+            ...f,
+            month: initialLedgerMonthIso(monthStartDay),
+            monthMode: defaultLedgerMonthMode(monthStartDay),
+            dateRangeOverride: undefined,
+        }));
     }, [monthStartDay]);
+
+    const selectedMonthRangeLabel = useMemo(() => {
+        if (filters.allMonths) return null;
+        const range = ledgerDateRangeForFilters(filters, monthStartDay);
+        if (!range) return null;
+        if (monthStartDay === 1 && filters.monthMode !== 'fiscal') {
+            return `${formatLedgerDateYmd(range.start)} – ${formatLedgerDateYmd(range.end)}`;
+        }
+        const [year, month] = filters.month.split('-').map(Number);
+        if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+        return financialMonthLabel({ year, month }, monthStartDay);
+    }, [filters, monthStartDay]);
 
     const defaultMonthDateBounds = useMemo(() => {
         const range = ledgerDateRangeForFilters(filters, monthStartDay);
         if (!range) {
             const now = new Date();
-            const fallback = calendarMonthRangeFromIsoKey(currentCalendarMonthIso(now));
+            const fallback =
+                monthStartDay === 1
+                    ? calendarMonthRangeFromIsoKey(currentCalendarMonthIso(now))
+                    : financialMonthRangeFromKey(
+                          { year: now.getFullYear(), month: now.getMonth() + 1 },
+                          monthStartDay,
+                      );
             if (!fallback) {
                 return { from: '', to: '' };
             }
@@ -1544,12 +1569,13 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
 
     const usesCanonicalFinancialMonthKpis = useMemo(
         () =>
-            monthStartDay === 1 &&
             filters.accountId === 'all' &&
             filters.nature === 'all' &&
             filters.expenseType === 'all' &&
             filters.budgetCategory === 'all' &&
             !filters.allMonths &&
+            !filters.dateRangeOverride &&
+            (filters.monthMode ?? defaultLedgerMonthMode(monthStartDay)) === 'fiscal' &&
             filters.month === currentFinancialMonthKey,
         [filters, currentFinancialMonthKey, monthStartDay],
     );
@@ -1674,14 +1700,14 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             setFilters((prev) => ({
                 ...prev,
                 month: `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}`,
-                monthMode: 'calendar',
+                monthMode: defaultLedgerMonthMode(monthStartDay),
                 dateRangeOverride: undefined,
                 budgetCategory: category || 'all',
                 type: 'expense',
             }));
             clearPageAction?.();
         }
-    }, [pageAction, clearPageAction]);
+    }, [pageAction, clearPageAction, monthStartDay]);
 
     const handleSaveTransaction = (transaction: Omit<Transaction, 'id'> | Transaction) => {
         const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
@@ -2209,15 +2235,15 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     Ledger: <strong>{scopedCashTransactions.length}</strong> transaction(s) on your visible accounts
                     {filters.allMonths
                         ? ' (all months)'
-                        : filters.monthMode === 'fiscal'
-                            ? ` · fiscal month ${filters.month}`
+                        : (filters.monthMode ?? defaultLedgerMonthMode(monthStartDay)) === 'fiscal'
+                            ? ` · financial month ${filters.month}`
                             : ` · calendar month ${filters.month}`}
                     . Showing <strong>{filteredTransactions.length}</strong> after filters.
                     {filters.budgetCategory !== 'all' && (
                         <span className="inline-flex items-center gap-1.5 ml-2">
                             <span className="badge-neutral">Budget: {filters.budgetCategory}</span>
-                            {filters.monthMode === 'fiscal' && (
-                                <span className="badge-neutral">Fiscal month</span>
+                            {(filters.monthMode ?? defaultLedgerMonthMode(monthStartDay)) === 'fiscal' && (
+                                <span className="badge-neutral">Financial month</span>
                             )}
                             <button
                                 type="button"
@@ -2244,9 +2270,27 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                         type="month"
                         value={filters.month}
                         disabled={filters.allMonths}
-                        onChange={(e) => setFilters({ ...filters, month: e.target.value, allMonths: false, monthMode: 'calendar', dateRangeOverride: undefined })}
+                        onChange={(e) =>
+                            setFilters({
+                                ...filters,
+                                month: e.target.value,
+                                allMonths: false,
+                                monthMode: defaultLedgerMonthMode(monthStartDay),
+                                dateRangeOverride: undefined,
+                            })
+                        }
                         className="input-base w-auto min-w-[140px] disabled:opacity-50"
+                        title={
+                            monthStartDay !== 1
+                                ? `Financial month (starts day ${monthStartDay})`
+                                : 'Calendar month'
+                        }
                     />
+                    {selectedMonthRangeLabel && !filters.allMonths && (
+                        <span className="text-xs text-slate-600 whitespace-nowrap" title="Financial month date range">
+                            {selectedMonthRangeLabel}
+                        </span>
+                    )}
                     <label className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600 cursor-pointer">
                         <input
                             type="checkbox"

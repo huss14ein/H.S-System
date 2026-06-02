@@ -70,7 +70,20 @@ jobs:
         run: |
           SITE_URL=$(npx netlify api getSite --data "{\"site_id\":\"${NETLIFY_SITE_ID}\"}" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);console.log(j.ssl_url||j.url);});")
           echo "Checking ${SITE_URL}"
-          HTML=$(curl -sfL "${SITE_URL}/?nocache=$(date +%s)")
+          HTTP_CODE=$(curl -sfL -o /tmp/finova-index.html -w '%{http_code}' "${SITE_URL}/?nocache=$(date +%s)")
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error title=Netlify production not serving app::${SITE_URL} returned HTTP ${HTTP_CODE} (expected 200 with finova-app meta)."
+            exit 1
+          fi
+          HTML=$(cat /tmp/finova-index.html)
           echo "$HTML" | grep -q 'name="finova-app"'
           echo "$HTML" | grep -q 'name="finova-build-sha"'
+          grep -rl 'Wealth Analytics' dist/assets/*.js > /dev/null
           echo "Netlify production serves H.S-System Vite app at ${SITE_URL}"
+          ORIGIN="${SITE_URL%/}"
+          HEALTH=$(curl -sfL -X POST "${ORIGIN}/api/gemini-proxy" \
+            -H "Content-Type: application/json" \
+            -H "Origin: ${ORIGIN}" \
+            -d '{"health":true}')
+          echo "$HEALTH" | grep -q 'anyProviderConfigured'
+          echo "AI proxy health OK with browser Origin header at ${ORIGIN}"

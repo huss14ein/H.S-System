@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAI, type AiUnavailableReason } from '../context/AiContext';
+import { getCanonicalAppUrl, isOnCanonicalHost } from '../utils/buildInfo';
 
 type Variant = 'centered' | 'banner';
 
@@ -53,16 +54,27 @@ export const AiProxyUnavailableHint: React.FC<{
       case 'origin_blocked': {
         const origin =
           typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'your app origin';
+        const onCanonical = isOnCanonicalHost();
+        const canonical = getCanonicalAppUrl();
         return (
           <>
-            The AI proxy rejected this browser origin (HTTP 403). After the next deploy,{' '}
-            <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">netlify.toml</code> should allow{' '}
-            <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">{origin}</code> automatically. If this
-            persists, add that URL to <strong>Site → Environment variables</strong> as{' '}
-            <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">ALLOWED_ORIGINS</code> (comma-separated
-            origins, not paths), confirm{' '}
-            <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">GEMINI_API_KEY</code> (or another
-            provider key) is set for <strong>Functions</strong>, redeploy, then <strong>Retry connection check</strong>.
+            The AI proxy blocked this page (HTTP 403).{' '}
+            {!onCanonical ? (
+              <>
+                You are on a deploy URL ({origin}). Trigger a new deploy with the latest code so this host is allowed,
+                or open{' '}
+                <a href={canonical} className="font-semibold underline">
+                  {canonical.replace(/^https:\/\//, '')}
+                </a>{' '}
+                once production is live.
+              </>
+            ) : (
+              <>
+                Redeploy the latest build, then <strong>Retry connection check</strong>. Confirm{' '}
+                <code className="text-xs bg-amber-100 px-1 rounded dark:bg-amber-900/50">GEMINI_API_KEY</code> is set
+                under Netlify → Environment variables (Functions scope).
+              </>
+            )}
           </>
         );
       }

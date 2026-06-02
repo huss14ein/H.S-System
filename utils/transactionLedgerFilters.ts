@@ -3,7 +3,9 @@ import { getTransactionBudgetAllocations } from '../services/transactionBudgetAl
 import {
   calendarMonthRangeFromIsoKey,
   currentCalendarMonthIso,
+  currentFinancialMonthIso,
   dateInRange,
+  DEFAULT_FINANCIAL_MONTH_START_DAY,
   financialMonthRangeFromKey,
 } from './financialMonth';
 import { resolveTransactionAccountId } from './wealthScope';
@@ -76,12 +78,30 @@ function passesVisibilityScope(
   return isVisibleForCollaborator(t, scope.allowedBudgetCategories ?? []);
 }
 
+/** Ledger month picker: fiscal (28→27 style) unless settings use calendar day 1. */
+export function defaultLedgerMonthMode(monthStartDay: number): 'calendar' | 'fiscal' {
+  return monthStartDay === 1 ? 'calendar' : 'fiscal';
+}
+
+export function initialLedgerMonthIso(monthStartDay: number, ref = new Date()): string {
+  return monthStartDay === 1
+    ? currentCalendarMonthIso(ref)
+    : currentFinancialMonthIso(ref, monthStartDay);
+}
+
+function resolveLedgerMonthMode(
+  filters: TransactionLedgerFilters,
+  monthStartDay: number,
+): 'calendar' | 'fiscal' {
+  return filters.monthMode ?? defaultLedgerMonthMode(monthStartDay);
+}
+
 function monthRangeForFilters(
   filters: TransactionLedgerFilters,
   monthStartDay: number,
 ): { start: Date; end: Date } | null {
-  const monthIso = filters.month.trim() || currentCalendarMonthIso();
-  if (filters.monthMode === 'fiscal') {
+  const monthIso = filters.month.trim() || initialLedgerMonthIso(monthStartDay);
+  if (resolveLedgerMonthMode(filters, monthStartDay) === 'fiscal') {
     const [year, month] = monthIso.split('-').map(Number);
     if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
     return financialMonthRangeFromKey({ year, month }, monthStartDay);
@@ -131,12 +151,12 @@ export function budgetDrillDownDateRange(
 
 /**
  * UI ledger filters — account, nature, type, budget category.
- * Month picker uses calendar months; budget drill-down uses fiscal months when monthMode=fiscal.
+ * Month picker uses fiscal months when settings monthStartDay ≠ 1 (default 28→27); calendar when day 1.
  */
 export function filterTransactionsForLedgerView(
   transactions: Transaction[],
   filters: TransactionLedgerFilters,
-  monthStartDay = 1,
+  monthStartDay = DEFAULT_FINANCIAL_MONTH_START_DAY,
   visibilityScope?: TransactionLedgerVisibilityScope,
 ): Transaction[] {
   const monthRange = ledgerDateRangeForFilters(filters, monthStartDay);

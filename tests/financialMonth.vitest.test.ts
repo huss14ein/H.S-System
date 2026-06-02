@@ -10,6 +10,7 @@ import {
   financialMonthColumnHeadersForPlanYear,
   financialMonthKeysEndingAt,
   financialMonthIsoKey,
+  currentFinancialMonthIso,
   dateInRange,
   parseCalendarDateLocal,
   calendarMonthRangeFromIsoKey,
@@ -167,6 +168,26 @@ describe('parseCalendarDateLocal and dateInRange', () => {
 });
 
 describe('resolveMonthStartDayFromData', () => {
+  it('financial month key 2026-06 runs Jun 28 through Jul 27 when start day is 28', () => {
+    const monthStartDay = 28;
+    const { start, end } = financialMonthRangeFromKey({ year: 2026, month: 6 }, monthStartDay);
+    expect(start.getFullYear()).toBe(2026);
+    expect(start.getMonth()).toBe(5);
+    expect(start.getDate()).toBe(28);
+    expect(end.getFullYear()).toBe(2026);
+    expect(end.getMonth()).toBe(6);
+    expect(end.getDate()).toBe(27);
+  });
+
+  it('on Jun 1 the active financial month key is 2026-05 (May 28 – Jun 27)', () => {
+    expect(currentFinancialMonthIso(new Date(2026, 5, 1), 28)).toBe('2026-05');
+    const { start, end } = financialMonthRangeFromKey({ year: 2026, month: 5 }, 28);
+    expect(start.getDate()).toBe(28);
+    expect(start.getMonth()).toBe(4);
+    expect(end.getDate()).toBe(27);
+    expect(end.getMonth()).toBe(5);
+  });
+
   it('defaults to day 28 when settings omit month start day', () => {
     expect(resolveMonthStartDayFromData(null)).toBe(DEFAULT_FINANCIAL_MONTH_START_DAY);
     expect(resolveMonthStartDayFromData({ settings: {} })).toBe(DEFAULT_FINANCIAL_MONTH_START_DAY);
