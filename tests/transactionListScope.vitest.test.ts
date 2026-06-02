@@ -24,6 +24,8 @@ describe('transaction list scope', () => {
 
     it('Transactions page wires fiscal drill-down, governance loading, and hydrate warning', () => {
         const src = readFileSync(join(process.cwd(), 'pages/Transactions.tsx'), 'utf8');
+        expect(src).toContain('defaultLedgerMonthMode');
+        expect(src).toContain('initialLedgerMonthIso');
         expect(src).toContain("monthMode: 'fiscal'");
         expect(src).toContain('transactionsLoadWarning');
         expect(src).toContain('orphanTransactionCount');
@@ -118,7 +120,7 @@ describe('transaction list scope', () => {
         ).toEqual([txs[0], txs[2]]);
     });
 
-    it('filterTransactionsForLedgerView uses calendar month not fiscal month (day 28 start)', () => {
+    it('filterTransactionsForLedgerView uses calendar month when monthMode=calendar (day 28 start)', () => {
         const txs = [
             { id: 'early', accountId: 'a1', amount: -10, date: '2026-05-05', description: 'Early May', type: 'expense', category: 'Food' },
             { id: 'late', accountId: 'a1', amount: -10, date: '2026-05-29', description: 'Late May', type: 'expense', category: 'Food' },
@@ -126,14 +128,22 @@ describe('transaction list scope', () => {
         ] as Transaction[];
         const may = filterTransactionsForLedgerView(
             txs,
-            { accountId: 'all', month: '2026-05', allMonths: false, nature: 'all', expenseType: 'all', budgetCategory: 'all' },
+            {
+                accountId: 'all',
+                month: '2026-05',
+                allMonths: false,
+                monthMode: 'calendar',
+                nature: 'all',
+                expenseType: 'all',
+                budgetCategory: 'all',
+            },
             28,
             { mode: 'owner', governanceReady: true },
         );
         expect(may.map((t) => t.id).sort()).toEqual(['early', 'late']);
     });
 
-    it('filterTransactionsForLedgerView uses fiscal month when monthMode=fiscal (day 28 start)', () => {
+    it('filterTransactionsForLedgerView defaults to fiscal month when monthStartDay=28 (28→27 window)', () => {
         const txs = [
             { id: 'early', accountId: 'a1', amount: -10, date: '2026-05-05', description: 'Early May', type: 'expense', category: 'Food' },
             { id: 'late', accountId: 'a1', amount: -10, date: '2026-05-29', description: 'Late May', type: 'expense', category: 'Food' },
@@ -141,15 +151,7 @@ describe('transaction list scope', () => {
         ] as Transaction[];
         const fiscalMay = filterTransactionsForLedgerView(
             txs,
-            {
-                accountId: 'all',
-                month: '2026-05',
-                allMonths: false,
-                monthMode: 'fiscal',
-                nature: 'all',
-                expenseType: 'all',
-                budgetCategory: 'all',
-            },
+            { accountId: 'all', month: '2026-05', allMonths: false, nature: 'all', expenseType: 'all', budgetCategory: 'all' },
             28,
             { mode: 'owner', governanceReady: true },
         );
@@ -235,6 +237,26 @@ describe('transaction list scope', () => {
             month: 5,
             anchorDate: '2026-05-15',
         });
+    });
+
+    it('ledgerDateRangeForFilters defaults to fiscal bounds without monthMode (day 28)', () => {
+        const expected = financialMonthRangeFromKey({ year: 2026, month: 6 }, 28);
+        const range = ledgerDateRangeForFilters(
+            {
+                accountId: 'all',
+                month: '2026-06',
+                allMonths: false,
+                nature: 'all',
+                expenseType: 'all',
+                budgetCategory: 'all',
+            },
+            28,
+        );
+        expect(range).not.toBeNull();
+        expect(formatLedgerDateYmd(range!.start)).toBe('2026-06-28');
+        expect(formatLedgerDateYmd(range!.end)).toBe('2026-07-27');
+        expect(formatLedgerDateYmd(range!.start)).toBe(formatLedgerDateYmd(expected.start));
+        expect(formatLedgerDateYmd(range!.end)).toBe(formatLedgerDateYmd(expected.end));
     });
 
     it('ledgerDateRangeForFilters aligns fiscal list bounds with export sync', () => {
