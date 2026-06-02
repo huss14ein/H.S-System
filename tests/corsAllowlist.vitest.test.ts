@@ -96,6 +96,12 @@ describe('corsAllowlist', () => {
     expect(isOriginAllowed('https://other.netlify.app')).toBe(false);
   });
 
+  it('allows Vercel mirror origin from ALLOWED_ORIGINS (netlify.toml)', () => {
+    process.env.ALLOWED_ORIGINS =
+      'https://finova-hussein.netlify.app,https://h-s-system.vercel.app,http://localhost:5173';
+    expect(isOriginAllowed('https://h-s-system.vercel.app')).toBe(true);
+  });
+
   it('allows browser Origin when it matches the request Host (same deployment)', () => {
     const event = {
       headers: {

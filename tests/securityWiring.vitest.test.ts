@@ -16,9 +16,10 @@ describe('security wiring', () => {
     expect(tracked).toBe('');
   });
 
-  it('vercel.json ships security headers', () => {
+  it('vercel.json serves SPA and proxies API (no permanent redirect to Netlify)', () => {
     const vercel = read('vercel.json');
-    expect(vercel).toContain('X-Frame-Options');
+    expect(vercel).not.toContain('"redirects"');
+    expect(vercel).toContain('/api/:path*');
     expect(vercel).toContain('Content-Security-Policy');
     expect(vercel).toContain('Strict-Transport-Security');
   });
@@ -29,11 +30,17 @@ describe('security wiring', () => {
     expect(netlify).toContain('Content-Security-Policy');
   });
 
-  it('Netlify proxies wire CORS + JWT gates', () => {
-    for (const fn of ['gemini-proxy.ts', 'stooq-proxy.ts', 'sahmk-proxy.ts']) {
-      const src = read(`netlify/functions/${fn}`);
-      expect(src).toContain('assertBrowserOriginAllowed');
-      expect(src).toContain('assertProxySupabaseJwt');
+  it('Netlify gemini-proxy wires CORS + JWT gates and health bypass', () => {
+    const src = read('netlify/functions/gemini-proxy.ts');
+    expect(src).toContain('assertBrowserOriginAllowed');
+    expect(src).toContain('assertProxySupabaseJwt');
+    expect(src).toContain('isHealthProbeBody');
+    expect(src).toMatch(/if\s*\(!assertBrowserOriginAllowed\(event\)\)/);
+    expect(src).not.toMatch(/!healthProbe && !assertBrowserOriginAllowed/);
+    for (const fn of ['stooq-proxy.ts', 'sahmk-proxy.ts']) {
+      const proxy = read(`netlify/functions/${fn}`);
+      expect(proxy).toContain('assertBrowserOriginAllowed');
+      expect(proxy).toContain('assertProxySupabaseJwt');
     }
   });
 

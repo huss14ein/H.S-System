@@ -1,12 +1,14 @@
 {
-  "redirects": [
+  "rewrites": [
     {
-      "source": "/(.*)",
-      "destination": "https://finova-hussein.netlify.app/$1",
-      "permanent": true
+      "source": "/api/:path*",
+      "destination": "https://finova-hussein.netlify.app/api/:path*"
+    },
+    {
+      "source": "/((?!assets/|logo\\.svg|auth-shell\\.css).*)",
+      "destination": "/index.html"
     }
   ],
-  "rewrites": [{ "source": "/((?!assets/|logo\\.svg|auth-shell\\.css).*)", "destination": "/index.html" }],
   "headers": [
     {
       "source": "/assets/(.*)",

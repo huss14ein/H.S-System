@@ -19,8 +19,8 @@ export function shouldRedirectToCanonicalHost(hostname: string, canonicalHostnam
   if (!host || !canonical || host === canonical) return false;
   if (isLocalDevHost(host)) return false;
   // Legacy Netlify deploy permalinks: <hash>--<site-slug>.netlify.app (not unique deploy-id hosts).
+  // Vercel production (h-s-system.vercel.app) is a first-class host — do not redirect to Netlify.
   if (host.endsWith('.netlify.app') && host.includes('--')) return true;
-  if (host.endsWith('.vercel.app')) return true;
   return false;
 }
 

@@ -1,12 +1,19 @@
 import React, { useState, useContext, Suspense, lazy } from 'react';
-import LoginPage from './pages/LoginPage';
-import SignupPage from './pages/SignupPage';
-import PendingApprovalPage from './pages/PendingApprovalPage';
 import { AuthContext } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import LoadingSpinner from './components/LoadingSpinner';
-import AppStylesGate from './components/AppStylesGate';
+
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const SignupPage = lazy(() => import('./pages/SignupPage'));
+const PendingApprovalPage = lazy(() => import('./pages/PendingApprovalPage'));
 const AuthenticatedAppShell = lazy(() => import('./components/AuthenticatedAppShell'));
+const AppStylesGate = lazy(() => import('./components/AppStylesGate'));
+
+const AuthShellFallback = () => (
+  <div className="min-h-screen flex items-center justify-center bg-gray-50" aria-busy="true" aria-label="Loading">
+    <div className="h-10 w-10 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+  </div>
+);
 
 const App: React.FC = () => {
   const auth = useContext(AuthContext);
@@ -31,7 +38,9 @@ const App: React.FC = () => {
     const showSignup = authHash === '#signup';
     return (
       <ThemeProvider>
-        {showSignup ? <SignupPage /> : <LoginPage />}
+        <Suspense fallback={<AuthShellFallback />}>
+          {showSignup ? <SignupPage /> : <LoginPage />}
+        </Suspense>
       </ThemeProvider>
     );
   }
@@ -49,18 +58,22 @@ const App: React.FC = () => {
   if (isSignupRejected || approvalSyncIssue || approvalHardBlock) {
     return (
       <ThemeProvider>
-        <PendingApprovalPage />
+        <Suspense fallback={<AuthShellFallback />}>
+          <PendingApprovalPage />
+        </Suspense>
       </ThemeProvider>
     );
   }
 
   return (
     <ThemeProvider>
-      <AppStylesGate>
-        <Suspense fallback={<LoadingSpinner className="min-h-screen" />}>
-          <AuthenticatedAppShell />
-        </Suspense>
-      </AppStylesGate>
+      <Suspense fallback={<LoadingSpinner className="min-h-screen" />}>
+        <AppStylesGate>
+          <Suspense fallback={<LoadingSpinner className="min-h-screen" />}>
+            <AuthenticatedAppShell />
+          </Suspense>
+        </AppStylesGate>
+      </Suspense>
     </ThemeProvider>
   );
 };

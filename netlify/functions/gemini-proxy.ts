@@ -302,10 +302,11 @@ const handler: Handler = async (event: HandlerEvent) => {
   const healthProbe = event.httpMethod === 'POST' && isHealthProbeBody(event.body);
 
   if (event.httpMethod === 'OPTIONS') {
-    if (!assertBrowserOriginAllowed(event)) {
+    const origin = getRequestOrigin(event);
+    if (origin && !assertBrowserOriginAllowed(event)) {
       return { statusCode: 403, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ error: 'Origin not allowed' }) };
     }
-    return { statusCode: 200, headers: corsHeaders(event) };
+    return { statusCode: 200, headers: corsHeaders(event, origin ? { health: true } : undefined) };
   }
 
   if (event.httpMethod !== 'POST') {
@@ -316,7 +317,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     };
   }
 
-  if (!healthProbe && !assertBrowserOriginAllowed(event)) {
+  if (!assertBrowserOriginAllowed(event)) {
     return {
       statusCode: 403,
       headers: { "Content-Type": "application/json" },

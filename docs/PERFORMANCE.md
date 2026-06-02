@@ -16,15 +16,19 @@ If **AI summary is off** after deploy:
 
 ## Auditing the production URL
 
-Preview deploy URLs (`https://<hash>--finova-hussein.netlify.app/`) **redirect to** the canonical host via an inline script in `index.html` and `enforceCanonicalHostRedirect()`. Lighthouse will flag that redirect and may skew metrics.
+Preview deploy URLs (`https://<hash>--finova-hussein.netlify.app/`) **redirect to** the canonical Netlify host via an inline script in `index.html` and `enforceCanonicalHostRedirect()`. **Vercel** (`https://h-s-system.vercel.app`) is a first-class mirror and is **not** redirected.
 
-**Always run Lighthouse against:** `https://finova-hussein.netlify.app/` (see `VITE_CANONICAL_APP_URL` in `netlify.toml`).
+**Lighthouse:** use `https://h-s-system.vercel.app/` or `https://finova-hussein.netlify.app/` (when Netlify serves 200).
 
 ## Login / unauthenticated shell
 
 - **Critical CSS:** inline rules in `index.html` for first paint (system font, layout).
-- **`auth-shell.css`:** small Tailwind build (`tailwind.auth.config.js`) for login, signup, and pending approval only — built to `public/auth-shell.css` on each `vite build` / dev server start.
-- **Full `index.css`:** loaded only after the user passes approval and enters `AuthenticatedAppShell` (`utils/loadAppStyles.ts` + `AppStylesGate`).
+- **`auth-shell.css`:** small Tailwind build (`tailwind.auth.config.js`) for login, signup, and pending approval only — built to `public/auth-shell.css` on each `vite build` / dev server start. Loaded via **non-blocking** `rel=preload` + `onload` stylesheet swap.
+- **Auth pages:** `LoginPage`, `SignupPage`, and `PendingApprovalPage` are **lazy** — not in the entry chunk.
+- **Full `index.css`:** loaded only after the user passes approval and enters `AuthenticatedAppShell` (`utils/loadAppStyles.ts` + lazy `AppStylesGate`).
+- **Charts (`vendor-recharts`):** only in lazy route chunks after login — not on the login Lighthouse path when the latest build is deployed.
+
+Run `npm run verify:login-performance` after changes to this path.
 
 ## After login
 

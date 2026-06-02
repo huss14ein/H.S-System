@@ -22,14 +22,16 @@ function cssBeforeModuleScripts(): Plugin {
     transformIndexHtml: {
       order: 'post',
       handler(html) {
-        const styles = [...html.matchAll(/<link[^>]*rel="stylesheet"[^>]*>/gi)].map((m) => m[0]);
+        const withoutNoscript = html.replace(/<noscript>[\s\S]*?<\/noscript>/gi, '');
+        const styles = [...withoutNoscript.matchAll(/<link[^>]*rel="stylesheet"[^>]*>/gi)]
+          .map((m) => m[0])
+          .filter((tag) => /\/assets\//.test(tag));
         const preloads = [...html.matchAll(/<link[^>]*rel="modulepreload"[^>]*>/gi)].map((m) => m[0]);
         if (styles.length === 0 && preloads.length === 0) return html;
         let out = html
-          .replace(/<link[^>]*rel="stylesheet"[^>]*>\s*/gi, '')
+          .replace(/<link[^>]*rel="stylesheet"[^>]*\/assets\/[^>]*>\s*/gi, '')
           .replace(/<link[^>]*rel="modulepreload"[^>]*>\s*/gi, '');
         const firstModuleScript = out.search(/<script[^>]*type="module"/i);
-        // Keep stripped `out` — returning `html` would restore links we already removed.
         if (firstModuleScript === -1) return out;
         const injection = [...styles, ...preloads].join('\n  ') + '\n  ';
         return out.slice(0, firstModuleScript) + injection + out.slice(firstModuleScript);
@@ -62,7 +64,7 @@ function injectBuildMeta(): Plugin {
         const canonical =
           process.env.VITE_CANONICAL_APP_URL?.trim().replace(/\/$/, '') ||
           'https://finova-hussein.netlify.app';
-        const redirectScript = `<script>(function(){try{var c=${JSON.stringify(canonical)};var h=location.hostname.toLowerCase();var ch=new URL(c).hostname.toLowerCase();if(h===ch||h==='localhost'||h==='127.0.0.1'||/^10\\.|^192\\.168\\.|^172\\.(1[6-9]|2\\d|3[01])\\./.test(h))return;if((h.slice(-12)==='.netlify.app'&&h.indexOf('--')!==-1)||h.slice(-11)==='.vercel.app'){location.replace(c+location.pathname+location.search+location.hash);}}catch(e){}})();</script>`;
+        const redirectScript = `<script>(function(){try{var c=${JSON.stringify(canonical)};var h=location.hostname.toLowerCase();var ch=new URL(c).hostname.toLowerCase();if(h===ch||h==='localhost'||h==='127.0.0.1'||/^10\\.|^192\\.168\\.|^172\\.(1[6-9]|2\\d|3[01])\\./.test(h))return;if(h.slice(-12)==='.netlify.app'&&h.indexOf('--')!==-1){location.replace(c+location.pathname+location.search+location.hash);}}catch(e){}})();</script>`;
         return html
           .replace('</head>', `    ${meta}\n    ${redirectScript}\n  </head>`);
       },
@@ -83,10 +85,15 @@ export default defineConfig(({ mode }) => {
     // Emulates Netlify redirects (`/api/*` → functions). Functions read AI keys from Netlify Site env server-side only.
     plugins: [buildAuthShellCss(), react(), netlify(), injectBuildMeta(), cssBeforeModuleScripts()],
     build: {
+      modulePreload: { polyfill: false },
+      cssCodeSplit: true,
       rollupOptions: {
         output: {
           manualChunks(id) {
-            if (!id.includes('node_modules')) return undefined;
+            if (!id.includes('node_modules')) {
+              if (id.includes('/context/AuthContext')) return 'vendor-auth';
+              return undefined;
+            }
 
             if (id.includes('recharts')) {
               return 'vendor-recharts';
