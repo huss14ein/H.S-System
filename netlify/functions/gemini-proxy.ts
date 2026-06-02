@@ -1,11 +1,26 @@
 import "./loadNetlifyFunctionEnv";
 import type { Handler, HandlerEvent } from "@netlify/functions";
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
-import { assertBrowserOriginAllowed, geminiProxyCorsHeaders } from "./corsAllowlist";
+import { accessControlOriginHeader, assertBrowserOriginAllowed, getRequestOrigin } from "./corsAllowlist";
 import { assertProxySupabaseJwt } from "./proxySupabaseJwt";
 
-function corsHeaders(event: HandlerEvent, mode: 'preflight' | 'health' | 'default' = 'default'): Record<string, string> {
-  return geminiProxyCorsHeaders(event, mode);
+function corsHeaders(event: HandlerEvent, opts?: { health?: boolean }): Record<string, string> {
+  const origin = getRequestOrigin(event);
+  const base = {
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  };
+  if (opts?.health && origin) {
+    return {
+      ...base,
+      'Access-Control-Allow-Origin': origin,
+      Vary: 'Origin',
+    };
+  }
+  return {
+    ...accessControlOriginHeader(event),
+    ...base,
+  };
 }
 
 /** Fallback model if the requested one is unavailable (e.g. preview not enabled). */
@@ -287,7 +302,10 @@ const handler: Handler = async (event: HandlerEvent) => {
   const healthProbe = event.httpMethod === 'POST' && isHealthProbeBody(event.body);
 
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 204, headers: corsHeaders(event, 'preflight'), body: '' };
+    if (!assertBrowserOriginAllowed(event)) {
+      return { statusCode: 403, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ error: 'Origin not allowed' }) };
+    }
+    return { statusCode: 200, headers: corsHeaders(event) };
   }
 
   if (event.httpMethod !== 'POST') {
@@ -326,7 +344,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         geminiConfigured || anthropicConfigured || grokConfigured || openaiConfigured;
       return {
         statusCode: 200,
-        headers: { ...corsHeaders(event, 'health'), "Content-Type": "application/json" },
+        headers: { ...corsHeaders(event, { health: true }), "Content-Type": "application/json" },
         body: JSON.stringify({
           ok: true,
           anyProviderConfigured,

@@ -60,7 +60,8 @@ function canonicalOrigin(raw: string): string | null {
 
 /**
  * Netlify site slug from `*.netlify.app` hostname: production `mysite.netlify.app` → `mysite`;
- * deploy permalink `abc123--mysite.netlify.app` → `mysite`.
+ * deploy permalink `abc123--mysite.netlify.app` → `mysite`;
+ * unique deploy host `abc123def.netlify.app` → `abc123def` (no `--` separator).
  */
 export function netlifySiteSlugFromHostname(hostname: string): string | null {
   const h = hostname.trim().toLowerCase();
@@ -99,9 +100,35 @@ function isNetlifyDeployOrProductionOriginForSite(origin: string, siteSlug: stri
   }
 }
 
+/** Baked production origin — works even when Netlify function env is empty. */
+const BAKED_DEFAULT_ORIGINS = ['https://finova-hussein.netlify.app'] as const;
+
+/** Hostnames from Netlify deploy env + the host serving this request. */
+export function deployedHostnamesFromContext(event?: HandlerEvent): Set<string> {
+  const hosts = new Set<string>();
+  for (const key of ['URL', 'DEPLOY_PRIME_URL', 'DEPLOY_URL', 'NETLIFY_SITE_URL'] as const) {
+    const v = process.env[key]?.trim();
+    if (!v) continue;
+    try {
+      hosts.add(new URL(v).hostname.toLowerCase());
+    } catch {
+      /* ignore */
+    }
+  }
+  if (event) {
+    const h = requestHostFromEvent(event);
+    if (h) hosts.add(h);
+  }
+  return hosts;
+}
+
 /** Origins merged from Netlify deployment env + ALLOWED_ORIGINS. */
-export function deployedAllowedOrigins(): Set<string> {
+export function deployedAllowedOrigins(event?: HandlerEvent): Set<string> {
   const set = new Set<string>();
+  for (const baked of BAKED_DEFAULT_ORIGINS) {
+    const o = canonicalOrigin(baked);
+    if (o) set.add(o);
+  }
   const extras = String(process.env.ALLOWED_ORIGINS ?? '')
     .split(/[,\n]/)
     .map((s) => s.trim().replace(/^["']+|["']+$/g, '').trim())
@@ -131,6 +158,12 @@ export function deployedAllowedOrigins(): Set<string> {
     const o = canonicalOrigin(v.startsWith('http') ? v : `https://${v}`);
     if (o) set.add(o);
   }
+  if (event) {
+    for (const host of deployedHostnamesFromContext(event)) {
+      const o = canonicalOrigin(`https://${host}`);
+      if (o) set.add(o);
+    }
+  }
   return set;
 }
 
@@ -138,6 +171,10 @@ function requestOrigin(event: HandlerEvent): string | undefined {
   const h = event.headers ?? {};
   const raw = (h['origin'] ?? h['Origin']) as string | undefined;
   return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
+}
+
+export function getRequestOrigin(event: HandlerEvent): string | undefined {
+  return requestOrigin(event);
 }
 
 /** Host serving this function invocation (Netlify sets `x-forwarded-host` / `host`). */
@@ -164,64 +201,23 @@ export function isSameDeploymentOrigin(event: HandlerEvent, origin: string): boo
   }
 }
 
-export function isOriginAllowed(origin: string): boolean {
+export function isOriginAllowed(origin: string, event?: HandlerEvent): boolean {
   if (LOCAL_ORIGIN_RE.test(origin)) return true;
   if (isPrivateOrLocalNetworkOrigin(origin)) return true;
   const ctxSlug = netlifySiteSlugFromContextEnv();
   if (ctxSlug && isNetlifyDeployOrProductionOriginForSite(origin, ctxSlug)) return true;
-  return deployedAllowedOrigins().has(origin);
-}
-
-/** Preview/production Netlify hosts for this site (slug from URL env + deploy permalink). */
-function isTrustedNetlifySiteOrigin(event: HandlerEvent, origin: string): boolean {
-  if (isSameDeploymentOrigin(event, origin)) return true;
-  const host = requestHostFromEvent(event);
-  if (!host?.endsWith('.netlify.app')) return false;
   try {
-    const originHost = new URL(origin).hostname.toLowerCase();
-    if (!originHost.endsWith('.netlify.app')) return false;
-    const ctxSlug = netlifySiteSlugFromContextEnv();
-    if (ctxSlug) {
-      const hostSlug = netlifySiteSlugFromHostname(host);
-      const originSlug = netlifySiteSlugFromHostname(originHost);
-      if (hostSlug === ctxSlug || originSlug === ctxSlug) return true;
-    }
-    for (const key of ['DEPLOY_URL', 'DEPLOY_PRIME_URL', 'URL'] as const) {
-      const v = process.env[key]?.trim();
-      if (!v) continue;
-      try {
-        const deployHost = new URL(v).hostname.toLowerCase();
-        if (deployHost === host || deployHost === originHost) return true;
-      } catch {
-        /* ignore */
-      }
-    }
-    return false;
+    const oh = new URL(origin).hostname.toLowerCase();
+    if (event && deployedHostnamesFromContext(event).has(oh)) return true;
   } catch {
-    return false;
+    /* ignore */
   }
+  return deployedAllowedOrigins(event).has(origin);
 }
 
 export function isOriginAllowedForRequest(event: HandlerEvent, origin: string): boolean {
-  if (isTrustedNetlifySiteOrigin(event, origin)) return true;
-  return isOriginAllowed(origin);
-}
-
-/** CORS headers for browser callers. `reflect` echoes `Origin` (OPTIONS preflight + health probes). */
-export function browserCorsHeaders(
-  event: HandlerEvent,
-  opts: { allowMethods: string; reflect?: boolean },
-): Record<string, string> {
-  const base: Record<string, string> = {
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Allow-Methods': opts.allowMethods,
-  };
-  const origin = requestOrigin(event);
-  if (!origin) return base;
-  if (opts.reflect || isOriginAllowedForRequest(event, origin)) {
-    return { ...base, 'Access-Control-Allow-Origin': origin, Vary: 'Origin' };
-  }
-  return base;
+  if (isSameDeploymentOrigin(event, origin)) return true;
+  return isOriginAllowed(origin, event);
 }
 
 /**
@@ -243,15 +239,4 @@ export function accessControlOriginHeader(event: HandlerEvent): Record<string, s
     'Access-Control-Allow-Origin': origin,
     Vary: 'Origin',
   };
-}
-
-/** Gemini proxy: permissive preflight + health (POST still gated except health body). */
-export function geminiProxyCorsHeaders(
-  event: HandlerEvent,
-  mode: 'preflight' | 'health' | 'default',
-): Record<string, string> {
-  return browserCorsHeaders(event, {
-    allowMethods: 'POST, OPTIONS',
-    reflect: mode === 'preflight' || mode === 'health',
-  });
 }

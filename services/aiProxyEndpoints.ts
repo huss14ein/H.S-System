@@ -1,5 +1,3 @@
-import { getAiProxyAuthorizationHeader } from './aiProxyAuth';
-
 /**
  * Single source of truth for Netlify `gemini-proxy` URLs. Provider keys are read only in the function from
  * Netlify Site → Environment variables (`process.env`), never in the client bundle.
@@ -34,11 +32,7 @@ export function getGeminiProxyEndpoints(): string[] {
 }
 
 /** When `reachable` is false, best-effort reason (403 CORS, HTML shell instead of function, or network/parse). */
-export type GeminiProxyUnreachableReason =
-    | 'origin_forbidden'
-    | 'spa_shell'
-    | 'functions_missing'
-    | 'unreachable';
+export type GeminiProxyUnreachableReason = 'origin_forbidden' | 'spa_shell' | 'unreachable';
 
 export type GeminiProxyHealthResult = {
     /** At least one endpoint returned HTTP 200 with a parseable health JSON body */
@@ -74,7 +68,6 @@ export async function fetchGeminiProxyHealthStatus(signal?: AbortSignal): Promis
     const maxRounds = 3;
     let sawOriginForbidden403 = false;
     let sawSpaShell = false;
-    let sawFunctionsMissing = false;
     const relativeEndpoints = endpoints.filter((u) => u.startsWith('/'));
 
     for (let round = 0; round < maxRounds; round++) {
@@ -83,10 +76,9 @@ export async function fetchGeminiProxyHealthStatus(signal?: AbortSignal): Promis
         }
         for (const endpoint of endpoints) {
             try {
-                const authHeaders = await getAiProxyAuthorizationHeader();
                 const res = await fetch(endpoint, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', ...authHeaders },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ health: true }),
                     signal,
                     cache: 'no-store',
@@ -94,9 +86,6 @@ export async function fetchGeminiProxyHealthStatus(signal?: AbortSignal): Promis
                 const raw = await res.text();
                 if (!res.ok) {
                     const isRelative = endpoint.startsWith('/');
-                    if (res.status === 404 && isRelative) {
-                        sawFunctionsMissing = true;
-                    }
                     if (res.status === 403 && isRelative) {
                         try {
                             const errJson = JSON.parse(raw) as { error?: string };
@@ -142,12 +131,10 @@ export async function fetchGeminiProxyHealthStatus(signal?: AbortSignal): Promis
 
     const unreachableReason: GeminiProxyUnreachableReason =
         sawOriginForbidden403 && relativeEndpoints.length > 0
-          ? 'origin_forbidden'
-          : sawFunctionsMissing
-            ? 'functions_missing'
-            : sawSpaShell
-              ? 'spa_shell'
-              : 'unreachable';
+        ? 'origin_forbidden'
+        : sawSpaShell
+          ? 'spa_shell'
+          : 'unreachable';
 
     return { reachable: false, configured: false, unreachableReason };
 }

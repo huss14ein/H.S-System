@@ -18,8 +18,8 @@ export function shouldRedirectToCanonicalHost(hostname: string, canonicalHostnam
   const canonical = canonicalHostname.trim().toLowerCase();
   if (!host || !canonical || host === canonical) return false;
   if (isLocalDevHost(host)) return false;
-  // Stale deploy previews (Netlify permalinks) and old Vercel URLs → canonical production host.
-  if (host.endsWith('.netlify.app')) return true;
+  // Legacy Netlify deploy permalinks: <hash>--<site-slug>.netlify.app (not unique deploy-id hosts).
+  if (host.endsWith('.netlify.app') && host.includes('--')) return true;
   if (host.endsWith('.vercel.app')) return true;
   return false;
 }

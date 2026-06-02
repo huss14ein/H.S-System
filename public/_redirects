@@ -1,2 +1,0 @@
-# Backup for netlify.toml — API routes must hit functions before SPA fallback.
-/api/*  /.netlify/functions/:splat  200
