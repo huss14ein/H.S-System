@@ -13,11 +13,7 @@ const PendingApprovalPage: React.FC = () => {
   const canonicalUrl = getCanonicalAppUrl();
   const buildSha = getBuildSha();
 
-  useEffect(() => {
-    if (onCanonicalHost) return;
-    const target = `${canonicalUrl}${window.location.pathname}${window.location.search}${window.location.hash}`;
-    window.location.replace(target);
-  }, [onCanonicalHost, canonicalUrl]);
+  // Do not auto-redirect here — cross-origin replace drops the Supabase session (looks like instant logout).
 
   const handleRecheck = async () => {
     setChecking(true);

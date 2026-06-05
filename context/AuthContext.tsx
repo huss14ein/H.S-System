@@ -1,7 +1,11 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { registerAiProxyAuth } from '../services/aiProxyAuth';
-import { approvalFlagsFromSync, syncUserApprovalProfile } from '../services/syncUserApprovalProfile';
+import {
+  approvalFlagsFromSync,
+  markAuthSignInForProfileSync,
+  syncUserApprovalProfile,
+} from '../services/syncUserApprovalProfile';
 import { inferIsAdmin } from '../utils/role';
 import { User, Session, AuthError } from '@supabase/supabase-js';
 
@@ -750,7 +754,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setIsAdmin(true);
             return;
         }
-        setIsApproved(null);
+        // Keep resolved approval during background refetch — avoids shell flicker and auth races.
+        setIsApproved((prev) => (prev === null ? null : prev));
         setApprovalSyncIssue(null);
         try {
             const sync = await syncUserApprovalProfile(supabase, userId);
@@ -842,20 +847,27 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     
         void getSession();
     
-        const { data: { subscription } } = currentSupabase.auth.onAuthStateChange((_event, session) => {
-            void (async () => {
-                setSession(session);
-                setUser(session?.user ?? null);
-                setIsEmailVerified(session?.user?.email_confirmed_at ? true : false);
-                if (session?.user?.id) {
-                    await fetchApprovalStatus(session.user.id, session.user);
-                } else {
-                    setIsApproved(null);
-                    setUserRole(null);
-                    setIsAdmin(false);
-                }
-                setLoading(false);
-            })();
+        const { data: { subscription } } = currentSupabase.auth.onAuthStateChange((event, session) => {
+            if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+                markAuthSignInForProfileSync();
+            }
+            setSession(session);
+            setUser(session?.user ?? null);
+            setIsEmailVerified(session?.user?.email_confirmed_at ? true : false);
+            setLoading(false);
+            if (session?.user?.id) {
+                // Never await profile sync inside the auth callback — refreshSession there can sign users out.
+                queueMicrotask(() => {
+                    void fetchApprovalStatus(session.user!.id, session.user);
+                });
+            } else if (event === 'SIGNED_OUT') {
+                setIsApproved(null);
+                setIsSignupRejected(false);
+                setApprovalHardBlock(false);
+                setApprovalSyncIssue(null);
+                setUserRole(null);
+                setIsAdmin(false);
+            }
         });
     
         return () => subscription.unsubscribe();
@@ -905,7 +917,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 }
                 
                 logSecurityEvent('login_success', { userId: data.user.id, email, deviceFingerprint }, true);
-                await fetchApprovalStatus(data.user.id, data.user);
+                markAuthSignInForProfileSync();
+                queueMicrotask(() => {
+                    void fetchApprovalStatus(data.user.id, data.user);
+                });
             }
 
             return { error: null, user: data.user };

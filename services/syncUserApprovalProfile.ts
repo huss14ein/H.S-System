@@ -17,11 +17,22 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((r) => setTimeout(r, ms));
 }
 
-/** Refresh session before RLS reads — mobile often resumes with a stale access token. */
+/** Skip refresh immediately after sign-in — refresh inside onAuthStateChange can emit SIGNED_OUT. */
+let lastAuthSignInAtMs = 0;
+
+export function markAuthSignInForProfileSync(): void {
+  lastAuthSignInAtMs = Date.now();
+}
+
+/** Refresh only when the access token is near expiry (never on every profile read). */
 async function refreshSessionForProfileSync(client: SupabaseClient): Promise<void> {
+  if (Date.now() - lastAuthSignInAtMs < 4000) return;
   try {
     const { data: { session } } = await client.auth.getSession();
     if (!session) return;
+    const expiresAt = Number(session.expires_at ?? 0);
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (expiresAt > 0 && expiresAt - nowSec > 120) return;
     await client.auth.refreshSession();
   } catch {
     /* non-fatal */
