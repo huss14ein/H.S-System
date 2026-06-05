@@ -18,7 +18,9 @@ If **AI summary is off** after deploy:
 
 Preview deploy URLs (`https://<hash>--finova-hussein.netlify.app/`) **redirect to** the canonical Netlify host via an inline script in `index.html` and `enforceCanonicalHostRedirect()`. **Vercel** (`https://h-s-system.vercel.app`) is a first-class mirror and is **not** redirected.
 
-**Lighthouse:** use `https://h-s-system.vercel.app/` or `https://finova-hussein.netlify.app/` (when Netlify serves 200).
+**Lighthouse (Netlify deploy plugin):** audits **`https://finova-hussein.netlify.app`** directly (`netlify.toml` → `@netlify/plugin-lighthouse`). Do not use deploy preview URLs (`<hash>--finova-hussein.netlify.app`) — they redirect to canonical production and Lighthouse will warn that the test URL was redirected.
+
+Manual checks: `https://finova-hussein.netlify.app/` or `https://h-s-system.vercel.app/` (Vercel mirror).
 
 ## Login / unauthenticated shell
 

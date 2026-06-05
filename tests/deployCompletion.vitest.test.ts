@@ -41,6 +41,12 @@ describe('deploy completion — Wealth Analytics + production hosts', () => {
     expect(toml).toContain('Strict-Transport-Security');
   });
 
+  it('Netlify Lighthouse audits canonical production URL (not deploy preview redirect)', () => {
+    const toml = read('netlify.toml');
+    expect(toml).toContain('@netlify/plugin-lighthouse');
+    expect(toml).toContain('url = "https://finova-hussein.netlify.app"');
+  });
+
   it('public/_redirects mirrors API rewrite then SPA fallback', () => {
     const redirects = read('public/_redirects');
     expect(redirects).toMatch(/\/api\/\*\s+\/\.netlify\/functions\/:splat/);
