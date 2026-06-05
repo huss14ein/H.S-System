@@ -24,7 +24,7 @@ const DeployFreshnessBanner: React.FC = () => {
         ) : (
           '.'
         )}{' '}
-        Refresh to load Wealth Analytics, fiscal-month Transactions, signup approval, and AI fixes.
+        Refresh to load Wealth Analytics, fiscal-month Transactions, signup approval, performance fixes, and AI updates.
       </p>
       <div className="mt-2 flex flex-wrap gap-2">
         <button

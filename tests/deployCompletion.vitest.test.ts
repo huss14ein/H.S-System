@@ -79,8 +79,15 @@ describe('deploy completion — Wealth Analytics + production hosts', () => {
     expect(settings).toContain('Wealth Analytics');
   });
 
-  it('DeployFreshnessBanner prompts refresh when bundle is stale', () => {
-    expect(read('components/DeployFreshnessBanner.tsx')).toContain('Wealth Analytics');
-    expect(read('hooks/useDeployFreshness.ts')).toContain('finova-build-sha');
+  it('Dashboard links to Wealth Analytics for moved charts and executive summary', () => {
+    const dash = read('pages/Dashboard.tsx');
+    expect(dash).toContain('WealthAnalyticsGuideBanner');
+    expect(dash).toContain("setActivePage('Wealth Analytics')");
+    expect(read('components/WealthAnalyticsGuideBanner.tsx')).toContain('Overview → Wealth Analytics');
+  });
+
+  it('Layout surfaces partial data load warnings app-wide', () => {
+    expect(read('components/Layout.tsx')).toContain('DataLoadWarningBanner');
+    expect(read('components/DataLoadWarningBanner.tsx')).toContain('transactionsLoadWarning');
   });
 });

@@ -64,6 +64,7 @@ import {
 import { buildPersonalInvestmentTreemapRows } from '../services/wealthSummaryReportModel';
 import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
 import PlanCompareContextBanner from '../components/PlanCompareContextBanner';
+import WealthAnalyticsGuideBanner from '../components/WealthAnalyticsGuideBanner';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import { useLanguage } from '../context/LanguageContext';
 
@@ -636,6 +637,7 @@ const DashboardContent: React.FC<{
                 dashboardMonthlyPnLSar={kpiSnapshot?.monthlyPnL ?? 0}
                 onOpenPlan={() => setActivePage('Plan')}
             />
+            {setActivePage && <WealthAnalyticsGuideBanner setActivePage={setActivePage} />}
 
             {isNewUser && (
                 <div className="mb-6 p-5 rounded-xl border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-white">

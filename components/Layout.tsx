@@ -22,6 +22,7 @@ import { pauseBackgroundWork } from '../utils/backgroundWorkGate';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
 import { PageDeferredDataProvider } from '../context/PageDeferredDataContext';
 import DeployFreshnessBanner from './DeployFreshnessBanner';
+import DataLoadWarningBanner from './DataLoadWarningBanner';
 import { APP_VERSION, getBuildSha } from '../utils/buildInfo';
 
 interface LayoutProps {
@@ -165,6 +166,7 @@ const Layout: React.FC<LayoutProps> = ({
         <div className={`${contentMaxClass} mx-auto w-full animate-fadeIn min-w-0`}>
           <FinancialDataHydrateBanner />
           <DeployFreshnessBanner />
+          <DataLoadWarningBanner />
           {ready && (
             <CrossEngineAlertsBanner
               ready={ready}
