@@ -54,7 +54,7 @@ jobs:
         id: publish
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID || '801d32fc-62bd-4211-8520-b5c1dea9dcae' }}
           NETLIFY_BUILD_HOOK: ${{ secrets.NETLIFY_BUILD_HOOK }}
           GITHUB_SHA: ${{ github.sha }}
         run: |
@@ -66,7 +66,7 @@ jobs:
             echo "published=true" >> "$GITHUB_OUTPUT"
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=Netlify publish skipped::Add NETLIFY_BUILD_HOOK or NETLIFY_AUTH_TOKEN+NETLIFY_SITE_ID, or link Netlify site to this repo."
+            echo "::warning title=Netlify publish skipped::Add NETLIFY_BUILD_HOOK or NETLIFY_AUTH_TOKEN in GitHub secrets, or link Netlify site to this repo."
           fi
 
       - name: Wait for live finova-hussein.netlify.app

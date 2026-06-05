@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { getBuildSha } from '../utils/buildInfo';
+import { clearStalePwaCaches } from '../utils/pwaCacheBust';
 
 const BUILD_SHA_META = /name="finova-build-sha"\s+content="([^"]+)"/i;
+const STALE_RELOAD_KEY = 'finova_stale_deploy_reload_once';
 
 /** Detect when a cached SPA bundle is older than the live index.html on the server. */
 export function useDeployFreshness(): { stale: boolean; remoteSha: string | null; localSha: string } {
@@ -25,7 +27,18 @@ export function useDeployFreshness(): { stale: boolean; remoteSha: string | null
         const remote = match?.[1]?.trim() ?? null;
         if (cancelled || !remote) return;
         setRemoteSha(remote);
-        if (remote !== localSha) setStale(true);
+        if (remote !== localSha) {
+          setStale(true);
+          try {
+            if (!sessionStorage.getItem(STALE_RELOAD_KEY)) {
+              sessionStorage.setItem(STALE_RELOAD_KEY, remote);
+              await clearStalePwaCaches();
+              window.location.reload();
+            }
+          } catch {
+            // ignore — banner still offers manual refresh
+          }
+        }
       } catch {
         // offline or blocked — ignore
       }
@@ -38,6 +51,16 @@ export function useDeployFreshness(): { stale: boolean; remoteSha: string | null
       window.clearInterval(id);
     };
   }, [localSha]);
+
+  useEffect(() => {
+    if (!stale) {
+      try {
+        sessionStorage.removeItem(STALE_RELOAD_KEY);
+      } catch {
+        // ignore
+      }
+    }
+  }, [stale]);
 
   return { stale, remoteSha, localSha };
 }

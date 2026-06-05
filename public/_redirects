@@ -1,4 +1,6 @@
 # API routes hit Netlify functions first (same-origin AI proxy).
 /api/*  /.netlify/functions/:splat  200
+# Missing hashed chunks must 404 — do not serve index.html with immutable /assets/* cache (stale-tab trap).
+/assets/*  /404.html  404
 # SPA fallback — latest Vite build from dist/ on finova-hussein.netlify.app.
 /*  /index.html  200

@@ -74,5 +74,6 @@ describe('deploy completion — Wealth Analytics + production hosts', () => {
   it('DeployFreshnessBanner prompts refresh when bundle is stale', () => {
     expect(read('components/DeployFreshnessBanner.tsx')).toContain('Wealth Analytics');
     expect(read('hooks/useDeployFreshness.ts')).toContain('finova-build-sha');
+    expect(read('hooks/useDeployFreshness.ts')).toContain('clearStalePwaCaches');
   });
 });

@@ -23,6 +23,22 @@ describe('production deploy wiring', () => {
     const script = fs.readFileSync(path.join(process.cwd(), 'scripts/netlify-production-deploy.mjs'), 'utf8');
     expect(script).toContain('NETLIFY_BUILD_HOOK');
     expect(script).toContain('finova-hussein.netlify.app');
+    expect(script).toContain('netlify-publish-production.mjs');
+  });
+
+  it('netlify publish script unlocks locked production deploys', () => {
+    const script = fs.readFileSync(path.join(process.cwd(), 'scripts/netlify-publish-production.mjs'), 'utf8');
+    expect(script).toContain('restoreSiteDeploy');
+    expect(script).toContain('unlockDeploy');
+    expect(script).toContain('801d32fc-62bd-4211-8520-b5c1dea9dcae');
+  });
+
+  it('missing hashed assets return 404 instead of cached index.html', () => {
+    const redirects = fs.readFileSync(path.join(process.cwd(), 'public/_redirects'), 'utf8');
+    const netlify = fs.readFileSync(path.join(process.cwd(), 'netlify.toml'), 'utf8');
+    expect(redirects).toMatch(/\/assets\/\*.*404/);
+    expect(netlify).toContain('/assets/*');
+    expect(netlify).toContain('status = 404');
   });
 
   it('vercel.json redirects to Netlify production', () => {

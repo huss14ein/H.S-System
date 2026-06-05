@@ -38,6 +38,12 @@
   to = "/.netlify/functions/:splat"
   status = 200
 
+# Missing hashed chunks must 404 — never serve index.html under /assets/* (immutable cache pins stale UI).
+[[redirects]]
+  from = "/assets/*"
+  to = "/404.html"
+  status = 404
+
 # SPA fallback — serve latest dist/ on this host (same-origin /api/* above for AI).
 [[redirects]]
   from = "/*"
