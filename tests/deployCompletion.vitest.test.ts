@@ -19,8 +19,10 @@ describe('deploy completion — Wealth Analytics + production hosts', () => {
   it('canonical redirect only targets Netlify -- permalinks, not production host', () => {
     const redirect = read('utils/canonicalHostRedirect.ts');
     expect(redirect).not.toContain("host.endsWith('.vercel.app')");
+    expect(redirect).toContain('isLighthouseAuditUserAgent');
     const vite = read('vite.config.ts');
     expect(vite).toContain('finova-hussein.netlify.app');
+    expect(vite).toContain('Chrome-Lighthouse');
     expect(vite).toContain("h.indexOf('--')");
   });
 

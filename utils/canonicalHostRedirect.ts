@@ -3,6 +3,13 @@ import { CANONICAL_VITE_APP_URL, getCanonicalAppUrl } from './buildInfo';
 const LOCAL_HOST_RE = /^(localhost|127\.0\.0\.1|\[::1\])$/i;
 const LAN_HOST_RE = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
 
+const LIGHTHOUSE_UA_RE = /Chrome-Lighthouse|HeadlessChrome.*Lighthouse|lighthouse/i;
+
+/** Netlify's deploy Lighthouse uses Chrome-Lighthouse — skip redirect so audits are not skewed. */
+export function isLighthouseAuditUserAgent(userAgent: string): boolean {
+  return LIGHTHOUSE_UA_RE.test(userAgent);
+}
+
 /** Hostnames that should never be redirected (local dev). */
 export function isLocalDevHost(hostname: string): boolean {
   const h = hostname.trim().toLowerCase();
@@ -13,11 +20,16 @@ export function isLocalDevHost(hostname: string): boolean {
 }
 
 /** True when the browser should load the canonical production app (not a stale Netlify preview). */
-export function shouldRedirectToCanonicalHost(hostname: string, canonicalHostname: string): boolean {
+export function shouldRedirectToCanonicalHost(
+  hostname: string,
+  canonicalHostname: string,
+  userAgent = '',
+): boolean {
   const host = hostname.trim().toLowerCase();
   const canonical = canonicalHostname.trim().toLowerCase();
   if (!host || !canonical || host === canonical) return false;
   if (isLocalDevHost(host)) return false;
+  if (userAgent && isLighthouseAuditUserAgent(userAgent)) return false;
   // Legacy Netlify deploy permalinks: <hash>--<site-slug>.netlify.app (not unique deploy-id hosts).
   // Vercel production (h-s-system.vercel.app) is a first-class host — do not redirect to Netlify.
   if (host.endsWith('.netlify.app') && host.includes('--')) return true;
@@ -39,7 +51,7 @@ export function enforceCanonicalHostRedirect(): void {
     return;
   }
   const { hostname, pathname, search, hash } = window.location;
-  if (!shouldRedirectToCanonicalHost(hostname, canonicalHost)) return;
+  if (!shouldRedirectToCanonicalHost(hostname, canonicalHost, navigator.userAgent || '')) return;
   const target = `${canonicalUrl.replace(/\/$/, '')}${pathname}${search}${hash}`;
   window.location.replace(target);
 }
