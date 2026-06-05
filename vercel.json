@@ -1,4 +1,7 @@
 {
+  "functions": {
+    "api/gemini-proxy.ts": { "maxDuration": 30 }
+  },
   "rewrites": [
     {
       "source": "/((?!api/|assets/|logo\\.svg|auth-shell\\.css).*)",

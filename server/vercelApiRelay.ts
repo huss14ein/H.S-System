@@ -1,16 +1,18 @@
 /**
  * Vercel `/api/*` relay: browser CORS on Vercel, server-to-server call to Netlify functions
  * without `Origin` (avoids stale Netlify CORS on production). Keys stay on Netlify only.
+ *
+ * Self-contained (no imports from `netlify/functions/*`) so Vercel serverless can bundle it.
  */
-import type { HandlerEvent } from '@netlify/functions';
-import { isOriginAllowedForRequest } from '../netlify/functions/corsAllowlist';
-
 export const NETLIFY_FUNCTIONS_ORIGIN = 'https://finova-hussein.netlify.app';
 
-const BROWSER_ORIGINS = [
+const ALLOWED_BROWSER_ORIGINS = new Set([
   'https://h-s-system.vercel.app',
   'https://finova-hussein.netlify.app',
-] as const;
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:8888',
+]);
 
 type RelayRequest = {
   method?: string;
@@ -27,29 +29,24 @@ type RelayResponse = {
   json(body: unknown): void;
 };
 
-function vercelServingHost(): string {
-  const vercel = process.env.VERCEL_URL?.trim();
-  if (vercel) return vercel.replace(/:\d+$/, '').toLowerCase();
-  return 'h-s-system.vercel.app';
+function hostnameFromOrigin(origin: string): string | null {
+  try {
+    return new URL(origin).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
 }
 
-function mockCorsEvent(origin: string | undefined): HandlerEvent {
-  const host = vercelServingHost();
-  return {
-    headers: {
-      ...(origin ? { origin, Origin: origin } : {}),
-      host,
-      Host: host,
-      'x-forwarded-host': host,
-    },
-  } as HandlerEvent;
-}
-
-/** Browser Origin allowlist — Vercel production + Netlify + localhost (via corsAllowlist). */
+/** Browser Origin allowlist — production hosts + dev localhost + Vercel/Netlify previews. */
 export function assertVercelRelayOriginAllowed(origin: string | undefined): boolean {
   if (!origin) return true;
-  if (BROWSER_ORIGINS.includes(origin as (typeof BROWSER_ORIGINS)[number])) return true;
-  return isOriginAllowedForRequest(mockCorsEvent(origin), origin);
+  if (ALLOWED_BROWSER_ORIGINS.has(origin)) return true;
+  const host = hostnameFromOrigin(origin);
+  if (!host) return false;
+  if (host.endsWith('.vercel.app')) return true;
+  if (host.endsWith('.netlify.app') && host.includes('finova-hussein')) return true;
+  if (/^localhost$|^127\.0\.0\.1$/i.test(host)) return true;
+  return false;
 }
 
 function applyCors(res: RelayResponse, origin: string | undefined, methods: string): void {
