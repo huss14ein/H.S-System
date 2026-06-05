@@ -40,7 +40,7 @@ import {
   getCanonicalAppUrl,
   hasWealthAnalyticsRollout,
   isOnCanonicalHost,
-  NETLIFY_API_ORIGIN,
+  VERCEL_MIRROR_APP_URL,
 } from '../utils/buildInfo';
 import AIAdvisor from '../components/AIAdvisor';
 import Modal from '../components/Modal';
@@ -518,23 +518,23 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                         <strong>{hasWealthAnalyticsRollout() ? 'included in this build' : 'not in this build — hard refresh or use the URL below'}</strong>
                     </p>
                     <p className="mt-2 text-xs opacity-90">
-                        Production app:{' '}
+                        Production:{' '}
                         <a href={getCanonicalAppUrl()} className="underline font-medium" target="_blank" rel="noopener noreferrer">
                             {getCanonicalAppUrl().replace('https://', '')}
                         </a>
                         {' · '}
-                        API functions:{' '}
-                        <a href={NETLIFY_API_ORIGIN} className="underline font-medium" target="_blank" rel="noopener noreferrer">
-                            {NETLIFY_API_ORIGIN.replace('https://', '')}
+                        Vercel mirror:{' '}
+                        <a href={VERCEL_MIRROR_APP_URL} className="underline font-medium" target="_blank" rel="noopener noreferrer">
+                            {VERCEL_MIRROR_APP_URL.replace('https://', '')}
                         </a>
-                        . GitHub <code className="text-[10px]">main</code> auto-deploys the SPA via Vercel; Netlify hosts{' '}
+                        . GitHub <code className="text-[10px]">main</code> auto-deploys to Netlify when{' '}
                         <code className="text-[10px]">NETLIFY_AUTH_TOKEN</code> +{' '}
-                        <code className="text-[10px]">NETLIFY_SITE_ID</code> secrets are set) Netlify Actions.
+                        <code className="text-[10px]">NETLIFY_SITE_ID</code> are set in repository secrets.
                         {typeof window !== 'undefined' && !isOnCanonicalHost() ? (
                             <>
                                 {' '}
                                 This tab is on <strong>{window.location.hostname}</strong> — if features are missing, open the
-                                production app URL above (Vercel). Netlify now redirects the SPA to Vercel and only serves API functions.
+                                production URL above or hard-refresh (Cmd+Shift+R). Avoid legacy hosts like my-finova.netlify.app.
                             </>
                         ) : null}
                     </p>

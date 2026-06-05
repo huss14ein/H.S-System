@@ -32,14 +32,20 @@ export function hasWealthAnalyticsRollout(): boolean {
   }
 }
 
-/** Live SPA host (Vercel auto-deploys from main with finova-build-sha). */
-export const CANONICAL_VITE_APP_URL = 'https://h-s-system.vercel.app';
+/** Production SPA + API host (GitHub Actions → Netlify deploy on every main push). */
+export const CANONICAL_VITE_APP_URL = 'https://finova-hussein.netlify.app';
 
-/** Netlify host — serves `/api/*` functions only; SPA traffic redirects to {@link CANONICAL_VITE_APP_URL}. */
-export const NETLIFY_API_ORIGIN = 'https://finova-hussein.netlify.app';
+/** Same as {@link CANONICAL_VITE_APP_URL} — SPA and `/api/*` on one origin. */
+export const NETLIFY_PRODUCTION_ORIGIN = CANONICAL_VITE_APP_URL;
 
-/** @deprecated Use {@link CANONICAL_VITE_APP_URL}. Kept for Settings copy. */
-export const VERCEL_FALLBACK_APP_URL = CANONICAL_VITE_APP_URL;
+/** @deprecated Use {@link NETLIFY_PRODUCTION_ORIGIN}. */
+export const NETLIFY_API_ORIGIN = NETLIFY_PRODUCTION_ORIGIN;
+
+/** Vercel mirror — proxies `/api/*` to Netlify; optional secondary host. */
+export const VERCEL_MIRROR_APP_URL = 'https://h-s-system.vercel.app';
+
+/** @deprecated Use {@link VERCEL_MIRROR_APP_URL}. */
+export const VERCEL_FALLBACK_APP_URL = VERCEL_MIRROR_APP_URL;
 
 /** Preferred production URL (env override → default Netlify). Set in netlify.toml / site env after linking this repo. */
 export function getCanonicalAppUrl(): string {
@@ -48,14 +54,14 @@ export function getCanonicalAppUrl(): string {
   return url.replace(/\/$/, '');
 }
 
-/** True when the SPA hostname matches canonical Vercel or Netlify API host. */
+/** True when the SPA hostname matches canonical Netlify or Vercel mirror. */
 export function isOnCanonicalHost(): boolean {
   if (import.meta.env.DEV || typeof window === 'undefined') return true;
   try {
     const host = window.location.hostname.toLowerCase();
     const canonical = new URL(getCanonicalAppUrl()).hostname.toLowerCase();
-    const netlify = new URL(NETLIFY_API_ORIGIN).hostname.toLowerCase();
-    return host === canonical || host === netlify;
+    const vercel = new URL(VERCEL_MIRROR_APP_URL).hostname.toLowerCase();
+    return host === canonical || host === vercel;
   } catch {
     return true;
   }

@@ -31,40 +31,42 @@ describe('deploy completion — Wealth Analytics + production hosts', () => {
     expect(read('vite.config.ts')).toContain('__WEALTH_ANALYTICS_V2__');
     expect(read('vite.config.ts')).toContain('finova-build-sha');
     expect(read('utils/buildInfo.ts')).toContain('hasWealthAnalyticsRollout');
-    expect(read('utils/buildInfo.ts')).toContain('NETLIFY_API_ORIGIN');
-    expect(read('utils/buildInfo.ts')).toContain('h-s-system.vercel.app');
+    expect(read('utils/buildInfo.ts')).toContain('NETLIFY_PRODUCTION_ORIGIN');
+    expect(read('utils/buildInfo.ts')).toContain('finova-hussein.netlify.app');
   });
 
-  it('Netlify ships API rewrite, SPA redirect to Vercel, and security headers', () => {
+  it('Netlify ships API rewrite, SPA fallback, and security headers', () => {
     const toml = read('netlify.toml');
     expect(toml).toMatch(/from\s*=\s*"\/api\/\*"/);
     expect(toml).toMatch(/from\s*=\s*"\/\*"/);
-    expect(toml).toContain('https://h-s-system.vercel.app/:splat');
+    expect(toml).toContain('to = "/index.html"');
+    expect(toml).not.toContain('h-s-system.vercel.app/:splat');
     expect(toml).toContain('Content-Security-Policy');
     expect(toml).toContain('Strict-Transport-Security');
   });
 
-  it('public/_redirects mirrors API rewrite then SPA redirect to Vercel', () => {
+  it('public/_redirects mirrors API rewrite then SPA fallback', () => {
     const redirects = read('public/_redirects');
     expect(redirects).toMatch(/\/api\/\*\s+\/\.netlify\/functions\/:splat/);
-    expect(redirects).toContain('https://h-s-system.vercel.app/:splat');
-    expect(redirects).toContain('302!');
+    expect(redirects).toMatch(/\/\*\s+\/index\.html\s+200/);
+    expect(redirects).not.toContain('302');
   });
 
   it('GitHub deploy workflow verifies Wealth Analytics in dist and smoke-tests live site', () => {
     const wf = read('.github/workflows/deploy-production.yml');
     expect(wf).toContain('Wealth Analytics');
     expect(wf).toContain('finova-build-sha');
-    expect(wf).toContain('Smoke test Vercel production URL');
-    expect(wf).toContain('h-s-system.vercel.app');
-    expect(wf).toContain('HTTP');
+    expect(wf).toContain('Smoke test Netlify production URL');
+    expect(wf).toContain('finova-hussein.netlify.app');
+    expect(wf).toContain('NETLIFY_AUTH_TOKEN');
+    expect(wf).not.toContain('Netlify deploy skipped');
   });
 
   it('Settings surfaces build stamp and Wealth Analytics rollout for deploy verification', () => {
     const settings = read('pages/Settings.tsx');
     expect(settings).toContain('hasWealthAnalyticsRollout');
     expect(settings).toContain('getBuildSha');
-    expect(settings).toContain('NETLIFY_API_ORIGIN');
+    expect(settings).toContain('VERCEL_MIRROR_APP_URL');
   });
 
   it('DeployFreshnessBanner prompts refresh when bundle is stale', () => {
