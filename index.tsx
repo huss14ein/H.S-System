@@ -16,10 +16,9 @@ if (!rootElement) {
 }
 
 const root = ReactDOM.createRoot(rootElement);
-root.render(
-  <React.StrictMode>
-    <AuthProvider>
-      <App />
-    </AuthProvider>
-  </React.StrictMode>
+const app = (
+  <AuthProvider>
+    <App />
+  </AuthProvider>
 );
+root.render(import.meta.env.DEV ? <React.StrictMode>{app}</React.StrictMode> : app);

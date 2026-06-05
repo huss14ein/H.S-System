@@ -174,7 +174,7 @@ const HeaderAlertsPopover: React.FC<HeaderAlertsPopoverProps> = ({
         aria-expanded={isOpen}
         aria-haspopup="dialog"
       >
-        <BellIcon className={`h-6 w-6 ${hasUrgent && unreadCount > 0 ? 'animate-wiggle' : ''}`} />
+        <BellIcon className={`h-6 w-6 ${hasUrgent && unreadCount > 0 ? 'motion-safe:animate-pulse text-amber-600' : ''}`} />
         {unreadCount > 0 && (
           <span className="absolute top-1 right-1 flex h-4 min-w-[1rem]">
             {hasUrgent && (

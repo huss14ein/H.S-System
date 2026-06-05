@@ -1,6 +1,7 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
 import type { Page } from '../types';
 import { INVESTMENT_SUB_NAV_PAGE_NAMES } from '../constants';
+import { scheduleIdleWork } from './runWhenIdle';
 
 type PageModule = {
   Lazy: LazyExoticComponent<ComponentType<any>>;
@@ -110,19 +111,17 @@ const IDLE_PREFETCH_PAGES: Page[] = [
   'Notifications',
 ];
 
-/** Warm common lazy chunks after first paint without blocking the main thread. */
+/** Warm common lazy chunks one route at a time so we never block the main thread for 30s+. */
 export function prefetchCommonPagesIdle(): void {
   if (typeof window === 'undefined') return;
-  const run = () => {
-    for (const p of IDLE_PREFETCH_PAGES) prefetchPage(p);
+  let index = 0;
+  const step = () => {
+    if (index >= IDLE_PREFETCH_PAGES.length) return;
+    prefetchPage(IDLE_PREFETCH_PAGES[index]!);
+    index += 1;
+    if (index < IDLE_PREFETCH_PAGES.length) {
+      scheduleIdleWork(step, 2500);
+    }
   };
-  const w = window as Window & {
-    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-    cancelIdleCallback?: (id: number) => void;
-  };
-  if (typeof w.requestIdleCallback === 'function') {
-    w.requestIdleCallback(run, { timeout: 4000 });
-    return;
-  }
-  window.setTimeout(run, 1500);
+  scheduleIdleWork(step, 2500);
 }

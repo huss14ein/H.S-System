@@ -825,14 +825,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 setSession(session);
                 setUser(session?.user ?? null);
                 setIsEmailVerified(session?.user?.email_confirmed_at ? true : false);
-                if (session?.user?.id) {
-                    await fetchApprovalStatus(session.user.id, session.user);
-                } else {
-                    setIsApproved(null);
-                    setIsSignupRejected(false);
-                    setUserRole(null);
-                    setIsAdmin(false);
-                }
+                // Approval profile loads from onAuthStateChange INITIAL_SESSION — avoid duplicate refreshSession.
             } catch {
                 setSession(null);
                 setUser(null);
@@ -856,10 +849,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setIsEmailVerified(session?.user?.email_confirmed_at ? true : false);
             setLoading(false);
             if (session?.user?.id) {
-                // Never await profile sync inside the auth callback — refreshSession there can sign users out.
-                queueMicrotask(() => {
-                    void fetchApprovalStatus(session.user!.id, session.user);
-                });
+                if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+                    queueMicrotask(() => {
+                        void fetchApprovalStatus(session.user!.id, session.user);
+                    });
+                }
             } else if (event === 'SIGNED_OUT') {
                 setIsApproved(null);
                 setIsSignupRejected(false);

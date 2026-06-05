@@ -22,6 +22,7 @@ import { SelfLearningProvider } from '../context/SelfLearningContext';
 import { PAGE_DISPLAY_NAMES, INVESTMENT_SUB_NAV_PAGE_NAMES } from '../constants';
 import { PAGE_MODULES, prefetchCommonPagesIdle, prefetchPage, resolveShellPage } from '../utils/lazyPages';
 import { pauseBackgroundWork } from '../utils/backgroundWorkGate';
+import { scheduleIdleWork } from '../utils/runWhenIdle';
 import { CanonicalFinancialMetricsProvider } from '../context/CanonicalFinancialMetricsContext';
 import { LanguageProvider } from '../context/LanguageContext';
 
@@ -194,7 +195,8 @@ const AuthenticatedAppShell: React.FC = () => {
 
   useEffect(() => {
     prefetchPage(getInitialPage());
-    prefetchCommonPagesIdle();
+    const cancel = scheduleIdleWork(() => prefetchCommonPagesIdle(), 6000);
+    return cancel;
   }, []);
 
   useEffect(() => {

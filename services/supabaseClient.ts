@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { supabaseAuthLock } from './supabaseAuthLock';
 
 let hasLoggedSupabaseError = false;
 
@@ -22,6 +23,7 @@ const createSupabaseClient = () => {
             detectSessionInUrl: true,
             flowType: 'pkce',
             storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+            lock: supabaseAuthLock,
         },
     });
 };

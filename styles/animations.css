@@ -83,6 +83,12 @@
   animation: wiggle 1.2s ease-in-out infinite;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .animate-wiggle {
+    animation: none;
+  }
+}
+
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }

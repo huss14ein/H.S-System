@@ -10,6 +10,7 @@ describe('auth session stability', () => {
     const src = read('services/supabaseClient.ts');
     expect(src).toContain('persistSession: true');
     expect(src).toContain('autoRefreshToken: true');
+    expect(src).toContain('supabaseAuthLock');
   });
 
   it('profile sync defers refreshSession after sign-in', () => {
@@ -24,6 +25,8 @@ describe('auth session stability', () => {
     expect(src).toContain('queueMicrotask');
     expect(src).toMatch(/onAuthStateChange[\s\S]*?queueMicrotask/);
     expect(src).toContain("event === 'SIGNED_OUT'");
+    expect(src).toContain("event === 'INITIAL_SESSION'");
+    expect(src).not.toMatch(/TOKEN_REFRESHED[\s\S]{0,80}fetchApprovalStatus/);
   });
 
   it('PendingApprovalPage does not cross-origin redirect (session loss)', () => {

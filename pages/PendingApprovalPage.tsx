@@ -46,7 +46,7 @@ const PendingApprovalPage: React.FC = () => {
     if (rejected || !auth?.user?.id) return;
     const id = window.setInterval(() => {
       void auth.refetchApprovalStatus();
-    }, 5_000);
+    }, 30_000);
     return () => window.clearInterval(id);
   }, [auth, rejected]);
 

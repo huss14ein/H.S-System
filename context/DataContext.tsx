@@ -40,6 +40,7 @@ import { normalizeCoreUpsideAllocations } from '../utils/investmentPlanAllocatio
 import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/investmentPlanPerPortfolio';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { financialDataHasHydrated } from '../services/financialDataHydration';
+import { pauseBackgroundWork } from '../utils/backgroundWorkGate';
 import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
 import { deltaForInvestmentTrade } from '../services/investmentBalanceDelta';
 import { buildTransactionPayloadVariants } from '../services/transactionPayloadVariants';
@@ -1014,7 +1015,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const trySelectOptionalTable = <T,>(q: PromiseLike<any>) =>
         q.then((r: any) => r, () => ({ data: [] as T[], error: { code: 'PGRST205', message: 'Table not found' } }));
 
-    const FETCH_SETTLE_BUDGET_MS = 10_000;
+    const FETCH_SETTLE_BUDGET_MS = 25_000;
 
     const fetchData = async () => {
         if (!auth?.user || !supabase) {
@@ -1023,6 +1024,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setLoading(false);
             return;
         }
+        pauseBackgroundWork(3500);
         const db = supabase;
         const isInitialHydrate = !financialDataLoadedRef.current;
         if (isInitialHydrate) setLoading(true);
@@ -1051,7 +1053,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('investment_plan').select('*').eq('user_id', auth.user.id).maybeSingle(),
                 db.from('portfolio_universe').select('*').eq('user_id', auth.user.id),
                 db.from('status_change_log').select('*').eq('user_id', auth.user.id),
-                db.from('execution_logs').select('*').eq('user_id', auth.user.id).order('created_at', { ascending: false }),
+                db.from('execution_logs').select('*').eq('user_id', auth.user.id).order('created_at', { ascending: false }).limit(150),
                 recurringPromise,
                 db.from('budget_requests').select('*').eq('user_id', auth.user.id),
                 sukukSchedulesPromise,
@@ -1059,22 +1061,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             ];
             const keys = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'investments', 'investmentTransactions', 'budgets', 'watchlist', 'settings', 'zakatPayments', 'priceAlerts', 'commodityHoldings', 'plannedTrades', 'investmentPlan', 'portfolioUniverse', 'statusChangeLog', 'executionLogs', 'recurringTransactions', 'budgetRequests', 'sukukPayoutSchedules', 'sukukPayoutEvents'] as const;
             const emptyResult = (err?: any) => ({ data: null, error: err || { code: 'FETCH_FAILED' } });
-            const settled = await Promise.race([
-                Promise.allSettled(fetchPromises.map((p) => Promise.resolve(p))),
-                new Promise<PromiseSettledResult<{ data: unknown; error: unknown }>[]>((resolve) => {
-                    setTimeout(() => {
-                        console.warn(
-                            `Financial data fetch exceeded ${FETCH_SETTLE_BUDGET_MS}ms; continuing with partial workspace.`,
-                        );
-                        resolve(
-                            keys.map(() => ({
-                                status: 'fulfilled' as const,
-                                value: emptyResult({ code: 'TIMEOUT' }),
-                            })),
-                        );
-                    }, FETCH_SETTLE_BUDGET_MS);
-                }),
-            ]);
+            const slowFetchTimer = window.setTimeout(() => {
+                if (import.meta.env.DEV) {
+                    console.warn(
+                        `Financial data fetch still running after ${FETCH_SETTLE_BUDGET_MS}ms — hydrate banner stays until complete.`,
+                    );
+                }
+            }, FETCH_SETTLE_BUDGET_MS);
+            const settled = await Promise.allSettled(fetchPromises.map((p) => Promise.resolve(p)));
+            window.clearTimeout(slowFetchTimer);
             const results = settled.map((s, i) => {
                 if (s.status === 'fulfilled') return s.value as any;
                 console.error(`Error fetching ${keys[i]}:`, s.reason);
@@ -1345,15 +1340,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setAwaitingInitialHydrate(true);
         setTransactionsLoadWarning(null);
         void fetchData();
-
-        // Safety timeout: never leave hydrate banner up longer than 3s on slow Supabase / preview cold starts
-        const timeoutId = setTimeout(() => {
-            financialDataLoadedRef.current = true;
-            setAwaitingInitialHydrate(false);
-            setLoading(false);
-        }, 3000);
-
-        return () => clearTimeout(timeoutId);
         // Use user id only: `user` object reference changes on TOKEN_REFRESHED; refetching then caused global loading flashes.
     }, [auth?.user?.id]);
 

@@ -57,9 +57,11 @@ describe('performance recovery E2E wiring', () => {
   it('idle route prefetch is registered from the authenticated shell', () => {
     const lazy = read('utils/lazyPages.tsx');
     expect(lazy).toContain('prefetchCommonPagesIdle');
+    expect(lazy).toContain('scheduleIdleWork');
     expect(lazy).toMatch(/'Budgets'/);
     expect(lazy).toMatch(/'Transactions'/);
     expect(read('components/AuthenticatedAppShell.tsx')).toContain('prefetchCommonPagesIdle()');
+    expect(read('components/AuthenticatedAppShell.tsx')).toContain('scheduleIdleWork');
   });
 
   it('budget advance-from-next-month is wired through palette, page action, and card CTA', () => {
@@ -206,6 +208,8 @@ describe('performance recovery E2E wiring', () => {
     expect(read('components/HoldingSymbolSelect.tsx')).not.toContain('<select');
     expect(read('pages/Transactions.tsx')).toContain('TRANSACTIONS_LIST_PAGE_SIZE');
     expect(read('context/DataContext.tsx')).toContain('startTransition(() => {');
+    expect(read('context/DataContext.tsx')).toContain('pauseBackgroundWork');
+    expect(read('context/DataContext.tsx')).not.toContain('continuing with partial workspace');
     expect(read('context/DataContext.tsx')).toContain('transactions: [normalized, ...prev.transactions]');
     expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('useDebouncedValue(showHydrateBanner ? null : data, 350)');
     expect(read('utils/backgroundWorkGate.ts')).toContain('pauseBackgroundWork');
