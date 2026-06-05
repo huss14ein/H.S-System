@@ -40,7 +40,6 @@ import {
   getCanonicalAppUrl,
   hasWealthAnalyticsRollout,
   isOnCanonicalHost,
-  NETLIFY_PRODUCTION_ORIGIN,
 } from '../utils/buildInfo';
 import AIAdvisor from '../components/AIAdvisor';
 import Modal from '../components/Modal';
@@ -522,17 +521,13 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                         <a href={getCanonicalAppUrl()} className="underline font-medium" target="_blank" rel="noopener noreferrer">
                             {getCanonicalAppUrl().replace('https://', '')}
                         </a>
-                        {' · '}
-                        Netlify bookmark:{' '}
-                        <a href={NETLIFY_PRODUCTION_ORIGIN} className="underline font-medium" target="_blank" rel="noopener noreferrer">
-                            {NETLIFY_PRODUCTION_ORIGIN.replace('https://', '')}
-                        </a>
-                        {' '}(redirects here). Pushing to <code className="text-[10px]">main</code> auto-deploys on Vercel — no GitHub secrets.
+                        . SPA and AI proxy run on this host (<code className="text-[10px]">/api/gemini-proxy</code>).
+                        Pushing to <code className="text-[10px]">main</code> auto-deploys via Netlify Git + <code className="text-[10px]">netlify.toml</code>.
                         {typeof window !== 'undefined' && !isOnCanonicalHost() ? (
                             <>
                                 {' '}
-                                This tab is on <strong>{window.location.hostname}</strong> — if features are missing, open the
-                                production URL above or the Vercel mirror. Avoid <strong>my-finova.netlify.app</strong> (legacy Next.js app).
+                                This tab is on <strong>{window.location.hostname}</strong> — open the production URL above.
+                                Avoid <strong>my-finova.netlify.app</strong> (legacy Next.js app).
                             </>
                         ) : null}
                     </p>

@@ -1,11 +1,9 @@
 {
-  "functions": {
-    "api/gemini-proxy.ts": { "maxDuration": 30 }
-  },
-  "rewrites": [
+  "redirects": [
     {
-      "source": "/((?!api/|assets/|logo\\.svg|auth-shell\\.css).*)",
-      "destination": "/index.html"
+      "source": "/:path*",
+      "destination": "https://finova-hussein.netlify.app/:path*",
+      "permanent": false
     }
   ],
   "headers": [

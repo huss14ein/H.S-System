@@ -103,7 +103,6 @@ function isNetlifyDeployOrProductionOriginForSite(origin: string, siteSlug: stri
 /** Baked production origin — works even when Netlify function env is empty. */
 const BAKED_DEFAULT_ORIGINS = [
   'https://finova-hussein.netlify.app',
-  'https://h-s-system.vercel.app',
 ] as const;
 
 /** Hostnames from Netlify deploy env + the host serving this request. */

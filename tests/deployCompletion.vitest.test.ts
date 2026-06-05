@@ -9,21 +9,18 @@ import { join } from 'node:path';
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
 
 describe('deploy completion — Wealth Analytics + production hosts', () => {
-  it('vercel.json serves the SPA and local /api routes (no redirect-to-404)', () => {
+  it('vercel.json redirects all traffic to finova-hussein.netlify.app', () => {
     const vercel = read('vercel.json');
-    expect(vercel).not.toContain('"redirects"');
+    expect(vercel).toContain('"redirects"');
+    expect(vercel).toContain('finova-hussein.netlify.app');
     expect(vercel).not.toContain('finova-hussein.netlify.app/api');
-    expect(read('api/gemini-proxy.ts')).toContain('relayToNetlifyFunction');
-    expect(vercel).toContain('/index.html');
-    expect(vercel).toContain('Content-Security-Policy');
-    expect(vercel).toContain('X-Frame-Options');
   });
 
-  it('canonical redirect only targets Netlify -- permalinks, not Vercel production', () => {
+  it('canonical redirect only targets Netlify -- permalinks, not production host', () => {
     const redirect = read('utils/canonicalHostRedirect.ts');
     expect(redirect).not.toContain("host.endsWith('.vercel.app')");
     const vite = read('vite.config.ts');
-    expect(vite).not.toContain("h.slice(-11)==='.vercel.app'");
+    expect(vite).toContain('finova-hussein.netlify.app');
     expect(vite).toContain("h.indexOf('--')");
   });
 
@@ -31,33 +28,33 @@ describe('deploy completion — Wealth Analytics + production hosts', () => {
     expect(read('vite.config.ts')).toContain('__WEALTH_ANALYTICS_V2__');
     expect(read('vite.config.ts')).toContain('finova-build-sha');
     expect(read('utils/buildInfo.ts')).toContain('hasWealthAnalyticsRollout');
-    expect(read('utils/buildInfo.ts')).toContain('NETLIFY_PRODUCTION_ORIGIN');
-    expect(read('utils/buildInfo.ts')).toContain('h-s-system.vercel.app');
+    expect(read('utils/buildInfo.ts')).toContain('finova-hussein.netlify.app');
   });
 
-  it('Netlify ships API rewrite, SPA redirect to Vercel, and security headers', () => {
+  it('Netlify ships API rewrite, SPA fallback, and security headers', () => {
     const toml = read('netlify.toml');
     expect(toml).toMatch(/from\s*=\s*"\/api\/\*"/);
     expect(toml).toMatch(/from\s*=\s*"\/\*"/);
-    expect(toml).toContain('https://h-s-system.vercel.app/:splat');
+    expect(toml).toContain('to = "/index.html"');
+    expect(toml).not.toContain('h-s-system.vercel.app');
     expect(toml).toContain('Content-Security-Policy');
     expect(toml).toContain('Strict-Transport-Security');
   });
 
-  it('public/_redirects mirrors API rewrite then SPA redirect to Vercel', () => {
+  it('public/_redirects mirrors API rewrite then SPA fallback', () => {
     const redirects = read('public/_redirects');
     expect(redirects).toMatch(/\/api\/\*\s+\/\.netlify\/functions\/:splat/);
-    expect(redirects).toContain('https://h-s-system.vercel.app/:splat');
-    expect(redirects).toContain('302!');
+    expect(redirects).toMatch(/\/\*\s+\/index\.html\s+200/);
+    expect(redirects).not.toContain('302');
   });
 
-  it('GitHub deploy workflow verifies Wealth Analytics in dist and smoke-tests live site', () => {
+  it('GitHub deploy workflow verifies Wealth Analytics and smoke-tests Netlify + AI CORS', () => {
     const wf = read('.github/workflows/deploy-production.yml');
     expect(wf).toContain('Wealth Analytics');
     expect(wf).toContain('finova-build-sha');
-    expect(wf).toContain('Smoke test production hosts');
-    expect(wf).toContain('finova-hussein.netlify.app');
-    expect(wf).toContain('Netlify Git deploy');
+    expect(wf).toContain('Smoke test finova-hussein.netlify.app');
+    expect(wf).toContain('Origin:');
+    expect(wf).toContain('anyProviderConfigured');
   });
 
   it('netlify.toml uses a fast Git build (tests run in CI, not on Netlify)', () => {
@@ -70,7 +67,8 @@ describe('deploy completion — Wealth Analytics + production hosts', () => {
     const settings = read('pages/Settings.tsx');
     expect(settings).toContain('hasWealthAnalyticsRollout');
     expect(settings).toContain('getBuildSha');
-    expect(settings).toContain('NETLIFY_PRODUCTION_ORIGIN');
+    expect(settings).toContain('getCanonicalAppUrl');
+    expect(settings).toContain('/api/gemini-proxy');
   });
 
   it('DeployFreshnessBanner prompts refresh when bundle is stale', () => {

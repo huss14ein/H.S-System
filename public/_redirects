@@ -1,4 +1,4 @@
-# API routes hit Netlify functions (keys stay server-side on Netlify).
+# API routes hit Netlify functions first (same-origin AI proxy).
 /api/*  /.netlify/functions/:splat  200
-# Stale static deploys on this host → Vercel SPA (auto-deploys from main, zero GitHub secrets).
-/*  https://h-s-system.vercel.app/:splat  302!
+# SPA fallback — latest Vite build from dist/ on finova-hussein.netlify.app.
+/*  /index.html  200

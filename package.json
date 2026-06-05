@@ -21,7 +21,7 @@
     "test:e2e": "playwright test",
     "verify:performance-recovery": "node scripts/verify-performance-recovery.mjs",
     "verify:ai-proxy-wiring": "vitest run tests/aiProxyCompletion.vitest.test.ts tests/corsAllowlist.vitest.test.ts tests/aiProxyEndpoints.vitest.test.ts",
-    "verify:deploy-wiring": "vitest run tests/deployCompletion.vitest.test.ts tests/wealthAnalyticsWiring.vitest.test.ts tests/canonicalHostRedirect.vitest.test.ts tests/securityWiring.vitest.test.ts tests/vercelApiRelay.vitest.test.ts",
+    "verify:deploy-wiring": "vitest run tests/deployCompletion.vitest.test.ts tests/wealthAnalyticsWiring.vitest.test.ts tests/canonicalHostRedirect.vitest.test.ts tests/securityWiring.vitest.test.ts",
     "verify:login-performance": "vitest run tests/loginPerformance.vitest.test.ts tests/pageLoadingGateCoverage.vitest.test.ts",
     "test:release": "npm run test && npm run build && npm run test:e2e"
   },

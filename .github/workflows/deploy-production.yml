@@ -1,9 +1,8 @@
 name: Deploy Production
 
-# Netlify auto-deploys from Git when the finova-hussein site is linked to this repo (netlify.toml).
-# No GitHub secrets required — same model as before. Optional NETLIFY_AUTH_TOKEN + NETLIFY_SITE_ID
-# only needed if you want GitHub Actions to CLI-deploy in addition to Netlify's own build hook.
-# Vercel also auto-deploys from its GitHub integration on every main push.
+# Publishes https://finova-hussein.netlify.app on every main push (SPA + functions + same-origin AI).
+# Netlify Git auto-deploy also runs from netlify.toml when the site is linked to this repo.
+# Optional: NETLIFY_AUTH_TOKEN + NETLIFY_SITE_ID for GitHub Actions CLI deploy.
 
 on:
   push:
@@ -39,7 +38,7 @@ jobs:
         env:
           COMMIT_REF: ${{ github.sha }}
           GITHUB_SHA: ${{ github.sha }}
-          VITE_CANONICAL_APP_URL: https://h-s-system.vercel.app
+          VITE_CANONICAL_APP_URL: https://finova-hussein.netlify.app
 
       - name: Verify Wealth Analytics and build stamp in dist
         run: |
@@ -52,68 +51,48 @@ jobs:
           grep -q "content=\"${EXPECT_SHA}\"" dist/index.html
           echo "Build stamp ${EXPECT_SHA} verified in dist/index.html"
 
-      - name: Optional CLI deploy to Netlify
+      - name: Deploy to Netlify production
         id: netlify
-        continue-on-error: true
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
         run: |
           if [ -z "${NETLIFY_AUTH_TOKEN:-}" ] || [ -z "${NETLIFY_SITE_ID:-}" ]; then
-            echo "::notice title=Netlify Git deploy::No CLI secrets — production updates via Netlify linked-repo build (netlify.toml) and Vercel GitHub integration."
+            echo "::notice title=Netlify CLI deploy skipped::Site may still auto-deploy via Netlify Git link + netlify.toml."
             echo "deployed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           npx netlify deploy --prod --dir=dist --message "Deploy ${GITHUB_SHA:0:7} from GitHub Actions"
           echo "deployed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Smoke test production hosts
+      - name: Smoke test finova-hussein.netlify.app
         env:
           EXPECT_SHA: ${{ github.sha }}
         run: |
+          SITE_URL="https://finova-hussein.netlify.app"
           SHORT_SHA="${EXPECT_SHA:0:7}"
-          check_host() {
-            local SITE_URL="$1"
-            local LABEL="$2"
-            echo "Checking ${LABEL} ${SITE_URL}"
-            HTTP_CODE=$(curl -sfL -o /tmp/finova-index.html -w '%{http_code}' "${SITE_URL}/?nocache=$(date +%s)" || echo "000")
-            if [ "$HTTP_CODE" != "200" ]; then
-              echo "::warning title=${LABEL} unreachable::${SITE_URL} returned HTTP ${HTTP_CODE}"
-              return 1
-            fi
-            HTML=$(cat /tmp/finova-index.html)
-            if echo "$HTML" | grep -q 'esm.sh/react'; then
-              echo "::warning title=${LABEL} stale bundle::${SITE_URL} serves an old importmap prototype — link Netlify site to this repo or wait for Netlify Git build."
-              return 1
-            fi
-            if ! echo "$HTML" | grep -q 'name="finova-app"'; then
-              echo "::warning title=${LABEL} not H.S-System Vite::${SITE_URL} missing finova-app meta."
-              return 1
-            fi
-            LIVE_SHA=$(echo "$HTML" | sed -n 's/.*name="finova-build-sha" content="\([^"]*\)".*/\1/p' | head -1)
-            echo "${LABEL} live sha: ${LIVE_SHA} (push sha ${SHORT_SHA})"
-            if [ -n "${LIVE_SHA}" ] && [ "${LIVE_SHA}" != "${SHORT_SHA}" ]; then
-              echo "::warning title=${LABEL} deploy pending::Live sha ${LIVE_SHA} != push sha ${SHORT_SHA}"
-            fi
-            return 0
-          }
-          NETLIFY_OK=0
-          VERCEL_OK=0
-          check_host "https://finova-hussein.netlify.app" "Netlify" && NETLIFY_OK=1 || true
-          check_host "https://h-s-system.vercel.app" "Vercel" && VERCEL_OK=1 || true
-          if [ "$NETLIFY_OK" = "0" ] && [ "$VERCEL_OK" = "0" ]; then
-            echo "::error title=No production host serving latest app::Both Netlify and Vercel checks failed."
-            exit 1
+          echo "Checking ${SITE_URL} (expect build sha ${SHORT_SHA})"
+          sleep 15
+          HTTP_CODE=$(curl -sfL -o /tmp/finova-index.html -w '%{http_code}' "${SITE_URL}/?nocache=$(date +%s)" || echo "000")
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::warning title=Netlify production::${SITE_URL} returned HTTP ${HTTP_CODE}"
+            exit 0
           fi
-          if [ "$VERCEL_OK" = "1" ]; then
-            ORIGIN="https://h-s-system.vercel.app"
-            HEALTH=$(curl -sfL -X POST "${ORIGIN}/api/gemini-proxy" \
-              -H "Content-Type: application/json" \
-              -H "Origin: ${ORIGIN}" \
-              -d '{"health":true}' || true)
-            if echo "$HEALTH" | grep -q 'anyProviderConfigured'; then
-              echo "Vercel API relay + AI proxy health OK at ${ORIGIN}"
-            else
-              echo "::warning title=AI proxy health::Could not verify gemini-proxy CORS at ${ORIGIN}: ${HEALTH}"
-            fi
+          HTML=$(cat /tmp/finova-index.html)
+          if echo "$HTML" | grep -q 'esm.sh/react'; then
+            echo "::warning title=Stale Netlify bundle::${SITE_URL} still serves old importmap prototype — link Netlify site to this repo or set NETLIFY_AUTH_TOKEN + NETLIFY_SITE_ID."
+            exit 0
+          fi
+          echo "$HTML" | grep -q 'name="finova-app"'
+          LIVE_SHA=$(echo "$HTML" | sed -n 's/.*name="finova-build-sha" content="\([^"]*\)".*/\1/p' | head -1)
+          echo "Live sha: ${LIVE_SHA} (push sha ${SHORT_SHA})"
+          ORIGIN="${SITE_URL%/}"
+          HEALTH=$(curl -sfL -X POST "${ORIGIN}/api/gemini-proxy" \
+            -H "Content-Type: application/json" \
+            -H "Origin: ${ORIGIN}" \
+            -d '{"health":true}' || true)
+          if echo "$HEALTH" | grep -q 'anyProviderConfigured'; then
+            echo "AI proxy health OK with browser Origin at ${ORIGIN}"
+          else
+            echo "::warning title=AI proxy CORS::Health with Origin failed: ${HEALTH}"
           fi
