@@ -1,11 +1,7 @@
 {
   "rewrites": [
     {
-      "source": "/api/:path*",
-      "destination": "https://finova-hussein.netlify.app/api/:path*"
-    },
-    {
-      "source": "/((?!assets/|logo\\.svg|auth-shell\\.css).*)",
+      "source": "/((?!api/|assets/|logo\\.svg|auth-shell\\.css).*)",
       "destination": "/index.html"
     }
   ],

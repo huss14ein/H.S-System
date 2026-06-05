@@ -16,10 +16,11 @@ describe('security wiring', () => {
     expect(tracked).toBe('');
   });
 
-  it('vercel.json serves SPA and proxies API (no permanent redirect to Netlify)', () => {
+  it('vercel.json serves SPA with local API relay (no permanent redirect trap)', () => {
     const vercel = read('vercel.json');
     expect(vercel).not.toContain('"redirects"');
-    expect(vercel).toContain('/api/:path*');
+    expect(vercel).not.toContain('finova-hussein.netlify.app/api');
+    expect(read('server/vercelApiRelay.ts')).not.toContain("'Access-Control-Allow-Origin': '*'");
     expect(vercel).toContain('Content-Security-Policy');
     expect(vercel).toContain('Strict-Transport-Security');
   });

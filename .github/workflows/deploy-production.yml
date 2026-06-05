@@ -39,7 +39,7 @@ jobs:
         env:
           COMMIT_REF: ${{ github.sha }}
           GITHUB_SHA: ${{ github.sha }}
-          VITE_CANONICAL_APP_URL: https://finova-hussein.netlify.app
+          VITE_CANONICAL_APP_URL: https://h-s-system.vercel.app
 
       - name: Verify Wealth Analytics and build stamp in dist
         run: |
@@ -105,15 +105,15 @@ jobs:
             echo "::error title=No production host serving latest app::Both Netlify and Vercel checks failed."
             exit 1
           fi
-          if [ "$NETLIFY_OK" = "1" ]; then
-            ORIGIN="https://finova-hussein.netlify.app"
+          if [ "$VERCEL_OK" = "1" ]; then
+            ORIGIN="https://h-s-system.vercel.app"
             HEALTH=$(curl -sfL -X POST "${ORIGIN}/api/gemini-proxy" \
               -H "Content-Type: application/json" \
               -H "Origin: ${ORIGIN}" \
               -d '{"health":true}' || true)
             if echo "$HEALTH" | grep -q 'anyProviderConfigured'; then
-              echo "AI proxy health OK at ${ORIGIN}"
+              echo "Vercel API relay + AI proxy health OK at ${ORIGIN}"
             else
-              echo "::warning title=AI proxy health::Could not verify gemini-proxy at ${ORIGIN}"
+              echo "::warning title=AI proxy health::Could not verify gemini-proxy CORS at ${ORIGIN}: ${HEALTH}"
             fi
           fi

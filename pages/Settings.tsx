@@ -40,7 +40,7 @@ import {
   getCanonicalAppUrl,
   hasWealthAnalyticsRollout,
   isOnCanonicalHost,
-  VERCEL_MIRROR_APP_URL,
+  NETLIFY_PRODUCTION_ORIGIN,
 } from '../utils/buildInfo';
 import AIAdvisor from '../components/AIAdvisor';
 import Modal from '../components/Modal';
@@ -523,12 +523,11 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                             {getCanonicalAppUrl().replace('https://', '')}
                         </a>
                         {' · '}
-                        Vercel mirror:{' '}
-                        <a href={VERCEL_MIRROR_APP_URL} className="underline font-medium" target="_blank" rel="noopener noreferrer">
-                            {VERCEL_MIRROR_APP_URL.replace('https://', '')}
+                        Netlify bookmark:{' '}
+                        <a href={NETLIFY_PRODUCTION_ORIGIN} className="underline font-medium" target="_blank" rel="noopener noreferrer">
+                            {NETLIFY_PRODUCTION_ORIGIN.replace('https://', '')}
                         </a>
-                        . Pushing to <code className="text-[10px]">main</code> auto-deploys via Netlify Git (when the site is
-                        linked to this repo) and Vercel — no GitHub secrets required.
+                        {' '}(redirects here). Pushing to <code className="text-[10px]">main</code> auto-deploys on Vercel — no GitHub secrets.
                         {typeof window !== 'undefined' && !isOnCanonicalHost() ? (
                             <>
                                 {' '}
