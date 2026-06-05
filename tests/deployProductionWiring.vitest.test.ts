@@ -9,19 +9,24 @@ describe('production deploy wiring', () => {
     expect(vite).toContain('finova-app');
   });
 
-  it('deploy-production workflow builds dist and can publish to Netlify', () => {
+  it('deploy-production workflow builds dist, publishes Netlify, and fails if stale', () => {
     const wf = fs.readFileSync(path.join(process.cwd(), '.github/workflows/deploy-production.yml'), 'utf8');
     expect(wf).toContain('deploy-production');
-    expect(wf).toContain('netlify deploy --prod');
+    expect(wf).toContain('netlify-production-deploy.mjs');
     expect(wf).toContain('Wealth Analytics');
-    expect(wf).toContain('NETLIFY_SITE_ID');
+    expect(wf).toContain('NETLIFY_BUILD_HOOK');
+    expect(wf).toContain('Production still stale');
+    expect(wf).toContain('esm.sh/react');
   });
 
-  it('vercel.json keeps SPA shell uncached and assets immutable', () => {
+  it('netlify deploy script supports CLI token and build hook', () => {
+    const script = fs.readFileSync(path.join(process.cwd(), 'scripts/netlify-production-deploy.mjs'), 'utf8');
+    expect(script).toContain('NETLIFY_BUILD_HOOK');
+    expect(script).toContain('finova-hussein.netlify.app');
+  });
+
+  it('vercel.json redirects to Netlify production', () => {
     const vercel = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'vercel.json'), 'utf8'));
-    const indexHeader = vercel.headers.find((h: { source: string }) => h.source === '/index.html');
-    expect(indexHeader.headers.some((x: { value: string }) => x.value.includes('must-revalidate'))).toBe(true);
-    const assetHeader = vercel.headers.find((h: { source: string }) => h.source === '/assets/(.*)');
-    expect(assetHeader.headers.some((x: { value: string }) => x.value.includes('immutable'))).toBe(true);
+    expect(vercel.redirects[0].destination).toContain('finova-hussein.netlify.app');
   });
 });

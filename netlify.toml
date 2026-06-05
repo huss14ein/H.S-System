@@ -6,6 +6,10 @@
 [build.environment]
   NODE_VERSION = "20"
   VITE_CANONICAL_APP_URL = "https://finova-hussein.netlify.app"
+  # Netlify injects COMMIT_REF — vite.config.ts uses it for finova-build-sha in index.html.
+
+[context.production.environment]
+  VITE_CANONICAL_APP_URL = "https://finova-hussein.netlify.app"
 
 # Functions do not inherit `[build.environment]` — mirror canonical SPA origin here for AI/market proxy CORS.
 [context.all.environment]

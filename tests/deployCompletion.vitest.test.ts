@@ -48,13 +48,13 @@ describe('deploy completion — Wealth Analytics + production hosts', () => {
     expect(redirects).not.toContain('302');
   });
 
-  it('GitHub deploy workflow verifies Wealth Analytics and smoke-tests Netlify + AI CORS', () => {
+  it('GitHub deploy workflow verifies Wealth Analytics and fails if production is stale', () => {
     const wf = read('.github/workflows/deploy-production.yml');
     expect(wf).toContain('Wealth Analytics');
     expect(wf).toContain('finova-build-sha');
-    expect(wf).toContain('Smoke test finova-hussein.netlify.app');
-    expect(wf).toContain('Origin:');
-    expect(wf).toContain('anyProviderConfigured');
+    expect(wf).toContain('Wait for live finova-hussein.netlify.app');
+    expect(wf).toContain('Production still stale');
+    expect(wf).toContain('NETLIFY_BUILD_HOOK');
   });
 
   it('netlify.toml uses a fast Git build (tests run in CI, not on Netlify)', () => {
@@ -68,7 +68,7 @@ describe('deploy completion — Wealth Analytics + production hosts', () => {
     expect(settings).toContain('hasWealthAnalyticsRollout');
     expect(settings).toContain('getBuildSha');
     expect(settings).toContain('getCanonicalAppUrl');
-    expect(settings).toContain('/api/gemini-proxy');
+    expect(settings).toContain('Wealth Analytics');
   });
 
   it('DeployFreshnessBanner prompts refresh when bundle is stale', () => {

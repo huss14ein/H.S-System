@@ -521,8 +521,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                         <a href={getCanonicalAppUrl()} className="underline font-medium" target="_blank" rel="noopener noreferrer">
                             {getCanonicalAppUrl().replace('https://', '')}
                         </a>
-                        . SPA and AI proxy run on this host (<code className="text-[10px]">/api/gemini-proxy</code>).
-                        Pushing to <code className="text-[10px]">main</code> auto-deploys via Netlify Git + <code className="text-[10px]">netlify.toml</code>.
+                        Wealth Analytics (Overview menu) holds the charts, health score, and executive summary moved from Dashboard.
                         {typeof window !== 'undefined' && !isOnCanonicalHost() ? (
                             <>
                                 {' '}
