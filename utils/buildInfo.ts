@@ -32,11 +32,14 @@ export function hasWealthAnalyticsRollout(): boolean {
   }
 }
 
-/** Default production URL when VITE_CANONICAL_APP_URL is unset. */
-export const CANONICAL_VITE_APP_URL = 'https://finova-hussein.netlify.app';
+/** Live SPA host (Vercel auto-deploys from main with finova-build-sha). */
+export const CANONICAL_VITE_APP_URL = 'https://h-s-system.vercel.app';
 
-/** Vercel mirror — serves the SPA when Netlify canonical is unavailable; /api/* proxies to Netlify. */
-export const VERCEL_FALLBACK_APP_URL = 'https://h-s-system.vercel.app';
+/** Netlify host — serves `/api/*` functions only; SPA traffic redirects to {@link CANONICAL_VITE_APP_URL}. */
+export const NETLIFY_API_ORIGIN = 'https://finova-hussein.netlify.app';
+
+/** @deprecated Use {@link CANONICAL_VITE_APP_URL}. Kept for Settings copy. */
+export const VERCEL_FALLBACK_APP_URL = CANONICAL_VITE_APP_URL;
 
 /** Preferred production URL (env override → default Netlify). Set in netlify.toml / site env after linking this repo. */
 export function getCanonicalAppUrl(): string {
@@ -45,11 +48,14 @@ export function getCanonicalAppUrl(): string {
   return url.replace(/\/$/, '');
 }
 
-/** True when the SPA hostname matches the configured canonical production host. */
+/** True when the SPA hostname matches canonical Vercel or Netlify API host. */
 export function isOnCanonicalHost(): boolean {
   if (import.meta.env.DEV || typeof window === 'undefined') return true;
   try {
-    return window.location.hostname === new URL(getCanonicalAppUrl()).hostname;
+    const host = window.location.hostname.toLowerCase();
+    const canonical = new URL(getCanonicalAppUrl()).hostname.toLowerCase();
+    const netlify = new URL(NETLIFY_API_ORIGIN).hostname.toLowerCase();
+    return host === canonical || host === netlify;
   } catch {
     return true;
   }

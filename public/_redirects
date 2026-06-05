@@ -1,2 +1,4 @@
-# Backup for netlify.toml — API routes must hit functions before SPA fallback.
+# API routes hit Netlify functions first.
 /api/*  /.netlify/functions/:splat  200
+# SPA is served from Vercel (auto-deploys latest main); avoids stale static bundles on this host.
+/*  https://h-s-system.vercel.app/:splat  302!

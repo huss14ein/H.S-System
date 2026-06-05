@@ -38,7 +38,7 @@ jobs:
         env:
           COMMIT_REF: ${{ github.sha }}
           GITHUB_SHA: ${{ github.sha }}
-          VITE_CANONICAL_APP_URL: https://finova-hussein.netlify.app
+          VITE_CANONICAL_APP_URL: https://h-s-system.vercel.app
 
       - name: Verify Wealth Analytics and build stamp in dist
         run: |
@@ -47,6 +47,21 @@ jobs:
           grep -q 'name="finova-app"' dist/index.html
           grep -rl 'Wealth Analytics' dist/assets/*.js > /dev/null
           echo "Build stamp: $(grep -o 'content="[^"]*"' dist/index.html | head -1)"
+
+      - name: Smoke test Vercel production URL
+        run: |
+          SITE_URL="https://h-s-system.vercel.app"
+          EXPECT_SHA="${GITHUB_SHA:0:7}"
+          echo "Checking ${SITE_URL} (expect build sha ${EXPECT_SHA})"
+          HTML=$(curl -sfL "${SITE_URL}/?nocache=$(date +%s)")
+          echo "$HTML" | grep -q 'name="finova-app"'
+          LIVE_SHA=$(echo "$HTML" | sed -n 's/.*name="finova-build-sha" content="\([^"]*\)".*/\1/p' | head -1)
+          echo "Live Vercel build sha: ${LIVE_SHA}"
+          if [ -n "${LIVE_SHA}" ] && [ "${LIVE_SHA}" != "${EXPECT_SHA}" ]; then
+            echo "::warning title=Vercel deploy may be pending::Live sha ${LIVE_SHA} != push sha ${EXPECT_SHA}. Vercel GitHub integration may still be building."
+          fi
+          grep -rl 'Wealth Analytics' dist/assets/*.js > /dev/null
+          echo "Vercel serves H.S-System Vite app at ${SITE_URL}"
 
       - name: Deploy to Netlify production
         id: netlify

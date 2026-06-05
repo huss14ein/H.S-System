@@ -1,5 +1,6 @@
 import React from 'react';
 import { useDeployFreshness } from '../hooks/useDeployFreshness';
+import { getCanonicalAppUrl } from '../utils/buildInfo';
 
 /** Non-blocking banner when the browser is running an older hashed bundle than the live deploy. */
 const DeployFreshnessBanner: React.FC = () => {
@@ -23,7 +24,11 @@ const DeployFreshnessBanner: React.FC = () => {
         ) : (
           '.'
         )}{' '}
-        Refresh to load Wealth Analytics and other recent changes.
+        Refresh to load Wealth Analytics and other recent changes. Or open{' '}
+        <a href={getCanonicalAppUrl()} className="underline font-medium" target="_blank" rel="noopener noreferrer">
+          {getCanonicalAppUrl().replace('https://', '')}
+        </a>
+        .
       </p>
       <button
         type="button"

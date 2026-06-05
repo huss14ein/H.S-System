@@ -40,7 +40,7 @@ import {
   getCanonicalAppUrl,
   hasWealthAnalyticsRollout,
   isOnCanonicalHost,
-  VERCEL_FALLBACK_APP_URL,
+  NETLIFY_API_ORIGIN,
 } from '../utils/buildInfo';
 import AIAdvisor from '../components/AIAdvisor';
 import Modal from '../components/Modal';
@@ -518,24 +518,23 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                         <strong>{hasWealthAnalyticsRollout() ? 'included in this build' : 'not in this build — hard refresh or use the URL below'}</strong>
                     </p>
                     <p className="mt-2 text-xs opacity-90">
-                        Production URL:{' '}
+                        Production app:{' '}
                         <a href={getCanonicalAppUrl()} className="underline font-medium" target="_blank" rel="noopener noreferrer">
                             {getCanonicalAppUrl().replace('https://', '')}
                         </a>
                         {' · '}
-                        Vercel mirror:{' '}
-                        <a href={VERCEL_FALLBACK_APP_URL} className="underline font-medium" target="_blank" rel="noopener noreferrer">
-                            {VERCEL_FALLBACK_APP_URL.replace('https://', '')}
+                        API functions:{' '}
+                        <a href={NETLIFY_API_ORIGIN} className="underline font-medium" target="_blank" rel="noopener noreferrer">
+                            {NETLIFY_API_ORIGIN.replace('https://', '')}
                         </a>
-                        . GitHub <code className="text-[10px]">main</code> auto-deploys via Vercel and (when{' '}
+                        . GitHub <code className="text-[10px]">main</code> auto-deploys the SPA via Vercel; Netlify hosts{' '}
                         <code className="text-[10px]">NETLIFY_AUTH_TOKEN</code> +{' '}
                         <code className="text-[10px]">NETLIFY_SITE_ID</code> secrets are set) Netlify Actions.
                         {typeof window !== 'undefined' && !isOnCanonicalHost() ? (
                             <>
                                 {' '}
                                 This tab is on <strong>{window.location.hostname}</strong> — if features are missing, open the
-                                production URL above or the Vercel mirror (bookmarks to my-finova.netlify.app may still show an old
-                                Next.js app until Netlify is linked to this repo).
+                                production app URL above (Vercel). Netlify now redirects the SPA to Vercel and only serves API functions.
                             </>
                         ) : null}
                     </p>

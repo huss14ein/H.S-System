@@ -57,6 +57,13 @@ describe('security wiring', () => {
     expect(src).toContain('WEEKLY_DIGEST_SECRET');
   });
 
+  it('send-review-pack edge function uses origin allowlist CORS (no wildcard)', () => {
+    const src = read('supabase/functions/send-review-pack/index.ts');
+    expect(src).not.toContain("'Access-Control-Allow-Origin': '*'");
+    expect(src).toContain('allowedOrigins');
+    expect(src).toContain('Origin not allowed');
+  });
+
   it('signup approval uses server profile sync without client email bypass', () => {
     const approval = read('utils/userApproval.ts');
     const fn = approval.slice(approval.indexOf('export function resolveEffectiveAppAccess'));

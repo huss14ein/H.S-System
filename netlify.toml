@@ -4,12 +4,12 @@
 
 [build.environment]
   NODE_VERSION = "20"
-  VITE_CANONICAL_APP_URL = "https://finova-hussein.netlify.app"
+  VITE_CANONICAL_APP_URL = "https://h-s-system.vercel.app"
 
-# Functions do not inherit `[build.environment]` — mirror canonical origin here for AI/market proxy CORS.
+# Functions do not inherit `[build.environment]` — mirror canonical SPA origin here for AI/market proxy CORS.
 [context.all.environment]
-  FINOVA_CANONICAL_APP_URL = "https://finova-hussein.netlify.app"
-  ALLOWED_ORIGINS = "https://finova-hussein.netlify.app,https://h-s-system.vercel.app,http://localhost:5173,http://127.0.0.1:5173,http://localhost:8888"
+  FINOVA_CANONICAL_APP_URL = "https://h-s-system.vercel.app"
+  ALLOWED_ORIGINS = "https://h-s-system.vercel.app,https://finova-hussein.netlify.app,http://localhost:5173,http://127.0.0.1:5173,http://localhost:8888"
 
 [functions]
   directory = "netlify/functions"
@@ -33,11 +33,12 @@
   to = "/.netlify/functions/:splat"
   status = 200
 
-# SPA client-side routing (Vite build). Preview deploy permalinks redirect to production via index.html script.
+# Stale Netlify static deploys redirect to Vercel SPA (functions stay on this host via /api/* above).
 [[redirects]]
   from = "/*"
-  to = "/index.html"
-  status = 200
+  to = "https://h-s-system.vercel.app/:splat"
+  status = 302
+  force = true
 
 # Login/signup shell CSS (small, unhashed) — short cache so deploys pick up auth-shell changes quickly.
 [[headers]]
