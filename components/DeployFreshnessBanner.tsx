@@ -1,6 +1,6 @@
 import React from 'react';
 import { useDeployFreshness } from '../hooks/useDeployFreshness';
-import { getCanonicalAppUrl } from '../utils/buildInfo';
+import { getCanonicalAppUrl, VERCEL_MIRROR_APP_URL } from '../utils/buildInfo';
 
 /** Non-blocking banner when the browser is running an older hashed bundle than the live deploy. */
 const DeployFreshnessBanner: React.FC = () => {
@@ -24,19 +24,37 @@ const DeployFreshnessBanner: React.FC = () => {
         ) : (
           '.'
         )}{' '}
-        Refresh to load Wealth Analytics and other recent changes. Or open{' '}
-        <a href={getCanonicalAppUrl()} className="underline font-medium" target="_blank" rel="noopener noreferrer">
-          {getCanonicalAppUrl().replace('https://', '')}
-        </a>
-        .
+        Refresh to load Wealth Analytics, fiscal-month Transactions, signup approval, and other recent changes.
       </p>
-      <button
-        type="button"
-        onClick={() => window.location.reload()}
-        className="mt-2 inline-flex items-center rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-700"
-      >
-        Refresh now
-      </button>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="inline-flex items-center rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-700"
+        >
+          Refresh now
+        </button>
+        <a
+          href={getCanonicalAppUrl()}
+          className="inline-flex items-center rounded-lg border border-sky-400 bg-white px-3 py-1.5 text-xs font-semibold text-sky-800 hover:bg-sky-100"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Open {getCanonicalAppUrl().replace('https://', '')}
+        </a>
+        {typeof window !== 'undefined' &&
+        window.location.hostname === 'finova-hussein.netlify.app' &&
+        remoteSha !== localSha ? (
+          <a
+            href={VERCEL_MIRROR_APP_URL}
+            className="inline-flex items-center rounded-lg border border-sky-400 bg-white px-3 py-1.5 text-xs font-semibold text-sky-800 hover:bg-sky-100"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open Vercel mirror (latest)
+          </a>
+        ) : null}
+      </div>
     </div>
   );
 };

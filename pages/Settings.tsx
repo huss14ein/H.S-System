@@ -527,14 +527,13 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                         <a href={VERCEL_MIRROR_APP_URL} className="underline font-medium" target="_blank" rel="noopener noreferrer">
                             {VERCEL_MIRROR_APP_URL.replace('https://', '')}
                         </a>
-                        . GitHub <code className="text-[10px]">main</code> auto-deploys to Netlify when{' '}
-                        <code className="text-[10px]">NETLIFY_AUTH_TOKEN</code> +{' '}
-                        <code className="text-[10px]">NETLIFY_SITE_ID</code> are set in repository secrets.
+                        . Pushing to <code className="text-[10px]">main</code> auto-deploys via Netlify Git (when the site is
+                        linked to this repo) and Vercel — no GitHub secrets required.
                         {typeof window !== 'undefined' && !isOnCanonicalHost() ? (
                             <>
                                 {' '}
                                 This tab is on <strong>{window.location.hostname}</strong> — if features are missing, open the
-                                production URL above or hard-refresh (Cmd+Shift+R). Avoid legacy hosts like my-finova.netlify.app.
+                                production URL above or the Vercel mirror. Avoid <strong>my-finova.netlify.app</strong> (legacy Next.js app).
                             </>
                         ) : null}
                     </p>

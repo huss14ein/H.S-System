@@ -56,10 +56,15 @@ describe('deploy completion — Wealth Analytics + production hosts', () => {
     const wf = read('.github/workflows/deploy-production.yml');
     expect(wf).toContain('Wealth Analytics');
     expect(wf).toContain('finova-build-sha');
-    expect(wf).toContain('Smoke test Netlify production URL');
+    expect(wf).toContain('Smoke test production hosts');
     expect(wf).toContain('finova-hussein.netlify.app');
-    expect(wf).toContain('NETLIFY_AUTH_TOKEN');
-    expect(wf).not.toContain('Netlify deploy skipped');
+    expect(wf).toContain('Netlify Git deploy');
+  });
+
+  it('netlify.toml uses a fast Git build (tests run in CI, not on Netlify)', () => {
+    const toml = read('netlify.toml');
+    expect(toml).toContain('npm run build');
+    expect(toml).not.toContain('npm run test');
   });
 
   it('Settings surfaces build stamp and Wealth Analytics rollout for deploy verification', () => {
