@@ -45,9 +45,9 @@ describe('Plan completion audit (A–I)', () => {
 
   it('Phase F/G — layout order + PDF export + language toggle', () => {
     const wa = read('pages/WealthAnalytics.tsx');
-    expect(wa).toContain('WealthAnalyticsExportMenu');
+    expect(wa).toContain('WealthAnalyticsExportMenuSection');
     expect(wa).toContain('ExecutiveKpiGrid');
-    expect(wa.indexOf('<ExecutiveKpiGrid')).toBeLessThan(wa.indexOf('<PortfolioPeriodPnLPanel'));
+    expect(wa.indexOf('<ExecutiveKpiGrid')).toBeLessThan(wa.indexOf('<PortfolioPeriodPnLPanelSection'));
     expect(read('components/analytics/WealthAnalyticsExportMenu.tsx')).toContain('PageLanguageToggle');
     expect(read('services/reportingEngine.ts')).toContain('generateWealthExecutiveSummaryHtml');
     expect(read('services/reportingEngine.ts')).toContain('sparklineSvg');
@@ -58,7 +58,8 @@ describe('Plan completion audit (A–I)', () => {
     expect(read('services/geminiService.ts')).toContain('getAIMultiStockAnalysis');
     expect(read('pages/InvestmentOverview.tsx')).toContain('MultiStockAnalysisPanel');
     expect(read('pages/WatchlistView.tsx')).toContain('MultiStockAnalysisPanel');
-    expect(read('pages/WealthAnalytics.tsx')).toContain('MultiStockAnalysisPanel');
+    expect(read('pages/WealthAnalytics.tsx')).toContain('WealthAnalyticsDetailsSectionLazy');
+    expect(read('components/analytics/WealthAnalyticsDetailsSection.tsx')).toContain('MultiStockAnalysisSection');
     expect(read('docs/AI_GROUNDING.md')).toContain('getAIMultiStockAnalysis');
   });
 

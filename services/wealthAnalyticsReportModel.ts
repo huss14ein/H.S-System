@@ -107,6 +107,7 @@ export function buildWealthAnalyticsReportModel(input: {
     simulatedPrices: input.simulatedPrices,
     monthStartDay,
     getAvailableCashForAccount: input.getAvailableCashForAccount,
+    summary: pnlSummary,
   });
 
   const nwSpark = netWorthSparklineFromSnapshots();

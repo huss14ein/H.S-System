@@ -85,7 +85,8 @@ describe('performance recovery E2E wiring', () => {
   });
 
   it('KPI drift telemetry is available on Wealth Analytics (strict reconciliation)', () => {
-    expect(read('pages/WealthAnalytics.tsx')).toContain('reconcileDashboardVsSummaryKpis');
+    expect(read('hooks/useWealthAnalyticsDeferredInsights.ts')).toContain('reconcileDashboardVsSummaryKpis');
+    expect(read('components/analytics/WealthAnalyticsDetailsSection.tsx')).toContain('useWealthAnalyticsDeferredInsights');
     expect(read('services/kpiDriftTelemetry.ts')).toContain('kpi_reconciliation_diagnostics');
   });
 
@@ -223,7 +224,10 @@ describe('performance recovery E2E wiring', () => {
   });
 
   it('system performance: idle enhancement insights, debounced quotes, expanded prefetch', () => {
-    expect(read('hooks/useFinancialEnhancementInsights.ts')).toContain('scheduleIdleWork');
+    expect(read('hooks/useFinancialEnhancementInsights.ts')).toContain('scheduleIdleWorkAsync');
+    expect(read('hooks/useFinancialEnhancementInsights.ts')).toContain('yieldToMain');
+    expect(read('hooks/useWealthAnalyticsDeferredInsights.ts')).toContain('scheduleIdleWorkAsync');
+    expect(read('hooks/useFinancialEnginesIntegration.ts')).toContain('scheduleIdleWorkAsync');
     expect(read('hooks/useEnhancementSignals.ts')).toMatch(/showHydrateBanner/);
     expect(read('hooks/useDebouncedMarketPrices.ts')).toContain('MarketDebouncedPricesContext');
     expect(read('components/Layout.tsx')).toContain('useDebouncedMarketPrices');
@@ -249,6 +253,16 @@ describe('performance recovery E2E wiring', () => {
     expect(read('context/DataContext.tsx')).toContain('secondaryFetchPromise');
     expect(read('context/DataContext.tsx')).toContain('yieldToMain');
     expect(read('pages/WealthAnalytics.tsx')).toContain('usePortfolioPeriodPnLSnapshot');
+    expect(read('components/analytics/WealthAnalyticsDetailsSection.tsx')).toContain('useWealthAnalyticsDeferredInsights');
+    expect(read('pages/WealthAnalytics.tsx')).toContain('wealthAnalyticsLazySections');
+    expect(read('components/dashboard/DeferredMount.tsx')).toContain('staggerIndex');
+    expect(read('hooks/useExecutiveKpiSparklines.ts')).toContain('scheduleIdleWorkAsync');
+    expect(read('hooks/usePortfolioPeriodPnLSnapshot.ts')).toContain('scheduleIdleWorkAsync');
+    expect(read('hooks/usePortfolioPeriodPnLSnapshot.ts')).toContain('yieldToMain');
+    expect(read('pages/Investments.tsx')).toContain('usePortfolioPeriodPnLSnapshot');
+    expect(read('components/dashboard/PortfolioPeriodPnLPanel.tsx')).toContain('usePortfolioPeriodPnLSnapshot');
+    expect(read('utils/runWhenIdle.ts')).toContain('idleWorkChain');
+    expect(read('services/portfolioPeriodPnL.ts')).toContain('applyTxToLedgerReplayState');
     expect(read('utils/lazyPages.tsx')).toContain('PRIORITY_PREFETCH_PAGES');
   });
 });

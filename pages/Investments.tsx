@@ -79,11 +79,8 @@ import {
 } from '../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
-import {
-  computePortfolioPeriodPnLSummary,
-  computePortfolioPnLDailySeries,
-  portfolioPeriodPnLMap,
-} from '../services/portfolioPeriodPnL';
+import type { PortfolioPeriodPnLRow, PortfolioPnLDailyPoint } from '../services/portfolioPeriodPnL';
+import { usePortfolioPeriodPnLSnapshot } from '../hooks/usePortfolioPeriodPnLSnapshot';
 import MiniPnLSparkline from '../components/analytics/MiniPnLSparkline';
 import {
     inferInvestmentTransactionCurrency,
@@ -2541,8 +2538,10 @@ const PlatformCard: React.FC<{
     onToggleExpanded: () => void;
     holdingsOutliers?: import('../services/holdingsOutlierAudit').HoldingOutlierRow[];
     setActivePage?: (page: Page) => void;
+    portfolioPeriodPnLById: Map<string, PortfolioPeriodPnLRow>;
+    portfolioWeeklySparklineById: Map<string, PortfolioPnLDailyPoint[]>;
 }> = (props) => {
-    const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded, holdingsOutliers = [], setActivePage } = props;
+    const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded, holdingsOutliers = [], setActivePage, portfolioPeriodPnLById, portfolioWeeklySparklineById } = props;
     const { refreshPricesForPlatform, isRefreshing: quotesRefreshing, quotesRefreshUIScope } = useMarketQuoteMeta();
     const thisPlatformSyncing =
         quotesRefreshing &&
@@ -2551,7 +2550,7 @@ const PlatformCard: React.FC<{
     const portfoliosForMetrics = metricsPortfolios ?? portfolios;
     const showPersonalScopeNote = portfolios.length > portfoliosForMetrics.length;
     const { formatCurrencyString } = useFormatCurrency();
-    const { data: dataCtx, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data: dataCtx } = useContext(DataContext)!;
     const [isTxnModalOpen, setIsTxnModalOpen] = useState(false);
     const investmentsForInfer = useMemo(() => {
         if (!dataCtx) return [] as InvestmentPortfolio[];
@@ -2655,36 +2654,6 @@ const PlatformCard: React.FC<{
             availableCashByCurrency,
         ],
     );
-
-    const portfolioPeriodPnLById = useMemo(() => {
-        if (!dataCtx || portfoliosForMetrics.length === 0) return new Map<string, import('../services/portfolioPeriodPnL').PortfolioPeriodPnLRow>();
-        const summary = computePortfolioPeriodPnLSummary({
-            data: dataCtx,
-            portfolios: portfoliosForMetrics,
-            accounts: getPersonalAccounts(dataCtx),
-            sarPerUsd,
-            simulatedPrices,
-            monthStartDay: resolveMonthStartDayFromData(dataCtx),
-            getAvailableCashForAccount,
-        });
-        return portfolioPeriodPnLMap(summary);
-    }, [dataCtx, portfoliosForMetrics, sarPerUsd, simulatedPrices, getAvailableCashForAccount]);
-
-    const portfolioWeeklySparklineById = useMemo(() => {
-        if (!dataCtx || portfoliosForMetrics.length === 0) {
-            return new Map<string, import('../services/portfolioPeriodPnL').PortfolioPnLDailyPoint[]>();
-        }
-        const series = computePortfolioPnLDailySeries({
-            data: dataCtx,
-            portfolios: portfoliosForMetrics,
-            accounts: getPersonalAccounts(dataCtx),
-            sarPerUsd,
-            simulatedPrices,
-            monthStartDay: resolveMonthStartDayFromData(dataCtx),
-            getAvailableCashForAccount,
-        });
-        return series.weeklyByPortfolioId;
-    }, [dataCtx, portfoliosForMetrics, sarPerUsd, simulatedPrices, getAvailableCashForAccount]);
 
     const totalHoldings = portfolios.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
     const metricsHoldingsCount = portfoliosForMetrics.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
@@ -3281,9 +3250,18 @@ const PlatformView: React.FC<{
     onEditHolding: (holding: Holding) => void;
     simulatedPrices: SimulatedPriceMap;
 }> = (props) => {
-    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, getAvailableCashForAccount, showHydrateBanner } = useContext(DataContext)!;
     const { sarPerUsd, platformsRollupSar } = useInvestmentsCanonicalMetrics();
     const { setActivePage, setActiveTab, onOpenAddPortfolio } = props;
+    const personalInvestments = useMemo(() => getPersonalInvestments(data), [data]);
+    const personalAccounts = useMemo(() => getPersonalAccounts(data), [data]);
+    const portfolioPnL = usePortfolioPeriodPnLSnapshot({
+        data: showHydrateBanner ? null : data,
+        portfolios: personalInvestments,
+        accounts: personalAccounts,
+        sarPerUsd,
+        simulatedPrices: props.simulatedPrices,
+    });
 
     const holdingsOutliersAll = useMemo(() => (data ? findHoldingsValueOutliers(data) : []), [data]);
 
@@ -3489,6 +3467,8 @@ const PlatformView: React.FC<{
                         onToggleExpanded={() => setPlatformExpanded((prev) => ({ ...prev, [p.account.id]: !prev[p.account.id] }))}
                         holdingsOutliers={holdingsOutliersAll}
                         setActivePage={setActivePage}
+                        portfolioPeriodPnLById={portfolioPnL.pnlByPortfolioId}
+                        portfolioWeeklySparklineById={portfolioPnL.weeklySparklineByPortfolioId}
                     />
                 ))}
             </div>

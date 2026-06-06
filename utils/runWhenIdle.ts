@@ -1,13 +1,54 @@
-/** Schedule work after paint without blocking navigation / hydrate (requestIdleCallback with timeout fallback). */
+import { isBackgroundWorkPaused } from './backgroundWorkGate';
+import { yieldToMain } from './yieldToMain';
+
+/** Serializes heavy idle tasks so they do not stack on one long main-thread block. */
+let idleWorkChain: Promise<void> = Promise.resolve();
+
+/** Test helper — drain queued idle work between assertions. */
+export function resetIdleWorkQueueForTests(): void {
+  idleWorkChain = Promise.resolve();
+}
+
+function enqueueIdleWorkTask(work: () => void | Promise<void>): void {
+  idleWorkChain = idleWorkChain
+    .then(async () => {
+      if (isBackgroundWorkPaused()) return;
+      await yieldToMain(16);
+      if (isBackgroundWorkPaused()) return;
+      await work();
+    })
+    .catch(() => {});
+}
+
+/**
+ * Schedule work after paint without blocking navigation / hydrate.
+ * Work runs one task at a time with a main-thread yield between queued jobs.
+ */
 export function scheduleIdleWork(work: () => void, timeoutMs = 2000): () => void {
-  if (typeof window === 'undefined') {
-    work();
-    return () => {};
-  }
+  return scheduleIdleWorkAsync(work, timeoutMs);
+}
+
+/** Async-friendly idle scheduling — use for multi-step or chunked background work. */
+export function scheduleIdleWorkAsync(
+  work: () => void | Promise<void>,
+  timeoutMs = 2000,
+): () => void {
   let cancelled = false;
   const run = () => {
-    if (!cancelled) work();
+    if (cancelled || isBackgroundWorkPaused()) return;
+    enqueueIdleWorkTask(async () => {
+      if (cancelled || isBackgroundWorkPaused()) return;
+      await work();
+    });
   };
+
+  if (typeof window === 'undefined') {
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }
+
   const w = window as Window & {
     requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
     cancelIdleCallback?: (id: number) => void;

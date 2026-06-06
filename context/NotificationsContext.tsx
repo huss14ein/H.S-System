@@ -23,6 +23,9 @@ import { computeTaskCounts } from '../services/todoModel';
 import { isSupportedPageAction } from '../utils/pageActions';
 import { useEnhancementSignals } from '../hooks/useEnhancementSignals';
 import { buildNotificationsDataFingerprint } from '../services/budgetSpendFingerprint';
+import { cachedSupabaseHeadCount } from '../services/supabaseQueryCache';
+import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
 
 const READ_STORAGE_KEY = 'h.s.notifications.read';
 
@@ -120,35 +123,60 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
 
   useEffect(() => {
     let alive = true;
+    if (!supabase || !auth?.user?.id || showHydrateBanner) {
+      setPendingBudgetRequestCount(0);
+      setPendingTransactionApprovalCount(0);
+      setIsAdmin(false);
+      return () => {
+        alive = false;
+      };
+    }
+
+    const userId = auth.user.id;
+    const adminStatus = Boolean(auth.isAdmin);
+
     const loadPending = async () => {
-      if (!supabase || !auth?.user?.id) {
-        if (alive) { setPendingBudgetRequestCount(0); setPendingTransactionApprovalCount(0); }
-        return;
-      }
-      const { data: userRow } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
-      const adminStatus = String((userRow as any)?.role || '').toLowerCase() === 'admin';
-      if (alive) setIsAdmin(adminStatus);
-      const query = supabase
-        .from('budget_requests')
-        .select('id', { count: 'exact', head: true })
-        .eq('status', 'Pending')
-        .eq('user_id', auth.user.id);
-      const { count } = await query;
-      if (alive) setPendingBudgetRequestCount(Number(count || 0));
-      if (adminStatus) {
-        const txRes = await supabase
-          .from('budget_shared_transactions')
+      if (!alive || isBackgroundWorkPaused()) return;
+      setIsAdmin(adminStatus);
+
+      const budgetKey = `count:budget-requests-pending:${userId}`;
+      const { count } = await cachedSupabaseHeadCount(budgetKey, () =>
+        supabase!
+          .from('budget_requests')
           .select('id', { count: 'exact', head: true })
-          .eq('owner_user_id', auth.user.id)
-          .eq('status', 'Pending');
-        if (alive) setPendingTransactionApprovalCount(Number((txRes as any).count ?? 0));
-      } else if (alive) setPendingTransactionApprovalCount(0);
+          .eq('status', 'Pending')
+          .eq('user_id', userId),
+      );
+      if (alive) setPendingBudgetRequestCount(Number(count || 0));
+
+      if (adminStatus) {
+        const txKey = `count:shared-tx-pending:${userId}`;
+        const txRes = await cachedSupabaseHeadCount(txKey, () =>
+          supabase!
+            .from('budget_shared_transactions')
+            .select('id', { count: 'exact', head: true })
+            .eq('owner_user_id', userId)
+            .eq('status', 'Pending'),
+        );
+        if (alive) setPendingTransactionApprovalCount(Number(txRes.count ?? 0));
+      } else if (alive) {
+        setPendingTransactionApprovalCount(0);
+      }
     };
 
-    loadPending();
-    const timer = window.setInterval(loadPending, 60000);
-    return () => { alive = false; window.clearInterval(timer); };
-  }, [auth?.user?.id]);
+    const cancelIdle = scheduleIdleWork(() => {
+      void loadPending();
+    }, 1200);
+    const timer = window.setInterval(() => {
+      void loadPending();
+    }, 60000);
+
+    return () => {
+      alive = false;
+      cancelIdle();
+      window.clearInterval(timer);
+    };
+  }, [auth?.user?.id, auth?.isAdmin, showHydrateBanner]);
 
   const coreNotifications = useMemo<AppNotification[]>(() => {
     const list: AppNotification[] = [];

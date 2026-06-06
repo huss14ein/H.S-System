@@ -144,3 +144,39 @@ export function evaluateTransactionBudgetCoverageState(args: {
 
 /** Saving is never blocked solely because a budget is fully utilized or over limit. */
 export const BUDGET_OVER_UTILIZATION_BLOCKS_SUBMIT = false;
+
+export type TransactionBudgetCoverageState = ReturnType<typeof evaluateTransactionBudgetCoverageState>;
+
+/**
+ * Returns a user-facing block reason when budget headroom rules forbid submit.
+ * With {@link BUDGET_OVER_UTILIZATION_BLOCKS_SUBMIT} false (default), always returns null.
+ */
+export function getTransactionBudgetSubmitBlockReason(
+  state: Pick<TransactionBudgetCoverageState, 'isWithinBudget' | 'shortfalls'>,
+  formatSar: (amount: number) => string = (n) => String(Math.round(n)),
+): string | null {
+  if (!BUDGET_OVER_UTILIZATION_BLOCKS_SUBMIT || state.isWithinBudget) return null;
+  if (state.shortfalls.length === 1) {
+    const line = state.shortfalls[0];
+    return `Selected budget cannot cover this amount. Shortfall: ${formatSar(line.shortfallSar)}.`;
+  }
+  const totalShortfall = state.shortfalls.reduce((sum, line) => sum + (Number(line.shortfallSar) || 0), 0);
+  return `Split allocation exceeds remaining budget limits by ${formatSar(totalShortfall)}.`;
+}
+
+/**
+ * Optional confirm-dialog warning when an expense exceeds remaining budget headroom.
+ */
+export function buildTransactionBudgetConfirmWarning(
+  state: Pick<TransactionBudgetCoverageState, 'isWithinBudget' | 'tone' | 'summary' | 'shortfalls'>,
+  formatSar: (amount: number) => string = (n) => String(Math.round(n)),
+): string | null {
+  if (state.isWithinBudget || state.tone === 'neutral') return null;
+  if (state.shortfalls.length > 0) {
+    const lines = state.shortfalls.map(
+      (line) => `${line.category}: over by ${formatSar(line.shortfallSar)}`,
+    );
+    return `${state.summary} (${lines.join('; ')})`;
+  }
+  return state.summary;
+}

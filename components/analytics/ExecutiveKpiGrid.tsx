@@ -23,7 +23,17 @@ export const ExecutiveKpiGrid: React.FC<{
   emergencyFundTargetSar?: number;
   weeklyPnLSar?: number;
   weeklyPnLSparkline?: number[];
-}> = ({ headline, kpiSnapshot, emergencyFundMonths, emergencyFundTargetSar, weeklyPnLSar = 0, weeklyPnLSparkline }) => {
+  /** Deferred NW history sparkline (Wealth Analytics). Falls back to two-point until ready. */
+  netWorthSparklineOverride?: number[];
+}> = ({
+  headline,
+  kpiSnapshot,
+  emergencyFundMonths,
+  emergencyFundTargetSar,
+  weeklyPnLSar = 0,
+  weeklyPnLSparkline,
+  netWorthSparklineOverride,
+}) => {
   const { t } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
 
@@ -34,7 +44,12 @@ export const ExecutiveKpiGrid: React.FC<{
     const roi = kpiSnapshot?.roi ?? 0;
     const impliedMonthStart = netWorth - monthlyPnL;
 
-    const nwSpark = netWorthSparklineFromSnapshots();
+    const nwSpark =
+      netWorthSparklineOverride !== undefined
+        ? netWorthSparklineOverride.length >= 2
+          ? netWorthSparklineOverride
+          : twoPointTrend(netWorth, impliedMonthStart)
+        : netWorthSparklineFromSnapshots();
     const pnlSpark = twoPointTrend(monthlyPnL, 0);
     const roiSpark = twoPointTrend(roi * 100, 0);
     const weekSpark =
@@ -132,6 +147,7 @@ export const ExecutiveKpiGrid: React.FC<{
     emergencyFundTargetSar,
     weeklyPnLSar,
     weeklyPnLSparkline,
+    netWorthSparklineOverride,
     formatCurrencyString,
     t,
   ]);

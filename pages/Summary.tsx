@@ -21,7 +21,6 @@ import PageLayout from '../components/PageLayout';
 import InfoHint from '../components/InfoHint';
 import { useCurrency } from '../context/CurrencyContext';
 import { supabase } from '../services/supabaseClient';
-import { inferIsAdmin } from '../utils/role';
 import type { Page } from '../types';
 import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { getPersonalAccounts } from '../utils/wealthScope';
@@ -94,6 +93,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
     const { data, getAvailableCashForAccount, showHydrateBanner } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const auth = useContext(AuthContext);
+    const isAdmin = Boolean(auth?.isAdmin);
     const { exchangeRate, currency: displayCurrency } = useCurrency();
     const {
         wealthSummary: reportModel,
@@ -120,7 +120,6 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
     const [analysisLanguage, setAnalysisLanguage] = useState<'en' | 'ar'>('en');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [isAdmin, setIsAdmin] = useState(false);
     const [isPrintOptionsOpen, setIsPrintOptionsOpen] = useState(false);
     const [reviewPackEmailSending, setReviewPackEmailSending] = useState(false);
     const [printSections, setPrintSections] = useState({
@@ -134,18 +133,6 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         includeAssets: true,
         includeLiabilities: true,
     });
-
-    useEffect(() => {
-        const loadRole = async () => {
-            if (!auth?.user || !supabase) {
-                setIsAdmin(false);
-                return;
-            }
-            const { data: userRecord } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
-            setIsAdmin(inferIsAdmin(auth.user, userRecord?.role ?? null));
-        };
-        loadRole();
-    }, [auth?.user?.id]);
 
     const { maskBalance } = usePrivacyMask();
     const handleGenerateAnalysis = useCallback(async () => {

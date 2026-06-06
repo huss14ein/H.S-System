@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from 'react';
+import { useContext, useEffect, useState, startTransition } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useCanonicalSpotFx } from './useCanonicalFinancialMetrics';
 import { AuthContext } from '../context/AuthContext';
@@ -9,8 +9,9 @@ import { evaluateLifestyleGuardrailsFromData } from '../services/lifestyleGuardr
 import { computeIncomeStability } from '../services/incomeStability';
 import { computeMonthlyCashflowKpisSar } from '../services/financeTruth';
 import { getPersonalTransactions } from '../utils/wealthScope';
-import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { scheduleIdleWorkAsync } from '../utils/runWhenIdle';
 import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
+import { yieldToMain } from '../utils/yieldToMain';
 import type { CapitalDeploymentAnswer } from '../services/capitalDeploymentOrchestrator';
 
 const EF_TARGET = 6;
@@ -35,9 +36,13 @@ const EMPTY: FinancialEnhancementInsights = {
 };
 
 /** Enhancement panels — deferred to idle time and skipped during hydrate (Dashboard, Budgets, Plan, etc.). */
-export function useFinancialEnhancementInsights(emergencyFundMonths = 0): FinancialEnhancementInsights {
+export function useFinancialEnhancementInsights(
+  emergencyFundMonths = 0,
+  options?: { exchangeRate?: number },
+): FinancialEnhancementInsights {
   const { data, showHydrateBanner, getAvailableCashForAccount } = useContext(DataContext)!;
-  const exchangeRate = useCanonicalSpotFx();
+  const spotFx = useCanonicalSpotFx();
+  const exchangeRate = options?.exchangeRate ?? spotFx;
   const auth = useContext(AuthContext);
   const { goalConflicts, budgetDrift } = useEnhancementSignals();
   const [result, setResult] = useState<FinancialEnhancementInsights>(EMPTY);
@@ -48,7 +53,7 @@ export function useFinancialEnhancementInsights(emergencyFundMonths = 0): Financ
       return;
     }
 
-    return scheduleIdleWork(() => {
+    return scheduleIdleWorkAsync(async () => {
       if (isBackgroundWorkPaused()) return;
       const txs = getPersonalTransactions(data);
       const cf = computeMonthlyCashflowKpisSar({
@@ -60,20 +65,34 @@ export function useFinancialEnhancementInsights(emergencyFundMonths = 0): Financ
       const monthlySurplusSar = Math.max(0, cf.netSar);
       const savingsRate = cf.incomeSar > 0 ? cf.netSar / cf.incomeSar : 0;
 
-      setResult({
-        capitalDeployment: computeCapitalDeployment(
-          data,
-          exchangeRate,
-          getAvailableCashForAccount,
-          emergencyFundMonths,
-          EF_TARGET,
-        ),
-        goalConflicts,
-        budgetDrift,
-        lifestyleHits: evaluateLifestyleGuardrailsFromData(data, emergencyFundMonths, EF_TARGET, savingsRate),
-        incomeStability: computeIncomeStability(data),
-        monthlySurplusSar,
-        userId: auth?.user?.id,
+      await yieldToMain(16);
+      if (isBackgroundWorkPaused()) return;
+
+      const capitalDeployment = computeCapitalDeployment(
+        data,
+        exchangeRate,
+        getAvailableCashForAccount,
+        emergencyFundMonths,
+        EF_TARGET,
+      );
+      const lifestyleHits = evaluateLifestyleGuardrailsFromData(
+        data,
+        emergencyFundMonths,
+        EF_TARGET,
+        savingsRate,
+      );
+      const incomeStability = computeIncomeStability(data);
+
+      startTransition(() => {
+        setResult({
+          capitalDeployment,
+          goalConflicts,
+          budgetDrift,
+          lifestyleHits,
+          incomeStability,
+          monthlySurplusSar,
+          userId: auth?.user?.id,
+        });
       });
     }, 2500);
   }, [

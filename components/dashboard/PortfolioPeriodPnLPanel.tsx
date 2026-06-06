@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import type { Account, FinancialData } from '../../types';
 import { useLanguage } from '../../context/LanguageContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
@@ -6,13 +6,14 @@ import { usePrivacyMask } from '../../context/PrivacyContext';
 import InfoHint from '../InfoHint';
 import CollapsibleSection from '../CollapsibleSection';
 import {
-  computePortfolioPeriodPnLSummary,
-  computePortfolioPnLDailySeries,
+  type PortfolioPeriodPnLSummary,
+  type PortfolioPnLDailySeries,
 } from '../../services/portfolioPeriodPnL';
 import type { SimulatedPriceMap } from '../../services/investmentPlatformCardMetrics';
 import type { InvestmentPortfolio } from '../../types';
 import type { Page } from '../../types';
 import { PortfolioPnLTrendCharts } from '../analytics/PortfolioPnLTrendCharts';
+import { usePortfolioPeriodPnLSnapshot } from '../../hooks/usePortfolioPeriodPnLSnapshot';
 
 const PnLCell: React.FC<{ value: number; format: (n: number) => string; mask: (s: string) => string }> = ({
   value,
@@ -38,50 +39,50 @@ export const PortfolioPeriodPnLPanel: React.FC<{
   monthStartDay: number;
   getAvailableCashForAccount?: (accountId: string) => { SAR?: number; USD?: number } | null | undefined;
   setActivePage?: (page: Page) => void;
+  precomputed?: {
+    summary: PortfolioPeriodPnLSummary | null;
+    dailySeries: PortfolioPnLDailySeries | null;
+    ready: boolean;
+  };
 }> = ({
   data,
   portfolios,
   accounts,
   sarPerUsd,
   simulatedPrices,
-  monthStartDay,
-  getAvailableCashForAccount,
+  monthStartDay: _monthStartDay,
+  getAvailableCashForAccount: _getAvailableCashForAccount,
   setActivePage,
+  precomputed,
 }) => {
   const { t, dir, language } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
   const { maskBalance } = usePrivacyMask();
 
-  const summary = useMemo(
-    () =>
-      computePortfolioPeriodPnLSummary({
-        data,
-        portfolios,
-        accounts,
-        sarPerUsd,
-        simulatedPrices,
-        monthStartDay,
-        getAvailableCashForAccount,
-      }),
-    [data, portfolios, accounts, sarPerUsd, simulatedPrices, monthStartDay, getAvailableCashForAccount],
-  );
+  const idlePnL = usePortfolioPeriodPnLSnapshot({
+    data: precomputed ? null : data,
+    portfolios,
+    accounts,
+    sarPerUsd,
+    simulatedPrices,
+    locale: language === 'ar' ? 'ar-SA' : 'en-US',
+  });
 
-  const dailySeries = useMemo(
-    () =>
-      computePortfolioPnLDailySeries({
-        data,
-        portfolios,
-        accounts,
-        sarPerUsd,
-        simulatedPrices,
-        monthStartDay,
-        getAvailableCashForAccount,
-        locale: language === 'ar' ? 'ar-SA' : 'en-US',
-      }),
-    [data, portfolios, accounts, sarPerUsd, simulatedPrices, monthStartDay, getAvailableCashForAccount, language],
-  );
+  const summary = precomputed?.summary ?? idlePnL.summary;
+  const dailySeries = precomputed?.dailySeries ?? idlePnL.dailySeries;
+  const loading = precomputed ? !precomputed.ready : !idlePnL.ready;
 
-  if (summary.rows.length === 0) {
+  if (loading) {
+    return (
+      <div
+        dir={dir}
+        className="rounded-2xl border border-slate-200 bg-slate-50/70 animate-pulse min-h-[10rem]"
+        aria-hidden
+      />
+    );
+  }
+
+  if (!summary || !dailySeries || summary.rows.length === 0) {
     return (
       <div dir={dir} className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 p-6 text-center text-sm text-slate-600">
         {t('portfolioPeriodPnLEmpty')}

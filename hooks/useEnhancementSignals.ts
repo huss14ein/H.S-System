@@ -5,9 +5,10 @@ import { buildEnhancementSignals } from '../services/financialEnhancementSignals
 import { buildNotificationsDataFingerprint } from '../services/budgetSpendFingerprint';
 
 /** Single drift/goal-conflict scan per data + FX change (shared by notifications + enhancement panels). */
-export function useEnhancementSignals() {
+export function useEnhancementSignals(exchangeRateOverride?: number) {
   const { data, showHydrateBanner } = useContext(DataContext)!;
-  const sarPerUsd = useCanonicalSpotFx();
+  const spotFx = useCanonicalSpotFx();
+  const sarPerUsd = exchangeRateOverride ?? spotFx;
   const dataFingerprint = useMemo(
     () => buildNotificationsDataFingerprint(data),
     [

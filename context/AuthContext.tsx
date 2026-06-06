@@ -7,6 +7,7 @@ import {
   syncUserApprovalProfile,
 } from '../services/syncUserApprovalProfile';
 import { inferIsAdmin } from '../utils/role';
+import { invalidateSupabaseQueryCache } from '../services/supabaseQueryCache';
 import { User, Session, AuthError } from '@supabase/supabase-js';
 
 // Security configuration
@@ -861,6 +862,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 setApprovalSyncIssue(null);
                 setUserRole(null);
                 setIsAdmin(false);
+                invalidateSupabaseQueryCache();
             }
         });
     

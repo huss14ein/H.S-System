@@ -25,7 +25,8 @@ import {
   summarizeApplyRecurringForConfirm,
   summarizeRecurringForConfirm,
 } from '../utils/recordConfirmMessages';
-import { inferIsAdmin } from '../utils/role';
+import { fetchSharedAccountsForMe } from '../services/sharedAccountsRpc';
+import { fetchPendingTransactionsForAdmin, invalidatePendingTransactionsCache } from '../services/pendingTransactionsRpc';
 import {
     validateTransactionRequiredFields,
     findDuplicateTransactions,
@@ -38,7 +39,11 @@ import {
 import { validateSplitTotal } from '../services/transactionIntelligence';
 import { encodeNoteWithSplits } from '../services/transactionSplitNote';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
-import { evaluateTransactionBudgetCoverageState } from '../services/transactionBudgetCoverage';
+import {
+    buildTransactionBudgetConfirmWarning,
+    evaluateTransactionBudgetCoverageState,
+    getTransactionBudgetSubmitBlockReason,
+} from '../services/transactionBudgetCoverage';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, fromSAR } from '../utils/currencyMath';
 import { useCanonicalSpotFx, useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
@@ -522,13 +527,24 @@ const TransactionModal: React.FC<{
             return;
         }
 
+        const formatBudgetSar = (sar: number) => formatCurrencyString(sar, { inCurrency: 'SAR' });
+        const budgetBlockReason = getTransactionBudgetSubmitBlockReason(budgetCoverageState, formatBudgetSar);
+        if (budgetBlockReason) {
+            window.alert(budgetBlockReason);
+            return;
+        }
+        const budgetConfirmWarning = buildTransactionBudgetConfirmWarning(budgetCoverageState, formatBudgetSar);
+
         const acc = accounts.find((a) => a.id === accountId);
         const confirmOk = await confirmAction({
             title: transactionToEdit ? 'Save transaction?' : 'Add transaction?',
-            message: transactionToEdit
-                ? 'Update this transaction in your ledger?'
-                : 'Add this transaction to your ledger?',
+            message: budgetConfirmWarning
+                ? budgetConfirmWarning
+                : transactionToEdit
+                  ? 'Update this transaction in your ledger?'
+                  : 'Add this transaction to your ledger?',
             confirmLabel: transactionToEdit ? 'Save' : 'Add',
+            variant: budgetConfirmWarning ? 'danger' : 'primary',
             details: [
                 `Date: ${transactionData.date}`,
                 `Description: ${transactionData.description}`,
@@ -1155,9 +1171,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     const recurringList = data?.recurringTransactions ?? [];
     const auth = useContext(AuthContext);
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
-    const [userRole, setUserRole] = useState<UserRole>(() =>
-        inferIsAdmin(auth?.user ?? null, null) ? 'Admin' : 'Restricted',
-    );
+    const [userRole, setUserRole] = useState<UserRole>(() => (auth?.isAdmin ? 'Admin' : 'Restricted'));
     const [governanceReady, setGovernanceReady] = useState(false);
     const [permittedBudgetCategories, setPermittedBudgetCategories] = useState<string[]>([]);
     const [sharedBudgetCategories, setSharedBudgetCategories] = useState<string[]>([]);
@@ -1264,14 +1278,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             }
 
             setGovernanceReady(false);
-
-            const { data: userRecord } = await supabase
-                .from('users')
-                .select('role')
-                .eq('id', auth.user.id)
-                .maybeSingle();
-
-            const role = (inferIsAdmin(auth.user, userRecord?.role ?? null) ? 'Admin' : 'Restricted') as UserRole;
+            const role = (auth.isAdmin ? 'Admin' : 'Restricted') as UserRole;
             setUserRole(role);
 
             if (role === 'Restricted') {
@@ -1299,7 +1306,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         };
 
         loadGovernanceData();
-    }, [auth?.user?.id]);
+    }, [auth?.user?.id, auth?.isAdmin]);
 
     useEffect(() => {
         const loadSharedAccounts = async () => {
@@ -1307,9 +1314,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 setSharedAccounts([]);
                 return;
             }
-            const { data: sharedRows } = await supabase
-                .rpc('get_shared_accounts_for_me')
-                .then((r) => r, () => ({ data: [] as any[] } as any));
+            const { data: sharedRows } = await fetchSharedAccountsForMe(supabase, auth.user.id);
             const mapped = ((sharedRows || []) as any[])
                 .map((r) => ({
                     id: String(r.account_id ?? r.id ?? ''),
@@ -1356,7 +1361,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     useEffect(() => {
         const loadPendingTransactions = async () => {
             const userId = auth?.user?.id;
-            if (!supabase || !userId || userRole !== 'Admin') {
+            if (!supabase || !userId || !auth?.isAdmin) {
                 setAdminPendingTransactions([]);
                 setPendingLoadError(null);
                 return;
@@ -1376,7 +1381,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             let pendingRows: any[] = [];
             let pendingError: any = null;
 
-            const rpcResult = await db.rpc('get_pending_transactions_for_admin').then((r) => r, () => ({ data: null, error: { message: 'RPC unavailable' } } as any));
+            const rpcResult = await fetchPendingTransactionsForAdmin(db, userId);
             if (!rpcResult.error && Array.isArray(rpcResult.data)) {
                 pendingRows = rpcResult.data;
             } else {
@@ -1429,7 +1434,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         };
 
         loadPendingTransactions();
-    }, [userRole, data?.transactions, pendingRefreshKey]);
+    }, [auth?.isAdmin, auth?.user?.id, pendingRefreshKey]);
 
     const accountsById = useMemo(
         () => new Map<string, Account>(availableAccounts.map((a: Account) => [a.id, a])),
@@ -1953,6 +1958,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 return next;
             });
             setPendingRefreshKey((k) => k + 1);
+            if (auth?.user?.id) invalidatePendingTransactionsCache(auth.user.id);
         } else {
             const reason = window.prompt('Optional rejection reason for audit/history:');
             if (reason === null) {
@@ -2002,6 +2008,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 return next;
             });
             setPendingRefreshKey((k) => k + 1);
+            if (auth?.user?.id) invalidatePendingTransactionsCache(auth.user.id);
         }
     };
 
@@ -2114,7 +2121,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                         <div className="flex items-center gap-2">
                             <button type="button" disabled={selectedPendingIds.length === 0 || isBulkReviewing} onClick={() => handleBulkReview('Approved')} className="btn-outline text-xs disabled:opacity-50">Approve selected</button>
                             <button type="button" disabled={selectedPendingIds.length === 0 || isBulkReviewing} onClick={() => handleBulkReview('Rejected')} className="btn-outline text-xs disabled:opacity-50">Reject selected</button>
-                            <button type="button" onClick={() => setPendingRefreshKey((k) => k + 1)} className="btn-outline text-xs">Refresh pending</button>
+                            <button type="button" onClick={() => { if (auth?.user?.id) invalidatePendingTransactionsCache(auth.user.id); setPendingRefreshKey((k) => k + 1); }} className="btn-outline text-xs">Refresh pending</button>
                         </div>
                     </div>
                     {pendingLoadError && <p className="text-xs text-rose-700 mb-2">{pendingLoadError}</p>}

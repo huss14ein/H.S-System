@@ -1,23 +1,43 @@
-import { useContext, useEffect, useState } from 'react';
+import { startTransition, useContext, useEffect, useMemo, useState } from 'react';
 import type { Account, FinancialData, InvestmentPortfolio } from '../types';
 import { DataContext } from '../context/DataContext';
 import { resolveMonthStartDayFromData } from '../utils/financialMonth';
 import {
   computePortfolioPeriodPnLSummary,
   computePortfolioPnLDailySeries,
+  portfolioPeriodPnLMap,
+  type PortfolioPeriodPnLSummary,
+  type PortfolioPnLDailySeries,
+  type PortfolioPeriodPnLRow,
+  type PortfolioPnLDailyPoint,
 } from '../services/portfolioPeriodPnL';
 import type { SimulatedPriceMap } from '../services/investmentPlatformCardMetrics';
-import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { scheduleIdleWorkAsync } from '../utils/runWhenIdle';
 import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
+import { yieldToMain } from '../utils/yieldToMain';
 
-export type PortfolioPeriodPnLSnapshot = {
+type PortfolioPeriodPnLCore = {
   weeklyTotalSar: number;
   weeklySparkline: number[];
+  summary: PortfolioPeriodPnLSummary | null;
+  dailySeries: PortfolioPnLDailySeries | null;
+  ready: boolean;
 };
 
-const EMPTY: PortfolioPeriodPnLSnapshot = { weeklyTotalSar: 0, weeklySparkline: [] };
+export type PortfolioPeriodPnLSnapshot = PortfolioPeriodPnLCore & {
+  pnlByPortfolioId: Map<string, PortfolioPeriodPnLRow>;
+  weeklySparklineByPortfolioId: Map<string, PortfolioPnLDailyPoint[]>;
+};
 
-/** Deferred portfolio period P/L — avoids blocking Wealth Analytics route paint. */
+const EMPTY_CORE: PortfolioPeriodPnLCore = {
+  weeklyTotalSar: 0,
+  weeklySparkline: [],
+  summary: null,
+  dailySeries: null,
+  ready: false,
+};
+
+/** Deferred portfolio period P/L — summary first, daily series after yield (keeps input responsive). */
 export function usePortfolioPeriodPnLSnapshot(args: {
   data: FinancialData | null | undefined;
   portfolios: InvestmentPortfolio[];
@@ -27,7 +47,7 @@ export function usePortfolioPeriodPnLSnapshot(args: {
   locale?: string;
 }): PortfolioPeriodPnLSnapshot {
   const { showHydrateBanner, getAvailableCashForAccount } = useContext(DataContext)!;
-  const [snapshot, setSnapshot] = useState<PortfolioPeriodPnLSnapshot>(EMPTY);
+  const [snapshot, setSnapshot] = useState<PortfolioPeriodPnLCore>(EMPTY_CORE);
   const { data, portfolios, accounts, sarPerUsd, simulatedPrices, locale } = args;
 
   const fingerprint = [
@@ -41,23 +61,16 @@ export function usePortfolioPeriodPnLSnapshot(args: {
 
   useEffect(() => {
     if (!data || showHydrateBanner || !getAvailableCashForAccount) {
-      setSnapshot(EMPTY);
+      setSnapshot(EMPTY_CORE);
       return;
     }
 
-    return scheduleIdleWork(() => {
+    setSnapshot((prev) => ({ ...prev, ready: false }));
+    return scheduleIdleWorkAsync(async () => {
       if (isBackgroundWorkPaused()) return;
+
       const monthStartDay = resolveMonthStartDayFromData(data);
-      const summary = computePortfolioPeriodPnLSummary({
-        data,
-        portfolios,
-        accounts,
-        sarPerUsd,
-        simulatedPrices,
-        monthStartDay,
-        getAvailableCashForAccount,
-      });
-      const daily = computePortfolioPnLDailySeries({
+      const computeArgs = {
         data,
         portfolios,
         accounts,
@@ -66,13 +79,48 @@ export function usePortfolioPeriodPnLSnapshot(args: {
         monthStartDay,
         getAvailableCashForAccount,
         locale: locale ?? 'en-US',
+      };
+
+      const summary = computePortfolioPeriodPnLSummary(computeArgs);
+
+      startTransition(() => {
+        setSnapshot({
+          weeklyTotalSar: summary.weeklyTotalSar,
+          weeklySparkline: [],
+          summary,
+          dailySeries: null,
+          ready: false,
+        });
       });
-      setSnapshot({
-        weeklyTotalSar: summary.weeklyTotalSar,
-        weeklySparkline: daily.weekly.map((p) => p.cumulativeSar),
+
+      await yieldToMain(32);
+      if (isBackgroundWorkPaused()) return;
+
+      const dailySeries = computePortfolioPnLDailySeries({
+        ...computeArgs,
+        summary,
+      });
+
+      startTransition(() => {
+        setSnapshot({
+          weeklyTotalSar: summary.weeklyTotalSar,
+          weeklySparkline: dailySeries.weekly.map((p) => p.cumulativeSar),
+          summary,
+          dailySeries,
+          ready: true,
+        });
       });
     }, 1200);
   }, [data, portfolios, accounts, sarPerUsd, simulatedPrices, locale, showHydrateBanner, getAvailableCashForAccount, fingerprint]);
 
-  return snapshot;
+  const pnlByPortfolioId = useMemo(
+    () => (snapshot.summary ? portfolioPeriodPnLMap(snapshot.summary) : new Map()),
+    [snapshot.summary],
+  );
+  const weeklySparklineByPortfolioId = useMemo(
+    () => snapshot.dailySeries?.weeklyByPortfolioId ?? new Map(),
+    [snapshot.dailySeries],
+  );
+
+  return { ...snapshot, pnlByPortfolioId, weeklySparklineByPortfolioId };
 }

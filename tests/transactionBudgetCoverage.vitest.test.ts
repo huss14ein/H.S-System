@@ -1,13 +1,47 @@
 import { describe, expect, it } from 'vitest';
 import {
   BUDGET_OVER_UTILIZATION_BLOCKS_SUBMIT,
+  buildTransactionBudgetConfirmWarning,
   computeBudgetCoverageTone,
   evaluateTransactionBudgetCoverageState,
+  getTransactionBudgetSubmitBlockReason,
 } from '../services/transactionBudgetCoverage';
 
 describe('transactionBudgetCoverage', () => {
   it('does not block submit when budget is over-utilized', () => {
     expect(BUDGET_OVER_UTILIZATION_BLOCKS_SUBMIT).toBe(false);
+  });
+
+  it('getTransactionBudgetSubmitBlockReason returns null when warn-only mode is on', () => {
+    const state = evaluateTransactionBudgetCoverageState({
+      transactionType: 'expense',
+      hasAmount: true,
+      budgetCategory: 'Groceries',
+      useSplitExpense: false,
+      splitCoverage: [
+        { category: 'Groceries', amountSar: 200, remainingSar: 50, shortfallSar: 150 },
+      ],
+      budgetCoverageSummary: { limitSar: 500, remainingSar: 50 },
+      inputAmountSar: 200,
+    });
+    expect(getTransactionBudgetSubmitBlockReason(state)).toBeNull();
+  });
+
+  it('buildTransactionBudgetConfirmWarning surfaces over-budget note', () => {
+    const state = evaluateTransactionBudgetCoverageState({
+      transactionType: 'expense',
+      hasAmount: true,
+      budgetCategory: 'Groceries',
+      useSplitExpense: false,
+      splitCoverage: [
+        { category: 'Groceries', amountSar: 200, remainingSar: 50, shortfallSar: 150 },
+      ],
+      budgetCoverageSummary: { limitSar: 500, remainingSar: 50 },
+      inputAmountSar: 200,
+    });
+    const warning = buildTransactionBudgetConfirmWarning(state, (n) => `${n} SAR`);
+    expect(warning).toMatch(/still save/i);
+    expect(warning).toMatch(/Groceries: over by 150 SAR/);
   });
 
   it('flags red tone when amount exceeds remaining', () => {

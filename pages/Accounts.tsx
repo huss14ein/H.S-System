@@ -3,7 +3,7 @@ import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { Account, AccountRole, Page } from '../types';
 import { supabase } from '../services/supabaseClient';
-import { inferIsAdmin } from '../utils/role';
+import { fetchSharedAccountsForMe } from '../services/sharedAccountsRpc';
 import { resolveRecipientUserByEmail } from '../utils/shareRecipientLookup';
 
 interface AccountsProps {
@@ -397,15 +397,14 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     useEffect(() => {
         const loadSharingState = async () => {
             if (!supabase || !auth?.user?.id) return;
-            const { data: userRecord } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
-            const admin = inferIsAdmin(auth.user, userRecord?.role ?? null);
-            setIsAdmin(admin);
+            setIsAdmin(Boolean(auth.isAdmin));
 
-            const { data: sharedRows, error: sharedRpcError } = await supabase.rpc('get_shared_accounts_for_me');
+            const { data: sharedRows, error: sharedRpcError } = await fetchSharedAccountsForMe(supabase, auth.user.id);
             if (sharedRpcError) {
+                const msg = sharedRpcError instanceof Error ? sharedRpcError.message : String(sharedRpcError);
                 if (process.env.NODE_ENV === 'development') {
                     // eslint-disable-next-line no-console
-                    console.warn('get_shared_accounts_for_me failed:', sharedRpcError.message);
+                    console.warn('get_shared_accounts_for_me failed:', msg);
                 }
             }
 
@@ -438,7 +437,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
 
         };
         loadSharingState();
-    }, [auth?.user?.id, data?.accounts?.length]);
+    }, [auth?.user?.id, auth?.isAdmin]);
 
     const { sarPerUsd, investableCashTotalSar, investmentsTotalSar, liquidCashSar } = useCanonicalFinancialMetrics();
 
