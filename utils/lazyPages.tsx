@@ -90,6 +90,8 @@ export function prefetchPage(page: Page): void {
   PAGE_MODULES[shell]?.prefetch();
 }
 
+const PRIORITY_PREFETCH_PAGES: Page[] = ['Summary', 'Wealth Analytics', 'Investments', 'Budgets', 'Transactions'];
+
 const IDLE_PREFETCH_PAGES: Page[] = [
   'Budgets',
   'Transactions',
@@ -114,6 +116,9 @@ const IDLE_PREFETCH_PAGES: Page[] = [
 /** Warm common lazy chunks one route at a time so we never block the main thread for 30s+. */
 export function prefetchCommonPagesIdle(): void {
   if (typeof window === 'undefined') return;
+  for (const page of PRIORITY_PREFETCH_PAGES) {
+    prefetchPage(page);
+  }
   let index = 0;
   const step = () => {
     if (index >= IDLE_PREFETCH_PAGES.length) return;

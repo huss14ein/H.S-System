@@ -27,7 +27,8 @@ describe('wealth analytics end-to-end wiring', () => {
         expect(src).toContain('SummaryWealthAtlas');
         expect(src).toContain('WealthAnalyticsSummaryPanels');
         expect(src).toContain('PortfolioHoldingsGrid');
-        expect(src).toContain('PortfolioPeriodPnLPanel');
+        expect(src).toContain('portfolioId={holdingsPortfolioId');
+        expect(src).toContain('wealth-analytics-portfolio');
         expect(src).toContain('CostAveragingCalculator');
         expect(src).toContain('Goals2030Timeline');
         expect(src).toContain('AIExecutiveSummary');
@@ -35,6 +36,20 @@ describe('wealth analytics end-to-end wiring', () => {
         expect(src).toContain('getPersonalTransactions');
         expect(src).not.toMatch(/personalTransactions\s*\?\?\s*data\?\.transactions/);
         expect(src).not.toMatch(/personalAccounts\s*\?\?\s*data\?\.accounts/);
+    });
+
+    it('monthly cockpit uses inline date toolbar (not a wasted side card)', () => {
+        const cockpit = read('components/dashboard/DashboardOperationsCockpit.tsx');
+        expect(cockpit).not.toContain('lg:col-span-1');
+        expect(cockpit).toContain('DateRangePicker');
+        expect(read('components/dashboard/DateRangePicker.tsx')).not.toContain('h-full flex flex-col justify-center');
+        expect(read('components/dashboard/DateRangePicker.tsx')).toContain('ring-slate-200/80');
+    });
+
+    it('holdings grid scopes rows by portfolio id', () => {
+        expect(read('components/dashboard/PortfolioHoldingsGrid.tsx')).toContain('portfolioId');
+        expect(read('components/dashboard/PortfolioHoldingsGrid.tsx')).toContain('scopedPortfolios');
+        expect(read('components/dashboard/CostAveragingCalculator.tsx')).toContain('portfolioId');
     });
 
     it('Dashboard and Summary gate auto snapshots on quote readiness', () => {

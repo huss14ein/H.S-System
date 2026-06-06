@@ -43,30 +43,33 @@ export const DashboardOperationsCockpit: React.FC<{
   const suiteMonthsBack = useMemo(() => dashboardSuiteMonthsBack(suiteRange), [suiteRange]);
 
   return (
-    <div className={`space-y-4 ${className}`}>
-      {showSectionHeader && (
-        <DashboardSectionHeader
-          titleKey="dashboardCockpitTitle"
-          subtitleKey="dashboardCockpitSubtitle"
-          showLanguageToggle={showLanguageToggle}
-        />
-      )}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-stretch">
-        <div className="lg:col-span-1 flex">
-          <DateRangePicker value={suiteRange} onChange={setSuiteRange} />
-        </div>
-        <div className="lg:col-span-2 min-w-0">
-          <MomCashflowTrendChart
-            data={data}
-            uiExchangeRate={sarPerUsd}
-            startIso={suiteRange.startIso}
-            endIso={suiteRange.endIso}
-            monthsBack={suiteMonthsBack}
+    <div className={`space-y-5 ${className}`}>
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        {showSectionHeader ? (
+          <DashboardSectionHeader
+            titleKey="dashboardCockpitTitle"
+            subtitleKey="dashboardCockpitSubtitle"
+            showLanguageToggle={showLanguageToggle}
+            className="pb-0 flex-1 min-w-0"
           />
-        </div>
+        ) : null}
+        <DateRangePicker
+          value={suiteRange}
+          onChange={setSuiteRange}
+          className="w-full xl:w-auto xl:min-w-[22rem] shrink-0"
+        />
       </div>
+
+      <MomCashflowTrendChart
+        data={data}
+        uiExchangeRate={sarPerUsd}
+        startIso={suiteRange.startIso}
+        endIso={suiteRange.endIso}
+        monthsBack={suiteMonthsBack}
+      />
+
       <DeferredMount minHeight="14rem">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <BudgetBurnRatePanel
             data={data}
             budgets={budgets}
@@ -81,7 +84,7 @@ export const DashboardOperationsCockpit: React.FC<{
             uiExchangeRate={sarPerUsd}
           />
         </div>
-        <div className="mt-3">
+        <div className="mt-4">
           <WhatIfSandbox
             data={data}
             goals={goals}

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { forwardFillDailyNetWorthRows, inheritBucketsWhenMissing } from '../services/netWorthChartDense';
+import {
+    forwardFillDailyNetWorthRows,
+    inheritBucketsWhenMissing,
+    buildNetWorthTrendSeriesFromSnapshots,
+    carryForwardInvalidNetWorthSnapshots,
+} from '../services/netWorthChartDense';
 
 describe('netWorthChartDense', () => {
     it('forward-fills missing calendar days with previous amounts', () => {
@@ -63,5 +68,29 @@ describe('netWorthChartDense', () => {
         const out = inheritBucketsWhenMissing(rows);
         expect(out[1]!.Cash).toBe(2000);
         expect(out[1]!['Net Worth']).toBe(2000);
+    });
+
+    it('carryForwardInvalidNetWorthSnapshots replaces zero with previous good level', () => {
+        const rows = [
+            { dayKey: '2026-04-14', netWorth: 1_200_000 },
+            { dayKey: '2026-04-15', netWorth: 0 },
+            { dayKey: '2026-04-16', netWorth: 1_210_000 },
+        ];
+        const out = carryForwardInvalidNetWorthSnapshots(rows);
+        expect(out[1]!.netWorth).toBe(1_200_000);
+        expect(out[2]!.netWorth).toBe(1_210_000);
+    });
+
+    it('buildNetWorthTrendSeriesFromSnapshots forward-fills missing days and never plots zero gaps', () => {
+        const sparse = [
+            { dayKey: '2026-04-14', netWorth: 1_200_000 },
+            { dayKey: '2026-04-16', netWorth: 0 },
+            { dayKey: '2026-04-18', netWorth: 1_250_000 },
+        ];
+        const dense = buildNetWorthTrendSeriesFromSnapshots(sparse);
+        expect(dense.find((r) => r.dayKey === '2026-04-15')?.netWorth).toBe(1_200_000);
+        expect(dense.find((r) => r.dayKey === '2026-04-16')?.netWorth).toBe(1_200_000);
+        expect(dense.find((r) => r.dayKey === '2026-04-17')?.netWorth).toBe(1_200_000);
+        expect(dense.every((r) => r.netWorth > 0)).toBe(true);
     });
 });

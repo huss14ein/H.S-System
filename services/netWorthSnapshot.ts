@@ -147,13 +147,18 @@ export function pushNetWorthSnapshot(
     const at = new Date().toISOString();
     const fx = typeof sarPerUsd === 'number' && Number.isFinite(sarPerUsd) && sarPerUsd > 0 ? sarPerUsd : undefined;
     if (fx != null) recordSarPerUsdForCalendarDay(today, fx);
+    const nw = Number(netWorth);
+    const validNw = Number.isFinite(nw) && nw > 0.5;
+    // Never overwrite a good snapshot with a zero mid-hydrate capture.
+    if (!validNw && last && last.netWorth > 0.5) return;
     const schemaForRow = buckets ? NW_BUCKETS_SCHEMA_V2 : last?.bucketsSchemaVersion;
     let final: NetWorthSnapshot;
     if (last && last.at.slice(0, 10) === today) {
-      final = { at, netWorth, sarPerUsd: fx ?? last.sarPerUsd, buckets: buckets ?? last.buckets, bucketsSchemaVersion: buckets ? NW_BUCKETS_SCHEMA_V2 : schemaForRow };
+      final = { at, netWorth: validNw ? nw : last.netWorth, sarPerUsd: fx ?? last.sarPerUsd, buckets: buckets ?? last.buckets, bucketsSchemaVersion: buckets ? NW_BUCKETS_SCHEMA_V2 : schemaForRow };
       arr[0] = final;
     } else {
-      final = { at, netWorth, sarPerUsd: fx, buckets, bucketsSchemaVersion: buckets ? NW_BUCKETS_SCHEMA_V2 : undefined };
+      if (!validNw) return;
+      final = { at, netWorth: nw, sarPerUsd: fx, buckets, bucketsSchemaVersion: buckets ? NW_BUCKETS_SCHEMA_V2 : undefined };
       arr.unshift(final);
     }
     localStorage.setItem(KEY, JSON.stringify(arr.slice(0, MAX)));

@@ -35,7 +35,7 @@ describe('performance recovery E2E wiring', () => {
   it('Dashboard and Summary pass NetWorthCockpit metricsOverride', () => {
     expect(read('pages/Dashboard.tsx')).toContain('metricsOverride={{');
     expect(read('pages/Summary.tsx')).toContain('metricsOverride={{');
-    expect(read('components/charts/NetWorthCockpit.tsx')).toContain('NetWorthCockpitFromCanonical');
+    expect(read('components/charts/NetWorthCockpit.tsx')).toContain('buildNetWorthTrendSeriesFromSnapshots');
   });
 
   it('auto NW snapshot waits for quote readiness on Dashboard, Summary, and Layout', () => {
@@ -219,6 +219,9 @@ describe('performance recovery E2E wiring', () => {
     expect(read('components/MarketSimulator.tsx')).toContain('isBackgroundWorkPaused');
     expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('isBackgroundWorkPaused');
     expect(read('utils/lazyPages.tsx')).toContain("'Analysis'");
-    expect(read('utils/lazyPages.tsx')).toContain("'Notifications'");
+    expect(read('context/DataContext.tsx')).toContain('secondaryFetchPromise');
+    expect(read('context/DataContext.tsx')).toContain('yieldToMain');
+    expect(read('pages/WealthAnalytics.tsx')).toContain('usePortfolioPeriodPnLSnapshot');
+    expect(read('utils/lazyPages.tsx')).toContain('PRIORITY_PREFETCH_PAGES');
   });
 });

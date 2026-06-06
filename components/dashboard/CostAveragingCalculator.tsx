@@ -13,13 +13,21 @@ function safeNum(n: unknown): number {
 
 export const CostAveragingCalculator: React.FC<{
   portfolios: InvestmentPortfolio[];
-}> = React.memo(function CostAveragingCalculator({ portfolios }) {
+  /** When set, symbols are limited to this portfolio (matches Holdings grid scope). */
+  portfolioId?: string | null;
+}> = React.memo(function CostAveragingCalculator({ portfolios, portfolioId = null }) {
   const { t, dir } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
 
+  const scopedPortfolios = useMemo(() => {
+    const list = portfolios ?? [];
+    if (!portfolioId) return list;
+    return list.filter((p) => p.id === portfolioId);
+  }, [portfolios, portfolioId]);
+
   const options = useMemo((): Option[] => {
     const out: Option[] = [];
-    for (const p of portfolios ?? []) {
+    for (const p of scopedPortfolios) {
       for (const h of (p.holdings ?? []) as Holding[]) {
         const symbol = String(h.symbol ?? '').trim().toUpperCase();
         if (!symbol) continue;
@@ -32,9 +40,18 @@ export const CostAveragingCalculator: React.FC<{
       }
     }
     return out.sort((a, b) => a.symbol.localeCompare(b.symbol));
-  }, [portfolios]);
+  }, [scopedPortfolios]);
 
   const [symbol, setSymbol] = useState(options[0]?.symbol ?? '');
+  React.useEffect(() => {
+    if (!options.length) {
+      setSymbol('');
+      return;
+    }
+    if (!options.some((o) => o.symbol === symbol)) {
+      setSymbol(options[0]!.symbol);
+    }
+  }, [options, symbol]);
   const pickerOptions = useMemo(
     () => options.map((o) => ({ symbol: o.symbol, label: `${o.symbol} — ${o.name}` })),
     [options],

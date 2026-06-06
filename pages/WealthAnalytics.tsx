@@ -1,4 +1,4 @@
-import React, { useContext, useMemo } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import PageLayout from '../components/PageLayout';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
@@ -36,10 +36,7 @@ import { personalNetCashflowBetween } from '../services/netWorthPeriodFlows';
 import { generateNextBestActions } from '../services/nextBestActionEngine';
 import { salaryToExpenseCoverage } from '../services/salaryExpenseCoverage';
 import { reconcileDashboardVsSummaryKpis } from '../services/kpiReconciliation';
-import {
-  computePortfolioPeriodPnLSummary,
-  computePortfolioPnLDailySeries,
-} from '../services/portfolioPeriodPnL';
+import { usePortfolioPeriodPnLSnapshot } from '../hooks/usePortfolioPeriodPnLSnapshot';
 import type { Page } from '../types';
 
 interface WealthAnalyticsProps {
@@ -73,6 +70,21 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
     const personalInvestments = useMemo(() => getPersonalInvestments(data), [data]);
     const goals = data?.goals ?? [];
     const budgets = data?.budgets ?? [];
+
+    const portfoliosWithHoldings = useMemo(
+        () => personalInvestments.filter((p) => (p.holdings?.length ?? 0) > 0),
+        [personalInvestments],
+    );
+    const [holdingsPortfolioId, setHoldingsPortfolioId] = useState<string>('');
+    useEffect(() => {
+        if (
+            holdingsPortfolioId &&
+            portfoliosWithHoldings.some((p) => p.id === holdingsPortfolioId)
+        ) {
+            return;
+        }
+        setHoldingsPortfolioId(portfoliosWithHoldings[0]?.id ?? '');
+    }, [portfoliosWithHoldings, holdingsPortfolioId]);
 
     const quotesAsOfIso = useMemo(() => {
         const stamps = Object.values(symbolQuoteUpdatedAt).filter(Boolean);
@@ -148,41 +160,30 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
         };
     }, [personalTransactions]);
 
-    const portfolioPnL = useMemo(() => {
-        if (!data || !getAvailableCashForAccount) {
-            return { weeklyTotalSar: 0, weeklySparkline: [] as number[] };
-        }
-        const monthStartDay = resolveMonthStartDayFromData(data);
-        const summary = computePortfolioPeriodPnLSummary({
-            data,
-            portfolios: personalInvestments,
-            accounts: personalAccounts,
-            sarPerUsd,
-            simulatedPrices,
-            monthStartDay,
-            getAvailableCashForAccount,
-        });
-        const daily = computePortfolioPnLDailySeries({
-            data,
-            portfolios: personalInvestments,
-            accounts: personalAccounts,
-            sarPerUsd,
-            simulatedPrices,
-            monthStartDay,
-            getAvailableCashForAccount,
-            locale: dir === 'rtl' ? 'ar-SA' : 'en-US',
-        });
-        return {
-            weeklyTotalSar: summary.weeklyTotalSar,
-            weeklySparkline: daily.weekly.map((p) => p.cumulativeSar),
-        };
-    }, [data, personalInvestments, personalAccounts, sarPerUsd, simulatedPrices, getAvailableCashForAccount, dir]);
+    const portfolioPnL = usePortfolioPeriodPnLSnapshot({
+        data,
+        portfolios: personalInvestments,
+        accounts: personalAccounts,
+        sarPerUsd,
+        simulatedPrices,
+        locale: dir === 'rtl' ? 'ar-SA' : 'en-US',
+    });
 
-    if (showHydrateBanner || !reportModel || !data) {
+    if (showHydrateBanner || !data) {
         return (
             <PageLayout title="Wealth Analytics" description={t('executiveKpiGridSubtitle')}>
                 <p className="text-sm text-slate-600" role="status">
                     Loading analytics…
+                </p>
+            </PageLayout>
+        );
+    }
+
+    if (!reportModel) {
+        return (
+            <PageLayout title="Wealth Analytics" description={t('executiveKpiGridSubtitle')}>
+                <p className="text-sm text-slate-600" role="status">
+                    Preparing analytics…
                 </p>
             </PageLayout>
         );
@@ -288,15 +289,39 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
                         subtitleKey="analyticsHoldingsSubtitle"
                         showLanguageToggle={false}
                     />
+                    {portfoliosWithHoldings.length > 0 && (
+                        <div className="mb-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                            <label htmlFor="wealth-analytics-portfolio" className="text-sm font-medium text-slate-700 shrink-0">
+                                {t('portfolioLabel')}
+                            </label>
+                            <select
+                                id="wealth-analytics-portfolio"
+                                value={holdingsPortfolioId}
+                                onChange={(e) => setHoldingsPortfolioId(e.target.value)}
+                                className="input-base w-full sm:max-w-md"
+                                aria-label={t('portfolioLabel')}
+                            >
+                                {portfoliosWithHoldings.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                        {p.name || p.id}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
                     <DeferredMount minHeight="12rem">
                         <PortfolioHoldingsGrid
                             portfolios={personalInvestments}
                             simulatedPrices={simulatedPrices}
                             sarPerUsd={sarPerUsd}
+                            portfolioId={holdingsPortfolioId || null}
                         />
                     </DeferredMount>
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch mt-4">
-                        <CostAveragingCalculator portfolios={personalInvestments} />
+                        <CostAveragingCalculator
+                            portfolios={personalInvestments}
+                            portfolioId={holdingsPortfolioId || null}
+                        />
                         <Goals2030Timeline
                             data={data}
                             goals={goals}

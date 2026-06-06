@@ -50,11 +50,28 @@ export function dashboardSuiteMonthsBack(range: DashboardDateRange): number {
   return 12;
 }
 
+function formatIsoRangeLabel(startIso?: string, endIso?: string, lang: 'en' | 'ar' = 'en'): string {
+  if (!startIso && !endIso) {
+    return lang === 'ar' ? 'كل السجل' : 'All history';
+  }
+  if (startIso && endIso) {
+    const fmt = (iso: string) =>
+      new Date(`${iso}T12:00:00`).toLocaleDateString(lang === 'ar' ? 'ar-SA' : 'en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+    return `${fmt(startIso)} – ${fmt(endIso)}`;
+  }
+  return formatDashboardRangeLabel(startIso ?? '—', endIso ?? '—');
+}
+
 export const DateRangePicker: React.FC<{
   value: DashboardDateRange;
   onChange: (v: DashboardDateRange) => void;
-}> = ({ value, onChange }) => {
-  const { t, dir } = useLanguage();
+  className?: string;
+}> = ({ value, onChange, className = '' }) => {
+  const { t, dir, language } = useLanguage();
   const [customStart, setCustomStart] = useState(value.startIso ?? '');
   const [customEnd, setCustomEnd] = useState(value.endIso ?? '');
 
@@ -70,18 +87,30 @@ export const DateRangePicker: React.FC<{
     [t],
   );
 
+  const activeRangeLabel = useMemo(() => {
+    if (value.preset === 'Custom') {
+      return formatIsoRangeLabel(value.startIso, value.endIso, language);
+    }
+    if (value.preset === 'All') {
+      return formatIsoRangeLabel(undefined, undefined, language);
+    }
+    const r = rangeForPreset(value.preset);
+    return formatIsoRangeLabel(r.startIso, r.endIso, language);
+  }, [language, value]);
+
   return (
-    <div dir={dir} className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-3 sm:p-4 w-full h-full flex flex-col justify-center">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t('dateRange')}</p>
-          <p className="mt-0.5 text-sm text-slate-700">
-            {value.preset === 'Custom'
-              ? formatDashboardRangeLabel(value.startIso ?? '—', value.endIso ?? '—')
-              : value.preset}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
+    <div dir={dir} className={`flex flex-col gap-2.5 ${className}`}>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+          {t('dateRange')}
+        </span>
+        <span className="text-xs text-slate-600 tabular-nums">{activeRangeLabel}</span>
+      </div>
+      <div
+        className="inline-flex w-full sm:w-auto flex-wrap gap-1 rounded-xl bg-slate-100/90 p-1 ring-1 ring-slate-200/80"
+        role="group"
+        aria-label={t('dateRange')}
+      >
           {presets.map((p) => (
             <button
               key={p.id}
@@ -90,10 +119,10 @@ export const DateRangePicker: React.FC<{
                 const r = rangeForPreset(p.id);
                 onChange({ preset: p.id, ...r });
               }}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-full border transition-colors ${
+              className={`min-w-[2.5rem] px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 value.preset === p.id
-                  ? 'border-primary bg-primary/10 text-primary'
-                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                  ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/80'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
               }`}
             >
               {p.label}
@@ -102,41 +131,44 @@ export const DateRangePicker: React.FC<{
           <button
             type="button"
             onClick={() => onChange({ preset: 'Custom', startIso: value.startIso, endIso: value.endIso })}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-full border transition-colors ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
               value.preset === 'Custom'
-                ? 'border-violet-500 bg-violet-50 text-violet-800'
-                : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                ? 'bg-white text-violet-900 shadow-sm ring-1 ring-violet-200/80'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
             }`}
           >
             {t('apply') === 'تطبيق' ? 'مخصص' : 'Custom'}
           </button>
-        </div>
       </div>
 
       {value.preset === 'Custom' && (
-        <div className="mt-3 flex flex-col sm:flex-row gap-2 sm:items-end">
-          <div className="flex-1">
-            <label className="block text-xs font-medium text-slate-600">{t('apply') === 'تطبيق' ? 'من' : 'From'}</label>
+        <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 px-3 py-3 flex flex-col sm:flex-row gap-3 sm:items-end">
+          <div className="flex-1 min-w-0">
+            <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              {t('apply') === 'تطبيق' ? 'من' : 'From'}
+            </label>
             <input
               type="date"
               value={customStart}
               onChange={(e) => setCustomStart(e.target.value)}
-              className="mt-1 w-full input-base"
+              className="mt-1 w-full input-base bg-white"
             />
           </div>
-          <div className="flex-1">
-            <label className="block text-xs font-medium text-slate-600">{t('apply') === 'تطبيق' ? 'إلى' : 'To'}</label>
+          <div className="flex-1 min-w-0">
+            <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              {t('apply') === 'تطبيق' ? 'إلى' : 'To'}
+            </label>
             <input
               type="date"
               value={customEnd}
               onChange={(e) => setCustomEnd(e.target.value)}
-              className="mt-1 w-full input-base"
+              className="mt-1 w-full input-base bg-white"
             />
           </div>
           <button
             type="button"
             onClick={() => onChange({ preset: 'Custom', startIso: customStart || undefined, endIso: customEnd || undefined })}
-            className="btn-primary sm:ms-2 sm:self-end"
+            className="btn-primary w-full sm:w-auto shrink-0"
           >
             {t('apply')}
           </button>
@@ -145,4 +177,3 @@ export const DateRangePicker: React.FC<{
     </div>
   );
 };
-

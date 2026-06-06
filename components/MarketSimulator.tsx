@@ -35,19 +35,11 @@ import {
 } from '../services/quoteRefreshCooldown';
 import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { yieldToMain } from '../utils/yieldToMain';
 
 const MAX_LIVE_FETCH_PER_TICK = 15;
 const PARTIAL_LIVE_RATIO = 0.8;
 const INTER_SCOPE_DELAY_MS = 400;
-
-const yieldToMain = (): Promise<void> =>
-    new Promise((resolve) => {
-        if (typeof requestIdleCallback === 'function') {
-            requestIdleCallback(() => resolve(), { timeout: 80 });
-        } else {
-            setTimeout(resolve, 0);
-        }
-    });
 
 const applyPricesInBackground = (apply: () => void) => {
     try {

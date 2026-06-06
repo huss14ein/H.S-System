@@ -3,7 +3,7 @@
  * Background quote/metrics work checks this so it does not compete with route paint.
  */
 
-const DEFAULT_PAUSE_MS = 1_200;
+const DEFAULT_PAUSE_MS = 2_500;
 
 let pausedUntilMs = 0;
 

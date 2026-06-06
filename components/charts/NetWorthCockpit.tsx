@@ -26,6 +26,7 @@ import { resolveInvestmentPortfolioCurrency } from '../../utils/investmentPortfo
 import { getSarPerUsdForCalendarDay } from '../../services/fxDailySeries';
 import { useHydrateSarPerUsdDailySeries } from '../../hooks/useHydrateSarPerUsdDailySeries';
 import { listNetWorthSnapshots } from '../../services/netWorthSnapshot';
+import { buildNetWorthTrendSeriesFromSnapshots } from '../../services/netWorthChartDense';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../../utils/wealthScope';
 import type { Account, Transaction } from '../../types';
 import InfoHint from '../InfoHint';
@@ -245,27 +246,37 @@ function NetWorthCockpitContent(
 
     const snaps = listNetWorthSnapshots();
     const cutoff = cutoffFor(period);
-    const rawRows = snaps
-      .map((s) => ({
-        dayKey: toDayKeyLocal(new Date(s.at)),
-        netWorth: safeNumber(s.netWorth),
-      }))
-      .filter((r) => (cutoff ? parseLocalDayKey(r.dayKey) >= cutoff : true));
-
-    // Always include today (live) as the latest point.
     const todayLocalKey = toDayKeyLocal(new Date());
-    const rows =
-      rawRows.length && rawRows[0]?.dayKey === todayLocalKey
-        ? rawRows.map((r) => (r.dayKey === todayLocalKey ? { ...r, netWorth: safeNumber(buckets.netWorth) } : r))
-        : [{ dayKey: todayLocalKey, netWorth: safeNumber(buckets.netWorth) }, ...rawRows];
+    const liveNw = safeNumber(buckets.netWorth);
 
-    const seriesChrono = rows
-      .slice()
-      .reverse()
-      .map((r) => ({ ...r, name: shortLabel(r.dayKey) }));
+    let seedBeforeRange: number | null = null;
+    if (cutoff) {
+      for (const s of snaps) {
+        const dayKey = toDayKeyLocal(new Date(s.at));
+        if (parseLocalDayKey(dayKey) >= cutoff) continue;
+        const nw = safeNumber(s.netWorth);
+        if (nw > 0.5) {
+          seedBeforeRange = nw;
+          break;
+        }
+      }
+    }
+
+    const sparseByDay = new Map<string, number>();
+    for (const s of snaps) {
+      const dayKey = toDayKeyLocal(new Date(s.at));
+      if (sparseByDay.has(dayKey)) continue;
+      if (cutoff && parseLocalDayKey(dayKey) < cutoff) continue;
+      sparseByDay.set(dayKey, safeNumber(s.netWorth));
+    }
+    sparseByDay.set(todayLocalKey, liveNw);
+
+    const sparseRows = Array.from(sparseByDay.entries()).map(([dayKey, netWorth]) => ({ dayKey, netWorth }));
+
+    const seriesChrono = buildNetWorthTrendSeriesFromSnapshots(sparseRows, shortLabel, seedBeforeRange);
     const series = seriesChrono.map((r, i) => ({
       ...r,
-      deltaFromPrev: i > 0 ? r.netWorth - seriesChrono[i - 1].netWorth : 0,
+      deltaFromPrev: i > 0 ? r.netWorth - seriesChrono[i - 1]!.netWorth : 0,
     }));
 
     let nwTrendInChart: {

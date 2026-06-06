@@ -55,7 +55,10 @@ const DICT: Dict = {
   educationExpenseBump: { en: 'Education expenses (+%)', ar: 'زيادة مصروفات التعليم (+٪)' },
 
   dashboardCockpitTitle: { en: 'Monthly cockpit', ar: 'لوحة الشهر' },
-  dashboardCockpitSubtitle: { en: 'Cashflow, budgets, and spending — your day-to-day financial pulse.', ar: 'التدفقات والميزانية والمصروفات — نبضك المالي اليومي.' },
+  dashboardCockpitSubtitle: {
+    en: 'Cashflow, budgets, and spending — use the range control to focus every chart below.',
+    ar: 'التدفقات والميزانية والمصروف — اختر النطاق الزمني لتركيز كل المخططات أدناه.',
+  },
   summaryAtlasTitle: { en: 'Wealth atlas', ar: 'خريطة الثروة' },
   summaryAtlasSubtitle: { en: 'How your net worth is built, allocated, and tracking toward 2030 — charts only on this page.', ar: 'كيف تُبنى ثروتك وتُوزَّع وتتجه نحو 2030 — رسوم بيانية خاصة بهذه الصفحة.' },
   wealthComposition: { en: 'Wealth composition', ar: 'تركيبة الثروة' },
@@ -65,8 +68,8 @@ const DICT: Dict = {
   goalsRoadmapHint: { en: 'Milestone rings on the road to 2030.', ar: 'محطات على طريق 2030.' },
   analyticsHoldingsTitle: { en: 'Holdings & calculators', ar: 'المقتنيات والحاسبات' },
   analyticsHoldingsSubtitle: {
-    en: 'Position-level ROI with live quotes — same SAR/USD rate as the Investments hub.',
-    ar: 'عائد كل مركز بأسعار مباشرة — نفس سعر الصرف كمركز الاستثمار.',
+    en: 'One portfolio at a time — position ROI with live quotes, same SAR/USD rate as the Investments hub.',
+    ar: 'محفظة واحدة في كل مرة — عائد كل مركز بأسعار مباشرة، نفس سعر الصرف كمركز الاستثمار.',
   },
   analyticsResilienceTitle: { en: 'Resilience & liquid wealth', ar: 'المرونة والثروة السائلة' },
   analyticsResilienceSubtitle: {

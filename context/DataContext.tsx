@@ -41,6 +41,7 @@ import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/inve
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { financialDataHasHydrated } from '../services/financialDataHydration';
 import { pauseBackgroundWork } from '../utils/backgroundWorkGate';
+import { yieldToMain } from '../utils/yieldToMain';
 import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
 import { deltaForInvestmentTrade } from '../services/investmentBalanceDelta';
 import { buildTransactionPayloadVariants } from '../services/transactionPayloadVariants';
@@ -1061,6 +1062,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             ];
             const keys = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'investments', 'investmentTransactions', 'budgets', 'watchlist', 'settings', 'zakatPayments', 'priceAlerts', 'commodityHoldings', 'plannedTrades', 'investmentPlan', 'portfolioUniverse', 'statusChangeLog', 'executionLogs', 'recurringTransactions', 'budgetRequests', 'sukukPayoutSchedules', 'sukukPayoutEvents'] as const;
             const emptyResult = (err?: any) => ({ data: null, error: err || { code: 'FETCH_FAILED' } });
+            const settleFetches = (promises: PromiseLike<any>[], keySlice: readonly (typeof keys)[number][]) =>
+                Promise.allSettled(promises.map((p) => Promise.resolve(p))).then((settled) =>
+                    settled.map((s, i) => {
+                        if (s.status === 'fulfilled') return s.value as any;
+                        console.error(`Error fetching ${keySlice[i]}:`, s.reason);
+                        return emptyResult(s.reason);
+                    }),
+                );
+            const CRITICAL_COUNT = 10;
+            const criticalKeys = keys.slice(0, CRITICAL_COUNT);
+            const secondaryKeys = keys.slice(CRITICAL_COUNT);
             const slowFetchTimer = window.setTimeout(() => {
                 if (import.meta.env.DEV) {
                     console.warn(
@@ -1068,15 +1080,50 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     );
                 }
             }, FETCH_SETTLE_BUDGET_MS);
-            const settled = await Promise.allSettled(fetchPromises.map((p) => Promise.resolve(p)));
+            const secondaryFetchPromise = settleFetches(fetchPromises.slice(CRITICAL_COUNT), secondaryKeys);
+            const criticalResults = await settleFetches(fetchPromises.slice(0, CRITICAL_COUNT), criticalKeys);
             window.clearTimeout(slowFetchTimer);
-            const results = settled.map((s, i) => {
-                if (s.status === 'fulfilled') return s.value as any;
-                console.error(`Error fetching ${keys[i]}:`, s.reason);
-                return emptyResult(s.reason);
-            });
-            const [accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, recurringTransactions, budgetRequests, sukukPayoutSchedules, sukukPayoutEvents] = results;
-            const allFetches = { accounts, assets, liabilities, goals, transactions, investments, investmentTransactions, budgets, watchlist, settings, zakatPayments, priceAlerts, commodityHoldings, plannedTrades, investmentPlan, portfolioUniverse, statusChangeLog, executionLogs, recurringTransactions, budgetRequests, sukukPayoutSchedules, sukukPayoutEvents };
+            const secondaryPlaceholder = Object.fromEntries(
+                secondaryKeys.map((k) => [k, emptyResult()]),
+            ) as Record<(typeof secondaryKeys)[number], ReturnType<typeof emptyResult>>;
+            const mergedResults = [...criticalResults, ...secondaryKeys.map((k) => secondaryPlaceholder[k])];
+            let results = mergedResults;
+            let [
+                accounts,
+                assets,
+                liabilities,
+                goals,
+                transactions,
+                investments,
+                investmentTransactions,
+                budgets,
+                watchlist,
+                settings,
+                zakatPayments,
+                priceAlerts,
+                commodityHoldings,
+                plannedTrades,
+                investmentPlan,
+                portfolioUniverse,
+                statusChangeLog,
+                executionLogs,
+                recurringTransactions,
+                budgetRequests,
+                sukukPayoutSchedules,
+                sukukPayoutEvents,
+            ] = results;
+            const allFetches = {
+                accounts,
+                assets,
+                liabilities,
+                goals,
+                transactions,
+                investments,
+                investmentTransactions,
+                budgets,
+                watchlist,
+                settings,
+            };
             Object.entries(allFetches).forEach(([key, value]) => {
               if (value?.error && value.error.code !== 'PGRST116') console.error(`Error fetching ${key}:`, value.error);
             });
@@ -1099,42 +1146,49 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             });
             const ownedAccounts = filterOwnedRows(normalizedAccounts);
 
-            const normalizedSukukSchedules = filterOwnedRows((sukukPayoutSchedules.data as any[]) || []).map(normalizeSukukPayoutScheduleRow);
-            const normalizedSukukEvents = filterOwnedRows((sukukPayoutEvents.data as any[]) || []).map(normalizeSukukPayoutEventRow);
-
             const todayYmd = new Date().toISOString().slice(0, 10);
-            const dueSukukEvents = normalizedSukukEvents
-                .filter((e) => !e.posted && e.amount > 0 && String(e.payoutDate) <= todayYmd)
-                .slice(0, 50);
             const wuBase = getDefaultWealthUltraSystemConfig();
-            let wealthUltraConfig = wuBase;
-            if (supabase && auth.user) {
-                try {
-                    const { data: wuUser } = await supabase
-                        .from('wealth_ultra_config')
-                        .select('*')
-                        .eq('user_id', auth.user.id)
-                        .maybeSingle();
-                    if (wuUser) {
-                        wealthUltraConfig = mergeWealthUltraSystemConfigFromRow(wuUser as Record<string, unknown>, wuBase);
-                    } else {
-                        const { data: wuGlobal } = await supabase
-                            .from('wealth_ultra_config')
-                            .select('*')
-                            .is('user_id', null)
-                            .limit(1)
-                            .maybeSingle();
-                        if (wuGlobal) {
-                            wealthUltraConfig = mergeWealthUltraSystemConfigFromRow(wuGlobal as Record<string, unknown>, wuBase);
-                        }
-                    }
-                } catch (e) {
-                    console.warn('Optional wealth_ultra_config load skipped:', e);
-                }
-            }
 
+            await yieldToMain();
+
+            const applyFinancialDataPatch = (
+                patch: Partial<FinancialData> & Pick<FinancialData, 'accounts'>,
+                wealthUltraConfig = wuBase,
+            ) => {
             startTransition(() => {
-            setData({
+            setData((prev) => ({
+                ...prev,
+                accounts: patch.accounts,
+                assets: patch.assets ?? prev.assets,
+                liabilities: patch.liabilities ?? prev.liabilities,
+                goals: patch.goals ?? prev.goals,
+                transactions: patch.transactions ?? prev.transactions,
+                investments: patch.investments ?? prev.investments,
+                investmentTransactions: patch.investmentTransactions ?? prev.investmentTransactions,
+                sukukPayoutSchedules: patch.sukukPayoutSchedules ?? prev.sukukPayoutSchedules,
+                sukukPayoutEvents: patch.sukukPayoutEvents ?? prev.sukukPayoutEvents,
+                budgets: patch.budgets ?? prev.budgets,
+                commodityHoldings: patch.commodityHoldings ?? prev.commodityHoldings,
+                watchlist: patch.watchlist ?? prev.watchlist,
+                settings: patch.settings ?? prev.settings,
+                zakatPayments: patch.zakatPayments ?? prev.zakatPayments,
+                priceAlerts: patch.priceAlerts ?? prev.priceAlerts,
+                plannedTrades: patch.plannedTrades ?? prev.plannedTrades,
+                investmentPlan: patch.investmentPlan ?? prev.investmentPlan,
+                wealthUltraConfig: patch.wealthUltraConfig ?? wealthUltraConfig,
+                portfolioUniverse: patch.portfolioUniverse ?? prev.portfolioUniverse,
+                statusChangeLog: patch.statusChangeLog ?? prev.statusChangeLog,
+                executionLogs: patch.executionLogs ?? prev.executionLogs,
+                recurringTransactions: patch.recurringTransactions ?? prev.recurringTransactions,
+                budgetRequests: patch.budgetRequests ?? prev.budgetRequests,
+                notifications: patch.notifications ?? prev.notifications,
+                allTransactions: patch.allTransactions ?? prev.allTransactions,
+                allBudgets: patch.allBudgets ?? prev.allBudgets,
+            }));
+            });
+            };
+
+            applyFinancialDataPatch({
                 accounts: ownedAccounts,
                 assets: filterOwnedRows(assets.data as any[]).map(normalizeAssetRow),
                 liabilities: [...filterOwnedRows(((liabilities.data as any[]) || []).map(normalizeLiability))].sort(
@@ -1161,8 +1215,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     };
                 }),
                 investmentTransactions: sortByNewestFirst(normalizedInvestmentTransactions),
-                sukukPayoutSchedules: normalizedSukukSchedules,
-                sukukPayoutEvents: normalizedSukukEvents,
                 budgets: filterOwnedRows(budgets.data as any[]).map((b: any) => ({
                     ...b,
                     period: b.period ?? 'monthly',
@@ -1171,49 +1223,230 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     goalId: b.goal_id ?? b.goalId ?? undefined,
                     limit: roundMoney(Number(b.limit ?? 0)),
                 })),
-                commodityHoldings: filterOwnedRows(commodityHoldings.data as any[]).map(normalizeCommodityHolding),
                 watchlist: filterOwnedRows(watchlist.data as any[])
                     .map((w: any) => normalizeWatchlistRow(w))
                     .sort((a, b) => String(b.symbol).localeCompare(String(a.symbol))),
                 settings: normalizeSettings((settings as any).data ?? initialData.settings),
-                zakatPayments: sortByNewestFirst(filterOwnedRows(zakatPayments.data as any[])),
-                priceAlerts: filterOwnedRows(priceAlerts.data as any[]).map(normalizePriceAlert),
-                plannedTrades: sortPlannedTradesNewestFirst(
-                    filterOwnedRows(plannedTrades.data as any[]).map(normalizePlannedTradeRow),
-                ),
                 notifications: [],
-                investmentPlan: normalizeInvestmentPlan((investmentPlan as any).data),
-                wealthUltraConfig,
-                portfolioUniverse: filterOwnedRows((portfolioUniverse as any).data || []).map(normalizeUniverseTicker),
-                statusChangeLog: sortByNewestFirst(filterOwnedRows((statusChangeLog as any).data || [])),
-                executionLogs: sortByNewestFirst(
-                    filterOwnedRows((executionLogs as any).data || []).map(normalizeExecutionLog),
-                ),
-                recurringTransactions: (recurringTransactions as any).error
-                    ? []
-                    : [...filterOwnedRows((recurringTransactions as any).data || []).map((r: any) =>
-                          normalizeRecurringTransaction(
-                              r,
-                              resolveAccountId(r.account_id ?? r.accountId, normalizedAccounts) ?? undefined,
-                          ),
-                      )].sort((a, b) => b.id.localeCompare(a.id)),
-                budgetRequests: sortByNewestFirst(
-                    ((budgetRequests as any).data || []).map((r: any) => ({
-                        id: r.id,
-                        userId: r.user_id ?? r.userId,
-                        requestType: (r.request_type ?? r.requestType) === 'IncreaseLimit' ? 'IncreaseLimit' : 'NewCategory',
-                        categoryId: r.category_id ?? r.categoryId,
-                        categoryName: r.category_name ?? r.categoryName,
-                        amount: roundMoney(Number(r.amount ?? 0)),
-                        note: r.note ?? r.request_note,
-                        status: r.status === 'Finalized' ? 'Finalized' : r.status === 'Rejected' ? 'Rejected' : 'Pending',
-                        created_at: r.created_at,
-                    })),
-                ),
                 allTransactions: [],
                 allBudgets: [],
             });
-            });
+
+            financialDataLoadedRef.current = true;
+            setAwaitingInitialHydrate(false);
+            setLoading(false);
+
+            void (async () => {
+                try {
+                    const secondaryResults = await secondaryFetchPromise;
+                    [
+                        zakatPayments,
+                        priceAlerts,
+                        commodityHoldings,
+                        plannedTrades,
+                        investmentPlan,
+                        portfolioUniverse,
+                        statusChangeLog,
+                        executionLogs,
+                        recurringTransactions,
+                        budgetRequests,
+                        sukukPayoutSchedules,
+                        sukukPayoutEvents,
+                    ] = secondaryResults;
+                    results = [...criticalResults, ...secondaryResults];
+                    const secondaryFetches = {
+                        zakatPayments,
+                        priceAlerts,
+                        commodityHoldings,
+                        plannedTrades,
+                        investmentPlan,
+                        portfolioUniverse,
+                        statusChangeLog,
+                        executionLogs,
+                        recurringTransactions,
+                        budgetRequests,
+                        sukukPayoutSchedules,
+                        sukukPayoutEvents,
+                    };
+                    Object.entries(secondaryFetches).forEach(([key, value]) => {
+                        if (value?.error && value.error.code !== 'PGRST116') {
+                            console.error(`Error fetching ${key}:`, value.error);
+                        }
+                    });
+                    const normalizedSukukSchedulesBg = filterOwnedRows((sukukPayoutSchedules.data as any[]) || []).map(
+                        normalizeSukukPayoutScheduleRow,
+                    );
+                    const normalizedSukukEventsBg = filterOwnedRows((sukukPayoutEvents.data as any[]) || []).map(
+                        normalizeSukukPayoutEventRow,
+                    );
+                    const dueSukukEventsBg = normalizedSukukEventsBg
+                        .filter((e) => !e.posted && e.amount > 0 && String(e.payoutDate) <= todayYmd)
+                        .slice(0, 50);
+                    await yieldToMain();
+                    applyFinancialDataPatch(
+                        {
+                            accounts: ownedAccounts,
+                            sukukPayoutSchedules: normalizedSukukSchedulesBg,
+                            sukukPayoutEvents: normalizedSukukEventsBg,
+                            commodityHoldings: filterOwnedRows(commodityHoldings.data as any[]).map(normalizeCommodityHolding),
+                            zakatPayments: sortByNewestFirst(filterOwnedRows(zakatPayments.data as any[])),
+                            priceAlerts: filterOwnedRows(priceAlerts.data as any[]).map(normalizePriceAlert),
+                            plannedTrades: sortPlannedTradesNewestFirst(
+                                filterOwnedRows(plannedTrades.data as any[]).map(normalizePlannedTradeRow),
+                            ),
+                            investmentPlan: normalizeInvestmentPlan((investmentPlan as any).data),
+                            portfolioUniverse: filterOwnedRows((portfolioUniverse as any).data || []).map(normalizeUniverseTicker),
+                            statusChangeLog: sortByNewestFirst(filterOwnedRows((statusChangeLog as any).data || [])),
+                            executionLogs: sortByNewestFirst(
+                                filterOwnedRows((executionLogs as any).data || []).map(normalizeExecutionLog),
+                            ),
+                            recurringTransactions: (recurringTransactions as any).error
+                                ? []
+                                : [...filterOwnedRows((recurringTransactions as any).data || []).map((r: any) =>
+                                      normalizeRecurringTransaction(
+                                          r,
+                                          resolveAccountId(r.account_id ?? r.accountId, normalizedAccounts) ?? undefined,
+                                      ),
+                                  )].sort((a, b) => b.id.localeCompare(a.id)),
+                            budgetRequests: sortByNewestFirst(
+                                ((budgetRequests as any).data || []).map((r: any) => ({
+                                    id: r.id,
+                                    userId: r.user_id ?? r.userId,
+                                    requestType:
+                                        (r.request_type ?? r.requestType) === 'IncreaseLimit' ? 'IncreaseLimit' : 'NewCategory',
+                                    categoryId: r.category_id ?? r.categoryId,
+                                    categoryName: r.category_name ?? r.categoryName,
+                                    amount: roundMoney(Number(r.amount ?? 0)),
+                                    note: r.note ?? r.request_note,
+                                    status:
+                                        r.status === 'Finalized'
+                                            ? 'Finalized'
+                                            : r.status === 'Rejected'
+                                              ? 'Rejected'
+                                              : 'Pending',
+                                    created_at: r.created_at,
+                                })),
+                            ),
+                        },
+                    );
+                    if (supabase && auth.user) {
+                        try {
+                            const { data: wuUser } = await supabase
+                                .from('wealth_ultra_config')
+                                .select('*')
+                                .eq('user_id', auth.user.id)
+                                .maybeSingle();
+                            let wealthUltraConfig = wuBase;
+                            if (wuUser) {
+                                wealthUltraConfig = mergeWealthUltraSystemConfigFromRow(
+                                    wuUser as Record<string, unknown>,
+                                    wuBase,
+                                );
+                            } else {
+                                const { data: wuGlobal } = await supabase
+                                    .from('wealth_ultra_config')
+                                    .select('*')
+                                    .is('user_id', null)
+                                    .limit(1)
+                                    .maybeSingle();
+                                if (wuGlobal) {
+                                    wealthUltraConfig = mergeWealthUltraSystemConfigFromRow(
+                                        wuGlobal as Record<string, unknown>,
+                                        wuBase,
+                                    );
+                                }
+                            }
+                            startTransition(() => {
+                                setData((prev) => ({ ...prev, wealthUltraConfig }));
+                            });
+                        } catch (e) {
+                            console.warn('Optional wealth_ultra_config load skipped:', e);
+                        }
+                    }
+                    if (dueSukukEventsBg.length && auth.user) {
+                        const userId = auth.user.id;
+                        void (async () => {
+                            try {
+                                const appendedInvestmentTx: InvestmentTransaction[] = [];
+                                const postedEventIds = new Set<string>();
+                                const sukukPostDeadline = Date.now() + 5000;
+                                for (const ev of dueSukukEventsBg) {
+                                    if (Date.now() > sukukPostDeadline) {
+                                        console.warn(
+                                            'Sukuk auto-post time budget reached; remaining events deferred to next refresh.',
+                                        );
+                                        break;
+                                    }
+                                    const symbol = `SUKUK:${String(ev.assetId).slice(0, 8)}:${ev.kind.toUpperCase()}`;
+                                    const txType: InvestmentTransaction['type'] =
+                                        ev.kind === 'principal' ? 'deposit' : 'dividend';
+                                    const payload: Omit<InvestmentTransaction, 'id' | 'user_id'> = {
+                                        accountId: ev.investmentAccountId,
+                                        date: ev.payoutDate,
+                                        type: txType,
+                                        symbol,
+                                        quantity: 0,
+                                        price: 0,
+                                        total: ev.amount,
+                                        currency: ev.currency,
+                                    };
+                                    let inserted: any | null = null;
+                                    for (const variant of tradePayloadVariants(payload)) {
+                                        const res = await db
+                                            .from('investment_transactions')
+                                            .insert(withUser(variant))
+                                            .select('*')
+                                            .maybeSingle();
+                                        if (!res.error && res.data) {
+                                            inserted = res.data;
+                                            break;
+                                        }
+                                    }
+                                    if (inserted?.id) {
+                                        const postUpdate = await db
+                                            .from('sukuk_payout_events')
+                                            .update({
+                                                posted: true,
+                                                posted_at: new Date().toISOString(),
+                                                posted_investment_transaction_id: inserted.id,
+                                            })
+                                            .eq('id', ev.id)
+                                            .eq('user_id', userId)
+                                            .select('id')
+                                            .maybeSingle();
+                                        if (postUpdate.error || !postUpdate.data?.id) {
+                                            try {
+                                                await db.from('investment_transactions').delete().eq('id', inserted.id);
+                                            } catch {
+                                                // ignore rollback failures
+                                            }
+                                        } else {
+                                            appendedInvestmentTx.push(normalizeInvestmentTransaction(inserted));
+                                            postedEventIds.add(ev.id);
+                                        }
+                                    }
+                                }
+                                if (!appendedInvestmentTx.length && postedEventIds.size === 0) return;
+                                setData((prev) => ({
+                                    ...prev,
+                                    investmentTransactions: appendedInvestmentTx.length
+                                        ? sortByNewestFirst([...prev.investmentTransactions, ...appendedInvestmentTx])
+                                        : prev.investmentTransactions,
+                                    sukukPayoutEvents: postedEventIds.size
+                                        ? (prev.sukukPayoutEvents ?? []).map((e) =>
+                                              postedEventIds.has(e.id) ? { ...e, posted: true } : e,
+                                          )
+                                        : prev.sukukPayoutEvents,
+                                }));
+                            } catch (e) {
+                                console.warn('Sukuk auto-post skipped:', e);
+                            }
+                        })();
+                    }
+                } catch (e) {
+                    console.warn('Secondary financial data hydrate skipped:', e);
+                }
+            })();
 
             const initialTxCount = filterOwnedRows(transactions.data as any[]).length;
             if (txFetchTimedOut || (txFetchError && txFetchError.code !== 'PGRST116' && initialTxCount === 0)) {
@@ -1243,75 +1476,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 })();
             } else {
                 setTransactionsLoadWarning(null);
-            }
-
-            // Post due Sukuk payouts after first paint (was blocking setData for up to 5s).
-            if (dueSukukEvents.length) {
-                const userId = auth.user.id;
-                void (async () => {
-                    try {
-                        const appendedInvestmentTx: InvestmentTransaction[] = [];
-                        const postedEventIds = new Set<string>();
-                        const sukukPostDeadline = Date.now() + 5000;
-                        for (const ev of dueSukukEvents) {
-                            if (Date.now() > sukukPostDeadline) {
-                                console.warn('Sukuk auto-post time budget reached; remaining events deferred to next refresh.');
-                                break;
-                            }
-                            const symbol = `SUKUK:${String(ev.assetId).slice(0, 8)}:${ev.kind.toUpperCase()}`;
-                            const txType: InvestmentTransaction['type'] = ev.kind === 'principal' ? 'deposit' : 'dividend';
-                            const payload: Omit<InvestmentTransaction, 'id' | 'user_id'> = {
-                                accountId: ev.investmentAccountId,
-                                date: ev.payoutDate,
-                                type: txType,
-                                symbol,
-                                quantity: 0,
-                                price: 0,
-                                total: ev.amount,
-                                currency: ev.currency,
-                            };
-                            let inserted: any | null = null;
-                            for (const variant of tradePayloadVariants(payload)) {
-                                const res = await db.from('investment_transactions').insert(withUser(variant)).select('*').maybeSingle();
-                                if (!res.error && res.data) {
-                                    inserted = res.data;
-                                    break;
-                                }
-                            }
-                            if (inserted?.id) {
-                                const postUpdate = await db
-                                    .from('sukuk_payout_events')
-                                    .update({ posted: true, posted_at: new Date().toISOString(), posted_investment_transaction_id: inserted.id })
-                                    .eq('id', ev.id)
-                                    .eq('user_id', userId)
-                                    .select('id')
-                                    .maybeSingle();
-                                if (postUpdate.error || !postUpdate.data?.id) {
-                                    try {
-                                        await db.from('investment_transactions').delete().eq('id', inserted.id);
-                                    } catch {
-                                        // ignore rollback failures
-                                    }
-                                } else {
-                                    appendedInvestmentTx.push(normalizeInvestmentTransaction(inserted));
-                                    postedEventIds.add(ev.id);
-                                }
-                            }
-                        }
-                        if (!appendedInvestmentTx.length && postedEventIds.size === 0) return;
-                        setData((prev) => ({
-                            ...prev,
-                            investmentTransactions: appendedInvestmentTx.length
-                                ? sortByNewestFirst([...prev.investmentTransactions, ...appendedInvestmentTx])
-                                : prev.investmentTransactions,
-                            sukukPayoutEvents: postedEventIds.size
-                                ? (prev.sukukPayoutEvents ?? []).map((e) => (postedEventIds.has(e.id) ? { ...e, posted: true } : e))
-                                : prev.sukukPayoutEvents,
-                        }));
-                    } catch (e) {
-                        console.warn('Sukuk auto-post skipped:', e);
-                    }
-                })();
             }
 
         } catch (error) {

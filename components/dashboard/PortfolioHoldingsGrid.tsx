@@ -8,6 +8,8 @@ import { toSAR } from '../../utils/currencyMath';
 
 type Row = {
   key: string;
+  portfolioId: string;
+  portfolioName: string;
   symbol: string;
   name: string;
   shares: number;
@@ -27,14 +29,24 @@ const PortfolioHoldingsGridInner: React.FC<{
   portfolios: InvestmentPortfolio[];
   simulatedPrices: Record<string, { price: number; change?: number; changePercent?: number }>;
   sarPerUsd: number;
-}> = ({ portfolios, simulatedPrices, sarPerUsd }) => {
+  /** When set, only holdings from this portfolio are shown (required on Wealth Analytics). */
+  portfolioId?: string | null;
+}> = ({ portfolios, simulatedPrices, sarPerUsd, portfolioId = null }) => {
   const { t, dir } = useLanguage();
   const { formatCurrencyString, formatCurrency } = useFormatCurrency();
   const [query, setQuery] = useState('');
 
+  const scopedPortfolios = useMemo(() => {
+    const list = portfolios ?? [];
+    if (!portfolioId) return list;
+    return list.filter((p) => p.id === portfolioId);
+  }, [portfolios, portfolioId]);
+
+  const activePortfolio = scopedPortfolios[0] ?? null;
+
   const rows = useMemo((): Row[] => {
     const out: Row[] = [];
-    for (const p of portfolios ?? []) {
+    for (const p of scopedPortfolios) {
       const book = resolveInvestmentPortfolioCurrency(p) as TradeCurrency;
       for (const h of (p.holdings ?? []) as Holding[]) {
         const sym = String(h.symbol ?? '').trim().toUpperCase();
@@ -51,6 +63,8 @@ const PortfolioHoldingsGridInner: React.FC<{
         const roi = gainLossSar != null && costSar > 1e-6 ? gainLossSar / costSar : null;
         out.push({
           key: `${p.id}:${h.id}`,
+          portfolioId: p.id,
+          portfolioName: String(p.name ?? p.id),
           symbol: sym,
           name: String(h.name ?? p.name ?? sym),
           shares: qty,
@@ -66,15 +80,19 @@ const PortfolioHoldingsGridInner: React.FC<{
     const filtered = q
       ? out.filter((r) => r.symbol.includes(q) || r.name.toUpperCase().includes(q))
       : out;
-    return filtered.sort((a, b) => b.marketValueSar - a.marketValueSar).slice(0, 50);
-  }, [portfolios, query, sarPerUsd, simulatedPrices]);
+    return filtered.sort((a, b) => b.marketValueSar - a.marketValueSar);
+  }, [scopedPortfolios, query, sarPerUsd, simulatedPrices]);
 
   return (
     <div dir={dir} className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t('holdings')}</p>
-          <p className="mt-1 text-sm text-slate-700">{t('investmentsAnalytics')}</p>
+          <p className="mt-1 text-sm text-slate-700">
+            {activePortfolio
+              ? `${t('portfolioLabel')}: ${activePortfolio.name ?? activePortfolio.id}`
+              : t('investmentsAnalytics')}
+          </p>
         </div>
         <div className="w-full sm:w-64">
           <input
@@ -103,7 +121,13 @@ const PortfolioHoldingsGridInner: React.FC<{
             {rows.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-3 py-6 text-center text-sm text-slate-500">
-                  {t('apply') === 'تطبيق' ? 'لا توجد مقتنيات لعرضها.' : 'No holdings to display.'}
+                  {portfolioId
+                    ? t('apply') === 'تطبيق'
+                      ? 'لا توجد مقتنيات في هذه المحفظة.'
+                      : 'No holdings in this portfolio.'
+                    : t('apply') === 'تطبيق'
+                      ? 'لا توجد مقتنيات لعرضها.'
+                      : 'No holdings to display.'}
                 </td>
               </tr>
             )}
