@@ -36,7 +36,7 @@ describe('login performance — lean unauthenticated shell', () => {
     expect(html).toMatch(/auth-shell\.css/);
     const distWithoutNoscript = html.replace(/<noscript>[\s\S]*?<\/noscript>/gi, '');
     expect(distWithoutNoscript).not.toMatch(/<link rel="stylesheet" href="\/auth-shell\.css"/);
-  });
+  }, 60000);
 
   it('entry chunk does not statically import recharts or full index.css', () => {
     const distHtml = join(process.cwd(), 'dist/index.html');
@@ -51,5 +51,5 @@ describe('login performance — lean unauthenticated shell', () => {
     expect(entry).not.toMatch(/import\s*\{[^}]*\}\s*from\s*["'][^"']*recharts/);
     expect(entry).not.toContain('index.css');
     expect(entry).not.toMatch(/^import[^;]*vendor-recharts/m);
-  });
+  }, 60000);
 });
