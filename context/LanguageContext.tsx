@@ -79,8 +79,8 @@ const DICT: Dict = {
     ar: 'ربح/خسارة أسبوعية (آخر 7 أيام) وشهر مالي لكل محفظة — نفس قواعد دفتر الاستثمار.',
   },
   portfolioPeriodPnLHint: {
-    en: 'Ledger = realized sells (avg cost) + dividends − fees in the window. Market est. = today’s live quote P/L × trading days (no tick history stored). Totals in SAR.',
-    ar: 'الدفتر = مبيعات محققة + أرباح − رسوم في الفترة. تقدير السوق = ربح/خسارة اليوم من الأسعار × أيام التداول. المجموع بالريال.',
+    en: 'Total = end live value − start-of-period snapshot − net deposits/withdrawals. Ledger = realized sells, dividends, fees. Market = remainder (open-position mark-to-market). Totals in SAR.',
+    ar: 'المجموع = القيمة الحية − لقطة بداية الفترة − صافي الإيداعات/السحوبات. الدفتر = مبيعات محققة وأرباح ورسوم. السوق = الباقي (تقييم المراكز المفتوحة).',
   },
   portfolioPeriodPnLEmpty: {
     en: 'Add investment portfolios to see weekly and monthly P/L here.',
@@ -98,9 +98,9 @@ const DICT: Dict = {
   monthMarketShort: { en: 'Month · market est.', ar: 'شهر · سوق' },
   openInvestmentsHub: { en: 'Open Investments hub', ar: 'فتح مركز الاستثمار' },
   weekPnLTrendTitle: { en: 'Week P/L trend', ar: 'اتجاه الربح/الخسارة الأسبوعي' },
-  weekPnLTrendSubtitle: { en: 'Cumulative last 7 days — ledger + live quote estimate', ar: 'تراكمي آخر 7 أيام — دفتر + تقدير السوق' },
+  weekPnLTrendSubtitle: { en: 'Cumulative last 7 days — mark-to-market from period start', ar: 'تراكمي آخر 7 أيام — تقييم السوق من بداية الفترة' },
   monthPnLTrendTitle: { en: 'Month P/L trend', ar: 'اتجاه الربح/الخسارة الشهري' },
-  monthPnLTrendSubtitle: { en: 'Cumulative financial month — same rules as Investments', ar: 'تراكمي للشهر المالي — نفس قواعد الاستثمار' },
+  monthPnLTrendSubtitle: { en: 'Cumulative financial month — same mark-to-market rules as Investments', ar: 'تراكمي للشهر المالي — نفس قواعد تقييم السوق في الاستثمار' },
   executiveKpiGridTitle: { en: 'Executive KPIs', ar: 'مؤشرات تنفيذية' },
   executiveKpiGridSubtitle: {
     en: 'Net worth, monthly & weekly P/L, ROI, budget, emergency fund — same canonical engine as Dashboard.',

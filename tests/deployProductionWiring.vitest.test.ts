@@ -13,10 +13,10 @@ describe('production deploy wiring', () => {
     const wf = fs.readFileSync(path.join(process.cwd(), '.github/workflows/deploy-production.yml'), 'utf8');
     expect(wf).toContain('deploy-production');
     expect(wf).toContain('netlify-production-deploy.mjs');
+    expect(wf).toContain('netlify-ensure-production-live.mjs');
     expect(wf).toContain('Wealth Analytics');
     expect(wf).toContain('NETLIFY_BUILD_HOOK');
-    expect(wf).toContain('Production still stale');
-    expect(wf).toContain('esm.sh/react');
+    expect(wf).toContain('netlify-self-publish.mjs');
   });
 
   it('netlify deploy script supports CLI token and build hook', () => {
@@ -31,6 +31,8 @@ describe('production deploy wiring', () => {
     expect(script).toContain('restoreSiteDeploy');
     expect(script).toContain('unlockDeploy');
     expect(script).toContain('801d32fc-62bd-4211-8520-b5c1dea9dcae');
+    const selfPub = fs.readFileSync(path.join(process.cwd(), 'scripts/netlify-self-publish.mjs'), 'utf8');
+    expect(selfPub).toContain('publishDeploy');
   });
 
   it('missing hashed assets return 404 instead of cached index.html', () => {

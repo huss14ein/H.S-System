@@ -34,8 +34,8 @@ export function pickLatestReadyProductionDeploy(deploys) {
   );
 }
 
-export function publishDeploy(deployId) {
-  netlifyApi('restoreSiteDeploy', { site_id: FINOVA_NETLIFY_SITE_ID, deploy_id: deployId });
+export function publishDeploy(deployId, siteId = FINOVA_NETLIFY_SITE_ID) {
+  netlifyApi('restoreSiteDeploy', { site_id: siteId, deploy_id: deployId });
   try {
     netlifyApi('unlockDeploy', { deploy_id: deployId });
   } catch {
@@ -60,7 +60,7 @@ export function publishLatestProductionDeploy(siteId = FINOVA_NETLIFY_SITE_ID) {
   console.log(
     `Publishing deploy ${latest.id} (${sha})${latest.locked ? ' [was locked]' : ''}${wasPublished ? ' [already published — refreshing]' : ''}`,
   );
-  publishDeploy(latest.id);
+  publishDeploy(latest.id, siteId);
   console.log(`Production ${siteUrl} now serves ${sha}.`);
   return { deployId: latest.id, sha, siteUrl };
 }

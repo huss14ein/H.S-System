@@ -2946,7 +2946,7 @@ const PlatformCard: React.FC<{
                                             <strong>Invested</strong> / <strong>Withdrawn</strong> include deposits &amp; withdrawals tied to this portfolio, plus a <strong>share of account-level transfers</strong> (no portfolio tag) split by position value.
                                             <strong> Unrealized P/L</strong> and <strong>ROI</strong> use position vs average cost like the holdings table. Idle cash is shared — <strong>Available cash</strong> matches the platform header.
                                             {' '}
-                                            <strong>Week / Month P/L</strong> match the Wealth Analytics scoreboard (ledger + live quote estimate).
+                                            <strong>Week / Month P/L</strong> use mark-to-market from period start (end live value − start snapshot − net deposits/withdrawals), same as Wealth Analytics.
                                           </>
                                         )}
                                     </p>
@@ -3023,7 +3023,7 @@ const PlatformCard: React.FC<{
                                                 <div className="rounded-2xl bg-gradient-to-b from-white to-indigo-50/40 border border-indigo-100/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
                                                     <dt
                                                         className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-indigo-700 uppercase tracking-[0.12em] leading-tight px-0.5"
-                                                        title="Last 7 days: ledger (sells, dividends, fees) + live quote move estimate."
+                                                        title="Last 7 days: end value − start-of-week snapshot − net deposits/withdrawals (same as Wealth Analytics)."
                                                     >
                                                         Week P/L
                                                     </dt>
@@ -3035,7 +3035,7 @@ const PlatformCard: React.FC<{
                                                 <div className="rounded-2xl bg-gradient-to-b from-white to-violet-50/40 border border-violet-100/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
                                                     <dt
                                                         className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-violet-700 uppercase tracking-[0.12em] leading-tight px-0.5"
-                                                        title="Current financial month: ledger + live quote move estimate (same as Wealth Analytics scoreboard)."
+                                                        title="Current financial month: mark-to-market from month start — not daily P/L × days."
                                                     >
                                                         Month P/L
                                                     </dt>

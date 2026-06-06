@@ -1,6 +1,6 @@
 # Tests run in GitHub CI — keep Netlify build fast/reliable so Git-linked auto-deploy always publishes.
 [build]
-  command = "npm ci && npm run build"
+  command = "npm ci && npm run build && node scripts/netlify-self-publish.mjs"
   publish = "dist"
 
 [build.environment]

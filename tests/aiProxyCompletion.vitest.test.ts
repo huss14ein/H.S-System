@@ -67,10 +67,10 @@ describe('AI proxy completion — CORS + health + UI', () => {
 
   it('GitHub deploy workflow smoke-tests production HTML after Netlify deploy', () => {
     const wf = read('.github/workflows/deploy-production.yml');
-    expect(wf).toContain('Wait for live finova-hussein.netlify.app');
+    expect(wf).toContain('Ensure production serves this commit');
+    expect(wf).toContain('netlify-ensure-production-live.mjs');
     expect(wf).toContain('finova-build-sha');
     expect(wf).toContain('finova-app');
-    expect(wf).toContain('esm.sh/react');
   });
 
   it('GitHub deploy workflow smoke-tests AI proxy CORS with Origin header', () => {

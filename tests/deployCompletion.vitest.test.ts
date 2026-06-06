@@ -56,19 +56,26 @@ describe('deploy completion — Wealth Analytics + production hosts', () => {
     expect(redirects).not.toContain('302');
   });
 
-  it('GitHub deploy workflow verifies Wealth Analytics and fails if production is stale', () => {
+  it('GitHub deploy workflow ensures production serves push sha (no stale alias)', () => {
     const wf = read('.github/workflows/deploy-production.yml');
     expect(wf).toContain('Wealth Analytics');
     expect(wf).toContain('finova-build-sha');
-    expect(wf).toContain('Wait for live finova-hussein.netlify.app');
-    expect(wf).toContain('Production still stale');
+    expect(wf).toContain('Ensure production serves this commit');
+    expect(wf).toContain('netlify-ensure-production-live.mjs');
     expect(wf).toContain('NETLIFY_BUILD_HOOK');
+    expect(wf).not.toContain('accepting newer deploy');
   });
 
-  it('netlify.toml uses a fast Git build (tests run in CI, not on Netlify)', () => {
+  it('Netlify build self-publishes production alias when NETLIFY_AUTH_TOKEN is set', () => {
     const toml = read('netlify.toml');
     expect(toml).toContain('npm run build');
+    expect(toml).toContain('netlify-self-publish.mjs');
     expect(toml).not.toContain('npm run test');
+    const selfPub = read('scripts/netlify-self-publish.mjs');
+    expect(selfPub).toContain('publishDeploy');
+    expect(selfPub).toContain('CONTEXT');
+    expect(selfPub).toContain('DEPLOY_ID');
+    expect(read('scripts/netlify-ensure-production-live.mjs')).toContain('finova-build-sha');
   });
 
   it('Settings surfaces build stamp and Wealth Analytics rollout for deploy verification', () => {
@@ -89,5 +96,24 @@ describe('deploy completion — Wealth Analytics + production hosts', () => {
   it('Layout surfaces partial data load warnings app-wide', () => {
     expect(read('components/Layout.tsx')).toContain('DataLoadWarningBanner');
     expect(read('components/DataLoadWarningBanner.tsx')).toContain('transactionsLoadWarning');
+  });
+
+  it('auth session stability wiring (login loop fixes)', () => {
+    expect(read('services/supabaseAuthLock.ts')).toMatch(/mutex|lock/i);
+    expect(read('services/syncUserApprovalProfile.ts')).toContain('markAuthSignInForProfileSync');
+    expect(read('context/AuthContext.tsx')).toContain('queueMicrotask');
+    expect(read('index.tsx')).toContain('import.meta.env.DEV ? <React.StrictMode>');
+  });
+
+  it('signup approval DB bootstrap includes first-user owner RPC', () => {
+    const sql = read('supabase/migrations/20260601180000_first_auth_user_owner_bootstrap.sql');
+    expect(sql).toContain('ensure_own_user_profile');
+    expect(read('supabase/migrations/20260531200000_approve_verified_email_users.sql')).toContain('approved');
+  });
+
+  it('performance: no destructive hydrate race; staggered idle prefetch', () => {
+    expect(read('context/DataContext.tsx')).not.toContain('continuing with partial workspace');
+    expect(read('utils/lazyPages.tsx')).toContain('one route at a time');
+    expect(read('components/AuthenticatedAppShell.tsx')).toContain('prefetchCommonPagesIdle(), 6000');
   });
 });

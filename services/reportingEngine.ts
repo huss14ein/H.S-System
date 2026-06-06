@@ -813,7 +813,7 @@ export function generateWealthMetricPassportHtml(
   if (metric === 'netWorth') {
     sectionC = `Headline balance sheet net worth from computePersonalHeadlineNetWorthSar. Investments total ${money(model.investmentsTotalSar)}. Liquid cash ${money(model.liquidCashSar)}.`;
   } else if (metric === 'monthlyPnL') {
-    sectionC = `Financial-month income minus expenses (transaction-dated FX). Portfolio week P/L ${money(model.weeklyPnLTotalSar)}; month P/L ${money(model.monthlyPnLTotalSar)} (ledger + live quote estimate).`;
+    sectionC = `Financial-month income minus expenses (transaction-dated FX). Portfolio week P/L ${money(model.weeklyPnLTotalSar)}; month P/L ${money(model.monthlyPnLTotalSar)} (mark-to-market from period start).`;
   } else if (metric === 'investmentRoi') {
     sectionC = `Platform rollup + commodities + Sukuk vs net capital (computeHeadlinePersonalInvestmentRoiDecimal). Total exposure ${money(model.investmentsTotalSar)}.`;
   } else if (metric === 'budgetVariance') {

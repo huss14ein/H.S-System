@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   computePortfolioLedgerPnLSarInRange,
+  computePortfolioMarkToMarketPeriodPnLSar,
   computePortfolioPeriodPnLSummary,
   computePortfolioPnLDailySeries,
 } from '../services/portfolioPeriodPnL';
@@ -78,6 +79,64 @@ describe('portfolioPeriodPnL', () => {
     expect(ledger).toBeCloseTo(150, 0);
   });
 
+  it('mark-to-market period P/L does not multiply daily P/L by trading days', () => {
+    const accounts: Account[] = [{ id: 'acc-1', name: 'Broker', type: 'Investment', balance: 0 }];
+    const portfolios: InvestmentPortfolio[] = [
+      {
+        id: 'p1',
+        name: 'Core',
+        accountId: 'acc-1',
+        currency: 'SAR',
+        holdings: [
+          {
+            id: 'h1',
+            symbol: '2222.SR',
+            quantity: 100,
+            avgCost: 10,
+            currentValue: 1200,
+            zakahClass: 'Zakatable',
+            realizedPnL: 0,
+            holdingType: 'equity',
+          },
+        ],
+      },
+    ];
+    const data = {
+      accounts,
+      investments: portfolios,
+      investmentTransactions: [] as InvestmentTransaction[],
+      personalInvestments: portfolios,
+      monthStartDay: 1,
+    } as FinancialData;
+
+    const now = new Date(2026, 4, 25);
+    const weekStart = new Date(now);
+    weekStart.setDate(weekStart.getDate() - 6);
+    weekStart.setHours(0, 0, 0, 0);
+    const weekEnd = new Date(now);
+    weekEnd.setHours(23, 59, 59, 999);
+
+    const endValueSar = 1200;
+    const period = computePortfolioMarkToMarketPeriodPnLSar({
+      portfolio: portfolios[0],
+      transactions: [],
+      startMs: weekStart.getTime(),
+      endMs: weekEnd.getTime(),
+      endValueSar,
+      includeCash: true,
+      accounts,
+      portfolios,
+      data,
+      sarPerUsd: 3.75,
+      simulatedPrices: { '2222.SR': { price: 12, change: 0.5, changePercent: 1 } },
+    });
+
+    // Start cost 100×10=1000, end live 1200 → total +200 (not daily 50 × 5 trading days = 250)
+    expect(period.totalSar).toBeCloseTo(200, 0);
+    expect(period.ledgerSar).toBeCloseTo(0, 0);
+    expect(period.marketEstimateSar).toBeCloseTo(200, 0);
+  });
+
   it('summary returns one row per portfolio with weekly and monthly totals', () => {
     const accounts: Account[] = [{ id: 'acc-1', name: 'Broker', type: 'Investment', balance: 0 }];
     const portfolios: InvestmentPortfolio[] = [
@@ -122,8 +181,7 @@ describe('portfolioPeriodPnL', () => {
 
     expect(summary.rows).toHaveLength(1);
     expect(summary.rows[0].portfolioName).toBe('Core');
-    expect(Number.isFinite(summary.rows[0].weekly.totalSar)).toBe(true);
-    expect(Number.isFinite(summary.rows[0].monthly.totalSar)).toBe(true);
+    expect(summary.rows[0].weekly.totalSar).toBeCloseTo(200, 0);
     expect(summary.weeklyTotalSar).toBe(summary.rows[0].weekly.totalSar);
   });
 

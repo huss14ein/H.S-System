@@ -66,47 +66,15 @@ jobs:
             echo "published=true" >> "$GITHUB_OUTPUT"
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=Netlify publish skipped::Add NETLIFY_BUILD_HOOK or NETLIFY_AUTH_TOKEN in GitHub secrets, or link Netlify site to this repo."
+            echo "::notice title=Netlify CLI publish skipped::Git-linked build + netlify-self-publish.mjs will publish when NETLIFY_AUTH_TOKEN is set in Netlify site env."
           fi
 
-      - name: Wait for live finova-hussein.netlify.app
+      - name: Ensure production serves this commit
         env:
           EXPECT_SHA: ${{ github.sha }}
-        run: |
-          SITE_URL="https://finova-hussein.netlify.app"
-          SHORT_SHA="${EXPECT_SHA:0:7}"
-          echo "Waiting for ${SITE_URL} to serve sha ${SHORT_SHA} (Wealth Analytics bundle)"
-          for attempt in 1 2 3 4 5 6 7 8 9 10 12 14 16 18 20; do
-            HTML=$(curl -sfL "${SITE_URL}/?nocache=${RANDOM}${attempt}" || true)
-            if [ -z "$HTML" ]; then
-              echo "Attempt ${attempt}: unreachable"
-              sleep 20
-              continue
-            fi
-            if echo "$HTML" | grep -q 'esm.sh/react'; then
-              echo "Attempt ${attempt}: still stale importmap prototype"
-              sleep 20
-              continue
-            fi
-            if ! echo "$HTML" | grep -q 'name="finova-app"'; then
-              echo "Attempt ${attempt}: missing finova-app meta (not H.S-System Vite build)"
-              sleep 20
-              continue
-            fi
-            LIVE_SHA=$(echo "$HTML" | sed -n 's/.*name="finova-build-sha" content="\([^"]*\)".*/\1/p' | head -1)
-            echo "Attempt ${attempt}: live sha=${LIVE_SHA}"
-            if [ "${LIVE_SHA}" = "${SHORT_SHA}" ]; then
-              echo "Production matches push sha ${SHORT_SHA}"
-              exit 0
-            fi
-            if [ -n "${LIVE_SHA}" ] && [ "${LIVE_SHA}" != "dev" ]; then
-              echo "Production updated to ${LIVE_SHA} (push was ${SHORT_SHA}) — accepting newer deploy"
-              exit 0
-            fi
-            sleep 20
-          done
-          echo "::error title=Production still stale::${SITE_URL} does not serve the latest H.S-System build (Wealth Analytics missing). Add NETLIFY_BUILD_HOOK or NETLIFY_AUTH_TOKEN+NETLIFY_SITE_ID in GitHub secrets, or link Netlify site finova-hussein to this repo (branch main)."
-          exit 1
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID || '801d32fc-62bd-4211-8520-b5c1dea9dcae' }}
+        run: node scripts/netlify-ensure-production-live.mjs
 
       - name: Smoke test AI proxy CORS on production
         run: |
