@@ -14,6 +14,7 @@ import type { InvestmentPortfolio } from '../../types';
 import type { Page } from '../../types';
 import { PortfolioPnLTrendCharts } from '../analytics/PortfolioPnLTrendCharts';
 import { usePortfolioPeriodPnLSnapshot } from '../../hooks/usePortfolioPeriodPnLSnapshot';
+import { SectionLoadingPlaceholder } from '../shared/SectionLoadingPlaceholder';
 
 const PnLCell: React.FC<{ value: number; format: (n: number) => string; mask: (s: string) => string }> = ({
   value,
@@ -73,13 +74,7 @@ export const PortfolioPeriodPnLPanel: React.FC<{
   const loading = precomputed ? !precomputed.ready : !idlePnL.ready;
 
   if (loading) {
-    return (
-      <div
-        dir={dir}
-        className="rounded-2xl border border-slate-200 bg-slate-50/70 animate-pulse min-h-[10rem]"
-        aria-hidden
-      />
-    );
+    return <SectionLoadingPlaceholder labelKey="sectionLoading" minHeight="10rem" />;
   }
 
   if (!summary || !dailySeries || summary.rows.length === 0) {

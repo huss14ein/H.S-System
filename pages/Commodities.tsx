@@ -18,7 +18,8 @@ import { getAICommodityPrices, formatAiError } from '../services/geminiService';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { parseMoneyInput, roundQuantity } from '../utils/money';
 import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics, pickCommoditiesValueSar, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
+import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import AIAdvisor from '../components/AIAdvisor';
 import { useConfirmAction } from '../hooks/useConfirmAction';
 import { summarizeCommodityForConfirm } from '../utils/recordConfirmMessages';
@@ -272,8 +273,14 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
     const { data, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const { formatCurrencyString } = useFormatCurrency();
-    const { sarPerUsd, commoditiesValueSar, investmentsTotalSar } = useCanonicalFinancialMetrics();
-    
+    const metrics = useExtendedCanonicalMetrics();
+    const { sarPerUsd, extendedReady } = metrics;
+    const commoditiesValueSar = pickCommoditiesValueSar(metrics, extendedReady);
+    const investmentsTotalSar = pickInvestmentsTotalSar(metrics, extendedReady);
+
+    /** Live headline commodity slice (matches Investments hub / Dashboard investments band). */
+    const totalCommodityValue = commoditiesValueSar ?? 0;
+
     const [isCommodityModalOpen, setIsCommodityModalOpen] = useState(false);
     const [commodityToEdit, setCommodityToEdit] = useState<CommodityHolding | null>(null);
     const [commodityToDelete, setCommodityToDelete] = useState<CommodityHolding | null>(null);
@@ -281,11 +288,8 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
 
     const commodityRows = useMemo(
         () => (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [],
-        [data, (data as any)?.personalCommodityHoldings, data?.commodityHoldings]
+        [data, (data as any)?.personalCommodityHoldings, data?.commodityHoldings],
     );
-
-    /** Live headline commodity slice (matches Investments hub / Dashboard investments band). */
-    const totalCommodityValue = commoditiesValueSar;
 
     const commoditiesAiContext = useMemo(
         () => ({
@@ -365,7 +369,15 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
             }
         >
         <div className="space-y-6">
-            <Card title="Total Commodity Value" value={formatCurrencyString(totalCommodityValue)} tooltip="Personal holdings only (excludes commodities with Owner set). Matches Assets page metals/crypto total." />
+            <Card
+                title="Total Commodity Value"
+                value={
+                    <ExtendedMetricGate ready={extendedReady} compact>
+                        {formatCurrencyString(totalCommodityValue)}
+                    </ExtendedMetricGate>
+                }
+                tooltip="Personal holdings only (excludes commodities with Owner set). Matches Assets page metals/crypto total."
+            />
 
             <div className="section-card">
                 <div className="flex flex-wrap justify-between items-center gap-4 mb-4">

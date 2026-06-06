@@ -18,16 +18,18 @@ describe('wealth analytics end-to-end wiring', () => {
 
     it('Wealth Analytics page uses canonical metrics and advanced widgets', () => {
         const src = read('pages/WealthAnalytics.tsx');
+        const deferred = read('components/analytics/WealthAnalyticsDeferredSections.tsx');
         expect(src).toContain('useCanonicalFinancialMetrics');
+        expect(src).not.toContain('useDashboardCanonicalMetrics');
         expect(src).toContain('netWorth');
         expect(src).toContain('liquidCashSar');
-        expect(src).toContain('wealthSummary: reportModel');
         expect(src).not.toContain('resolveSarPerUsd');
         expect(src).not.toContain('useMarketData');
-        expect(src).toContain('ExecutiveKpiGrid');
+        expect(src).toContain('WealthAnalyticsExecutiveKpiSection');
+        expect(deferred).toContain('ExecutiveKpiGrid');
         expect(src).toContain('PortfolioPeriodPnLPanelSection');
         expect(src).toContain('WealthAnalyticsExportMenuSection');
-        expect(src).toContain('WealthHealthIndicatorsSection');
+        expect(src).toContain('WealthHealthIndicatorsDeferredSection');
         expect(src).toContain('DashboardOperationsCockpitSection');
         expect(src).toContain('SummaryWealthAtlasSection');
         expect(src).toContain('WealthAnalyticsDetailsSectionLazy');
@@ -36,9 +38,9 @@ describe('wealth analytics end-to-end wiring', () => {
         expect(src).toContain('wealth-analytics-portfolio');
         expect(src).toContain('CostAveragingCalculatorSection');
         expect(src).toContain('Goals2030TimelineSection');
-        expect(src).toContain('useExecutiveKpiSparklines');
-        expect(src).toContain('useEnhancementSignals');
-        expect(src).toContain('useEnhancementSignals(sarPerUsd)');
+        expect(deferred).toContain('useExecutiveKpiSparklines');
+        expect(deferred).toContain('useEnhancementSignals');
+        expect(src).toContain('extendedReady');
         expect(src).toContain('staggerIndex');
         expect(src).not.toContain('Loading analytics');
         expect(read('components/analytics/wealthAnalyticsLazySections.tsx')).toContain('WealthHealthIndicators');

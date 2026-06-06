@@ -9,7 +9,7 @@ interface CollapsibleSectionProps {
   summary?: string;
   /** Content shown when expanded */
   children: ReactNode;
-  /** Kept for API compatibility; sections always mount expanded (click header to collapse). */
+  /** Initial expanded state (default true). Children mount only while expanded. */
   defaultExpanded?: boolean;
   /** Extra class for the container */
   className?: string;

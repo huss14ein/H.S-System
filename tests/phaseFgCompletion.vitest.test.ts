@@ -18,7 +18,7 @@ describe('Phase F — Wealth Analytics layout E2E', () => {
 
   it('above-fold order: KPI grid → P/L → atlas → cockpit', () => {
     const wa = read('pages/WealthAnalytics.tsx');
-    const kpi = wa.indexOf('<ExecutiveKpiGrid');
+    const kpi = wa.indexOf('<WealthAnalyticsExecutiveKpiSection');
     const pnl = wa.indexOf('<PortfolioPeriodPnLPanelSection');
     const atlas = wa.indexOf('aria-label="Wealth atlas"');
     const cockpit = wa.indexOf('aria-label="Operations cockpit"');

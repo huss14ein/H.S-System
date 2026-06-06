@@ -2,7 +2,7 @@ import React, { useMemo, useContext, useEffect, useCallback } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useAI } from '../context/AiContext';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
 import { aggregateMonthlyBudgetAcrossPortfolios } from '../utils/investmentPlanPerPortfolio';
 import type { InvestmentPlanSettings, UniverseTicker } from '../types';
 import AIAdvisor from '../components/AIAdvisor';
@@ -66,11 +66,11 @@ const SCENARIO_OPTIONS: { id: string; label: string; multiplier: number }[] = [
 
 const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePage, triggerPageAction }) => {
   const { data, totalDeployableCash } = useContext(DataContext)!;
-  const { simulatedPrices } = useCanonicalFinancialMetrics();
+  const metrics = useExtendedCanonicalMetrics();
+  const { simulatedPrices, sarPerUsd, netWorth: headlineNetWorthSar, extendedReady } = metrics;
+  const investmentsTotalSar = pickInvestmentsTotalSar(metrics, extendedReady);
   const { formatCurrencyString } = useFormatCurrency();
   const { isAiAvailable, aiHealthChecked } = useAI();
-
-  const { sarPerUsd, netWorth: headlineNetWorthSar, investmentsTotalSar } = useCanonicalFinancialMetrics();
   const emergencyFund = useEmergencyFund(data);
   const ultraInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
 

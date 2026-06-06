@@ -45,6 +45,8 @@ function normalizeExpenseType(value: unknown): string {
 
 function transactionMatchesBudgetCategory(t: Transaction, category: string): boolean {
   if (category === 'all') return true;
+  /** Budget card drill-down — only expenses charged to that envelope. */
+  if (t.type !== 'expense') return false;
   const allocations = getTransactionBudgetAllocations(t);
   if (allocations.length > 0) {
     return allocations.some((line) => line.category === category);
@@ -192,19 +194,22 @@ export function parseFilterByBudgetPageAction(action: string): {
 } | null {
   if (!action.startsWith('filter-by-budget:')) return null;
   const rest = action.slice('filter-by-budget:'.length);
-  const match = rest.match(/^(.+):(monthly|weekly|daily|yearly):(\d{4}):([1-9]|1[0-2])(?::(\d{4}-\d{2}-\d{2}))?$/i);
-  if (!match) return null;
-  const period = match[2].toLowerCase();
-  const year = Number(match[3]);
-  const month = Number(match[4]);
+  const anchorMatch = rest.match(/:(\d{4}-\d{2}-\d{2})$/);
+  const anchorDate = anchorMatch?.[1];
+  const withoutAnchor = anchorDate ? rest.slice(0, -(anchorDate.length + 1)) : rest;
+  const tail = withoutAnchor.match(/:(monthly|weekly|daily|yearly):(\d{4}):([1-9]|1[0-2])$/i);
+  if (!tail) return null;
+  const period = tail[1].toLowerCase();
+  const year = Number(tail[2]);
+  const month = Number(tail[3]);
   if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
-  let category = match[1];
+  let category = withoutAnchor.slice(0, withoutAnchor.length - tail[0].length);
   try {
     category = decodeURIComponent(category);
   } catch {
     /* keep raw */
   }
-  const anchorDate = match[5];
+  if (!category.trim()) return null;
   return { category, period, year, month, ...(anchorDate ? { anchorDate } : {}) };
 }
 

@@ -1,16 +1,18 @@
 import React, { createContext, useContext, useMemo, useDeferredValue, useRef, useEffect, useState, startTransition } from 'react';
-import type { FinancialData } from '../types';
 import { DataContext } from './DataContext';
 import { useCurrency } from './CurrencyContext';
 import { useMarketPrices } from './MarketDataContext';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
-import { pickDashboardCanonicalMetrics, type DashboardCanonicalMetrics } from '../services/canonicalFinancialMetrics';
-import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
-import { scheduleIdleWorkAsync } from '../utils/runWhenIdle';
+import type { DashboardCanonicalMetrics } from '../services/canonicalFinancialMetrics';
+import { pickDashboardCanonicalMetrics } from '../services/canonicalFinancialMetrics';
+import type { CanonicalFinancialMetrics } from '../services/canonicalFinancialMetrics';
+import { extendCanonicalFinancialMetricsAsync } from '../services/canonicalFinancialMetricsAsync';
 import { yieldToMain } from '../utils/yieldToMain';
 import {
-  buildCanonicalFinancialMetricsResult,
+  buildFastCanonicalFinancialMetricsResult,
+  buildFromCanonicalMetrics,
+  pickDashboardFromMetricsResult,
   type UseCanonicalFinancialMetricsResult,
 } from '../hooks/canonicalFinancialMetricsBundle';
 
@@ -26,30 +28,10 @@ type CanonicalFinancialMetricsContextValue = {
 
 const CanonicalFinancialMetricsContext = createContext<CanonicalFinancialMetricsContextValue | null>(null);
 
-function buildContextValue(args: {
-  data: FinancialData | null;
-  exchangeRate: number;
-  getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number };
-  debouncedPrices: UseCanonicalFinancialMetricsResult['simulatedPrices'];
-  showHydrateBanner: boolean;
-}): CanonicalFinancialMetricsContextValue {
-  const full = buildCanonicalFinancialMetricsResult({
-    data: args.data,
-    exchangeRate: args.exchangeRate,
-    getAvailableCashForAccount: args.getAvailableCashForAccount,
-    debouncedPrices: args.debouncedPrices,
-    showHydrateBanner: args.showHydrateBanner,
-  });
-  const dashboardCore = pickDashboardCanonicalMetrics(full);
+function buildContextValue(full: UseCanonicalFinancialMetricsResult): CanonicalFinancialMetricsContextValue {
   return {
     full,
-    dashboard: {
-      ...dashboardCore,
-      data: args.data,
-      exchangeRate: args.exchangeRate,
-      simulatedPrices: args.debouncedPrices,
-      getAvailableCashForAccount: args.getAvailableCashForAccount,
-    },
+    dashboard: pickDashboardFromMetricsResult(full),
   };
 }
 
@@ -57,13 +39,15 @@ function buildEmptyContextValue(
   exchangeRate: number,
   getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number },
 ): CanonicalFinancialMetricsContextValue {
-  return buildContextValue({
-    data: null,
-    exchangeRate,
-    getAvailableCashForAccount,
-    debouncedPrices: {},
-    showHydrateBanner: true,
-  });
+  return buildContextValue(
+    buildFastCanonicalFinancialMetricsResult({
+      data: null,
+      exchangeRate,
+      getAvailableCashForAccount,
+      debouncedPrices: {},
+      showHydrateBanner: true,
+    }),
+  );
 }
 
 /** One canonical metrics bundle for the authenticated shell (idle recompute — keeps input responsive). */
@@ -116,30 +100,40 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
       showHydrateBanner: false,
     };
 
-    const applyCompute = () => {
-      const next = buildContextValue(computeArgs);
-      valueRef.current = next;
-      startTransition(() => setValue(next));
+    const applyFast = () => {
+      const fast = buildFastCanonicalFinancialMetricsResult(computeArgs);
+      valueRef.current = buildContextValue(fast);
+      startTransition(() => setValue(valueRef.current));
     };
 
-    const isFirstPaintWithData = !valueRef.current.full.data;
-    if (isFirstPaintWithData && !isBackgroundWorkPaused()) {
-      applyCompute();
-      return () => {
-        aborted = true;
-      };
-    }
+    const applyExtended = (metrics: CanonicalFinancialMetrics) => {
+      const full = buildFromCanonicalMetrics(computeArgs, metrics, true);
+      valueRef.current = buildContextValue(full);
+      startTransition(() => setValue(valueRef.current));
+    };
 
-    const cancelIdle = scheduleIdleWorkAsync(async () => {
-      if (aborted || isBackgroundWorkPaused()) return;
+    applyFast();
+
+    void (async () => {
       await yieldToMain(16);
-      if (aborted || isBackgroundWorkPaused()) return;
-      applyCompute();
-    }, 500);
+      if (aborted) return;
+      const dashboard = pickDashboardCanonicalMetrics(valueRef.current.full);
+      const extended = await extendCanonicalFinancialMetricsAsync(
+        dashboard,
+        {
+          data: deferredData,
+          exchangeRate,
+          getAvailableCashForAccount,
+          simulatedPrices: deferredPrices,
+        },
+        { shouldAbort: () => aborted },
+      );
+      if (!extended || aborted) return;
+      applyExtended(extended);
+    })();
 
     return () => {
       aborted = true;
-      cancelIdle();
     };
   }, [fingerprint, deferredData, exchangeRate, getAvailableCashForAccount, deferredPrices, showHydrateBanner]);
 

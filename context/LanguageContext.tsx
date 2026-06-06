@@ -157,6 +157,15 @@ const DICT: Dict = {
   exportPassportPrefix: { en: 'Passport:', ar: 'جواز:' },
   analyticsDetailsTitle: { en: 'Details & insights', ar: 'التفاصيل والرؤى' },
   analyticsDetailsSummary: { en: 'Resilience, suggested actions, AI — expand when needed', ar: 'المرونة، الإجراءات، الذكاء — وسّع عند الحاجة' },
+  syncingWorkspace: { en: 'Syncing workspace…', ar: 'جاري مزامنة مساحة العمل…' },
+  analyticsMetricsLoading: {
+    en: 'Computing allocation, health metrics, and export data (canonical engine)…',
+    ar: 'جاري حساب التوزيع ومؤشرات الصحة وبيانات التصدير (المحرك الموحد)…',
+  },
+  analyticsSectionLoading: { en: 'Loading section…', ar: 'جاري تحميل القسم…' },
+  analyticsHealthLoading: { en: 'Loading wealth health indicators…', ar: 'جاري تحميل مؤشرات صحة الثروة…' },
+  analyticsAtlasLoading: { en: 'Loading wealth atlas charts…', ar: 'جاري تحميل مخططات أطلس الثروة…' },
+  sectionLoading: { en: 'Loading…', ar: 'جاري التحميل…' },
 };
 
 export type LanguageContextValue = {

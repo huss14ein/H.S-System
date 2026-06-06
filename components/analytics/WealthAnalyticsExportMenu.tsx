@@ -15,18 +15,17 @@ import type { WealthAnalyticsReportModel } from '../../services/wealthAnalyticsR
 import type { FinancialData } from '../../types';
 import type { DashboardKpiSnapshot } from '../../services/dashboardKpiSnapshot';
 import type { PersonalHeadlineNetWorthResult } from '../../services/personalNetWorth';
-import type { EmergencyFundMetrics } from '../../hooks/useEmergencyFund';
 import type { WealthSummaryReportInput } from '../../services/reportingEngine';
 import type { SimulatedPriceMap } from '../../services/investmentPlatformCardMetrics';
 import { useLanguage } from '../../context/LanguageContext';
 import PageLanguageToggle from '../PageLanguageToggle';
+import { useEmergencyFund } from '../../hooks/useEmergencyFund';
 
 export const WealthAnalyticsExportMenu: React.FC<{
   data: FinancialData;
   wealthSummaryPayload: WealthSummaryReportInput;
   headline: PersonalHeadlineNetWorthResult;
   kpiSnapshot: DashboardKpiSnapshot | null | undefined;
-  emergencyFund: EmergencyFundMetrics;
   sarPerUsd: number;
   simulatedPrices: SimulatedPriceMap;
   investmentsTotalSar: number;
@@ -38,7 +37,6 @@ export const WealthAnalyticsExportMenu: React.FC<{
   wealthSummaryPayload,
   headline,
   kpiSnapshot,
-  emergencyFund,
   sarPerUsd,
   simulatedPrices,
   investmentsTotalSar,
@@ -47,6 +45,7 @@ export const WealthAnalyticsExportMenu: React.FC<{
   quotesLive,
 }) => {
   const { t } = useLanguage();
+  const emergencyFund = useEmergencyFund(data);
 
   const exportModel = useMemo(
     (): WealthAnalyticsReportModel =>

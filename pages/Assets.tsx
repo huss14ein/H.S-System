@@ -27,7 +27,8 @@ import PageLayout from '../components/PageLayout';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { parseMoneyInput, roundMoney, roundQuantity } from '../utils/money';
 import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics, pickCommoditiesValueSar, pickSukukAssetsValueSar } from '../hooks/useCanonicalFinancialMetrics';
+import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { financialMonthIsoKey, financialMonthKey, resolveMonthStartDayFromData } from '../utils/financialMonth';
 import AIAdvisor from '../components/AIAdvisor';
 import { supabase } from '../services/supabaseClient';
@@ -891,7 +892,10 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const { data, refreshData, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
     const { isAiAvailable, aiHealthChecked } = useAI();
     const { formatCurrencyString } = useFormatCurrency();
-    const { sarPerUsd, commoditiesValueSar, sukukAssetsValueSar } = useCanonicalFinancialMetrics();
+    const metrics = useExtendedCanonicalMetrics();
+    const { sarPerUsd, extendedReady } = metrics;
+    const commoditiesValueSar = pickCommoditiesValueSar(metrics, extendedReady) ?? 0;
+    const sukukAssetsValueSar = pickSukukAssetsValueSar(metrics, extendedReady) ?? 0;
 
     // State for both types of modals
     const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
@@ -1044,9 +1048,9 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
         const recomputedPhysical = assetsList.reduce((sum: number, a: Asset) => sum + (Number(a.value) || 0), 0);
         const recomputedCommodities = commodityList.reduce((sum: number, h: CommodityHolding) => sum + (Number(h.currentValue) || 0), 0);
         const recomputedTotal = recomputedPhysical + recomputedCommodities;
-        if (Math.abs(recomputedTotal - totalAssetValue) > 0.01) warnings.push('Asset total card is out of sync with row totals.');
+        if (extendedReady && Math.abs(recomputedTotal - totalAssetValue) > 0.01) warnings.push('Asset total card is out of sync with row totals.');
         return warnings;
-    }, [sarPerUsd, data?.goals, assetsList, commodityList, totalAssetValue]);
+    }, [sarPerUsd, data?.goals, assetsList, commodityList, totalAssetValue, extendedReady]);
     const assetsAiContext = useMemo(() => {
         const now = new Date();
         const monthStartDay = resolveMonthStartDayFromData(data);
@@ -1109,9 +1113,31 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             </CollapsibleSection>
 
             <div className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
-                <Card title="Total Asset Value" value={formatCurrencyString(totalAssetValue)} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Personal wealth only: physical + metals/crypto (same rows below). Excludes assets with Owner set." />
+                <Card
+                    title="Total Asset Value"
+                    value={
+                        <ExtendedMetricGate ready={extendedReady} compact>
+                            {formatCurrencyString(totalAssetValue)}
+                        </ExtendedMetricGate>
+                    }
+                    indicatorColor="green"
+                    valueColor="text-emerald-700"
+                    icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />}
+                    tooltip="Personal wealth only: physical + metals/crypto (same rows below). Excludes assets with Owner set."
+                />
                 <Card title="Physical Asset Value" value={formatCurrencyString(totalPhysicalAssetValue)} indicatorColor="green" valueColor="text-indigo-700" icon={<HomeModernIcon className="h-5 w-5 text-indigo-600" />} tooltip="Personal physical assets (property, vehicles, Sukuk, etc.)." />
-                <Card title="Metals & Crypto Value" value={formatCurrencyString(totalCommodityValue)} indicatorColor="yellow" valueColor="text-amber-700" icon={<CubeIcon className="h-5 w-5 text-amber-600" />} tooltip="Live commodity slice — same mark as Investments hub and Dashboard investments band." />
+                <Card
+                    title="Metals & Crypto Value"
+                    value={
+                        <ExtendedMetricGate ready={extendedReady} compact>
+                            {formatCurrencyString(totalCommodityValue)}
+                        </ExtendedMetricGate>
+                    }
+                    indicatorColor="yellow"
+                    valueColor="text-amber-700"
+                    icon={<CubeIcon className="h-5 w-5 text-amber-600" />}
+                    tooltip="Live commodity slice — same mark as Investments hub and Dashboard investments band."
+                />
                 <Card title="Monthly Rental Income" value={formatCurrencyString(totalRentalIncome)} indicatorColor="green" valueColor="text-teal-700" icon={<BanknotesIcon className="h-5 w-5 text-teal-600" />} tooltip="Rental income from your personal rental-flagged properties." />
             </div>
             {assetsValidationWarnings.length > 0 && (

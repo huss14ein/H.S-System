@@ -13,7 +13,7 @@ import { rankCapitalUses, buyScoreBreakdown } from '../services/decisionEngine';
 import { computeDecisionPreviewVerdict } from '../services/decisionPreviewVerdict';
 import DecisionPreviewPanel from '../components/DecisionPreviewPanel';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics, pickWealthSummary } from '../hooks/useCanonicalFinancialMetrics';
 import { loadTradingPolicy, saveTradingPolicy, type TradingPolicy, DEFAULT_TRADING_POLICY, TRADING_POLICY_PRESETS } from '../services/tradingPolicy';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import {
@@ -110,7 +110,9 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     const ef = useEmergencyFund(data ?? null);
     const { maskSensitive, setMaskSensitive, playNotificationSound, setPlayNotificationSound } = usePrivacyMask();
 
-    const { sarPerUsd, liquidCashSar, wealthSummary } = useCanonicalFinancialMetrics();
+    const metrics = useExtendedCanonicalMetrics();
+    const { sarPerUsd, liquidCashSar, extendedReady } = metrics;
+    const wealthSummary = pickWealthSummary(metrics, extendedReady);
 
     const sleeveDriftPct = useMemo(() => computeMaxAbsSleeveDriftPercent(data), [data]);
 

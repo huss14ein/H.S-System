@@ -1,4 +1,7 @@
-import { isBackgroundWorkPaused } from './backgroundWorkGate';
+import {
+  backgroundWorkPauseRemainingMs,
+  isBackgroundWorkPaused,
+} from './backgroundWorkGate';
 import { yieldToMain } from './yieldToMain';
 
 /** Serializes heavy idle tasks so they do not stack on one long main-thread block. */
@@ -9,9 +12,26 @@ export function resetIdleWorkQueueForTests(): void {
   idleWorkChain = Promise.resolve();
 }
 
+const MAX_PAUSE_WAIT_MS = 12_000;
+
+/** Wait until input/route pause ends — idle work retries instead of being dropped. */
+export async function waitUntilBackgroundWorkResumed(maxWaitMs = MAX_PAUSE_WAIT_MS): Promise<void> {
+  const started = Date.now();
+  while (isBackgroundWorkPaused()) {
+    if (Date.now() - started >= maxWaitMs) return;
+    const waitMs = Math.min(Math.max(backgroundWorkPauseRemainingMs(), 32), 400);
+    await yieldToMain(waitMs);
+  }
+}
+
+async function waitUntilBackgroundWorkResumedInternal(): Promise<void> {
+  return waitUntilBackgroundWorkResumed();
+}
+
 function enqueueIdleWorkTask(work: () => void | Promise<void>): void {
   idleWorkChain = idleWorkChain
     .then(async () => {
+      await waitUntilBackgroundWorkResumedInternal();
       if (isBackgroundWorkPaused()) return;
       await yieldToMain(0);
       if (isBackgroundWorkPaused()) return;
@@ -34,11 +54,17 @@ export function scheduleIdleWorkAsync(
   timeoutMs = 2000,
 ): () => void {
   let cancelled = false;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
   const startWork = () => {
-    if (cancelled || isBackgroundWorkPaused()) return;
+    if (cancelled) return;
+    if (isBackgroundWorkPaused()) {
+      const waitMs = Math.min(Math.max(backgroundWorkPauseRemainingMs(), 32), 500);
+      retryTimer = setTimeout(startWork, waitMs);
+      return;
+    }
     enqueueIdleWorkTask(async () => {
-      if (cancelled || isBackgroundWorkPaused()) return;
+      if (cancelled) return;
       await work();
     });
   };
@@ -48,6 +74,7 @@ export function scheduleIdleWorkAsync(
       startWork();
       return () => {
         cancelled = true;
+        if (retryTimer) clearTimeout(retryTimer);
       };
     }
 
@@ -65,6 +92,7 @@ export function scheduleIdleWorkAsync(
       const id = w.requestIdleCallback(onIdle, { timeout: timeoutMs });
       return () => {
         cancelled = true;
+        if (retryTimer) clearTimeout(retryTimer);
         w.cancelIdleCallback?.(id);
       };
     }
@@ -72,6 +100,7 @@ export function scheduleIdleWorkAsync(
     const t = window.setTimeout(onIdle, Math.min(timeoutMs, 32));
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
       window.clearTimeout(t);
     };
   };

@@ -48,12 +48,13 @@ describe('Wealth Analytics completion (E2E)', () => {
 
   it('performance: lazy sections, staggered deferred mount, idle portfolio P/L + sparklines', () => {
     const page = read('pages/WealthAnalytics.tsx');
+    const deferred = read('components/analytics/WealthAnalyticsDeferredSections.tsx');
     expect(page).toContain('wealthAnalyticsLazySections');
-    expect(page).toContain('DeferredMount');
-    expect(page).toContain('staggerIndex');
-    expect(page).toContain('usePortfolioPeriodPnLSnapshot');
-    expect(page).toContain('useExecutiveKpiSparklines');
-    expect(page).toContain('precomputed={{');
+    expect(page).toContain('SectionLoadingPlaceholder');
+    expect(page).toContain('extendedReady');
+    expect(deferred).toContain('hideWeeklyPnL');
+    expect(page).not.toContain('usePortfolioPeriodPnLSnapshot');
+    expect(deferred).toContain('useExecutiveKpiSparklines');
     expect(page).not.toContain('Loading analytics');
     expect(page).not.toContain('Preparing analytics');
     expect(read('components/dashboard/DeferredMount.tsx')).toContain('scheduleIdleWork');
@@ -103,6 +104,7 @@ describe('Wealth Analytics completion (E2E)', () => {
     const menu = read('components/analytics/WealthAnalyticsExportMenu.tsx');
     expect(menu).toContain('buildWealthAnalyticsReportModel');
     expect(menu).toContain('generateWealthExecutiveSummaryHtml');
+    expect(menu).toContain('useEmergencyFund');
   });
 
   it('holdings grid: portfolio filter wired end-to-end', () => {
@@ -115,26 +117,27 @@ describe('Wealth Analytics completion (E2E)', () => {
 
   it('health indicators + atlas use canonical report model and allocation slices', () => {
     const page = read('pages/WealthAnalytics.tsx');
-    expect(page).toContain('discipline={reportModel?.discipline}');
-    expect(page).toContain('liquidityRunway={reportModel?.liquidityRunway}');
+    const deferred = read('components/analytics/WealthAnalyticsDeferredSections.tsx');
+    expect(page).toContain('discipline={reportModel.discipline}');
+    expect(page).toContain('liquidityRunway={reportModel.liquidityRunway}');
     expect(page).toContain('investmentAllocation={investmentAllocation}');
     expect(page).toContain('buckets={headline.buckets}');
     expect(page).toContain('netWorthSar={netWorth');
-    expect(page).toContain('useEnhancementSignals(sarPerUsd)');
+    expect(deferred).toContain('useEnhancementSignals');
   });
 
   it('operations cockpit receives canonical liquid cash and investment total', () => {
     const page = read('pages/WealthAnalytics.tsx');
     expect(page).toContain('liquidCashSar={liquidCashSar}');
-    expect(page).toContain('investmentsTotalSar={investmentsTotalSar}');
+    expect(page).toContain('investmentsTotalSar={extendedReady ? investmentsTotalSar : headline.buckets.investments}');
     expect(page).toContain('sarPerUsd={sarPerUsd}');
   });
 
   it('Executive KPI grid uses canonical headline + KPI snapshot + deferred NW sparkline', () => {
-    const page = read('pages/WealthAnalytics.tsx');
-    expect(page).toContain('headline={headline}');
-    expect(page).toContain('kpiSnapshot={kpiSnapshot}');
-    expect(page).toContain('netWorthSparklineOverride={netWorthSparkline}');
+    const deferred = read('components/analytics/WealthAnalyticsDeferredSections.tsx');
+    expect(deferred).toContain('headline={headline}');
+    expect(deferred).toContain('kpiSnapshot={kpiSnapshot}');
+    expect(deferred).toContain('netWorthSparklineOverride={netWorthSparkline}');
     expect(read('components/analytics/ExecutiveKpiGrid.tsx')).toContain('netWorthSparklineOverride');
   });
 });

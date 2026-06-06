@@ -74,7 +74,7 @@ const PnLAreaChart: React.FC<{
                 );
               }}
             />
-            <Area type="monotone" dataKey="cumulative" stroke={stroke} fill={fill} fillOpacity={0.45} strokeWidth={2} />
+            <Area type="monotone" dataKey="cumulative" stroke={stroke} fill={fill} fillOpacity={0.45} strokeWidth={2} isAnimationActive={false} />
           </AreaChart>
         </ResponsiveContainer>
       </div>

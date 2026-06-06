@@ -22,7 +22,7 @@ import InfoHint from '../components/InfoHint';
 import { useCurrency } from '../context/CurrencyContext';
 import { supabase } from '../services/supabaseClient';
 import type { Page } from '../types';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { getPersonalAccounts } from '../utils/wealthScope';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { usePrivacyMask } from '../context/PrivacyContext';
@@ -41,6 +41,7 @@ import {
 } from '../services/netWorthSnapshotThrottle';
 import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import DashboardKpiQualityPanel from '../components/DashboardKpiQualityPanel';
+import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
 import {
     generateWealthSummaryReportCsv,
     generateWealthSummaryReportHtml,
@@ -103,7 +104,8 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         investableCashBars,
         sarPerUsd: canonicalSarPerUsd,
         simulatedPrices: canonicalSimulatedPrices,
-    } = useCanonicalFinancialMetrics();
+        extendedReady,
+    } = useExtendedCanonicalMetrics();
     const { isRefreshing, hasQueuedPriceRefresh, symbolQuoteUpdatedAt, isLive } = useMarketQuoteMeta();
     const fxBanner = useMemo(() => {
         const w = Number(data?.wealthUltraConfig?.fxRate);
@@ -361,12 +363,10 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         return out;
     }, [reportModel, summaryMonthlyKpis, data, exchangeRate]);
 
-    if (!reportModel) {
+    if (!extendedReady || !reportModel) {
         return (
             <PageLayout title="Wealth Summary" description="Consolidated view of net worth, investments, and cashflow.">
-                <p className="text-sm text-slate-600" role="status">
-                    Preparing wealth summary…
-                </p>
+                <SectionLoadingPlaceholder labelKey="analyticsMetricsLoading" minHeight="12rem" />
             </PageLayout>
         );
     }

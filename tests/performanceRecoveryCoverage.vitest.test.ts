@@ -109,7 +109,8 @@ describe('performance recovery E2E wiring', () => {
 
   it('shell canonical metrics provider dedupes compute app-wide', () => {
     expect(read('components/AuthenticatedAppShell.tsx')).toContain('CanonicalFinancialMetricsProvider');
-    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('buildCanonicalFinancialMetricsResult');
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('buildFastCanonicalFinancialMetricsResult');
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('extendCanonicalFinancialMetricsAsync');
     expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('pickDashboardCanonicalMetrics');
     expect(read('context/CanonicalFinancialMetricsContext.tsx')).not.toContain('computeDashboardCanonicalMetrics');
     expect(read('hooks/useCanonicalFinancialMetrics.ts')).toContain('useCanonicalFinancialMetricsContext');
@@ -249,8 +250,8 @@ describe('performance recovery E2E wiring', () => {
     expect(read('components/Layout.tsx')).toContain('startTransition');
     expect(read('components/Layout.tsx')).toContain('useFinancialEnginesIntegration({ eager: false })');
     expect(read('components/MarketSimulator.tsx')).toContain('isBackgroundWorkPaused');
-    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('isBackgroundWorkPaused');
-    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('scheduleIdleWorkAsync');
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('applyFast()');
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('extendCanonicalFinancialMetricsAsync');
     expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('yieldToMain');
     expect(read('hooks/useEnhancementSignals.ts')).toContain('scheduleIdleWorkAsync');
     expect(read('hooks/useHydrateSarPerUsdDailySeries.ts')).toContain('scheduleIdleWork');
@@ -259,8 +260,14 @@ describe('performance recovery E2E wiring', () => {
     expect(read('utils/lazyPages.tsx')).toContain("'Analysis'");
     expect(read('context/DataContext.tsx')).toContain('secondaryFetchPromise');
     expect(read('context/DataContext.tsx')).toContain('yieldToMain');
-    expect(read('pages/WealthAnalytics.tsx')).toContain('usePortfolioPeriodPnLSnapshot');
+    expect(read('pages/WealthAnalytics.tsx')).toContain('WealthAnalyticsExecutiveKpiSection');
+    expect(read('components/analytics/WealthAnalyticsDeferredSections.tsx')).toContain('hideWeeklyPnL');
+    expect(read('pages/WealthAnalytics.tsx')).not.toContain('usePortfolioPeriodPnLSnapshot');
+    expect(read('components/analytics/ExecutiveKpiCard.tsx')).toContain('KpiSparklineSvg');
+    expect(read('components/analytics/ExecutiveKpiCard.tsx')).not.toContain('recharts');
+    expect(read('pages/Transactions.tsx')).toContain('scheduleIdleWork');
     expect(read('components/analytics/WealthAnalyticsDetailsSection.tsx')).toContain('useWealthAnalyticsDeferredInsights');
+    expect(read('pages/WealthAnalytics.tsx')).toContain('extendedReady');
     expect(read('pages/WealthAnalytics.tsx')).toContain('wealthAnalyticsLazySections');
     expect(read('components/dashboard/DeferredMount.tsx')).toContain('staggerIndex');
     expect(read('hooks/useExecutiveKpiSparklines.ts')).toContain('scheduleIdleWorkAsync');
@@ -278,8 +285,22 @@ describe('performance recovery E2E wiring', () => {
     expect(read('services/portfolioPeriodPnL.ts')).toContain('cooperativeCheckpoint');
     expect(read('pages/Investments.tsx')).toContain('usePortfolioPeriodPnLSnapshot');
     expect(read('components/dashboard/PortfolioPeriodPnLPanel.tsx')).toContain('usePortfolioPeriodPnLSnapshot');
-    expect(read('utils/runWhenIdle.ts')).toContain('idleWorkChain');
+    expect(read('utils/runWhenIdle.ts')).toContain('waitUntilBackgroundWorkResumed');
     expect(read('services/portfolioPeriodPnL.ts')).toContain('applyTxToLedgerReplayState');
     expect(read('utils/lazyPages.tsx')).toContain('PRIORITY_PREFETCH_PAGES');
+  });
+
+  it('extended metrics: app-wide banner, shared loading shell, and hook gate', () => {
+    expect(read('components/Layout.tsx')).toContain('CanonicalMetricsExtendedBanner');
+    expect(read('hooks/useCanonicalFinancialMetrics.ts')).toContain('useExtendedCanonicalMetrics');
+    expect(read('components/shared/SectionLoadingPlaceholder.tsx')).toContain('aria-live="polite"');
+    expect(read('components/dashboard/DeferredMount.tsx')).toContain('SectionLoadingPlaceholder');
+    expect(read('pages/Summary.tsx')).toContain('useExtendedCanonicalMetrics');
+    expect(read('pages/InvestmentOverview.tsx')).toContain('extendedReady');
+    expect(read('pages/Commodities.tsx')).toContain('useExtendedCanonicalMetrics');
+    expect(read('pages/Assets.tsx')).toContain('ExtendedMetricGate');
+    expect(read('pages/Investments.tsx')).toContain('pickInvestmentsTotalSar');
+    expect(read('context/InvestmentsMetricsContext.tsx')).toContain('useExtendedCanonicalMetrics');
+    expect(read('services/extendedMetricsPresentation.ts')).toContain('pickWealthSummary');
   });
 });

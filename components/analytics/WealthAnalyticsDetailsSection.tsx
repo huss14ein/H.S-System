@@ -3,6 +3,7 @@ import CollapsibleSection from '../CollapsibleSection';
 import EnhancementInsightStrip from '../EnhancementInsightStrip';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { usePrivacyMask } from '../../context/PrivacyContext';
+import { useEmergencyFund } from '../../hooks/useEmergencyFund';
 import { useFinancialEnhancementInsights } from '../../hooks/useFinancialEnhancementInsights';
 import { useWealthAnalyticsDeferredInsights } from '../../hooks/useWealthAnalyticsDeferredInsights';
 import type { computeWealthSummaryReportModel } from '../../services/wealthSummaryReportModel';
@@ -14,6 +15,7 @@ import {
   AIFeedSection,
   MultiStockAnalysisSection,
 } from './wealthAnalyticsLazySections';
+import { SectionLoadingPlaceholder } from '../shared/SectionLoadingPlaceholder';
 
 type ReportModel = NonNullable<ReturnType<typeof computeWealthSummaryReportModel>>;
 
@@ -22,7 +24,6 @@ export const WealthAnalyticsDetailsSection: React.FC<{
   reportModel: ReportModel | null | undefined;
   personalTransactions: Transaction[];
   goals: Goal[];
-  emergencyFundMonths: number;
   strictReconciliationMode: boolean;
   kpiSnapshot: DashboardKpiSnapshot | null | undefined;
   sarPerUsd: number;
@@ -33,7 +34,6 @@ export const WealthAnalyticsDetailsSection: React.FC<{
   reportModel,
   personalTransactions,
   goals,
-  emergencyFundMonths,
   strictReconciliationMode,
   kpiSnapshot,
   sarPerUsd,
@@ -42,14 +42,15 @@ export const WealthAnalyticsDetailsSection: React.FC<{
 }) => {
   const { formatCurrencyString } = useFormatCurrency();
   const { maskBalance } = usePrivacyMask();
-  const enhancementInsights = useFinancialEnhancementInsights(emergencyFundMonths, { exchangeRate: sarPerUsd });
+  const emergencyFund = useEmergencyFund(data);
+  const enhancementInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered, { exchangeRate: sarPerUsd });
   const capitalDeployment = enhancementInsights.capitalDeployment;
   const deferredInsights = useWealthAnalyticsDeferredInsights({
     enabled: true,
     data,
     personalTransactions,
     goals,
-    emergencyFundMonths,
+    emergencyFundMonths: emergencyFund.monthsCovered,
     strictReconciliationMode,
     reportModel,
     kpiSnapshot,
@@ -67,7 +68,7 @@ export const WealthAnalyticsDetailsSection: React.FC<{
           triggerPageAction={triggerPageAction}
         />
       ) : (
-        <div className="rounded-xl border border-slate-200 bg-slate-50/70 animate-pulse min-h-[10rem]" aria-hidden />
+        <SectionLoadingPlaceholder labelKey="sectionLoading" minHeight="10rem" />
       )}
 
       {strictReconciliationMode && deferredInsights.kpiReconciliation && !deferredInsights.kpiReconciliation.ok && (

@@ -23,7 +23,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { computeAllNetWorthChartBucketsSAR } from '../services/personalNetWorth';
-import { useCanonicalFinancialMetrics, useCanonicalSpotFx, useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics, useCanonicalSpotFx, useCanonicalSimulatedPrices, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
 import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { detectBudgetDrift } from '../services/budgetDrift';
@@ -195,13 +195,15 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const simulatedPrices = useCanonicalSimulatedPrices();
     useHydrateSarPerUsdDailySeries(data, exchangeRate);
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
+    const metrics = useExtendedCanonicalMetrics();
     const {
         sarPerUsd: headlineFx,
         netWorth: personalNetWorth,
-        investmentsTotalSar,
         buckets: personalBuckets,
         kpiSnapshot,
-    } = useCanonicalFinancialMetrics();
+        extendedReady,
+    } = metrics;
+    const investmentsTotalSar = pickInvestmentsTotalSar(metrics, extendedReady);
 
     const contextData = useMemo(() => {
         const transactions = data?.transactions ?? [];
@@ -276,11 +278,11 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         if (Math.abs(personalNetWorth - personalBuckets.netWorth) > 2) {
             warnings.push('Personal headline net worth does not match chart buckets — open System & APIs Health.');
         }
-        if (Math.abs(investmentsTotalSar - personalBuckets.investments) > 2) {
+        if (extendedReady && Math.abs(investmentsTotalSar - personalBuckets.investments) > 2) {
             warnings.push('Personal investment total does not match net worth investments band.');
         }
         return warnings;
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, contextData, headlineFx, kpiSnapshot, personalNetWorth, personalBuckets, investmentsTotalSar]);
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, contextData, headlineFx, kpiSnapshot, personalNetWorth, personalBuckets, investmentsTotalSar, extendedReady]);
 
     const budgetDriftRows = useMemo(() => detectBudgetDrift(data!, exchangeRate), [data, exchangeRate]);
     const incomeStability = useMemo(() => computeIncomeStability(data!), [data]);

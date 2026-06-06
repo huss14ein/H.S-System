@@ -94,8 +94,9 @@ import {
   computePortfolioMetricsBundle,
   type SimulatedPriceMap,
 } from '../services/investmentPlatformCardMetrics';
-import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
 import { InvestmentsMetricsProvider, useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
+import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 import { aggregateMonthlyBudgetAcrossPortfolios, getEffectivePlanForPortfolio } from '../utils/investmentPlanPerPortfolio';
 import { computeGoalMonthlyFundingEnvelopeSar } from '../services/goalProjectionFunding';
@@ -3251,7 +3252,7 @@ const PlatformView: React.FC<{
     simulatedPrices: SimulatedPriceMap;
 }> = (props) => {
     const { data, getAvailableCashForAccount, showHydrateBanner } = useContext(DataContext)!;
-    const { sarPerUsd, platformsRollupSar } = useInvestmentsCanonicalMetrics();
+    const { sarPerUsd, platformsRollupSar, extendedReady } = useInvestmentsCanonicalMetrics();
     const { setActivePage, setActiveTab, onOpenAddPortfolio } = props;
     const personalInvestments = useMemo(() => getPersonalInvestments(data), [data]);
     const personalAccounts = useMemo(() => getPersonalAccounts(data), [data]);
@@ -3395,7 +3396,11 @@ const PlatformView: React.FC<{
                             <div className="flex items-baseline gap-2">
                                 <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Your platforms total (holdings + cash, SAR)</span>
                                 <span className="text-xl sm:text-2xl text-primary tabular-nums tracking-tight inline-flex items-baseline">
-                                    <CurrencyDualDisplay value={aggregateValue} inCurrency="SAR" digits={2} size="xl" weight="bold" className="text-primary" />
+                                    {extendedReady ? (
+                                        <CurrencyDualDisplay value={aggregateValue} inCurrency="SAR" digits={2} size="xl" weight="bold" className="text-primary" />
+                                    ) : (
+                                        <span className="text-sm font-medium text-slate-500">Syncing metrics…</span>
+                                    )}
                                 </span>
                             </div>
                             <div className="flex items-center gap-2 sm:gap-4">
@@ -5173,39 +5178,42 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
   const [currentAccountId, setCurrentAccountId] = useState<string|null>(null);
 
   const { currency: appDisplayCurrency } = useCurrency();
-  const { investmentExposure } = useInvestmentsCanonicalMetrics();
+  const metrics = useInvestmentsCanonicalMetrics();
+  const { investmentExposure, extendedReady, kpiSnapshot } = metrics;
   const { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage, platformsRollupSAR, commoditiesValueSAR, sukukAssetsValueSAR } = useMemo(() => {
     const h = investmentExposure;
-    if (!h) {
+    if (h) {
+      const totalValue = h.totalExposureSar;
+      const totalGainLoss = h.totalGainLossSar;
+      const roi = Number.isFinite(h.roi) ? h.roi * 100 : 0;
+      const totalDailyPnL = h.platformsDailyPnLSar + h.commoditiesDailyPnLSar;
+      const previousTotalValue = totalValue - totalDailyPnL;
+      const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
+
       return {
-        totalValue: 0,
-        totalGainLoss: 0,
-        roi: 0,
-        totalDailyPnL: 0,
-        trendPercentage: 0,
-        platformsRollupSAR: 0,
-        commoditiesValueSAR: 0,
-        sukukAssetsValueSAR: 0,
+        totalValue,
+        totalGainLoss,
+        roi,
+        totalDailyPnL,
+        trendPercentage,
+        platformsRollupSAR: h.platformsRollupSar,
+        commoditiesValueSAR: h.commoditiesValueSar,
+        sukukAssetsValueSAR: h.sukukAssetsValueSar,
       };
     }
-    const totalValue = h.totalExposureSar;
-    const totalGainLoss = h.totalGainLossSar;
-    const roi = Number.isFinite(h.roi) ? h.roi * 100 : 0;
-    const totalDailyPnL = h.platformsDailyPnLSar + h.commoditiesDailyPnLSar;
-    const previousTotalValue = totalValue - totalDailyPnL;
-    const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
-
+    const totalValue = pickInvestmentsTotalSar(metrics, extendedReady);
+    const roi = kpiSnapshot && Number.isFinite(kpiSnapshot.roi) ? kpiSnapshot.roi * 100 : 0;
     return {
       totalValue,
-      totalGainLoss,
+      totalGainLoss: 0,
       roi,
-      totalDailyPnL,
-      trendPercentage,
-      platformsRollupSAR: h.platformsRollupSar,
-      commoditiesValueSAR: h.commoditiesValueSar,
-      sukukAssetsValueSAR: h.sukukAssetsValueSar,
+      totalDailyPnL: 0,
+      trendPercentage: 0,
+      platformsRollupSAR: extendedReady ? metrics.platformsRollupSar : 0,
+      commoditiesValueSAR: extendedReady ? metrics.commoditiesValueSar : 0,
+      sukukAssetsValueSAR: extendedReady ? metrics.sukukAssetsValueSar : 0,
     };
-  }, [investmentExposure]);
+  }, [investmentExposure, extendedReady, metrics, kpiSnapshot]);
 
   const investmentsHubAiContext = useMemo(() => {
     if (!data) return undefined;
@@ -5591,7 +5599,13 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
             />
             <Card
                 title="Net Gain/Loss"
-                value={<CurrencyDualDisplay value={totalGainLoss} inCurrency="SAR" digits={2} colorize size="2xl" />}
+                value={
+                    extendedReady ? (
+                        <CurrencyDualDisplay value={totalGainLoss} inCurrency="SAR" digits={2} colorize size="2xl" />
+                    ) : (
+                        <ExtendedMetricGate ready={false} compact className="border-0 bg-transparent py-2" />
+                    )
+                }
                 density="compact"
                 indicatorColor={totalGainLoss >= 0 ? 'green' : 'red'}
                 valueColor={totalGainLoss >= 0 ? 'text-emerald-700' : 'text-rose-700'}
@@ -5609,8 +5623,14 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
             />
             <Card
                 title="Daily P/L"
-                value={<CurrencyDualDisplay value={totalDailyPnL} inCurrency="SAR" digits={2} colorize size="2xl" />}
-                trend={getTrendString(trendPercentage)}
+                value={
+                    extendedReady ? (
+                        <CurrencyDualDisplay value={totalDailyPnL} inCurrency="SAR" digits={2} colorize size="2xl" />
+                    ) : (
+                        <ExtendedMetricGate ready={false} compact className="border-0 bg-transparent py-2" />
+                    )
+                }
+                trend={extendedReady ? getTrendString(trendPercentage) : undefined}
                 tooltip="Estimated change today from price moves on your holdings (live or simulated quotes). Converted the same way as total value so it lines up with your portfolio currency and FX settings. Hover the amount to see USD equivalent."
                 density="compact"
                 indicatorColor={totalDailyPnL >= 0 ? 'green' : 'red'}
@@ -5618,7 +5638,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                 icon={<ArrowsRightLeftIcon className={`h-5 w-5 ${totalDailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
             />
         </section>
-        {(platformsRollupSAR > 0 || commoditiesValueSAR > 0 || sukukAssetsValueSAR > 0) && (
+        {extendedReady && (platformsRollupSAR > 0 || commoditiesValueSAR > 0 || sukukAssetsValueSAR > 0) && (
             <p className="text-xs text-slate-500 -mt-2 px-0.5 leading-relaxed" role="note">
                 KPIs aggregate personal portfolios in <strong>each portfolio&apos;s base currency</strong> (USD or SAR), convert to SAR using your FX settings, then show amounts in your app currency ({appDisplayCurrency}). Commodities are valued in USD and converted consistently.
                 <span className="tabular-nums block mt-1">

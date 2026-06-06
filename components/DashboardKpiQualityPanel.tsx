@@ -7,7 +7,8 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { reconcileDashboardVsSummaryKpis } from '../services/kpiReconciliation';
-import { useCanonicalFinancialMetrics, useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics, useCanonicalSimulatedPrices, pickWealthSummary } from '../hooks/useCanonicalFinancialMetrics';
+import { ExtendedMetricGate } from './shared/ExtendedMetricGate';
 import { computeDashboardValidationWarnings } from '../services/dashboardKpiSnapshot';
 import { listRecentKpiReconciliationDrift, type KpiDriftEvent } from '../services/kpiDriftTelemetry';
 import { useDashboardReconciliationPrefs } from '../hooks/useDashboardReconciliationPrefs';
@@ -25,7 +26,9 @@ const DashboardKpiQualityPanel: React.FC = () => {
     const { strictReconciliationMode, setStrictReconciliationMode, hardBlockOnMismatch, setHardBlockOnMismatch } =
         useDashboardReconciliationPrefs(auth?.user?.id);
 
-    const { kpiSnapshot, wealthSummary: summaryModelForReconciliation } = useCanonicalFinancialMetrics();
+    const metrics = useExtendedCanonicalMetrics();
+    const { kpiSnapshot, extendedReady } = metrics;
+    const summaryModelForReconciliation = pickWealthSummary(metrics, extendedReady);
 
     const dashboardValidationWarnings = useMemo(
         () => computeDashboardValidationWarnings(data, kpiSnapshot),
@@ -122,7 +125,7 @@ const DashboardKpiQualityPanel: React.FC = () => {
                         Hard block on mismatch
                     </label>
                 </div>
-                {kpiReconciliation && (
+                {extendedReady && kpiReconciliation && (
                     <>
                         <p className={`mt-2 text-xs font-medium ${kpiReconciliation.ok ? 'text-emerald-700' : 'text-red-700'}`}>
                             {kpiReconciliation.ok
@@ -159,6 +162,9 @@ const DashboardKpiQualityPanel: React.FC = () => {
                             ))}
                         </div>
                     </>
+                )}
+                {!extendedReady && (
+                    <ExtendedMetricGate ready={false} compact className="mt-2 border-0 bg-transparent" />
                 )}
             </div>
 

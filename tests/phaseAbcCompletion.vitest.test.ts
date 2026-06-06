@@ -26,6 +26,7 @@ describe('Phase A — Transactions E2E', () => {
     it('budget drill-down uses fiscal month and scrolls to list', () => {
         expect(read('pages/Transactions.tsx')).toContain("monthMode: 'fiscal'");
         expect(read('pages/Budgets.tsx')).toContain('filter-by-budget:');
+        expect(read('pages/Budgets.tsx')).toContain('budget.period');
         expect(read('pages/Transactions.tsx')).toContain('transactionListRef');
         expect(read('pages/Transactions.tsx')).toContain('scrollIntoView');
     });
@@ -34,6 +35,8 @@ describe('Phase A — Transactions E2E', () => {
         const tx = read('pages/Transactions.tsx');
         expect(tx).toMatch(/userRole === 'Admin'[\s\S]*data\?\.accounts/);
         expect(tx).toContain('governanceReady');
+        expect(read('pages/Transactions.tsx')).toContain('scheduleIdleWork');
+        expect(tx).toMatch(/budgetCategory !== 'all'/);
         expect(tx).toContain('Loading permissions');
         expect(tx).toContain('orphanTransactionCount');
     });

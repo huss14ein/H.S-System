@@ -44,7 +44,7 @@ import { useSelfLearning } from '../context/SelfLearningContext';
 import AIAdvisor from '../components/AIAdvisor';
 import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import { brokerCashBucketsFromInvestmentAccount } from '../services/investmentCashLedger';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics, pickInvestmentsTotalSar, pickInvestableCashTotalSar } from '../hooks/useCanonicalFinancialMetrics';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 
 type SharedAccountRow = Account & { ownerEmail?: string; owner_user_id?: string; account_id?: string; show_balance?: boolean };
@@ -439,7 +439,10 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
         loadSharingState();
     }, [auth?.user?.id, auth?.isAdmin]);
 
-    const { sarPerUsd, investableCashTotalSar, investmentsTotalSar, liquidCashSar } = useCanonicalFinancialMetrics();
+    const metrics = useExtendedCanonicalMetrics();
+    const { sarPerUsd, liquidCashSar, extendedReady } = metrics;
+    const investableCashTotalSar = pickInvestableCashTotalSar(metrics);
+    const investmentsTotalSar = pickInvestmentsTotalSar(metrics, extendedReady);
 
     const { cashAccounts, creditAccounts, investmentAccounts, totalCash, totalCredit } = useMemo(() => {
         const accounts = getPersonalAccounts(data);

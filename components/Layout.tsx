@@ -10,6 +10,7 @@ import { useTrackPageVisit } from '../context/SelfLearningContext';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import CrossEngineAlertsBanner from './CrossEngineAlertsBanner';
 import FinancialDataHydrateBanner from './FinancialDataHydrateBanner';
+import CanonicalMetricsExtendedBanner from './shared/CanonicalMetricsExtendedBanner';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { useCurrency } from '../context/CurrencyContext';
@@ -167,6 +168,7 @@ const Layout: React.FC<LayoutProps> = ({
       >
         <div className={`${contentMaxClass} mx-auto w-full animate-fadeIn min-w-0`}>
           <FinancialDataHydrateBanner />
+          <CanonicalMetricsExtendedBanner />
           <DeployFreshnessBanner />
           <DataLoadWarningBanner />
           {ready && (

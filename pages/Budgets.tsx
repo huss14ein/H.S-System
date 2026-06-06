@@ -2058,14 +2058,18 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const handleOwnPortfolioNavigate = useCallback(
         (budget: BudgetRow) => {
             if (triggerPageAction) {
-                const periodTag = budgetView.toLowerCase();
+                const periodRaw = String(budget.period ?? 'monthly').toLowerCase();
+                const periodTag =
+                    periodRaw === 'weekly' || periodRaw === 'daily' || periodRaw === 'yearly'
+                        ? periodRaw
+                        : 'monthly';
                 triggerPageAction(
                     'Transactions',
                     `filter-by-budget:${encodeURIComponent(budget.category)}:${periodTag}:${budget.year || currentYear}:${budget.month || currentMonth}:${currentDate.toISOString().slice(0, 10)}`,
                 );
             }
         },
-        [triggerPageAction, budgetView, currentYear, currentMonth],
+        [triggerPageAction, currentYear, currentMonth, currentDate],
     );
 
     const handleOwnPortfolioDelete = useCallback(

@@ -53,6 +53,8 @@ import { filterTransactionsForLedgerView, filterTransactionsForLedgerExport, par
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { exportCashTransactionsToCsv } from '../services/reportingEngine';
 import { computeMonthlyCashflowKpisSar } from '../services/financeTruth';
+import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
 import {
     financialMonthKey,
     financialMonthRangeFromKey,
@@ -1212,12 +1214,15 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [filters.accountId, filters.month, filters.allMonths, filters.nature, filters.expenseType, filters.budgetCategory]);
 
     useEffect(() => {
-        setFilters((f) => ({
-            ...f,
-            month: initialLedgerMonthIso(monthStartDay),
-            monthMode: defaultLedgerMonthMode(monthStartDay),
-            dateRangeOverride: undefined,
-        }));
+        setFilters((f) => {
+            if (f.budgetCategory !== 'all') return f;
+            return {
+                ...f,
+                month: initialLedgerMonthIso(monthStartDay),
+                monthMode: defaultLedgerMonthMode(monthStartDay),
+                dateRangeOverride: undefined,
+            };
+        });
     }, [monthStartDay]);
 
     const selectedMonthRangeLabel = useMemo(() => {
@@ -1271,7 +1276,9 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [filters.accountId]);
 
     useEffect(() => {
+        let cancelled = false;
         const loadGovernanceData = async () => {
+            if (cancelled || isBackgroundWorkPaused()) return;
             if (!supabase || !auth?.user) {
                 setGovernanceReady(true);
                 return;
@@ -1288,6 +1295,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     .eq('user_id', auth.user.id);
 
                 const allowed = (permissions || []).map((p: any) => p.categories?.name).filter(Boolean);
+                if (cancelled) return;
                 setPermittedBudgetCategories(allowed);
 
                 const { data: sharedRows } = await supabase
@@ -1296,16 +1304,24 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 const sharedCats = Array.from(new Set(((sharedRows || []) as any[])
                     .map((row) => String(row?.category || '').trim())
                     .filter(Boolean)));
+                if (cancelled) return;
                 setSharedBudgetCategories(sharedCats);
             } else {
                 setPermittedBudgetCategories([]);
                 setSharedBudgetCategories([]);
             }
 
-            setGovernanceReady(true);
+            if (!cancelled) setGovernanceReady(true);
         };
 
-        loadGovernanceData();
+        const cancelIdle = scheduleIdleWork(() => {
+            void loadGovernanceData();
+        }, 1200);
+
+        return () => {
+            cancelled = true;
+            cancelIdle();
+        };
     }, [auth?.user?.id, auth?.isAdmin]);
 
     useEffect(() => {

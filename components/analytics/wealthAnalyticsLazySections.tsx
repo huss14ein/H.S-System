@@ -2,16 +2,12 @@ import React, { Suspense, lazy, type ComponentProps } from 'react';
 import type { FinancialData } from '../../types';
 import type { PersonalHeadlineNetWorthResult } from '../../services/personalNetWorth';
 import type { DashboardKpiSnapshot } from '../../services/dashboardKpiSnapshot';
-import type { EmergencyFundMetrics } from '../../hooks/useEmergencyFund';
-import type { SimulatedPriceMap } from '../../services/investmentPlatformCardMetrics';
 import type { WealthSummaryReportInput } from '../../services/reportingEngine';
+import type { SimulatedPriceMap } from '../../services/investmentPlatformCardMetrics';
+import { SectionLoadingPlaceholder } from '../shared/SectionLoadingPlaceholder';
 
-const sectionPulse = (minHeight: string) => (
-  <div
-    className="rounded-2xl border border-slate-200 bg-slate-50/70 animate-pulse"
-    style={{ minHeight }}
-    aria-hidden
-  />
+const sectionFallback = (minHeight: string, labelKey = 'sectionLoading') => (
+  <SectionLoadingPlaceholder labelKey={labelKey} minHeight={minHeight} />
 );
 
 const LazyWealthHealthIndicators = lazy(() =>
@@ -65,13 +61,13 @@ const LazyWealthAnalyticsDetailsSection = lazy(() =>
 export const WealthHealthIndicatorsSection: React.FC<
   ComponentProps<typeof LazyWealthHealthIndicators>
 > = (props) => (
-  <Suspense fallback={sectionPulse('6rem')}>
+  <Suspense fallback={sectionFallback('6rem')}>
     <LazyWealthHealthIndicators {...props} />
   </Suspense>
 );
 
 export const SummaryWealthAtlasSection: React.FC<ComponentProps<typeof LazySummaryWealthAtlas>> = (props) => (
-  <Suspense fallback={sectionPulse('14rem')}>
+  <Suspense fallback={sectionFallback('14rem')}>
     <LazySummaryWealthAtlas {...props} />
   </Suspense>
 );
@@ -79,7 +75,7 @@ export const SummaryWealthAtlasSection: React.FC<ComponentProps<typeof LazySumma
 export const DashboardOperationsCockpitSection: React.FC<
   ComponentProps<typeof LazyDashboardOperationsCockpit>
 > = (props) => (
-  <Suspense fallback={sectionPulse('16rem')}>
+  <Suspense fallback={sectionFallback('16rem')}>
     <LazyDashboardOperationsCockpit {...props} />
   </Suspense>
 );
@@ -87,25 +83,25 @@ export const DashboardOperationsCockpitSection: React.FC<
 export const WealthAnalyticsSummaryPanelsSection: React.FC<
   ComponentProps<typeof LazyWealthAnalyticsSummaryPanels>
 > = (props) => (
-  <Suspense fallback={sectionPulse('10rem')}>
+  <Suspense fallback={sectionFallback('10rem')}>
     <LazyWealthAnalyticsSummaryPanels {...props} />
   </Suspense>
 );
 
 export const AIExecutiveSummarySection: React.FC = () => (
-  <Suspense fallback={sectionPulse('8rem')}>
+  <Suspense fallback={sectionFallback('8rem')}>
     <LazyAIExecutiveSummary />
   </Suspense>
 );
 
 export const AIFeedSection: React.FC = () => (
-  <Suspense fallback={sectionPulse('8rem')}>
+  <Suspense fallback={sectionFallback('8rem')}>
     <LazyAIFeed />
   </Suspense>
 );
 
 export const MultiStockAnalysisSection: React.FC<{ compact?: boolean }> = (props) => (
-  <Suspense fallback={sectionPulse('8rem')}>
+  <Suspense fallback={sectionFallback('8rem')}>
     <LazyMultiStockAnalysisPanel {...props} />
   </Suspense>
 );
@@ -113,7 +109,7 @@ export const MultiStockAnalysisSection: React.FC<{ compact?: boolean }> = (props
 export const PortfolioPeriodPnLPanelSection: React.FC<
   ComponentProps<typeof LazyPortfolioPeriodPnLPanel>
 > = (props) => (
-  <Suspense fallback={sectionPulse('10rem')}>
+  <Suspense fallback={sectionFallback('10rem')}>
     <LazyPortfolioPeriodPnLPanel {...props} />
   </Suspense>
 );
@@ -121,7 +117,7 @@ export const PortfolioPeriodPnLPanelSection: React.FC<
 export const PortfolioHoldingsGridSection: React.FC<
   ComponentProps<typeof LazyPortfolioHoldingsGrid>
 > = (props) => (
-  <Suspense fallback={sectionPulse('12rem')}>
+  <Suspense fallback={sectionFallback('12rem')}>
     <LazyPortfolioHoldingsGrid {...props} />
   </Suspense>
 );
@@ -129,13 +125,13 @@ export const PortfolioHoldingsGridSection: React.FC<
 export const CostAveragingCalculatorSection: React.FC<
   ComponentProps<typeof LazyCostAveragingCalculator>
 > = (props) => (
-  <Suspense fallback={sectionPulse('10rem')}>
+  <Suspense fallback={sectionFallback('10rem')}>
     <LazyCostAveragingCalculator {...props} />
   </Suspense>
 );
 
 export const Goals2030TimelineSection: React.FC<ComponentProps<typeof LazyGoals2030Timeline>> = (props) => (
-  <Suspense fallback={sectionPulse('10rem')}>
+  <Suspense fallback={sectionFallback('10rem')}>
     <LazyGoals2030Timeline {...props} />
   </Suspense>
 );
@@ -145,7 +141,6 @@ export const WealthAnalyticsExportMenuSection: React.FC<{
   wealthSummaryPayload: WealthSummaryReportInput;
   headline: PersonalHeadlineNetWorthResult;
   kpiSnapshot: DashboardKpiSnapshot | null | undefined;
-  emergencyFund: EmergencyFundMetrics;
   sarPerUsd: number;
   simulatedPrices: SimulatedPriceMap;
   investmentsTotalSar: number;
@@ -153,7 +148,7 @@ export const WealthAnalyticsExportMenuSection: React.FC<{
   quotesAsOfIso?: string | null;
   quotesLive?: boolean;
 }> = (props) => (
-  <Suspense fallback={<span className="inline-block h-9 w-24 rounded-lg bg-slate-100 animate-pulse" aria-hidden />}>
+  <Suspense fallback={<SectionLoadingPlaceholder compact labelKey="sectionLoading" className="inline-flex min-h-0 border-0 bg-transparent py-0" />}>
     <LazyWealthAnalyticsExportMenu {...props} />
   </Suspense>
 );
@@ -161,7 +156,7 @@ export const WealthAnalyticsExportMenuSection: React.FC<{
 export const WealthAnalyticsDetailsSectionLazy: React.FC<
   ComponentProps<typeof LazyWealthAnalyticsDetailsSection>
 > = (props) => (
-  <Suspense fallback={sectionPulse('12rem')}>
+  <Suspense fallback={sectionFallback('12rem')}>
     <LazyWealthAnalyticsDetailsSection {...props} />
   </Suspense>
 );

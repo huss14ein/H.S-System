@@ -9,7 +9,6 @@ import { InvestmentAllocationRings } from './InvestmentAllocationRings';
 import { HoldingsBubbleChart } from './HoldingsBubbleChart';
 import { Goals2030JourneyMap } from './Goals2030JourneyMap';
 import { GoalProjectionAreaChart } from './GoalProjectionAreaChart';
-import { DeferredMount } from './DeferredMount';
 
 /** Wealth composition, allocation, holdings map, goals journey (Wealth Analytics). */
 export const SummaryWealthAtlas: React.FC<{
@@ -52,15 +51,13 @@ export const SummaryWealthAtlas: React.FC<{
       />
     )}
     <NetWorthCompositionChart buckets={buckets} netWorthSar={netWorthSar} />
-    <DeferredMount minHeight="14rem">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch">
-        <InvestmentAllocationRings allocation={investmentAllocation} investmentsTotalSar={investmentsTotalSar} />
-        <HoldingsBubbleChart portfolios={personalInvestments} simulatedPrices={simulatedPrices} sarPerUsd={sarPerUsd} />
-      </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3 items-stretch">
-        <Goals2030JourneyMap data={data} goals={goals} sarPerUsd={sarPerUsd} onOpenGoals={onOpenGoals} />
-        <GoalProjectionAreaChart data={data} goals={goals} sarPerUsd={sarPerUsd} />
-      </div>
-    </DeferredMount>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch">
+      <InvestmentAllocationRings allocation={investmentAllocation} investmentsTotalSar={investmentsTotalSar} />
+      <HoldingsBubbleChart portfolios={personalInvestments} simulatedPrices={simulatedPrices} sarPerUsd={sarPerUsd} />
+    </div>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch">
+      <Goals2030JourneyMap data={data} goals={goals} sarPerUsd={sarPerUsd} onOpenGoals={onOpenGoals} />
+      <GoalProjectionAreaChart data={data} goals={goals} sarPerUsd={sarPerUsd} />
+    </div>
   </div>
 );

@@ -26,7 +26,21 @@ describe('runWhenIdle', () => {
       order.push('b');
     });
     await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
     expect(order).toEqual(['a', 'b']);
+  });
+
+  it('retries idle work after a short input pause instead of dropping it', async () => {
+    vi.useFakeTimers();
+    const ran: string[] = [];
+    const { pauseBackgroundWork } = await import('../utils/backgroundWorkGate');
+    pauseBackgroundWork(500);
+    scheduleIdleWorkAsync(async () => {
+      ran.push('done');
+    });
+    await vi.advanceTimersByTimeAsync(600);
+    expect(ran).toEqual(['done']);
+    vi.useRealTimers();
   });
 
   it('cancel prevents queued work from running', async () => {
