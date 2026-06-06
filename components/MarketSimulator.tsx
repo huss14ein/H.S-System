@@ -43,15 +43,7 @@ const PARTIAL_LIVE_RATIO = 0.8;
 const INTER_SCOPE_DELAY_MS = 400;
 
 const applyPricesInBackground = (apply: () => void) => {
-    try {
-        if (typeof requestIdleCallback === 'function') {
-            requestIdleCallback(() => startTransition(apply), { timeout: 200 });
-            return;
-        }
-    } catch {
-        // fall through
-    }
-    setTimeout(() => startTransition(apply), 0);
+    scheduleIdleWork(() => startTransition(apply), 200);
 };
 
 const MarketSimulator: React.FC = () => {

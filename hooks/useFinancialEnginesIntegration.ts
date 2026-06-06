@@ -59,7 +59,7 @@ type Options = {
  * Use in Plan, Budgets, Wealth Ultra, and Investment Plan for shared constraints and alerts.
  */
 export function useFinancialEnginesIntegration(options?: Options): UseFinancialEnginesIntegrationResult {
-  const eager = options?.eager !== false;
+  const eager = options?.eager === true;
   const { data, showHydrateBanner } = useContext(DataContext)!;
   const [idleSnapshot, setIdleSnapshot] = useState(EMPTY_FINANCIAL_ENGINES_SNAPSHOT);
 

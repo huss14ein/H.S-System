@@ -3,8 +3,8 @@ import type { Account, FinancialData, InvestmentPortfolio } from '../types';
 import { DataContext } from '../context/DataContext';
 import { resolveMonthStartDayFromData } from '../utils/financialMonth';
 import {
-  computePortfolioPeriodPnLSummary,
-  computePortfolioPnLDailySeries,
+  computePortfolioPeriodPnLSummaryAsync,
+  computePortfolioPnLDailySeriesAsync,
   portfolioPeriodPnLMap,
   type PortfolioPeriodPnLSummary,
   type PortfolioPnLDailySeries,
@@ -45,7 +45,10 @@ export function usePortfolioPeriodPnLSnapshot(args: {
   sarPerUsd: number;
   simulatedPrices: SimulatedPriceMap;
   locale?: string;
+  /** When false, skips idle scheduling (panel not visible / tab inactive). */
+  enabled?: boolean;
 }): PortfolioPeriodPnLSnapshot {
+  const enabled = args.enabled !== false;
   const { showHydrateBanner, getAvailableCashForAccount } = useContext(DataContext)!;
   const [snapshot, setSnapshot] = useState<PortfolioPeriodPnLCore>(EMPTY_CORE);
   const { data, portfolios, accounts, sarPerUsd, simulatedPrices, locale } = args;
@@ -60,14 +63,19 @@ export function usePortfolioPeriodPnLSnapshot(args: {
   ].join(':');
 
   useEffect(() => {
+    if (!enabled) {
+      setSnapshot(EMPTY_CORE);
+      return;
+    }
     if (!data || showHydrateBanner || !getAvailableCashForAccount) {
       setSnapshot(EMPTY_CORE);
       return;
     }
 
     setSnapshot((prev) => ({ ...prev, ready: false }));
-    return scheduleIdleWorkAsync(async () => {
-      if (isBackgroundWorkPaused()) return;
+    let aborted = false;
+    const cancelIdle = scheduleIdleWorkAsync(async () => {
+      if (isBackgroundWorkPaused() || aborted) return;
 
       const monthStartDay = resolveMonthStartDayFromData(data);
       const computeArgs = {
@@ -80,8 +88,10 @@ export function usePortfolioPeriodPnLSnapshot(args: {
         getAvailableCashForAccount,
         locale: locale ?? 'en-US',
       };
+      const shouldAbort = () => aborted || isBackgroundWorkPaused();
 
-      const summary = computePortfolioPeriodPnLSummary(computeArgs);
+      const summary = await computePortfolioPeriodPnLSummaryAsync(computeArgs, { shouldAbort });
+      if (!summary || shouldAbort()) return;
 
       startTransition(() => {
         setSnapshot({
@@ -94,12 +104,13 @@ export function usePortfolioPeriodPnLSnapshot(args: {
       });
 
       await yieldToMain(32);
-      if (isBackgroundWorkPaused()) return;
+      if (shouldAbort()) return;
 
-      const dailySeries = computePortfolioPnLDailySeries({
-        ...computeArgs,
-        summary,
-      });
+      const dailySeries = await computePortfolioPnLDailySeriesAsync(
+        { ...computeArgs, summary },
+        { shouldAbort },
+      );
+      if (!dailySeries || shouldAbort()) return;
 
       startTransition(() => {
         setSnapshot({
@@ -111,7 +122,12 @@ export function usePortfolioPeriodPnLSnapshot(args: {
         });
       });
     }, 1200);
-  }, [data, portfolios, accounts, sarPerUsd, simulatedPrices, locale, showHydrateBanner, getAvailableCashForAccount, fingerprint]);
+
+    return () => {
+      aborted = true;
+      cancelIdle();
+    };
+  }, [enabled, data, portfolios, accounts, sarPerUsd, simulatedPrices, locale, showHydrateBanner, getAvailableCashForAccount, fingerprint]);
 
   const pnlByPortfolioId = useMemo(
     () => (snapshot.summary ? portfolioPeriodPnLMap(snapshot.summary) : new Map()),

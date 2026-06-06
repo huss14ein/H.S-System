@@ -13,7 +13,7 @@ function enqueueIdleWorkTask(work: () => void | Promise<void>): void {
   idleWorkChain = idleWorkChain
     .then(async () => {
       if (isBackgroundWorkPaused()) return;
-      await yieldToMain(16);
+      await yieldToMain(0);
       if (isBackgroundWorkPaused()) return;
       await work();
     })
@@ -22,7 +22,7 @@ function enqueueIdleWorkTask(work: () => void | Promise<void>): void {
 
 /**
  * Schedule work after paint without blocking navigation / hydrate.
- * Work runs one task at a time with a main-thread yield between queued jobs.
+ * requestIdleCallback only picks a start slot — work always runs on a later task.
  */
 export function scheduleIdleWork(work: () => void, timeoutMs = 2000): () => void {
   return scheduleIdleWorkAsync(work, timeoutMs);
@@ -34,7 +34,8 @@ export function scheduleIdleWorkAsync(
   timeoutMs = 2000,
 ): () => void {
   let cancelled = false;
-  const run = () => {
+
+  const startWork = () => {
     if (cancelled || isBackgroundWorkPaused()) return;
     enqueueIdleWorkTask(async () => {
       if (cancelled || isBackgroundWorkPaused()) return;
@@ -42,27 +43,38 @@ export function scheduleIdleWorkAsync(
     });
   };
 
-  if (typeof window === 'undefined') {
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }
+  const scheduleStart = () => {
+    if (typeof window === 'undefined') {
+      startWork();
+      return () => {
+        cancelled = true;
+      };
+    }
 
-  const w = window as Window & {
-    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-    cancelIdleCallback?: (id: number) => void;
-  };
-  if (typeof w.requestIdleCallback === 'function') {
-    const id = w.requestIdleCallback(run, { timeout: timeoutMs });
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+
+    /** Never run queued work inside the idle callback — keeps DevTools INP/rIC clean. */
+    const onIdle = () => {
+      window.setTimeout(startWork, 0);
+    };
+
+    if (typeof w.requestIdleCallback === 'function') {
+      const id = w.requestIdleCallback(onIdle, { timeout: timeoutMs });
+      return () => {
+        cancelled = true;
+        w.cancelIdleCallback?.(id);
+      };
+    }
+
+    const t = window.setTimeout(onIdle, Math.min(timeoutMs, 32));
     return () => {
       cancelled = true;
-      w.cancelIdleCallback?.(id);
+      window.clearTimeout(t);
     };
-  }
-  const t = window.setTimeout(run, 32);
-  return () => {
-    cancelled = true;
-    window.clearTimeout(t);
   };
+
+  return scheduleStart();
 }

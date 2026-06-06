@@ -14,6 +14,8 @@ import {
 } from './investmentPlatformCardMetrics';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
+import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
+import { yieldToMain } from '../utils/yieldToMain';
 
 export type PortfolioPeriodPnLBreakdown = {
   /** Realized on sells + dividends − fees/vat in the window (ledger, SAR). */
@@ -857,6 +859,358 @@ export function computePortfolioPnLDailySeries(args: {
   const monthlyAgg = aggregateDailySeries(monthlyParts);
 
   // Align aggregated cumulative with summary totals (rounding / multi-portfolio)
+  if (weeklyAgg.length > 0) {
+    weeklyAgg[weeklyAgg.length - 1]!.cumulativeSar = summary.weeklyTotalSar;
+  }
+  if (monthlyAgg.length > 0) {
+    monthlyAgg[monthlyAgg.length - 1]!.cumulativeSar = summary.monthlyTotalSar;
+  }
+
+  return {
+    weekly: weeklyAgg,
+    monthly: monthlyAgg,
+    weeklyByPortfolioId,
+  };
+}
+
+export type PortfolioPnLComputeSignal = {
+  shouldAbort?: () => boolean;
+};
+
+async function cooperativeCheckpoint(signal?: PortfolioPnLComputeSignal): Promise<boolean> {
+  if (signal?.shouldAbort?.() || isBackgroundWorkPaused()) return true;
+  await yieldToMain(0);
+  return !!(signal?.shouldAbort?.() || isBackgroundWorkPaused());
+}
+
+async function buildPortfolioDailySeriesInWindowAsync(
+  args: Parameters<typeof buildPortfolioDailySeriesInWindow>[0],
+  signal?: PortfolioPnLComputeSignal,
+): Promise<PortfolioPnLDailyPoint[] | null> {
+  const days = eachCalendarDayIsoInRange(args.startMs, args.endMs);
+  if (days.length === 0) return [];
+
+  const ctx: LedgerTxContext = {
+    accounts: args.accounts,
+    portfolios: args.portfolios,
+    data: args.data,
+    sarPerUsd: args.sarPerUsd,
+  };
+  const sorted = [...args.transactions].sort(sortTxsAsc);
+  const startThroughMs = Math.max(0, args.startMs - 1);
+  const replayState = seedLedgerStateFromHoldingsIfEmpty(
+    replayPortfolioLedgerStateThrough({
+      transactions: args.transactions,
+      throughMs: startThroughMs,
+      ...ctx,
+    }),
+    args.portfolio,
+    args.sarPerUsd,
+  );
+  const startValueSar = computePortfolioSnapshotValueSar({
+    portfolio: args.portfolio,
+    state: replayState,
+    sarPerUsd: args.sarPerUsd,
+    simulatedPrices: args.simulatedPrices,
+    useLiveMark: false,
+    includeCash: args.includeCash,
+  });
+
+  const ledgerLots = new Map<string, Lot>();
+  seedLedgerPnLLotsBeforeWindow(ledgerLots, args.transactions, args.startMs, ctx);
+
+  let txIdx = 0;
+  while (txIdx < sorted.length && txDayMs(sorted[txIdx]!) < args.startMs) txIdx++;
+
+  const lastDayIso = days[days.length - 1]!;
+  let prevCumulative = 0;
+  let prevLedgerToDate = 0;
+  let ledgerToDate = 0;
+  let externalToDate = 0;
+  const out: PortfolioPnLDailyPoint[] = [];
+
+  for (let di = 0; di < days.length; di++) {
+    const day = days[di]!;
+    const { endMs: dayEndMs } = dayBoundsMs(day);
+
+    while (txIdx < sorted.length) {
+      const tx = sorted[txIdx]!;
+      const dayMs = txDayMs(tx);
+      if (Number.isNaN(dayMs) || dayMs > dayEndMs) break;
+      if (dayMs >= args.startMs) {
+        applyTxToLedgerReplayState(replayState, tx, ctx);
+        ledgerToDate += applyTxToLedgerPnLLots(ledgerLots, tx, ctx);
+        const cashSar = cashSarForTx({ tx, ...ctx });
+        if (isInvestmentTransactionType(tx.type, 'deposit')) externalToDate += cashSar;
+        else if (isInvestmentTransactionType(tx.type, 'withdrawal')) externalToDate -= cashSar;
+      }
+      txIdx++;
+    }
+
+    const endValueSar =
+      day === lastDayIso
+        ? args.endValueSar
+        : computePortfolioSnapshotValueSar({
+            portfolio: args.portfolio,
+            state: replayState,
+            sarPerUsd: args.sarPerUsd,
+            simulatedPrices: args.simulatedPrices,
+            useLiveMark: false,
+            includeCash: args.includeCash,
+          });
+
+    const cumulativeSar = endValueSar - startValueSar - externalToDate;
+    const totalSar = cumulativeSar - prevCumulative;
+    const dayLedgerSar = ledgerToDate - prevLedgerToDate;
+    const marketEstimateSar = totalSar - dayLedgerSar;
+
+    prevCumulative = cumulativeSar;
+    prevLedgerToDate = ledgerToDate;
+
+    const label = new Date(`${day}T12:00:00`).toLocaleDateString(args.locale ?? 'en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
+
+    out.push({
+      day,
+      label,
+      ledgerSar: dayLedgerSar,
+      marketEstimateSar,
+      totalSar,
+      cumulativeSar,
+    });
+
+    if (di > 0 && di % 2 === 0 && (await cooperativeCheckpoint(signal))) return null;
+  }
+
+  return out;
+}
+
+/** Cooperative summary — yields between portfolios so keyboard INP stays responsive. */
+export async function computePortfolioPeriodPnLSummaryAsync(
+  args: Parameters<typeof computePortfolioPeriodPnLSummary>[0],
+  signal?: PortfolioPnLComputeSignal,
+): Promise<PortfolioPeriodPnLSummary | null> {
+  const {
+    data,
+    portfolios,
+    accounts,
+    sarPerUsd,
+    simulatedPrices,
+    monthStartDay,
+    getAvailableCashForAccount,
+    now = new Date(),
+  } = args;
+
+  const allTx = getPersonalInvestmentTransactionsForKpis(data);
+  const week = weekWindowMs(now);
+  const month = financialMonthWindowMs(now, monthStartDay);
+
+  const byAccount = new Map<string, InvestmentPortfolio[]>();
+  for (const p of portfolios) {
+    const list = byAccount.get(p.accountId) ?? [];
+    list.push(p);
+    byAccount.set(p.accountId, list);
+  }
+
+  const rows: PortfolioPeriodPnLRow[] = [];
+
+  for (const [, siblings] of byAccount) {
+    if (await cooperativeCheckpoint(signal)) return null;
+
+    const sorted = [...siblings].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const accountId = sorted[0]?.accountId ?? '';
+    const accountTx = allTx.filter(
+      (t) => resolveInvestmentTransactionAccountId(t, accounts, portfolios) === accountId,
+    );
+    const cashBuckets = getAvailableCashForAccount?.(accountId) ?? { SAR: 0, USD: 0 };
+
+    const bundle = computePortfolioMetricsBundle({
+      siblingPortfolios: sorted,
+      transactions: accountTx,
+      accounts,
+      allInvestments: portfolios,
+      sarPerUsd,
+      simulatedPrices,
+      accountAvailableCashByCurrency: {
+        SAR: Math.max(0, cashBuckets?.SAR ?? 0),
+        USD: Math.max(0, cashBuckets?.USD ?? 0),
+      },
+    });
+
+    for (let i = 0; i < sorted.length; i++) {
+      const p = sorted[i];
+      const txsForLedger =
+        sorted.length === 1
+          ? accountTx
+          : getPortfolioAttributedTransactions({
+              portfolioId: p.id,
+              portfolioIndex: i,
+              siblingPortfolios: sorted,
+              transactions: accountTx,
+              sarPerUsd,
+              simulatedPrices,
+            });
+
+      const book = resolveInvestmentPortfolioCurrency(p);
+      const includeCash = sorted.length === 1;
+      const metrics =
+        bundle.metricsByPortfolioId.get(p.id) ??
+        computePlatformCardMetrics({
+          portfolios: [p],
+          transactions: txsForLedger,
+          accounts,
+          allInvestments: portfolios,
+          sarPerUsd,
+          availableCashByCurrency: includeCash
+            ? { SAR: Math.max(0, cashBuckets?.SAR ?? 0), USD: Math.max(0, cashBuckets?.USD ?? 0) }
+            : { SAR: 0, USD: 0 },
+          simulatedPrices,
+          platformCurrency: book,
+          unrealizedPnLBasis: 'holdings_cost',
+        });
+
+      const endValueSar = metrics.totalValueInSAR;
+
+      const weekly = computePortfolioMarkToMarketPeriodPnLSar({
+        portfolio: p,
+        transactions: txsForLedger,
+        startMs: week.startMs,
+        endMs: week.endMs,
+        endValueSar,
+        includeCash,
+        accounts,
+        portfolios,
+        data,
+        sarPerUsd,
+        simulatedPrices,
+      });
+      const monthly = computePortfolioMarkToMarketPeriodPnLSar({
+        portfolio: p,
+        transactions: txsForLedger,
+        startMs: month.startMs,
+        endMs: month.endMs,
+        endValueSar,
+        includeCash,
+        accounts,
+        portfolios,
+        data,
+        sarPerUsd,
+        simulatedPrices,
+      });
+
+      rows.push({
+        portfolioId: p.id,
+        portfolioName: p.name || p.id,
+        accountId,
+        bookCurrency: book,
+        valueSar: endValueSar,
+        dailyPnLSar: metrics.dailyPnLSAR,
+        weekly,
+        monthly,
+      });
+
+      if (await cooperativeCheckpoint(signal)) return null;
+    }
+  }
+
+  rows.sort((a, b) => b.valueSar - a.valueSar);
+
+  return {
+    rows,
+    weeklyTotalSar: rows.reduce((s, r) => s + r.weekly.totalSar, 0),
+    monthlyTotalSar: rows.reduce((s, r) => s + r.monthly.totalSar, 0),
+  };
+}
+
+/** Cooperative daily series — yields between portfolios and every few chart days. */
+export async function computePortfolioPnLDailySeriesAsync(
+  args: Parameters<typeof computePortfolioPnLDailySeries>[0],
+  signal?: PortfolioPnLComputeSignal,
+): Promise<PortfolioPnLDailySeries | null> {
+  const summary =
+    args.summary ??
+    (await computePortfolioPeriodPnLSummaryAsync(args, signal));
+  if (!summary) return null;
+
+  const allTx = getPersonalInvestmentTransactionsForKpis(args.data);
+  const week = weekWindowMs(args.now ?? new Date());
+  const month = financialMonthWindowMs(args.now ?? new Date(), args.monthStartDay);
+
+  const weeklyByPortfolioId = new Map<string, PortfolioPnLDailyPoint[]>();
+  const weeklyParts: PortfolioPnLDailyPoint[][] = [];
+  const monthlyParts: PortfolioPnLDailyPoint[][] = [];
+
+  const byAccount = new Map<string, InvestmentPortfolio[]>();
+  for (const p of args.portfolios) {
+    const list = byAccount.get(p.accountId) ?? [];
+    list.push(p);
+    byAccount.set(p.accountId, list);
+  }
+
+  for (const [, siblings] of byAccount) {
+    if (await cooperativeCheckpoint(signal)) return null;
+
+    const sorted = [...siblings].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const accountId = sorted[0]?.accountId ?? '';
+    const accountTx = allTx.filter(
+      (t) => resolveInvestmentTransactionAccountId(t, args.accounts, args.portfolios) === accountId,
+    );
+
+    for (let i = 0; i < sorted.length; i++) {
+      const p = sorted[i];
+      const row = summary.rows.find((r) => r.portfolioId === p.id);
+      if (!row) continue;
+      const includeCash = sorted.length === 1;
+      const txsForLedger =
+        sorted.length === 1
+          ? accountTx
+          : getPortfolioAttributedTransactions({
+              portfolioId: p.id,
+              portfolioIndex: i,
+              siblingPortfolios: sorted,
+              transactions: accountTx,
+              sarPerUsd: args.sarPerUsd,
+              simulatedPrices: args.simulatedPrices,
+            });
+
+      const seriesArgs = {
+        portfolio: p,
+        transactions: txsForLedger,
+        endValueSar: row.valueSar,
+        includeCash,
+        accounts: args.accounts,
+        portfolios: args.portfolios,
+        data: args.data,
+        sarPerUsd: args.sarPerUsd,
+        simulatedPrices: args.simulatedPrices,
+        locale: args.locale,
+      };
+
+      const weekly = await buildPortfolioDailySeriesInWindowAsync(
+        { ...seriesArgs, startMs: week.startMs, endMs: week.endMs },
+        signal,
+      );
+      if (!weekly) return null;
+      const monthly = await buildPortfolioDailySeriesInWindowAsync(
+        { ...seriesArgs, startMs: month.startMs, endMs: month.endMs },
+        signal,
+      );
+      if (!monthly) return null;
+
+      weeklyByPortfolioId.set(p.id, weekly);
+      weeklyParts.push(weekly);
+      monthlyParts.push(monthly);
+
+      if (await cooperativeCheckpoint(signal)) return null;
+    }
+  }
+
+  const weeklyAgg = aggregateDailySeries(weeklyParts);
+  const monthlyAgg = aggregateDailySeries(monthlyParts);
+
   if (weeklyAgg.length > 0) {
     weeklyAgg[weeklyAgg.length - 1]!.cumulativeSar = summary.weeklyTotalSar;
   }

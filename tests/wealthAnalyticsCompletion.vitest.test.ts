@@ -74,8 +74,8 @@ describe('Wealth Analytics completion (E2E)', () => {
     expect(panel).toMatch(/data:\s*precomputed\s*\?\s*null\s*:\s*data/);
     expect(panel).toContain('loading');
     const hook = read('hooks/usePortfolioPeriodPnLSnapshot.ts');
-    expect(hook).toContain('computePortfolioPeriodPnLSummary');
-    expect(hook).toContain('computePortfolioPnLDailySeries');
+    expect(hook).toContain('computePortfolioPeriodPnLSummaryAsync');
+    expect(hook).toContain('computePortfolioPnLDailySeriesAsync');
     expect(hook).toContain('yieldToMain');
     expect(hook).toContain('weeklySparkline: dailySeries.weekly.map');
   });

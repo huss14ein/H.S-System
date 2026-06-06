@@ -20,6 +20,7 @@ import { runAutoNetWorthSnapshotIfDue } from '../services/scheduledNetWorthSnaps
 import { canAutoCaptureNetWorthSnapshot } from '../services/netWorthSnapshotReadiness';
 import { pauseBackgroundWork } from '../utils/backgroundWorkGate';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { useBackgroundWorkInputPause } from '../hooks/useBackgroundWorkInputPause';
 import { PageDeferredDataProvider } from '../context/PageDeferredDataContext';
 import DeployFreshnessBanner from './DeployFreshnessBanner';
 import DataLoadWarningBanner from './DataLoadWarningBanner';
@@ -45,6 +46,7 @@ const Layout: React.FC<LayoutProps> = ({
   contentMaxClass = 'max-w-7xl',
 }) => {
   useTrackPageVisit(activePage);
+  useBackgroundWorkInputPause();
   const dataCtx = useContext(DataContext);
   const auth = useContext(AuthContext);
   const { exchangeRate } = useCurrency();

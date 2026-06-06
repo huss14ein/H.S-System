@@ -245,10 +245,17 @@ describe('performance recovery E2E wiring', () => {
     expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('useDebouncedValue(showHydrateBanner ? null : data, 350)');
     expect(read('utils/backgroundWorkGate.ts')).toContain('pauseBackgroundWork');
     expect(read('components/Layout.tsx')).toContain('pauseBackgroundWork');
+    expect(read('components/Layout.tsx')).toContain('useBackgroundWorkInputPause');
     expect(read('components/Layout.tsx')).toContain('startTransition');
     expect(read('components/Layout.tsx')).toContain('useFinancialEnginesIntegration({ eager: false })');
     expect(read('components/MarketSimulator.tsx')).toContain('isBackgroundWorkPaused');
     expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('isBackgroundWorkPaused');
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('scheduleIdleWorkAsync');
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('yieldToMain');
+    expect(read('hooks/useEnhancementSignals.ts')).toContain('scheduleIdleWorkAsync');
+    expect(read('hooks/useHydrateSarPerUsdDailySeries.ts')).toContain('scheduleIdleWork');
+    expect(read('hooks/useFinancialEnginesIntegration.ts')).toContain('options?.eager === true');
+    expect(read('components/Layout.tsx')).toContain('useBackgroundWorkInputPause');
     expect(read('utils/lazyPages.tsx')).toContain("'Analysis'");
     expect(read('context/DataContext.tsx')).toContain('secondaryFetchPromise');
     expect(read('context/DataContext.tsx')).toContain('yieldToMain');
@@ -258,7 +265,17 @@ describe('performance recovery E2E wiring', () => {
     expect(read('components/dashboard/DeferredMount.tsx')).toContain('staggerIndex');
     expect(read('hooks/useExecutiveKpiSparklines.ts')).toContain('scheduleIdleWorkAsync');
     expect(read('hooks/usePortfolioPeriodPnLSnapshot.ts')).toContain('scheduleIdleWorkAsync');
+    expect(read('hooks/usePortfolioPeriodPnLSnapshot.ts')).toContain('computePortfolioPeriodPnLSummaryAsync');
+    expect(read('hooks/usePortfolioPeriodPnLSnapshot.ts')).toContain('computePortfolioPnLDailySeriesAsync');
     expect(read('hooks/usePortfolioPeriodPnLSnapshot.ts')).toContain('yieldToMain');
+    expect(read('utils/yieldToMain.ts')).toContain('setTimeout');
+    expect(read('utils/yieldToMain.ts')).toMatch(/window\.setTimeout\(resolve/);
+    expect(read('utils/runWhenIdle.ts')).toContain('window.setTimeout(startWork, 0)');
+    expect(read('components/MarketSimulator.tsx')).not.toMatch(
+      /applyPricesInBackground[\s\S]{0,200}requestIdleCallback/,
+    );
+    expect(read('services/portfolioPeriodPnL.ts')).toContain('computePortfolioPeriodPnLSummaryAsync');
+    expect(read('services/portfolioPeriodPnL.ts')).toContain('cooperativeCheckpoint');
     expect(read('pages/Investments.tsx')).toContain('usePortfolioPeriodPnLSnapshot');
     expect(read('components/dashboard/PortfolioPeriodPnLPanel.tsx')).toContain('usePortfolioPeriodPnLSnapshot');
     expect(read('utils/runWhenIdle.ts')).toContain('idleWorkChain');
