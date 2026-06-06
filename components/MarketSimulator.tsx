@@ -36,6 +36,7 @@ import {
 import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
 import { yieldToMain } from '../utils/yieldToMain';
+import { computeRestoreCachedQuotesPatch } from '../services/cachedQuoteRestore';
 
 const MAX_LIVE_FETCH_PER_TICK = 15;
 const PARTIAL_LIVE_RATIO = 0.8;
@@ -62,47 +63,78 @@ const MarketSimulator: React.FC = () => {
     contextRef.current = { dataContext, marketContext, sarPerUsd };
 
     const previousPricesRef = useRef<Record<string, number>>({});
-    const didInitialPricePassRef = useRef(false);
+    const didRestoreCachedHoldingsRef = useRef(false);
     const tickInFlightRef = useRef(false);
     /** Symbols left after per-tick cap — drained via queued refresh scopes. */
     const pendingLiveFetchSymbolsRef = useRef<string[]>([]);
 
-    /** When portfolio data first loads, run one price pass after hydrate + idle (non-blocking). */
+    /** After hydrate, restore persisted quotes into holdings locally — no live API fetch. */
     useEffect(() => {
-        const { data, showHydrateBanner } = dataContext ?? {};
-        if (!data || showHydrateBanner || !marketContext?.bumpPriceRefresh) return;
-        const inv = (data as any)?.personalInvestments ?? data?.investments ?? [];
-        const holdings = inv.flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []);
-        const refreshableHoldingSymbols = getRefreshableHoldingQuoteSymbols(
-            holdings as { symbol?: string; holdingType?: string; holding_type?: string }[],
-        );
-        const watch = data?.watchlist ?? [];
-        const planned = data?.plannedTrades ?? [];
-        const comm = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
-        const hasSymbols =
-            refreshableHoldingSymbols.length > 0 || watch.length > 0 || planned.length > 0 || comm.length > 0;
-        if (!hasSymbols || didInitialPricePassRef.current) return;
+        const { data, showHydrateBanner, batchUpdateHoldingValues, batchUpdateCommodityHoldingValues } =
+            dataContext ?? {};
+        if (!data || showHydrateBanner || didRestoreCachedHoldingsRef.current) return;
+        didRestoreCachedHoldingsRef.current = true;
         return scheduleIdleWork(() => {
-            if (didInitialPricePassRef.current || isBackgroundWorkPaused()) return;
-            didInitialPricePassRef.current = true;
-            marketContext.bumpPriceRefresh();
-        }, 3000);
-    }, [dataContext?.data, dataContext?.showHydrateBanner, marketContext?.bumpPriceRefresh]);
+            if (isBackgroundWorkPaused()) return;
+            const patch = computeRestoreCachedQuotesPatch(data, sarPerUsd);
+            if (!patch.hasCache) return;
+            applyPricesInBackground(() => {
+                marketContext?.setSimulatedPrices((prev) => {
+                    const next = { ...prev };
+                    let changed = false;
+                    for (const [k, row] of Object.entries(patch.trusted)) {
+                        if (!row?.price) continue;
+                        const prevRow = prev[k];
+                        const mapped = {
+                            price: row.price,
+                            change: row.change ?? 0,
+                            changePercent: row.changePercent ?? 0,
+                        };
+                        if (
+                            !prevRow ||
+                            prevRow.price !== mapped.price ||
+                            prevRow.change !== mapped.change ||
+                            prevRow.changePercent !== mapped.changePercent
+                        ) {
+                            next[k] = mapped;
+                            changed = true;
+                        }
+                    }
+                    return changed ? next : prev;
+                });
+                if (patch.lastUpdated && marketContext?.setLastUpdated) {
+                    marketContext.setLastUpdated(patch.lastUpdated);
+                }
+                marketContext?.setIsLive(true);
+                marketContext?.setQuotesPriceSource('cached');
+                marketContext?.touchQuoteTimestamps(Object.keys(patch.trusted));
+            });
+            if (patch.equityUpdates.length > 0 && batchUpdateHoldingValues) {
+                batchUpdateHoldingValues(patch.equityUpdates);
+            }
+            if (patch.commodityUpdates.length > 0 && batchUpdateCommodityHoldingValues) {
+                batchUpdateCommodityHoldingValues(patch.commodityUpdates);
+            }
+        }, 1500);
+    }, [dataContext?.data, dataContext?.showHydrateBanner, sarPerUsd, marketContext]);
 
-    /** Resume pending symbol batches after provider cooldown expires. */
+    /** Resume pending symbol batches after provider cooldown — manual refresh sessions only. */
     useEffect(() => {
         const bump = marketContext?.bumpPriceRefresh;
-        if (!bump) return;
+        const isManual = marketContext?.isManualRefreshSession;
+        if (!bump || !isManual) return;
         setQuoteRefreshCooldownEndListener(() => {
+            if (!isManual()) return;
             if (pendingLiveFetchSymbolsRef.current.length === 0) return;
             bump({
                 kind: 'symbols',
                 symbols: [...pendingLiveFetchSymbolsRef.current],
-                forceFetch: false,
+                forceFetch: true,
+                manual: true,
             });
         });
         return () => setQuoteRefreshCooldownEndListener(null);
-    }, [marketContext?.bumpPriceRefresh]);
+    }, [marketContext?.bumpPriceRefresh, marketContext?.isManualRefreshSession]);
 
     useEffect(() => {
         if (!marketContext) return;
@@ -129,7 +161,7 @@ const MarketSimulator: React.FC = () => {
             const forceFetch = priceScope.forceFetch === true;
 
             const { data, batchUpdateHoldingValues, batchUpdateCommodityHoldingValues, updatePriceAlert } = dataContext;
-            const { setSimulatedPrices, simulatedPrices: currentSimulatedPrices, setIsLive, setLastUpdated, touchQuoteTimestamps } = marketContext;
+            const { setSimulatedPrices, simulatedPrices: currentSimulatedPrices, setIsLive, setLastUpdated, touchQuoteTimestamps, setQuotesPriceSource } = marketContext;
             const sarPerUsd = contextRef.current.sarPerUsd;
 
             const accounts = data.accounts ?? [];
@@ -273,6 +305,9 @@ const MarketSimulator: React.FC = () => {
                         saveQuoteCacheRows(cacheRows);
                         const apiExpanded = expandLiveQuotesForRequestedSymbols(toFetch, sanitizedApi);
                         mergedEquity = { ...mergedEquity, ...apiExpanded };
+                        if (priceScope.manual === true && Object.keys(sanitizedApi).length > 0) {
+                            setQuotesPriceSource('live');
+                        }
                     }
 
                     newPrices = { ...mergedEquity };
@@ -487,11 +522,12 @@ const MarketSimulator: React.FC = () => {
                 pendingLiveFetchSymbolsRef.current.length > 0 &&
                 !isQuoteRefreshInCooldown() &&
                 !isBackgroundWorkPaused() &&
-                marketContext
+                marketContext &&
+                priceScope.manual === true
             ) {
                 const pending = [...pendingLiveFetchSymbolsRef.current];
                 pendingLiveFetchSymbolsRef.current = [];
-                marketContext.bumpPriceRefresh({ kind: 'symbols', symbols: pending, forceFetch: false });
+                marketContext.bumpPriceRefresh({ kind: 'symbols', symbols: pending, forceFetch: true, manual: true });
             }
         };
 

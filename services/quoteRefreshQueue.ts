@@ -14,18 +14,25 @@ export function mergePriceRefreshScope(
       if (existing.kind !== 'symbols') return { queue, changed: false };
       const mergedSymbols = normalizeSymbolList([...existing.symbols, ...symbols]);
       const forceFetch = existing.forceFetch === true || incoming.forceFetch === true;
+      const manual = existing.manual === true || incoming.manual === true;
       if (
         mergedSymbols.length === existing.symbols.length &&
-        forceFetch === (existing.forceFetch === true)
+        forceFetch === (existing.forceFetch === true) &&
+        manual === (existing.manual === true)
       ) {
         return { queue, changed: false };
       }
       const next = [...queue];
-      next[idx] = { kind: 'symbols', symbols: mergedSymbols, forceFetch: forceFetch || undefined };
+      next[idx] = {
+        kind: 'symbols',
+        symbols: mergedSymbols,
+        forceFetch: forceFetch || undefined,
+        manual: manual || undefined,
+      };
       return { queue: next, changed: true };
     }
     return {
-      queue: [...queue, { kind: 'symbols', symbols, forceFetch: incoming.forceFetch || undefined }],
+      queue: [...queue, { kind: 'symbols', symbols, forceFetch: incoming.forceFetch || undefined, manual: incoming.manual || undefined }],
       changed: true,
     };
   }
@@ -34,11 +41,16 @@ export function mergePriceRefreshScope(
     const existingAll = queue.find((s) => s.kind === 'all');
     const forceFetch =
       incoming.forceFetch === true || (existingAll?.kind === 'all' && existingAll.forceFetch === true);
-    if (existingAll?.kind === 'all' && (existingAll.forceFetch === true) === forceFetch) {
+    const manual = incoming.manual === true || (existingAll?.kind === 'all' && existingAll.manual === true);
+    if (
+      existingAll?.kind === 'all' &&
+      (existingAll.forceFetch === true) === forceFetch &&
+      (existingAll.manual === true) === manual
+    ) {
       return { queue, changed: false };
     }
     const next: PriceRefreshScope[] = queue.filter((s) => s.kind !== 'all');
-    next.push({ kind: 'all', forceFetch: forceFetch || undefined });
+    next.push({ kind: 'all', forceFetch: forceFetch || undefined, manual: manual || undefined });
     return { queue: next, changed: true };
   }
 
@@ -50,13 +62,32 @@ export function mergePriceRefreshScope(
       const existing = queue[idx]!;
       if (existing.kind !== 'platform') return { queue, changed: false };
       const forceFetch = existing.forceFetch === true || incoming.forceFetch === true;
-      if (forceFetch === (existing.forceFetch === true)) return { queue, changed: false };
+      const manual = existing.manual === true || incoming.manual === true;
+      if (
+        forceFetch === (existing.forceFetch === true) &&
+        manual === (existing.manual === true)
+      ) {
+        return { queue, changed: false };
+      }
       const next = [...queue];
-      next[idx] = { kind: 'platform', platformId, forceFetch: forceFetch || undefined };
+      next[idx] = {
+        kind: 'platform',
+        platformId,
+        forceFetch: forceFetch || undefined,
+        manual: manual || undefined,
+      };
       return { queue: next, changed: true };
     }
     return {
-      queue: [...queue, { kind: 'platform', platformId, forceFetch: incoming.forceFetch || undefined }],
+      queue: [
+        ...queue,
+        {
+          kind: 'platform',
+          platformId,
+          forceFetch: incoming.forceFetch || undefined,
+          manual: incoming.manual || undefined,
+        },
+      ],
       changed: true,
     };
   }

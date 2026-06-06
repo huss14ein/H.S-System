@@ -1,6 +1,7 @@
 
 import React, { createContext, useState, useCallback, ReactNode, useContext, useEffect, useRef, useMemo } from 'react';
 import { cacheRowsToSimulatedMap, loadQuoteCacheRows } from '../services/quotePriceCache';
+import { latestQuoteCacheTimestamp, symbolTimestampsFromCacheRows } from '../services/cachedQuoteRestore';
 import { isQuoteRefreshInCooldown, quoteRefreshCooldownRemainingMs } from '../services/quoteRefreshCooldown';
 import { mergePriceRefreshScope } from '../services/quoteRefreshQueue';
 import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
@@ -15,16 +16,19 @@ export type SymbolQuoteTimestamps = Record<string, string>;
 
 /** `all` = every tracked symbol (header refresh). `platform` = one investment account’s holdings only (saves API quota). */
 export type PriceRefreshScope =
-    | { kind: 'all'; forceFetch?: boolean }
-    | { kind: 'platform'; platformId: string; forceFetch?: boolean }
+    | { kind: 'all'; forceFetch?: boolean; manual?: boolean }
+    | { kind: 'platform'; platformId: string; forceFetch?: boolean; manual?: boolean }
     /** Pending overflow / targeted drain — fetches only listed symbols (no full portfolio rescan). */
-    | { kind: 'symbols'; symbols: string[]; forceFetch?: boolean };
+    | { kind: 'symbols'; symbols: string[]; forceFetch?: boolean; manual?: boolean };
 
 /** Drives spinners: full refresh updates header + every platform card; platform refresh only touches one card + omits header “Updating…”. */
 export type QuotesRefreshUIScope =
     | { mode: 'idle' }
     | { mode: 'all' }
     | { mode: 'platform'; accountId: string };
+
+/** Where displayed quotes came from this session (cache restore vs manual live fetch). */
+export type QuotesPriceSource = 'none' | 'cached' | 'live';
 
 export type MarketPricesContextType = {
   simulatedPrices: SimulatedPrices;
@@ -50,6 +54,8 @@ export type MarketDataControlContextType = {
   setLastUpdated: (date: Date | null) => void;
   isLive: boolean;
   setIsLive: (isLive: boolean) => void;
+  quotesPriceSource: QuotesPriceSource;
+  setQuotesPriceSource: (source: QuotesPriceSource) => void;
   refreshTrigger: number;
   symbolQuoteUpdatedAt: SymbolQuoteTimestamps;
   touchQuoteTimestamps: (symbols: string[]) => void;
@@ -57,6 +63,7 @@ export type MarketDataControlContextType = {
   isQuoteRefreshCancelled: () => boolean;
   quoteRefreshQueueLength: () => number;
   quoteRefreshCooldownRemainingMs: () => number;
+  isManualRefreshSession: () => boolean;
 };
 
 /** @deprecated Prefer `useMarketPrices` / `useMarketQuoteMeta` to avoid quote-tick re-renders. */
@@ -69,8 +76,9 @@ export const MarketDataControlContext = createContext<MarketDataControlContextTy
 export const MarketDataContext = createContext<MarketDataContextType | null>(null);
 
 export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+    const initialCacheRows = loadQuoteCacheRows();
     const [simulatedPrices, setSimulatedPrices] = useState<SimulatedPrices>(() => {
-        const m = cacheRowsToSimulatedMap(loadQuoteCacheRows());
+        const m = cacheRowsToSimulatedMap(initialCacheRows);
         const out: SimulatedPrices = {};
         for (const [k, v] of Object.entries(m)) {
             out[k] = {
@@ -84,9 +92,14 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
     const debouncedPrices = useDebouncedValue(simulatedPrices, 1500);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [quotesRefreshUIScope, setQuotesRefreshUIScope] = useState<QuotesRefreshUIScope>({ mode: 'idle' });
-    const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-    const [isLive, setIsLive] = useState(() => Object.keys(loadQuoteCacheRows()).length > 0);
-    const [symbolQuoteUpdatedAt, setSymbolQuoteUpdatedAt] = useState<SymbolQuoteTimestamps>({});
+    const [lastUpdated, setLastUpdated] = useState<Date | null>(() => latestQuoteCacheTimestamp(initialCacheRows));
+    const [isLive, setIsLive] = useState(() => Object.keys(initialCacheRows).length > 0);
+    const [quotesPriceSource, setQuotesPriceSource] = useState<QuotesPriceSource>(() =>
+        Object.keys(initialCacheRows).length > 0 ? 'cached' : 'none',
+    );
+    const [symbolQuoteUpdatedAt, setSymbolQuoteUpdatedAt] = useState<SymbolQuoteTimestamps>(() =>
+        symbolTimestampsFromCacheRows(initialCacheRows),
+    );
 
     const touchQuoteTimestamps = useCallback((symbols: string[]) => {
         if (!symbols.length) return;
@@ -102,14 +115,16 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
     }, []);
 
     useEffect(() => {
-        if (!lastUpdated) {
-            setLastUpdated(new Date());
-        }
-    }, []);
+        if (lastUpdated) return;
+        const cached = latestQuoteCacheTimestamp(loadQuoteCacheRows());
+        if (cached) setLastUpdated(cached);
+    }, [lastUpdated]);
 
     const [refreshTrigger, setRefreshTrigger] = useState(0);
     const refreshQueueRef = useRef<PriceRefreshScope[]>([]);
     const quoteRefreshAbortRef = useRef(false);
+    /** True while a user-initiated refresh is draining its queue — blocks auto-resume paths. */
+    const manualRefreshSessionRef = useRef(false);
 
     const isQuoteRefreshCancelled = useCallback(() => quoteRefreshAbortRef.current, []);
 
@@ -133,14 +148,23 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         return quoteRefreshCooldownRemainingMs();
     }, []);
 
+    const isManualRefreshSession = useCallback((): boolean => {
+        return manualRefreshSessionRef.current;
+    }, []);
+
     const notifyQueuedPriceRefresh = useCallback(() => {
         if (refreshQueueRef.current.length > 0) {
             setRefreshTrigger((prev) => prev + 1);
         }
     }, []);
 
-    const bumpPriceRefresh = useCallback((scope: PriceRefreshScope = { kind: 'all' }) => {
+    const bumpPriceRefresh = useCallback((scope: PriceRefreshScope = { kind: 'all', manual: true }) => {
         quoteRefreshAbortRef.current = false;
+        if (scope.manual === true) {
+            manualRefreshSessionRef.current = true;
+        } else {
+            return;
+        }
         if (isBackgroundWorkPaused() && scope.forceFetch !== true) {
             return;
         }
@@ -159,22 +183,27 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
     const finishQuotesRefresh = useCallback(() => {
         setIsRefreshing(false);
         setQuotesRefreshUIScope({ mode: 'idle' });
+        if (refreshQueueRef.current.length === 0) {
+            manualRefreshSessionRef.current = false;
+        }
     }, []);
 
     const cancelQuoteRefresh = useCallback(() => {
         quoteRefreshAbortRef.current = true;
         refreshQueueRef.current = [];
+        manualRefreshSessionRef.current = false;
         finishQuotesRefresh();
     }, [finishQuotesRefresh]);
 
     const refreshPrices = useCallback(async (options?: { forceFetch?: boolean }) => {
         setQuotesRefreshUIScope({ mode: 'all' });
         setIsRefreshing(true);
+        manualRefreshSessionRef.current = true;
         if (isQuoteRefreshInCooldown() && options?.forceFetch === true) {
             finishQuotesRefresh();
             return;
         }
-        bumpPriceRefresh({ kind: 'all', forceFetch: options?.forceFetch === true });
+        bumpPriceRefresh({ kind: 'all', forceFetch: true, manual: true });
     }, [bumpPriceRefresh, finishQuotesRefresh]);
 
     const refreshPricesForPlatform = useCallback(
@@ -183,7 +212,8 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             const id = platformId.trim();
             setQuotesRefreshUIScope({ mode: 'platform', accountId: id });
             setIsRefreshing(true);
-            bumpPriceRefresh({ kind: 'platform', platformId: id, forceFetch: false });
+            manualRefreshSessionRef.current = true;
+            bumpPriceRefresh({ kind: 'platform', platformId: id, forceFetch: true, manual: true });
         },
         [bumpPriceRefresh],
     );
@@ -219,6 +249,8 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             setLastUpdated,
             isLive,
             setIsLive,
+            quotesPriceSource,
+            setQuotesPriceSource,
             refreshTrigger,
             symbolQuoteUpdatedAt,
             touchQuoteTimestamps,
@@ -226,6 +258,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             isQuoteRefreshCancelled,
             quoteRefreshQueueLength,
             quoteRefreshCooldownRemainingMs: quoteRefreshCooldownRemainingMsSafe,
+            isManualRefreshSession,
         }),
         [
             isRefreshing,
@@ -239,6 +272,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             notifyQueuedPriceRefresh,
             lastUpdated,
             isLive,
+            quotesPriceSource,
             refreshTrigger,
             symbolQuoteUpdatedAt,
             touchQuoteTimestamps,
@@ -246,6 +280,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             isQuoteRefreshCancelled,
             quoteRefreshQueueLength,
             quoteRefreshCooldownRemainingMsSafe,
+            isManualRefreshSession,
         ],
     );
 

@@ -113,7 +113,20 @@ describe('deploy completion — Wealth Analytics + production hosts', () => {
 
   it('performance: no destructive hydrate race; staggered idle prefetch', () => {
     expect(read('context/DataContext.tsx')).not.toContain('continuing with partial workspace');
+    expect(read('context/DataContext.tsx')).toContain('secondaryFetchPromise');
     expect(read('utils/lazyPages.tsx')).toContain('one route at a time');
     expect(read('components/AuthenticatedAppShell.tsx')).toContain('prefetchCommonPagesIdle(), 6000');
+  });
+
+  it('live prices: manual refresh only; cache restore on hydrate', () => {
+    expect(read('components/MarketSimulator.tsx')).toContain('computeRestoreCachedQuotesPatch');
+    expect(read('components/MarketSimulator.tsx')).not.toMatch(/didInitialPricePassRef/);
+    expect(read('context/MarketDataContext.tsx')).toContain('scope.manual === true');
+    expect(read('services/cachedQuoteRestore.ts')).toContain('computeRestoreCachedQuotesPatch');
+  });
+
+  it('net worth trend forward-fills missing snapshot days', () => {
+    expect(read('components/charts/NetWorthCockpit.tsx')).toContain('buildNetWorthTrendSeriesFromSnapshots');
+    expect(read('services/netWorthChartDense.ts')).toContain('forwardFillNetWorthTrendRows');
   });
 });

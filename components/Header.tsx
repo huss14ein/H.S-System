@@ -45,29 +45,36 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
   const auth = useContext(AuthContext);
   const { data } = useContext(DataContext)!;
   const { currency, setCurrency } = useCurrency();
-  const { refreshPrices, isRefreshing, quotesRefreshUIScope, lastUpdated, isLive } = useMarketQuoteMeta();
+  const { refreshPrices, isRefreshing, quotesRefreshUIScope, lastUpdated, isLive, quotesPriceSource } = useMarketQuoteMeta();
   const headerRefreshing = isRefreshing && quotesRefreshUIScope.mode === 'all';
   const [quoteCooldownSec, setQuoteCooldownSec] = useState(0);
   const [pricesStatusLabel, setPricesStatusLabel] = useState('');
+  const priceSourceWord = quotesPriceSource === 'live' ? 'Live' : quotesPriceSource === 'cached' ? 'Cached' : 'Simulated';
   const lastUpdatedRef = useRef(lastUpdated);
   lastUpdatedRef.current = lastUpdated;
   useEffect(() => {
     if (!lastUpdated) {
-      setPricesStatusLabel(isLive ? 'Live prices' : 'Simulated prices');
+      setPricesStatusLabel(
+        quotesPriceSource === 'cached'
+          ? 'Cached prices (click Refresh for live)'
+          : quotesPriceSource === 'live'
+            ? 'Live prices'
+            : 'Simulated prices',
+      );
       return;
     }
     const formatRel = (at: Date) => {
       const s = Math.floor((Date.now() - at.getTime()) / 1000);
       return s < 10 ? 'just now' : s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     };
-    setPricesStatusLabel(isLive ? `Live · ${formatRel(lastUpdated)}` : `Simulated · ${formatRel(lastUpdated)}`);
+    setPricesStatusLabel(`${priceSourceWord} · ${formatRel(lastUpdated)}`);
     const t = setInterval(() => {
       const at = lastUpdatedRef.current;
       if (!at) return;
-      setPricesStatusLabel(isLive ? `Live · ${formatRel(at)}` : `Simulated · ${formatRel(at)}`);
+      setPricesStatusLabel(`${priceSourceWord} · ${formatRel(at)}`);
     }, 10000);
     return () => clearInterval(t);
-  }, [lastUpdated, isLive]);
+  }, [lastUpdated, quotesPriceSource, priceSourceWord]);
 
   useEffect(() => {
     const tick = () => {
@@ -288,25 +295,27 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
             <div className="flex items-center space-x-0.5 sm:space-x-2">
               <div className="hidden sm:flex flex-col items-end mr-2 min-w-[126px]">
                 <button 
-                  onClick={(e) => void refreshPrices({ forceFetch: e.shiftKey })} 
+                  onClick={() => void refreshPrices({ forceFetch: true })} 
                   disabled={headerRefreshing || quoteCooldownSec > 0}
                   className={`p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all flex items-center justify-end gap-2 w-full ${headerRefreshing ? 'animate-pulse' : ''}`}
                   title={
                     quoteCooldownSec > 0
                       ? `Rate limited — retry in ${quoteCooldownSec}s (uses cache meanwhile)`
-                      : isLive
+                      : quotesPriceSource === 'live'
                         ? lastUpdated
                           ? `Live prices · Updated ${pricesStatusLabel.split('·')[1] ?? 'recently'}. Click to refresh.`
                           : 'Live prices. Click to refresh.'
-                        : 'Simulated prices. Click to fetch live prices.'
+                        : quotesPriceSource === 'cached'
+                          ? 'Showing last saved quotes. Click Refresh for a live fetch.'
+                          : 'Simulated prices. Click to fetch live prices.'
                   }
                 >
                   <ArrowPathIcon className={`h-5 w-5 ${isRefreshing ? 'animate-spin' : ''}`} />
                   <div className="flex flex-col items-end text-right leading-tight">
                     <span className="text-[10px] font-bold uppercase tracking-widest hidden xl:block">Refresh Prices</span>
-                    <span className={`inline-flex items-center gap-1 text-[8px] font-bold uppercase px-1.5 py-0.5 rounded hidden xl:flex ${isLive ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`} title={isLive ? 'Live market data' : 'Simulated (no API)'}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${isLive ? 'bg-green-500' : 'bg-amber-500'}`} />
-                      {isLive ? 'Live' : 'Simulated'}
+                    <span className={`inline-flex items-center gap-1 text-[8px] font-bold uppercase px-1.5 py-0.5 rounded hidden xl:flex ${quotesPriceSource === 'live' ? 'bg-green-100 text-green-700' : quotesPriceSource === 'cached' ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-700'}`} title={quotesPriceSource === 'live' ? 'Live market data' : quotesPriceSource === 'cached' ? 'Last saved quotes — refresh for live' : 'Simulated (no API)'}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${quotesPriceSource === 'live' ? 'bg-green-500' : quotesPriceSource === 'cached' ? 'bg-sky-500' : 'bg-amber-500'}`} />
+                      {quotesPriceSource === 'live' ? 'Live' : quotesPriceSource === 'cached' ? 'Cached' : 'Simulated'}
                     </span>
                   </div>
                 </button>

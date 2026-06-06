@@ -115,8 +115,35 @@ describe('performance recovery E2E wiring', () => {
     expect(read('hooks/useCanonicalFinancialMetrics.ts')).toContain('useCanonicalSimulatedPrices');
   });
 
-  it('MarketSimulator filters no-op holding updates', () => {
-    expect(read('components/MarketSimulator.tsx')).toContain('filterNoOpHoldingValueUpdates');
+  it('MarketSimulator restores cached quotes without auto live fetch', () => {
+    const src = read('components/MarketSimulator.tsx');
+    expect(src).toContain('computeRestoreCachedQuotesPatch');
+    expect(src).toContain('didRestoreCachedHoldingsRef');
+    expect(src).not.toMatch(/didInitialPricePassRef/);
+    expect(src).not.toMatch(/bumpPriceRefresh\(\s*\)/);
+  });
+
+  it('MarketDataContext gates live refresh to manual sessions only', () => {
+    const src = read('context/MarketDataContext.tsx');
+    expect(src).toContain('manualRefreshSessionRef');
+    expect(src).toContain('scope.manual === true');
+    expect(src).toContain('manualRefreshSessionRef.current = true');
+  });
+
+  it('Header refresh always force-fetches on user click', () => {
+    expect(read('components/Header.tsx')).toContain('refreshPrices({ forceFetch: true })');
+    expect(read('components/Header.tsx')).toContain('quotesPriceSource');
+  });
+
+  it('cachedQuoteRestore service restores holdings without network', () => {
+    expect(read('services/cachedQuoteRestore.ts')).toContain('computeRestoreCachedQuotesPatch');
+    expect(read('services/cachedQuoteRestore.ts')).toContain('symbolTimestampsFromCacheRows');
+    expect(read('tests/cachedQuoteRestore.vitest.test.ts')).toContain('computeRestoreCachedQuotesPatch');
+  });
+
+  it('MarketDataContext exposes cached vs live quote source for header', () => {
+    expect(read('context/MarketDataContext.tsx')).toContain('QuotesPriceSource');
+    expect(read('context/MarketDataContext.tsx')).toContain("Object.keys(initialCacheRows).length > 0 ? 'cached' : 'none'");
   });
 
   it('ExchangeRateSync skips sub-epsilon FX churn', () => {
