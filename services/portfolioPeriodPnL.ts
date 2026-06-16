@@ -190,13 +190,39 @@ function holdingBySymbol(portfolio: InvestmentPortfolio): Map<string, Holding> {
   return map;
 }
 
-/** When ledger replay has no lots (imported holdings), open the period from current qty × avg cost. */
+function ledgerLotsMatchHoldings(lots: Map<string, Lot>, portfolio: InvestmentPortfolio): boolean {
+  const bySym = holdingBySymbol(portfolio);
+  let hasPositiveHolding = false;
+  for (const [, h] of bySym) {
+    const sym = String(h.symbol ?? '').trim().toUpperCase();
+    const qty = Number(h.quantity ?? 0);
+    if (!(sym && qty > 0)) continue;
+    hasPositiveHolding = true;
+    const lot = lots.get(sym);
+    if (!lot || Math.abs(lot.qty - qty) > 0.01) return false;
+  }
+  if (!hasPositiveHolding) return lots.size === 0;
+  if (lots.size === 0) return false;
+  for (const [sym, lot] of lots) {
+    if (lot.qty > 0 && !bySym.has(sym)) return false;
+  }
+  return true;
+}
+
+type SeededLedgerState = { state: LedgerReplayState; ledgerExplainsHoldings: boolean };
+
+/**
+ * When ledger replay cannot explain current holdings (imported positions, missing buys),
+ * seed lots from holdings and avoid orphan deposit cash that would double-count vs end value.
+ */
 function seedLedgerStateFromHoldingsIfEmpty(
   state: LedgerReplayState,
   portfolio: InvestmentPortfolio,
   sarPerUsd: number,
-): LedgerReplayState {
-  if (state.lots.size > 0) return state;
+): SeededLedgerState {
+  if (state.lots.size > 0 && ledgerLotsMatchHoldings(state.lots, portfolio)) {
+    return { state, ledgerExplainsHoldings: true };
+  }
   const book = resolveInvestmentPortfolioCurrency(portfolio);
   const lots = new Map<string, Lot>();
   for (const h of portfolio.holdings ?? []) {
@@ -206,7 +232,7 @@ function seedLedgerStateFromHoldingsIfEmpty(
     if (!(sym && qty > 0 && avg > 0)) continue;
     lots.set(sym, { qty, avgCostSar: toSAR(avg, book, sarPerUsd) });
   }
-  return { lots, cashSar: state.cashSar };
+  return { state: { lots, cashSar: 0 }, ledgerExplainsHoldings: false };
 }
 
 function holdingLiveValueSarForLot(
@@ -286,6 +312,10 @@ export function computePortfolioMarkToMarketPeriodPnLSar(args: {
   startMs: number;
   endMs: number;
   endValueSar: number;
+  /** Cash slice at period end — aligns start cash when ledger does not explain holdings (single-portfolio accounts). */
+  endCashSar?: number;
+  /** When true, orphan-ledger portfolios align start cash to end cash (one portfolio per broker). */
+  singlePortfolioOnAccount?: boolean;
   includeCash: boolean;
   accounts: Account[];
   portfolios: InvestmentPortfolio[];
@@ -294,7 +324,7 @@ export function computePortfolioMarkToMarketPeriodPnLSar(args: {
   simulatedPrices: SimulatedPriceMap;
 }): PortfolioPeriodPnLBreakdown {
   const startThroughMs = Math.max(0, args.startMs - 1);
-  const startState = seedLedgerStateFromHoldingsIfEmpty(
+  const { state: startState, ledgerExplainsHoldings } = seedLedgerStateFromHoldingsIfEmpty(
     replayPortfolioLedgerStateThrough({
       transactions: args.transactions,
       throughMs: startThroughMs,
@@ -306,14 +336,21 @@ export function computePortfolioMarkToMarketPeriodPnLSar(args: {
     args.portfolio,
     args.sarPerUsd,
   );
-  const startValueSar = computePortfolioSnapshotValueSar({
+  const holdingsStartSar = computePortfolioSnapshotValueSar({
     portfolio: args.portfolio,
     state: startState,
     sarPerUsd: args.sarPerUsd,
     simulatedPrices: args.simulatedPrices,
     useLiveMark: true,
-    includeCash: args.includeCash,
+    includeCash: false,
   });
+  const startCashSar =
+    args.includeCash && !ledgerExplainsHoldings && args.singlePortfolioOnAccount
+      ? Math.max(0, args.endCashSar ?? 0)
+      : args.includeCash && ledgerExplainsHoldings
+        ? Math.max(0, startState.cashSar)
+        : 0;
+  const startValueSar = holdingsStartSar + startCashSar;
 
   const externalFlowSar = computeNetExternalInvestmentFlowSarInRange({
     transactions: args.transactions,
@@ -525,6 +562,10 @@ export function computePortfolioPeriodPnLSummary(args: {
         portfolioWeight: siblingWeights[i] ?? 0,
         accountCashSar,
       });
+      const endCashSar =
+        sorted.length === 1
+          ? Math.max(0, endValueSar - metrics.holdingsValueInSAR)
+          : Math.max(0, accountCashSar) * Math.max(0, siblingWeights[i] ?? 0);
 
       const weekly = computePortfolioMarkToMarketPeriodPnLSar({
         portfolio: p,
@@ -532,6 +573,8 @@ export function computePortfolioPeriodPnLSummary(args: {
         startMs: week.startMs,
         endMs: week.endMs,
         endValueSar,
+        endCashSar,
+        singlePortfolioOnAccount: sorted.length === 1,
         includeCash: true,
         accounts,
         portfolios,
@@ -545,6 +588,8 @@ export function computePortfolioPeriodPnLSummary(args: {
         startMs: month.startMs,
         endMs: month.endMs,
         endValueSar,
+        endCashSar,
+        singlePortfolioOnAccount: sorted.length === 1,
         includeCash: true,
         accounts,
         portfolios,
@@ -712,6 +757,8 @@ function buildPortfolioDailySeriesInWindow(args: {
   startMs: number;
   endMs: number;
   endValueSar: number;
+  endCashSar?: number;
+  singlePortfolioOnAccount?: boolean;
   includeCash: boolean;
   accounts: Account[];
   portfolios: InvestmentPortfolio[];
@@ -731,7 +778,7 @@ function buildPortfolioDailySeriesInWindow(args: {
   };
   const sorted = [...args.transactions].sort(sortTxsAsc);
   const startThroughMs = Math.max(0, args.startMs - 1);
-  const replayState = seedLedgerStateFromHoldingsIfEmpty(
+  const { state: replayState, ledgerExplainsHoldings } = seedLedgerStateFromHoldingsIfEmpty(
     replayPortfolioLedgerStateThrough({
       transactions: args.transactions,
       throughMs: startThroughMs,
@@ -740,14 +787,22 @@ function buildPortfolioDailySeriesInWindow(args: {
     args.portfolio,
     args.sarPerUsd,
   );
-  const startValueSar = computePortfolioSnapshotValueSar({
+  const holdingsStartSar = computePortfolioSnapshotValueSar({
     portfolio: args.portfolio,
     state: replayState,
     sarPerUsd: args.sarPerUsd,
     simulatedPrices: args.simulatedPrices,
     useLiveMark: true,
-    includeCash: args.includeCash,
+    includeCash: false,
   });
+  const endCashSar = Math.max(0, args.endCashSar ?? 0);
+  const startCashSar =
+    args.includeCash && !ledgerExplainsHoldings && args.singlePortfolioOnAccount
+      ? endCashSar
+      : args.includeCash && ledgerExplainsHoldings
+        ? Math.max(0, replayState.cashSar)
+        : 0;
+  const startValueSar = holdingsStartSar + startCashSar;
 
   const ledgerLots = new Map<string, Lot>();
   seedLedgerPnLLotsBeforeWindow(ledgerLots, args.transactions, args.startMs, ctx);
@@ -986,7 +1041,7 @@ async function buildPortfolioDailySeriesInWindowAsync(
   };
   const sorted = [...args.transactions].sort(sortTxsAsc);
   const startThroughMs = Math.max(0, args.startMs - 1);
-  const replayState = seedLedgerStateFromHoldingsIfEmpty(
+  const { state: replayState, ledgerExplainsHoldings } = seedLedgerStateFromHoldingsIfEmpty(
     replayPortfolioLedgerStateThrough({
       transactions: args.transactions,
       throughMs: startThroughMs,
@@ -995,14 +1050,22 @@ async function buildPortfolioDailySeriesInWindowAsync(
     args.portfolio,
     args.sarPerUsd,
   );
-  const startValueSar = computePortfolioSnapshotValueSar({
+  const holdingsStartSar = computePortfolioSnapshotValueSar({
     portfolio: args.portfolio,
     state: replayState,
     sarPerUsd: args.sarPerUsd,
     simulatedPrices: args.simulatedPrices,
     useLiveMark: true,
-    includeCash: args.includeCash,
+    includeCash: false,
   });
+  const endCashSar = Math.max(0, args.endCashSar ?? 0);
+  const startCashSar =
+    args.includeCash && !ledgerExplainsHoldings && args.singlePortfolioOnAccount
+      ? endCashSar
+      : args.includeCash && ledgerExplainsHoldings
+        ? Math.max(0, replayState.cashSar)
+        : 0;
+  const startValueSar = holdingsStartSar + startCashSar;
 
   const ledgerLots = new Map<string, Lot>();
   seedLedgerPnLLotsBeforeWindow(ledgerLots, args.transactions, args.startMs, ctx);
@@ -1186,6 +1249,10 @@ export async function computePortfolioPeriodPnLSummaryAsync(
         portfolioWeight: siblingWeights[i] ?? 0,
         accountCashSar,
       });
+      const endCashSar =
+        sorted.length === 1
+          ? Math.max(0, endValueSar - metrics.holdingsValueInSAR)
+          : Math.max(0, accountCashSar) * Math.max(0, siblingWeights[i] ?? 0);
 
       const weekly = computePortfolioMarkToMarketPeriodPnLSar({
         portfolio: p,
@@ -1193,6 +1260,8 @@ export async function computePortfolioPeriodPnLSummaryAsync(
         startMs: week.startMs,
         endMs: week.endMs,
         endValueSar,
+        endCashSar,
+        singlePortfolioOnAccount: sorted.length === 1,
         includeCash: true,
         accounts,
         portfolios,
@@ -1206,6 +1275,8 @@ export async function computePortfolioPeriodPnLSummaryAsync(
         startMs: month.startMs,
         endMs: month.endMs,
         endValueSar,
+        endCashSar,
+        singlePortfolioOnAccount: sorted.length === 1,
         includeCash: true,
         accounts,
         portfolios,

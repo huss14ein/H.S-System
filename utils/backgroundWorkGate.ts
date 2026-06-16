@@ -3,7 +3,11 @@
  * Background quote/metrics work checks this so it does not compete with route paint.
  */
 
-const DEFAULT_PAUSE_MS = 2_500;
+/** Route transition — long enough to let Suspense paint, short enough to resume prefetch quickly. */
+export const NAV_TRANSITION_PAUSE_MS = 800;
+/** Typing / clicking in content — defer heavy idle work without blocking nav links. */
+export const INPUT_INTERACTION_PAUSE_MS = 1_200;
+const DEFAULT_PAUSE_MS = NAV_TRANSITION_PAUSE_MS;
 
 let pausedUntilMs = 0;
 

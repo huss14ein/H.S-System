@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useEffect, useState, startTransition } from 'react';
+import React, { createContext, useContext, useMemo, useEffect, useState, startTransition, useDeferredValue } from 'react';
 import { DataContext } from './DataContext';
 import { useCurrency } from './CurrencyContext';
 import { useMarketPrices } from './MarketDataContext';
@@ -59,6 +59,8 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
   const { exchangeRate } = useCurrency();
   const { simulatedPrices } = useMarketPrices();
   const debouncedPrices = useDebouncedValue(simulatedPrices, 400);
+  /** Let route transitions win over quote-driven KPI recomputes. */
+  const deferredPrices = useDeferredValue(debouncedPrices);
   /** Live data for metrics — use partial/cached rows while fast tier hydrates; never block on full ledger. */
   const metricsData = showHydrateBanner && !financialDataHasHydrated(data) ? null : data;
   useHydrateSarPerUsdDailySeries(metricsData, exchangeRate);
@@ -69,7 +71,7 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
         data: null,
         exchangeRate,
         getAvailableCashForAccount,
-        debouncedPrices,
+        debouncedPrices: deferredPrices,
         showHydrateBanner: true,
       });
     }
@@ -77,10 +79,10 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
       data: metricsData,
       exchangeRate,
       getAvailableCashForAccount,
-      debouncedPrices,
+      debouncedPrices: deferredPrices,
       showHydrateBanner: false,
     });
-  }, [metricsData, exchangeRate, getAvailableCashForAccount, debouncedPrices, showHydrateBanner]);
+  }, [metricsData, exchangeRate, getAvailableCashForAccount, deferredPrices, showHydrateBanner]);
 
   const [extendedBundle, setExtendedBundle] = useState<UseCanonicalFinancialMetricsResult | null>(null);
 
@@ -96,11 +98,11 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
             metricsData.transactions?.length ?? 0,
             metricsData.investmentTransactions?.length ?? 0,
             metricsData.investments?.length ?? 0,
-            Object.keys(debouncedPrices).length,
+            Object.keys(deferredPrices).length,
             exchangeRate,
           ].join(':')
         : '',
-    [metricsData, debouncedPrices, exchangeRate],
+    [metricsData, deferredPrices, exchangeRate],
   );
 
   useEffect(() => {
@@ -111,7 +113,7 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
       data: metricsData,
       exchangeRate,
       getAvailableCashForAccount,
-      debouncedPrices,
+      debouncedPrices: deferredPrices,
       showHydrateBanner: false as const,
     };
 
@@ -123,7 +125,7 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
           data: metricsData,
           exchangeRate,
           getAvailableCashForAccount,
-          debouncedPrices,
+          debouncedPrices: deferredPrices,
           showHydrateBanner: false,
         }),
       );
@@ -133,7 +135,7 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
           data: metricsData,
           exchangeRate,
           getAvailableCashForAccount,
-          simulatedPrices: debouncedPrices,
+          simulatedPrices: deferredPrices,
         },
         { shouldAbort: () => aborted },
       );
@@ -145,7 +147,7 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
     return () => {
       aborted = true;
     };
-  }, [extendedFingerprint, metricsData, exchangeRate, getAvailableCashForAccount, debouncedPrices]);
+  }, [extendedFingerprint, metricsData, exchangeRate, getAvailableCashForAccount, deferredPrices]);
 
   const value = useMemo(() => {
     if (!metricsData) {

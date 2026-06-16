@@ -29,6 +29,10 @@ const steps = [
       'tests/uiNonBlockingCoverage.vitest.test.ts',
       'tests/supabaseHydrateCompletion.vitest.test.ts',
       'tests/workspaceHydrateCache.vitest.test.ts',
+      'tests/marketDataRefresh.vitest.test.ts',
+      'tests/portfolioPeriodPnLEndToEnd.vitest.test.ts',
+      'tests/investmentAccountKpiScope.vitest.test.ts',
+      'tests/investmentsHubCompletion.vitest.test.ts',
     ],
   },
   {

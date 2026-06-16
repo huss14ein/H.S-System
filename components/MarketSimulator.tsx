@@ -247,6 +247,11 @@ const MarketSimulator: React.FC = () => {
                     const toFetch = mergedFetch.slice(0, MAX_LIVE_FETCH_PER_TICK);
                     pendingLiveFetchSymbolsRef.current = mergedFetch.slice(MAX_LIVE_FETCH_PER_TICK);
                     const rateLimited = isQuoteRefreshInCooldown();
+                    if (rateLimited && forceFetch && toFetch.length > 0) {
+                        pendingLiveFetchSymbolsRef.current = Array.from(
+                            new Set([...pendingLiveFetchSymbolsRef.current, ...toFetch]),
+                        );
+                    }
 
                     /** Equity and commodities are independent: a thrown/rejected equity batch must not discard commodity quotes. */
                     const equityFetchPromise: Promise<Record<string, LiveQuoteRow>> =
@@ -544,8 +549,15 @@ const MarketSimulator: React.FC = () => {
             } finally {
                 tickInFlightRef.current = false;
                 const after = contextRef.current.marketContext;
+                const pendingSymbols = pendingLiveFetchSymbolsRef.current.length > 0;
                 if (after?.hasQueuedPriceRefresh()) {
                     after.notifyQueuedPriceRefresh();
+                } else if (pendingSymbols && after?.isManualRefreshSession?.()) {
+                    if (!isQuoteRefreshInCooldown()) {
+                        const pending = [...pendingLiveFetchSymbolsRef.current];
+                        pendingLiveFetchSymbolsRef.current = [];
+                        after.bumpPriceRefresh({ kind: 'symbols', symbols: pending, forceFetch: true, manual: true });
+                    }
                 } else {
                     after?.finishQuotesRefresh();
                 }

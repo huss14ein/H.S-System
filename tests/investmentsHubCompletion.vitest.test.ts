@@ -1,0 +1,54 @@
+/**
+ * Investments hub — week/month P/L, live quotes, and performance wiring (E2E guards).
+ */
+import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
+
+describe('Investments hub completion (E2E)', () => {
+  it('period P/L: single engine, scoped cash, ledger seed fix', () => {
+    expect(read('services/portfolioPeriodPnL.ts')).toContain('ledgerLotsMatchHoldings');
+    expect(read('services/portfolioPeriodPnL.ts')).toContain('ledgerExplainsHoldings');
+    expect(read('services/portfolioPeriodPnL.ts')).toContain('singlePortfolioOnAccount');
+    expect(read('services/portfolioPeriodPnL.ts')).toContain('buildInvestmentAccountKpiScope');
+    expect(read('pages/Investments.tsx')).toContain('platformPeriodPnLFromSummary');
+    expect(read('pages/Investments.tsx')).toContain('buildInvestmentAccountKpiScope');
+  });
+
+  it('Investments UI shows week/month P/L with ready gate', () => {
+    const page = read('pages/Investments.tsx');
+    expect(page).toContain('periodPnLReady');
+    expect(page).toContain('periodPnLSparklinesReady');
+    expect(page).toContain('usePortfolioPeriodPnLSnapshot');
+    expect(page).toContain('aria-busy={!periodPnLReady}');
+  });
+
+  it('portfolio P/L hook waits for nav pause and marks ready on summary', () => {
+    const hook = read('hooks/usePortfolioPeriodPnLSnapshot.ts');
+    expect(hook).toContain('waitUntilBackgroundWorkResumed');
+    expect(hook).toContain('sparklinesReady');
+    expect(hook).toMatch(/ready:\s*true,\s*\n\s*sparklinesReady:\s*false/);
+  });
+
+  it('live price refresh: manual force queues through cooldown', () => {
+    expect(read('context/MarketDataContext.tsx')).not.toContain('finishQuotesRefresh();\n            return;');
+    expect(read('components/MarketSimulator.tsx')).toContain('pendingLiveFetchSymbolsRef');
+    expect(read('components/Header.tsx')).toContain('Queued for live');
+  });
+
+  it('performance: transition expand + deferred portfolio KPI bundle', () => {
+    const page = read('pages/Investments.tsx');
+    expect(page).toContain('startTransition(onToggleExpanded)');
+    expect(page).toContain('startTransition(() => {');
+    expect(page).toMatch(/isExpanded[\s\S]{0,120}computePortfolioMetricsBundle/);
+  });
+
+  it('verification script registers hub completion tests', () => {
+    const script = read('scripts/verify-performance-recovery.mjs');
+    expect(script).toContain('investmentsHubCompletion.vitest.test.ts');
+    expect(script).toContain('marketDataRefresh.vitest.test.ts');
+    expect(script).toContain('portfolioPeriodPnLEndToEnd.vitest.test.ts');
+  });
+});

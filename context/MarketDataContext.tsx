@@ -168,9 +168,8 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         if (isBackgroundWorkPaused() && scope.forceFetch !== true) {
             return;
         }
-        if (isQuoteRefreshInCooldown()) {
-            const scopedForce = scope.forceFetch === true;
-            if (scopedForce) return;
+        if (isQuoteRefreshInCooldown() && scope.forceFetch !== true) {
+            return;
         }
         const merged = mergePriceRefreshScope(refreshQueueRef.current, scope);
         refreshQueueRef.current = merged.queue;
@@ -196,15 +195,12 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
     }, [finishQuotesRefresh]);
 
     const refreshPrices = useCallback(async (options?: { forceFetch?: boolean }) => {
+        const force = options?.forceFetch === true;
         setQuotesRefreshUIScope({ mode: 'all' });
         setIsRefreshing(true);
         manualRefreshSessionRef.current = true;
-        if (isQuoteRefreshInCooldown() && options?.forceFetch === true) {
-            finishQuotesRefresh();
-            return;
-        }
-        bumpPriceRefresh({ kind: 'all', forceFetch: true, manual: true });
-    }, [bumpPriceRefresh, finishQuotesRefresh]);
+        bumpPriceRefresh({ kind: 'all', forceFetch: force, manual: true });
+    }, [bumpPriceRefresh]);
 
     const refreshPricesForPlatform = useCallback(
         async (platformId: string) => {

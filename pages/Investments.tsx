@@ -2546,8 +2546,10 @@ const PlatformCard: React.FC<{
     portfolioPeriodPnLById: Map<string, PortfolioPeriodPnLRow>;
     portfolioWeeklySparklineById: Map<string, PortfolioPnLDailyPoint[]>;
     portfolioPnLSummary: PortfolioPeriodPnLSummary | null;
+    periodPnLReady: boolean;
+    periodPnLSparklinesReady: boolean;
 }> = (props) => {
-    const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, symbolNames = {}, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded, holdingsOutliers = [], setActivePage, portfolioPeriodPnLById, portfolioWeeklySparklineById, portfolioPnLSummary } = props;
+    const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, symbolNames = {}, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded, holdingsOutliers = [], setActivePage, portfolioPeriodPnLById, portfolioWeeklySparklineById, portfolioPnLSummary, periodPnLReady, periodPnLSparklinesReady } = props;
     const { refreshPricesForPlatform, isRefreshing: quotesRefreshing, quotesRefreshUIScope } = useMarketQuoteMeta();
     const thisPlatformSyncing =
         quotesRefreshing &&
@@ -2628,16 +2630,19 @@ const PlatformCard: React.FC<{
 
     const portfolioKpiBundle = useMemo(
         () =>
-            computePortfolioMetricsBundle({
-                siblingPortfolios: sortedPortfolios,
-                transactions: metricsTransactions ?? transactions,
-                accounts: dataCtx?.accounts ?? [],
-                allInvestments: investmentsForInfer,
-                sarPerUsd,
-                simulatedPrices,
-                accountAvailableCashByCurrency: availableCashByCurrency,
-            }),
+            isExpanded
+                ? computePortfolioMetricsBundle({
+                      siblingPortfolios: sortedPortfolios,
+                      transactions: metricsTransactions ?? transactions,
+                      accounts: dataCtx?.accounts ?? [],
+                      allInvestments: investmentsForInfer,
+                      sarPerUsd,
+                      simulatedPrices,
+                      accountAvailableCashByCurrency: availableCashByCurrency,
+                  })
+                : null,
         [
+            isExpanded,
             sortedPortfolios,
             transactions,
             metricsTransactions,
@@ -2691,7 +2696,7 @@ const PlatformCard: React.FC<{
                     <div className="flex items-start gap-3 min-w-0 flex-1 overflow-hidden">
                         <button
                             type="button"
-                            onClick={onToggleExpanded}
+                            onClick={() => startTransition(onToggleExpanded)}
                             className="mt-1 shrink-0 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-primary transition-colors"
                             aria-expanded={isExpanded}
                             title={isExpanded ? 'Collapse platform' : 'Expand platform'}
@@ -2809,7 +2814,7 @@ const PlatformCard: React.FC<{
                             <CurrencyDualDisplay value={dailyPnLSAR} inCurrency="SAR" digits={0} size="lg" colorize weight="bold" />
                         </dd>
                     </div>
-                    {platformPeriodPnL.hasRow ? (
+                    {portfolios.length > 0 ? (
                         <>
                             <div className="rounded-2xl bg-gradient-to-b from-white to-indigo-50/40 border border-indigo-100/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
                                 <dt
@@ -2818,8 +2823,14 @@ const PlatformCard: React.FC<{
                                 >
                                     Week P/L
                                 </dt>
-                                <dd className="metric-value w-full mt-1.5 flex justify-center">
-                                    <CurrencyDualDisplay value={platformPeriodPnL.weekly} inCurrency="SAR" digits={0} size="lg" colorize weight="bold" />
+                                <dd className="metric-value w-full mt-1.5 flex justify-center" aria-busy={!periodPnLReady}>
+                                    {!periodPnLReady ? (
+                                        <span className="text-slate-400 text-lg font-bold tabular-nums">…</span>
+                                    ) : platformPeriodPnL.hasRow ? (
+                                        <CurrencyDualDisplay value={platformPeriodPnL.weekly} inCurrency="SAR" digits={0} size="lg" colorize weight="bold" />
+                                    ) : (
+                                        <span className="text-slate-400 text-sm">—</span>
+                                    )}
                                 </dd>
                             </div>
                             <div className="rounded-2xl bg-gradient-to-b from-white to-violet-50/40 border border-violet-100/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
@@ -2829,8 +2840,14 @@ const PlatformCard: React.FC<{
                                 >
                                     Month P/L
                                 </dt>
-                                <dd className="metric-value w-full mt-1.5 flex justify-center">
-                                    <CurrencyDualDisplay value={platformPeriodPnL.monthly} inCurrency="SAR" digits={0} size="lg" colorize weight="bold" />
+                                <dd className="metric-value w-full mt-1.5 flex justify-center" aria-busy={!periodPnLReady}>
+                                    {!periodPnLReady ? (
+                                        <span className="text-slate-400 text-lg font-bold tabular-nums">…</span>
+                                    ) : platformPeriodPnL.hasRow ? (
+                                        <CurrencyDualDisplay value={platformPeriodPnL.monthly} inCurrency="SAR" digits={0} size="lg" colorize weight="bold" />
+                                    ) : (
+                                        <span className="text-slate-400 text-sm">—</span>
+                                    )}
                                 </dd>
                             </div>
                         </>
@@ -2892,7 +2909,7 @@ const PlatformCard: React.FC<{
                     const portfolioCurrency = resolveInvestmentPortfolioCurrency(portfolio);
                     const portfolioHoldings = holdingsWithGains(portfolio.holdings || [], portfolioCurrency);
                     const portfolioValue = portfolioHoldings.reduce((sum, h) => sum + h.currentValue, 0);
-                    const pk = portfolioKpiBundle.metricsByPortfolioId.get(portfolio.id);
+                    const pk = portfolioKpiBundle?.metricsByPortfolioId.get(portfolio.id);
                     const periodPnL = portfolioPeriodPnLById.get(portfolio.id);
                     const weekSparkline = portfolioWeeklySparklineById.get(portfolio.id) ?? [];
                     const portfolioHeadlineValue = pk != null ? pk.totalValue : portfolioValue;
@@ -3027,7 +3044,7 @@ const PlatformCard: React.FC<{
                                                 <CurrencyDualDisplay value={pk.dailyPnLSAR} inCurrency="SAR" digits={0} size="base" colorize weight="bold" />
                                             </dd>
                                         </div>
-                                        {periodPnL != null && (
+                                        {periodPnLReady && periodPnL != null && (
                                             <>
                                                 <div className="rounded-2xl bg-gradient-to-b from-white to-indigo-50/40 border border-indigo-100/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
                                                     <dt
@@ -3038,7 +3055,9 @@ const PlatformCard: React.FC<{
                                                     </dt>
                                                     <dd className="metric-value flex flex-1 flex-col items-center justify-center mt-2 min-h-0 gap-1">
                                                         <CurrencyDualDisplay value={periodPnL.weekly.totalSar} inCurrency="SAR" digits={0} size="base" colorize weight="bold" />
-                                                        <MiniPnLSparkline points={weekSparkline} height={32} className="max-w-[88px]" />
+                                                        {periodPnLSparklinesReady && weekSparkline.length > 0 ? (
+                                                            <MiniPnLSparkline points={weekSparkline} height={32} className="max-w-[88px]" />
+                                                        ) : null}
                                                     </dd>
                                                 </div>
                                                 <div className="rounded-2xl bg-gradient-to-b from-white to-violet-50/40 border border-violet-100/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
@@ -3489,12 +3508,18 @@ const PlatformView: React.FC<{
                         onEditHolding={props.onEditHolding}
                         simulatedPrices={props.simulatedPrices}
                         isExpanded={platformExpanded[p.account.id] ?? false}
-                        onToggleExpanded={() => setPlatformExpanded((prev) => ({ ...prev, [p.account.id]: !prev[p.account.id] }))}
+                        onToggleExpanded={() =>
+                            startTransition(() => {
+                                setPlatformExpanded((prev) => ({ ...prev, [p.account.id]: !prev[p.account.id] }));
+                            })
+                        }
                         holdingsOutliers={holdingsOutliersAll}
                         setActivePage={setActivePage}
                         portfolioPeriodPnLById={portfolioPnL.pnlByPortfolioId}
                         portfolioWeeklySparklineById={portfolioPnL.weeklySparklineByPortfolioId}
                         portfolioPnLSummary={portfolioPnL.summary}
+                        periodPnLReady={portfolioPnL.ready}
+                        periodPnLSparklinesReady={portfolioPnL.sparklinesReady}
                         symbolNames={platformSymbolNames}
                     />
                 ))}

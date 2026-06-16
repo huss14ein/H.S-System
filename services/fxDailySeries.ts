@@ -5,10 +5,13 @@ const KEY = 'finova_sar_per_usd_by_day_v1';
 const SNAPSHOT_KEY = 'finova_nw_snapshots_v1';
 
 let fxMapMemoryCache: Record<string, number> | null = null;
+/** Skip re-running the dense forward-fill when spot/today/horizon unchanged this session. */
+let lastHydrateFingerprint = '';
 
 /** Test helper — reset in-memory FX map cache. */
 export function clearFxMapMemoryCacheForTests(): void {
   fxMapMemoryCache = null;
+  lastHydrateFingerprint = '';
 }
 
 function isoDate(d: Date): string {
@@ -105,22 +108,30 @@ export function hydrateSarPerUsdDailySeries(
 ): void {
   const spot = resolveSarPerUsd(data, uiExchangeRate);
   const horizon = Math.min(4000, Math.max(30, options?.horizonDays ?? 400));
-  const map = loadSarPerUsdByDay();
   const today = isoDate(new Date());
+  const earliest = options?.earliestCalendarDay ?? '';
+  const fingerprint = `${today}:${spot.toFixed(6)}:${horizon}:${earliest}`;
+  const existing = loadSarPerUsdByDay();
+  if (fingerprint === lastHydrateFingerprint && Object.keys(existing).length >= Math.min(horizon, 60)) {
+    return;
+  }
+
+  const map = { ...existing };
+  let dirty = map[today] !== spot;
   map[today] = spot;
 
   for (const s of readNetWorthSnapshotsForFxSeed()) {
     const day = typeof s.at === 'string' ? s.at.slice(0, 10) : '';
     const r = s.sarPerUsd;
-    if (day.length === 10 && typeof r === 'number' && Number.isFinite(r) && r > 0) {
+    if (day.length === 10 && typeof r === 'number' && Number.isFinite(r) && r > 0 && map[day] !== r) {
       map[day] = r;
+      dirty = true;
     }
   }
 
   const end = new Date(`${today}T12:00:00`);
   let start = new Date(end);
   start.setDate(start.getDate() - horizon);
-  const earliest = options?.earliestCalendarDay;
   if (earliest && /^\d{4}-\d{2}-\d{2}$/.test(earliest)) {
     const e = new Date(`${earliest}T12:00:00`);
     if (e < start) start = e;
@@ -132,11 +143,27 @@ export function hydrateSarPerUsdDailySeries(
     const v = map[key];
     if (v != null && Number.isFinite(v) && v > 0) {
       carry = v;
-    } else {
+    } else if (map[key] !== carry) {
       map[key] = carry;
+      dirty = true;
     }
   }
-  saveMap(map);
+
+  if (dirty) {
+    saveMap(map);
+  } else {
+    fxMapMemoryCache = map;
+  }
+  lastHydrateFingerprint = fingerprint;
+}
+
+/** KPI path — returns cached map; hydrates only when the session fingerprint is stale. */
+export function fxMapForKpiCompute(
+  data: FinancialData | null | undefined,
+  uiExchangeRate: number,
+): Record<string, number> {
+  hydrateSarPerUsdDailySeries(data, uiExchangeRate);
+  return loadSarPerUsdByDay();
 }
 
 /** One row per calendar day from startDay to endDay inclusive (after hydration). */

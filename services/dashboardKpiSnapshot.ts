@@ -4,7 +4,7 @@ import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './t
 import { savingsRateSarFinancialMonth } from './financeMetrics';
 import { resolveMonthStartDayFromData } from '../utils/financialMonth';
 import { toSAR, totalLiquidCashSARFromAccounts } from '../utils/currencyMath';
-import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay, loadSarPerUsdByDay } from './fxDailySeries';
+import { hydrateSarPerUsdDailySeries, fxMapForKpiCompute, getSarPerUsdForCalendarDay } from './fxDailySeries';
 import { computePersonalHeadlineNetWorthSar } from './personalNetWorth';
 import {
   computeHeadlinePersonalInvestmentRoiDecimal,
@@ -48,10 +48,7 @@ export function financialMonthNetCashflowSar(
   uiExchangeRate: number,
   fxMap?: Record<string, number>,
 ): FinancialMonthCashflowSar {
-  const map = fxMap ?? (() => {
-    hydrateSarPerUsdDailySeries(data, uiExchangeRate);
-    return loadSarPerUsdByDay();
-  })();
+  const map = fxMap ?? fxMapForKpiCompute(data, uiExchangeRate);
   const now = new Date();
   const monthStartDay = resolveMonthStartDayFromData(data);
   const currentRange = financialMonthRange(now, monthStartDay);
@@ -112,8 +109,7 @@ export function computeDashboardKpiSnapshot(
 ): DashboardKpiSnapshot | null {
   try {
     if (!data) return null;
-    hydrateSarPerUsdDailySeries(data, exchangeRate);
-    const fxMap = loadSarPerUsdByDay();
+    const fxMap = fxMapForKpiCompute(data, exchangeRate);
     const headline = computePersonalHeadlineNetWorthSar(data, exchangeRate, {
       getAvailableCashForAccount: getAvailableCashForAccount as (id: string) => { SAR: number; USD: number },
       simulatedPrices,

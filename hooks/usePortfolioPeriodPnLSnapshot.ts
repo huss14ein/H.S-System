@@ -13,8 +13,7 @@ import {
 } from '../services/portfolioPeriodPnL';
 import type { SimulatedPriceMap } from '../services/investmentPlatformCardMetrics';
 import { financialDataHasHydrated } from '../services/financialDataHydration';
-import { scheduleIdleWorkAsync } from '../utils/runWhenIdle';
-import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
+import { scheduleIdleWorkAsync, waitUntilBackgroundWorkResumed } from '../utils/runWhenIdle';
 import { yieldToMain } from '../utils/yieldToMain';
 
 type PortfolioPeriodPnLCore = {
@@ -22,7 +21,10 @@ type PortfolioPeriodPnLCore = {
   weeklySparkline: number[];
   summary: PortfolioPeriodPnLSummary | null;
   dailySeries: PortfolioPnLDailySeries | null;
+  /** True once week/month summary rows are available (KPI cards). */
   ready: boolean;
+  /** True once per-portfolio sparkline series finished (optional charts). */
+  sparklinesReady: boolean;
 };
 
 export type PortfolioPeriodPnLSnapshot = PortfolioPeriodPnLCore & {
@@ -36,6 +38,7 @@ const EMPTY_CORE: PortfolioPeriodPnLCore = {
   summary: null,
   dailySeries: null,
   ready: false,
+  sparklinesReady: false,
 };
 
 /** Deferred portfolio period P/L — summary first, daily series after yield (keeps input responsive). */
@@ -73,10 +76,11 @@ export function usePortfolioPeriodPnLSnapshot(args: {
       return;
     }
 
-    setSnapshot((prev) => ({ ...prev, ready: false }));
+    setSnapshot((prev) => ({ ...prev, ready: false, sparklinesReady: false }));
     let aborted = false;
     const cancelIdle = scheduleIdleWorkAsync(async () => {
-      if (isBackgroundWorkPaused() || aborted) return;
+      await waitUntilBackgroundWorkResumed();
+      if (aborted) return;
 
       const monthStartDay = resolveMonthStartDayFromData(data);
       const computeArgs = {
@@ -89,7 +93,7 @@ export function usePortfolioPeriodPnLSnapshot(args: {
         getAvailableCashForAccount,
         locale: locale ?? 'en-US',
       };
-      const shouldAbort = () => aborted || isBackgroundWorkPaused();
+      const shouldAbort = () => aborted;
 
       const summary = await computePortfolioPeriodPnLSummaryAsync(computeArgs, { shouldAbort });
       if (!summary || shouldAbort()) return;
@@ -100,7 +104,8 @@ export function usePortfolioPeriodPnLSnapshot(args: {
           weeklySparkline: [],
           summary,
           dailySeries: null,
-          ready: false,
+          ready: true,
+          sparklinesReady: false,
         });
       });
 
@@ -120,9 +125,10 @@ export function usePortfolioPeriodPnLSnapshot(args: {
           summary,
           dailySeries,
           ready: true,
+          sparklinesReady: true,
         });
       });
-    }, 1200);
+    }, 400);
 
     return () => {
       aborted = true;

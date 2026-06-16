@@ -298,7 +298,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
               <div className="hidden sm:flex flex-col items-end mr-2 min-w-[126px]">
                 <button 
                   onClick={() => void refreshPrices({ forceFetch: true })} 
-                  disabled={headerRefreshing || quoteCooldownSec > 0}
+                  disabled={headerRefreshing}
                   className={`p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all flex items-center justify-end gap-2 w-full ${headerRefreshing ? 'animate-pulse' : ''}`}
                   title={
                     quoteCooldownSec > 0
@@ -324,7 +324,9 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                 {(pricesStatusLabel || quoteCooldownSec > 0) && (
                   <span className="text-[10px] text-gray-400 mt-0.5 px-2 hidden xl:block text-right leading-tight" title={lastUpdated ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}>
                     {quoteCooldownSec > 0
-                      ? `Rate limited · ${quoteCooldownSec}s`
+                      ? headerRefreshing
+                        ? `Queued for live · ${quoteCooldownSec}s`
+                        : `Rate limited · ${quoteCooldownSec}s`
                       : headerRefreshing
                         ? 'Updating…'
                         : pricesStatusLabel}

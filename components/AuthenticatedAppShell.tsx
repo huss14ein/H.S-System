@@ -21,7 +21,7 @@ import { ConfirmActionProvider } from '../hooks/useConfirmAction';
 import { SelfLearningProvider } from '../context/SelfLearningContext';
 import { PAGE_DISPLAY_NAMES, INVESTMENT_SUB_NAV_PAGE_NAMES } from '../constants';
 import { PAGE_MODULES, prefetchCommonPagesIdle, prefetchPage, resolveShellPage } from '../utils/lazyPages';
-import { pauseBackgroundWork } from '../utils/backgroundWorkGate';
+import { pauseBackgroundWork, NAV_TRANSITION_PAUSE_MS } from '../utils/backgroundWorkGate';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
 import { cancelQuoteRefreshOnNav } from '../utils/navigationBridge';
 import { CanonicalFinancialMetricsProvider } from '../context/CanonicalFinancialMetricsContext';
@@ -167,8 +167,9 @@ const AuthenticatedAppShell: React.FC = () => {
   const suppressNextHashChangeRef = useRef(false);
 
   const navigatePage = useCallback((page: Page) => {
-    pauseBackgroundWork();
+    pauseBackgroundWork(NAV_TRANSITION_PAUSE_MS);
     cancelQuoteRefreshOnNav();
+    prefetchPage(page);
     startTransition(() => {
       if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(page)) {
         setActivePageState('Investments');
@@ -192,7 +193,6 @@ const AuthenticatedAppShell: React.FC = () => {
         }
       } catch (_) {}
     });
-    scheduleIdleWork(() => prefetchPage(page), 0);
   }, []);
 
   const setActivePage = navigatePage;
@@ -217,19 +217,19 @@ const AuthenticatedAppShell: React.FC = () => {
         suppressNextHashChangeRef.current = false;
         return;
       }
-      pauseBackgroundWork();
+      pauseBackgroundWork(NAV_TRANSITION_PAUSE_MS);
       cancelQuoteRefreshOnNav();
       startTransition(() => {
         const decoded = decodeHashPage();
         if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(decoded as Page)) {
-          scheduleIdleWork(() => prefetchPage(decoded as Page), 0);
+          prefetchPage(decoded as Page);
           setActivePageState('Investments');
           setPageAction(`investment-tab:${decoded}`);
           return;
         }
         setPageAction(null);
         const page = getPageFromHash();
-        if (page) scheduleIdleWork(() => prefetchPage(page), 0);
+        if (page) prefetchPage(page);
         setActivePageState(page ?? 'Dashboard');
       });
     };
@@ -239,8 +239,9 @@ const AuthenticatedAppShell: React.FC = () => {
   }, []);
 
   const triggerPageAction = useCallback((page: Page, action: string) => {
-    pauseBackgroundWork();
+    pauseBackgroundWork(NAV_TRANSITION_PAUSE_MS);
     cancelQuoteRefreshOnNav();
+    prefetchPage(page);
     startTransition(() => {
       setActivePageState(resolveShellPage(page));
       setPageAction(action);
@@ -252,7 +253,6 @@ const AuthenticatedAppShell: React.FC = () => {
         }
       } catch (_) {}
     });
-    scheduleIdleWork(() => prefetchPage(page), 0);
   }, []);
   const clearPageAction = () => setPageAction(null);
 
