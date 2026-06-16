@@ -20,7 +20,6 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { LinkIcon } from '../components/icons/LinkIcon';
 import Combobox from '../components/Combobox';
 import { supabase } from '../services/supabaseClient';
-import { inferIsAdmin } from '../utils/role';
 import { resolveRecipientUserByEmail } from '../utils/shareRecipientLookup';
 import { useConfirmAction } from '../hooks/useConfirmAction';
 import { summarizeBudgetForConfirm } from '../utils/recordConfirmMessages';
@@ -1080,8 +1079,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
         const loadGovernanceCore = async () => {
             try {
-                const { data: userRecord } = await sb.from('users').select('role').eq('id', user.id).maybeSingle();
-                const admin = inferIsAdmin(user, userRecord?.role ?? null);
+                const admin = Boolean(auth.isAdmin);
                 if (cancelled) return;
                 setIsAdmin(admin);
 
@@ -1179,7 +1177,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             cancelled = true;
             window.clearTimeout(safety);
         };
-    }, [auth?.user?.id, dataResetKey]);
+    }, [auth?.user?.id, auth?.isAdmin, dataResetKey]);
 
     const sharedRpcBackoffUntilRef = React.useRef(0);
     const [sharedRpcRefreshNonce, setSharedRpcRefreshNonce] = useState(0);
@@ -2060,14 +2058,18 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const handleOwnPortfolioNavigate = useCallback(
         (budget: BudgetRow) => {
             if (triggerPageAction) {
-                const periodTag = budgetView.toLowerCase();
+                const periodRaw = String(budget.period ?? 'monthly').toLowerCase();
+                const periodTag =
+                    periodRaw === 'weekly' || periodRaw === 'daily' || periodRaw === 'yearly'
+                        ? periodRaw
+                        : 'monthly';
                 triggerPageAction(
                     'Transactions',
                     `filter-by-budget:${encodeURIComponent(budget.category)}:${periodTag}:${budget.year || currentYear}:${budget.month || currentMonth}:${currentDate.toISOString().slice(0, 10)}`,
                 );
             }
         },
-        [triggerPageAction, budgetView, currentYear, currentMonth],
+        [triggerPageAction, currentYear, currentMonth, currentDate],
     );
 
     const handleOwnPortfolioDelete = useCallback(

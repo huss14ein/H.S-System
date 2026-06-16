@@ -23,7 +23,9 @@ import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { computeAllNetWorthChartBucketsSAR } from '../services/personalNetWorth';
-import { useCanonicalFinancialMetrics, useCanonicalSpotFx, useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics, useCanonicalSpotFx, useCanonicalSimulatedPrices, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
+import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
+import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { detectBudgetDrift } from '../services/budgetDrift';
@@ -191,28 +193,32 @@ const AssetLiabilityChart: React.FC = () => {
 const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { aiHealthChecked, isAiAvailable } = useAI();
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { computeData } = usePageDeferredData();
+    const engineData = computeData ?? data;
     const { exchangeRate, currency: displayCurrency } = useCurrency();
     const simulatedPrices = useCanonicalSimulatedPrices();
-    useHydrateSarPerUsdDailySeries(data, exchangeRate);
+    useHydrateSarPerUsdDailySeries(engineData, exchangeRate);
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
+    const metrics = useExtendedCanonicalMetrics();
     const {
         sarPerUsd: headlineFx,
         netWorth: personalNetWorth,
-        investmentsTotalSar,
         buckets: personalBuckets,
         kpiSnapshot,
-    } = useCanonicalFinancialMetrics();
+        extendedReady,
+    } = metrics;
+    const investmentsTotalSar = pickInvestmentsTotalSar(metrics, extendedReady);
 
     const contextData = useMemo(() => {
-        const transactions = data?.transactions ?? [];
-        const accounts = data?.accounts ?? [];
+        const transactions = engineData?.transactions ?? [];
+        const accounts = engineData?.accounts ?? [];
 
         const spendingData = expenseTotalsByBudgetCategorySar(transactions as Transaction[], accounts, headlineFx);
 
-        const monthStartDay = resolveMonthStartDayFromData(data);
+        const monthStartDay = resolveMonthStartDayFromData(engineData);
         const trendData = buildTrendDataSar(transactions as Transaction[], accounts, headlineFx, monthStartDay, 6);
 
-        const nwBuckets = computeAllNetWorthChartBucketsSAR(data, exchangeRate, { getAvailableCashForAccount, simulatedPrices });
+        const nwBuckets = computeAllNetWorthChartBucketsSAR(engineData, exchangeRate, { getAvailableCashForAccount, simulatedPrices });
         const compositionData = [
             { name: 'Investments (platforms + commodities + Sukuk)', value: nwBuckets.investments },
             { name: 'Cash', value: nwBuckets.cash },
@@ -240,7 +246,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             salaryCoverage,
             sarPerUsd: headlineFx,
         };
-    }, [data, exchangeRate, getAvailableCashForAccount, headlineFx, simulatedPrices]);
+    }, [engineData, exchangeRate, getAvailableCashForAccount, headlineFx, simulatedPrices]);
 
     const analysisValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
@@ -276,14 +282,14 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         if (Math.abs(personalNetWorth - personalBuckets.netWorth) > 2) {
             warnings.push('Personal headline net worth does not match chart buckets — open System & APIs Health.');
         }
-        if (Math.abs(investmentsTotalSar - personalBuckets.investments) > 2) {
+        if (extendedReady && Math.abs(investmentsTotalSar - personalBuckets.investments) > 2) {
             warnings.push('Personal investment total does not match net worth investments band.');
         }
         return warnings;
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, contextData, headlineFx, kpiSnapshot, personalNetWorth, personalBuckets, investmentsTotalSar]);
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, contextData, headlineFx, kpiSnapshot, personalNetWorth, personalBuckets, investmentsTotalSar, extendedReady]);
 
-    const budgetDriftRows = useMemo(() => detectBudgetDrift(data!, exchangeRate), [data, exchangeRate]);
-    const incomeStability = useMemo(() => computeIncomeStability(data!), [data]);
+    const budgetDriftRows = useMemo(() => detectBudgetDrift(engineData ?? null, exchangeRate), [engineData, exchangeRate]);
+    const incomeStability = useMemo(() => computeIncomeStability(engineData ?? null), [engineData]);
 
     const cov = contextData.salaryCoverage;
     const coverageTone =
@@ -338,7 +344,9 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     </div>
                     <div>
                         <p className="text-slate-600">Investments</p>
-                        <p className="font-bold text-slate-900 tabular-nums">{formatCurrencyString(investmentsTotalSar, { digits: 0 })}</p>
+                        <ExtendedMetricGate ready={extendedReady} compact>
+                            <p className="font-bold text-slate-900 tabular-nums">{formatCurrencyString(investmentsTotalSar, { digits: 0 })}</p>
+                        </ExtendedMetricGate>
                     </div>
                     <div>
                         <p className="text-slate-600">Cash</p>
@@ -346,7 +354,9 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     </div>
                     <div>
                         <p className="text-slate-600">Investment ROI (headline)</p>
-                        <p className="font-bold text-slate-900 tabular-nums">{kpiSnapshot ? `${(kpiSnapshot.roi * 100).toFixed(1)}%` : '—'}</p>
+                        <ExtendedMetricGate ready={extendedReady} compact>
+                            <p className="font-bold text-slate-900 tabular-nums">{kpiSnapshot ? `${(kpiSnapshot.roi * 100).toFixed(1)}%` : '—'}</p>
+                        </ExtendedMetricGate>
                     </div>
                 </div>
             </div>
@@ -531,9 +541,11 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:col-span-2 min-h-[380px] flex flex-col border-t-4 border-t-primary/30">
                     <h3 className="text-base font-semibold text-slate-900 mb-1">Current financial position</h3>
                     <p className="text-xs text-slate-500 mb-3">Major buckets that build your net worth (same SAR math as Investments &amp; Assets).</p>
-                    <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden">
-                        <AssetLiabilityChart />
-                    </div>
+                    <ExtendedMetricGate ready={extendedReady} className="flex-1 min-h-[300px]">
+                        <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden">
+                            <AssetLiabilityChart />
+                        </div>
+                    </ExtendedMetricGate>
                 </div>
             </div>
         </PageLayout>

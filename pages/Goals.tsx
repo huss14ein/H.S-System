@@ -35,7 +35,7 @@ import { monteCarloGoalSuccess } from '../services/portfolioConstruction';
 import { projectedGoalCompletionDate, goalFundingGap as goalGapShared, computeGoalTimelineStatus } from '../services/goalMetrics';
 import { detectGoalConflict, goalFeasibilityCheck, type GoalConflict } from '../services/goalConflictEngine';
 import { useSelfLearning } from '../context/SelfLearningContext';
-import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { useCompanyNames, symbolsNeedingCompanyName } from '../hooks/useSymbolCompanyName';
 import { formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
 import { receivableContributionForGoal } from '../services/goalReceivableContribution';
 import {
@@ -416,18 +416,20 @@ const GoalCard: React.FC<{
     const [aiPlan, setAiPlan] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
 
-    const goalLinkSymbols = useMemo(() => {
+    const goalLinkHoldings = useMemo(() => {
         const investments = (data as any)?.personalInvestments ?? data?.investments ?? [];
-        const syms: string[] = [];
-        investments.forEach((p: { goalId?: string; holdings?: { goalId?: string; symbol?: string }[] }) => {
-            (p.holdings ?? []).forEach((h: { goalId?: string; symbol?: string }) => {
+        const holdings: Array<{ symbol?: string; name?: string }> = [];
+        investments.forEach((p: { goalId?: string; holdings?: { goalId?: string; symbol?: string; name?: string }[] }) => {
+            (p.holdings ?? []).forEach((h) => {
                 const resolvedGoalId = h.goalId || p.goalId;
-                if (resolvedGoalId === goal.id && h.goalId && h.symbol) syms.push((h.symbol || '').trim());
+                if (resolvedGoalId === goal.id && h.goalId && h.symbol) {
+                    holdings.push({ symbol: h.symbol, name: h.name });
+                }
             });
         });
-        return Array.from(new Set(syms.filter((s) => s.length >= 2)));
+        return holdings;
     }, [data?.investments, goal.id]);
-    const { names: goalHoldingNames } = useCompanyNames(goalLinkSymbols);
+    const { names: goalHoldingNames } = useCompanyNames(symbolsNeedingCompanyName(goalLinkHoldings));
         const personalLiabilities = useMemo(
             () => ((data as any)?.personalLiabilities ?? data?.liabilities ?? []) as Liability[],
             [data?.liabilities, (data as any)?.personalLiabilities],

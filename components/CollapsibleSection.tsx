@@ -9,7 +9,7 @@ interface CollapsibleSectionProps {
   summary?: string;
   /** Content shown when expanded */
   children: ReactNode;
-  /** Kept for API compatibility; sections always mount expanded (click header to collapse). */
+  /** Initial expanded state (default true). Children mount only while expanded. */
   defaultExpanded?: boolean;
   /** Extra class for the container */
   className?: string;
@@ -17,6 +17,8 @@ interface CollapsibleSectionProps {
   icon?: ReactNode;
   /** Use section-card styling */
   card?: boolean;
+  /** Fired when the user expands or collapses the section */
+  onExpandedChange?: (expanded: boolean) => void;
 }
 
 /**
@@ -31,8 +33,17 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
   className = '',
   icon,
   card = true,
+  onExpandedChange,
 }) => {
   const [expanded, setExpanded] = useState(_defaultExpanded ?? true);
+
+  const toggleExpanded = () => {
+    setExpanded((prev) => {
+      const next = !prev;
+      onExpandedChange?.(next);
+      return next;
+    });
+  };
 
   const baseClass = card ? 'section-card' : 'rounded-lg border border-slate-200 bg-white';
   const headerClass = 'flex items-center justify-between gap-3 w-full text-left py-1 pr-1 cursor-pointer rounded-lg';
@@ -41,7 +52,7 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
     <div className={`${baseClass} ${className}`}>
       <button
         type="button"
-        onClick={() => setExpanded((e) => !e)}
+        onClick={toggleExpanded}
         className={headerClass}
         aria-expanded={expanded}
       >

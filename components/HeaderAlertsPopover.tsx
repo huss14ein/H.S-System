@@ -312,52 +312,77 @@ const HeaderAlertsPopover: React.FC<HeaderAlertsPopoverProps> = ({
               <ul className="space-y-2" role="list">
                 {filteredPreview.map((n) => (
                   <li key={n.id}>
-                    <button
-                      type="button"
-                      onClick={() => onOpenNotification(n)}
-                      className={`group w-full text-left rounded-xl transition-all hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${notificationRowSurface(
+                    <div
+                      className={`group w-full text-left rounded-xl transition-all hover:shadow-sm focus-within:ring-2 focus-within:ring-primary/30 ${notificationRowSurface(
                         n.severity,
                         n.isRead,
                       )}`}
                     >
                       <div className="flex items-stretch gap-3 px-3 py-2.5">
-                        <div
-                          className={`shrink-0 flex h-10 w-10 items-center justify-center rounded-xl ring-1 ${iconTileClass(
-                            n.severity,
-                          )}`}
+                        <button
+                          type="button"
+                          onClick={() => onOpenNotification(n)}
+                          className="flex flex-1 items-stretch gap-3 min-w-0 text-left focus:outline-none"
                         >
-                          {categoryIcon(n.category, 'h-[1.125rem] w-[1.125rem]')}
-                        </div>
-                        <div className="min-w-0 flex-1 flex flex-col justify-center">
-                          <div className="flex items-center justify-between gap-2 mb-1">
-                            <span
-                              className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide leading-none ${notificationSeverityPillClass(
-                                n.severity,
-                              )}`}
-                            >
-                              {notificationSeverityLabel(n.severity)}
-                            </span>
-                            <span className="flex items-center gap-1.5 shrink-0">
-                              <span className="text-[11px] text-slate-500 tabular-nums leading-none">
-                                {formatRelativeTime(n.date)}
-                              </span>
-                              {!n.isRead && (
-                                <span className="h-2 w-2 rounded-full bg-primary shrink-0" aria-label="Unread" />
-                              )}
-                            </span>
+                          <div
+                            className={`shrink-0 flex h-10 w-10 items-center justify-center rounded-xl ring-1 ${iconTileClass(
+                              n.severity,
+                            )}`}
+                          >
+                            {categoryIcon(n.category, 'h-[1.125rem] w-[1.125rem]')}
                           </div>
-                          <p className="text-[13px] font-medium text-slate-800 line-clamp-2 leading-snug pr-1">
-                            {n.message}
-                          </p>
-                          {n.actionHint && (
-                            <p className="text-[11px] text-slate-600 mt-0.5 line-clamp-2 leading-relaxed">
-                              {n.actionHint}
+                          <div className="min-w-0 flex-1 flex flex-col justify-center">
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <span
+                                className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide leading-none ${notificationSeverityPillClass(
+                                  n.severity,
+                                )}`}
+                              >
+                                {notificationSeverityLabel(n.severity)}
+                              </span>
+                              <span className="flex items-center gap-1.5 shrink-0">
+                                <span className="text-[11px] text-slate-500 tabular-nums leading-none">
+                                  {formatRelativeTime(n.date)}
+                                </span>
+                                {!n.isRead && (
+                                  <span className="h-2 w-2 rounded-full bg-primary shrink-0" aria-label="Unread" />
+                                )}
+                              </span>
+                            </div>
+                            <p className="text-[13px] font-medium text-slate-800 line-clamp-2 leading-snug pr-1">
+                              {n.message}
                             </p>
-                          )}
-                        </div>
-                        <ChevronRightIcon className="h-4 w-4 shrink-0 self-center text-slate-300 group-hover:text-primary transition-colors" />
+                            {n.actionHint && (
+                              <p className="text-[11px] text-slate-600 mt-0.5 line-clamp-2 leading-relaxed">
+                                {n.actionHint}
+                              </p>
+                            )}
+                          </div>
+                        </button>
+                        {!n.isRead && ctx?.markAsRead && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              ctx.markAsRead(n.id);
+                            }}
+                            className="shrink-0 self-center p-2 rounded-lg text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 transition-colors"
+                            aria-label="Mark as read"
+                            title="Mark as read"
+                          >
+                            <CheckCircleIcon className="h-4 w-4" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => onOpenNotification(n)}
+                          className="shrink-0 self-center p-1 rounded-lg text-slate-300 hover:text-primary hover:bg-primary/5 transition-colors focus:outline-none"
+                          aria-label="Open alert"
+                        >
+                          <ChevronRightIcon className="h-4 w-4" />
+                        </button>
                       </div>
-                    </button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -375,7 +400,7 @@ const HeaderAlertsPopover: React.FC<HeaderAlertsPopoverProps> = ({
               View all alerts
             </button>
             <p className="text-[10px] text-center text-slate-400 mt-2 leading-relaxed">
-              Esc to close · select a row to open
+              Esc to close · ✓ dismiss · row opens alert
             </p>
           </div>
         </div>

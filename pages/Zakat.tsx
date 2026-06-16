@@ -20,7 +20,7 @@ import { summarizeZakatableCashForZakat } from '../services/zakatCashValuation';
 import { computeDeductibleLiabilities } from '../services/zakatLiabilityMath';
 import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestments, getPersonalLiabilities, getPersonalTransactions } from '../utils/wealthScope';
 import AIAdvisor from '../components/AIAdvisor';
-import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { useCompanyNames, symbolsNeedingCompanyName } from '../hooks/useSymbolCompanyName';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 import { sortByNewestFirst } from '../utils/sortRecency';
 import { useConfirmAction } from '../hooks/useConfirmAction';
@@ -150,14 +150,7 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
     }, [data, sarPerUsd]);
 
     const zakatInvSymbols = useMemo(
-        () =>
-            Array.from(
-                new Set(
-                    zakatableAssets.investmentLines
-                        .map((r: { symbol?: string }) => (r.symbol || '').trim())
-                        .filter((s: string) => s.length >= 2),
-                ),
-            ),
+        () => symbolsNeedingCompanyName(zakatableAssets.investmentLines),
         [zakatableAssets.investmentLines],
     );
     const { names: zakatCompanyNames } = useCompanyNames(zakatInvSymbols);

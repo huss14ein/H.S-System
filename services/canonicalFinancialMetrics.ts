@@ -40,7 +40,7 @@ export type HeadlineExposureParts = Pick<
   'totalExposureSar' | 'platformsRollupSar' | 'commoditiesValueSar' | 'sukukAssetsValueSar'
 >;
 
-function deriveHeadlineExposureParts(
+export function deriveHeadlineExposureParts(
   data: FinancialData,
   sarPerUsd: number,
   investmentsTotalSar: number,
@@ -135,6 +135,148 @@ export function computeDashboardCanonicalMetrics(
     netWorth: headline.netWorth,
     liquidCashSar: kpiSnapshot?.liquidCashSar ?? 0,
     nwOptions,
+  };
+}
+
+const EMPTY_INVESTMENT_ALLOCATION = (totalSar: number): HeadlineInvestmentAllocationSlices => ({
+  totalSar,
+  platformHoldingsSar: 0,
+  platformCashSar: 0,
+  commoditiesSar: 0,
+  sukukSar: 0,
+  assetClassAllocation: [],
+  portfolioAllocation: [],
+});
+
+/**
+ * Fast path for first paint — headline + KPI only; skips wealth summary, ROI rollup, and allocation charts.
+ */
+export function buildFastCanonicalFinancialMetrics(
+  input: CanonicalFinancialMetricsInput,
+): CanonicalFinancialMetrics {
+  const dashboard = computeDashboardCanonicalMetrics(input);
+  const investmentsTotalSar = Math.max(0, dashboard.headline.buckets.investments);
+  const investableCashTotalSar = dashboard.investableCashBars.reduce((s, row) => s + row.sar, 0);
+  return {
+    ...dashboard,
+    breakdown: {
+      totalAssets: Math.max(0, dashboard.netWorth),
+      totalDebt: 0,
+      totalReceivable: 0,
+      netWorth: dashboard.netWorth,
+    },
+    wealthSummary: null,
+    investableCashTotalSar,
+    investmentExposure: null,
+    investmentsTotalSar,
+    headlineExposureParts: {
+      totalExposureSar: investmentsTotalSar,
+      platformsRollupSar: 0,
+      commoditiesValueSar: 0,
+      sukukAssetsValueSar: 0,
+    },
+    investmentAllocation: EMPTY_INVESTMENT_ALLOCATION(investmentsTotalSar),
+  };
+}
+
+/** Expensive slices only — reuses dashboard headline/KPI from phase 1. */
+export function extendCanonicalFinancialMetrics(
+  dashboard: DashboardCanonicalMetrics,
+  input: CanonicalFinancialMetricsInput,
+): CanonicalFinancialMetrics {
+  const { data, exchangeRate, getAvailableCashForAccount, simulatedPrices = {} } = input;
+  const nwOptions: PersonalNetWorthOptions | undefined = getAvailableCashForAccount
+    ? { getAvailableCashForAccount, simulatedPrices }
+    : undefined;
+
+  const breakdown = computePersonalNetWorthBreakdownSAR(data, exchangeRate, nwOptions);
+  const wealthSummary =
+    data && getAvailableCashForAccount
+      ? computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount, simulatedPrices)
+      : null;
+
+  let investableCashTotalSar = 0;
+  let investmentExposure: HeadlinePersonalInvestmentRoi | null = null;
+  if (data && getAvailableCashForAccount) {
+    investmentExposure = computeHeadlinePersonalInvestmentRoiDecimal(
+      data,
+      dashboard.sarPerUsd,
+      getAvailableCashForAccount,
+      simulatedPrices,
+    );
+  }
+
+  if (data) {
+    const scope = getPersonalAccounts(data);
+    const allAccounts = data.accounts ?? scope;
+    investableCashTotalSar = sumTradableCashSarFromInvestmentAccounts(scope, allAccounts, dashboard.sarPerUsd);
+  }
+
+  const investmentsTotalSar =
+    investmentExposure?.totalExposureSar ?? Math.max(0, dashboard.headline.buckets.investments);
+  const headlineExposureParts: HeadlineExposureParts = investmentExposure
+    ? {
+        totalExposureSar: investmentExposure.totalExposureSar,
+        platformsRollupSar: investmentExposure.platformsRollupSar,
+        commoditiesValueSar: investmentExposure.commoditiesValueSar,
+        sukukAssetsValueSar: investmentExposure.sukukAssetsValueSar,
+      }
+    : data
+      ? deriveHeadlineExposureParts(data, dashboard.sarPerUsd, investmentsTotalSar, simulatedPrices)
+      : {
+          totalExposureSar: 0,
+          platformsRollupSar: 0,
+          commoditiesValueSar: 0,
+          sukukAssetsValueSar: 0,
+        };
+  const investmentAllocation = buildHeadlineInvestmentAllocationSlices(
+    data,
+    headlineExposureParts,
+    dashboard.sarPerUsd,
+    investableCashTotalSar,
+    simulatedPrices,
+  );
+
+  return mergeExtendedIntoDashboard(dashboard, {
+    breakdown,
+    wealthSummary,
+    investableCashTotalSar,
+    investmentExposure,
+    investmentsTotalSar,
+    headlineExposureParts,
+    investmentAllocation,
+  });
+}
+
+export function mergeExtendedIntoDashboard(
+  dashboard: DashboardCanonicalMetrics,
+  extended: Pick<
+    CanonicalFinancialMetrics,
+    | 'breakdown'
+    | 'wealthSummary'
+    | 'investableCashTotalSar'
+    | 'investmentExposure'
+    | 'investmentsTotalSar'
+    | 'headlineExposureParts'
+    | 'investmentAllocation'
+  >,
+): CanonicalFinancialMetrics {
+  return {
+    headline: dashboard.headline,
+    breakdown: extended.breakdown,
+    kpiSnapshot: dashboard.kpiSnapshot,
+    wealthSummary: extended.wealthSummary,
+    todaySnapshot: dashboard.todaySnapshot,
+    investableCashBars: dashboard.investableCashBars,
+    investableCashTotalSar: extended.investableCashTotalSar,
+    sarPerUsd: dashboard.sarPerUsd,
+    netWorth: dashboard.netWorth,
+    liquidCashSar: dashboard.liquidCashSar,
+    nwOptions: dashboard.nwOptions,
+    investmentExposure: extended.investmentExposure,
+    investmentsTotalSar: extended.investmentsTotalSar,
+    headlineExposureParts: extended.headlineExposureParts,
+    investmentAllocation: extended.investmentAllocation,
   };
 }
 

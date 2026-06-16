@@ -26,6 +26,7 @@ describe('Phase A — Transactions E2E', () => {
     it('budget drill-down uses fiscal month and scrolls to list', () => {
         expect(read('pages/Transactions.tsx')).toContain("monthMode: 'fiscal'");
         expect(read('pages/Budgets.tsx')).toContain('filter-by-budget:');
+        expect(read('pages/Budgets.tsx')).toContain('budget.period');
         expect(read('pages/Transactions.tsx')).toContain('transactionListRef');
         expect(read('pages/Transactions.tsx')).toContain('scrollIntoView');
     });
@@ -34,6 +35,8 @@ describe('Phase A — Transactions E2E', () => {
         const tx = read('pages/Transactions.tsx');
         expect(tx).toMatch(/userRole === 'Admin'[\s\S]*data\?\.accounts/);
         expect(tx).toContain('governanceReady');
+        expect(read('pages/Transactions.tsx')).toContain('scheduleIdleWork');
+        expect(tx).toMatch(/budgetCategory !== 'all'/);
         expect(tx).toContain('Loading permissions');
         expect(tx).toContain('orphanTransactionCount');
     });
@@ -66,17 +69,17 @@ describe('Phase A — Transactions E2E', () => {
 });
 
 describe('Phase B — Snapshot readiness E2E', () => {
-    it('all auto-capture paths gate on canAutoCaptureNetWorthSnapshot', () => {
-        expect(read('pages/Dashboard.tsx')).toContain('canAutoCaptureNetWorthSnapshot');
-        expect(read('pages/Summary.tsx')).toContain('canAutoCaptureNetWorthSnapshot');
+    it('all auto-capture paths gate on snapshot readiness and canonical headline', () => {
+        expect(read('pages/Dashboard.tsx')).toContain('tryAutoCaptureNetWorthSnapshot');
+        expect(read('pages/Summary.tsx')).toContain('tryAutoCaptureNetWorthSnapshot');
         expect(read('components/Layout.tsx')).toContain('canAutoCaptureNetWorthSnapshot');
+        expect(read('services/netWorthSnapshotReadiness.ts')).toContain('metricsExtendedReady');
+        expect(read('services/netWorthSnapshotCapture.ts')).toContain('captureNetWorthSnapshotFromHeadline');
     });
 
-    it('Dashboard and Summary pass live prices and quote fingerprint to throttle', () => {
-        expect(read('pages/Dashboard.tsx')).toContain('dashboardDebouncedPrices');
-        expect(read('pages/Dashboard.tsx')).toContain('quoteRefreshFingerprint');
-        expect(read('pages/Summary.tsx')).toContain('canonicalSimulatedPrices');
-        expect(read('pages/Summary.tsx')).toContain('quoteRefreshFingerprint');
+    it('snapshot capture uses canonical headline and quote fingerprint in capture service', () => {
+        expect(read('services/netWorthSnapshotCapture.ts')).toContain('quoteRefreshFingerprint');
+        expect(read('services/netWorthSnapshotCapture.ts')).toContain('captureNetWorthSnapshotFromHeadline');
         expect(read('services/netWorthSnapshotThrottle.ts')).toContain('SESSION_QUOTE_FP_PREFIX');
     });
 

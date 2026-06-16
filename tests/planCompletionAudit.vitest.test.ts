@@ -21,8 +21,8 @@ describe('Plan completion audit (A–I)', () => {
 
   it('Phase B — snapshot readiness gates Dashboard, Summary, Layout', () => {
     expect(exists('services/netWorthSnapshotReadiness.ts')).toBe(true);
-    expect(read('pages/Dashboard.tsx')).toContain('canAutoCaptureNetWorthSnapshot');
-    expect(read('pages/Summary.tsx')).toContain('canAutoCaptureNetWorthSnapshot');
+    expect(read('pages/Dashboard.tsx')).toContain('tryAutoCaptureNetWorthSnapshot');
+    expect(read('pages/Summary.tsx')).toContain('captureNetWorthSnapshotFromHeadline');
     expect(read('components/Layout.tsx')).toContain('canAutoCaptureNetWorthSnapshot');
   });
 
@@ -40,14 +40,15 @@ describe('Plan completion audit (A–I)', () => {
   it('Phase E — executive KPI grid includes weekly P/L card', () => {
     expect(read('components/analytics/ExecutiveKpiGrid.tsx')).toContain('weeklyPnLKpi');
     expect(read('components/analytics/ExecutiveKpiGrid.tsx')).toContain('weeklyPnLSar');
-    expect(read('pages/WealthAnalytics.tsx')).toContain('weeklyPnLSparkline');
+    expect(read('components/analytics/WealthAnalyticsDeferredSections.tsx')).toContain('hideWeeklyPnL');
   });
 
   it('Phase F/G — layout order + PDF export + language toggle', () => {
     const wa = read('pages/WealthAnalytics.tsx');
-    expect(wa).toContain('WealthAnalyticsExportMenu');
-    expect(wa).toContain('ExecutiveKpiGrid');
-    expect(wa.indexOf('<ExecutiveKpiGrid')).toBeLessThan(wa.indexOf('<PortfolioPeriodPnLPanel'));
+    const deferred = read('components/analytics/WealthAnalyticsDeferredSections.tsx');
+    expect(wa).toContain('WealthAnalyticsExportMenuSection');
+    expect(deferred).toContain('ExecutiveKpiGrid');
+    expect(wa.indexOf('<WealthAnalyticsExecutiveKpiSection')).toBeLessThan(wa.indexOf('<PortfolioPeriodPnLPanelSection'));
     expect(read('components/analytics/WealthAnalyticsExportMenu.tsx')).toContain('PageLanguageToggle');
     expect(read('services/reportingEngine.ts')).toContain('generateWealthExecutiveSummaryHtml');
     expect(read('services/reportingEngine.ts')).toContain('sparklineSvg');
@@ -58,7 +59,8 @@ describe('Plan completion audit (A–I)', () => {
     expect(read('services/geminiService.ts')).toContain('getAIMultiStockAnalysis');
     expect(read('pages/InvestmentOverview.tsx')).toContain('MultiStockAnalysisPanel');
     expect(read('pages/WatchlistView.tsx')).toContain('MultiStockAnalysisPanel');
-    expect(read('pages/WealthAnalytics.tsx')).toContain('MultiStockAnalysisPanel');
+    expect(read('pages/WealthAnalytics.tsx')).toContain('WealthAnalyticsDetailsSectionLazy');
+    expect(read('components/analytics/WealthAnalyticsDetailsSection.tsx')).toContain('MultiStockAnalysisSection');
     expect(read('docs/AI_GROUNDING.md')).toContain('getAIMultiStockAnalysis');
   });
 

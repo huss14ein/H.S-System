@@ -82,8 +82,8 @@ const DICT: Dict = {
     ar: 'ربح/خسارة أسبوعية (آخر 7 أيام) وشهر مالي لكل محفظة — نفس قواعد دفتر الاستثمار.',
   },
   portfolioPeriodPnLHint: {
-    en: 'Total = end live value − start-of-period snapshot − net deposits/withdrawals. Ledger = realized sells, dividends, fees. Market = remainder (open-position mark-to-market). Totals in SAR.',
-    ar: 'المجموع = القيمة الحية − لقطة بداية الفترة − صافي الإيداعات/السحوبات. الدفتر = مبيعات محققة وأرباح ورسوم. السوق = الباقي (تقييم المراكز المفتوحة).',
+    en: 'Total = end live value − start-of-period live snapshot − net attributed deposits/withdrawals (cash included; siblings share broker cash by position weight). Ledger = realized sells, dividends, fees. Market = remainder.',
+    ar: 'المجموع = القيمة الحية − لقطة بداية الفترة (تقييم حي) − صافي الإيداعات/السحوبات المنسوبة. الدفتر = مبيعات وأرباح ورسوم. السوق = الباقي.',
   },
   portfolioPeriodPnLEmpty: {
     en: 'Add investment portfolios to see weekly and monthly P/L here.',
@@ -157,6 +157,15 @@ const DICT: Dict = {
   exportPassportPrefix: { en: 'Passport:', ar: 'جواز:' },
   analyticsDetailsTitle: { en: 'Details & insights', ar: 'التفاصيل والرؤى' },
   analyticsDetailsSummary: { en: 'Resilience, suggested actions, AI — expand when needed', ar: 'المرونة، الإجراءات، الذكاء — وسّع عند الحاجة' },
+  syncingWorkspace: { en: 'Syncing workspace…', ar: 'جاري مزامنة مساحة العمل…' },
+  analyticsMetricsLoading: {
+    en: 'Computing allocation, health metrics, and export data (canonical engine)…',
+    ar: 'جاري حساب التوزيع ومؤشرات الصحة وبيانات التصدير (المحرك الموحد)…',
+  },
+  analyticsSectionLoading: { en: 'Loading section…', ar: 'جاري تحميل القسم…' },
+  analyticsHealthLoading: { en: 'Loading wealth health indicators…', ar: 'جاري تحميل مؤشرات صحة الثروة…' },
+  analyticsAtlasLoading: { en: 'Loading wealth atlas charts…', ar: 'جاري تحميل مخططات أطلس الثروة…' },
+  sectionLoading: { en: 'Loading…', ar: 'جاري التحميل…' },
 };
 
 export type LanguageContextValue = {

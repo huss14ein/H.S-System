@@ -102,11 +102,11 @@ export const WealthHealthIndicators: React.FC<{
         <h2 className="text-lg sm:text-xl font-bold text-slate-900">{t('wealthHealthStripTitle')}</h2>
         <p className="text-sm text-slate-600">{t('healthStripSubtitle')}</p>
       </div>
-      <div className="flex flex-wrap gap-2 min-w-0">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 min-w-0 w-full">
         {items.map((item) => (
           <div
             key={item.key}
-            className={`flex-1 min-w-[min(100%,14rem)] rounded-xl border px-3 py-2.5 shadow-sm ${toneClasses(item.tone)}`}
+            className={`rounded-xl border px-3 py-2.5 shadow-sm h-full flex flex-col ${toneClasses(item.tone)}`}
           >
             <div className="flex items-start justify-between gap-2">
               <p className="text-[10px] font-bold uppercase tracking-wider opacity-80">{item.label}</p>

@@ -11,7 +11,6 @@ import { MomCashflowTrendChart } from './MomCashflowTrendChart';
 import { BudgetBurnRatePanel } from './BudgetBurnRatePanel';
 import { ExpenseDonutDrilldown } from './ExpenseDonutDrilldown';
 import { WhatIfSandbox } from './WhatIfSandbox';
-import { DeferredMount } from './DeferredMount';
 
 /** Monthly operations — cashflow, budgets, spending sandbox (Wealth Analytics + legacy Dashboard). */
 export const DashboardOperationsCockpit: React.FC<{
@@ -68,32 +67,30 @@ export const DashboardOperationsCockpit: React.FC<{
         monthsBack={suiteMonthsBack}
       />
 
-      <DeferredMount minHeight="14rem">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <BudgetBurnRatePanel
-            data={data}
-            budgets={budgets}
-            transactions={personalTransactions}
-            accounts={personalAccounts}
-            uiExchangeRate={sarPerUsd}
-          />
-          <ExpenseDonutDrilldown
-            data={data}
-            transactions={personalTransactions}
-            accounts={personalAccounts}
-            uiExchangeRate={sarPerUsd}
-          />
-        </div>
-        <div className="mt-4">
-          <WhatIfSandbox
-            data={data}
-            goals={goals}
-            sarPerUsd={sarPerUsd}
-            liquidCashSar={liquidCashSar}
-            investmentsTotalSar={investmentsTotalSar}
-          />
-        </div>
-      </DeferredMount>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <BudgetBurnRatePanel
+          data={data}
+          budgets={budgets}
+          transactions={personalTransactions}
+          accounts={personalAccounts}
+          uiExchangeRate={sarPerUsd}
+        />
+        <ExpenseDonutDrilldown
+          data={data}
+          transactions={personalTransactions}
+          accounts={personalAccounts}
+          uiExchangeRate={sarPerUsd}
+        />
+      </div>
+      <div className="mt-4">
+        <WhatIfSandbox
+          data={data}
+          goals={goals}
+          sarPerUsd={sarPerUsd}
+          liquidCashSar={liquidCashSar}
+          investmentsTotalSar={investmentsTotalSar}
+        />
+      </div>
     </div>
   );
 };

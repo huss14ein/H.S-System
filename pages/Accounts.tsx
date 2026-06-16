@@ -3,7 +3,7 @@ import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { Account, AccountRole, Page } from '../types';
 import { supabase } from '../services/supabaseClient';
-import { inferIsAdmin } from '../utils/role';
+import { fetchSharedAccountsForMe } from '../services/sharedAccountsRpc';
 import { resolveRecipientUserByEmail } from '../utils/shareRecipientLookup';
 
 interface AccountsProps {
@@ -44,7 +44,8 @@ import { useSelfLearning } from '../context/SelfLearningContext';
 import AIAdvisor from '../components/AIAdvisor';
 import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import { brokerCashBucketsFromInvestmentAccount } from '../services/investmentCashLedger';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics, pickInvestmentsTotalSar, pickInvestableCashTotalSar } from '../hooks/useCanonicalFinancialMetrics';
+import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 
 type SharedAccountRow = Account & { ownerEmail?: string; owner_user_id?: string; account_id?: string; show_balance?: boolean };
@@ -397,15 +398,14 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
     useEffect(() => {
         const loadSharingState = async () => {
             if (!supabase || !auth?.user?.id) return;
-            const { data: userRecord } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
-            const admin = inferIsAdmin(auth.user, userRecord?.role ?? null);
-            setIsAdmin(admin);
+            setIsAdmin(Boolean(auth.isAdmin));
 
-            const { data: sharedRows, error: sharedRpcError } = await supabase.rpc('get_shared_accounts_for_me');
+            const { data: sharedRows, error: sharedRpcError } = await fetchSharedAccountsForMe(supabase, auth.user.id);
             if (sharedRpcError) {
+                const msg = sharedRpcError instanceof Error ? sharedRpcError.message : String(sharedRpcError);
                 if (process.env.NODE_ENV === 'development') {
                     // eslint-disable-next-line no-console
-                    console.warn('get_shared_accounts_for_me failed:', sharedRpcError.message);
+                    console.warn('get_shared_accounts_for_me failed:', msg);
                 }
             }
 
@@ -438,9 +438,12 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
 
         };
         loadSharingState();
-    }, [auth?.user?.id, data?.accounts?.length]);
+    }, [auth?.user?.id, auth?.isAdmin]);
 
-    const { sarPerUsd, investableCashTotalSar, investmentsTotalSar, liquidCashSar } = useCanonicalFinancialMetrics();
+    const metrics = useExtendedCanonicalMetrics();
+    const { sarPerUsd, liquidCashSar, extendedReady } = metrics;
+    const investableCashTotalSar = pickInvestableCashTotalSar(metrics);
+    const investmentsTotalSar = pickInvestmentsTotalSar(metrics, extendedReady);
 
     const { cashAccounts, creditAccounts, investmentAccounts, totalCash, totalCredit } = useMemo(() => {
         const accounts = getPersonalAccounts(data);
@@ -906,7 +909,9 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                  <Card title="Total Cash Balance (SAR eq.)" value={maskBalance(formatCurrencyString(totalCash))} indicatorColor="green" valueColor="text-emerald-700" icon={<BanknotesIcon className="h-5 w-5 text-emerald-600" />} tooltip="Sum of Checking and Savings converted to SAR equivalent using current FX rate." />
                  <Card title="Total Credit Balance (SAR eq.)" value={maskBalance(formatCurrencyString(totalCredit))} indicatorColor="red" valueColor="text-rose-700" icon={<CreditCardIcon className="h-5 w-5 text-rose-600" />} tooltip="Total amount owed across all credit accounts, converted to SAR equivalent." />
                  <Card title="Tradable cash (platforms, SAR eq.)" value={maskBalance(formatCurrencyString(investableCashTotalSar))} indicatorColor="yellow" valueColor="text-indigo-700" icon={<ArrowTrendingUpIcon className="h-5 w-5 text-indigo-600" />} tooltip="Cash available for trading on investment platforms — same total as Dashboard liquid-cash breakdown and Accounts investable cash chart." />
-                 <Card title="Investment exposure (SAR)" value={maskBalance(formatCurrencyString(investmentsTotalSar))} indicatorColor="green" valueColor="text-violet-700" icon={<ArrowTrendingUpIcon className="h-5 w-5 text-violet-600" />} tooltip="Platforms + commodities + Sukuk — matches Investments hub headline and Dashboard today snapshot. Not the same as tradable cash above." />
+                 <ExtendedMetricGate ready={extendedReady} compact className="min-h-[7rem]">
+                     <Card title="Investment exposure (SAR)" value={maskBalance(formatCurrencyString(investmentsTotalSar))} indicatorColor="green" valueColor="text-violet-700" icon={<ArrowTrendingUpIcon className="h-5 w-5 text-violet-600" />} tooltip="Platforms + commodities + Sukuk — matches Investments hub headline and Dashboard today snapshot. Not the same as tradable cash above." />
+                 </ExtendedMetricGate>
             </div>
             <p className="text-xs text-slate-500 -mt-2 mb-2">Headline liquid cash (bank + platform idle cash): <strong className="tabular-nums">{maskBalance(formatCurrencyString(liquidCashSar, { digits: 0 }))}</strong> — same as Dashboard KPI.</p>
             {accountValidationWarnings.length > 0 && (

@@ -21,27 +21,19 @@ import PageLayout from '../components/PageLayout';
 import InfoHint from '../components/InfoHint';
 import { useCurrency } from '../context/CurrencyContext';
 import { supabase } from '../services/supabaseClient';
-import { inferIsAdmin } from '../utils/role';
 import type { Page } from '../types';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { getPersonalAccounts } from '../utils/wealthScope';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import { buildReviewPack, downloadReviewPackMarkdown } from '../services/reviewPack';
 import { sendReviewPackEmail } from '../services/reviewPackEmail';
 import { toast } from '../context/ToastContext';
-import { captureExtendedNetWorthSnapshot } from '../services/netWorthSnapshotExtended';
-import {
-    canAutoCaptureNetWorthSnapshot,
-    getTrackedQuoteSymbolsFromData,
-    quoteRefreshFingerprint,
-} from '../services/netWorthSnapshotReadiness';
-import {
-    markAutoNetWorthSnapshotCaptured,
-    shouldThrottleAutoNetWorthSnapshot,
-} from '../services/netWorthSnapshotThrottle';
+import { captureNetWorthSnapshotFromHeadline } from '../services/netWorthSnapshotExtended';
+import { tryAutoCaptureNetWorthSnapshot } from '../services/netWorthSnapshotCapture';
 import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import DashboardKpiQualityPanel from '../components/DashboardKpiQualityPanel';
+import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import {
     generateWealthSummaryReportCsv,
     generateWealthSummaryReportHtml,
@@ -94,6 +86,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
     const { data, getAvailableCashForAccount, showHydrateBanner } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
     const auth = useContext(AuthContext);
+    const isAdmin = Boolean(auth?.isAdmin);
     const { exchangeRate, currency: displayCurrency } = useCurrency();
     const {
         wealthSummary: reportModel,
@@ -103,7 +96,8 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         investableCashBars,
         sarPerUsd: canonicalSarPerUsd,
         simulatedPrices: canonicalSimulatedPrices,
-    } = useCanonicalFinancialMetrics();
+        extendedReady,
+    } = useExtendedCanonicalMetrics();
     const { isRefreshing, hasQueuedPriceRefresh, symbolQuoteUpdatedAt, isLive } = useMarketQuoteMeta();
     const fxBanner = useMemo(() => {
         const w = Number(data?.wealthUltraConfig?.fxRate);
@@ -120,7 +114,6 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
     const [analysisLanguage, setAnalysisLanguage] = useState<'en' | 'ar'>('en');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [isAdmin, setIsAdmin] = useState(false);
     const [isPrintOptionsOpen, setIsPrintOptionsOpen] = useState(false);
     const [reviewPackEmailSending, setReviewPackEmailSending] = useState(false);
     const [printSections, setPrintSections] = useState({
@@ -134,18 +127,6 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         includeAssets: true,
         includeLiabilities: true,
     });
-
-    useEffect(() => {
-        const loadRole = async () => {
-            if (!auth?.user || !supabase) {
-                setIsAdmin(false);
-                return;
-            }
-            const { data: userRecord } = await supabase.from('users').select('role').eq('id', auth.user.id).maybeSingle();
-            setIsAdmin(inferIsAdmin(auth.user, userRecord?.role ?? null));
-        };
-        loadRole();
-    }, [auth?.user?.id]);
 
     const { maskBalance } = usePrivacyMask();
     const handleGenerateAnalysis = useCallback(async () => {
@@ -259,50 +240,46 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
 
     const handleCaptureSnapshot = useCallback(() => {
         if (!data) return;
-        captureExtendedNetWorthSnapshot(
+        if (!extendedReady) {
+            toast('Workspace metrics are still syncing — snapshot will match your headline net worth once ready.', 'info');
+            return;
+        }
+        const snap = captureNetWorthSnapshotFromHeadline(
+            headline,
             data,
-            exchangeRate,
-            getAvailableCashForAccount,
             supabase && auth?.user?.id ? { supabase, userId: auth.user.id } : null,
-            canonicalSimulatedPrices,
         );
-        trackAction('capture-nw-snapshot', 'Summary');
-    }, [data, exchangeRate, getAvailableCashForAccount, auth?.user?.id, canonicalSimulatedPrices, trackAction]);
+        if (snap) {
+            toast('Net worth snapshot saved.', 'success');
+            trackAction('capture-nw-snapshot', 'Summary');
+        } else {
+            toast('Could not save snapshot — net worth buckets did not reconcile. Try again after quotes finish loading.', 'error');
+        }
+    }, [data, extendedReady, headline, auth?.user?.id, trackAction]);
 
     useEffect(() => {
         if (!auth?.user?.id || !data) return;
-        const nw = headline?.netWorth;
-        if (typeof nw !== 'number' || !Number.isFinite(nw)) return;
-        const snapshotReady = canAutoCaptureNetWorthSnapshot({
+        tryAutoCaptureNetWorthSnapshot({
+            userId: auth.user.id,
+            data,
+            headline,
+            metricsExtendedReady: extendedReady,
             showHydrateBanner,
+            getAvailableCashForAccount,
             isRefreshing,
             hasQueuedPriceRefresh,
             symbolQuoteUpdatedAt,
             isLive,
-            data,
+            sync: supabase ? { supabase, userId: auth.user.id } : null,
         });
-        if (!snapshotReady) return;
-        const quoteFp = quoteRefreshFingerprint(
-            getTrackedQuoteSymbolsFromData(data),
-            symbolQuoteUpdatedAt,
-        );
-        if (shouldThrottleAutoNetWorthSnapshot(auth.user.id, nw, undefined, quoteFp)) return;
-        captureExtendedNetWorthSnapshot(
-            data,
-            exchangeRate,
-            getAvailableCashForAccount,
-            supabase ? { supabase, userId: auth.user.id } : null,
-            canonicalSimulatedPrices,
-        );
-        markAutoNetWorthSnapshotCaptured(auth.user.id, nw, quoteFp);
     }, [
         auth?.user?.id,
         data,
-        headline?.netWorth,
+        headline,
+        extendedReady,
         exchangeRate,
         getAvailableCashForAccount,
         showHydrateBanner,
-        canonicalSimulatedPrices,
         isRefreshing,
         hasQueuedPriceRefresh,
         symbolQuoteUpdatedAt,
@@ -374,22 +351,11 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         return out;
     }, [reportModel, summaryMonthlyKpis, data, exchangeRate]);
 
-    if (!reportModel) {
-        return (
-            <PageLayout title="Wealth Summary" description="Consolidated view of net worth, investments, and cashflow.">
-                <p className="text-sm text-slate-600" role="status">
-                    Preparing wealth summary…
-                </p>
-            </PageLayout>
-        );
-    }
-
-    const {
-        financialMetricsWithEf,
-        investmentTreemapData,
-        managedWealthTotal,
-        emergencyFund,
-    } = reportModel;
+    const summaryExtendedReady = extendedReady && Boolean(reportModel);
+    const financialMetricsWithEf = reportModel?.financialMetricsWithEf;
+    const investmentTreemapData = reportModel?.investmentTreemapData ?? [];
+    const managedWealthTotal = reportModel?.managedWealthTotal ?? 0;
+    const emergencyFund = reportModel?.emergencyFund;
 
     return (
         <PageLayout 
@@ -483,8 +449,41 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                 </div>
             </div>
 
-            {data && isAdmin && <DashboardKpiQualityPanel />}
+            {data && isAdmin && extendedReady && <DashboardKpiQualityPanel />}
 
+            <div className="mb-4 rounded-xl border border-violet-100 bg-violet-50/40 px-4 py-3 text-sm text-slate-700 flex flex-wrap items-center justify-between gap-2">
+                <span>Liquid wealth, resilience, shock drills, and snapshot attribution live on <strong>Wealth Analytics</strong> (same canonical numbers).</span>
+                {setActivePage && (
+                    <button type="button" className="btn-outline text-sm shrink-0" onClick={() => setActivePage('Wealth Analytics')}>
+                        Open Wealth Analytics →
+                    </button>
+                )}
+            </div>
+
+            <div className="cards-grid grid grid-cols-1 gap-4 mb-6">
+                <div className="section-card flex flex-col border-l-4 border-l-sky-500">
+                    <NetWorthCockpit
+                        title="Net worth (history + today)"
+                        metricsOverride={{
+                            headline,
+                            todaySnapshot,
+                            investableCashBars,
+                            sarPerUsd: canonicalSarPerUsd,
+                            simulatedPrices: canonicalSimulatedPrices,
+                        }}
+                        onOpenInvestments={setActivePage ? () => setActivePage('Investments') : undefined}
+                        onOpenAccounts={setActivePage ? () => setActivePage('Accounts') : undefined}
+                        onOpenAssets={setActivePage ? () => setActivePage('Assets') : undefined}
+                        onOpenDataReconciliation={() => {
+                            window.location.hash = 'data-reconciliation';
+                        }}
+                    />
+                </div>
+            </div>
+
+            <ExtendedMetricGate ready={summaryExtendedReady} labelKey="analyticsMetricsLoading" className="min-h-[16rem]">
+            {financialMetricsWithEf && emergencyFund ? (
+            <>
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     <div
                         role="button"
@@ -554,24 +553,6 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
             )}
 
             <div className="cards-grid grid grid-cols-1 gap-4 mb-6">
-                    <div className="section-card flex flex-col border-l-4 border-l-sky-500">
-                        <NetWorthCockpit
-                            title="Net worth (history + today)"
-                        metricsOverride={{
-                            headline,
-                            todaySnapshot,
-                            investableCashBars,
-                            sarPerUsd: canonicalSarPerUsd,
-                            simulatedPrices: canonicalSimulatedPrices,
-                        }}
-                            onOpenInvestments={setActivePage ? () => setActivePage('Investments') : undefined}
-                            onOpenAccounts={setActivePage ? () => setActivePage('Accounts') : undefined}
-                            onOpenAssets={setActivePage ? () => setActivePage('Assets') : undefined}
-                            onOpenDataReconciliation={() => {
-                                window.location.hash = 'data-reconciliation';
-                            }}
-                        />
-                    </div>
                 <div className="section-card flex flex-col min-h-[420px] h-[min(56vh,520px)]">
                     <div className="mb-2 sm:mb-4 space-y-1">
                         <h3 className="section-title !mb-0">Investment allocation &amp; performance</h3>
@@ -588,15 +569,9 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                     </div>
                 </div>
             </div>
-            
-            <div className="mb-4 rounded-xl border border-violet-100 bg-violet-50/40 px-4 py-3 text-sm text-slate-700 flex flex-wrap items-center justify-between gap-2">
-                <span>Liquid wealth, resilience, shock drills, and snapshot attribution moved to <strong>Wealth Analytics</strong> (same canonical numbers).</span>
-                {setActivePage && (
-                    <button type="button" className="btn-outline text-sm shrink-0" onClick={() => setActivePage('Wealth Analytics')}>
-                        Open Wealth Analytics →
-                    </button>
-                )}
-            </div>
+            </>
+            ) : null}
+            </ExtendedMetricGate>
 
             <div className="section-card max-w-full">
                 {aiHealthChecked && !isAiAvailable && (
@@ -605,7 +580,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                 <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
                     <div className="flex flex-col"><div className="flex items-center space-x-2"><LightBulbIcon className="h-6 w-6 text-yellow-500" /><h2 className="text-xl font-semibold text-dark">Financial Advisor</h2></div><p className="text-xs text-slate-500 mt-0.5">Direct, summarized guidance with a report card</p></div>
                     <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-                        <button type="button" onClick={handleGenerateAnalysis} disabled={isLoading || !aiActionsEnabled} title={!aiActionsEnabled ? 'AI unavailable — configure provider keys' : undefined} className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
+                        <button type="button" onClick={handleGenerateAnalysis} disabled={isLoading || !aiActionsEnabled || !financialMetricsWithEf} title={!financialMetricsWithEf ? 'Metrics still syncing' : !aiActionsEnabled ? 'AI unavailable — configure provider keys' : undefined} className="w-full md:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 transition-colors">
                             <SparklesIcon className="h-5 w-5 mr-2" />
                             {isLoading ? 'Analyzing...' : (analysis ? 'Refresh Advisor Summary' : 'Generate Advisor Summary')}
                         </button>

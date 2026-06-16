@@ -10,7 +10,7 @@ const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
 describe('Phase F — Wealth Analytics layout E2E', () => {
   it('compact header with export row in PageLayout action slot', () => {
     const wa = read('pages/WealthAnalytics.tsx');
-    expect(wa).toContain('WealthAnalyticsExportMenu');
+    expect(wa).toContain('WealthAnalyticsExportMenuSection');
     expect(wa).toContain('action={exportAction}');
     expect(wa).not.toContain('PAGE_INTROS');
     expect(wa).not.toContain('ExecutiveStatusRow');
@@ -18,8 +18,8 @@ describe('Phase F — Wealth Analytics layout E2E', () => {
 
   it('above-fold order: KPI grid → P/L → atlas → cockpit', () => {
     const wa = read('pages/WealthAnalytics.tsx');
-    const kpi = wa.indexOf('<ExecutiveKpiGrid');
-    const pnl = wa.indexOf('<PortfolioPeriodPnLPanel');
+    const kpi = wa.indexOf('<WealthAnalyticsExecutiveKpiSection');
+    const pnl = wa.indexOf('<PortfolioPeriodPnLPanelSection');
     const atlas = wa.indexOf('aria-label="Wealth atlas"');
     const cockpit = wa.indexOf('aria-label="Operations cockpit"');
     expect(kpi).toBeGreaterThan(-1);
@@ -32,8 +32,8 @@ describe('Phase F — Wealth Analytics layout E2E', () => {
     const wa = read('pages/WealthAnalytics.tsx');
     expect(wa).toContain('analyticsDetailsTitle');
     expect(wa).toContain('defaultExpanded={false}');
-    expect(wa).toContain('WealthAnalyticsSummaryPanels');
-    expect(wa).toContain('AIExecutiveSummary');
+    expect(wa).toContain('WealthAnalyticsDetailsSectionLazy');
+    expect(read('components/analytics/WealthAnalyticsDetailsSection.tsx')).toContain('WealthAnalyticsSummaryPanelsSection');
   });
 });
 

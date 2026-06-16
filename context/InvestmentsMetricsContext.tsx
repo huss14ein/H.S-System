@@ -1,8 +1,11 @@
 import React from 'react';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import type { UseCanonicalFinancialMetricsResult } from '../hooks/canonicalFinancialMetricsBundle';
 
-export type InvestmentsMetrics = UseCanonicalFinancialMetricsResult;
+export type InvestmentsMetrics = UseCanonicalFinancialMetricsResult & {
+  extendedReady: boolean;
+  showHydrateBanner: boolean;
+};
 
 /** Investments sub-views share shell canonical metrics (no extra provider compute). */
 export function InvestmentsMetricsProvider({ children }: { children: React.ReactNode }) {
@@ -10,5 +13,5 @@ export function InvestmentsMetricsProvider({ children }: { children: React.React
 }
 
 export function useInvestmentsCanonicalMetrics(): InvestmentsMetrics {
-  return useCanonicalFinancialMetrics();
+  return useExtendedCanonicalMetrics();
 }

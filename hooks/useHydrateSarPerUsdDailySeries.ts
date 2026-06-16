@@ -2,6 +2,8 @@ import { useContext, useEffect, useRef } from 'react';
 import type { FinancialData } from '../types';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { DataContext } from '../context/DataContext';
+import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
 
 /**
  * Persists the dense SAR/USD calendar map (localStorage). Must run in an effect, not during render/memo.
@@ -20,7 +22,11 @@ export function useHydrateSarPerUsdDailySeries(
     if (data == null) return;
     const hydrateKey = `${dataResetKey}:${optsKey}`;
     if (lastHydratedKeyRef.current === hydrateKey) return;
-    lastHydratedKeyRef.current = hydrateKey;
-    hydrateSarPerUsdDailySeries(data, uiExchangeRate, opts);
+
+    return scheduleIdleWork(() => {
+      if (isBackgroundWorkPaused()) return;
+      lastHydratedKeyRef.current = hydrateKey;
+      hydrateSarPerUsdDailySeries(data, uiExchangeRate, opts);
+    }, 900);
   }, [data, uiExchangeRate, dataResetKey, optsKey, opts]);
 }

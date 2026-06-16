@@ -16,7 +16,8 @@ export function PageDeferredDataProvider({ children }: { children: React.ReactNo
   const ctx = useContext(DataContext);
   const data = ctx?.data ?? null;
   const showHydrateBanner = ctx?.showHydrateBanner ?? false;
-  const deferredData = useDeferredValue(showHydrateBanner ? null : data);
+  /** Always defer the data snapshot so route paint wins over heavy recomputes during hydrate/quote ticks. */
+  const deferredData = useDeferredValue(data);
 
   const value = useMemo(
     (): PageDeferredDataContextValue => ({

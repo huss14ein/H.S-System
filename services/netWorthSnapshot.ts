@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { recordSarPerUsdForCalendarDay } from './fxDailySeries';
+import { bucketSumMatchesNetWorth } from './netWorthReconciliation';
 
 const KEY = 'finova_nw_snapshots_v1';
 /** One-time localStorage backfill: stamp legacy rows that predate explicit bucket schema versioning. */
@@ -149,6 +150,10 @@ export function pushNetWorthSnapshot(
     if (fx != null) recordSarPerUsdForCalendarDay(today, fx);
     const nw = Number(netWorth);
     const validNw = Number.isFinite(nw) && nw > 0.5;
+    if (buckets && validNw) {
+      const balance = bucketSumMatchesNetWorth({ netWorth: nw, buckets });
+      if (!balance.matches) return;
+    }
     // Never overwrite a good snapshot with a zero mid-hydrate capture.
     if (!validNw && last && last.netWorth > 0.5) return;
     const schemaForRow = buckets ? NW_BUCKETS_SCHEMA_V2 : last?.bucketsSchemaVersion;

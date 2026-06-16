@@ -484,16 +484,80 @@ export interface CompanyProfile {
 }
 
 export async function getCompanyProfile(symbol: string): Promise<CompanyProfile | null> {
+  return getCompanyProfileCached(symbol);
+}
+
+const PROFILE_LS_KEY = 'finova_company_profile_cache_v1';
+const PROFILE_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const profileMemoryCache = new Map<string, { profile: CompanyProfile | null; at: number }>();
+const profilePending = new Map<string, Promise<CompanyProfile | null>>();
+
+function loadProfileLsCache(): Record<string, { profile: CompanyProfile | null; at: number }> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(PROFILE_LS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== 'object' || !parsed || Array.isArray(parsed)) return {};
+    return parsed as Record<string, { profile: CompanyProfile | null; at: number }>;
+  } catch {
+    return {};
+  }
+}
+
+function saveProfileLsEntry(key: string, entry: { profile: CompanyProfile | null; at: number }): void {
+  try {
+    const all = loadProfileLsCache();
+    all[key] = entry;
+    localStorage.setItem(PROFILE_LS_KEY, JSON.stringify(all));
+  } catch {
+    /* quota */
+  }
+}
+
+async function fetchCompanyProfileUncached(symbol: string): Promise<CompanyProfile | null> {
   try {
     const resolved = toFinnhubSymbol(symbol);
     const data = await get<CompanyProfile>('/stock/profile2', { symbol: resolved });
     if (!data?.name) return null;
-    // Finnhub may return ticker as bare "2222" or "REITF" while we queried TADAWUL:… — still the same listing.
-    // Finnhub may canonicalize listing symbols differently; keep valid named profile silently.
     return data;
   } catch {
     return null;
   }
+}
+
+/** Cached company profile — shared by name hooks and fundamentals (memory + localStorage, ~30 day TTL). */
+export async function getCompanyProfileCached(symbol: string): Promise<CompanyProfile | null> {
+  const key = toFinnhubSymbol(symbol).toUpperCase();
+  if (!key) return null;
+
+  const mem = profileMemoryCache.get(key);
+  if (mem && Date.now() - mem.at < PROFILE_CACHE_TTL_MS) return mem.profile;
+
+  const ls = loadProfileLsCache()[key];
+  if (ls && Date.now() - ls.at < PROFILE_CACHE_TTL_MS) {
+    profileMemoryCache.set(key, ls);
+    return ls.profile;
+  }
+
+  if (profilePending.has(key)) return profilePending.get(key)!;
+
+  const p = (async () => {
+    const profile = await fetchCompanyProfileUncached(symbol);
+    const entry = { profile, at: Date.now() };
+    profileMemoryCache.set(key, entry);
+    saveProfileLsEntry(key, entry);
+    profilePending.delete(key);
+    return profile;
+  })();
+  profilePending.set(key, p);
+  return p;
+}
+
+/** Test helper — clear in-memory profile cache between runs. */
+export function clearCompanyProfileCacheForTests(): void {
+  profileMemoryCache.clear();
+  profilePending.clear();
 }
 
 // --- Basic financials / metrics ---
@@ -772,6 +836,38 @@ export interface HoldingFundamentals {
 
 /** Convenience helper: upcoming earnings (revenue estimate) + dividend yield metrics for a symbol. */
 export async function getHoldingFundamentals(symbol: string): Promise<HoldingFundamentals | null> {
+  return getHoldingFundamentalsCached(symbol);
+}
+
+const FUNDAMENTALS_LS_KEY = 'finova_holding_fundamentals_cache_v1';
+const FUNDAMENTALS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const fundamentalsMemoryCache = new Map<string, { data: HoldingFundamentals | null; at: number }>();
+const fundamentalsPending = new Map<string, Promise<HoldingFundamentals | null>>();
+
+function loadFundamentalsLsCache(): Record<string, { data: HoldingFundamentals | null; at: number }> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(FUNDAMENTALS_LS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== 'object' || !parsed || Array.isArray(parsed)) return {};
+    return parsed as Record<string, { data: HoldingFundamentals | null; at: number }>;
+  } catch {
+    return {};
+  }
+}
+
+function saveFundamentalsLsEntry(key: string, entry: { data: HoldingFundamentals | null; at: number }): void {
+  try {
+    const all = loadFundamentalsLsCache();
+    all[key] = entry;
+    localStorage.setItem(FUNDAMENTALS_LS_KEY, JSON.stringify(all));
+  } catch {
+    /* quota */
+  }
+}
+
+async function fetchHoldingFundamentalsUncached(symbol: string): Promise<HoldingFundamentals | null> {
   if (!symbol) return null;
   const today = new Date();
   const from = today.toISOString().split('T')[0];
@@ -787,7 +883,7 @@ export async function getHoldingFundamentals(symbol: string): Promise<HoldingFun
       }),
     ),
     getBasicFinancials(symbol),
-    getCompanyProfile(symbol),
+    getCompanyProfileCached(symbol),
     getQuote(symbol),
   ]);
 
@@ -883,6 +979,40 @@ export async function getHoldingFundamentals(symbol: string): Promise<HoldingFun
     nextEarnings,
     dividend,
   };
+}
+
+/** Cached fundamentals bundle — shared by watchlist, dividend tracker, recovery, holding modal. */
+export async function getHoldingFundamentalsCached(symbol: string): Promise<HoldingFundamentals | null> {
+  const key = toFinnhubSymbol(symbol).toUpperCase();
+  if (!key) return null;
+
+  const mem = fundamentalsMemoryCache.get(key);
+  if (mem && Date.now() - mem.at < FUNDAMENTALS_CACHE_TTL_MS) return mem.data;
+
+  const ls = loadFundamentalsLsCache()[key];
+  if (ls && Date.now() - ls.at < FUNDAMENTALS_CACHE_TTL_MS) {
+    fundamentalsMemoryCache.set(key, ls);
+    return ls.data;
+  }
+
+  if (fundamentalsPending.has(key)) return fundamentalsPending.get(key)!;
+
+  const p = (async () => {
+    const data = await fetchHoldingFundamentalsUncached(symbol);
+    const entry = { data, at: Date.now() };
+    fundamentalsMemoryCache.set(key, entry);
+    saveFundamentalsLsEntry(key, entry);
+    fundamentalsPending.delete(key);
+    return data;
+  })();
+  fundamentalsPending.set(key, p);
+  return p;
+}
+
+/** Test helper — clear in-memory fundamentals cache. */
+export function clearHoldingFundamentalsCacheForTests(): void {
+  fundamentalsMemoryCache.clear();
+  fundamentalsPending.clear();
 }
 
 // --- Insider transactions ---
@@ -1103,7 +1233,7 @@ export async function getSymbolResearch(symbol: string): Promise<SymbolResearch>
   const fromStr = from.toISOString().split('T')[0];
   const toStr = to.toISOString().split('T')[0];
   const [profile, quote, earnings, insider, news] = await Promise.all([
-    getCompanyProfile(symbol),
+    getCompanyProfileCached(symbol),
     getQuoteWith52W(symbol),
     getEarningsCalendar(fromStr, toStr).then((list) => list.filter((e) => e.symbol.toUpperCase() === symbol.toUpperCase())),
     getInsiderTransactions(symbol, fromStr, toStr),

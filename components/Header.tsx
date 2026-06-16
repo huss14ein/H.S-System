@@ -244,6 +244,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                           return (
                             <button
                               key={itemName}
+                              data-nav-link
                               onMouseEnter={() => prefetchPage(itemName as Page)}
                               onFocus={() => prefetchPage(itemName as Page)}
                               onClick={() => { setActivePage(itemName as Page); setActiveGroup(null); }}
@@ -268,6 +269,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
             {/* Investment Plan Quick Status */}
             <div 
               className="hidden xl:flex flex-col items-end mr-4 cursor-pointer hover:opacity-80 transition-opacity"
+              data-nav-link
               onMouseEnter={() => prefetchPage('Investments')}
               onClick={() => setActivePage('Investments')}
               title={
@@ -534,6 +536,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                         return (
                           <button 
                               key={itemName}
+                              data-nav-link
                               onMouseEnter={() => prefetchPage(itemName as Page)}
                               onFocus={() => prefetchPage(itemName as Page)}
                               onClick={() => { setActivePage(itemName as Page); setIsMobileMenuOpen(false); }}

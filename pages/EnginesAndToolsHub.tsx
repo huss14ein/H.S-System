@@ -21,7 +21,7 @@ import { ArrowTrendingDownIcon } from '../components/icons/ArrowTrendingDownIcon
 import { BookOpenIcon } from '../components/icons/BookOpenIcon';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { BoltIcon } from '../components/icons/BoltIcon';
-import LoadingSpinner from '../components/LoadingSpinner';
+import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
 import CollapsibleSection from '../components/CollapsibleSection';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 
@@ -512,7 +512,7 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
           })()}
         </div>
         <div className="p-4 sm:p-6">
-          <Suspense fallback={<LoadingSpinner className="min-h-[20rem]" />}>{content}</Suspense>
+          <Suspense fallback={<SectionLoadingPlaceholder compact label="Loading tool…" minHeight="8rem" />}>{content}</Suspense>
         </div>
       </div>
     </div>

@@ -18,24 +18,37 @@ describe('wealth analytics end-to-end wiring', () => {
 
     it('Wealth Analytics page uses canonical metrics and advanced widgets', () => {
         const src = read('pages/WealthAnalytics.tsx');
+        const deferred = read('components/analytics/WealthAnalyticsDeferredSections.tsx');
         expect(src).toContain('useCanonicalFinancialMetrics');
-        expect(src).toContain('ExecutiveKpiGrid');
-        expect(src).toContain('PortfolioPeriodPnLPanel');
-        expect(src).toContain('WealthAnalyticsExportMenu');
-        expect(src).toContain('WealthHealthIndicators');
-        expect(src).toContain('DashboardOperationsCockpit');
-        expect(src).toContain('SummaryWealthAtlas');
-        expect(src).toContain('WealthAnalyticsSummaryPanels');
-        expect(src).toContain('PortfolioHoldingsGrid');
+        expect(src).not.toContain('useDashboardCanonicalMetrics');
+        expect(src).toContain('netWorth');
+        expect(src).toContain('liquidCashSar');
+        expect(src).not.toContain('resolveSarPerUsd');
+        expect(src).not.toContain('useMarketData');
+        expect(src).toContain('WealthAnalyticsExecutiveKpiSection');
+        expect(deferred).toContain('ExecutiveKpiGrid');
+        expect(src).toContain('PortfolioPeriodPnLPanelSection');
+        expect(src).toContain('WealthAnalyticsExportMenuSection');
+        expect(src).toContain('WealthHealthIndicatorsDeferredSection');
+        expect(src).toContain('DashboardOperationsCockpitSection');
+        expect(src).toContain('SummaryWealthAtlasSection');
+        expect(src).toContain('WealthAnalyticsDetailsSectionLazy');
+        expect(src).toContain('PortfolioHoldingsGridSection');
         expect(src).toContain('portfolioId={holdingsPortfolioId');
         expect(src).toContain('wealth-analytics-portfolio');
-        expect(src).toContain('CostAveragingCalculator');
-        expect(src).toContain('Goals2030Timeline');
-        expect(src).toContain('AIExecutiveSummary');
-        expect(src).toContain('AIFeed');
-        expect(src).toContain('getPersonalTransactions');
-        expect(src).not.toMatch(/personalTransactions\s*\?\?\s*data\?\.transactions/);
-        expect(src).not.toMatch(/personalAccounts\s*\?\?\s*data\?\.accounts/);
+        expect(src).toContain('CostAveragingCalculatorSection');
+        expect(src).toContain('Goals2030TimelineSection');
+        expect(deferred).toContain('useExecutiveKpiSparklines');
+        expect(deferred).toContain('useEnhancementSignals');
+        expect(src).toContain('extendedReady');
+        expect(src).toContain('staggerIndex');
+        expect(src).not.toContain('Loading analytics');
+        expect(read('components/analytics/wealthAnalyticsLazySections.tsx')).toContain('WealthHealthIndicators');
+        expect(read('components/analytics/wealthAnalyticsLazySections.tsx')).toContain('SummaryWealthAtlas');
+        expect(read('components/analytics/wealthAnalyticsLazySections.tsx')).toContain('DashboardOperationsCockpit');
+        expect(read('components/analytics/WealthAnalyticsDetailsSection.tsx')).toContain('useWealthAnalyticsDeferredInsights');
+        expect(read('components/analytics/WealthAnalyticsDetailsSection.tsx')).toContain('exchangeRate: sarPerUsd');
+        expect(read('hooks/useWealthAnalyticsDeferredInsights.ts')).toContain('kpiSnapshot: DashboardKpiSnapshot');
     });
 
     it('monthly cockpit uses inline date toolbar (not a wasted side card)', () => {
@@ -55,10 +68,10 @@ describe('wealth analytics end-to-end wiring', () => {
     it('Dashboard and Summary gate auto snapshots on quote readiness', () => {
         const dashboard = read('pages/Dashboard.tsx');
         const summary = read('pages/Summary.tsx');
-        expect(dashboard).toContain('canAutoCaptureNetWorthSnapshot');
+        expect(dashboard).toContain('tryAutoCaptureNetWorthSnapshot');
         expect(dashboard).toContain('dashboardDebouncedPrices');
-        expect(summary).toContain('canAutoCaptureNetWorthSnapshot');
-        expect(summary).toContain('quoteRefreshFingerprint');
+        expect(summary).toContain('tryAutoCaptureNetWorthSnapshot');
+        expect(summary).toContain('captureNetWorthSnapshotFromHeadline');
     });
 
     it('Dashboard and Summary stay lean (heavy widgets on Wealth Analytics only)', () => {
@@ -83,8 +96,12 @@ describe('wealth analytics end-to-end wiring', () => {
         expect(src).toContain('startTransition(() => {\n                setData((prevState) => ({\n                    ...prevState,\n                    transactions: prevState.transactions.map((t) => (t.id === transaction.id ? normalized : t)),');
     });
 
-    it('CanonicalFinancialMetricsProvider debounces data before compute', () => {
+    it('CanonicalFinancialMetricsProvider computes fast metrics on live data (no data debounce)', () => {
         const src = read('context/CanonicalFinancialMetricsContext.tsx');
-        expect(src).toContain('useDebouncedValue(showHydrateBanner ? null : data, 350)');
+        expect(src).toMatch(
+          /const metricsData = showHydrateBanner && !financialDataHasHydrated\(data\) \? null : data/,
+        );
+        expect(src).toContain('fastBundle');
+        expect(src).not.toContain('useDebouncedValue(showHydrateBanner ? null : data');
     });
 });

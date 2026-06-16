@@ -10,8 +10,10 @@ import { TrophyIcon } from '../components/icons/TrophyIcon';
 import { useCurrency } from '../context/CurrencyContext';
 import { personalInvestmentTerminalValueSAR } from '../utils/currencyMath';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
-import type { InvestmentTransaction, Page } from '../types';
-import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { effectivePayoutMonths } from '../services/dividendExpectedSchedule';
+import type { Holding, InvestmentTransaction, Page } from '../types';
+import { useCompanyNames, symbolsNeedingCompanyName } from '../hooks/useSymbolCompanyName';
 import { useAI } from '../context/AiContext';
 import { useToast } from '../context/ToastContext';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
@@ -160,43 +162,66 @@ const DividendTrackerView: React.FC<{
         planEpoch,
     ]);
 
-    const fundamentalsSymbols = useMemo(() => {
-        const fromHoldings = personalInvestments.flatMap((p) =>
-            (p.holdings ?? []).map((h) => String(h.symbol ?? '').trim().toUpperCase()),
-        );
-        return Array.from(new Set(fromHoldings.filter((s) => s.length >= 2))).slice(0, 24);
+    const fundamentalsSymbolsNeedingMarket = useMemo(() => {
+        const syms = new Set<string>();
+        for (const p of personalInvestments) {
+            for (const h of p.holdings ?? []) {
+                if ((h as Holding).holdingType === 'commodity') continue;
+                const sym = String(h.symbol ?? '').trim().toUpperCase();
+                if (sym.length < 2) continue;
+                if (Number(h.dividendYield) > 0) continue;
+                if (effectivePayoutMonths(h as Holding).length > 0) continue;
+                syms.add(sym);
+            }
+        }
+        return Array.from(syms);
     }, [personalInvestments]);
 
+    const fundMapRef = useRef(fundMap);
+    fundMapRef.current = fundMap;
+
     useEffect(() => {
+        if (!import.meta.env.VITE_FINNHUB_API_KEY) return;
+        if (fundamentalsSymbolsNeedingMarket.length === 0) return;
         let cancelled = false;
-        (async () => {
-            for (const sym of fundamentalsSymbols) {
-                if (cancelled) break;
-                try {
-                    const f = await getHoldingFundamentals(sym);
-                    if (!cancelled && f?.dividend) {
-                        setFundMap((prev) => ({ ...prev, [sym]: f.dividend! }));
+        const cancelIdle = scheduleIdleWork(() => {
+            void (async () => {
+                for (const sym of fundamentalsSymbolsNeedingMarket) {
+                    if (cancelled) break;
+                    if (fundMapRef.current[sym]) continue;
+                    try {
+                        const f = await getHoldingFundamentals(sym);
+                        if (!cancelled && f?.dividend) {
+                            setFundMap((prev) => ({ ...prev, [sym]: f.dividend! }));
+                        }
+                    } catch {
+                        /* ignore */
                     }
-                } catch {
-                    /* ignore */
+                    await new Promise((r) => setTimeout(r, 1200));
                 }
-                await new Promise((r) => setTimeout(r, 1200));
-            }
-        })();
+            })();
+        }, 2000);
         return () => {
             cancelled = true;
+            cancelIdle();
         };
-    }, [fundamentalsSymbols.join('|')]);
+    }, [fundamentalsSymbolsNeedingMarket.join('|')]);
+
+    const dividendNameEntries = useMemo(
+        () =>
+            personalInvestments.flatMap((p) =>
+                (p.holdings ?? []).map((h) => ({ symbol: h.symbol, name: h.name })),
+            ),
+        [personalInvestments],
+    );
 
     const symbolBatch = useMemo(() => {
-        const syms = new Set<string>();
+        const entries = [...dividendNameEntries];
         for (const t of dividendTransactions.slice(0, 20)) {
-            const s = (t.symbol || '').trim();
-            if (s.length >= 2) syms.add(s);
+            entries.push({ symbol: t.symbol, name: undefined });
         }
-        for (const r of tracker?.holdingRows ?? []) syms.add(r.symbol);
-        return [...syms];
-    }, [dividendTransactions, tracker?.holdingRows]);
+        return symbolsNeedingCompanyName(entries);
+    }, [dividendNameEntries, dividendTransactions]);
 
     const { names: dividendCompanyNames } = useCompanyNames(symbolBatch);
 

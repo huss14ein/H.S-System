@@ -4,7 +4,10 @@ import {
   computePortfolioMarkToMarketPeriodPnLSar,
   computePortfolioPeriodPnLSummary,
   computePortfolioPnLDailySeries,
+  platformPeriodPnLFromSummary,
+  resolvePortfolioPeriodPnLEndValueSar,
 } from '../services/portfolioPeriodPnL';
+import { computePlatformCardMetrics } from '../services/investmentPlatformCardMetrics';
 import type { Account, FinancialData, InvestmentPortfolio, InvestmentTransaction } from '../types';
 
 describe('portfolioPeriodPnL', () => {
@@ -131,10 +134,10 @@ describe('portfolioPeriodPnL', () => {
       simulatedPrices: { '2222.SR': { price: 12, change: 0.5, changePercent: 1 } },
     });
 
-    // Start cost 100×10=1000, end live 1200 → total +200 (not daily 50 × 5 trading days = 250)
-    expect(period.totalSar).toBeCloseTo(200, 0);
+    // Same live mark at period start and end (no flows) → period P/L ≈ 0, not cost-to-live lifetime gain.
+    expect(period.totalSar).toBeCloseTo(0, 0);
     expect(period.ledgerSar).toBeCloseTo(0, 0);
-    expect(period.marketEstimateSar).toBeCloseTo(200, 0);
+    expect(period.marketEstimateSar).toBeCloseTo(0, 0);
   });
 
   it('summary returns one row per portfolio with weekly and monthly totals', () => {
@@ -181,7 +184,7 @@ describe('portfolioPeriodPnL', () => {
 
     expect(summary.rows).toHaveLength(1);
     expect(summary.rows[0].portfolioName).toBe('Core');
-    expect(summary.rows[0].weekly.totalSar).toBeCloseTo(200, 0);
+    expect(summary.rows[0].weekly.totalSar).toBeCloseTo(0, 0);
     expect(summary.weeklyTotalSar).toBe(summary.rows[0].weekly.totalSar);
   });
 
@@ -230,5 +233,125 @@ describe('portfolioPeriodPnL', () => {
     expect(series.weekly[series.weekly.length - 1]?.cumulativeSar).toBeCloseTo(summary.weeklyTotalSar, 0);
     expect(series.monthly[series.monthly.length - 1]?.cumulativeSar).toBeCloseTo(summary.monthlyTotalSar, 0);
     expect(series.weeklyByPortfolioId.get('p1')?.length).toBe(series.weekly.length);
+  });
+
+  it('multi-portfolio week P/L does not treat attributed deposit as a loss', () => {
+    const accounts: Account[] = [{ id: 'acc-1', name: 'Broker', type: 'Investment', balance: 0 }];
+    const p1: InvestmentPortfolio = {
+      id: 'port-low',
+      name: 'Small',
+      accountId: 'acc-1',
+      currency: 'SAR',
+      holdings: [
+        {
+          id: 'h1',
+          symbol: 'AAA.SR',
+          quantity: 100,
+          avgCost: 10,
+          currentValue: 1000,
+          zakahClass: 'Zakatable',
+          realizedPnL: 0,
+          holdingType: 'manual_fund',
+        },
+      ],
+    };
+    const p2: InvestmentPortfolio = {
+      id: 'port-high',
+      name: 'Big',
+      accountId: 'acc-1',
+      currency: 'SAR',
+      holdings: [
+        {
+          id: 'h2',
+          symbol: 'BBB.SR',
+          quantity: 50,
+          avgCost: 10,
+          currentValue: 3000,
+          zakahClass: 'Zakatable',
+          realizedPnL: 0,
+          holdingType: 'manual_fund',
+        },
+      ],
+    };
+    const now = new Date(2026, 4, 25);
+    const depositDate = '2026-05-24';
+    const txs: InvestmentTransaction[] = [
+      {
+        id: 'orphan-d',
+        accountId: 'acc-1',
+        symbol: 'CASH',
+        type: 'deposit',
+        date: depositDate,
+        total: 1000,
+        currency: 'SAR',
+      },
+    ];
+    const data = {
+      accounts,
+      investments: [p1, p2],
+      investmentTransactions: txs,
+      personalInvestments: [p1, p2],
+      personalAccounts: accounts,
+    } as FinancialData;
+
+    const summary = computePortfolioPeriodPnLSummary({
+      data,
+      portfolios: [p1, p2],
+      accounts,
+      sarPerUsd: 3.75,
+      simulatedPrices: {},
+      monthStartDay: 1,
+      getAvailableCashForAccount: () => ({ SAR: 1000, USD: 0 }),
+      now,
+    });
+
+    const low = summary.rows.find((r) => r.portfolioId === 'port-low')!;
+    const high = summary.rows.find((r) => r.portfolioId === 'port-high')!;
+    expect(low.weekly.totalSar).toBeCloseTo(0, 0);
+    expect(high.weekly.totalSar).toBeCloseTo(0, 0);
+
+    const platform = platformPeriodPnLFromSummary(summary, 'acc-1');
+    expect(platform.weekly.totalSar).toBeCloseTo(0, 0);
+  });
+
+  it('resolvePortfolioPeriodPnLEndValueSar adds weighted cash slice for sibling portfolios', () => {
+    const metrics = computePlatformCardMetrics({
+      portfolios: [
+        {
+          id: 'p1',
+          name: 'A',
+          accountId: 'acc',
+          currency: 'SAR',
+          holdings: [
+            {
+              id: 'h1',
+              symbol: 'AAA.SR',
+              quantity: 10,
+              avgCost: 100,
+              currentValue: 1000,
+              zakahClass: 'Zakatable',
+              realizedPnL: 0,
+              holdingType: 'manual_fund',
+            },
+          ],
+        },
+      ],
+      transactions: [],
+      accounts: [{ id: 'acc', name: 'B', type: 'Investment', balance: 0 }],
+      allInvestments: [],
+      sarPerUsd: 3.75,
+      availableCashByCurrency: { SAR: 0, USD: 0 },
+      simulatedPrices: {},
+      platformCurrency: 'SAR',
+      unrealizedPnLBasis: 'holdings_cost',
+    });
+    expect(
+      resolvePortfolioPeriodPnLEndValueSar({
+        metrics,
+        siblingCount: 2,
+        portfolioWeight: 0.25,
+        accountCashSar: 1000,
+      }),
+    ).toBeCloseTo(1000 + 250, 0);
   });
 });

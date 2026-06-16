@@ -858,7 +858,7 @@ const PlanTradeModal: React.FC<{
 const InvestmentPlanControlTower: React.FC = () => {
   const { data } = useContext(DataContext)!;
   const { formatCurrencyString } = useFormatCurrency();
-  const { analysis, actionQueue, cash, risk, household, ready } = useFinancialEnginesIntegration();
+  const { analysis, actionQueue, cash, risk, household, ready } = useFinancialEnginesIntegration({ eager: true });
   const emergencyFund = useEmergencyFund(data ?? null);
   const nextBestActions = useMemo(() => {
     const txs = getPersonalTransactions(data);

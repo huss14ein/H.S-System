@@ -4,7 +4,7 @@ import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './t
 import { savingsRateSarFinancialMonth } from './financeMetrics';
 import { resolveMonthStartDayFromData } from '../utils/financialMonth';
 import { toSAR, totalLiquidCashSARFromAccounts } from '../utils/currencyMath';
-import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from './fxDailySeries';
+import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay, loadSarPerUsdByDay } from './fxDailySeries';
 import { computePersonalHeadlineNetWorthSar } from './personalNetWorth';
 import {
   computeHeadlinePersonalInvestmentRoiDecimal,
@@ -46,8 +46,12 @@ export type FinancialMonthCashflowSar = {
 export function financialMonthNetCashflowSar(
   data: FinancialData,
   uiExchangeRate: number,
+  fxMap?: Record<string, number>,
 ): FinancialMonthCashflowSar {
-  hydrateSarPerUsdDailySeries(data, uiExchangeRate);
+  const map = fxMap ?? (() => {
+    hydrateSarPerUsdDailySeries(data, uiExchangeRate);
+    return loadSarPerUsdByDay();
+  })();
   const now = new Date();
   const monthStartDay = resolveMonthStartDayFromData(data);
   const currentRange = financialMonthRange(now, monthStartDay);
@@ -61,7 +65,7 @@ export function financialMonthNetCashflowSar(
     const raw = Math.abs(Number(t.amount) || 0);
     if (c === 'SAR') return raw;
     const day = t.date.slice(0, 10);
-    const r = getSarPerUsdForCalendarDay(day, data, uiExchangeRate);
+    const r = getSarPerUsdForCalendarDay(day, data, uiExchangeRate, map);
     return toSAR(raw, 'USD', r);
   };
 
@@ -109,13 +113,14 @@ export function computeDashboardKpiSnapshot(
   try {
     if (!data) return null;
     hydrateSarPerUsdDailySeries(data, exchangeRate);
+    const fxMap = loadSarPerUsdByDay();
     const headline = computePersonalHeadlineNetWorthSar(data, exchangeRate, {
       getAvailableCashForAccount: getAvailableCashForAccount as (id: string) => { SAR: number; USD: number },
       simulatedPrices,
     });
     const sarPerUsd = headline.sarPerUsd;
 
-    const cf = financialMonthNetCashflowSar(data, exchangeRate);
+    const cf = financialMonthNetCashflowSar(data, exchangeRate, fxMap);
     const { monthlyExpensesSar: monthlyExpenses, monthlyPnLSar: monthlyPnL, currentRange } = cf;
     const monthStartDay = resolveMonthStartDayFromData(data);
     const prevKey: FinancialMonthKey = addMonthsToKey(currentRange.key, -1);
@@ -132,7 +137,7 @@ export function computeDashboardKpiSnapshot(
       const raw = Math.abs(Number(t.amount) || 0);
       if (c === 'SAR') return raw;
       const day = t.date.slice(0, 10);
-      const r = getSarPerUsdForCalendarDay(day, data, exchangeRate);
+      const r = getSarPerUsdForCalendarDay(day, data, exchangeRate, fxMap);
       return toSAR(raw, 'USD', r);
     };
 

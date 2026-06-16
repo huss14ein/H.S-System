@@ -10,20 +10,20 @@ import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
 import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { quoteNotionalInBookCurrency, toSAR } from '../utils/currencyMath';
 import { holdingUsesLiveQuote } from '../utils/holdingValuation';
 import { getPersonalInvestments } from '../utils/wealthScope';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import type { InvestmentPortfolio } from '../types';
 import type { HeadlineAllocationRow } from '../services/headlineInvestmentAllocation';
-import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { useCompanyNames, symbolsNeedingCompanyName } from '../hooks/useSymbolCompanyName';
 import {
     ResolvedSymbolLabel,
     formatSymbolWithCompany,
-    symbolsFromHoldings,
 } from '../components/SymbolWithCompanyName';
 import MultiStockAnalysisPanel from '../components/investments/MultiStockAnalysisPanel';
+import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
 
 type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
 
@@ -50,14 +50,15 @@ function holdingValueInBookCurrency(
 const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => void }> = ({ setActiveTab }) => {
     const { data } = useContext(DataContext)!;
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
-    const { simulatedPrices } = useCanonicalFinancialMetrics();
     const {
+        simulatedPrices,
         sarPerUsd,
         investmentsTotalSar,
         investableCashTotalSar: tradableCashSAR,
         sukukAssetsValueSar: sukukAssetsSAR,
         investmentAllocation,
-    } = useCanonicalFinancialMetrics();
+        extendedReady,
+    } = useExtendedCanonicalMetrics();
 
     const assetClassAllocation = investmentAllocation.assetClassAllocation;
     const portfolioAllocation = investmentAllocation.portfolioAllocation;
@@ -97,7 +98,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
         return allHoldingsWithGains;
     }, [data, simulatedPrices, sarPerUsd]);
 
-    const holdingSymbolsForNames = useMemo(() => symbolsFromHoldings(allHoldingsWithGains), [allHoldingsWithGains]);
+    const holdingSymbolsForNames = useMemo(() => symbolsNeedingCompanyName(allHoldingsWithGains), [allHoldingsWithGains]);
     const { names: companyNameMap } = useCompanyNames(holdingSymbolsForNames);
 
     const [swotEn, setSwotEn] = useState('');
@@ -228,32 +229,45 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                 </div>
             </div>
 
-            <div className={`rounded-xl border p-4 ${
+            {!extendedReady ? (
+                <SectionLoadingPlaceholder labelKey="analyticsMetricsLoading" minHeight="14rem" />
+            ) : (
+            <>
+            <div
+              className={`rounded-xl border p-4 ${
                 diversification.status === 'healthy'
-                    ? 'border-emerald-200 bg-emerald-50/70'
-                    : diversification.status === 'watch'
+                  ? 'border-emerald-200 bg-emerald-50/70'
+                  : diversification.status === 'watch'
                     ? 'border-amber-200 bg-amber-50/70'
                     : 'border-rose-200 bg-rose-50/70'
-            }`}>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-sm font-semibold text-slate-800">Diversification monitor</p>
-                    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
-                        diversification.status === 'healthy'
-                            ? 'bg-emerald-100 text-emerald-700'
-                            : diversification.status === 'watch'
-                            ? 'bg-amber-100 text-amber-700'
-                            : 'bg-rose-100 text-rose-700'
-                    }`}>{diversification.status === 'healthy' ? 'Healthy' : diversification.status === 'watch' ? 'Watch' : 'Alert'}</span>
-                </div>
-                {diversification.warnings.length > 0 ? (
-                    <ul className="mt-2 text-sm space-y-1 text-slate-700">
-                        {diversification.warnings.map((warning, idx) => (
-                            <li key={idx} className="flex items-start gap-2"><ExclamationTriangleIcon className="h-4 w-4 mt-0.5 text-amber-600" />{warning}</li>
-                        ))}
-                    </ul>
-                ) : (
-                    <p className="mt-2 text-sm text-emerald-700">Allocation concentration is within recommended guardrails.</p>
-                )}
+              }`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-slate-800">Diversification monitor</p>
+                <span
+                  className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
+                    diversification.status === 'healthy'
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : diversification.status === 'watch'
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'bg-rose-100 text-rose-700'
+                  }`}
+                >
+                  {diversification.status === 'healthy' ? 'Healthy' : diversification.status === 'watch' ? 'Watch' : 'Alert'}
+                </span>
+              </div>
+              {diversification.warnings.length > 0 ? (
+                <ul className="mt-2 text-sm space-y-1 text-slate-700">
+                  {diversification.warnings.map((warning, idx) => (
+                    <li key={idx} className="flex items-start gap-2">
+                      <ExclamationTriangleIcon className="h-4 w-4 mt-0.5 text-amber-600" />
+                      {warning}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-sm text-emerald-700">Allocation concentration is within recommended guardrails.</p>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
@@ -444,6 +458,9 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                     </div>
                 </div>
             </div>
+            </>
+            )}
+
             <div className="section-card flex flex-col min-h-[460px] border border-slate-200 shadow-sm">
                 <h3 className="section-title mb-1">Consolidated Holdings Performance</h3>
                 <p className="text-sm text-slate-500 mb-4">Size represents market value; color represents performance (unrealized gain/loss %).</p>

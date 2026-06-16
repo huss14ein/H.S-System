@@ -18,6 +18,15 @@ import {
 export type { CanonicalFinancialMetrics } from '../services/canonicalFinancialMetrics';
 export type { UseCanonicalFinancialMetricsResult } from './canonicalFinancialMetricsBundle';
 export { buildCanonicalFinancialMetricsResult } from './canonicalFinancialMetricsBundle';
+export {
+  headlineInvestmentsBucketSar,
+  pickInvestmentsTotalSar,
+  pickCommoditiesValueSar,
+  pickSukukAssetsValueSar,
+  pickPlatformsRollupSar,
+  pickInvestableCashTotalSar,
+  pickWealthSummary,
+} from '../services/extendedMetricsPresentation';
 
 /**
  * Debounced live quotes from the shell provider (or local fallback).
@@ -121,4 +130,23 @@ export function useDashboardCanonicalMetrics(): DashboardCanonicalMetrics & {
   const shell = useCanonicalFinancialMetricsContext();
   if (shell) return shell.dashboard;
   return useDashboardCanonicalMetricsLocal();
+}
+
+/** True when phase-2 wealth summary, allocation, and live investment ROI are merged. */
+export function useExtendedMetricsReady(): boolean {
+  const ctx = useContext(DataContext);
+  const metrics = useCanonicalFinancialMetrics();
+  return metrics.metricsExtendedReady && !(ctx?.showHydrateBanner) && !!ctx?.data;
+}
+
+/** Canonical bundle + consistent extended/hydrate gates for wealth surfaces. */
+export function useExtendedCanonicalMetrics(): UseCanonicalFinancialMetricsResult & {
+  extendedReady: boolean;
+  showHydrateBanner: boolean;
+} {
+  const ctx = useContext(DataContext);
+  const metrics = useCanonicalFinancialMetrics();
+  const showHydrateBanner = ctx?.showHydrateBanner ?? false;
+  const extendedReady = metrics.metricsExtendedReady && !showHydrateBanner && !!ctx?.data;
+  return { ...metrics, extendedReady, showHydrateBanner };
 }

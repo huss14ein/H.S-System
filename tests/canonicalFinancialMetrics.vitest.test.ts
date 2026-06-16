@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeCanonicalFinancialMetrics } from '../services/canonicalFinancialMetrics';
+import { computeCanonicalFinancialMetrics, buildFastCanonicalFinancialMetrics } from '../services/canonicalFinancialMetrics';
 import type { FinancialData } from '../types';
 
 describe('computeCanonicalFinancialMetrics', () => {
@@ -99,5 +99,27 @@ describe('computeCanonicalFinancialMetrics', () => {
         m.headlineExposureParts.sukukAssetsValueSar,
     ).toBeCloseTo(m.investmentsTotalSar, 6);
     expect(m.investmentAllocation.commoditiesSar).toBe(5000);
+  });
+
+  it('fast phase exposes headline + KPI without wealth summary (extended phase fills later)', () => {
+    const data = {
+      accounts: [{ id: 'a1', name: 'Chk', type: 'Checking', balance: 5000, currency: 'SAR' }],
+      assets: [],
+      liabilities: [],
+      commodityHoldings: [],
+      investments: [],
+      transactions: [],
+      budgets: [],
+    } as unknown as FinancialData;
+    const fast = buildFastCanonicalFinancialMetrics({
+      data,
+      exchangeRate: 3.75,
+      getAvailableCashForAccount: () => ({ SAR: 0, USD: 0 }),
+      simulatedPrices: {},
+    });
+    expect(fast.netWorth).toBeGreaterThan(0);
+    expect(fast.kpiSnapshot?.netWorth).toBe(fast.netWorth);
+    expect(fast.wealthSummary).toBeNull();
+    expect(fast.investmentAllocation.portfolioAllocation).toEqual([]);
   });
 });

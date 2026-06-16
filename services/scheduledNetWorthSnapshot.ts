@@ -1,5 +1,6 @@
 import type { FinancialData } from '../types';
-import { captureExtendedNetWorthSnapshot } from './netWorthSnapshotExtended';
+import type { PersonalHeadlineNetWorthResult } from './personalNetWorth';
+import { captureExtendedNetWorthSnapshot, captureNetWorthSnapshotFromHeadline } from './netWorthSnapshotExtended';
 import { canAutoCaptureNetWorthSnapshot } from './netWorthSnapshotReadiness';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -46,16 +47,20 @@ export function markAutoSnapshotRan(userId: string): void {
 export async function runAutoNetWorthSnapshotIfDue(input: {
   userId: string;
   data: FinancialData;
+  headline?: PersonalHeadlineNetWorthResult;
   exchangeRate: number;
   getAvailableCashForAccount: (id: string) => { SAR: number; USD: number };
   simulatedPrices?: Record<string, { price: number }>;
   supabase: SupabaseClient | null;
+  metricsExtendedReady?: boolean;
   snapshotReadiness?: {
     showHydrateBanner: boolean;
     isRefreshing: boolean;
     hasQueuedPriceRefresh: () => boolean;
     symbolQuoteUpdatedAt: Record<string, string | undefined>;
     isLive: boolean;
+    metricsExtendedReady?: boolean;
+    getAvailableCashForAccount?: (id: string) => { SAR: number; USD: number };
   };
 }): Promise<boolean> {
   if (!shouldRunAutoSnapshot(input.userId) || !input.supabase) return false;
@@ -67,13 +72,18 @@ export async function runAutoNetWorthSnapshotIfDue(input: {
     if (!ready) return false;
   }
   try {
-    await captureExtendedNetWorthSnapshot(
-      input.data,
-      input.exchangeRate,
-      input.getAvailableCashForAccount,
-      { supabase: input.supabase, userId: input.userId },
-      input.simulatedPrices,
-    );
+    const sync = { supabase: input.supabase, userId: input.userId };
+    const snap =
+      input.headline && input.metricsExtendedReady
+        ? captureNetWorthSnapshotFromHeadline(input.headline, input.data, sync)
+        : captureExtendedNetWorthSnapshot(
+            input.data,
+            input.exchangeRate,
+            input.getAvailableCashForAccount,
+            sync,
+            input.simulatedPrices,
+          );
+    if (!snap) return false;
     markAutoSnapshotRan(input.userId);
     return true;
   } catch {

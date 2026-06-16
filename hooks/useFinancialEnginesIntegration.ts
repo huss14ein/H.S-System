@@ -4,7 +4,7 @@
  * Consumable by Plan, Budgets, Wealth Ultra, and Investment Plan for consistent cash/risk/household constraints.
  */
 
-import { useMemo, useContext, useEffect, useState, useRef } from 'react';
+import { useMemo, useContext, useEffect, useState, useRef, startTransition } from 'react';
 import { DataContext } from '../context/DataContext';
 import {
   validateInvestmentAction,
@@ -19,8 +19,9 @@ import {
   computeFinancialEnginesIntegration,
   EMPTY_FINANCIAL_ENGINES_SNAPSHOT,
 } from '../services/financialEnginesIntegrationCompute';
-import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { scheduleIdleWorkAsync } from '../utils/runWhenIdle';
 import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
+import { yieldToMain } from '../utils/yieldToMain';
 
 export interface UseFinancialEnginesIntegrationResult {
   /** Unified context (cash, risk, household) from all engines */
@@ -58,7 +59,7 @@ type Options = {
  * Use in Plan, Budgets, Wealth Ultra, and Investment Plan for shared constraints and alerts.
  */
 export function useFinancialEnginesIntegration(options?: Options): UseFinancialEnginesIntegrationResult {
-  const eager = options?.eager !== false;
+  const eager = options?.eager === true;
   const { data, showHydrateBanner } = useContext(DataContext)!;
   const [idleSnapshot, setIdleSnapshot] = useState(EMPTY_FINANCIAL_ENGINES_SNAPSHOT);
 
@@ -96,9 +97,12 @@ export function useFinancialEnginesIntegration(options?: Options): UseFinancialE
       setIdleSnapshot(EMPTY_FINANCIAL_ENGINES_SNAPSHOT);
       return;
     }
-    return scheduleIdleWork(() => {
+    return scheduleIdleWorkAsync(async () => {
       if (isBackgroundWorkPaused()) return;
-      setIdleSnapshot(computeFinancialEnginesIntegration(data, showHydrateBanner));
+      await yieldToMain(16);
+      if (isBackgroundWorkPaused()) return;
+      const next = computeFinancialEnginesIntegration(data, showHydrateBanner);
+      startTransition(() => setIdleSnapshot(next));
     }, 2500);
   }, [eager, data, showHydrateBanner, dataFingerprint]);
 

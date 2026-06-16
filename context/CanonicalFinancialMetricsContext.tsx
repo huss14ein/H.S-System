@@ -1,13 +1,18 @@
-import React, { createContext, useContext, useMemo, useDeferredValue, useRef } from 'react';
+import React, { createContext, useContext, useMemo, useEffect, useState, startTransition } from 'react';
 import { DataContext } from './DataContext';
 import { useCurrency } from './CurrencyContext';
 import { useMarketPrices } from './MarketDataContext';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
-import { pickDashboardCanonicalMetrics, type DashboardCanonicalMetrics } from '../services/canonicalFinancialMetrics';
-import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
+import type { DashboardCanonicalMetrics } from '../services/canonicalFinancialMetrics';
+import { pickDashboardCanonicalMetrics } from '../services/canonicalFinancialMetrics';
+import { extendCanonicalFinancialMetricsAsync } from '../services/canonicalFinancialMetricsAsync';
+import { financialDataHasHydrated } from '../services/financialDataHydration';
+import { yieldToMain } from '../utils/yieldToMain';
 import {
-  buildCanonicalFinancialMetricsResult,
+  buildFastCanonicalFinancialMetricsResult,
+  buildFromCanonicalMetrics,
+  pickDashboardFromMetricsResult,
   type UseCanonicalFinancialMetricsResult,
 } from '../hooks/canonicalFinancialMetricsBundle';
 
@@ -23,7 +28,29 @@ type CanonicalFinancialMetricsContextValue = {
 
 const CanonicalFinancialMetricsContext = createContext<CanonicalFinancialMetricsContextValue | null>(null);
 
-/** One canonical metrics bundle for the authenticated shell (avoids N× recompute per page). */
+function buildContextValue(full: UseCanonicalFinancialMetricsResult): CanonicalFinancialMetricsContextValue {
+  return {
+    full,
+    dashboard: pickDashboardFromMetricsResult(full),
+  };
+}
+
+function buildEmptyContextValue(
+  exchangeRate: number,
+  getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number },
+): CanonicalFinancialMetricsContextValue {
+  return buildContextValue(
+    buildFastCanonicalFinancialMetricsResult({
+      data: null,
+      exchangeRate,
+      getAvailableCashForAccount,
+      debouncedPrices: {},
+      showHydrateBanner: true,
+    }),
+  );
+}
+
+/** One canonical metrics bundle for the authenticated shell (fast sync paint, extended async). */
 export function CanonicalFinancialMetricsProvider({ children }: { children: React.ReactNode }) {
   const ctx = useContext(DataContext);
   const data = ctx?.data ?? null;
@@ -31,39 +58,102 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
   const getAvailableCashForAccount = ctx?.getAvailableCashForAccount;
   const { exchangeRate } = useCurrency();
   const { simulatedPrices } = useMarketPrices();
-  const debouncedPrices = useDebouncedValue(simulatedPrices, 1500);
-  const deferredPrices = useDeferredValue(debouncedPrices);
-  const debouncedData = useDebouncedValue(showHydrateBanner ? null : data, 350);
-  const deferredData = useDeferredValue(debouncedData);
-  useHydrateSarPerUsdDailySeries(deferredData, exchangeRate);
+  const debouncedPrices = useDebouncedValue(simulatedPrices, 400);
+  /** Live data for metrics — use partial/cached rows while fast tier hydrates; never block on full ledger. */
+  const metricsData = showHydrateBanner && !financialDataHasHydrated(data) ? null : data;
+  useHydrateSarPerUsdDailySeries(metricsData, exchangeRate);
 
-  const cachedValueRef = useRef<CanonicalFinancialMetricsContextValue | null>(null);
-
-  const value = useMemo((): CanonicalFinancialMetricsContextValue => {
-    if (isBackgroundWorkPaused() && cachedValueRef.current) {
-      return cachedValueRef.current;
+  const fastBundle = useMemo((): UseCanonicalFinancialMetricsResult => {
+    if (!metricsData) {
+      return buildFastCanonicalFinancialMetricsResult({
+        data: null,
+        exchangeRate,
+        getAvailableCashForAccount,
+        debouncedPrices,
+        showHydrateBanner: true,
+      });
     }
-    const full = buildCanonicalFinancialMetricsResult({
-      data: deferredData,
+    return buildFastCanonicalFinancialMetricsResult({
+      data: metricsData,
       exchangeRate,
       getAvailableCashForAccount,
-      debouncedPrices: deferredPrices,
-      showHydrateBanner,
+      debouncedPrices,
+      showHydrateBanner: false,
     });
-    const dashboardCore = pickDashboardCanonicalMetrics(full);
-    const next: CanonicalFinancialMetricsContextValue = {
-      full,
-      dashboard: {
-        ...dashboardCore,
-        data: deferredData,
-        exchangeRate,
-        simulatedPrices: deferredPrices,
-        getAvailableCashForAccount,
-      },
+  }, [metricsData, exchangeRate, getAvailableCashForAccount, debouncedPrices, showHydrateBanner]);
+
+  const [extendedBundle, setExtendedBundle] = useState<UseCanonicalFinancialMetricsResult | null>(null);
+
+  useEffect(() => {
+    if (!metricsData) setExtendedBundle(null);
+  }, [metricsData]);
+
+  const extendedFingerprint = useMemo(
+    () =>
+      metricsData
+        ? [
+            metricsData.accounts?.length ?? 0,
+            metricsData.transactions?.length ?? 0,
+            metricsData.investmentTransactions?.length ?? 0,
+            metricsData.investments?.length ?? 0,
+            Object.keys(debouncedPrices).length,
+            exchangeRate,
+          ].join(':')
+        : '',
+    [metricsData, debouncedPrices, exchangeRate],
+  );
+
+  useEffect(() => {
+    if (!metricsData) return;
+
+    let aborted = false;
+    const computeArgs = {
+      data: metricsData,
+      exchangeRate,
+      getAvailableCashForAccount,
+      debouncedPrices,
+      showHydrateBanner: false as const,
     };
-    cachedValueRef.current = next;
-    return next;
-  }, [deferredData, exchangeRate, getAvailableCashForAccount, deferredPrices, showHydrateBanner]);
+
+    void (async () => {
+      await yieldToMain(16);
+      if (aborted) return;
+      const dashboard = pickDashboardCanonicalMetrics(
+        buildFastCanonicalFinancialMetricsResult({
+          data: metricsData,
+          exchangeRate,
+          getAvailableCashForAccount,
+          debouncedPrices,
+          showHydrateBanner: false,
+        }),
+      );
+      const extended = await extendCanonicalFinancialMetricsAsync(
+        dashboard,
+        {
+          data: metricsData,
+          exchangeRate,
+          getAvailableCashForAccount,
+          simulatedPrices: debouncedPrices,
+        },
+        { shouldAbort: () => aborted },
+      );
+      if (!extended || aborted) return;
+      const full = buildFromCanonicalMetrics(computeArgs, extended, true);
+      startTransition(() => setExtendedBundle(full));
+    })();
+
+    return () => {
+      aborted = true;
+    };
+  }, [extendedFingerprint, metricsData, exchangeRate, getAvailableCashForAccount, debouncedPrices]);
+
+  const value = useMemo(() => {
+    if (!metricsData) {
+      return buildEmptyContextValue(exchangeRate, getAvailableCashForAccount);
+    }
+    const full = extendedBundle ?? fastBundle;
+    return buildContextValue(full);
+  }, [metricsData, fastBundle, extendedBundle, exchangeRate, getAvailableCashForAccount]);
 
   return (
     <CanonicalFinancialMetricsContext.Provider value={value}>{children}</CanonicalFinancialMetricsContext.Provider>

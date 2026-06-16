@@ -1,4 +1,4 @@
-import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { useCompanyNames, symbolsNeedingCompanyName } from '../hooks/useSymbolCompanyName';
 import { normalizeSymbolKeyForCompanyLookup } from '../services/staticCompanyNameService';
 
 export type SymbolNamesMap = Record<string, string | null>;
@@ -106,8 +106,6 @@ export function SymbolWithCompanyName({
   return <ResolvedSymbolLabel symbol={sym} storedName={storedName} names={map} {...rest} />;
 }
 
-export function symbolsFromHoldings(holdings: Array<{ symbol?: string | null }>): string[] {
-  return Array.from(
-    new Set(holdings.map((h) => (h.symbol || '').trim()).filter((s) => s.length >= 2)),
-  );
+export function symbolsFromHoldings(holdings: Array<{ symbol?: string | null; name?: string | null }>): string[] {
+  return symbolsNeedingCompanyName(holdings);
 }

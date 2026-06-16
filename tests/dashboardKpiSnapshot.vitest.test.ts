@@ -7,6 +7,7 @@ const mockFx = () => 3.75;
 vi.mock('../services/fxDailySeries', () => ({
   hydrateSarPerUsdDailySeries: vi.fn(),
   getSarPerUsdForCalendarDay: vi.fn(() => mockFx()),
+  loadSarPerUsdByDay: vi.fn(() => ({})),
 }));
 
 describe('computeDashboardKpiSnapshot', () => {

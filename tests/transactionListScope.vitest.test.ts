@@ -239,6 +239,30 @@ describe('transaction list scope', () => {
         });
     });
 
+    it('parseFilterByBudgetPageAction supports category names containing colons', () => {
+        expect(parseFilterByBudgetPageAction('filter-by-budget:Food%3A%20Groceries:monthly:2026:5')).toEqual({
+            category: 'Food: Groceries',
+            period: 'monthly',
+            year: 2026,
+            month: 5,
+        });
+    });
+
+    it('budget category filter excludes income and unrelated expenses', () => {
+        const txs = [
+            { id: '1', accountId: 'a1', amount: 500, date: '2026-05-10', type: 'income', budgetCategory: 'Food' },
+            { id: '2', accountId: 'a1', amount: -50, date: '2026-05-11', type: 'expense', budgetCategory: 'Food' },
+            { id: '3', accountId: 'a1', amount: -30, date: '2026-05-12', type: 'expense', budgetCategory: 'Transport' },
+        ] as Transaction[];
+        const foodOnly = filterTransactionsForLedgerView(
+            txs,
+            { accountId: 'all', month: '2026-05', allMonths: true, nature: 'all', expenseType: 'all', budgetCategory: 'Food' },
+            1,
+            { mode: 'owner', governanceReady: true },
+        );
+        expect(foodOnly.map((t) => t.id)).toEqual(['2']);
+    });
+
     it('ledgerDateRangeForFilters defaults to fiscal bounds without monthMode (day 28)', () => {
         const expected = financialMonthRangeFromKey({ year: 2026, month: 6 }, 28);
         const range = ledgerDateRangeForFilters(

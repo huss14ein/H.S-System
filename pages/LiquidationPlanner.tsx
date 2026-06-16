@@ -10,7 +10,7 @@ import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolio
 import { sellScore } from '../services/decisionEngine';
 import { thesisValidityCheck, type ThesisRecord } from '../services/thesisJournalEngine';
 import type { Holding, InvestmentPortfolio, Page } from '../types';
-import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { useCompanyNames, symbolsNeedingCompanyName } from '../hooks/useSymbolCompanyName';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
 import { getPersonalInvestments } from '../utils/wealthScope';
 import {
@@ -113,7 +113,7 @@ const LiquidationPlanner: React.FC<LiquidationPlannerProps> = ({ setActivePage, 
   }, [data, sarPerUsd, thesisBySymbol]);
 
   const liqSymbols = useMemo(
-    () => Array.from(new Set(ranked.map((r) => (r.symbol || '').trim()).filter((s) => s.length >= 2))),
+    () => symbolsNeedingCompanyName(ranked.map((r) => ({ symbol: r.symbol, name: r.name }))),
     [ranked],
   );
   const { names: liqCompanyNames } = useCompanyNames(liqSymbols);

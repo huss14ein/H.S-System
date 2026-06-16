@@ -23,7 +23,20 @@ export const ExecutiveKpiGrid: React.FC<{
   emergencyFundTargetSar?: number;
   weeklyPnLSar?: number;
   weeklyPnLSparkline?: number[];
-}> = ({ headline, kpiSnapshot, emergencyFundMonths, emergencyFundTargetSar, weeklyPnLSar = 0, weeklyPnLSparkline }) => {
+  /** Deferred NW history sparkline (Wealth Analytics). Falls back to two-point until ready. */
+  netWorthSparklineOverride?: number[];
+  /** Omit weekly P/L card — Wealth Analytics computes it in the deferred P/L panel below. */
+  hideWeeklyPnL?: boolean;
+}> = ({
+  headline,
+  kpiSnapshot,
+  emergencyFundMonths,
+  emergencyFundTargetSar,
+  weeklyPnLSar = 0,
+  weeklyPnLSparkline,
+  netWorthSparklineOverride,
+  hideWeeklyPnL = false,
+}) => {
   const { t } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
 
@@ -34,7 +47,12 @@ export const ExecutiveKpiGrid: React.FC<{
     const roi = kpiSnapshot?.roi ?? 0;
     const impliedMonthStart = netWorth - monthlyPnL;
 
-    const nwSpark = netWorthSparklineFromSnapshots();
+    const nwSpark =
+      netWorthSparklineOverride !== undefined
+        ? netWorthSparklineOverride.length >= 2
+          ? netWorthSparklineOverride
+          : twoPointTrend(netWorth, impliedMonthStart)
+        : netWorthSparklineFromSnapshots();
     const pnlSpark = twoPointTrend(monthlyPnL, 0);
     const roiSpark = twoPointTrend(roi * 100, 0);
     const weekSpark =
@@ -112,18 +130,22 @@ export const ExecutiveKpiGrid: React.FC<{
         sparklineTarget: 0,
         accentStroke: '#8b5cf6',
       },
-      {
-        key: 'weeklyPnL',
-        title: t('weeklyPnLKpi'),
-        currentValue: formatCurrencyString(weeklyPnLSar, { digits: 0 }),
-        targetValue: formatCurrencyString(0, { digits: 0 }),
-        targetLabel: t('kpiTargetBreakEven'),
-        status: statusFromSigned(weeklyPnLSar),
-        statusLabel: weeklyPnLSar >= 0 ? t('kpiStatusGain') : t('kpiStatusLoss'),
-        sparkline: weekSpark,
-        sparklineTarget: 0,
-        accentStroke: '#06b6d4',
-      },
+      ...(hideWeeklyPnL
+        ? []
+        : [
+            {
+              key: 'weeklyPnL',
+              title: t('weeklyPnLKpi'),
+              currentValue: formatCurrencyString(weeklyPnLSar, { digits: 0 }),
+              targetValue: formatCurrencyString(0, { digits: 0 }),
+              targetLabel: t('kpiTargetBreakEven'),
+              status: statusFromSigned(weeklyPnLSar),
+              statusLabel: weeklyPnLSar >= 0 ? t('kpiStatusGain') : t('kpiStatusLoss'),
+              sparkline: weekSpark,
+              sparklineTarget: 0,
+              accentStroke: '#06b6d4',
+            },
+          ]),
     ];
   }, [
     headline.netWorth,
@@ -132,6 +154,8 @@ export const ExecutiveKpiGrid: React.FC<{
     emergencyFundTargetSar,
     weeklyPnLSar,
     weeklyPnLSparkline,
+    netWorthSparklineOverride,
+    hideWeeklyPnL,
     formatCurrencyString,
     t,
   ]);
@@ -142,7 +166,7 @@ export const ExecutiveKpiGrid: React.FC<{
         <h2 className="text-lg sm:text-xl font-bold text-slate-900">{t('executiveKpiGridTitle')}</h2>
         <p className="text-sm text-slate-600">{t('executiveKpiGridSubtitle')}</p>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 auto-rows-fr">
         {cards.map(({ key, ...card }) => (
           <ExecutiveKpiCard key={key} {...card} />
         ))}

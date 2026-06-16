@@ -1,5 +1,4 @@
 import React, { useMemo } from 'react';
-import { Area, AreaChart, ReferenceLine, ResponsiveContainer } from 'recharts';
 
 export type ExecutiveKpiStatus = 'good' | 'warn' | 'bad' | 'neutral';
 
@@ -33,6 +32,49 @@ const STATUS_STYLES: Record<
   },
 };
 
+/** Lightweight SVG sparkline — avoids Recharts main-thread cost on KPI grids. */
+function KpiSparklineSvg({
+  values,
+  stroke,
+  target,
+}: {
+  values: number[];
+  stroke: string;
+  target?: number;
+}) {
+  const { linePoints, areaPoints, targetY } = useMemo(() => {
+    const nums = values.filter((v) => Number.isFinite(v));
+    if (nums.length < 2) return { linePoints: '', areaPoints: '', targetY: null as number | null };
+    const all = typeof target === 'number' && Number.isFinite(target) ? [...nums, target] : nums;
+    const min = Math.min(...all);
+    const max = Math.max(...all);
+    const span = max - min || 1;
+    const w = 100;
+    const h = 56;
+    const toY = (v: number) => h - 2 - ((v - min) / span) * (h - 4);
+    const pts = nums.map((v, i) => {
+      const x = (i / (nums.length - 1)) * w;
+      return `${x.toFixed(2)},${toY(v).toFixed(2)}`;
+    });
+    const line = pts.join(' ');
+    const area = `0,${h} ${line} ${w},${h}`;
+    const ty = typeof target === 'number' && Number.isFinite(target) ? toY(target) : null;
+    return { linePoints: line, areaPoints: area, targetY: ty };
+  }, [values, target]);
+
+  if (!linePoints) return null;
+
+  return (
+    <svg viewBox="0 0 100 56" className="h-14 w-full" preserveAspectRatio="none" aria-hidden>
+      {targetY != null && (
+        <line x1="0" y1={targetY} x2="100" y2={targetY} stroke="#94a3b8" strokeDasharray="4 4" strokeWidth="1" />
+      )}
+      <polygon points={areaPoints} fill={stroke} fillOpacity={0.15} />
+      <polyline points={linePoints} fill="none" stroke={stroke} strokeWidth="2" />
+    </svg>
+  );
+}
+
 export const ExecutiveKpiCard: React.FC<{
   title: string;
   currentValue: string;
@@ -55,10 +97,6 @@ export const ExecutiveKpiCard: React.FC<{
   accentStroke = '#6366f1',
 }) => {
   const styles = STATUS_STYLES[status];
-  const chartData = useMemo(
-    () => sparkline.map((v, i) => ({ i, v })),
-    [sparkline],
-  );
 
   return (
     <div
@@ -76,24 +114,9 @@ export const ExecutiveKpiCard: React.FC<{
           {targetLabel ?? 'Target'}: <span className="font-semibold tabular-nums">{targetValue}</span>
         </p>
       )}
-      {chartData.length >= 2 && (
+      {sparkline.length >= 2 && (
         <div className="mt-3 h-14 w-full" aria-hidden>
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
-              {typeof sparklineTarget === 'number' && Number.isFinite(sparklineTarget) && (
-                <ReferenceLine y={sparklineTarget} stroke="#94a3b8" strokeDasharray="4 4" strokeWidth={1} />
-              )}
-              <Area
-                type="monotone"
-                dataKey="v"
-                stroke={accentStroke}
-                fill={accentStroke}
-                fillOpacity={0.15}
-                strokeWidth={2}
-                isAnimationActive={false}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
+          <KpiSparklineSvg values={sparkline} stroke={accentStroke} target={sparklineTarget} />
         </div>
       )}
     </div>

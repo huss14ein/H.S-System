@@ -1,6 +1,6 @@
 
 
-import React, { useState, useEffect, useRef, useContext, useCallback, startTransition } from 'react';
+import React, { useState, useEffect, useRef, useContext } from 'react';
 import Header from './Header';
 import { Page } from '../types';
 import QuickActionsSidebar from './QuickActionsSidebar';
@@ -10,16 +10,18 @@ import { useTrackPageVisit } from '../context/SelfLearningContext';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import CrossEngineAlertsBanner from './CrossEngineAlertsBanner';
 import FinancialDataHydrateBanner from './FinancialDataHydrateBanner';
+import CanonicalMetricsExtendedBanner from './shared/CanonicalMetricsExtendedBanner';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
-import { useDebouncedMarketPrices } from '../hooks/useDebouncedMarketPrices';
 import { supabase } from '../services/supabaseClient';
 import { runAutoNetWorthSnapshotIfDue } from '../services/scheduledNetWorthSnapshot';
 import { canAutoCaptureNetWorthSnapshot } from '../services/netWorthSnapshotReadiness';
-import { pauseBackgroundWork } from '../utils/backgroundWorkGate';
+import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { registerQuoteRefreshCancel } from '../utils/navigationBridge';
+import { useBackgroundWorkInputPause } from '../hooks/useBackgroundWorkInputPause';
 import { PageDeferredDataProvider } from '../context/PageDeferredDataContext';
 import DeployFreshnessBanner from './DeployFreshnessBanner';
 import DataLoadWarningBanner from './DataLoadWarningBanner';
@@ -45,10 +47,10 @@ const Layout: React.FC<LayoutProps> = ({
   contentMaxClass = 'max-w-7xl',
 }) => {
   useTrackPageVisit(activePage);
+  useBackgroundWorkInputPause();
   const dataCtx = useContext(DataContext);
   const auth = useContext(AuthContext);
   const { exchangeRate } = useCurrency();
-  const debouncedPrices = useDebouncedMarketPrices();
   const {
     cancelQuoteRefresh,
     isRefreshing,
@@ -56,21 +58,17 @@ const Layout: React.FC<LayoutProps> = ({
     symbolQuoteUpdatedAt,
     isLive,
   } = useMarketQuoteMeta();
-  const navigatePage = useCallback(
-    (page: Page) => {
-      // Pause background quote/metrics work so route paint and input stay responsive.
-      pauseBackgroundWork();
-      cancelQuoteRefresh();
-      startTransition(() => {
-        setActivePage(page);
-      });
-    },
-    [setActivePage, cancelQuoteRefresh],
-  );
+
+  useEffect(() => {
+    registerQuoteRefreshCancel(cancelQuoteRefresh);
+    return () => registerQuoteRefreshCancel(null);
+  }, [cancelQuoteRefresh]);
+
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isLiveAdvisorOpen, setIsLiveAdvisorOpen] = useState(false);
   const mainContentRef = useRef<HTMLElement>(null);
   const { ready, analysis, actionQueue } = useFinancialEnginesIntegration({ eager: false });
+  const { headline, extendedReady, simulatedPrices: canonicalSimulatedPrices } = useExtendedCanonicalMetrics();
 
   const skipToMainContent = () => {
     mainContentRef.current?.focus();
@@ -89,6 +87,8 @@ const Layout: React.FC<LayoutProps> = ({
       symbolQuoteUpdatedAt,
       isLive,
       data,
+      metricsExtendedReady: extendedReady,
+      getAvailableCashForAccount: dataCtx.getAvailableCashForAccount,
     });
     if (!snapshotReady) return;
 
@@ -96,16 +96,20 @@ const Layout: React.FC<LayoutProps> = ({
       void runAutoNetWorthSnapshotIfDue({
         userId: uid,
         data,
+        headline,
         exchangeRate,
         getAvailableCashForAccount: dataCtx.getAvailableCashForAccount,
-        simulatedPrices: debouncedPrices,
+        simulatedPrices: canonicalSimulatedPrices,
         supabase,
+        metricsExtendedReady: extendedReady,
         snapshotReadiness: {
           showHydrateBanner: dataCtx.showHydrateBanner,
           isRefreshing,
           hasQueuedPriceRefresh,
           symbolQuoteUpdatedAt,
           isLive,
+          metricsExtendedReady: extendedReady,
+          getAvailableCashForAccount: dataCtx.getAvailableCashForAccount,
         },
       });
     }, 500);
@@ -113,9 +117,11 @@ const Layout: React.FC<LayoutProps> = ({
     auth?.user?.id,
     dataCtx?.showHydrateBanner,
     dataCtx?.data,
-    exchangeRate,
-    debouncedPrices,
     dataCtx?.getAvailableCashForAccount,
+    exchangeRate,
+    canonicalSimulatedPrices,
+    headline,
+    extendedReady,
     isRefreshing,
     hasQueuedPriceRefresh,
     symbolQuoteUpdatedAt,
@@ -150,7 +156,7 @@ const Layout: React.FC<LayoutProps> = ({
       </a>
       <Header
         activePage={activePage}
-        setActivePage={navigatePage}
+        setActivePage={setActivePage}
         onOpenLiveAdvisor={() => setIsLiveAdvisorOpen(true)}
         onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         triggerPageActionPair={triggerPageActionPair}
@@ -165,6 +171,7 @@ const Layout: React.FC<LayoutProps> = ({
       >
         <div className={`${contentMaxClass} mx-auto w-full animate-fadeIn min-w-0`}>
           <FinancialDataHydrateBanner />
+          <CanonicalMetricsExtendedBanner />
           <DeployFreshnessBanner />
           <DataLoadWarningBanner />
           {ready && (
@@ -172,7 +179,7 @@ const Layout: React.FC<LayoutProps> = ({
               ready={ready}
               analysis={analysis ?? undefined}
               actionQueue={actionQueue}
-              setActivePage={navigatePage}
+              setActivePage={setActivePage}
               triggerPageAction={triggerPageAction}
             />
           )}
@@ -188,7 +195,7 @@ const Layout: React.FC<LayoutProps> = ({
       <CommandPalette
         isOpen={isCommandPaletteOpen}
         setIsOpen={setIsCommandPaletteOpen}
-        setActivePage={navigatePage}
+        setActivePage={setActivePage}
         triggerPageAction={triggerPageAction}
         onOpenLiveAdvisor={() => {
           setIsCommandPaletteOpen(false);

@@ -13,7 +13,8 @@ import { rankCapitalUses, buyScoreBreakdown } from '../services/decisionEngine';
 import { computeDecisionPreviewVerdict } from '../services/decisionPreviewVerdict';
 import DecisionPreviewPanel from '../components/DecisionPreviewPanel';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics, pickWealthSummary } from '../hooks/useCanonicalFinancialMetrics';
+import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { loadTradingPolicy, saveTradingPolicy, type TradingPolicy, DEFAULT_TRADING_POLICY, TRADING_POLICY_PRESETS } from '../services/tradingPolicy';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import {
@@ -110,7 +111,9 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     const ef = useEmergencyFund(data ?? null);
     const { maskSensitive, setMaskSensitive, playNotificationSound, setPlayNotificationSound } = usePrivacyMask();
 
-    const { sarPerUsd, liquidCashSar, wealthSummary } = useCanonicalFinancialMetrics();
+    const metrics = useExtendedCanonicalMetrics();
+    const { sarPerUsd, liquidCashSar, extendedReady } = metrics;
+    const wealthSummary = pickWealthSummary(metrics, extendedReady);
 
     const sleeveDriftPct = useMemo(() => computeMaxAbsSleeveDriftPercent(data), [data]);
 
@@ -1112,6 +1115,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                     <div className="rounded-xl border border-slate-200 p-3 bg-slate-50/50">
                         <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Wealth summary</p>
+                        <ExtendedMetricGate ready={extendedReady} compact className="min-h-[2.5rem]">
                         <div className="flex flex-wrap gap-2">
                             {wealthSummaryPayload && (
                                 <>
@@ -1128,6 +1132,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                             )}
                             {!wealthSummaryPayload && <span className="text-xs text-slate-500">Add data to generate.</span>}
                         </div>
+                        </ExtendedMetricGate>
                     </div>
                     <div className="rounded-xl border border-slate-200 p-3 bg-slate-50/50">
                         <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Other exports</p>

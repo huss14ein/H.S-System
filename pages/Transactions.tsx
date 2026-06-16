@@ -25,7 +25,8 @@ import {
   summarizeApplyRecurringForConfirm,
   summarizeRecurringForConfirm,
 } from '../utils/recordConfirmMessages';
-import { inferIsAdmin } from '../utils/role';
+import { fetchSharedAccountsForMe } from '../services/sharedAccountsRpc';
+import { fetchPendingTransactionsForAdmin, invalidatePendingTransactionsCache } from '../services/pendingTransactionsRpc';
 import {
     validateTransactionRequiredFields,
     findDuplicateTransactions,
@@ -38,9 +39,14 @@ import {
 import { validateSplitTotal } from '../services/transactionIntelligence';
 import { encodeNoteWithSplits } from '../services/transactionSplitNote';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
-import { evaluateTransactionBudgetCoverageState } from '../services/transactionBudgetCoverage';
+import {
+    buildTransactionBudgetConfirmWarning,
+    evaluateTransactionBudgetCoverageState,
+    getTransactionBudgetSubmitBlockReason,
+} from '../services/transactionBudgetCoverage';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, fromSAR } from '../utils/currencyMath';
+import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import { useCanonicalSpotFx, useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { financialMonthNetCashflowSar } from '../services/dashboardKpiSnapshot';
 import { getPersonalAccounts, getScopedCashTransactions } from '../utils/wealthScope';
@@ -48,6 +54,8 @@ import { filterTransactionsForLedgerView, filterTransactionsForLedgerExport, par
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { exportCashTransactionsToCsv } from '../services/reportingEngine';
 import { computeMonthlyCashflowKpisSar } from '../services/financeTruth';
+import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
 import {
     financialMonthKey,
     financialMonthRangeFromKey,
@@ -522,13 +530,24 @@ const TransactionModal: React.FC<{
             return;
         }
 
+        const formatBudgetSar = (sar: number) => formatCurrencyString(sar, { inCurrency: 'SAR' });
+        const budgetBlockReason = getTransactionBudgetSubmitBlockReason(budgetCoverageState, formatBudgetSar);
+        if (budgetBlockReason) {
+            window.alert(budgetBlockReason);
+            return;
+        }
+        const budgetConfirmWarning = buildTransactionBudgetConfirmWarning(budgetCoverageState, formatBudgetSar);
+
         const acc = accounts.find((a) => a.id === accountId);
         const confirmOk = await confirmAction({
             title: transactionToEdit ? 'Save transaction?' : 'Add transaction?',
-            message: transactionToEdit
-                ? 'Update this transaction in your ledger?'
-                : 'Add this transaction to your ledger?',
+            message: budgetConfirmWarning
+                ? budgetConfirmWarning
+                : transactionToEdit
+                  ? 'Update this transaction in your ledger?'
+                  : 'Add this transaction to your ledger?',
             confirmLabel: transactionToEdit ? 'Save' : 'Add',
+            variant: budgetConfirmWarning ? 'danger' : 'primary',
             details: [
                 `Date: ${transactionData.date}`,
                 `Description: ${transactionData.description}`,
@@ -1148,6 +1167,8 @@ const RecurringModal: React.FC<{
 
 const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
     const { data, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth, transactionsLoadWarning } = useContext(DataContext)!;
+    const { computeData } = usePageDeferredData();
+    const engineData = computeData ?? data;
     const confirmAction = useConfirmAction();
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useCanonicalSpotFx();
@@ -1155,9 +1176,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     const recurringList = data?.recurringTransactions ?? [];
     const auth = useContext(AuthContext);
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
-    const [userRole, setUserRole] = useState<UserRole>(() =>
-        inferIsAdmin(auth?.user ?? null, null) ? 'Admin' : 'Restricted',
-    );
+    const [userRole, setUserRole] = useState<UserRole>(() => (auth?.isAdmin ? 'Admin' : 'Restricted'));
     const [governanceReady, setGovernanceReady] = useState(false);
     const [permittedBudgetCategories, setPermittedBudgetCategories] = useState<string[]>([]);
     const [sharedBudgetCategories, setSharedBudgetCategories] = useState<string[]>([]);
@@ -1198,12 +1217,15 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [filters.accountId, filters.month, filters.allMonths, filters.nature, filters.expenseType, filters.budgetCategory]);
 
     useEffect(() => {
-        setFilters((f) => ({
-            ...f,
-            month: initialLedgerMonthIso(monthStartDay),
-            monthMode: defaultLedgerMonthMode(monthStartDay),
-            dateRangeOverride: undefined,
-        }));
+        setFilters((f) => {
+            if (f.budgetCategory !== 'all') return f;
+            return {
+                ...f,
+                month: initialLedgerMonthIso(monthStartDay),
+                monthMode: defaultLedgerMonthMode(monthStartDay),
+                dateRangeOverride: undefined,
+            };
+        });
     }, [monthStartDay]);
 
     const selectedMonthRangeLabel = useMemo(() => {
@@ -1257,21 +1279,16 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [filters.accountId]);
 
     useEffect(() => {
+        let cancelled = false;
         const loadGovernanceData = async () => {
+            if (cancelled || isBackgroundWorkPaused()) return;
             if (!supabase || !auth?.user) {
                 setGovernanceReady(true);
                 return;
             }
 
             setGovernanceReady(false);
-
-            const { data: userRecord } = await supabase
-                .from('users')
-                .select('role')
-                .eq('id', auth.user.id)
-                .maybeSingle();
-
-            const role = (inferIsAdmin(auth.user, userRecord?.role ?? null) ? 'Admin' : 'Restricted') as UserRole;
+            const role = (auth.isAdmin ? 'Admin' : 'Restricted') as UserRole;
             setUserRole(role);
 
             if (role === 'Restricted') {
@@ -1281,6 +1298,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     .eq('user_id', auth.user.id);
 
                 const allowed = (permissions || []).map((p: any) => p.categories?.name).filter(Boolean);
+                if (cancelled) return;
                 setPermittedBudgetCategories(allowed);
 
                 const { data: sharedRows } = await supabase
@@ -1289,17 +1307,25 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 const sharedCats = Array.from(new Set(((sharedRows || []) as any[])
                     .map((row) => String(row?.category || '').trim())
                     .filter(Boolean)));
+                if (cancelled) return;
                 setSharedBudgetCategories(sharedCats);
             } else {
                 setPermittedBudgetCategories([]);
                 setSharedBudgetCategories([]);
             }
 
-            setGovernanceReady(true);
+            if (!cancelled) setGovernanceReady(true);
         };
 
-        loadGovernanceData();
-    }, [auth?.user?.id]);
+        const cancelIdle = scheduleIdleWork(() => {
+            void loadGovernanceData();
+        }, 1200);
+
+        return () => {
+            cancelled = true;
+            cancelIdle();
+        };
+    }, [auth?.user?.id, auth?.isAdmin]);
 
     useEffect(() => {
         const loadSharedAccounts = async () => {
@@ -1307,9 +1333,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 setSharedAccounts([]);
                 return;
             }
-            const { data: sharedRows } = await supabase
-                .rpc('get_shared_accounts_for_me')
-                .then((r) => r, () => ({ data: [] as any[] } as any));
+            const { data: sharedRows } = await fetchSharedAccountsForMe(supabase, auth.user.id);
             const mapped = ((sharedRows || []) as any[])
                 .map((r) => ({
                     id: String(r.account_id ?? r.id ?? ''),
@@ -1344,8 +1368,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [data, sharedAccounts, userRole]);
 
     const scopedCashTransactions = useMemo(
-        () => getScopedCashTransactions(data, availableAccounts.map((a) => a.id)),
-        [data, availableAccounts],
+        () => getScopedCashTransactions(engineData, availableAccounts.map((a) => a.id)),
+        [engineData, availableAccounts],
     );
 
     const orphanTransactionCount = useMemo(() => {
@@ -1356,7 +1380,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     useEffect(() => {
         const loadPendingTransactions = async () => {
             const userId = auth?.user?.id;
-            if (!supabase || !userId || userRole !== 'Admin') {
+            if (!supabase || !userId || !auth?.isAdmin) {
                 setAdminPendingTransactions([]);
                 setPendingLoadError(null);
                 return;
@@ -1376,7 +1400,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             let pendingRows: any[] = [];
             let pendingError: any = null;
 
-            const rpcResult = await db.rpc('get_pending_transactions_for_admin').then((r) => r, () => ({ data: null, error: { message: 'RPC unavailable' } } as any));
+            const rpcResult = await fetchPendingTransactionsForAdmin(db, userId);
             if (!rpcResult.error && Array.isArray(rpcResult.data)) {
                 pendingRows = rpcResult.data;
             } else {
@@ -1429,7 +1453,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         };
 
         loadPendingTransactions();
-    }, [userRole, data?.transactions, pendingRefreshKey]);
+    }, [auth?.isAdmin, auth?.user?.id, pendingRefreshKey]);
 
     const accountsById = useMemo(
         () => new Map<string, Account>(availableAccounts.map((a: Account) => [a.id, a])),
@@ -1953,6 +1977,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 return next;
             });
             setPendingRefreshKey((k) => k + 1);
+            if (auth?.user?.id) invalidatePendingTransactionsCache(auth.user.id);
         } else {
             const reason = window.prompt('Optional rejection reason for audit/history:');
             if (reason === null) {
@@ -2002,6 +2027,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 return next;
             });
             setPendingRefreshKey((k) => k + 1);
+            if (auth?.user?.id) invalidatePendingTransactionsCache(auth.user.id);
         }
     };
 
@@ -2114,7 +2140,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                         <div className="flex items-center gap-2">
                             <button type="button" disabled={selectedPendingIds.length === 0 || isBulkReviewing} onClick={() => handleBulkReview('Approved')} className="btn-outline text-xs disabled:opacity-50">Approve selected</button>
                             <button type="button" disabled={selectedPendingIds.length === 0 || isBulkReviewing} onClick={() => handleBulkReview('Rejected')} className="btn-outline text-xs disabled:opacity-50">Reject selected</button>
-                            <button type="button" onClick={() => setPendingRefreshKey((k) => k + 1)} className="btn-outline text-xs">Refresh pending</button>
+                            <button type="button" onClick={() => { if (auth?.user?.id) invalidatePendingTransactionsCache(auth.user.id); setPendingRefreshKey((k) => k + 1); }} className="btn-outline text-xs">Refresh pending</button>
                         </div>
                     </div>
                     {pendingLoadError && <p className="text-xs text-rose-700 mb-2">{pendingLoadError}</p>}
