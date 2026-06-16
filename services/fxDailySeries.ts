@@ -4,23 +4,40 @@ import { resolveSarPerUsd } from '../utils/currencyMath';
 const KEY = 'finova_sar_per_usd_by_day_v1';
 const SNAPSHOT_KEY = 'finova_nw_snapshots_v1';
 
+let fxMapMemoryCache: Record<string, number> | null = null;
+
+/** Test helper — reset in-memory FX map cache. */
+export function clearFxMapMemoryCacheForTests(): void {
+  fxMapMemoryCache = null;
+}
+
 function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
 export function loadSarPerUsdByDay(): Record<string, number> {
+  if (fxMapMemoryCache) return fxMapMemoryCache;
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return {};
+    if (!raw) {
+      fxMapMemoryCache = {};
+      return fxMapMemoryCache;
+    }
     const p = JSON.parse(raw) as unknown;
-    if (typeof p !== 'object' || !p || Array.isArray(p)) return {};
-    return p as Record<string, number>;
+    if (typeof p !== 'object' || !p || Array.isArray(p)) {
+      fxMapMemoryCache = {};
+      return fxMapMemoryCache;
+    }
+    fxMapMemoryCache = p as Record<string, number>;
+    return fxMapMemoryCache;
   } catch {
-    return {};
+    fxMapMemoryCache = {};
+    return fxMapMemoryCache;
   }
 }
 
 function saveMap(m: Record<string, number>): void {
+  fxMapMemoryCache = m;
   try {
     localStorage.setItem(KEY, JSON.stringify(m));
   } catch {
@@ -50,14 +67,16 @@ function readNetWorthSnapshotsForFxSeed(): Array<{ at: string; sarPerUsd?: numbe
 /**
  * Spot / current resolution: always `resolveSarPerUsd(data, uiExchangeRate)`.
  * Historical days: stored map, then forward-fill from last known ≤ day, else spot.
+ * Pass `fxMap` when looping many transactions in one KPI compute to avoid re-parsing localStorage.
  */
 export function getSarPerUsdForCalendarDay(
   day: string,
   data: FinancialData | null | undefined,
   uiExchangeRate: number,
+  fxMap?: Record<string, number>,
 ): number {
   const spot = resolveSarPerUsd(data, uiExchangeRate);
-  const map = loadSarPerUsdByDay();
+  const map = fxMap ?? loadSarPerUsdByDay();
   const direct = map[day];
   if (direct != null && Number.isFinite(direct) && direct > 0) return direct;
 

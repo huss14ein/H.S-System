@@ -30,6 +30,7 @@ import {
   WealthAnalyticsDetailsSectionLazy,
 } from '../components/analytics/wealthAnalyticsLazySections';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
+import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import { resolveMonthStartDayFromData } from '../utils/financialMonth';
 import type { Page } from '../types';
 
@@ -42,6 +43,8 @@ const BELOW_FOLD_ROOT_MARGIN = '320px';
 
 const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, triggerPageAction }) => {
   const { data, getAvailableCashForAccount, showHydrateBanner } = useContext(DataContext)!;
+  const { computeData } = usePageDeferredData();
+  const engineData = computeData ?? data;
   const auth = useContext(AuthContext);
   const { formatCurrencyString } = useFormatCurrency();
   const { maskBalance } = usePrivacyMask();
@@ -62,9 +65,9 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
     extendedReady,
   } = useExtendedCanonicalMetrics();
 
-  const personalTransactions = useMemo(() => getPersonalTransactions(data), [data]);
-  const personalAccounts = useMemo(() => getPersonalAccounts(data), [data]);
-  const personalInvestments = useMemo(() => getPersonalInvestments(data), [data]);
+  const personalTransactions = useMemo(() => getPersonalTransactions(engineData), [engineData]);
+  const personalAccounts = useMemo(() => getPersonalAccounts(engineData), [engineData]);
+  const personalInvestments = useMemo(() => getPersonalInvestments(engineData), [engineData]);
   const goals = data?.goals ?? [];
   const budgets = data?.budgets ?? [];
 

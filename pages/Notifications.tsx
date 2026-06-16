@@ -11,7 +11,7 @@ import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
-import LoadingSpinner from '../components/LoadingSpinner';
+import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
 import EmptyState from '../components/EmptyState';
 import AIAdvisor from '../components/AIAdvisor';
 import { DataContext } from '../context/DataContext';
@@ -173,7 +173,7 @@ const Notifications: React.FC<{
   if (!ctx) {
     return (
       <PageLayout title="Notifications">
-        <LoadingSpinner message="Loading…" />
+        <SectionLoadingPlaceholder compact label="Loading alerts…" minHeight="6rem" />
       </PageLayout>
     );
   }

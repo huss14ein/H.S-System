@@ -46,6 +46,7 @@ import {
 } from '../services/transactionBudgetCoverage';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, fromSAR } from '../utils/currencyMath';
+import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import { useCanonicalSpotFx, useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { financialMonthNetCashflowSar } from '../services/dashboardKpiSnapshot';
 import { getPersonalAccounts, getScopedCashTransactions } from '../utils/wealthScope';
@@ -1166,6 +1167,8 @@ const RecurringModal: React.FC<{
 
 const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
     const { data, updateTransaction, addTransaction, deleteTransaction, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyRecurringForMonth, applyRecurringRuleForMonth, transactionsLoadWarning } = useContext(DataContext)!;
+    const { computeData } = usePageDeferredData();
+    const engineData = computeData ?? data;
     const confirmAction = useConfirmAction();
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useCanonicalSpotFx();
@@ -1365,8 +1368,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [data, sharedAccounts, userRole]);
 
     const scopedCashTransactions = useMemo(
-        () => getScopedCashTransactions(data, availableAccounts.map((a) => a.id)),
-        [data, availableAccounts],
+        () => getScopedCashTransactions(engineData, availableAccounts.map((a) => a.id)),
+        [engineData, availableAccounts],
     );
 
     const orphanTransactionCount = useMemo(() => {

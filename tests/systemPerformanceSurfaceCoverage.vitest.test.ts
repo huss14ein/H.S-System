@@ -55,7 +55,7 @@ describe('system performance surface coverage', () => {
   });
 
   it('heavy household pages defer compute data', () => {
-    for (const file of ['pages/Budgets.tsx', 'pages/Plan.tsx', 'pages/Goals.tsx']) {
+    for (const file of ['pages/Budgets.tsx', 'pages/Plan.tsx', 'pages/Goals.tsx', 'pages/Transactions.tsx', 'pages/Analysis.tsx', 'pages/WealthAnalytics.tsx', 'pages/Forecast.tsx']) {
       const src = read(file);
       expect(src).toContain('usePageDeferredData');
       expect(src).toContain('engineData');

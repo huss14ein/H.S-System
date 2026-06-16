@@ -72,8 +72,9 @@ describe('page loading gate coverage', () => {
     expect(src).toContain('showHydrateBanner');
     expect(src).toMatch(/const showHydrateBanner = awaitingInitialHydrate/);
     expect(src).toMatch(/const showBlockingLoader = false/);
-    expect(src).toContain('financialDataLoadedRef.current = false');
-    expect(src).toMatch(/\[auth\?\.user\?\.id\][\s\S]*financialDataLoadedRef\.current = false/);
+    expect(src).toContain('readWorkspaceHydrateCache');
+    expect(src).toMatch(/if \(cached\)[\s\S]{0,400}financialDataLoadedRef\.current = true/);
+    expect(src).toMatch(/else \{[\s\S]{0,200}financialDataLoadedRef\.current = false/);
   });
 
   it('DataContext side effects skip while loading or awaiting initial hydrate', () => {
@@ -86,5 +87,11 @@ describe('page loading gate coverage', () => {
     const src = readFileSync(join(CONTEXT_DIR, 'NotificationsContext.tsx'), 'utf8');
     expect(src).toContain('showHydrateBanner');
     expect(src).toMatch(/if\s*\(\s*!data\s*\|\|\s*showHydrateBanner\s*\)/);
+  });
+
+  it('PageDeferredDataProvider defers data without nulling during hydrate', () => {
+    const src = readFileSync(join(CONTEXT_DIR, 'PageDeferredDataContext.tsx'), 'utf8');
+    expect(src).toContain('useDeferredValue(data)');
+    expect(src).not.toMatch(/showHydrateBanner \? null : data/);
   });
 });

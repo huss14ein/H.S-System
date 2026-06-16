@@ -21,7 +21,7 @@ import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import { fetchCompanyNameForSymbol, useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { fetchCompanyNameForSymbol, useCompanyNames, symbolsNeedingCompanyName } from '../hooks/useSymbolCompanyName';
 import MiniPriceChart from '../components/charts/MiniPriceChart';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { PlusIcon } from '../components/icons/PlusIcon';
@@ -39,6 +39,7 @@ import SectionCard from '../components/SectionCard';
 import PortfolioUniversePanel from '../components/PortfolioUniversePanel';
 import AIAdvisor from '../components/AIAdvisor';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
 import LivePricesStatus from '../components/LivePricesStatus';
 import { CurrencyDollarIcon } from '../components/icons/CurrencyDollarIcon';
 import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
@@ -79,8 +80,10 @@ import {
 } from '../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
-import type { PortfolioPeriodPnLRow, PortfolioPnLDailyPoint } from '../services/portfolioPeriodPnL';
+import type { PortfolioPeriodPnLRow, PortfolioPnLDailyPoint, PortfolioPeriodPnLSummary } from '../services/portfolioPeriodPnL';
+import { platformPeriodPnLFromSummary } from '../services/portfolioPeriodPnL';
 import { usePortfolioPeriodPnLSnapshot } from '../hooks/usePortfolioPeriodPnLSnapshot';
+import { buildInvestmentAccountKpiScope } from '../services/investmentAccountKpiScope';
 import MiniPnLSparkline from '../components/analytics/MiniPnLSparkline';
 import {
     inferInvestmentTransactionCurrency,
@@ -2527,6 +2530,7 @@ const PlatformCard: React.FC<{
     goals: Goal[];
     sarPerUsd: number;
     availableCashByCurrency?: { SAR: number; USD: number };
+    symbolNames?: Record<string, string | null>;
     onEditPlatform: (platform: Account) => void;
     onDeletePlatform: (platform: Account) => void;
     onAddPortfolio: (platformId: string) => void;
@@ -2541,8 +2545,9 @@ const PlatformCard: React.FC<{
     setActivePage?: (page: Page) => void;
     portfolioPeriodPnLById: Map<string, PortfolioPeriodPnLRow>;
     portfolioWeeklySparklineById: Map<string, PortfolioPnLDailyPoint[]>;
+    portfolioPnLSummary: PortfolioPeriodPnLSummary | null;
 }> = (props) => {
-    const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded, holdingsOutliers = [], setActivePage, portfolioPeriodPnLById, portfolioWeeklySparklineById } = props;
+    const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, symbolNames = {}, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded, holdingsOutliers = [], setActivePage, portfolioPeriodPnLById, portfolioWeeklySparklineById, portfolioPnLSummary } = props;
     const { refreshPricesForPlatform, isRefreshing: quotesRefreshing, quotesRefreshUIScope } = useMarketQuoteMeta();
     const thisPlatformSyncing =
         quotesRefreshing &&
@@ -2604,18 +2609,6 @@ const PlatformCard: React.FC<{
     
     const getGoalName = (goalId?: string) => goalId ? goals.find(g => g.id === goalId)?.name : undefined;
 
-    const symbolsNeedingName = useMemo(() => {
-        const set = new Set<string>();
-        portfolios.forEach((p) =>
-            (p.holdings || []).forEach((h) => {
-                const s = (h.symbol || '').trim();
-                if (s.length >= 2) set.add(s);
-            }),
-        );
-        return Array.from(set);
-    }, [portfolios]);
-    const { names: symbolNames } = useCompanyNames(symbolsNeedingName);
-
     const [portfolioExpanded, setPortfolioExpanded] = useState<Record<string, boolean>>({});
     const sortedPortfolios = useMemo(
         () => [...portfolios].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })),
@@ -2664,6 +2657,26 @@ const PlatformCard: React.FC<{
         const names = new Set(portfolios.map((p) => String(p.name ?? p.id ?? '')));
         return holdingsOutliers.filter((o) => names.has(o.portfolioName));
     }, [holdingsOutliers, portfolios]);
+
+    const platformPeriodPnL = useMemo(() => {
+        if (portfolioPnLSummary) {
+            const rolled = platformPeriodPnLFromSummary(portfolioPnLSummary, platform.id);
+            const hasRow = portfolioPnLSummary.rows.some((r) => r.accountId === platform.id);
+            return { weekly: rolled.weekly.totalSar, monthly: rolled.monthly.totalSar, hasRow };
+        }
+        const scopePortfolios = metricsPortfolios ?? portfolios;
+        let weekly = 0;
+        let monthly = 0;
+        let hasRow = false;
+        for (const p of scopePortfolios) {
+            const row = portfolioPeriodPnLById.get(p.id);
+            if (!row) continue;
+            hasRow = true;
+            weekly += row.weekly.totalSar;
+            monthly += row.monthly.totalSar;
+        }
+        return { weekly, monthly, hasRow };
+    }, [platform.id, metricsPortfolios, portfolios, portfolioPeriodPnLById, portfolioPnLSummary]);
 
     return (
         <article className="platform-card w-full max-w-full bg-white rounded-2xl shadow-md flex flex-col overflow-hidden border border-slate-200 hover:shadow-md transition-shadow duration-300 ease-in-out min-w-0">
@@ -2796,6 +2809,32 @@ const PlatformCard: React.FC<{
                             <CurrencyDualDisplay value={dailyPnLSAR} inCurrency="SAR" digits={0} size="lg" colorize weight="bold" />
                         </dd>
                     </div>
+                    {platformPeriodPnL.hasRow ? (
+                        <>
+                            <div className="rounded-2xl bg-gradient-to-b from-white to-indigo-50/40 border border-indigo-100/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
+                                <dt
+                                    className="metric-label w-full text-[11px] font-semibold text-indigo-600 uppercase tracking-[0.14em] leading-tight"
+                                    title="Sum of portfolio week P/L on this platform — mark-to-market from 7 days ago, net of attributed deposits/withdrawals."
+                                >
+                                    Week P/L
+                                </dt>
+                                <dd className="metric-value w-full mt-1.5 flex justify-center">
+                                    <CurrencyDualDisplay value={platformPeriodPnL.weekly} inCurrency="SAR" digits={0} size="lg" colorize weight="bold" />
+                                </dd>
+                            </div>
+                            <div className="rounded-2xl bg-gradient-to-b from-white to-violet-50/40 border border-violet-100/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
+                                <dt
+                                    className="metric-label w-full text-[11px] font-semibold text-violet-600 uppercase tracking-[0.14em] leading-tight"
+                                    title="Sum of portfolio month P/L — current financial month, same rules as each portfolio row below."
+                                >
+                                    Month P/L
+                                </dt>
+                                <dd className="metric-value w-full mt-1.5 flex justify-center">
+                                    <CurrencyDualDisplay value={platformPeriodPnL.monthly} inCurrency="SAR" digits={0} size="lg" colorize weight="bold" />
+                                </dd>
+                            </div>
+                        </>
+                    ) : null}
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
                         <dt
                             className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight"
@@ -3251,13 +3290,13 @@ const PlatformView: React.FC<{
     onEditHolding: (holding: Holding) => void;
     simulatedPrices: SimulatedPriceMap;
 }> = (props) => {
-    const { data, getAvailableCashForAccount, showHydrateBanner } = useContext(DataContext)!;
+    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { sarPerUsd, platformsRollupSar, extendedReady } = useInvestmentsCanonicalMetrics();
     const { setActivePage, setActiveTab, onOpenAddPortfolio } = props;
     const personalInvestments = useMemo(() => getPersonalInvestments(data), [data]);
     const personalAccounts = useMemo(() => getPersonalAccounts(data), [data]);
     const portfolioPnL = usePortfolioPeriodPnLSnapshot({
-        data: showHydrateBanner ? null : data,
+        data,
         portfolios: personalInvestments,
         accounts: personalAccounts,
         sarPerUsd,
@@ -3288,46 +3327,21 @@ const PlatformView: React.FC<{
                     return canon === account.id || txAccountId === account.id;
                 });
             const accountTxSorted = sortByNewestFirst(accountTx);
-
-            const hasMixedOwnership = portfoliosAll.length > portfoliosPersonal.length;
-            const personalPortfolioIds = new Set(portfoliosPersonal.map((p) => p.id).filter(Boolean));
-            const canSafelyIncludeUnassignedFlows = hasMixedOwnership && personalPortfolioIds.size === 1;
-            const transactionsForMetrics = hasMixedOwnership
-                ? accountTxSorted.filter((t) => {
-                    const pid = t.portfolioId ?? (t as { portfolio_id?: string }).portfolio_id ?? '';
-                    if (pid) return personalPortfolioIds.has(pid);
-                    // Many legacy deposit/withdraw/dividend rows are account-level (no portfolioId).
-                    // When there is only one personal portfolio under this account, include them to avoid dropping real cash.
-                    return canSafelyIncludeUnassignedFlows;
-                })
-                : accountTxSorted;
-
-            const metricsAvailableCashByCurrency = hasMixedOwnership
-                ? (() => {
-                    let sar = 0;
-                    let usd = 0;
-                    transactionsForMetrics.forEach((t) => {
-                        const cur = inferInvestmentTransactionCurrency(t, accList, invList);
-                        const amt = getInvestmentTransactionCashAmount(t as any);
-                        if (!Number.isFinite(amt) || !(amt > 0)) return;
-                        const type = String(t.type ?? '').toLowerCase();
-                        const delta = type === 'deposit' || type === 'sell' || type === 'dividend'
-                            ? amt
-                            : (type === 'withdrawal' || type === 'buy' ? -amt : 0);
-                        if (cur === 'SAR') sar += delta;
-                        else usd += delta;
-                    });
-                    return { SAR: Math.max(0, sar), USD: Math.max(0, usd) };
-                })()
-                : getAvailableCashForAccount(account.id);
+            const scope = buildInvestmentAccountKpiScope({
+                account,
+                personalPortfolios: portfoliosPersonal,
+                data,
+                accountTransactions: accountTxSorted,
+                getAvailableCashForAccount,
+            });
 
             return {
                 account,
                 portfoliosAll,
                 portfoliosPersonal,
                 transactions: accountTxSorted,
-                transactionsForMetrics,
-                availableCashByCurrency: metricsAvailableCashByCurrency,
+                transactionsForMetrics: scope.transactionsForMetrics,
+                availableCashByCurrency: scope.availableCashByCurrency,
             };
         });
     }, [data, getAvailableCashForAccount]);
@@ -3349,6 +3363,12 @@ const PlatformView: React.FC<{
     const aggregateValue = platformsRollupSar;
     const hasAnyPlatforms = totalPlatforms > 0;
     const hasAnyPortfolios = platformsData.some((p) => p.portfoliosAll.length > 0);
+
+    const allHoldingsForNames = useMemo(
+        () => platformsData.flatMap((p) => p.portfoliosAll.flatMap((pf) => pf.holdings ?? [])),
+        [platformsData],
+    );
+    const platformSymbolNames = useCompanyNames(symbolsNeedingCompanyName(allHoldingsForNames)).names;
 
     return (
         <div className="space-y-6 mt-2">
@@ -3474,6 +3494,8 @@ const PlatformView: React.FC<{
                         setActivePage={setActivePage}
                         portfolioPeriodPnLById={portfolioPnL.pnlByPortfolioId}
                         portfolioWeeklySparklineById={portfolioPnL.weeklySparklineByPortfolioId}
+                        portfolioPnLSummary={portfolioPnL.summary}
+                        symbolNames={platformSymbolNames}
                     />
                 ))}
             </div>
@@ -4409,7 +4431,10 @@ Save anyway?`)) return;
         return allocated;
     }, [data, data?.portfolioUniverse, sarPerUsd, plan.monthlyBudget, planCurrency, simulatedPrices, tickerCurrencyMap, universePortfolioId]);
 
-    const addOnSymbols = useMemo(() => addOnOpportunities.map((o) => o.symbol), [addOnOpportunities]);
+    const addOnSymbols = useMemo(
+        () => symbolsNeedingCompanyName(addOnOpportunities.map((o) => ({ symbol: o.symbol, name: o.name }))),
+        [addOnOpportunities],
+    );
     const { names: addOnCompanyNames } = useCompanyNames(addOnSymbols);
 
     const handleExecutePlan = async (forceRuleBased = false) => {
@@ -5725,7 +5750,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
       
       <InvestmentTabErrorBoundary activeTab={activeTab} onReset={() => setActiveTab('Overview')}>
         <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50/80 via-white to-indigo-50/50 min-h-[28rem] overflow-hidden p-4 sm:p-6">
-          <Suspense fallback={<LoadingSpinner message="Loading..." className="min-h-[12rem] bg-transparent" />}>
+          <Suspense fallback={<SectionLoadingPlaceholder compact label="Loading section…" minHeight="8rem" className="bg-transparent border-0" />}>
             {renderContent()}
           </Suspense>
         </div>

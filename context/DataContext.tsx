@@ -40,6 +40,17 @@ import { normalizeCoreUpsideAllocations } from '../utils/investmentPlanAllocatio
 import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/investmentPlanPerPortfolio';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { financialDataHasHydrated } from '../services/financialDataHydration';
+import {
+    clearWorkspaceHydrateCache,
+    readWorkspaceHydrateCache,
+    writeWorkspaceHydrateCache,
+} from '../services/workspaceHydrateCache';
+import {
+    FAST_HYDRATE_INDICES,
+    HEAVY_HYDRATE_INDICES,
+    HYDRATE_FETCH_KEYS,
+    HYDRATE_SECONDARY_START_INDEX,
+} from '../services/workspaceHydrateTiers';
 import { pauseBackgroundWork } from '../utils/backgroundWorkGate';
 import { yieldToMain } from '../utils/yieldToMain';
 import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
@@ -120,6 +131,8 @@ interface DataContextType {
   loading: boolean;
   /** True during first Supabase hydrate — use for inline hints only (Layout banner). Never full-page block. */
   showHydrateBanner: boolean;
+  /** True while heavy/secondary tables finish syncing after the hydrate banner cleared. */
+  isBackgroundSyncing: boolean;
   /** Non-null when the transactions table failed to load on hydrate (retry may follow). */
   transactionsLoadWarning: string | null;
   /** @deprecated Always false — pages must not early-return on this; use showHydrateBanner + Layout banner. */
@@ -757,6 +770,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const financialDataLoadedRef = useRef(false);
     /** UI gate: true until first hydrate for this session/user completes (independent of background `loading`). */
     const [awaitingInitialHydrate, setAwaitingInitialHydrate] = useState(true);
+    const [isBackgroundSyncing, setIsBackgroundSyncing] = useState(false);
+    const backgroundSyncInFlightRef = useRef(false);
     const [transactionsLoadWarning, setTransactionsLoadWarning] = useState<string | null>(null);
     const recurringAutoApplyInFlightRef = useRef(false);
     const transactionsRef = useRef<FinancialData['transactions']>(data?.transactions ?? []);
@@ -1025,12 +1040,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setLoading(false);
             return;
         }
-        pauseBackgroundWork(3500);
-        const db = supabase;
         const isInitialHydrate = !financialDataLoadedRef.current;
-        if (isInitialHydrate) setLoading(true);
+        if (isInitialHydrate) {
+            pauseBackgroundWork(1500);
+            setLoading(true);
+        }
         try {
-            // Optional tables: fetch so they never reject (migrations may not be run yet)
+            const db = supabase;
             const recurringPromise = trySelectOptionalTable<any>(db.from('recurring_transactions').select('*').eq('user_id', auth.user.id));
             const sukukSchedulesPromise = trySelectOptionalTable<any>(db.from('sukuk_payout_schedules').select('*').eq('user_id', auth.user.id));
             const sukukEventsPromise = trySelectOptionalTable<any>(db.from('sukuk_payout_events').select('*').eq('user_id', auth.user.id));
@@ -1060,7 +1076,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 sukukSchedulesPromise,
                 sukukEventsPromise,
             ];
-            const keys = ['accounts', 'assets', 'liabilities', 'goals', 'transactions', 'investments', 'investmentTransactions', 'budgets', 'watchlist', 'settings', 'zakatPayments', 'priceAlerts', 'commodityHoldings', 'plannedTrades', 'investmentPlan', 'portfolioUniverse', 'statusChangeLog', 'executionLogs', 'recurringTransactions', 'budgetRequests', 'sukukPayoutSchedules', 'sukukPayoutEvents'] as const;
+            const keys = HYDRATE_FETCH_KEYS;
             const emptyResult = (err?: any) => ({ data: null, error: err || { code: 'FETCH_FAILED' } });
             const settleFetches = (promises: PromiseLike<any>[], keySlice: readonly (typeof keys)[number][]) =>
                 Promise.allSettled(promises.map((p) => Promise.resolve(p))).then((settled) =>
@@ -1070,56 +1086,58 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         return emptyResult(s.reason);
                     }),
                 );
-            const CRITICAL_COUNT = 10;
-            const criticalKeys = keys.slice(0, CRITICAL_COUNT);
-            const secondaryKeys = keys.slice(CRITICAL_COUNT);
+            const fastKeys = FAST_HYDRATE_INDICES.map((i) => keys[i]);
+            const heavyKeys = HEAVY_HYDRATE_INDICES.map((i) => keys[i]);
+            const secondaryKeys = keys.slice(HYDRATE_SECONDARY_START_INDEX);
             const slowFetchTimer = window.setTimeout(() => {
                 if (import.meta.env.DEV) {
                     console.warn(
-                        `Financial data fetch still running after ${FETCH_SETTLE_BUDGET_MS}ms — hydrate banner stays until complete.`,
+                        `Financial data fetch still running after ${FETCH_SETTLE_BUDGET_MS}ms — background sync continues.`,
                     );
                 }
             }, FETCH_SETTLE_BUDGET_MS);
-            const secondaryFetchPromise = settleFetches(fetchPromises.slice(CRITICAL_COUNT), secondaryKeys);
-            const criticalResults = await settleFetches(fetchPromises.slice(0, CRITICAL_COUNT), criticalKeys);
+            const fastPromise = settleFetches(
+                FAST_HYDRATE_INDICES.map((i) => fetchPromises[i]),
+                fastKeys,
+            );
+            const heavyPromise = settleFetches(
+                HEAVY_HYDRATE_INDICES.map((i) => fetchPromises[i]),
+                heavyKeys,
+            );
+            const secondaryFetchPromise = settleFetches(
+                fetchPromises.slice(HYDRATE_SECONDARY_START_INDEX),
+                secondaryKeys,
+            );
+            const fastResults = await fastPromise;
             window.clearTimeout(slowFetchTimer);
-            const secondaryPlaceholder = Object.fromEntries(
-                secondaryKeys.map((k) => [k, emptyResult()]),
-            ) as Record<(typeof secondaryKeys)[number], ReturnType<typeof emptyResult>>;
-            const mergedResults = [...criticalResults, ...secondaryKeys.map((k) => secondaryPlaceholder[k])];
-            let results = mergedResults;
             let [
                 accounts,
-                assets,
-                liabilities,
                 goals,
-                transactions,
                 investments,
-                investmentTransactions,
                 budgets,
                 watchlist,
                 settings,
-                zakatPayments,
-                priceAlerts,
-                commodityHoldings,
-                plannedTrades,
-                investmentPlan,
-                portfolioUniverse,
-                statusChangeLog,
-                executionLogs,
-                recurringTransactions,
-                budgetRequests,
-                sukukPayoutSchedules,
-                sukukPayoutEvents,
-            ] = results;
+            ] = fastResults;
+            let assets = emptyResult();
+            let liabilities = emptyResult();
+            let transactions = emptyResult();
+            let investmentTransactions = emptyResult();
+            let zakatPayments = emptyResult();
+            let priceAlerts = emptyResult();
+            let commodityHoldings = emptyResult();
+            let plannedTrades = emptyResult();
+            let investmentPlan = emptyResult();
+            let portfolioUniverse = emptyResult();
+            let statusChangeLog = emptyResult();
+            let executionLogs = emptyResult();
+            let recurringTransactions = emptyResult();
+            let budgetRequests = emptyResult();
+            let sukukPayoutSchedules = emptyResult();
+            let sukukPayoutEvents = emptyResult();
             const allFetches = {
                 accounts,
-                assets,
-                liabilities,
                 goals,
-                transactions,
                 investments,
-                investmentTransactions,
                 budgets,
                 watchlist,
                 settings,
@@ -1137,13 +1155,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 const resolved = resolveAccountId(norm.accountId, normalizedAccounts);
                 return resolved ? { ...norm, accountId: resolved } : norm;
             };
-            const txFetchError = transactions?.error;
-            const txFetchTimedOut = txFetchError?.code === 'TIMEOUT';
-            const normalizedInvestmentTransactions = filterOwnedRows(investmentTransactions.data as any[]).map((t: any) => {
-                const norm = normalizeInvestmentTransaction(t);
-                const resolved = resolveAccountId(norm.accountId, normalizedAccounts);
-                return resolved ? { ...norm, accountId: resolved } : norm;
-            });
+            const normalizeInvestmentTransactionRows = (rows: any[] | null | undefined) =>
+                filterOwnedRows(rows as any[]).map((t: any) => {
+                    const norm = normalizeInvestmentTransaction(t);
+                    const resolved = resolveAccountId(norm.accountId, normalizedAccounts);
+                    return resolved ? { ...norm, accountId: resolved } : norm;
+                });
             const ownedAccounts = filterOwnedRows(normalizedAccounts);
 
             const todayYmd = new Date().toISOString().slice(0, 10);
@@ -1188,20 +1205,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             });
             };
 
-            applyFinancialDataPatch({
-                accounts: ownedAccounts,
-                assets: filterOwnedRows(assets.data as any[]).map(normalizeAssetRow),
-                liabilities: [...filterOwnedRows(((liabilities.data as any[]) || []).map(normalizeLiability))].sort(
-                    (a, b) => b.id.localeCompare(a.id),
-                ),
-                goals: [...filterOwnedRows(goals.data as any[]).map(normalizeGoalRow)].sort((a, b) =>
-                    b.id.localeCompare(a.id),
-                ),
-                transactions: sortByNewestFirst(
-                    filterOwnedRows(transactions.data as any[]).map(normalizeCashTransactionRow),
-                ),
-                // Portfolios: API uses goal_id / account_id; app + Portfolio modal use goalId / accountId (do not drop on refresh).
-                investments: filterOwnedRows((investments.data as any) || []).map((portfolio: any) => {
+            const buildInvestmentsFromRows = (rows: any) =>
+                filterOwnedRows((rows as any) || []).map((portfolio: any) => {
                     const rawAccountId = portfolio.accountId || portfolio.account_id;
                     const resolved = resolveAccountId(rawAccountId, normalizedAccounts) ?? rawAccountId;
                     const holdings = (portfolio.holdings || []).map(normalizeHolding);
@@ -1213,8 +1218,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         currency,
                         holdings,
                     };
-                }),
-                investmentTransactions: sortByNewestFirst(normalizedInvestmentTransactions),
+                });
+
+            applyFinancialDataPatch({
+                accounts: ownedAccounts,
+                goals: [...filterOwnedRows(goals.data as any[]).map(normalizeGoalRow)].sort((a, b) =>
+                    b.id.localeCompare(a.id),
+                ),
+                investments: buildInvestmentsFromRows(investments.data),
                 budgets: filterOwnedRows(budgets.data as any[]).map((b: any) => ({
                     ...b,
                     period: b.period ?? 'monthly',
@@ -1237,7 +1248,64 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setLoading(false);
 
             void (async () => {
+                backgroundSyncInFlightRef.current = true;
+                setIsBackgroundSyncing(true);
                 try {
+                    const heavyResults = await heavyPromise;
+                    [assets, liabilities, transactions, investmentTransactions] = heavyResults;
+                    const heavyFetches = { assets, liabilities, transactions, investmentTransactions };
+                    Object.entries(heavyFetches).forEach(([key, value]) => {
+                        if (value?.error && value.error.code !== 'PGRST116') {
+                            console.error(`Error fetching ${key}:`, value.error);
+                        }
+                    });
+                    const normalizedInvestmentTransactions = normalizeInvestmentTransactionRows(
+                        (investmentTransactions.data ?? undefined) as any[] | undefined,
+                    );
+                    await yieldToMain();
+                    applyFinancialDataPatch({
+                        accounts: ownedAccounts,
+                        assets: filterOwnedRows((assets.data ?? undefined) as any[] | undefined).map(normalizeAssetRow),
+                        liabilities: [...filterOwnedRows((((liabilities.data ?? undefined) as any[] | undefined) || []).map(normalizeLiability))].sort(
+                            (a, b) => b.id.localeCompare(a.id),
+                        ),
+                        transactions: sortByNewestFirst(
+                            filterOwnedRows((transactions.data ?? undefined) as any[] | undefined).map(normalizeCashTransactionRow),
+                        ),
+                        investmentTransactions: sortByNewestFirst(normalizedInvestmentTransactions),
+                    });
+
+                    const txFetchError = transactions?.error;
+                    const txFetchTimedOut = txFetchError?.code === 'TIMEOUT';
+                    const initialTxCount = filterOwnedRows((transactions.data ?? undefined) as any[] | undefined).length;
+                    if (txFetchTimedOut || (txFetchError && txFetchError.code !== 'PGRST116' && initialTxCount === 0)) {
+                        const retryUserId = auth.user?.id;
+                        if (retryUserId) {
+                            try {
+                                const retry = await db.from('transactions').select('*').eq('user_id', retryUserId);
+                                if (retry.error) {
+                                    setTransactionsLoadWarning(
+                                        'Transactions could not be loaded. Use Settings → Refresh data or reload the page.',
+                                    );
+                                } else {
+                                    setTransactionsLoadWarning(null);
+                                    const retried = sortByNewestFirst(
+                                        filterOwnedRows(retry.data as any[]).map(normalizeCashTransactionRow),
+                                    );
+                                    if (retried.length > 0 || !retry.error) {
+                                        setData((prev) => ({ ...prev, transactions: retried }));
+                                    }
+                                }
+                            } catch {
+                                setTransactionsLoadWarning(
+                                    'Transactions could not be loaded. Use Settings → Refresh data or reload the page.',
+                                );
+                            }
+                        }
+                    } else {
+                        setTransactionsLoadWarning(null);
+                    }
+
                     const secondaryResults = await secondaryFetchPromise;
                     [
                         zakatPayments,
@@ -1253,7 +1321,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         sukukPayoutSchedules,
                         sukukPayoutEvents,
                     ] = secondaryResults;
-                    results = [...criticalResults, ...secondaryResults];
                     const secondaryFetches = {
                         zakatPayments,
                         priceAlerts,
@@ -1273,10 +1340,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             console.error(`Error fetching ${key}:`, value.error);
                         }
                     });
-                    const normalizedSukukSchedulesBg = filterOwnedRows((sukukPayoutSchedules.data as any[]) || []).map(
+                    const normalizedSukukSchedulesBg = filterOwnedRows(((sukukPayoutSchedules.data ?? undefined) as any[] | undefined) || []).map(
                         normalizeSukukPayoutScheduleRow,
                     );
-                    const normalizedSukukEventsBg = filterOwnedRows((sukukPayoutEvents.data as any[]) || []).map(
+                    const normalizedSukukEventsBg = filterOwnedRows(((sukukPayoutEvents.data ?? undefined) as any[] | undefined) || []).map(
                         normalizeSukukPayoutEventRow,
                     );
                     const dueSukukEventsBg = normalizedSukukEventsBg
@@ -1288,11 +1355,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             accounts: ownedAccounts,
                             sukukPayoutSchedules: normalizedSukukSchedulesBg,
                             sukukPayoutEvents: normalizedSukukEventsBg,
-                            commodityHoldings: filterOwnedRows(commodityHoldings.data as any[]).map(normalizeCommodityHolding),
-                            zakatPayments: sortByNewestFirst(filterOwnedRows(zakatPayments.data as any[])),
-                            priceAlerts: filterOwnedRows(priceAlerts.data as any[]).map(normalizePriceAlert),
+                            commodityHoldings: filterOwnedRows((commodityHoldings.data ?? undefined) as any[] | undefined).map(normalizeCommodityHolding),
+                            zakatPayments: sortByNewestFirst(filterOwnedRows((zakatPayments.data ?? undefined) as any[] | undefined)),
+                            priceAlerts: filterOwnedRows((priceAlerts.data ?? undefined) as any[] | undefined).map(normalizePriceAlert),
                             plannedTrades: sortPlannedTradesNewestFirst(
-                                filterOwnedRows(plannedTrades.data as any[]).map(normalizePlannedTradeRow),
+                                filterOwnedRows((plannedTrades.data ?? undefined) as any[] | undefined).map(normalizePlannedTradeRow),
                             ),
                             investmentPlan: normalizeInvestmentPlan((investmentPlan as any).data),
                             portfolioUniverse: filterOwnedRows((portfolioUniverse as any).data || []).map(normalizeUniverseTicker),
@@ -1443,47 +1510,25 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             }
                         })();
                     }
+                    if (auth.user?.id && financialDataHasHydrated(dataRef.current)) {
+                        writeWorkspaceHydrateCache(auth.user.id, dataRef.current);
+                    }
                 } catch (e) {
-                    console.warn('Secondary financial data hydrate skipped:', e);
+                    console.warn('Background financial data hydrate skipped:', e);
+                } finally {
+                    backgroundSyncInFlightRef.current = false;
+                    setIsBackgroundSyncing(false);
                 }
             })();
-
-            const initialTxCount = filterOwnedRows(transactions.data as any[]).length;
-            if (txFetchTimedOut || (txFetchError && txFetchError.code !== 'PGRST116' && initialTxCount === 0)) {
-                const retryUserId = auth.user?.id;
-                if (!retryUserId) return;
-                void (async () => {
-                    try {
-                        const retry = await db.from('transactions').select('*').eq('user_id', retryUserId);
-                        if (retry.error) {
-                            setTransactionsLoadWarning(
-                                'Transactions could not be loaded. Use Settings → Refresh data or reload the page.',
-                            );
-                            return;
-                        }
-                        setTransactionsLoadWarning(null);
-                        const retried = sortByNewestFirst(
-                            filterOwnedRows(retry.data as any[]).map(normalizeCashTransactionRow),
-                        );
-                        if (retried.length > 0 || !retry.error) {
-                            setData((prev) => ({ ...prev, transactions: retried }));
-                        }
-                    } catch {
-                        setTransactionsLoadWarning(
-                            'Transactions could not be loaded. Use Settings → Refresh data or reload the page.',
-                        );
-                    }
-                })();
-            } else {
-                setTransactionsLoadWarning(null);
-            }
 
         } catch (error) {
             console.error("Error fetching financial data:", error);
         } finally {
-            financialDataLoadedRef.current = true;
-            setAwaitingInitialHydrate(false);
-            setLoading(false);
+            if (!financialDataLoadedRef.current) {
+                financialDataLoadedRef.current = true;
+                setAwaitingInitialHydrate(false);
+                setLoading(false);
+            }
         }
     };
 
@@ -1496,12 +1541,30 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!auth?.user?.id || !supabase) {
             financialDataLoadedRef.current = false;
             setAwaitingInitialHydrate(false);
+            setIsBackgroundSyncing(false);
             setLoading(false);
             return;
         }
-        // New session or switched user — must block UI until this user's rows hydrate (avoid showing prior user's shell).
-        financialDataLoadedRef.current = false;
-        setAwaitingInitialHydrate(true);
+        const userId = auth.user.id;
+        const cached = readWorkspaceHydrateCache(userId);
+        if (cached) {
+            startTransition(() => {
+                setData((prev) => ({
+                    ...initialData,
+                    ...cached,
+                    notifications: prev.notifications,
+                    allTransactions: prev.allTransactions,
+                    allBudgets: prev.allBudgets,
+                }));
+            });
+            financialDataLoadedRef.current = true;
+            setAwaitingInitialHydrate(false);
+            setLoading(false);
+        } else {
+            setData(initialData);
+            financialDataLoadedRef.current = false;
+            setAwaitingInitialHydrate(true);
+        }
         setTransactionsLoadWarning(null);
         void fetchData();
         // Use user id only: `user` object reference changes on TOKEN_REFRESHED; refetching then caused global loading flashes.
@@ -1542,6 +1605,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await Promise.allSettled(tables.map(table => db.from(table).delete().eq('user_id', auth.user!.id)));
         setData(initialData);
         setDataResetKey((k) => k + 1);
+        clearWorkspaceHydrateCache(auth.user!.id);
         financialDataLoadedRef.current = true;
         setAwaitingInitialHydrate(false);
         setLoading(false);
@@ -4383,6 +4447,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             data: dataWithPersonal ?? initialData,
             loading,
             showHydrateBanner,
+            isBackgroundSyncing,
             transactionsLoadWarning,
             showBlockingLoader,
             dataResetKey,
@@ -4396,6 +4461,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             dataWithPersonal,
             loading,
             showHydrateBanner,
+            isBackgroundSyncing,
             transactionsLoadWarning,
             dataResetKey,
             data?.transactions,

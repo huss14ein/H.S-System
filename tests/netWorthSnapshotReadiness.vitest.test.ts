@@ -6,6 +6,8 @@ import {
 } from '../services/netWorthSnapshotReadiness';
 import type { FinancialData } from '../types';
 
+const ledgerCash = () => ({ SAR: 0, USD: 0 });
+
 describe('netWorthSnapshotReadiness', () => {
   const baseData = {
     investments: [{ holdings: [{ symbol: 'AAPL' }] }],
@@ -20,6 +22,37 @@ describe('netWorthSnapshotReadiness', () => {
         symbolQuoteUpdatedAt: { AAPL: new Date().toISOString() },
         isLive: true,
         data: baseData,
+        getAvailableCashForAccount: ledgerCash,
+        metricsExtendedReady: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('blocks capture until extended canonical metrics are ready', () => {
+    const readyInput = {
+      showHydrateBanner: false,
+      isRefreshing: false,
+      hasQueuedPriceRefresh: () => false,
+      symbolQuoteUpdatedAt: {},
+      isLive: false,
+      data: { investments: [] } as unknown as FinancialData,
+      getAvailableCashForAccount: ledgerCash,
+      metricsExtendedReady: false,
+    };
+    expect(canAutoCaptureNetWorthSnapshot(readyInput)).toBe(false);
+    expect(canAutoCaptureNetWorthSnapshot({ ...readyInput, metricsExtendedReady: true })).toBe(true);
+  });
+
+  it('blocks capture without investment ledger cash helper', () => {
+    expect(
+      canAutoCaptureNetWorthSnapshot({
+        showHydrateBanner: false,
+        isRefreshing: false,
+        hasQueuedPriceRefresh: () => false,
+        symbolQuoteUpdatedAt: {},
+        isLive: false,
+        data: { investments: [] } as unknown as FinancialData,
+        metricsExtendedReady: true,
       }),
     ).toBe(false);
   });
@@ -32,6 +65,8 @@ describe('netWorthSnapshotReadiness', () => {
       symbolQuoteUpdatedAt: { AAPL: new Date().toISOString() },
       isLive: true,
       data: baseData,
+      getAvailableCashForAccount: ledgerCash,
+      metricsExtendedReady: true,
     };
     expect(canAutoCaptureNetWorthSnapshot({ ...readyInput, isRefreshing: true })).toBe(false);
     expect(
@@ -42,7 +77,7 @@ describe('netWorthSnapshotReadiness', () => {
     ).toBe(false);
   });
 
-  it('allows capture when no tracked symbols', () => {
+  it('allows capture when no tracked symbols and extended metrics ready', () => {
     expect(
       canAutoCaptureNetWorthSnapshot({
         showHydrateBanner: false,
@@ -51,6 +86,8 @@ describe('netWorthSnapshotReadiness', () => {
         symbolQuoteUpdatedAt: {},
         isLive: false,
         data: { investments: [] } as unknown as FinancialData,
+        getAvailableCashForAccount: ledgerCash,
+        metricsExtendedReady: true,
       }),
     ).toBe(true);
   });
@@ -64,6 +101,8 @@ describe('netWorthSnapshotReadiness', () => {
         symbolQuoteUpdatedAt: {},
         isLive: true,
         data: baseData,
+        getAvailableCashForAccount: ledgerCash,
+        metricsExtendedReady: true,
       }),
     ).toBe(false);
   });

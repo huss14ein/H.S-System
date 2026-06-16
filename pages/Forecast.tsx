@@ -11,7 +11,9 @@ import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import { useCurrency } from '../context/CurrencyContext';
-import { useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { pickInvestmentsTotalSar } from '../services/extendedMetricsPresentation';
+import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
 import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
 import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import { buildBaselineScenarioTimeline } from '../services/scenarioTimelineEngine';
@@ -23,6 +25,7 @@ import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryRepo
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import { projectForecastSeries, downsampleForecastRows, type ForecastMonthRow } from '../services/forecastProjection';
+import { usePageDeferredData } from '../context/PageDeferredDataContext';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
@@ -31,15 +34,20 @@ const TOOLTIP_STYLE = { backgroundColor: 'white', border: '1px solid #e2e8f0', b
 const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { computeData } = usePageDeferredData();
+    const engineData = computeData ?? data;
     const { exchangeRate, currency: displayCurrency } = useCurrency();
-    const { simulatedPrices } = useDashboardCanonicalMetrics();
+    const metrics = useExtendedCanonicalMetrics();
+    const { netWorth: headlineNetWorth, sarPerUsd, liquidCashSar, extendedReady, simulatedPrices } = metrics;
+    const investmentsTotalSar = pickInvestmentsTotalSar(metrics, extendedReady);
+    const baselinesPending = metrics.showHydrateBanner || !extendedReady;
     useHydrateSarPerUsdDailySeries(data, exchangeRate);
     const [stressJobLossM, setStressJobLossM] = useState(3);
     const [stressMarketDrop, setStressMarketDrop] = useState(15);
     const [stressMedical, setStressMedical] = useState(8000);
 
     const savingsAnalytics = useMemo(() => {
-        if (!data) {
+        if (!engineData) {
             return {
                 averageMonthlyNet: 0,
                 medianMonthlyNet: 0,
@@ -48,7 +56,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 incomeGrowthSuggestion: 3,
             };
         }
-        const { values } = personalMonthlyNetByMonthKeySar(data, exchangeRate, 12);
+        const { values } = personalMonthlyNetByMonthKeySar(engineData, exchangeRate, 12);
         if (values.length === 0 || values.every((v) => v === 0)) {
             return {
                 averageMonthlyNet: 0,
@@ -79,7 +87,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             consistencyScore,
             incomeGrowthSuggestion,
         };
-    }, [data, exchangeRate]);
+    }, [engineData, exchangeRate]);
 
     const [horizon, setHorizon] = useState(10);
     const [monthlySavingsTouched, setMonthlySavingsTouched] = useState(false);
@@ -93,8 +101,6 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         setMonthlySavings(Math.max(0, savingsAnalytics.medianMonthlyNet));
     }, [savingsAnalytics.medianMonthlyNet, monthlySavingsTouched]);
 
-    const { netWorth: headlineNetWorth, sarPerUsd, headline, liquidCashSar } = useDashboardCanonicalMetrics();
-    const investmentsTotalSar = headline.buckets.investments;
     const initialValues = useMemo(
         () => ({
             netWorth: headlineNetWorth,
@@ -104,8 +110,8 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     );
 
     const goalResolvedSarById = useMemo(
-        () => computeGoalResolvedAmountsSar(data ?? null, sarPerUsd),
-        [data, sarPerUsd],
+        () => computeGoalResolvedAmountsSar(engineData ?? null, sarPerUsd),
+        [engineData, sarPerUsd],
     );
 
     const applyScenarioPreset = (preset: 'Conservative' | 'Base' | 'Aggressive') => {
@@ -133,7 +139,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     };
 
     const liveProjection = useMemo(() => {
-        if (!data) return null;
+        if (!engineData) return null;
         return projectForecastSeries({
             initialNetWorth: initialValues.netWorth,
             initialInvestmentValue: initialValues.investmentValue,
@@ -142,7 +148,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             investmentGrowthAnnualPct: investmentGrowth,
             savingsGrowthAnnualPct: incomeGrowth,
         });
-    }, [data, initialValues.netWorth, initialValues.investmentValue, monthlySavings, horizon, investmentGrowth, incomeGrowth]);
+    }, [engineData, initialValues.netWorth, initialValues.investmentValue, monthlySavings, horizon, investmentGrowth, incomeGrowth]);
 
     const forecastData = liveProjection?.rows ?? [];
     const summary = liveProjection
@@ -150,7 +156,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         : null;
 
     const scenarioComparison = useMemo(() => {
-        if (!data) return { Conservative: null, Base: null, Aggressive: null } as Record<'Conservative' | 'Base' | 'Aggressive', { projectedNetWorth: number; projectedInvestments: number } | null>;
+        if (!engineData) return { Conservative: null, Base: null, Aggressive: null } as Record<'Conservative' | 'Base' | 'Aggressive', { projectedNetWorth: number; projectedInvestments: number } | null>;
         const baseArgs = {
             initialNetWorth: initialValues.netWorth,
             initialInvestmentValue: initialValues.investmentValue,
@@ -169,7 +175,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             out[k] = { projectedNetWorth: r.finalNetWorth, projectedInvestments: r.finalInvestmentValue };
         });
         return out;
-    }, [data, initialValues.netWorth, initialValues.investmentValue, monthlySavings, horizon]);
+    }, [engineData, initialValues.netWorth, initialValues.investmentValue, monthlySavings, horizon]);
 
     const confidenceBand = useMemo(() => {
         if (!summary) return null;
@@ -198,8 +204,8 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     }, [chartDisplayData]);
 
     const goalProjections = useMemo(() => {
-        if (!data?.goals?.length || !forecastData.length) return [];
-        return (data.goals ?? []).map((goal) => {
+        if (!engineData?.goals?.length || !forecastData.length) return [];
+        return (engineData.goals ?? []).map((goal) => {
             const target = Math.max(0, Number(goal.targetAmount) || 0);
             const current = Math.max(0, goalResolvedSarById.get(goal.id) ?? (Number(goal.currentAmount) || 0));
             const gap = Math.max(0, target - current);
@@ -219,10 +225,10 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 months: met ? metMonth! % 12 : 0,
             };
         });
-    }, [data?.goals, forecastData, goalResolvedSarById, initialValues.netWorth]);
+    }, [engineData?.goals, forecastData, goalResolvedSarById, initialValues.netWorth]);
 
     const goalReferenceLines = useMemo(() => {
-        return (data?.goals ?? []).map((goal, idx) => {
+        return (engineData?.goals ?? []).map((goal, idx) => {
             const target = Math.max(0, Number(goal.targetAmount) || 0);
             const current = Math.max(0, goalResolvedSarById.get(goal.id) ?? (Number(goal.currentAmount) || 0));
             const gap = Math.max(0, target - current);
@@ -233,14 +239,14 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 key: goal.id ?? `goal-ref-${idx}-${goal.name ?? ''}`,
             };
         });
-    }, [data?.goals, initialValues.netWorth, goalResolvedSarById]);
+    }, [engineData?.goals, initialValues.netWorth, goalResolvedSarById]);
 
     const stressInputs = useMemo(() => {
-        const accounts = getPersonalAccounts(data);
-        const txs = getPersonalTransactions(data);
+        const accounts = getPersonalAccounts(engineData);
+        const txs = getPersonalTransactions(engineData);
         const monthlyExpense = normalizedMonthlyExpenseSar(txs as Transaction[], accounts, sarPerUsd, { monthsLookback: 6 });
         return { liquidCash: liquidCashSar, monthlyExpense };
-    }, [data, sarPerUsd, liquidCashSar]);
+    }, [engineData, sarPerUsd, liquidCashSar]);
 
     const stressResult = useMemo(
         () =>
@@ -265,21 +271,21 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     }, [monthlySavings, formatCurrencyString]);
 
     const currentSavingsRate = useMemo(() => {
-        if (!data) return 0;
-        const txs = getPersonalTransactions(data) as Transaction[];
-        const accounts = getPersonalAccounts(data) as import('../types').Account[];
-        return savingsRateSarFinancialMonth(txs, accounts, new Date(), data, exchangeRate);
-    }, [data, exchangeRate]);
+        if (!engineData) return 0;
+        const txs = getPersonalTransactions(engineData) as Transaction[];
+        const accounts = getPersonalAccounts(engineData) as import('../types').Account[];
+        return savingsRateSarFinancialMonth(txs, accounts, new Date(), engineData, exchangeRate);
+    }, [engineData, exchangeRate]);
 
     const timeline = useMemo(() => {
         if (!summary) return null;
-        return buildBaselineScenarioTimeline(data, horizon, summary.projectedNetWorth);
-    }, [data, horizon, summary]);
+        return buildBaselineScenarioTimeline(engineData, horizon, summary.projectedNetWorth);
+    }, [engineData, horizon, summary]);
 
     const forecastValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
         const fx = sarPerUsd;
-        const kpis = computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
+        const kpis = computeMonthlyReportFinancialKpis(engineData, exchangeRate, getAvailableCashForAccount, simulatedPrices);
         if (!Number.isFinite(fx) || fx <= 0) warnings.push('Exchange rate is invalid — USD-linked balances may mis-state projections.');
         if (!Number.isFinite(initialValues.netWorth)) warnings.push('Net worth baseline is invalid.');
         if (!Number.isFinite(initialValues.investmentValue) || initialValues.investmentValue < 0) warnings.push('Investment baseline is invalid.');
@@ -291,11 +297,11 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         if (liveProjection && Math.abs(liveProjection.nonInvestmentOpening + liveProjection.finalInvestmentValue - liveProjection.finalNetWorth) > 2) {
             warnings.push('Internal projection reconciliation failed — please report this.');
         }
-        const hasUsd = getPersonalAccounts(data).some((a) => a.currency === 'USD');
+        const hasUsd = getPersonalAccounts(engineData).some((a) => a.currency === 'USD');
         if (hasUsd && (!Number.isFinite(fx) || fx <= 0)) warnings.push('USD accounts detected — set SAR per USD in the header or Wealth Ultra.');
         return warnings;
     }, [
-        data,
+        engineData,
         exchangeRate,
         getAvailableCashForAccount,
         simulatedPrices,
@@ -507,7 +513,9 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 </div>
 
                 <div className="lg:col-span-3 min-w-0 w-full space-y-6 lg:self-start">
-                        {summary && (
+                        {baselinesPending ? (
+                            <SectionLoadingPlaceholder label="Syncing wealth baselines for forecast…" className="min-h-[12rem]" />
+                        ) : summary ? (
                             <>
                                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-md">
                                     <div className="flex flex-wrap items-center gap-2 mb-3">
@@ -562,8 +570,6 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                                         <p className="text-xs text-slate-500 mt-3">Spread scales with how jumpy your monthly savings were and how long you forecast — for intuition only.</p>
                                     </div>
                         )}
-                        </>
-                    )}
 
                         {chartDisplayData.length > 0 ? (
                             <SectionCard title="Growth chart" className="flex flex-col border-t-4 border-t-primary/25 shadow-md" collapsible collapsibleSummary="Net worth vs investment pile" defaultExpanded>
@@ -689,6 +695,8 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                                 <strong>Gentle heads-up:</strong> many plans assume saving at least ~15% of income. Your recent rate is lower — tighten spending or lift income if you want the forecast to feel realistic.
                         </div>
                     )}
+                            </>
+                        ) : null}
                 </div>
             </div>
 

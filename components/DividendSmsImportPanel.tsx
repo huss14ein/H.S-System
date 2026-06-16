@@ -17,7 +17,7 @@ import {
 } from '../services/dividendSmsParser';
 import { buildHoldingSymbolOptions } from '../services/holdingSymbolOptions';
 import { ResolvedSymbolLabel } from './SymbolWithCompanyName';
-import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { useCompanyNames, symbolsNeedingCompanyName } from '../hooks/useSymbolCompanyName';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useConfirmAction } from '../hooks/useConfirmAction';
 
@@ -95,7 +95,7 @@ const DividendSmsImportPanel: React.FC = () => {
   }, [parsedRows, portfolioOverrideByIndex, holdingOverrideByIndex, reresolve]);
 
   const symbolBatch = useMemo(
-    () => Array.from(new Set(resolvedRows.map((r) => r.symbol).filter(Boolean))),
+    () => symbolsNeedingCompanyName(resolvedRows.map((r) => ({ symbol: r.symbol }))),
     [resolvedRows],
   );
   const { names: companyNames } = useCompanyNames(symbolBatch);

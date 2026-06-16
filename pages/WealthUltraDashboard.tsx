@@ -3,6 +3,7 @@ import { DataContext } from '../context/DataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useAI } from '../context/AiContext';
 import { useExtendedCanonicalMetrics, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
+import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { aggregateMonthlyBudgetAcrossPortfolios } from '../utils/investmentPlanPerPortfolio';
 import type { InvestmentPlanSettings, UniverseTicker } from '../types';
 import AIAdvisor from '../components/AIAdvisor';
@@ -32,7 +33,7 @@ import InfoHint from '../components/InfoHint';
 import CurrencyDualDisplay from '../components/CurrencyDualDisplay';
 import CollapsibleSection from '../components/CollapsibleSection';
 import { formatUniverseMonthlyWeightFraction, getUniversePlanRoleLabel } from '../services/universePlanRole';
-import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { useCompanyNames, symbolsNeedingCompanyName } from '../hooks/useSymbolCompanyName';
 import { ResolvedSymbolLabel, formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
 
 const SLEEVE_COLORS: Record<WealthUltraSleeve, string> = {
@@ -382,7 +383,7 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     (orders ?? []).forEach((o: { ticker?: string }) => {
       if (o.ticker) set.add(o.ticker);
     });
-    return Array.from(set).filter((s) => s.length >= 2);
+    return symbolsNeedingCompanyName(Array.from(set).map((s) => ({ symbol: s })));
   }, [positions, monthlyDeployment.suggestedTicker, orders]);
   const { names: ultraTickerNames } = useCompanyNames(ultraTickerSymbols);
 
@@ -590,9 +591,12 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                 {Number.isFinite(config.fxRate) && Math.abs(config.fxRate - sarPerUsd) > 0.0001 && (
                   <span className="text-slate-500"> (stored config {config.fxRate.toFixed(4)} is ignored for display — resolver wins)</span>
                 )}
-                . Personal balance sheet (Dashboard / Investments): net worth{' '}
-                <span className="font-mono font-semibold">{headlineNetWorthSar.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span> SAR · investment exposure{' '}
-                <span className="font-mono font-semibold">{investmentsTotalSar.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span> SAR.
+                . Personal balance sheet (Dashboard / Investments):{' '}
+                <ExtendedMetricGate ready={extendedReady} compact className="inline-block min-w-[12rem]">
+                  net worth{' '}
+                  <span className="font-mono font-semibold">{headlineNetWorthSar.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span> SAR · investment exposure{' '}
+                  <span className="font-mono font-semibold">{investmentsTotalSar.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span> SAR.
+                </ExtendedMetricGate>
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">

@@ -354,7 +354,7 @@ function orphanShareWeightForPortfolio(args: {
 /**
  * Weights for splitting orphan cashflows: each portfolio’s live position value in SAR (same basis as holdings KPIs).
  */
-function portfolioSiblingAttributionWeights(
+export function portfolioSiblingAttributionWeights(
   siblingPortfolios: InvestmentPortfolio[],
   rate: number,
   simulatedPrices: SimulatedPriceMap,

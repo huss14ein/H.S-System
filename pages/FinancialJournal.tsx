@@ -20,7 +20,7 @@ import {
   journalOutcomeReview,
   type ThesisRecord,
 } from '../services/thesisJournalEngine';
-import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { useCompanyNames, symbolsNeedingCompanyName } from '../hooks/useSymbolCompanyName';
 import { ResolvedSymbolLabel, formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
 
 const KEY = 'finova_financial_journal_v1';
@@ -138,7 +138,10 @@ const FinancialJournal: React.FC<FinancialJournalProps> = ({ triggerPageAction, 
   const [invalidationPoint, setInvalidationPoint] = useState('');
   const [reviewDate, setReviewDate] = useState('');
 
-  const thesisSymbols = useMemo(() => theses.map((t) => t.symbol).filter((s): s is string => !!s && s.length >= 2), [theses]);
+  const thesisSymbols = useMemo(
+    () => symbolsNeedingCompanyName(theses.map((t) => ({ symbol: t.symbol }))),
+    [theses],
+  );
   const { names: thesisCompanyNames } = useCompanyNames(thesisSymbols);
 
   const loadThesisIntoForm = (t: ThesisRecord) => {

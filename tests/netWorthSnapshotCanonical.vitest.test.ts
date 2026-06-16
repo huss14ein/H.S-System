@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { buildExtendedNetWorthSnapshot } from '../services/netWorthSnapshotExtended';
+import {
+  buildExtendedNetWorthSnapshot,
+  buildNetWorthSnapshotFromHeadline,
+  captureNetWorthSnapshotFromHeadline,
+} from '../services/netWorthSnapshotExtended';
 import {
   computePersonalHeadlineNetWorthSar,
   computeTodayBalanceSheetSnapshotSar,
@@ -63,5 +67,14 @@ describe('buildExtendedNetWorthSnapshot', () => {
     const balance = bucketSumMatchesNetWorth(snap);
     expect(balance.matches).toBe(true);
     expect(balance.driftSar).toBeLessThan(1.5);
+  });
+
+  it('captureNetWorthSnapshotFromHeadline matches buildExtendedNetWorthSnapshot net worth', () => {
+    const headline = computePersonalHeadlineNetWorthSar(data, fx, opts);
+    const fromHeadline = buildNetWorthSnapshotFromHeadline(headline, data);
+    const { snap } = buildExtendedNetWorthSnapshot(data, fx, getCash, simulatedPrices);
+    expect(fromHeadline.netWorth).toBe(snap.netWorth);
+    expect(fromHeadline.buckets).toEqual(snap.buckets);
+    expect(captureNetWorthSnapshotFromHeadline(headline, data, null)?.netWorth).toBe(headline.netWorth);
   });
 });

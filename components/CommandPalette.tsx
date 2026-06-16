@@ -4,9 +4,9 @@ import { Page } from '../types';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSimulatedPrices, useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { supabase } from '../services/supabaseClient';
-import { captureExtendedNetWorthSnapshot } from '../services/netWorthSnapshotExtended';
+import { captureNetWorthSnapshotFromHeadline } from '../services/netWorthSnapshotExtended';
 import { buildReviewPack, downloadReviewPackMarkdown } from '../services/reviewPack';
 import { sendReviewPackEmail } from '../services/reviewPackEmail';
 import { toast } from '../context/ToastContext';
@@ -31,6 +31,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
     const auth = useContext(AuthContext);
     const { exchangeRate } = useCurrency();
     const simulatedPrices = useCanonicalSimulatedPrices();
+    const { headline, extendedReady } = useExtendedCanonicalMetrics();
     const { getTopPages, trackAction } = useSelfLearning();
     const topPages = getTopPages(5);
 
@@ -98,13 +99,18 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
             name: 'Capture net worth snapshot',
             action: () => {
                 if (!data) return;
-                captureExtendedNetWorthSnapshot(
+                if (!extendedReady) {
+                    toast('Workspace metrics are still syncing — try again in a moment.', 'info');
+                    setIsOpen(false);
+                    return;
+                }
+                const snap = captureNetWorthSnapshotFromHeadline(
+                    headline,
                     data,
-                    exchangeRate,
-                    getAvailableCashForAccount,
                     supabase && auth?.user?.id ? { supabase, userId: auth.user.id } : null,
-                    simulatedPrices,
                 );
+                if (snap) toast('Net worth snapshot saved.', 'success');
+                else toast('Could not save snapshot — buckets did not reconcile with headline net worth.', 'error');
                 trackAction('capture-nw-snapshot', 'CommandPalette');
                 setIsOpen(false);
             },

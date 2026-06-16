@@ -39,18 +39,18 @@ describe('performance recovery E2E wiring', () => {
   });
 
   it('auto NW snapshot waits for quote readiness on Dashboard, Summary, and Layout', () => {
-    expect(read('pages/Dashboard.tsx')).toContain('canAutoCaptureNetWorthSnapshot');
-    expect(read('pages/Dashboard.tsx')).toContain('dashboardDebouncedPrices');
-    expect(read('pages/Summary.tsx')).toContain('canAutoCaptureNetWorthSnapshot');
-    expect(read('pages/Summary.tsx')).toContain('quoteRefreshFingerprint');
+    expect(read('pages/Dashboard.tsx')).toContain('tryAutoCaptureNetWorthSnapshot');
+    expect(read('pages/Dashboard.tsx')).toContain('useExtendedMetricsReady');
+    expect(read('pages/Summary.tsx')).toContain('tryAutoCaptureNetWorthSnapshot');
+    expect(read('pages/Summary.tsx')).toContain('captureNetWorthSnapshotFromHeadline');
     expect(read('components/Layout.tsx')).toContain('canAutoCaptureNetWorthSnapshot');
     expect(read('services/scheduledNetWorthSnapshot.ts')).toContain('snapshotReadiness');
-    expect(read('services/netWorthSnapshotReadiness.ts')).toContain('canAutoCaptureNetWorthSnapshot');
+    expect(read('services/netWorthSnapshotReadiness.ts')).toContain('metricsExtendedReady');
+    expect(read('services/netWorthSnapshotCapture.ts')).toContain('captureNetWorthSnapshotFromHeadline');
   });
 
-  it('auto NW snapshot throttle is used on Dashboard and Summary', () => {
-    expect(read('pages/Dashboard.tsx')).toContain('shouldThrottleAutoNetWorthSnapshot');
-    expect(read('pages/Summary.tsx')).toContain('shouldThrottleAutoNetWorthSnapshot');
+  it('auto NW snapshot throttle is centralized in netWorthSnapshotCapture', () => {
+    expect(read('services/netWorthSnapshotCapture.ts')).toContain('shouldThrottleAutoNetWorthSnapshot');
     expect(read('services/netWorthSnapshotThrottle.ts')).toContain('MATERIAL_NW_CHANGE_PCT');
   });
 
@@ -168,10 +168,16 @@ describe('performance recovery E2E wiring', () => {
   });
 
   it('heavy hubs use dashboard canonical metrics not full bundle', () => {
-    for (const file of ['LogicEnginesHub.tsx', 'EnginesAndToolsHub.tsx', 'RiskTradingHub.tsx', 'Forecast.tsx']) {
+    for (const file of ['LogicEnginesHub.tsx', 'EnginesAndToolsHub.tsx', 'RiskTradingHub.tsx']) {
       const src = read(`pages/${file}`);
       expect(src).toContain('useDashboardCanonicalMetrics');
     }
+  });
+
+  it('Forecast uses extended metrics for investment baseline', () => {
+    const src = read('pages/Forecast.tsx');
+    expect(src).toContain('useExtendedCanonicalMetrics');
+    expect(src).toContain('pickInvestmentsTotalSar');
   });
 
   it('stability rollout: shared budget RPC migration fixes date trim', () => {
@@ -194,7 +200,7 @@ describe('performance recovery E2E wiring', () => {
       /assignedBudgetMonthly > 0 \? assignedBudgetMonthly : assignedInvestmentMonthly/,
     );
     expect(read('pages/Investments.tsx')).toContain("unrealizedPnLBasis: 'net_capital'");
-    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toMatch(/useDebouncedValue\(simulatedPrices,\s*1500\)/);
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toMatch(/useDebouncedValue\(simulatedPrices,\s*400\)/);
     expect(read('services/monthlyInvestmentPlanProgress.ts')).toContain('aggregateMonthlyBudgetAcrossPortfolios');
     expect(read('components/Header.tsx')).toContain('computeMonthlyInvestmentPlanProgress');
     expect(read('pages/Budgets.tsx')).toContain('BudgetSharedRpcBanner');
@@ -231,10 +237,12 @@ describe('performance recovery E2E wiring', () => {
     expect(read('hooks/useFinancialEnginesIntegration.ts')).toContain('scheduleIdleWorkAsync');
     expect(read('hooks/useEnhancementSignals.ts')).toMatch(/showHydrateBanner/);
     expect(read('hooks/useDebouncedMarketPrices.ts')).toContain('MarketDebouncedPricesContext');
-    expect(read('components/Layout.tsx')).toContain('useDebouncedMarketPrices');
+    expect(read('components/Layout.tsx')).toContain('useExtendedCanonicalMetrics');
     expect(read('pages/Summary.tsx')).not.toContain('useMarketData');
     expect(read('pages/Investments.tsx')).toContain('const { simulatedPrices } = useInvestmentsCanonicalMetrics()');
     expect(read('pages/Dashboard.tsx')).toContain('useDashboardCanonicalMetrics');
+    expect(read('pages/Dashboard.tsx')).toContain('kpisPending');
+    expect(read('pages/Dashboard.tsx')).toContain('SectionLoadingPlaceholder');
     expect(read('pages/Forecast.tsx')).not.toMatch(/useMarketData\(\)[\s\S]{0,120}simulatedPrices/);
     expect(read('pages/Analysis.tsx')).not.toMatch(/useMemo\([\s\S]*hydrateSarPerUsdDailySeries/);
     expect(read('components/HoldingSymbolSelect.tsx')).not.toContain('<select');
@@ -243,14 +251,17 @@ describe('performance recovery E2E wiring', () => {
     expect(read('context/DataContext.tsx')).toContain('pauseBackgroundWork');
     expect(read('context/DataContext.tsx')).not.toContain('continuing with partial workspace');
     expect(read('context/DataContext.tsx')).toContain('transactions: [normalized, ...prev.transactions]');
-    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('useDebouncedValue(showHydrateBanner ? null : data, 350)');
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toMatch(
+      /const metricsData = showHydrateBanner && !financialDataHasHydrated\(data\) \? null : data/,
+    );
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).not.toContain('useDebouncedValue(showHydrateBanner ? null : data');
     expect(read('utils/backgroundWorkGate.ts')).toContain('pauseBackgroundWork');
-    expect(read('components/Layout.tsx')).toContain('pauseBackgroundWork');
+    expect(read('components/AuthenticatedAppShell.tsx')).toContain('pauseBackgroundWork');
     expect(read('components/Layout.tsx')).toContain('useBackgroundWorkInputPause');
-    expect(read('components/Layout.tsx')).toContain('startTransition');
+    expect(read('components/AuthenticatedAppShell.tsx')).toContain('startTransition');
     expect(read('components/Layout.tsx')).toContain('useFinancialEnginesIntegration({ eager: false })');
     expect(read('components/MarketSimulator.tsx')).toContain('isBackgroundWorkPaused');
-    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('applyFast()');
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('fastBundle');
     expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('extendCanonicalFinancialMetricsAsync');
     expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('yieldToMain');
     expect(read('hooks/useEnhancementSignals.ts')).toContain('scheduleIdleWorkAsync');
@@ -284,6 +295,11 @@ describe('performance recovery E2E wiring', () => {
     expect(read('services/portfolioPeriodPnL.ts')).toContain('computePortfolioPeriodPnLSummaryAsync');
     expect(read('services/portfolioPeriodPnL.ts')).toContain('cooperativeCheckpoint');
     expect(read('pages/Investments.tsx')).toContain('usePortfolioPeriodPnLSnapshot');
+    expect(read('pages/Investments.tsx')).toContain('platformPeriodPnL');
+    expect(read('pages/Investments.tsx')).toContain('buildInvestmentAccountKpiScope');
+    expect(read('services/portfolioPeriodPnL.ts')).toContain('buildInvestmentAccountKpiScope');
+    expect(read('services/investmentAccountKpiScope.ts')).toContain('deriveLedgerCashBucketsFromInvestmentTransactions');
+    expect(read('services/portfolioPeriodPnL.ts')).toContain('resolvePortfolioPeriodPnLEndValueSar');
     expect(read('components/dashboard/PortfolioPeriodPnLPanel.tsx')).toContain('usePortfolioPeriodPnLSnapshot');
     expect(read('utils/runWhenIdle.ts')).toContain('waitUntilBackgroundWorkResumed');
     expect(read('services/portfolioPeriodPnL.ts')).toContain('applyTxToLedgerReplayState');
@@ -302,5 +318,45 @@ describe('performance recovery E2E wiring', () => {
     expect(read('pages/Investments.tsx')).toContain('pickInvestmentsTotalSar');
     expect(read('context/InvestmentsMetricsContext.tsx')).toContain('useExtendedCanonicalMetrics');
     expect(read('services/extendedMetricsPresentation.ts')).toContain('pickWealthSummary');
+  });
+
+  it('finnhub profile cache and static-first company names', () => {
+    expect(read('services/finnhubService.ts')).toContain('getCompanyProfileCached');
+    expect(read('hooks/useSymbolCompanyName.ts')).toContain('getStaticCompanyName(key)');
+    expect(read('hooks/useSymbolCompanyName.ts')).toContain('symbolsNeedingCompanyName');
+    expect(read('hooks/useSymbolCompanyName.ts')).toContain('FETCH_CONCURRENCY');
+    expect(read('pages/Investments.tsx')).toContain('platformSymbolNames');
+    expect(read('pages/WatchlistView.tsx')).toContain('requestFundamentalsForSymbol');
+    expect(read('pages/WatchlistView.tsx')).not.toMatch(/Promise\.all\([\s\S]{0,120}getHoldingFundamentals/);
+  });
+
+  it('FX map memory cache and KPI preload wiring', () => {
+    expect(read('services/fxDailySeries.ts')).toContain('fxMapMemoryCache');
+    expect(read('services/dashboardKpiSnapshot.ts')).toContain('loadSarPerUsdByDay');
+    expect(read('services/dashboardKpiSnapshot.ts')).toMatch(/getSarPerUsdForCalendarDay\([^)]+fxMap/);
+  });
+
+  it('single navigation path with hash echo suppression', () => {
+    const shell = read('components/AuthenticatedAppShell.tsx');
+    expect(shell).toContain('suppressNextHashChangeRef');
+    expect(shell).toContain('cancelQuoteRefreshOnNav');
+    expect(read('utils/navigationBridge.ts')).toContain('registerQuoteRefreshCancel');
+    expect(read('components/Layout.tsx')).toContain('registerQuoteRefreshCancel');
+    expect(read('components/Layout.tsx')).not.toContain('navigatePage = useCallback');
+    expect(read('hooks/useBackgroundWorkInputPause.ts')).toContain('data-nav-link');
+  });
+
+  it('canonical extended metrics stale-while-revalidate', () => {
+    const ctx = read('context/CanonicalFinancialMetricsContext.tsx');
+    expect(ctx).toMatch(
+      /}, \[extendedFingerprint, metricsData, exchangeRate, getAvailableCashForAccount, debouncedPrices\]\)/,
+    );
+    expect(ctx).not.toMatch(/\[extendedFingerprint[\s\S]{0,120}fastBundle/);
+    expect(ctx).toContain('extendedBundle ?? fastBundle');
+  });
+
+  it('notifications read-state merge and dismiss grace', () => {
+    expect(read('context/NotificationsContext.tsx')).toContain('dismissGraceUntilRef');
+    expect(read('components/HeaderAlertsPopover.tsx')).toContain('markAsRead(n.id)');
   });
 });

@@ -116,17 +116,15 @@ const IDLE_PREFETCH_PAGES: Page[] = [
 /** Warm common lazy chunks one route at a time so we never block the main thread for 30s+. */
 export function prefetchCommonPagesIdle(): void {
   if (typeof window === 'undefined') return;
-  for (const page of PRIORITY_PREFETCH_PAGES) {
-    prefetchPage(page);
-  }
+  const allPages = [...new Set([...PRIORITY_PREFETCH_PAGES, ...IDLE_PREFETCH_PAGES])];
   let index = 0;
   const step = () => {
-    if (index >= IDLE_PREFETCH_PAGES.length) return;
-    prefetchPage(IDLE_PREFETCH_PAGES[index]!);
+    if (index >= allPages.length) return;
+    prefetchPage(allPages[index]!);
     index += 1;
-    if (index < IDLE_PREFETCH_PAGES.length) {
+    if (index < allPages.length) {
       scheduleIdleWork(step, 2500);
     }
   };
-  scheduleIdleWork(step, 2500);
+  scheduleIdleWork(step, 3000);
 }

@@ -12,6 +12,7 @@ import {
   type PortfolioPnLDailyPoint,
 } from '../services/portfolioPeriodPnL';
 import type { SimulatedPriceMap } from '../services/investmentPlatformCardMetrics';
+import { financialDataHasHydrated } from '../services/financialDataHydration';
 import { scheduleIdleWorkAsync } from '../utils/runWhenIdle';
 import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
 import { yieldToMain } from '../utils/yieldToMain';
@@ -49,7 +50,7 @@ export function usePortfolioPeriodPnLSnapshot(args: {
   enabled?: boolean;
 }): PortfolioPeriodPnLSnapshot {
   const enabled = args.enabled !== false;
-  const { showHydrateBanner, getAvailableCashForAccount } = useContext(DataContext)!;
+  const { getAvailableCashForAccount } = useContext(DataContext)!;
   const [snapshot, setSnapshot] = useState<PortfolioPeriodPnLCore>(EMPTY_CORE);
   const { data, portfolios, accounts, sarPerUsd, simulatedPrices, locale } = args;
 
@@ -67,7 +68,7 @@ export function usePortfolioPeriodPnLSnapshot(args: {
       setSnapshot(EMPTY_CORE);
       return;
     }
-    if (!data || showHydrateBanner || !getAvailableCashForAccount) {
+    if (!data || !financialDataHasHydrated(data) || !getAvailableCashForAccount) {
       setSnapshot(EMPTY_CORE);
       return;
     }
@@ -127,7 +128,7 @@ export function usePortfolioPeriodPnLSnapshot(args: {
       aborted = true;
       cancelIdle();
     };
-  }, [enabled, data, portfolios, accounts, sarPerUsd, simulatedPrices, locale, showHydrateBanner, getAvailableCashForAccount, fingerprint]);
+  }, [enabled, data, portfolios, accounts, sarPerUsd, simulatedPrices, locale, getAvailableCashForAccount, fingerprint]);
 
   const pnlByPortfolioId = useMemo(
     () => (snapshot.summary ? portfolioPeriodPnLMap(snapshot.summary) : new Map()),

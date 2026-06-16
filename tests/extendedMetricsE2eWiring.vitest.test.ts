@@ -29,12 +29,13 @@ describe('extended metrics end-to-end wiring', () => {
   it('partial wealth surfaces pick extended fields with extendedReady', () => {
     const checks: Array<{ path: string; patterns: string[] }> = [
       { path: 'pages/InvestmentOverview.tsx', patterns: ['useExtendedCanonicalMetrics', 'extendedReady'] },
-      { path: 'pages/Accounts.tsx', patterns: ['useExtendedCanonicalMetrics', 'pickInvestmentsTotalSar'] },
-      { path: 'pages/Analysis.tsx', patterns: ['useExtendedCanonicalMetrics', 'pickInvestmentsTotalSar'] },
+      { path: 'pages/Accounts.tsx', patterns: ['useExtendedCanonicalMetrics', 'pickInvestmentsTotalSar', 'ExtendedMetricGate'] },
+      { path: 'pages/Analysis.tsx', patterns: ['useExtendedCanonicalMetrics', 'pickInvestmentsTotalSar', 'ExtendedMetricGate'] },
       { path: 'pages/Commodities.tsx', patterns: ['useExtendedCanonicalMetrics', 'pickCommoditiesValueSar', 'ExtendedMetricGate'] },
       { path: 'pages/Assets.tsx', patterns: ['useExtendedCanonicalMetrics', 'pickCommoditiesValueSar', 'ExtendedMetricGate'] },
-      { path: 'pages/WealthUltraDashboard.tsx', patterns: ['useExtendedCanonicalMetrics', 'pickInvestmentsTotalSar'] },
-      { path: 'pages/Settings.tsx', patterns: ['useExtendedCanonicalMetrics', 'pickWealthSummary'] },
+      { path: 'pages/Forecast.tsx', patterns: ['useExtendedCanonicalMetrics', 'pickInvestmentsTotalSar', 'SectionLoadingPlaceholder'] },
+      { path: 'pages/Settings.tsx', patterns: ['useExtendedCanonicalMetrics', 'pickWealthSummary', 'ExtendedMetricGate'] },
+      { path: 'pages/WealthUltraDashboard.tsx', patterns: ['useExtendedCanonicalMetrics', 'pickInvestmentsTotalSar', 'ExtendedMetricGate'] },
       { path: 'pages/Investments.tsx', patterns: ['pickInvestmentsTotalSar', 'extendedReady'] },
       { path: 'components/DashboardKpiQualityPanel.tsx', patterns: ['useExtendedCanonicalMetrics', 'pickWealthSummary', 'extendedReady'] },
     ];

@@ -12,7 +12,7 @@ import {
     lookupLiveQuoteForSymbol,
 } from '../services/finnhubService';
 import { getAITradeAnalysis, getAIWatchlistAdvice, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
-import { fetchCompanyNameForSymbol, useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { fetchCompanyNameForSymbol, useCompanyNames, symbolsNeedingCompanyName } from '../hooks/useSymbolCompanyName';
 import { ResolvedSymbolLabel, formatSymbolWithCompany, type SymbolNamesMap } from '../components/SymbolWithCompanyName';
 import Modal from '../components/Modal';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
@@ -439,8 +439,9 @@ const WatchlistItemRow: React.FC<{
     onOpenDeleteModal: (item: WatchlistItem) => void;
     onOpenResearchModal: (item: WatchlistItem) => void;
     onAddToPlan?: (item: WatchlistItem) => void;
+    onRequestFundamentals?: (symbol: string) => void;
     buyScore?: { score: number; allowed: boolean };
-}> = ({ item, companyNames, priceInfo, activeAlerts, historical1M, fundamentals, fundamentalsLoading, preferredCurrency, exchangeRate, onOpenAlertModal, onOpenDeleteModal, onOpenResearchModal, onAddToPlan, buyScore }) => {
+}> = ({ item, companyNames, priceInfo, activeAlerts, historical1M, fundamentals, fundamentalsLoading, preferredCurrency, exchangeRate, onOpenAlertModal, onOpenDeleteModal, onOpenResearchModal, onAddToPlan, onRequestFundamentals, buyScore }) => {
     const quoteSource = priceInfo.source ?? (priceInfo.price > 0 ? 'live' : 'none');
     const market = getExchangeAndCurrencyForSymbol(item.symbol);
     const priceCurrency: 'USD' | 'SAR' = (market?.currency === 'SAR' ? 'SAR' : 'USD');
@@ -463,6 +464,24 @@ const WatchlistItemRow: React.FC<{
         formatInCurrency(value, fundamentalsCurrency, digits);
     const [flashClass, setFlashClass] = useState('');
     const prevPriceRef = useRef<number | undefined>(undefined);
+    const rowRef = useRef<HTMLTableRowElement>(null);
+
+    useEffect(() => {
+        if (!onRequestFundamentals || typeof IntersectionObserver === 'undefined') return;
+        const el = rowRef.current;
+        if (!el) return;
+        const obs = new IntersectionObserver(
+            (entries) => {
+                if (entries.some((e) => e.isIntersecting)) {
+                    onRequestFundamentals(item.symbol);
+                    obs.disconnect();
+                }
+            },
+            { rootMargin: '120px' },
+        );
+        obs.observe(el);
+        return () => obs.disconnect();
+    }, [item.symbol, onRequestFundamentals]);
 
     const targetValues = activeAlerts.map(a => {
         const raw = a.targetPrice ?? (a as any).target_price;
@@ -533,7 +552,7 @@ const WatchlistItemRow: React.FC<{
     }, [priceInfo]);
 
     return (
-        <tr className={`transition-colors duration-1000 ${flashClass}`}>
+        <tr ref={rowRef} className={`transition-colors duration-1000 ${flashClass}`}>
             <td className="px-4 py-2 whitespace-nowrap min-w-0 max-w-[240px]">
                 <ResolvedSymbolLabel
                     symbol={item.symbol}
@@ -825,7 +844,30 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
     const [tipsTranslating, setTipsTranslating] = useState(false);
     const [historicalBySymbol, setHistoricalBySymbol] = useState<Record<string, CandlePoint[] | null>>({});
     const [fundamentalsBySymbol, setFundamentalsBySymbol] = useState<Record<string, HoldingFundamentals | null>>({});
-    const [fundamentalsLoading, setFundamentalsLoading] = useState(false);
+    const [fundamentalsLoadingSymbols, setFundamentalsLoadingSymbols] = useState<Set<string>>(() => new Set());
+    const fundamentalsBySymbolRef = useRef(fundamentalsBySymbol);
+    fundamentalsBySymbolRef.current = fundamentalsBySymbol;
+    const fundamentalsLoadingRef = useRef(new Set<string>());
+
+    const requestFundamentalsForSymbol = useCallback((rawSymbol: string) => {
+        const sym = rawSymbol.trim().toUpperCase();
+        if (!sym || !import.meta.env.VITE_FINNHUB_API_KEY) return;
+        if (fundamentalsBySymbolRef.current[sym] !== undefined) return;
+        if (fundamentalsLoadingRef.current.has(sym)) return;
+        fundamentalsLoadingRef.current.add(sym);
+        setFundamentalsLoadingSymbols(new Set(fundamentalsLoadingRef.current));
+        void getHoldingFundamentals(sym)
+            .then((payload) => {
+                setFundamentalsBySymbol((prev) => ({ ...prev, [sym]: payload }));
+            })
+            .catch(() => {
+                setFundamentalsBySymbol((prev) => ({ ...prev, [sym]: null }));
+            })
+            .finally(() => {
+                fundamentalsLoadingRef.current.delete(sym);
+                setFundamentalsLoadingSymbols(new Set(fundamentalsLoadingRef.current));
+            });
+    }, []);
     const [searchQuery, setSearchQuery] = useState('');
     const [marketFilter, setMarketFilter] = useState<'All' | 'US' | 'SAR'>('All');
     const [watchlistBuckets, setWatchlistBuckets] = useState<WatchlistBucket[]>([]);
@@ -861,45 +903,6 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
             cancelled = true;
         };
     }, [watchlistSymbolKey]);
-
-    useEffect(() => {
-        if (!import.meta.env.VITE_FINNHUB_API_KEY) return;
-        const symbols = watchlistSymbolKey ? watchlistSymbolKey.split(',') : [];
-        if (symbols.length === 0) {
-            setFundamentalsBySymbol({});
-            return;
-        }
-        let cancelled = false;
-        setFundamentalsLoading(true);
-        (async () => {
-            try {
-                const entries = await Promise.all(
-                    symbols.map(async (raw) => {
-                        const sym = raw.trim().toUpperCase();
-                        if (!sym) return [sym, null] as const;
-                        try {
-                            const data = await getHoldingFundamentals(sym);
-                            return [sym, data] as const;
-                        } catch {
-                            return [sym, null] as const;
-                        }
-                    }),
-                );
-                if (cancelled) return;
-                const next: Record<string, HoldingFundamentals | null> = {};
-                for (const [sym, info] of entries) {
-                    if (sym) next[sym] = info;
-                }
-                setFundamentalsBySymbol(next);
-            } finally {
-                if (!cancelled) setFundamentalsLoading(false);
-            }
-        })();
-        return () => {
-            cancelled = true;
-        };
-    }, [watchlistSymbolKey]);
-
 
     const bucketStorageKey = 'watchlist-buckets:v1';
 
@@ -980,7 +983,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
     }, [data?.watchlist, simulatedPrices, historicalBySymbol]);
 
     const watchlistSymbolsForNames = useMemo(() => {
-        const wl = (data?.watchlist ?? []).map((w) => (w.symbol || '').trim()).filter((s) => s.length >= 2);
+        const wl = symbolsNeedingCompanyName(data?.watchlist ?? []);
         const ir = ideaRanks.map((r) => r.symbol).filter(Boolean);
         return Array.from(new Set([...wl, ...ir]));
     }, [data?.watchlist, ideaRanks]);
@@ -1345,12 +1348,17 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
                                   activeAlerts={activeAlerts}
                                   historical1M={historicalBySymbol[symKey] ?? undefined}
                                   fundamentals={fundamentalsBySymbol[symKey] ?? undefined}
-                                  fundamentalsLoading={fundamentalsLoading && !fundamentalsBySymbol[symKey]}
+                                  fundamentalsLoading={fundamentalsLoadingSymbols.has(symKey) && fundamentalsBySymbol[symKey] === undefined}
                                   preferredCurrency={activeBucket?.currency}
                                   exchangeRate={sarPerUsd}
                                   onOpenAlertModal={handleOpenAlertModal}
                                   onOpenDeleteModal={handleOpenDeleteModal}
-                                  onOpenResearchModal={(it) => { setResearchItem(it); setIsResearchModalOpen(true); }}
+                                  onOpenResearchModal={(it) => {
+                                    requestFundamentalsForSymbol(it.symbol);
+                                    setResearchItem(it);
+                                    setIsResearchModalOpen(true);
+                                  }}
+                                  onRequestFundamentals={requestFundamentalsForSymbol}
                                   onAddToPlan={onCreatePlanFromWatchlist ? handleAddToPlan : undefined}
                                   buyScore={buyScoreBySymbol.get(String(item.symbol || '').toUpperCase())}
                                />

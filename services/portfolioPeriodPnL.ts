@@ -4,14 +4,18 @@ import { financialMonthRange } from '../utils/financialMonth';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { investmentTransactionCashAmountSarDated } from '../utils/investmentTransactionSar';
 import { toSAR } from '../utils/currencyMath';
-import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote } from '../utils/holdingValuation';
+import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { getPersonalInvestmentTransactionsForKpis } from './investmentKpiCore';
+import { buildInvestmentAccountKpiScope } from './investmentAccountKpiScope';
 import {
   computePlatformCardMetrics,
   computePortfolioMetricsBundle,
   getPortfolioAttributedTransactions,
+  portfolioSiblingAttributionWeights,
+  type PlatformCardMetrics,
   type SimulatedPriceMap,
 } from './investmentPlatformCardMetrics';
+import { tradableCashBucketToSAR } from '../utils/currencyMath';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
@@ -42,6 +46,38 @@ export type PortfolioPeriodPnLSummary = {
   weeklyTotalSar: number;
   monthlyTotalSar: number;
 };
+
+export type PlatformPeriodPnLBreakdown = {
+  accountId: string;
+  weekly: PortfolioPeriodPnLBreakdown;
+  monthly: PortfolioPeriodPnLBreakdown;
+};
+
+/** End-of-period value for mark-to-market P/L — full account cash on single portfolio; weighted cash slice when siblings share a broker. */
+export function resolvePortfolioPeriodPnLEndValueSar(args: {
+  metrics: PlatformCardMetrics;
+  siblingCount: number;
+  portfolioWeight: number;
+  accountCashSar: number;
+}): number {
+  if (args.siblingCount === 1) return args.metrics.totalValueInSAR;
+  const cashSlice = Math.max(0, args.accountCashSar) * Math.max(0, args.portfolioWeight);
+  return args.metrics.holdingsValueInSAR + cashSlice;
+}
+
+/** Account-level week/month P/L (sum of sibling portfolio rows — same attribution as Investments hub). */
+export function platformPeriodPnLFromSummary(
+  summary: PortfolioPeriodPnLSummary,
+  accountId: string,
+): PlatformPeriodPnLBreakdown {
+  const rows = summary.rows.filter((r) => r.accountId === accountId);
+  const fold = (key: 'weekly' | 'monthly'): PortfolioPeriodPnLBreakdown => ({
+    ledgerSar: rows.reduce((s, r) => s + r[key].ledgerSar, 0),
+    marketEstimateSar: rows.reduce((s, r) => s + r[key].marketEstimateSar, 0),
+    totalSar: rows.reduce((s, r) => s + r[key].totalSar, 0),
+  });
+  return { accountId, weekly: fold('weekly'), monthly: fold('monthly') };
+}
 
 type Lot = { qty: number; avgCostSar: number };
 
@@ -173,7 +209,26 @@ function seedLedgerStateFromHoldingsIfEmpty(
   return { lots, cashSar: state.cashSar };
 }
 
-/** Portfolio value at a ledger cutoff — cost basis unless `useLiveMark`. */
+function holdingLiveValueSarForLot(
+  holding: Holding,
+  lotQty: number,
+  book: ReturnType<typeof resolveInvestmentPortfolioCurrency>,
+  simulatedPrices: SimulatedPriceMap,
+  sarPerUsd: number,
+): number {
+  const totalQty = Number(holding.quantity ?? 0);
+  let scaled: Holding = { ...holding, quantity: lotQty };
+  if (totalQty > 0 && lotQty < totalQty - 1e-9) {
+    const cv = Number(holding.currentValue ?? 0);
+    if (cv > 0) {
+      scaled = { ...holding, quantity: lotQty, currentValue: (cv * lotQty) / totalQty };
+    }
+  }
+  const v = effectiveHoldingValueInBookCurrency(scaled, book, simulatedPrices, sarPerUsd);
+  return toSAR(v, book, sarPerUsd);
+}
+
+/** Portfolio value at a ledger cutoff — live mark when requested. */
 export function computePortfolioSnapshotValueSar(args: {
   portfolio: InvestmentPortfolio;
   state: LedgerReplayState;
@@ -189,10 +244,8 @@ export function computePortfolioSnapshotValueSar(args: {
   for (const [sym, lot] of args.state.lots) {
     if (!(lot.qty > 0)) continue;
     const holding = holdingsBySym.get(sym);
-    if (args.useLiveMark && holding && holdingUsesLiveQuote(holding)) {
-      const synthetic = { ...holding, quantity: lot.qty };
-      const v = effectiveHoldingValueInBookCurrency(synthetic, book, args.simulatedPrices, args.sarPerUsd);
-      holdingsSar += toSAR(v, book, args.sarPerUsd);
+    if (args.useLiveMark && holding) {
+      holdingsSar += holdingLiveValueSarForLot(holding, lot.qty, book, args.simulatedPrices, args.sarPerUsd);
     } else {
       holdingsSar += lot.qty * lot.avgCostSar;
     }
@@ -258,7 +311,7 @@ export function computePortfolioMarkToMarketPeriodPnLSar(args: {
     state: startState,
     sarPerUsd: args.sarPerUsd,
     simulatedPrices: args.simulatedPrices,
-    useLiveMark: false,
+    useLiveMark: true,
     includeCash: args.includeCash,
   });
 
@@ -381,6 +434,7 @@ export function computePortfolioPeriodPnLSummary(args: {
   } = args;
 
   const allTx = getPersonalInvestmentTransactionsForKpis(data);
+  const allInvestments = data.investments ?? [];
   const week = weekWindowMs(now);
   const month = financialMonthWindowMs(now, monthStartDay);
 
@@ -396,40 +450,58 @@ export function computePortfolioPeriodPnLSummary(args: {
   for (const [, siblings] of byAccount) {
     const sorted = [...siblings].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     const accountId = sorted[0]?.accountId ?? '';
+    const account = accounts.find((a) => a.id === accountId);
+    if (!account) continue;
     const accountTx = allTx.filter(
-      (t) => resolveInvestmentTransactionAccountId(t, accounts, portfolios) === accountId,
+      (t) => resolveInvestmentTransactionAccountId(t, accounts, allInvestments) === accountId,
     );
-    const cashBuckets = getAvailableCashForAccount?.(accountId) ?? { SAR: 0, USD: 0 };
+    const scope = buildInvestmentAccountKpiScope({
+      account,
+      personalPortfolios: sorted,
+      data,
+      accountTransactions: accountTx,
+      getAvailableCashForAccount,
+    });
+    const accountTxForMetrics = scope.transactionsForMetrics;
+    const cashBuckets = scope.availableCashByCurrency;
 
     const bundle = computePortfolioMetricsBundle({
       siblingPortfolios: sorted,
-      transactions: accountTx,
+      transactions: accountTxForMetrics,
       accounts,
       allInvestments: portfolios,
       sarPerUsd,
       simulatedPrices,
-      accountAvailableCashByCurrency: {
+      accountAvailableCashByCurrency: cashBuckets,
+    });
+
+    const siblingWeights =
+      sorted.length === 1
+        ? [1]
+        : portfolioSiblingAttributionWeights(sorted, sarPerUsd, simulatedPrices);
+    const accountCashSar = tradableCashBucketToSAR(
+      {
         SAR: Math.max(0, cashBuckets?.SAR ?? 0),
         USD: Math.max(0, cashBuckets?.USD ?? 0),
       },
-    });
+      sarPerUsd,
+    );
 
     for (let i = 0; i < sorted.length; i++) {
       const p = sorted[i];
       const txsForLedger =
         sorted.length === 1
-          ? accountTx
+          ? accountTxForMetrics
           : getPortfolioAttributedTransactions({
               portfolioId: p.id,
               portfolioIndex: i,
               siblingPortfolios: sorted,
-              transactions: accountTx,
+              transactions: accountTxForMetrics,
               sarPerUsd,
               simulatedPrices,
             });
 
       const book = resolveInvestmentPortfolioCurrency(p);
-      const includeCash = sorted.length === 1;
       const metrics =
         bundle.metricsByPortfolioId.get(p.id) ??
         computePlatformCardMetrics({
@@ -438,15 +510,21 @@ export function computePortfolioPeriodPnLSummary(args: {
           accounts,
           allInvestments: portfolios,
           sarPerUsd,
-          availableCashByCurrency: includeCash
-            ? { SAR: Math.max(0, cashBuckets?.SAR ?? 0), USD: Math.max(0, cashBuckets?.USD ?? 0) }
-            : { SAR: 0, USD: 0 },
+          availableCashByCurrency:
+            sorted.length === 1
+              ? { SAR: Math.max(0, cashBuckets?.SAR ?? 0), USD: Math.max(0, cashBuckets?.USD ?? 0) }
+              : { SAR: 0, USD: 0 },
           simulatedPrices,
           platformCurrency: book,
           unrealizedPnLBasis: 'holdings_cost',
         });
 
-      const endValueSar = metrics.totalValueInSAR;
+      const endValueSar = resolvePortfolioPeriodPnLEndValueSar({
+        metrics,
+        siblingCount: sorted.length,
+        portfolioWeight: siblingWeights[i] ?? 0,
+        accountCashSar,
+      });
 
       const weekly = computePortfolioMarkToMarketPeriodPnLSar({
         portfolio: p,
@@ -454,7 +532,7 @@ export function computePortfolioPeriodPnLSummary(args: {
         startMs: week.startMs,
         endMs: week.endMs,
         endValueSar,
-        includeCash,
+        includeCash: true,
         accounts,
         portfolios,
         data,
@@ -467,7 +545,7 @@ export function computePortfolioPeriodPnLSummary(args: {
         startMs: month.startMs,
         endMs: month.endMs,
         endValueSar,
-        includeCash,
+        includeCash: true,
         accounts,
         portfolios,
         data,
@@ -667,7 +745,7 @@ function buildPortfolioDailySeriesInWindow(args: {
     state: replayState,
     sarPerUsd: args.sarPerUsd,
     simulatedPrices: args.simulatedPrices,
-    useLiveMark: false,
+    useLiveMark: true,
     includeCash: args.includeCash,
   });
 
@@ -708,7 +786,7 @@ function buildPortfolioDailySeriesInWindow(args: {
             state: replayState,
             sarPerUsd: args.sarPerUsd,
             simulatedPrices: args.simulatedPrices,
-            useLiveMark: false,
+            useLiveMark: true,
             includeCash: args.includeCash,
           });
 
@@ -783,6 +861,7 @@ export function computePortfolioPnLDailySeries(args: {
 }): PortfolioPnLDailySeries {
   const summary = args.summary ?? computePortfolioPeriodPnLSummary(args);
   const allTx = getPersonalInvestmentTransactionsForKpis(args.data);
+  const allInvestments = args.data.investments ?? [];
   const week = weekWindowMs(args.now ?? new Date());
   const month = financialMonthWindowMs(args.now ?? new Date(), args.monthStartDay);
 
@@ -800,23 +879,32 @@ export function computePortfolioPnLDailySeries(args: {
   for (const [, siblings] of byAccount) {
     const sorted = [...siblings].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     const accountId = sorted[0]?.accountId ?? '';
+    const account = args.accounts.find((a) => a.id === accountId);
+    if (!account) continue;
     const accountTx = allTx.filter(
-      (t) => resolveInvestmentTransactionAccountId(t, args.accounts, args.portfolios) === accountId,
+      (t) => resolveInvestmentTransactionAccountId(t, args.accounts, allInvestments) === accountId,
     );
+    const scope = buildInvestmentAccountKpiScope({
+      account,
+      personalPortfolios: sorted,
+      data: args.data,
+      accountTransactions: accountTx,
+      getAvailableCashForAccount: args.getAvailableCashForAccount,
+    });
+    const accountTxForMetrics = scope.transactionsForMetrics;
 
     for (let i = 0; i < sorted.length; i++) {
       const p = sorted[i];
       const row = summary.rows.find((r) => r.portfolioId === p.id);
       if (!row) continue;
-      const includeCash = sorted.length === 1;
       const txsForLedger =
         sorted.length === 1
-          ? accountTx
+          ? accountTxForMetrics
           : getPortfolioAttributedTransactions({
               portfolioId: p.id,
               portfolioIndex: i,
               siblingPortfolios: sorted,
-              transactions: accountTx,
+              transactions: accountTxForMetrics,
               sarPerUsd: args.sarPerUsd,
               simulatedPrices: args.simulatedPrices,
             });
@@ -827,7 +915,7 @@ export function computePortfolioPnLDailySeries(args: {
         startMs: week.startMs,
         endMs: week.endMs,
         endValueSar: row.valueSar,
-        includeCash,
+        includeCash: true,
         accounts: args.accounts,
         portfolios: args.portfolios,
         data: args.data,
@@ -841,7 +929,7 @@ export function computePortfolioPnLDailySeries(args: {
         startMs: month.startMs,
         endMs: month.endMs,
         endValueSar: row.valueSar,
-        includeCash,
+        includeCash: true,
         accounts: args.accounts,
         portfolios: args.portfolios,
         data: args.data,
@@ -912,7 +1000,7 @@ async function buildPortfolioDailySeriesInWindowAsync(
     state: replayState,
     sarPerUsd: args.sarPerUsd,
     simulatedPrices: args.simulatedPrices,
-    useLiveMark: false,
+    useLiveMark: true,
     includeCash: args.includeCash,
   });
 
@@ -955,7 +1043,7 @@ async function buildPortfolioDailySeriesInWindowAsync(
             state: replayState,
             sarPerUsd: args.sarPerUsd,
             simulatedPrices: args.simulatedPrices,
-            useLiveMark: false,
+            useLiveMark: true,
             includeCash: args.includeCash,
           });
 
@@ -1005,6 +1093,7 @@ export async function computePortfolioPeriodPnLSummaryAsync(
   } = args;
 
   const allTx = getPersonalInvestmentTransactionsForKpis(data);
+  const allInvestments = data.investments ?? [];
   const week = weekWindowMs(now);
   const month = financialMonthWindowMs(now, monthStartDay);
 
@@ -1022,40 +1111,58 @@ export async function computePortfolioPeriodPnLSummaryAsync(
 
     const sorted = [...siblings].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     const accountId = sorted[0]?.accountId ?? '';
+    const account = accounts.find((a) => a.id === accountId);
+    if (!account) continue;
     const accountTx = allTx.filter(
-      (t) => resolveInvestmentTransactionAccountId(t, accounts, portfolios) === accountId,
+      (t) => resolveInvestmentTransactionAccountId(t, accounts, allInvestments) === accountId,
     );
-    const cashBuckets = getAvailableCashForAccount?.(accountId) ?? { SAR: 0, USD: 0 };
+    const scope = buildInvestmentAccountKpiScope({
+      account,
+      personalPortfolios: sorted,
+      data,
+      accountTransactions: accountTx,
+      getAvailableCashForAccount,
+    });
+    const accountTxForMetrics = scope.transactionsForMetrics;
+    const cashBuckets = scope.availableCashByCurrency;
 
     const bundle = computePortfolioMetricsBundle({
       siblingPortfolios: sorted,
-      transactions: accountTx,
+      transactions: accountTxForMetrics,
       accounts,
       allInvestments: portfolios,
       sarPerUsd,
       simulatedPrices,
-      accountAvailableCashByCurrency: {
+      accountAvailableCashByCurrency: cashBuckets,
+    });
+
+    const siblingWeights =
+      sorted.length === 1
+        ? [1]
+        : portfolioSiblingAttributionWeights(sorted, sarPerUsd, simulatedPrices);
+    const accountCashSar = tradableCashBucketToSAR(
+      {
         SAR: Math.max(0, cashBuckets?.SAR ?? 0),
         USD: Math.max(0, cashBuckets?.USD ?? 0),
       },
-    });
+      sarPerUsd,
+    );
 
     for (let i = 0; i < sorted.length; i++) {
       const p = sorted[i];
       const txsForLedger =
         sorted.length === 1
-          ? accountTx
+          ? accountTxForMetrics
           : getPortfolioAttributedTransactions({
               portfolioId: p.id,
               portfolioIndex: i,
               siblingPortfolios: sorted,
-              transactions: accountTx,
+              transactions: accountTxForMetrics,
               sarPerUsd,
               simulatedPrices,
             });
 
       const book = resolveInvestmentPortfolioCurrency(p);
-      const includeCash = sorted.length === 1;
       const metrics =
         bundle.metricsByPortfolioId.get(p.id) ??
         computePlatformCardMetrics({
@@ -1064,15 +1171,21 @@ export async function computePortfolioPeriodPnLSummaryAsync(
           accounts,
           allInvestments: portfolios,
           sarPerUsd,
-          availableCashByCurrency: includeCash
-            ? { SAR: Math.max(0, cashBuckets?.SAR ?? 0), USD: Math.max(0, cashBuckets?.USD ?? 0) }
-            : { SAR: 0, USD: 0 },
+          availableCashByCurrency:
+            sorted.length === 1
+              ? { SAR: Math.max(0, cashBuckets?.SAR ?? 0), USD: Math.max(0, cashBuckets?.USD ?? 0) }
+              : { SAR: 0, USD: 0 },
           simulatedPrices,
           platformCurrency: book,
           unrealizedPnLBasis: 'holdings_cost',
         });
 
-      const endValueSar = metrics.totalValueInSAR;
+      const endValueSar = resolvePortfolioPeriodPnLEndValueSar({
+        metrics,
+        siblingCount: sorted.length,
+        portfolioWeight: siblingWeights[i] ?? 0,
+        accountCashSar,
+      });
 
       const weekly = computePortfolioMarkToMarketPeriodPnLSar({
         portfolio: p,
@@ -1080,7 +1193,7 @@ export async function computePortfolioPeriodPnLSummaryAsync(
         startMs: week.startMs,
         endMs: week.endMs,
         endValueSar,
-        includeCash,
+        includeCash: true,
         accounts,
         portfolios,
         data,
@@ -1093,7 +1206,7 @@ export async function computePortfolioPeriodPnLSummaryAsync(
         startMs: month.startMs,
         endMs: month.endMs,
         endValueSar,
-        includeCash,
+        includeCash: true,
         accounts,
         portfolios,
         data,
@@ -1136,6 +1249,7 @@ export async function computePortfolioPnLDailySeriesAsync(
   if (!summary) return null;
 
   const allTx = getPersonalInvestmentTransactionsForKpis(args.data);
+  const allInvestments = args.data.investments ?? [];
   const week = weekWindowMs(args.now ?? new Date());
   const month = financialMonthWindowMs(args.now ?? new Date(), args.monthStartDay);
 
@@ -1155,23 +1269,32 @@ export async function computePortfolioPnLDailySeriesAsync(
 
     const sorted = [...siblings].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     const accountId = sorted[0]?.accountId ?? '';
+    const account = args.accounts.find((a) => a.id === accountId);
+    if (!account) continue;
     const accountTx = allTx.filter(
-      (t) => resolveInvestmentTransactionAccountId(t, args.accounts, args.portfolios) === accountId,
+      (t) => resolveInvestmentTransactionAccountId(t, args.accounts, allInvestments) === accountId,
     );
+    const scope = buildInvestmentAccountKpiScope({
+      account,
+      personalPortfolios: sorted,
+      data: args.data,
+      accountTransactions: accountTx,
+      getAvailableCashForAccount: args.getAvailableCashForAccount,
+    });
+    const accountTxForMetrics = scope.transactionsForMetrics;
 
     for (let i = 0; i < sorted.length; i++) {
       const p = sorted[i];
       const row = summary.rows.find((r) => r.portfolioId === p.id);
       if (!row) continue;
-      const includeCash = sorted.length === 1;
       const txsForLedger =
         sorted.length === 1
-          ? accountTx
+          ? accountTxForMetrics
           : getPortfolioAttributedTransactions({
               portfolioId: p.id,
               portfolioIndex: i,
               siblingPortfolios: sorted,
-              transactions: accountTx,
+              transactions: accountTxForMetrics,
               sarPerUsd: args.sarPerUsd,
               simulatedPrices: args.simulatedPrices,
             });
@@ -1180,7 +1303,7 @@ export async function computePortfolioPnLDailySeriesAsync(
         portfolio: p,
         transactions: txsForLedger,
         endValueSar: row.valueSar,
-        includeCash,
+        includeCash: true as const,
         accounts: args.accounts,
         portfolios: args.portfolios,
         data: args.data,

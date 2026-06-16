@@ -27,8 +27,13 @@ export function canAutoCaptureNetWorthSnapshot(input: {
   symbolQuoteUpdatedAt: Record<string, string | undefined>;
   isLive: boolean;
   data: FinancialData | null | undefined;
+  /** Phase-2 canonical metrics merged (live investment ROI + wealth summary path). */
+  metricsExtendedReady?: boolean;
+  getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number };
 }): boolean {
   if (input.showHydrateBanner || !input.data) return false;
+  if (!input.getAvailableCashForAccount) return false;
+  if (input.metricsExtendedReady === false) return false;
   if (input.isRefreshing || input.hasQueuedPriceRefresh()) return false;
 
   const tracked = getTrackedQuoteSymbolsFromData(input.data);

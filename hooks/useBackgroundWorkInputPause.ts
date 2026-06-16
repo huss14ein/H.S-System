@@ -11,7 +11,11 @@ export function useBackgroundWorkInputPause(enabled = true): void {
   useEffect(() => {
     if (!enabled || typeof window === 'undefined') return;
 
-    const pause = () => pauseBackgroundWork(INPUT_PAUSE_MS);
+    const pause = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest('[data-nav-link]')) return;
+      pauseBackgroundWork(INPUT_PAUSE_MS);
+    };
 
     window.addEventListener('keydown', pause, { capture: true, passive: true });
     window.addEventListener('pointerdown', pause, { capture: true, passive: true });

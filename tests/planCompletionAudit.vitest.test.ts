@@ -21,8 +21,8 @@ describe('Plan completion audit (A–I)', () => {
 
   it('Phase B — snapshot readiness gates Dashboard, Summary, Layout', () => {
     expect(exists('services/netWorthSnapshotReadiness.ts')).toBe(true);
-    expect(read('pages/Dashboard.tsx')).toContain('canAutoCaptureNetWorthSnapshot');
-    expect(read('pages/Summary.tsx')).toContain('canAutoCaptureNetWorthSnapshot');
+    expect(read('pages/Dashboard.tsx')).toContain('tryAutoCaptureNetWorthSnapshot');
+    expect(read('pages/Summary.tsx')).toContain('captureNetWorthSnapshotFromHeadline');
     expect(read('components/Layout.tsx')).toContain('canAutoCaptureNetWorthSnapshot');
   });
 

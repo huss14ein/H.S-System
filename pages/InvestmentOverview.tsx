@@ -17,11 +17,10 @@ import { getPersonalInvestments } from '../utils/wealthScope';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import type { InvestmentPortfolio } from '../types';
 import type { HeadlineAllocationRow } from '../services/headlineInvestmentAllocation';
-import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { useCompanyNames, symbolsNeedingCompanyName } from '../hooks/useSymbolCompanyName';
 import {
     ResolvedSymbolLabel,
     formatSymbolWithCompany,
-    symbolsFromHoldings,
 } from '../components/SymbolWithCompanyName';
 import MultiStockAnalysisPanel from '../components/investments/MultiStockAnalysisPanel';
 import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
@@ -99,7 +98,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
         return allHoldingsWithGains;
     }, [data, simulatedPrices, sarPerUsd]);
 
-    const holdingSymbolsForNames = useMemo(() => symbolsFromHoldings(allHoldingsWithGains), [allHoldingsWithGains]);
+    const holdingSymbolsForNames = useMemo(() => symbolsNeedingCompanyName(allHoldingsWithGains), [allHoldingsWithGains]);
     const { names: companyNameMap } = useCompanyNames(holdingSymbolsForNames);
 
     const [swotEn, setSwotEn] = useState('');

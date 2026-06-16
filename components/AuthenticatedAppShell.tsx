@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, startTransition } from 'react';
+import React, { useState, useCallback, useEffect, useRef, startTransition } from 'react';
 import Layout from './Layout';
 import { Page } from '../types';
 import { DataProvider } from '../context/DataContext';
@@ -23,6 +23,7 @@ import { PAGE_DISPLAY_NAMES, INVESTMENT_SUB_NAV_PAGE_NAMES } from '../constants'
 import { PAGE_MODULES, prefetchCommonPagesIdle, prefetchPage, resolveShellPage } from '../utils/lazyPages';
 import { pauseBackgroundWork } from '../utils/backgroundWorkGate';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { cancelQuoteRefreshOnNav } from '../utils/navigationBridge';
 import { CanonicalFinancialMetricsProvider } from '../context/CanonicalFinancialMetricsContext';
 import { LanguageProvider } from '../context/LanguageContext';
 
@@ -163,17 +164,21 @@ const AppRouteHost: React.FC<AppRouteHostProps> = ({
 const AuthenticatedAppShell: React.FC = () => {
   const [activePage, setActivePageState] = useState<Page>(getInitialPage);
   const [pageAction, setPageAction] = useState<string | null>(getInitialPageActionFromHash);
+  const suppressNextHashChangeRef = useRef(false);
 
-  const setActivePage = useCallback((page: Page) => {
-    prefetchPage(page);
+  const navigatePage = useCallback((page: Page) => {
     pauseBackgroundWork();
+    cancelQuoteRefreshOnNav();
     startTransition(() => {
       if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(page)) {
         setActivePageState('Investments');
         setPageAction(`investment-tab:${page}`);
         try {
           const hash = '#' + encodeURIComponent('Investments');
-          if (window.location.hash !== hash) window.location.hash = hash;
+          if (window.location.hash !== hash) {
+            suppressNextHashChangeRef.current = true;
+            window.location.hash = hash;
+          }
         } catch (_) {}
         return;
       }
@@ -181,10 +186,16 @@ const AuthenticatedAppShell: React.FC = () => {
       setPageAction(null);
       try {
         const hash = '#' + encodeURIComponent(page);
-        if (window.location.hash !== hash) window.location.hash = hash;
+        if (window.location.hash !== hash) {
+          suppressNextHashChangeRef.current = true;
+          window.location.hash = hash;
+        }
       } catch (_) {}
     });
+    scheduleIdleWork(() => prefetchPage(page), 0);
   }, []);
+
+  const setActivePage = navigatePage;
 
   useEffect(() => {
     const base = 'Finova';
@@ -202,18 +213,23 @@ const AuthenticatedAppShell: React.FC = () => {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const onHashChange = () => {
+      if (suppressNextHashChangeRef.current) {
+        suppressNextHashChangeRef.current = false;
+        return;
+      }
       pauseBackgroundWork();
+      cancelQuoteRefreshOnNav();
       startTransition(() => {
         const decoded = decodeHashPage();
         if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(decoded as Page)) {
-          prefetchPage(decoded as Page);
+          scheduleIdleWork(() => prefetchPage(decoded as Page), 0);
           setActivePageState('Investments');
           setPageAction(`investment-tab:${decoded}`);
           return;
         }
         setPageAction(null);
         const page = getPageFromHash();
-        if (page) prefetchPage(page);
+        if (page) scheduleIdleWork(() => prefetchPage(page), 0);
         setActivePageState(page ?? 'Dashboard');
       });
     };
@@ -223,16 +239,20 @@ const AuthenticatedAppShell: React.FC = () => {
   }, []);
 
   const triggerPageAction = useCallback((page: Page, action: string) => {
-    prefetchPage(page);
     pauseBackgroundWork();
+    cancelQuoteRefreshOnNav();
     startTransition(() => {
       setActivePageState(resolveShellPage(page));
       setPageAction(action);
       try {
         const hash = '#' + encodeURIComponent(resolveShellPage(page));
-        if (window.location.hash !== hash) window.location.hash = hash;
+        if (window.location.hash !== hash) {
+          suppressNextHashChangeRef.current = true;
+          window.location.hash = hash;
+        }
       } catch (_) {}
     });
+    scheduleIdleWork(() => prefetchPage(page), 0);
   }, []);
   const clearPageAction = () => setPageAction(null);
 

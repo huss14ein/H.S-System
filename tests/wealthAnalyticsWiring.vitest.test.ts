@@ -68,10 +68,10 @@ describe('wealth analytics end-to-end wiring', () => {
     it('Dashboard and Summary gate auto snapshots on quote readiness', () => {
         const dashboard = read('pages/Dashboard.tsx');
         const summary = read('pages/Summary.tsx');
-        expect(dashboard).toContain('canAutoCaptureNetWorthSnapshot');
+        expect(dashboard).toContain('tryAutoCaptureNetWorthSnapshot');
         expect(dashboard).toContain('dashboardDebouncedPrices');
-        expect(summary).toContain('canAutoCaptureNetWorthSnapshot');
-        expect(summary).toContain('quoteRefreshFingerprint');
+        expect(summary).toContain('tryAutoCaptureNetWorthSnapshot');
+        expect(summary).toContain('captureNetWorthSnapshotFromHeadline');
     });
 
     it('Dashboard and Summary stay lean (heavy widgets on Wealth Analytics only)', () => {
@@ -96,8 +96,12 @@ describe('wealth analytics end-to-end wiring', () => {
         expect(src).toContain('startTransition(() => {\n                setData((prevState) => ({\n                    ...prevState,\n                    transactions: prevState.transactions.map((t) => (t.id === transaction.id ? normalized : t)),');
     });
 
-    it('CanonicalFinancialMetricsProvider debounces data before compute', () => {
+    it('CanonicalFinancialMetricsProvider computes fast metrics on live data (no data debounce)', () => {
         const src = read('context/CanonicalFinancialMetricsContext.tsx');
-        expect(src).toContain('useDebouncedValue(showHydrateBanner ? null : data, 350)');
+        expect(src).toMatch(
+          /const metricsData = showHydrateBanner && !financialDataHasHydrated\(data\) \? null : data/,
+        );
+        expect(src).toContain('fastBundle');
+        expect(src).not.toContain('useDebouncedValue(showHydrateBanner ? null : data');
     });
 });

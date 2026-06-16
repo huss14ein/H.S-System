@@ -33,7 +33,7 @@ describe('Wealth Analytics completion (E2E)', () => {
     expect(page).not.toContain('computePersonalNetWorth');
     expect(page).not.toContain('computeDashboardKpiSnapshot');
     expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain(
-      'useDebouncedValue(showHydrateBanner ? null : data, 350)',
+      'financialDataHasHydrated(data)',
     );
   });
 

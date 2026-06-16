@@ -1,5 +1,9 @@
 import type { FinancialData } from '../types';
-import { computePersonalHeadlineNetWorthSar, sumPersonalSukukAssetsSar } from './personalNetWorth';
+import {
+  computePersonalHeadlineNetWorthSar,
+  sumPersonalSukukAssetsSar,
+  type PersonalHeadlineNetWorthResult,
+} from './personalNetWorth';
 import { bucketSumMatchesNetWorth } from './netWorthReconciliation';
 import { totalLiquidCashSARFromAccounts } from '../utils/currencyMath';
 import { debtStressScore } from './debtEngines';
@@ -15,6 +19,49 @@ export type ExtendedSnapshotMeta = {
   riskScore?: number;
   allocationPct?: { cash: number; investments: number; debt: number };
 };
+
+export function buildNetWorthSnapshotFromHeadline(
+  headline: PersonalHeadlineNetWorthResult,
+  data: FinancialData,
+): NetWorthSnapshot {
+  const buckets = headline.buckets;
+  const sukukAudit = sumPersonalSukukAssetsSar(data);
+  return {
+    at: new Date().toISOString(),
+    netWorth: headline.netWorth,
+    sarPerUsd: headline.sarPerUsd,
+    bucketsSchemaVersion: NW_BUCKETS_SCHEMA_V2,
+    buckets: {
+      cash: buckets.cash,
+      investments: buckets.investments,
+      physicalAndCommodities: buckets.physicalAndCommodities,
+      receivables: buckets.receivables,
+      liabilities: buckets.liabilities,
+      ...(sukukAudit > 0 ? { sukukSar: sukukAudit } : {}),
+    },
+  };
+}
+
+/** Persist snapshot from the same headline object shown on Dashboard / Summary KPIs. */
+export function captureNetWorthSnapshotFromHeadline(
+  headline: PersonalHeadlineNetWorthResult,
+  data: FinancialData,
+  sync?: NetWorthSyncContext | null,
+): NetWorthSnapshot | null {
+  const snap = buildNetWorthSnapshotFromHeadline(headline, data);
+  const balance = bucketSumMatchesNetWorth(snap);
+  if (!balance.matches) {
+    if (import.meta.env.DEV) {
+      console.warn(
+        `[Finova NW snapshot] Rejected capture — bucket drift ${balance.driftSar.toFixed(2)} SAR (components ${balance.componentsSum.toFixed(0)} vs NW ${snap.netWorth.toFixed(0)}).`,
+      );
+    }
+    return null;
+  }
+  if (!Number.isFinite(snap.netWorth) || snap.netWorth <= 0.5) return null;
+  pushNetWorthSnapshot(snap.netWorth, snap.buckets, snap.sarPerUsd, sync);
+  return snap;
+}
 
 export function buildExtendedNetWorthSnapshot(
   data: FinancialData,
@@ -59,21 +106,7 @@ export function buildExtendedNetWorthSnapshot(
     riskScore: stress.score,
     allocationPct,
   };
-  const sukukAudit = sumPersonalSukukAssetsSar(data);
-  const snap: NetWorthSnapshot = {
-    at: new Date().toISOString(),
-    netWorth: nw,
-    sarPerUsd: headline.sarPerUsd,
-    bucketsSchemaVersion: NW_BUCKETS_SCHEMA_V2,
-    buckets: {
-      cash: buckets.cash,
-      investments: buckets.investments,
-      physicalAndCommodities: buckets.physicalAndCommodities,
-      receivables: buckets.receivables,
-      liabilities: buckets.liabilities,
-      ...(sukukAudit > 0 ? { sukukSar: sukukAudit } : {}),
-    },
-  };
+  const snap = buildNetWorthSnapshotFromHeadline(headline, data);
   const balance = bucketSumMatchesNetWorth(snap);
   if (!balance.matches && import.meta.env.DEV) {
     console.warn(
@@ -89,8 +122,10 @@ export function captureExtendedNetWorthSnapshot(
   getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number },
   sync?: NetWorthSyncContext | null,
   simulatedPrices?: Record<string, { price: number }>,
-): NetWorthSnapshot {
+): NetWorthSnapshot | null {
   const { snap } = buildExtendedNetWorthSnapshot(data, uiExchangeRate, getAvailableCashForAccount, simulatedPrices);
+  const balance = bucketSumMatchesNetWorth(snap);
+  if (!balance.matches || !Number.isFinite(snap.netWorth) || snap.netWorth <= 0.5) return null;
   pushNetWorthSnapshot(snap.netWorth, snap.buckets, snap.sarPerUsd, sync);
   return snap;
 }

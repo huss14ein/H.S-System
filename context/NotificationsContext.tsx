@@ -114,6 +114,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     ],
   );
   const [readIds, setReadIds] = useState<Set<string>>(loadReadIds);
+  /** After mark-all, suppress async enhancement-signal alerts briefly so the badge stays cleared. */
+  const dismissGraceUntilRef = useRef(0);
 
   const [pendingBudgetRequestCount, setPendingBudgetRequestCount] = useState(0);
   const [pendingTransactionApprovalCount, setPendingTransactionApprovalCount] = useState(0);
@@ -541,29 +543,32 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       }
     }
 
-    for (const c of enhancementSignals.goalConflicts) {
-      push({
-        id: `goal-conflict-${c.id}`,
-        category: 'Goal',
-        message: c.message,
-        date: now.toISOString(),
-        isRead: false,
-        pageLink: 'Goals',
-        severity: c.severity === 'critical' ? 'urgent' : 'warning',
-        actionHint: 'Review goal deadlines and linked budgets or investments on Goals.',
-      });
-    }
-    for (const d of enhancementSignals.budgetDrift.slice(0, 2)) {
-      push({
-        id: `budget-drift-${d.category}`,
-        category: 'Budget',
-        message: `${d.category} spend is ${d.driftPct > 0 ? '+' : ''}${d.driftPct.toFixed(0)}% vs your 3-month baseline.`,
-        date: now.toISOString(),
-        isRead: false,
-        pageLink: 'Budgets',
-        severity: Math.abs(d.driftPct) >= 30 ? 'warning' : 'info',
-        actionHint: 'Open Budgets or Analysis to adjust limits or investigate the category.',
-      });
+    const inDismissGrace = Date.now() < dismissGraceUntilRef.current;
+    if (!inDismissGrace) {
+      for (const c of enhancementSignals.goalConflicts) {
+        push({
+          id: `goal-conflict-${c.id}`,
+          category: 'Goal',
+          message: c.message,
+          date: now.toISOString(),
+          isRead: false,
+          pageLink: 'Goals',
+          severity: c.severity === 'critical' ? 'urgent' : 'warning',
+          actionHint: 'Review goal deadlines and linked budgets or investments on Goals.',
+        });
+      }
+      for (const d of enhancementSignals.budgetDrift.slice(0, 2)) {
+        push({
+          id: `budget-drift-${d.category}`,
+          category: 'Budget',
+          message: `${d.category} spend is ${d.driftPct > 0 ? '+' : ''}${d.driftPct.toFixed(0)}% vs your 3-month baseline.`,
+          date: now.toISOString(),
+          isRead: false,
+          pageLink: 'Budgets',
+          severity: Math.abs(d.driftPct) >= 30 ? 'warning' : 'info',
+          actionHint: 'Open Budgets or Analysis to adjust limits or investigate the category.',
+        });
+      }
     }
 
     const execLogs = (data.executionLogs ?? []) as { created_at?: string; date?: string }[];
@@ -601,7 +606,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     isAdmin,
     auth?.user?.id,
     todosOpt?.todos,
-    enhancementSignals,
+    enhancementSignals.goalConflicts.length,
+    enhancementSignals.budgetDrift.length,
   ]);
 
   const priceTriggeredPlanNotifications = useMemo<AppNotification[]>(() => {
@@ -659,7 +665,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   }, []);
 
   const markAllAsRead = useCallback(() => {
-    setReadIds(() => new Set(notifications.map((n) => n.id)));
+    dismissGraceUntilRef.current = Date.now() + 30_000;
+    setReadIds((prev) => new Set([...prev, ...notifications.map((n) => n.id)]));
   }, [notifications]);
 
   const value = useMemo<NotificationsContextValue>(() => ({

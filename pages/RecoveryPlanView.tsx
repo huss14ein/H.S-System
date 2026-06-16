@@ -6,6 +6,7 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useCurrency } from '../context/CurrencyContext';
 import InfoHint from '../components/InfoHint';
 import SectionCard from '../components/SectionCard';
+import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
 import type { Holding, PlannedTrade, RecoveryOrderDraft, RecoveryPositionConfig, RecoveryGlobalConfig, TradeCurrency } from '../types';
 import {
   buildRecoveryPlan,
@@ -32,7 +33,7 @@ import {
 } from '../services/recoveryPlanPerformance';
 import type { Page } from '../types';
 import { useSelfLearning } from '../context/SelfLearningContext';
-import { useCompanyNames } from '../hooks/useSymbolCompanyName';
+import { useCompanyNames, symbolsNeedingCompanyName } from '../hooks/useSymbolCompanyName';
 import { ResolvedSymbolLabel, formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
 import { toast } from '../context/ToastContext';
 import { recoveryOrderDraftToPlannedTrade, plannedTradeMatchesRecoveryDraft } from '../services/recoveryToPlannedTrade';
@@ -253,12 +254,8 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const losingPositions = useMemo(() => positionsWithRecovery.filter(p => p.plan.plPct < 0), [positionsWithRecovery]);
   const recoverySymbols = useMemo(
     () =>
-      Array.from(
-        new Set(
-          losingPositions
-            .map(({ holding }) => (holding.symbol || '').trim())
-            .filter((s) => s.length >= 2),
-        ),
+      symbolsNeedingCompanyName(
+        losingPositions.map(({ holding }) => ({ symbol: holding.symbol, name: holding.name })),
       ),
     [losingPositions],
   );
@@ -2282,7 +2279,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
 export default function RecoveryPlanView(props: RecoveryPlanViewProps = {}) {
   return (
-    <React.Suspense fallback={<div className="text-center p-8 text-slate-500">Loading…</div>}>
+    <React.Suspense fallback={<SectionLoadingPlaceholder compact label="Loading recovery plan…" minHeight="8rem" />}>
       <RecoveryPlanViewContent {...props} />
     </React.Suspense>
   );

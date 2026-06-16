@@ -1,15 +1,29 @@
 /**
- * Fetches and caches company names for ticker symbols: Finnhub profile2, then static map.
+ * Fetches and caches company names for ticker symbols: static map first, then Finnhub profile2.
  * Cache key is normalized (e.g. TADAWUL:2222 and 2222.SR share one entry).
  */
 
 import { useState, useEffect } from 'react';
-import { getCompanyProfile } from '../services/finnhubService';
+import { getCompanyProfileCached } from '../services/finnhubService';
 import { getStaticCompanyName, normalizeSymbolKeyForCompanyLookup } from '../services/staticCompanyNameService';
 
 /** undefined = not yet loaded; null = no display name found (UI may show symbol); string = resolved name */
 const cache = new Map<string, string | null>();
 const pending = new Map<string, Promise<string | null>>();
+
+const FETCH_CONCURRENCY = 4;
+
+async function runPool<T>(items: T[], worker: (item: T) => Promise<void>, concurrency: number): Promise<void> {
+  if (items.length === 0) return;
+  let idx = 0;
+  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (idx < items.length) {
+      const i = idx++;
+      await worker(items[i]!);
+    }
+  });
+  await Promise.all(runners);
+}
 
 async function fetchAndCache(rawSymbol: string): Promise<string | null> {
   const key = normalizeSymbolKeyForCompanyLookup(rawSymbol);
@@ -18,9 +32,15 @@ async function fetchAndCache(rawSymbol: string): Promise<string | null> {
   if (pending.has(key)) return pending.get(key)!;
 
   const p = (async (): Promise<string | null> => {
+    const staticName = getStaticCompanyName(key);
+    if (staticName) {
+      cache.set(key, staticName);
+      pending.delete(key);
+      return staticName;
+    }
     let resolved: string | null = null;
     try {
-      const profile = await getCompanyProfile(key);
+      const profile = await getCompanyProfileCached(key);
       const n = profile?.name?.trim();
       if (n) resolved = n;
     } catch {
@@ -37,6 +57,30 @@ async function fetchAndCache(rawSymbol: string): Promise<string | null> {
   return p;
 }
 
+/** Symbols that still need a Finnhub/static lookup (skip when holding already has a name). */
+export function symbolsNeedingCompanyName(
+  entries: Array<{ symbol?: string | null; name?: string | null }>,
+): string[] {
+  return Array.from(
+    new Set(
+      entries
+        .filter((e) => {
+          const s = (e.symbol || '').trim();
+          if (s.length < 2) return false;
+          if (e.name?.trim()) return false;
+          return true;
+        })
+        .map((e) => normalizeSymbolKeyForCompanyLookup((e.symbol || '').trim())),
+    ),
+  ).filter((s) => s.length >= 2);
+}
+
+/** Test helper — clear hook-level name cache. */
+export function clearCompanyNameHookCacheForTests(): void {
+  cache.clear();
+  pending.clear();
+}
+
 /** Get company name for one symbol. Returns { name, loading }. Cached. Falls back to symbol for display when unknown. */
 export function useCompanyName(symbol: string | null): { name: string | null | undefined; loading: boolean } {
   const key = symbol ? normalizeSymbolKeyForCompanyLookup(symbol) : '';
@@ -46,6 +90,13 @@ export function useCompanyName(symbol: string | null): { name: string | null | u
   useEffect(() => {
     if (!key || key.length < 2) {
       setName(undefined);
+      setLoading(false);
+      return;
+    }
+    const staticName = getStaticCompanyName(key);
+    if (staticName) {
+      cache.set(key, staticName);
+      setName(staticName);
       setLoading(false);
       return;
     }
@@ -80,6 +131,12 @@ export function useCompanyNames(symbols: string[]): { names: Record<string, stri
   const [names, setNames] = useState<Record<string, string | null>>(() => {
     const initial: Record<string, string | null> = {};
     deduped.forEach((s) => {
+      const staticName = getStaticCompanyName(s);
+      if (staticName) {
+        cache.set(s, staticName);
+        initial[s] = staticName;
+        return;
+      }
       const v = cache.get(s);
       if (v !== undefined) initial[s] = v === null ? s : v;
     });
@@ -101,7 +158,9 @@ export function useCompanyNames(symbols: string[]): { names: Record<string, stri
       return;
     }
     setLoading(true);
-    Promise.all(toFetch.map((s) => fetchAndCache(s))).then(() => {
+    void runPool(toFetch, async (s) => {
+      await fetchAndCache(s);
+    }, FETCH_CONCURRENCY).then(() => {
       const next: Record<string, string | null> = {};
       deduped.forEach((s) => {
         const v = cache.get(s);

@@ -1,6 +1,6 @@
-import React, { useMemo, useContext, useState, useCallback, useEffect, Suspense, lazy, useDeferredValue } from 'react';
+import React, { useMemo, useContext, useState, useCallback, useEffect, Suspense, lazy } from 'react';
 import Card from '../components/Card';
-import LoadingSpinner from '../components/LoadingSpinner';
+import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
 
 const DraggableResizableGrid = lazy(() => import('../components/DraggableResizableGrid'));
 import { Transaction, Page, Budget, Account } from '../types';
@@ -27,19 +27,13 @@ import { DocumentArrowUpIcon } from '../components/icons/DocumentArrowUpIcon';
 import { GoldBarIcon } from '../components/icons/GoldBarIcon';
 import { UsersIcon } from '../components/icons/UsersIcon';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
-import { useCanonicalSpotFx, useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx, useDashboardCanonicalMetrics, useExtendedMetricsReady } from '../hooks/useCanonicalFinancialMetrics';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
 import { supabase } from '../services/supabaseClient';
-import { captureExtendedNetWorthSnapshot } from '../services/netWorthSnapshotExtended';
-import {
-    canAutoCaptureNetWorthSnapshot,
-    getTrackedQuoteSymbolsFromData,
-    quoteRefreshFingerprint,
-} from '../services/netWorthSnapshotReadiness';
-import { markAutoNetWorthSnapshotCaptured, shouldThrottleAutoNetWorthSnapshot } from '../services/netWorthSnapshotThrottle';
+import { tryAutoCaptureNetWorthSnapshot } from '../services/netWorthSnapshotCapture';
 import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import { subscriptionSpendMonthlySar } from '../services/transactionIntelligence';
 import InfoHint from '../components/InfoHint';
@@ -278,12 +272,14 @@ const DashboardContent: React.FC<{
         sarPerUsd: canonicalSarPerUsd,
         simulatedPrices: dashboardDebouncedPrices,
     } = useDashboardCanonicalMetrics();
+    const metricsExtendedReady = useExtendedMetricsReady();
     const { isRefreshing, hasQueuedPriceRefresh, symbolQuoteUpdatedAt, isLive } = useMarketQuoteMeta();
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
     const { maskBalance } = usePrivacyMask();
     const { dir } = useLanguage();
-    const deferredData = useDeferredValue(showHydrateBanner ? null : data);
+    const workingData = showHydrateBanner ? null : data;
+    const kpisPending = Boolean(workingData && !kpiSnapshot);
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
     const kpiDensity = 'compact' as const;
 
@@ -356,22 +352,22 @@ const DashboardContent: React.FC<{
 
     const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions, projectedCash30d, currentCash } = useMemo(() => {
         try {
-            if (!deferredData || showHydrateBanner || !kpiSnapshot) {
+            if (!workingData || showHydrateBanner || !kpiSnapshot) {
                 return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
             }
 
             const sarPerUsd = canonicalSarPerUsd;
 
             const now = new Date();
-            const monthStartDay = resolveMonthStartDayFromData(deferredData);
+            const monthStartDay = resolveMonthStartDayFromData(workingData);
             const currentFinMonth = financialMonthRange(now, monthStartDay);
-            const rawTransactions = getPersonalTransactions(deferredData);
+            const rawTransactions = getPersonalTransactions(workingData);
             const transactions = (rawTransactions as Array<Transaction & { account_id?: string; budget_category?: string }>).map((t) => ({
                 ...t,
                 accountId: t.accountId ?? t.account_id ?? '',
                 budgetCategory: t.budgetCategory ?? t.budget_category ?? '',
             }));
-            const accounts = getPersonalAccounts(deferredData);
+            const accounts = getPersonalAccounts(workingData);
             const accountsById = new Map(accounts.map((a: Account) => [a.id, a]));
             const txCashflowSar = (t: { accountId?: string; amount?: number; date: string }) => {
                 const acc = accountsById.get(t.accountId ?? '') as Account | undefined;
@@ -379,7 +375,7 @@ const DashboardContent: React.FC<{
                 const raw = Math.abs(Number(t.amount) || 0);
                 if (c === 'SAR') return raw;
                 const day = t.date.slice(0, 10);
-                const r = getSarPerUsdForCalendarDay(day, deferredData, exchangeRate);
+                const r = getSarPerUsdForCalendarDay(day, workingData, exchangeRate);
                 return toSAR(raw, 'USD', r);
             };
 
@@ -389,7 +385,7 @@ const DashboardContent: React.FC<{
                 return d0 >= currentFinMonth.start && d0 <= currentFinMonth.end;
             });
             const budgetToMonthly = (b: { limit: number; period?: string }) => b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
-            const currentMonthBudgets = (deferredData?.budgets ?? []).filter(
+            const currentMonthBudgets = (workingData?.budgets ?? []).filter(
                 (b) => b.month === currentFinMonth.key.month && b.year === currentFinMonth.key.year,
             );
             const snap = kpiSnapshot;
@@ -408,7 +404,7 @@ const DashboardContent: React.FC<{
                 investmentCapitalSource,
             } = snap;
 
-            const investmentTreemapData = buildPersonalInvestmentTreemapRows(deferredData, sarPerUsd, dashboardDebouncedPrices);
+            const investmentTreemapData = buildPersonalInvestmentTreemapRows(workingData, sarPerUsd, dashboardDebouncedPrices);
             const monthlySpending = new Map<string, number>();
             monthlyTransactions
                 .filter((t: { type?: string }) => countsAsExpenseForCashflowKpi(t))
@@ -514,43 +510,31 @@ const DashboardContent: React.FC<{
             console.error("Dashboard calculation error:", e);
             return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
         }
-    }, [deferredData, exchangeRate, getAvailableCashForAccount, kpiSnapshot, canonicalSarPerUsd, dashboardDebouncedPrices, showHydrateBanner]);
+    }, [workingData, exchangeRate, getAvailableCashForAccount, kpiSnapshot, canonicalSarPerUsd, dashboardDebouncedPrices, showHydrateBanner]);
 
     useEffect(() => {
         if (!auth?.user?.id || !data) return;
-        const nw = typeof headline.netWorth === 'number' && Number.isFinite(headline.netWorth) ? headline.netWorth : (kpiSummary as { netWorth?: number }).netWorth;
-        if (typeof nw !== 'number' || !Number.isFinite(nw)) return;
-        const snapshotReady = canAutoCaptureNetWorthSnapshot({
+        tryAutoCaptureNetWorthSnapshot({
+            userId: auth.user.id,
+            data,
+            headline,
+            metricsExtendedReady,
             showHydrateBanner,
+            getAvailableCashForAccount,
             isRefreshing,
             hasQueuedPriceRefresh,
             symbolQuoteUpdatedAt,
             isLive,
-            data,
+            sync: supabase ? { supabase, userId: auth.user.id } : null,
         });
-        if (!snapshotReady) return;
-        const quoteFp = quoteRefreshFingerprint(
-            getTrackedQuoteSymbolsFromData(data),
-            symbolQuoteUpdatedAt,
-        );
-        if (shouldThrottleAutoNetWorthSnapshot(auth.user.id, nw, undefined, quoteFp)) return;
-        captureExtendedNetWorthSnapshot(
-            data,
-            exchangeRate,
-            getAvailableCashForAccount,
-            supabase ? { supabase, userId: auth.user.id } : null,
-            dashboardDebouncedPrices,
-        );
-        markAutoNetWorthSnapshotCaptured(auth.user.id, nw, quoteFp);
     }, [
         auth?.user?.id,
         data,
-        headline.netWorth,
-        kpiSummary,
+        headline,
+        metricsExtendedReady,
         exchangeRate,
         getAvailableCashForAccount,
         showHydrateBanner,
-        dashboardDebouncedPrices,
         isRefreshing,
         hasQueuedPriceRefresh,
         symbolQuoteUpdatedAt,
@@ -755,7 +739,10 @@ const DashboardContent: React.FC<{
             )}
 
             <div id="dashboard-kpi-row" className="scroll-mt-20">
-            <Suspense fallback={<LoadingSpinner className="min-h-[16rem]" message="Loading dashboard layout…" />}>
+            {kpisPending ? (
+                <SectionLoadingPlaceholder labelKey="analyticsMetricsLoading" minHeight="10rem" className="mb-4" />
+            ) : (
+            <Suspense fallback={<SectionLoadingPlaceholder compact labelKey="sectionLoading" minHeight="10rem" />}>
                 <DraggableResizableGrid
                     layoutKey="dashboard-kpi"
                     itemOverflowY="visible"
@@ -777,6 +764,7 @@ const DashboardContent: React.FC<{
                     rowHeight={72}
                 />
             </Suspense>
+            )}
             </div>
 
             <section aria-label="Net worth" className="mb-6">
