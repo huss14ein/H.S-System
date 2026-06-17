@@ -32,7 +32,10 @@ describe('live quotes E2E wiring', () => {
 
   it('navigation resumes quote drain after pause (does not cancel)', () => {
     expect(read('utils/navigationBridge.ts')).toContain('resumeQuoteRefreshAfterNav');
+    expect(read('utils/quoteRefreshBridge.ts')).toContain('kickQuoteRefreshNow');
+    expect(read('context/MarketDataContext.tsx')).toContain('kickQuoteRefreshNow');
     expect(read('components/Layout.tsx')).toContain('registerQuoteRefreshResume');
+    expect(read('components/MarketSimulator.tsx')).toContain('registerQuoteRefreshKick');
     expect(read('components/AuthenticatedAppShell.tsx')).toContain('resumeQuoteRefreshAfterNav');
     expect(read('components/AuthenticatedAppShell.tsx')).not.toContain('cancelQuoteRefreshOnNav');
   });

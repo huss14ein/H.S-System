@@ -8,6 +8,7 @@ import {
 } from '../services/cachedQuoteRestore';
 import { quoteRefreshCooldownRemainingMs } from '../services/quoteRefreshCooldown';
 import { mergePriceRefreshScope } from '../services/quoteRefreshQueue';
+import { kickQuoteRefreshNow } from '../utils/quoteRefreshBridge';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 interface SimulatedPrices {
@@ -222,20 +223,24 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
 
     const refreshPrices = useCallback(async (options?: { forceFetch?: boolean }) => {
         const force = options?.forceFetch === true;
+        quoteRefreshAbortRef.current = false;
         setQuotesRefreshUIScope({ mode: 'all' });
         setIsRefreshing(true);
         manualRefreshSessionRef.current = true;
         bumpPriceRefresh({ kind: 'all', forceFetch: force, manual: true });
+        kickQuoteRefreshNow();
     }, [bumpPriceRefresh]);
 
     const refreshPricesForPlatform = useCallback(
         async (platformId: string) => {
             if (!platformId?.trim()) return;
             const id = platformId.trim();
+            quoteRefreshAbortRef.current = false;
             setQuotesRefreshUIScope({ mode: 'platform', accountId: id });
             setIsRefreshing(true);
             manualRefreshSessionRef.current = true;
             bumpPriceRefresh({ kind: 'platform', platformId: id, forceFetch: true, manual: true });
+            kickQuoteRefreshNow();
         },
         [bumpPriceRefresh],
     );

@@ -63,11 +63,13 @@ const Layout: React.FC<LayoutProps> = ({
   } = useMarketQuoteMeta();
 
   const quoteMetaRef = useRef({
+    isRefreshing,
     hasQueuedPriceRefresh,
     notifyQueuedPriceRefresh,
     isManualRefreshSession,
   });
   quoteMetaRef.current = {
+    isRefreshing,
     hasQueuedPriceRefresh,
     notifyQueuedPriceRefresh,
     isManualRefreshSession,
@@ -77,7 +79,7 @@ const Layout: React.FC<LayoutProps> = ({
     registerQuoteRefreshResume(() => {
       setTimeout(() => {
         const m = quoteMetaRef.current;
-        if (m.hasQueuedPriceRefresh() || m.isManualRefreshSession()) {
+        if (m.isRefreshing || m.hasQueuedPriceRefresh() || m.isManualRefreshSession()) {
           m.notifyQueuedPriceRefresh();
         }
       }, NAV_TRANSITION_PAUSE_MS + 32);

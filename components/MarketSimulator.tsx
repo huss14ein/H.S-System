@@ -40,6 +40,7 @@ import { scheduleIdleWork, scheduleIdleWorkAsync, waitUntilBackgroundWorkResumed
 import { yieldToMain } from '../utils/yieldToMain';
 import { computeRestoreCachedQuotesPatch, collectTrackedQuoteSymbols, sessionTimestampsForTrackedSymbols } from '../services/cachedQuoteRestore';
 import type { CachedQuoteRow } from '../services/quotePriceCache';
+import { registerQuoteRefreshKick } from '../utils/quoteRefreshBridge';
 
 const MAX_LIVE_FETCH_PER_TICK = 25;
 const PARTIAL_LIVE_RATIO = 0.8;
@@ -282,7 +283,8 @@ const MarketSimulator: React.FC = () => {
             pendingRefreshWhileInFlightRef.current = true;
             return;
         }
-        if (isBackgroundWorkPaused()) {
+        const manualKick = marketContext.isManualRefreshSession?.() === true;
+        if (isBackgroundWorkPaused() && !manualKick) {
             scheduleRefreshRetry();
             return;
         }
@@ -292,12 +294,17 @@ const MarketSimulator: React.FC = () => {
             if (
                 !dataContext ||
                 !marketContext ||
-                !dataContext.data ||
                 marketContext.isQuoteRefreshCancelled()
             ) {
                 return;
             }
-            if (isBackgroundWorkPaused()) {
+            if (!dataContext.data) {
+                if (priceScope.manual === true) {
+                    marketContext.notifyQueuedPriceRefresh();
+                }
+                return;
+            }
+            if (isBackgroundWorkPaused() && priceScope.manual !== true) {
                 await waitUntilBackgroundWorkResumed();
                 if (marketContext.isQuoteRefreshCancelled() || isBackgroundWorkPaused()) return;
             }
@@ -402,7 +409,8 @@ const MarketSimulator: React.FC = () => {
                     pendingLiveFetchSymbolsRef.current = [];
                     const toFetch = mergedFetch.slice(0, MAX_LIVE_FETCH_PER_TICK);
                     pendingLiveFetchSymbolsRef.current = mergedFetch.slice(MAX_LIVE_FETCH_PER_TICK);
-                    const rateLimited = isQuoteRefreshInCooldown();
+                    const rateLimited =
+                        isQuoteRefreshInCooldown() && !(priceScope.manual === true && forceFetch);
                     if (rateLimited && forceFetch && toFetch.length > 0) {
                         pendingLiveFetchSymbolsRef.current = Array.from(
                             new Set([...pendingLiveFetchSymbolsRef.current, ...toFetch]),
@@ -427,9 +435,9 @@ const MarketSimulator: React.FC = () => {
                         commodityFetchPromise,
                     ]);
 
-                    if (marketContext.isQuoteRefreshCancelled() || isBackgroundWorkPaused()) {
-                        return;
-                    }
+                    if (marketContext.isQuoteRefreshCancelled()) return;
+                    const manualScope = priceScope.manual === true;
+                    if (!manualScope && isBackgroundWorkPaused()) return;
 
                     let rawApi: Record<string, LiveQuoteRow> = {};
                     if (equitySettled.status === 'fulfilled') {
@@ -670,9 +678,11 @@ const MarketSimulator: React.FC = () => {
             );
             
             const holdingUpdatesFiltered = filterNoOpHoldingValueUpdates(portfoliosInScope, holdingUpdates);
-            if (holdingUpdatesFiltered.length > 0 && !marketContext.isQuoteRefreshCancelled() && !isBackgroundWorkPaused()) {
+            const allowHoldingPersist = (manual: boolean) =>
+                !marketContext.isQuoteRefreshCancelled() && (manual || !isBackgroundWorkPaused());
+            if (holdingUpdatesFiltered.length > 0 && allowHoldingPersist(priceScope.manual === true)) {
                 await yieldToMain();
-                if (marketContext.isQuoteRefreshCancelled() || isBackgroundWorkPaused()) return;
+                if (!allowHoldingPersist(priceScope.manual === true)) return;
                 batchUpdateHoldingValues(holdingUpdatesFiltered);
             }
 
@@ -685,7 +695,7 @@ const MarketSimulator: React.FC = () => {
                 const prev = commodityPrevById.get(u.id);
                 return prev == null || Math.abs(prev - u.currentValue) > 0.01;
             });
-            if (commodityUpdatesFiltered.length > 0 && !marketContext.isQuoteRefreshCancelled() && !isBackgroundWorkPaused()) {
+            if (commodityUpdatesFiltered.length > 0 && allowHoldingPersist(priceScope.manual === true)) {
                 batchUpdateCommodityHoldingValues(commodityUpdatesFiltered);
             }
             
@@ -696,8 +706,8 @@ const MarketSimulator: React.FC = () => {
 
             if (
                 pendingLiveFetchSymbolsRef.current.length > 0 &&
-                !isQuoteRefreshInCooldown() &&
-                !isBackgroundWorkPaused() &&
+                (!isQuoteRefreshInCooldown() || (priceScope.manual === true && forceFetch)) &&
+                (priceScope.manual === true || !isBackgroundWorkPaused()) &&
                 marketContext &&
                 priceScope.manual === true
             ) {
@@ -711,9 +721,11 @@ const MarketSimulator: React.FC = () => {
         void (async () => {
             const ctx = contextRef.current.marketContext;
             try {
-                await waitUntilBackgroundWorkResumed();
+                if (!ctx?.isManualRefreshSession?.()) {
+                    await waitUntilBackgroundWorkResumed();
+                }
                 while (ctx && !ctx.isQuoteRefreshCancelled()) {
-                    if (isBackgroundWorkPaused()) {
+                    if (isBackgroundWorkPaused() && !ctx.isManualRefreshSession?.()) {
                         await waitUntilBackgroundWorkResumed();
                         if (ctx.isQuoteRefreshCancelled()) break;
                     }
@@ -724,7 +736,8 @@ const MarketSimulator: React.FC = () => {
                     } catch (e) {
                         console.error('MarketSimulator tick failed:', e);
                     }
-                    if (ctx.isQuoteRefreshCancelled() || isBackgroundWorkPaused()) break;
+                    if (ctx.isQuoteRefreshCancelled()) break;
+                    if (isBackgroundWorkPaused() && !ctx.isManualRefreshSession?.()) break;
                     if (ctx.hasQueuedPriceRefresh()) {
                         await new Promise((r) => setTimeout(r, INTER_SCOPE_DELAY_MS));
                     }
@@ -760,6 +773,20 @@ const MarketSimulator: React.FC = () => {
         };
 
     }, [marketContext?.refreshTrigger]);
+
+    useEffect(() => {
+        const kick = () => {
+            const ctx = contextRef.current.marketContext;
+            if (!ctx) return;
+            if (tickInFlightRef.current) {
+                pendingRefreshWhileInFlightRef.current = true;
+                return;
+            }
+            ctx.notifyQueuedPriceRefresh();
+        };
+        registerQuoteRefreshKick(kick);
+        return () => registerQuoteRefreshKick(null);
+    }, []);
 
     return null;
 };

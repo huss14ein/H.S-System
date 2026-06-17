@@ -23,5 +23,7 @@ describe('market data refresh wiring', () => {
     expect(sim).toContain('pendingLiveFetchSymbolsRef.current.length > 0');
     expect(sim).toContain('isManualRefreshSession');
     expect(sim).toContain('pendingLiveFetchSymbolsRef.current = []');
+    expect(sim).toContain('priceScope.manual === true && forceFetch');
+    expect(sim).toContain('isManualRefreshSession?.()');
   });
 });

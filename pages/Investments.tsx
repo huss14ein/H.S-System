@@ -2543,6 +2543,7 @@ const PlatformCardInner: React.FC<{
     const { simulatedPrices: livePrices } = useMarketPrices();
     const throttledPrices = useDebouncedValue(livePrices, 500);
     const simulatedPrices = isExpanded ? livePrices : throttledPrices;
+    const metricsPrices = throttledPrices;
     const { refreshPricesForPlatform, isRefreshing: quotesRefreshing, quotesRefreshUIScope } = useMarketQuoteMeta();
     const thisPlatformSyncing =
         quotesRefreshing &&
@@ -2638,7 +2639,7 @@ const PlatformCardInner: React.FC<{
                 accounts: dataCtx?.accounts ?? [],
                 allInvestments: investmentsForInfer,
                 sarPerUsd,
-                simulatedPrices,
+                simulatedPrices: metricsPrices,
                 accountAvailableCashByCurrency: availableCashByCurrency,
             });
             if (aborted) return;
@@ -2656,7 +2657,7 @@ const PlatformCardInner: React.FC<{
         dataCtx?.accounts,
         investmentsForInfer,
         sarPerUsd,
-        simulatedPrices,
+        metricsPrices,
         availableCashByCurrency,
     ]);
 
@@ -2702,6 +2703,7 @@ const PlatformCardInner: React.FC<{
                     <div className="flex items-start gap-3 min-w-0 flex-1 overflow-hidden">
                         <button
                             type="button"
+                            data-skip-background-pause
                             onClick={onToggleExpanded}
                             className="mt-1 shrink-0 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-primary transition-colors"
                             aria-expanded={isExpanded}
@@ -3519,7 +3521,9 @@ const PlatformView: React.FC<{
                         onEditHolding={props.onEditHolding}
                         isExpanded={platformExpanded[p.account.id] ?? false}
                         onToggleExpanded={() =>
-                            setPlatformExpanded((prev) => ({ ...prev, [p.account.id]: !prev[p.account.id] }))
+                            startTransition(() => {
+                                setPlatformExpanded((prev) => ({ ...prev, [p.account.id]: !prev[p.account.id] }));
+                            })
                         }
                         holdingsOutliers={holdingsOutliersAll}
                         setActivePage={setActivePage}
