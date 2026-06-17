@@ -33,6 +33,9 @@ const steps = [
       'tests/portfolioPeriodPnLEndToEnd.vitest.test.ts',
       'tests/investmentAccountKpiScope.vitest.test.ts',
       'tests/investmentsHubCompletion.vitest.test.ts',
+      'tests/marketSessionLocal.vitest.test.ts',
+      'tests/marketSessionDailyPnLEndToEnd.vitest.test.ts',
+      'tests/liveQuotesEndToEnd.vitest.test.ts',
     ],
   },
   {

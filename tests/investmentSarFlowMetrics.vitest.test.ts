@@ -186,6 +186,7 @@ describe('SAR platform: transfer, buy context, P&L (PlatformCard metrics)', () =
       availableCashByCurrency: { SAR: 50_000, USD: 0 },
       simulatedPrices: { AAPL: { price: 110, change: 2 } },
       platformCurrency: 'SAR',
+      asOf: new Date('2026-06-03T15:00:00Z'),
     });
     const stockSar = 110 * 10 * SAR_PER_USD;
     expect(m.totalValueInSAR).toBeCloseTo(50_000 + stockSar, 4);

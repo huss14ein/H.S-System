@@ -2,9 +2,8 @@
 import React, { createContext, useState, useCallback, ReactNode, useContext, useEffect, useRef, useMemo } from 'react';
 import { cacheRowsToSimulatedMap, loadQuoteCacheRows } from '../services/quotePriceCache';
 import { latestQuoteCacheTimestamp, symbolTimestampsFromCacheRows } from '../services/cachedQuoteRestore';
-import { isQuoteRefreshInCooldown, quoteRefreshCooldownRemainingMs } from '../services/quoteRefreshCooldown';
+import { quoteRefreshCooldownRemainingMs } from '../services/quoteRefreshCooldown';
 import { mergePriceRefreshScope } from '../services/quoteRefreshQueue';
-import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 interface SimulatedPrices {
@@ -89,7 +88,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         }
         return out;
     });
-    const debouncedPrices = useDebouncedValue(simulatedPrices, 1500);
+    const debouncedPrices = useDebouncedValue(simulatedPrices, 800);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [quotesRefreshUIScope, setQuotesRefreshUIScope] = useState<QuotesRefreshUIScope>({ mode: 'idle' });
     const [lastUpdated, setLastUpdated] = useState<Date | null>(() => latestQuoteCacheTimestamp(initialCacheRows));
@@ -153,30 +152,19 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
     }, []);
 
     const notifyQueuedPriceRefresh = useCallback(() => {
-        if (refreshQueueRef.current.length > 0) {
-            setRefreshTrigger((prev) => prev + 1);
-        }
+        setRefreshTrigger((prev) => prev + 1);
     }, []);
 
     const bumpPriceRefresh = useCallback((scope: PriceRefreshScope = { kind: 'all', manual: true }) => {
         quoteRefreshAbortRef.current = false;
-        if (scope.manual === true) {
-            manualRefreshSessionRef.current = true;
-        } else {
+        if (scope.manual !== true) {
             return;
         }
-        if (isBackgroundWorkPaused() && scope.forceFetch !== true) {
-            return;
-        }
-        if (isQuoteRefreshInCooldown() && scope.forceFetch !== true) {
-            return;
-        }
+        manualRefreshSessionRef.current = true;
         const merged = mergePriceRefreshScope(refreshQueueRef.current, scope);
         refreshQueueRef.current = merged.queue;
-        if (merged.changed) {
-            setIsRefreshing(true);
-            setRefreshTrigger((prev) => prev + 1);
-        }
+        setIsRefreshing(true);
+        setRefreshTrigger((prev) => prev + 1);
     }, []);
 
     const finishQuotesRefresh = useCallback(() => {

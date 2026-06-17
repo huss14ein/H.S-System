@@ -32,17 +32,27 @@ describe('Investments hub completion (E2E)', () => {
     expect(hook).toMatch(/ready:\s*true,\s*\n\s*sparklinesReady:\s*false/);
   });
 
+  it('daily P/L zeros outside regular session via currencyMath helper', () => {
+    expect(read('utils/currencyMath.ts')).toContain('quoteChangeForDailyPnL');
+    expect(read('services/investmentPlatformCardMetrics.ts')).toContain('quoteDailyPnLInBookCurrency');
+  });
+
+  it('stale quote bootstrap after hydrate', () => {
+    expect(read('components/MarketSimulator.tsx')).toContain('didScheduleStaleRefreshRef');
+    expect(read('components/MarketSimulator.tsx')).toContain('symbolsNeedingLiveFetch');
+  });
+
   it('live price refresh: manual force queues through cooldown', () => {
     expect(read('context/MarketDataContext.tsx')).not.toContain('finishQuotesRefresh();\n            return;');
     expect(read('components/MarketSimulator.tsx')).toContain('pendingLiveFetchSymbolsRef');
     expect(read('components/Header.tsx')).toContain('Queued for live');
   });
 
-  it('performance: transition expand + deferred portfolio KPI bundle', () => {
+  it('performance: deferred portfolio KPI bundle + memoized platform card', () => {
     const page = read('pages/Investments.tsx');
-    expect(page).toContain('startTransition(onToggleExpanded)');
-    expect(page).toContain('startTransition(() => {');
-    expect(page).toMatch(/isExpanded[\s\S]{0,120}computePortfolioMetricsBundle/);
+    expect(page).toContain('scheduleIdleWorkAsync');
+    expect(page).toContain('React.memo(PlatformCardInner)');
+    expect(page).not.toContain('onClick={() => startTransition(onToggleExpanded)}');
   });
 
   it('verification script registers hub completion tests', () => {

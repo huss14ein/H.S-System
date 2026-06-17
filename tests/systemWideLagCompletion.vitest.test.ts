@@ -53,7 +53,7 @@ describe('system-wide lag completion E2E', () => {
     }
     const inv = read('pages/Investments.tsx');
     expect(inv).toContain('platformSymbolNames');
-    expect(inv).not.toMatch(/const PlatformCard[\s\S]{0,8000}useCompanyNames\(/);
+    expect(inv).not.toMatch(/const PlatformCardInner[\s\S]{0,8000}useCompanyNames\(/);
   });
 
   it('finnhub fundamentals are lazy on Watchlist and Dividend Tracker', () => {

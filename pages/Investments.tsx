@@ -46,8 +46,8 @@ import { ArrowTrendingUpIcon } from '../components/icons/ArrowTrendingUpIcon';
 import { ArrowPathIcon } from '../components/icons/ArrowPathIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
-import type { HoldingFundamentals } from '../services/finnhubService';
-import { getHoldingFundamentals, lookupLiveQuoteForSymbol } from '../services/finnhubService';
+import { getHoldingFundamentals, lookupLiveQuoteForSymbol, type HoldingFundamentals } from '../services/finnhubService';
+import { safeExternalHref } from '../utils/safeExternalUrl';
 import { dollarToShareQuantity } from '../services/portfolioConstruction';
 import { dividendAlreadyRecorded } from '../services/dividendLedgerGuards';
 import { useConfirmAction } from '../hooks/useConfirmAction';
@@ -95,6 +95,7 @@ import { getInvestmentTransactionCashAmount } from '../utils/investmentTransacti
 import {
   computePlatformCardMetrics,
   computePortfolioMetricsBundle,
+  type PortfolioMetricsBundle,
   type SimulatedPriceMap,
 } from '../services/investmentPlatformCardMetrics';
 import { useCanonicalSpotFx, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
@@ -107,6 +108,8 @@ import { computeGoalTimelineStatus } from '../services/goalMetrics';
 import { findHoldingsValueOutliers } from '../services/holdingsOutlierAudit';
 import PlatformHoldingsOutlierBanner from '../components/investments/PlatformHoldingsOutlierBanner';
 import InvestmentsQuoteStatusBanner from '../components/investments/InvestmentsQuoteStatusBanner';
+import { scheduleIdleWorkAsync } from '../utils/runWhenIdle';
+import { yieldToMain } from '../utils/yieldToMain';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { engineSleeveKeyToTickerStatus, inferEngineSleeveKeyFromHolding } from '../services/inferHoldingUniverseClassification';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
@@ -2156,15 +2159,17 @@ const HoldingDetailModal: React.FC<{
                         <div className="mt-4 pt-4 border-t border-slate-200">
                             <p className="text-xs font-semibold text-slate-600 mb-2">Sources</p>
                             <ul className="text-xs text-slate-500 space-y-1">
-                                {groundingChunks.map((chunk, index) => (
-                                    chunk.web && (
+                                {groundingChunks.map((chunk, index) => {
+                                    const href = chunk.web ? safeExternalHref(chunk.web.uri) : null;
+                                    if (!href) return null;
+                                    return (
                                         <li key={index}>
-                                            <a href={chunk.web.uri} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                                                {chunk.web.title || chunk.web.uri}
+                                            <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                                                {chunk.web.title || href}
                                             </a>
                                         </li>
-                                    )
-                                ))}
+                                    );
+                                })}
                             </ul>
                         </div>
                     )}
@@ -2520,7 +2525,7 @@ const TransactionHistoryModal: React.FC<{ isOpen: boolean, onClose: () => void, 
     )
 }
 
-const PlatformCard: React.FC<{ 
+const PlatformCardInner: React.FC<{ 
     platform: Account;
     portfolios: InvestmentPortfolio[];
     /** If set, card headline / ROI use only these portfolios (e.g. personal); `portfolios` still drives the holdings tables. */
@@ -2628,31 +2633,44 @@ const PlatformCard: React.FC<{
         });
     }, [sortedPortfolios]);
 
-    const portfolioKpiBundle = useMemo(
-        () =>
-            isExpanded
-                ? computePortfolioMetricsBundle({
-                      siblingPortfolios: sortedPortfolios,
-                      transactions: metricsTransactions ?? transactions,
-                      accounts: dataCtx?.accounts ?? [],
-                      allInvestments: investmentsForInfer,
-                      sarPerUsd,
-                      simulatedPrices,
-                      accountAvailableCashByCurrency: availableCashByCurrency,
-                  })
-                : null,
-        [
-            isExpanded,
-            sortedPortfolios,
-            transactions,
-            metricsTransactions,
-            dataCtx?.accounts,
-            investmentsForInfer,
-            sarPerUsd,
-            simulatedPrices,
-            availableCashByCurrency,
-        ],
-    );
+    const [portfolioKpiBundle, setPortfolioKpiBundle] = useState<PortfolioMetricsBundle | null>(null);
+
+    useEffect(() => {
+        if (!isExpanded) {
+            setPortfolioKpiBundle(null);
+            return;
+        }
+        let aborted = false;
+        const cancelIdle = scheduleIdleWorkAsync(async () => {
+            await yieldToMain();
+            if (aborted) return;
+            const bundle = computePortfolioMetricsBundle({
+                siblingPortfolios: sortedPortfolios,
+                transactions: metricsTransactions ?? transactions,
+                accounts: dataCtx?.accounts ?? [],
+                allInvestments: investmentsForInfer,
+                sarPerUsd,
+                simulatedPrices,
+                accountAvailableCashByCurrency: availableCashByCurrency,
+            });
+            if (aborted) return;
+            startTransition(() => setPortfolioKpiBundle(bundle));
+        }, 0);
+        return () => {
+            aborted = true;
+            cancelIdle();
+        };
+    }, [
+        isExpanded,
+        sortedPortfolios,
+        transactions,
+        metricsTransactions,
+        dataCtx?.accounts,
+        investmentsForInfer,
+        sarPerUsd,
+        simulatedPrices,
+        availableCashByCurrency,
+    ]);
 
     const totalHoldings = portfolios.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
     const metricsHoldingsCount = portfoliosForMetrics.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
@@ -2696,7 +2714,7 @@ const PlatformCard: React.FC<{
                     <div className="flex items-start gap-3 min-w-0 flex-1 overflow-hidden">
                         <button
                             type="button"
-                            onClick={() => startTransition(onToggleExpanded)}
+                            onClick={onToggleExpanded}
                             className="mt-1 shrink-0 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-primary transition-colors"
                             aria-expanded={isExpanded}
                             title={isExpanded ? 'Collapse platform' : 'Expand platform'}
@@ -2879,6 +2897,9 @@ const PlatformCard: React.FC<{
 
             {/* Portfolios & Holdings — compact hierarchy; spacing from design system */}
             {isExpanded && <div className="platform-card-body">
+                {!portfolioKpiBundle && portfolios.length > 0 ? (
+                    <SectionLoadingPlaceholder labelKey="sectionLoading" minHeight="6rem" />
+                ) : null}
                 <div className="flex items-center justify-between flex-wrap gap-2">
                     <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wider">
                         Portfolios · {portfolios.length}{' '}
@@ -3295,6 +3316,8 @@ const PlatformCard: React.FC<{
     );
 };
 
+const PlatformCard = React.memo(PlatformCardInner);
+
 
 const PlatformView: React.FC<{
     onAddPlatform: () => void;
@@ -3509,9 +3532,7 @@ const PlatformView: React.FC<{
                         simulatedPrices={props.simulatedPrices}
                         isExpanded={platformExpanded[p.account.id] ?? false}
                         onToggleExpanded={() =>
-                            startTransition(() => {
-                                setPlatformExpanded((prev) => ({ ...prev, [p.account.id]: !prev[p.account.id] }));
-                            })
+                            setPlatformExpanded((prev) => ({ ...prev, [p.account.id]: !prev[p.account.id] }))
                         }
                         holdingsOutliers={holdingsOutliersAll}
                         setActivePage={setActivePage}

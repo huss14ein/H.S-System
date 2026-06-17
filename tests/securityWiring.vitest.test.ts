@@ -67,5 +67,19 @@ describe('security wiring', () => {
     const fn = approval.slice(approval.indexOf('export function resolveEffectiveAppAccess'));
     expect(fn).not.toMatch(/email_confirmed_at/);
     expect(read('services/syncUserApprovalProfile.ts')).toContain('ensure_own_user_profile');
+    expect(read('supabase/migrations/20260617100000_security_hardening.sql')).not.toContain(
+      'email_confirmed is not null',
+    );
+  });
+
+  it('admin role inferred from DB only', () => {
+    expect(read('utils/role.ts')).not.toContain('user_metadata');
+    expect(read('utils/role.ts')).not.toContain('app_metadata');
+  });
+
+  it('wealth_ultra_config has RLS migration', () => {
+    expect(read('supabase/migrations/20260617100000_security_hardening.sql')).toContain(
+      'wealth_ultra_config_select_own_or_global',
+    );
   });
 });

@@ -117,25 +117,29 @@ describe('performance recovery E2E wiring', () => {
     expect(read('hooks/useCanonicalFinancialMetrics.ts')).toContain('useCanonicalSimulatedPrices');
   });
 
-  it('MarketSimulator restores cached quotes without auto live fetch', () => {
+  it('MarketSimulator restores cache then one-shot stale live refresh', () => {
     const src = read('components/MarketSimulator.tsx');
     expect(src).toContain('computeRestoreCachedQuotesPatch');
     expect(src).toContain('didRestoreCachedHoldingsRef');
+    expect(src).toContain('didScheduleStaleRefreshRef');
+    expect(src).toContain('symbolsNeedingLiveFetch');
     expect(src).not.toMatch(/didInitialPricePassRef/);
     expect(src).not.toMatch(/bumpPriceRefresh\(\s*\)/);
   });
 
-  it('MarketDataContext gates live refresh to manual sessions only', () => {
+  it('MarketDataContext queues manual refresh without cooldown/pause gate', () => {
     const src = read('context/MarketDataContext.tsx');
     expect(src).toContain('manualRefreshSessionRef');
-    expect(src).toContain('scope.manual === true');
-    expect(src).toContain('manualRefreshSessionRef.current = true');
+    expect(src).toContain('scope.manual !== true');
+    expect(src).not.toContain('isQuoteRefreshInCooldown() && scope.forceFetch');
+    expect(src).not.toContain('isBackgroundWorkPaused() && scope.forceFetch');
   });
 
-  it('Header refresh always force-fetches on user click', () => {
-    expect(read('components/Header.tsx')).toContain('refreshPrices({ forceFetch: true })');
-    expect(read('components/Header.tsx')).not.toMatch(/disabled=\{headerRefreshing \|\| quoteCooldownSec/);
-    expect(read('components/Header.tsx')).toContain('quotesPriceSource');
+  it('Header refresh always force-fetches on user click (desktop + mobile)', () => {
+    const header = read('components/Header.tsx');
+    expect(header).toMatch(/refreshPrices\(\{ forceFetch: true \}\)/g);
+    expect(header).not.toMatch(/disabled=\{headerRefreshing \|\| quoteCooldownSec/);
+    expect(header).toContain('quotesPriceSource');
   });
 
   it('cachedQuoteRestore service restores holdings without network', () => {

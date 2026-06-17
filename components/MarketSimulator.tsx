@@ -15,6 +15,7 @@ import {
     loadQuoteCacheRows,
     resolveSymbolsToLiveFetch,
     saveQuoteCacheRows,
+    symbolsNeedingLiveFetch,
     upsertCacheFromLiveQuotes,
 } from '../services/quotePriceCache';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
@@ -33,16 +34,20 @@ import {
     startQuoteRefreshCooldown,
     setQuoteRefreshCooldownEndListener,
 } from '../services/quoteRefreshCooldown';
-import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
-import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { isBackgroundWorkPaused, backgroundWorkPauseRemainingMs } from '../utils/backgroundWorkGate';
+import { scheduleIdleWork, scheduleIdleWorkAsync, waitUntilBackgroundWorkResumed } from '../utils/runWhenIdle';
 import { yieldToMain } from '../utils/yieldToMain';
 import { computeRestoreCachedQuotesPatch } from '../services/cachedQuoteRestore';
 
-const MAX_LIVE_FETCH_PER_TICK = 15;
+const MAX_LIVE_FETCH_PER_TICK = 25;
 const PARTIAL_LIVE_RATIO = 0.8;
-const INTER_SCOPE_DELAY_MS = 400;
+const INTER_SCOPE_DELAY_MS = 250;
 
-const applyPricesInBackground = (apply: () => void) => {
+const applyPricesInBackground = (apply: () => void, urgent = false) => {
+    if (urgent) {
+        startTransition(apply);
+        return;
+    }
     scheduleIdleWork(() => startTransition(apply), 200);
 };
 
@@ -59,6 +64,9 @@ const MarketSimulator: React.FC = () => {
     const tickInFlightRef = useRef(false);
     /** Symbols left after per-tick cap — drained via queued refresh scopes. */
     const pendingLiveFetchSymbolsRef = useRef<string[]>([]);
+    const didScheduleStaleRefreshRef = useRef(false);
+    const refreshRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pendingRefreshWhileInFlightRef = useRef(false);
 
     /** After hydrate, restore persisted quotes into holdings locally — no live API fetch. */
     useEffect(() => {
@@ -110,6 +118,48 @@ const MarketSimulator: React.FC = () => {
         }, 1500);
     }, [dataContext?.data, dataContext?.showHydrateBanner, sarPerUsd, marketContext]);
 
+    /** One-shot after hydrate: refresh symbols with stale/missing cache (no interval polling). */
+    useEffect(() => {
+        const { data, showHydrateBanner } = dataContext ?? {};
+        if (!data || showHydrateBanner || !marketContext?.bumpPriceRefresh) return;
+        if (didScheduleStaleRefreshRef.current) return;
+
+        let cancelled = false;
+        const cancelIdle = scheduleIdleWorkAsync(async () => {
+            await waitUntilBackgroundWorkResumed();
+            if (cancelled || didScheduleStaleRefreshRef.current) return;
+
+            const allInvestments = ((data as { personalInvestments?: InvestmentPortfolio[] }).personalInvestments ??
+                data.investments ??
+                []) as InvestmentPortfolio[];
+            const holdingSymbols = getRefreshableHoldingQuoteSymbols(
+                allInvestments.flatMap((p) => p.holdings ?? []) as {
+                    symbol?: string;
+                    holdingType?: string;
+                    holding_type?: string;
+                }[],
+            );
+            if (holdingSymbols.length === 0) {
+                didScheduleStaleRefreshRef.current = true;
+                return;
+            }
+
+            const stale = symbolsNeedingLiveFetch(holdingSymbols, loadQuoteCacheRows());
+            if (stale.length === 0) {
+                didScheduleStaleRefreshRef.current = true;
+                return;
+            }
+
+            didScheduleStaleRefreshRef.current = true;
+            marketContext.bumpPriceRefresh({ kind: 'all', manual: true, forceFetch: false });
+        }, 2500);
+
+        return () => {
+            cancelled = true;
+            cancelIdle();
+        };
+    }, [dataContext?.data, dataContext?.showHydrateBanner, marketContext?.bumpPriceRefresh]);
+
     /** Resume pending symbol batches after provider cooldown — manual refresh sessions only. */
     useEffect(() => {
         const bump = marketContext?.bumpPriceRefresh;
@@ -117,10 +167,12 @@ const MarketSimulator: React.FC = () => {
         if (!bump || !isManual) return;
         setQuoteRefreshCooldownEndListener(() => {
             if (!isManual()) return;
-            if (pendingLiveFetchSymbolsRef.current.length === 0) return;
+            const pending = pendingLiveFetchSymbolsRef.current;
+            if (pending.length === 0) return;
+            pendingLiveFetchSymbolsRef.current = [];
             bump({
                 kind: 'symbols',
-                symbols: [...pendingLiveFetchSymbolsRef.current],
+                symbols: [...pending],
                 forceFetch: true,
                 manual: true,
             });
@@ -131,8 +183,24 @@ const MarketSimulator: React.FC = () => {
     useEffect(() => {
         if (!marketContext) return;
         if (marketContext.refreshTrigger === 0) return;
-        if (tickInFlightRef.current) return;
-        if (isBackgroundWorkPaused()) return;
+
+        const scheduleRefreshRetry = () => {
+            if (refreshRetryTimerRef.current) clearTimeout(refreshRetryTimerRef.current);
+            const waitMs = Math.min(Math.max(backgroundWorkPauseRemainingMs(), 32), 500);
+            refreshRetryTimerRef.current = setTimeout(() => {
+                refreshRetryTimerRef.current = null;
+                marketContext.notifyQueuedPriceRefresh();
+            }, waitMs);
+        };
+
+        if (tickInFlightRef.current) {
+            pendingRefreshWhileInFlightRef.current = true;
+            return;
+        }
+        if (isBackgroundWorkPaused()) {
+            scheduleRefreshRetry();
+            return;
+        }
 
         const runSimulationTick = async (priceScope: NonNullable<ReturnType<typeof marketContext.consumePriceRefreshScope>>) => {
             const { dataContext, marketContext } = contextRef.current;
@@ -429,7 +497,8 @@ const MarketSimulator: React.FC = () => {
             });
             
             const newKeys = Object.keys(newPrices);
-            // Apply quote updates at low priority (idle + transition) to avoid blocking navigation/typing.
+            const urgentApply = priceScope.manual === true;
+            // Apply quote updates — manual refresh paints immediately; background ticks stay low priority.
             applyPricesInBackground(() => {
                 if (marketContext.isQuoteRefreshCancelled()) return;
                 if (scopeIsPlatform) {
@@ -451,6 +520,10 @@ const MarketSimulator: React.FC = () => {
                         }
                         return changed ? next : prev;
                     });
+                    if (priceScope.manual === true && Object.keys(trustedQuoteSnapshot).length > 0) {
+                        setQuotesPriceSource('live');
+                    }
+                    if (liveStatus && setLastUpdated) setLastUpdated(new Date());
                 } else {
                     setSimulatedPrices((prev) => {
                         let changed = false;
@@ -476,7 +549,7 @@ const MarketSimulator: React.FC = () => {
                     if (liveStatus && setLastUpdated) setLastUpdated(new Date());
                 }
                 touchQuoteTimestamps(newKeys);
-            });
+            }, urgentApply);
 
             // Persist market value only from trusted (cache/API) quotes. RNG `simulateSymbol` fills must not
             // overwrite `currentValue` — that caused inflated/wrong platform totals when live feeds failed.
@@ -558,11 +631,23 @@ const MarketSimulator: React.FC = () => {
                         pendingLiveFetchSymbolsRef.current = [];
                         after.bumpPriceRefresh({ kind: 'symbols', symbols: pending, forceFetch: true, manual: true });
                     }
+                    // During cooldown: keep isRefreshing + manual session until listener drains pending.
                 } else {
                     after?.finishQuotesRefresh();
                 }
+                if (pendingRefreshWhileInFlightRef.current) {
+                    pendingRefreshWhileInFlightRef.current = false;
+                    after?.notifyQueuedPriceRefresh();
+                }
             }
         })();
+
+        return () => {
+            if (refreshRetryTimerRef.current) {
+                clearTimeout(refreshRetryTimerRef.current);
+                refreshRetryTimerRef.current = null;
+            }
+        };
 
     }, [marketContext?.refreshTrigger]);
 

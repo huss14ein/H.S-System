@@ -811,12 +811,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               console.warn("Supabase client is not available because environment variables are missing. Authentication is disabled.");
             }
             setLoading(false);
-            setIsApproved(true);
+            setIsApproved(false);
             setIsSignupRejected(false);
-            setApprovalHardBlock(false);
-            setApprovalSyncIssue(null);
-            setUserRole('Admin');
-            setIsAdmin(true);
+            setApprovalHardBlock(true);
+            setApprovalSyncIssue('network');
+            setUserRole(null);
+            setIsAdmin(false);
             return;
         }
     

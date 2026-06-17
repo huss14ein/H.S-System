@@ -561,7 +561,7 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                     <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 px-3">Quick Actions</h3>
                     <div className="grid grid-cols-2 gap-3">
                         <button 
-                            onClick={() => { refreshPrices(); setIsMobileMenuOpen(false); }}
+                            onClick={() => { refreshPrices({ forceFetch: true }); setIsMobileMenuOpen(false); }}
                             className="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-2xl hover:bg-gray-100 transition-colors relative"
                         >
                             <ArrowPathIcon className={`h-6 w-6 text-gray-500 mb-2 ${headerRefreshing ? 'animate-spin' : ''}`} />

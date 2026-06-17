@@ -121,7 +121,7 @@ describe('deploy completion — Wealth Analytics + production hosts', () => {
   it('live prices: manual refresh only; cache restore on hydrate', () => {
     expect(read('components/MarketSimulator.tsx')).toContain('computeRestoreCachedQuotesPatch');
     expect(read('components/MarketSimulator.tsx')).not.toMatch(/didInitialPricePassRef/);
-    expect(read('context/MarketDataContext.tsx')).toContain('scope.manual === true');
+    expect(read('context/MarketDataContext.tsx')).toContain('scope.manual !== true');
     expect(read('services/cachedQuoteRestore.ts')).toContain('computeRestoreCachedQuotesPatch');
   });
 

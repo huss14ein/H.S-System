@@ -14,7 +14,7 @@ describe('market data refresh wiring', () => {
 
   it('header refresh stays enabled during rate-limit cooldown', () => {
     const header = read('components/Header.tsx');
-    expect(header).toContain('refreshPrices({ forceFetch: true })');
+    expect(header).toMatch(/refreshPrices\(\{ forceFetch: true \}\)/);
     expect(header).not.toMatch(/disabled=\{headerRefreshing \|\| quoteCooldownSec > 0\}/);
   });
 
@@ -22,5 +22,6 @@ describe('market data refresh wiring', () => {
     const sim = read('components/MarketSimulator.tsx');
     expect(sim).toContain('pendingLiveFetchSymbolsRef.current.length > 0');
     expect(sim).toContain('isManualRefreshSession');
+    expect(sim).toContain('pendingLiveFetchSymbolsRef.current = []');
   });
 });
