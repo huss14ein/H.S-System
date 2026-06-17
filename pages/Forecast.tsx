@@ -12,6 +12,7 @@ import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import { useCurrency } from '../context/CurrencyContext';
 import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useLiveQuotePrices } from '../hooks/useLiveQuotePrices';
 import { pickInvestmentsTotalSar } from '../services/extendedMetricsPresentation';
 import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
 import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
@@ -38,7 +39,8 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const engineData = computeData ?? data;
     const { exchangeRate, currency: displayCurrency } = useCurrency();
     const metrics = useExtendedCanonicalMetrics();
-    const { netWorth: headlineNetWorth, sarPerUsd, liquidCashSar, extendedReady, simulatedPrices } = metrics;
+    const simulatedPrices = useLiveQuotePrices();
+    const { netWorth: headlineNetWorth, sarPerUsd, liquidCashSar, extendedReady } = metrics;
     const investmentsTotalSar = pickInvestmentsTotalSar(metrics, extendedReady);
     const baselinesPending = metrics.showHydrateBanner || !extendedReady;
     useHydrateSarPerUsdDailySeries(data, exchangeRate);

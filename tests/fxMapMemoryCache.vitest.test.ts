@@ -7,6 +7,7 @@ import {
   recordSarPerUsdForCalendarDay,
   getSarPerUsdForCalendarDay,
   clearFxMapMemoryCacheForTests,
+  hydrateSarPerUsdDailySeries,
 } from '../services/fxDailySeries';
 
 function mockLocalStorage() {
@@ -47,5 +48,14 @@ describe('fx map memory cache', () => {
     loadSarPerUsdByDay();
     expect(parseSpy).toHaveBeenCalledTimes(1);
     parseSpy.mockRestore();
+  });
+
+  it('hydrateSarPerUsdDailySeries skips redundant forward-fill on repeat calls', () => {
+    const setItemSpy = vi.spyOn(localStorage, 'setItem');
+    hydrateSarPerUsdDailySeries(null, 3.75, { horizonDays: 60 });
+    const firstWrites = setItemSpy.mock.calls.length;
+    hydrateSarPerUsdDailySeries(null, 3.75, { horizonDays: 60 });
+    expect(setItemSpy.mock.calls.length).toBe(firstWrites);
+    setItemSpy.mockRestore();
   });
 });

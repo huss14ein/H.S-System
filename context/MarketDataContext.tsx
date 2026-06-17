@@ -1,10 +1,14 @@
 
 import React, { createContext, useState, useCallback, ReactNode, useContext, useEffect, useRef, useMemo } from 'react';
-import { cacheRowsToSimulatedMap, loadQuoteCacheRows } from '../services/quotePriceCache';
-import { latestQuoteCacheTimestamp, symbolTimestampsFromCacheRows } from '../services/cachedQuoteRestore';
-import { isQuoteRefreshInCooldown, quoteRefreshCooldownRemainingMs } from '../services/quoteRefreshCooldown';
+import { cacheRowsToSimulatedMap, loadQuoteCacheRows, QUOTE_CACHE_STORAGE_KEY } from '../services/quotePriceCache';
+import {
+  latestQuoteCacheTimestamp,
+  rehydrateSessionPricesFromQuoteCache,
+  symbolTimestampsFromCacheRows,
+} from '../services/cachedQuoteRestore';
+import { quoteRefreshCooldownRemainingMs } from '../services/quoteRefreshCooldown';
 import { mergePriceRefreshScope } from '../services/quoteRefreshQueue';
-import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
+import { kickQuoteRefreshNow } from '../utils/quoteRefreshBridge';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 interface SimulatedPrices {
@@ -16,10 +20,10 @@ export type SymbolQuoteTimestamps = Record<string, string>;
 
 /** `all` = every tracked symbol (header refresh). `platform` = one investment account’s holdings only (saves API quota). */
 export type PriceRefreshScope =
-    | { kind: 'all'; forceFetch?: boolean; manual?: boolean }
-    | { kind: 'platform'; platformId: string; forceFetch?: boolean; manual?: boolean }
+    | { kind: 'all'; forceFetch?: boolean; manual?: boolean; /** Skip header/platform spinners (session poll). */ silent?: boolean }
+    | { kind: 'platform'; platformId: string; forceFetch?: boolean; manual?: boolean; silent?: boolean }
     /** Pending overflow / targeted drain — fetches only listed symbols (no full portfolio rescan). */
-    | { kind: 'symbols'; symbols: string[]; forceFetch?: boolean; manual?: boolean };
+    | { kind: 'symbols'; symbols: string[]; forceFetch?: boolean; manual?: boolean; silent?: boolean };
 
 /** Drives spinners: full refresh updates header + every platform card; platform refresh only touches one card + omits header “Updating…”. */
 export type QuotesRefreshUIScope =
@@ -89,7 +93,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         }
         return out;
     });
-    const debouncedPrices = useDebouncedValue(simulatedPrices, 1500);
+    const debouncedPrices = useDebouncedValue(simulatedPrices, 800);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [quotesRefreshUIScope, setQuotesRefreshUIScope] = useState<QuotesRefreshUIScope>({ mode: 'idle' });
     const [lastUpdated, setLastUpdated] = useState<Date | null>(() => latestQuoteCacheTimestamp(initialCacheRows));
@@ -119,6 +123,38 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         const cached = latestQuoteCacheTimestamp(loadQuoteCacheRows());
         if (cached) setLastUpdated(cached);
     }, [lastUpdated]);
+
+    const applyPersistedQuoteCacheToSession = useCallback(() => {
+        const rows = loadQuoteCacheRows();
+        if (Object.keys(rows).length === 0) return;
+        setSimulatedPrices((prev) => {
+            const { prices, changed } = rehydrateSessionPricesFromQuoteCache(prev, rows);
+            return changed ? prices : prev;
+        });
+        const ts = latestQuoteCacheTimestamp(rows);
+        if (ts) setLastUpdated(ts);
+        setIsLive(true);
+        setSymbolQuoteUpdatedAt(symbolTimestampsFromCacheRows(rows));
+    }, []);
+
+    /** Cross-tab + return-to-tab: keep session prices aligned with localStorage cache. */
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const onStorage = (e: StorageEvent) => {
+            if (e.key !== QUOTE_CACHE_STORAGE_KEY) return;
+            applyPersistedQuoteCacheToSession();
+        };
+        const onVisible = () => {
+            if (document.visibilityState !== 'visible') return;
+            applyPersistedQuoteCacheToSession();
+        };
+        window.addEventListener('storage', onStorage);
+        document.addEventListener('visibilitychange', onVisible);
+        return () => {
+            window.removeEventListener('storage', onStorage);
+            document.removeEventListener('visibilitychange', onVisible);
+        };
+    }, [applyPersistedQuoteCacheToSession]);
 
     const [refreshTrigger, setRefreshTrigger] = useState(0);
     const refreshQueueRef = useRef<PriceRefreshScope[]>([]);
@@ -153,31 +189,21 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
     }, []);
 
     const notifyQueuedPriceRefresh = useCallback(() => {
-        if (refreshQueueRef.current.length > 0) {
-            setRefreshTrigger((prev) => prev + 1);
-        }
+        setRefreshTrigger((prev) => prev + 1);
     }, []);
 
     const bumpPriceRefresh = useCallback((scope: PriceRefreshScope = { kind: 'all', manual: true }) => {
         quoteRefreshAbortRef.current = false;
-        if (scope.manual === true) {
-            manualRefreshSessionRef.current = true;
-        } else {
+        if (scope.manual !== true) {
             return;
         }
-        if (isBackgroundWorkPaused() && scope.forceFetch !== true) {
-            return;
-        }
-        if (isQuoteRefreshInCooldown()) {
-            const scopedForce = scope.forceFetch === true;
-            if (scopedForce) return;
-        }
+        manualRefreshSessionRef.current = true;
         const merged = mergePriceRefreshScope(refreshQueueRef.current, scope);
         refreshQueueRef.current = merged.queue;
-        if (merged.changed) {
+        if (scope.silent !== true) {
             setIsRefreshing(true);
-            setRefreshTrigger((prev) => prev + 1);
         }
+        setRefreshTrigger((prev) => prev + 1);
     }, []);
 
     const finishQuotesRefresh = useCallback(() => {
@@ -196,24 +222,25 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
     }, [finishQuotesRefresh]);
 
     const refreshPrices = useCallback(async (options?: { forceFetch?: boolean }) => {
+        const force = options?.forceFetch === true;
+        quoteRefreshAbortRef.current = false;
         setQuotesRefreshUIScope({ mode: 'all' });
         setIsRefreshing(true);
         manualRefreshSessionRef.current = true;
-        if (isQuoteRefreshInCooldown() && options?.forceFetch === true) {
-            finishQuotesRefresh();
-            return;
-        }
-        bumpPriceRefresh({ kind: 'all', forceFetch: true, manual: true });
-    }, [bumpPriceRefresh, finishQuotesRefresh]);
+        bumpPriceRefresh({ kind: 'all', forceFetch: force, manual: true });
+        kickQuoteRefreshNow();
+    }, [bumpPriceRefresh]);
 
     const refreshPricesForPlatform = useCallback(
         async (platformId: string) => {
             if (!platformId?.trim()) return;
             const id = platformId.trim();
+            quoteRefreshAbortRef.current = false;
             setQuotesRefreshUIScope({ mode: 'platform', accountId: id });
             setIsRefreshing(true);
             manualRefreshSessionRef.current = true;
             bumpPriceRefresh({ kind: 'platform', platformId: id, forceFetch: true, manual: true });
+            kickQuoteRefreshNow();
         },
         [bumpPriceRefresh],
     );

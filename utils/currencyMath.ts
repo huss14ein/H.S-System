@@ -1,4 +1,5 @@
 import { Holding, InvestmentPortfolio, TradeCurrency } from '../types';
+import { quoteChangeForDailyPnL } from '../services/marketSessionLocal';
 import { resolveInvestmentPortfolioCurrency } from './investmentPortfolioCurrency';
 
 /** How many SAR equal 1 USD (multiply a USD amount by this to get SAR). */
@@ -201,9 +202,10 @@ export function quoteDailyPnLInBookCurrency(
   symbol: string,
   bookCurrency: TradeCurrency,
   sarPerUsd: number,
+  asOf: Date = new Date(),
 ): number {
   const inst = inferInstrumentCurrencyFromSymbol(symbol);
   const q = Number.isFinite(quantity) ? Math.max(0, quantity) : 0;
-  const c = Number.isFinite(changePerShare) ? changePerShare : 0;
+  const c = quoteChangeForDailyPnL(symbol, changePerShare, asOf);
   return convertBetweenTradeCurrencies(c * q, inst, bookCurrency, sarPerUsd);
 }

@@ -3,6 +3,7 @@ import { DataContext } from '../context/DataContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useAI } from '../context/AiContext';
 import { useExtendedCanonicalMetrics, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
+import { useLiveQuotePrices } from '../hooks/useLiveQuotePrices';
 import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { aggregateMonthlyBudgetAcrossPortfolios } from '../utils/investmentPlanPerPortfolio';
 import type { InvestmentPlanSettings, UniverseTicker } from '../types';
@@ -68,7 +69,8 @@ const SCENARIO_OPTIONS: { id: string; label: string; multiplier: number }[] = [
 const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePage, triggerPageAction }) => {
   const { data, totalDeployableCash } = useContext(DataContext)!;
   const metrics = useExtendedCanonicalMetrics();
-  const { simulatedPrices, sarPerUsd, netWorth: headlineNetWorthSar, extendedReady } = metrics;
+  const simulatedPrices = useLiveQuotePrices();
+  const { sarPerUsd, netWorth: headlineNetWorthSar, extendedReady } = metrics;
   const investmentsTotalSar = pickInvestmentsTotalSar(metrics, extendedReady);
   const { formatCurrencyString } = useFormatCurrency();
   const { isAiAvailable, aiHealthChecked } = useAI();

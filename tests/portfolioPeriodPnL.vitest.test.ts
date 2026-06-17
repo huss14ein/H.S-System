@@ -354,4 +354,84 @@ describe('portfolioPeriodPnL', () => {
       }),
     ).toBeCloseTo(1000 + 250, 0);
   });
+
+  it('week P/L stays near zero when deposits exist but buy txs are missing (imported holdings)', () => {
+    const accounts: Account[] = [{ id: 'acc-1', name: 'Awaed', type: 'Investment', balance: 0 }];
+    const p1: InvestmentPortfolio = {
+      id: 'p1',
+      name: 'Growth',
+      accountId: 'acc-1',
+      currency: 'USD',
+      holdings: [
+        {
+          id: 'h1',
+          symbol: 'UNH',
+          quantity: 10,
+          avgCost: 400,
+          currentValue: 4500,
+          zakahClass: 'Zakatable',
+          realizedPnL: 0,
+          holdingType: 'equity',
+        },
+        {
+          id: 'h2',
+          symbol: 'NKE',
+          quantity: 20,
+          avgCost: 100,
+          currentValue: 1900,
+          zakahClass: 'Zakatable',
+          realizedPnL: 0,
+          holdingType: 'equity',
+        },
+      ],
+    };
+    const txs: InvestmentTransaction[] = [
+      {
+        id: 'd1',
+        accountId: 'acc-1',
+        portfolioId: 'p1',
+        type: 'deposit',
+        date: '2024-01-15',
+        total: 50000,
+        currency: 'USD',
+      },
+      {
+        id: 'd2',
+        accountId: 'acc-1',
+        portfolioId: 'p1',
+        type: 'deposit',
+        date: '2025-12-01',
+        total: 10000,
+        currency: 'USD',
+      },
+    ];
+    const data = {
+      accounts,
+      investments: [p1],
+      investmentTransactions: txs,
+      personalInvestments: [p1],
+      personalAccounts: accounts,
+      monthStartDay: 1,
+    } as FinancialData;
+
+    const summary = computePortfolioPeriodPnLSummary({
+      data,
+      portfolios: [p1],
+      accounts,
+      sarPerUsd: 3.75,
+      simulatedPrices: {
+        UNH: { price: 450, change: 0, changePercent: 0 },
+        NKE: { price: 95, change: 0, changePercent: 0 },
+      },
+      monthStartDay: 1,
+      getAvailableCashForAccount: () => ({ SAR: 0, USD: 3000 }),
+      now: new Date(2026, 5, 17),
+    });
+
+    const row = summary.rows[0]!;
+    expect(Math.abs(row.weekly.totalSar)).toBeLessThan(5000);
+    expect(Math.abs(row.monthly.totalSar)).toBeLessThan(5000);
+    const platform = platformPeriodPnLFromSummary(summary, 'acc-1');
+    expect(Math.abs(platform.weekly.totalSar)).toBeLessThan(5000);
+  });
 });

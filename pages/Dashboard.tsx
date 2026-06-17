@@ -28,6 +28,7 @@ import { GoldBarIcon } from '../components/icons/GoldBarIcon';
 import { UsersIcon } from '../components/icons/UsersIcon';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import { useCanonicalSpotFx, useDashboardCanonicalMetrics, useExtendedMetricsReady } from '../hooks/useCanonicalFinancialMetrics';
+import { useLiveQuotePrices } from '../hooks/useLiveQuotePrices';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
@@ -270,8 +271,8 @@ const DashboardContent: React.FC<{
         todaySnapshot: dashboardTodaySnapshot,
         investableCashBars: dashboardInvestableCashBars,
         sarPerUsd: canonicalSarPerUsd,
-        simulatedPrices: dashboardDebouncedPrices,
     } = useDashboardCanonicalMetrics();
+    const liveQuotePrices = useLiveQuotePrices();
     const metricsExtendedReady = useExtendedMetricsReady();
     const { isRefreshing, hasQueuedPriceRefresh, symbolQuoteUpdatedAt, isLive } = useMarketQuoteMeta();
     const { formatCurrencyString, formatCurrency } = useFormatCurrency();
@@ -404,7 +405,7 @@ const DashboardContent: React.FC<{
                 investmentCapitalSource,
             } = snap;
 
-            const investmentTreemapData = buildPersonalInvestmentTreemapRows(workingData, sarPerUsd, dashboardDebouncedPrices);
+            const investmentTreemapData = buildPersonalInvestmentTreemapRows(workingData, sarPerUsd, liveQuotePrices);
             const monthlySpending = new Map<string, number>();
             monthlyTransactions
                 .filter((t: { type?: string }) => countsAsExpenseForCashflowKpi(t))
@@ -510,7 +511,7 @@ const DashboardContent: React.FC<{
             console.error("Dashboard calculation error:", e);
             return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
         }
-    }, [workingData, exchangeRate, getAvailableCashForAccount, kpiSnapshot, canonicalSarPerUsd, dashboardDebouncedPrices, showHydrateBanner]);
+    }, [workingData, exchangeRate, getAvailableCashForAccount, kpiSnapshot, canonicalSarPerUsd, liveQuotePrices, showHydrateBanner]);
 
     useEffect(() => {
         if (!auth?.user?.id || !data) return;
@@ -778,7 +779,7 @@ const DashboardContent: React.FC<{
                                 todaySnapshot: dashboardTodaySnapshot,
                                 investableCashBars: dashboardInvestableCashBars,
                                 sarPerUsd: canonicalSarPerUsd,
-                                simulatedPrices: dashboardDebouncedPrices,
+                                simulatedPrices: liveQuotePrices,
                             }}
                             onOpenSummary={() => setActivePage('Summary')}
                             onOpenInvestments={() => setActivePage('Investments')}

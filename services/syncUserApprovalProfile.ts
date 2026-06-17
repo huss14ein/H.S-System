@@ -3,6 +3,13 @@ import { approvalFlagsFromUserRow, resolveEffectiveAppAccess } from '../utils/us
 
 /** Mobile Safari cold starts need more retries than desktop. */
 const RETRY_DELAYS_MS = [0, 300, 800, 2000, 4000, 8000];
+const PROFILE_CACHE_MS = 120_000;
+
+let profileCache: { userId: string; at: number; result: SyncUserApprovalResult } | null = null;
+
+export function invalidateUserApprovalProfileCache(userId?: string): void {
+  if (!userId || profileCache?.userId === userId) profileCache = null;
+}
 
 export type SyncUserApprovalResult = {
   row: Record<string, unknown> | null;
@@ -76,6 +83,11 @@ export async function syncUserApprovalProfile(
   client: SupabaseClient,
   userId: string,
 ): Promise<SyncUserApprovalResult> {
+  const cached = profileCache;
+  if (cached && cached.userId === userId && Date.now() - cached.at < PROFILE_CACHE_MS) {
+    return cached.result;
+  }
+
   await refreshSessionForProfileSync(client);
 
   let rpcMissing = false;
@@ -91,7 +103,9 @@ export async function syncUserApprovalProfile(
     if (row) {
       lastEnsuredRow = row;
       if (rowIsTerminal(row)) {
-        return { row, rpcMissing, networkFailed: false };
+        const result = { row, rpcMissing, networkFailed: false };
+        profileCache = { userId, at: Date.now(), result };
+        return result;
       }
     }
   }
@@ -102,19 +116,26 @@ export async function syncUserApprovalProfile(
       await refreshSessionForProfileSync(client);
       const retry = await callEnsureOwnUserProfile(client);
       if (retry.row && rowIsTerminal(retry.row)) {
-        return { row: retry.row, rpcMissing, networkFailed: false };
+        const result = { row: retry.row, rpcMissing, networkFailed: false };
+        profileCache = { userId, at: Date.now(), result };
+        return result;
       }
       if (retry.row) lastEnsuredRow = retry.row;
     }
-    return { row: lastEnsuredRow, rpcMissing, networkFailed: false };
+    const result = { row: lastEnsuredRow, rpcMissing, networkFailed: false };
+    profileCache = { userId, at: Date.now(), result };
+    return result;
   }
 
   const fromTable = await readUsersRow(client, userId);
   if (fromTable) {
-    return { row: fromTable, rpcMissing, networkFailed: false };
+    const result = { row: fromTable, rpcMissing, networkFailed: false };
+    profileCache = { userId, at: Date.now(), result };
+    return result;
   }
 
-  return { row: null, rpcMissing, networkFailed: !rpcMissing };
+  const failed = { row: null, rpcMissing, networkFailed: !rpcMissing };
+  return failed;
 }
 
 /** Map sync result → shell access flags (no client-side approval bypass). */

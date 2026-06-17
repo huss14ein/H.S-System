@@ -297,8 +297,9 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
             <div className="flex items-center space-x-0.5 sm:space-x-2">
               <div className="hidden sm:flex flex-col items-end mr-2 min-w-[126px]">
                 <button 
+                  data-skip-background-pause
                   onClick={() => void refreshPrices({ forceFetch: true })} 
-                  disabled={headerRefreshing || quoteCooldownSec > 0}
+                  disabled={headerRefreshing}
                   className={`p-2 rounded-xl text-gray-400 hover:text-primary hover:bg-gray-50 transition-all flex items-center justify-end gap-2 w-full ${headerRefreshing ? 'animate-pulse' : ''}`}
                   title={
                     quoteCooldownSec > 0
@@ -324,7 +325,9 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                 {(pricesStatusLabel || quoteCooldownSec > 0) && (
                   <span className="text-[10px] text-gray-400 mt-0.5 px-2 hidden xl:block text-right leading-tight" title={lastUpdated ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''}>
                     {quoteCooldownSec > 0
-                      ? `Rate limited · ${quoteCooldownSec}s`
+                      ? headerRefreshing
+                        ? `Queued for live · ${quoteCooldownSec}s`
+                        : `Rate limited · ${quoteCooldownSec}s`
                       : headerRefreshing
                         ? 'Updating…'
                         : pricesStatusLabel}
@@ -559,7 +562,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                     <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 px-3">Quick Actions</h3>
                     <div className="grid grid-cols-2 gap-3">
                         <button 
-                            onClick={() => { refreshPrices(); setIsMobileMenuOpen(false); }}
+                            data-skip-background-pause
+                            onClick={() => { refreshPrices({ forceFetch: true }); setIsMobileMenuOpen(false); }}
                             className="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-2xl hover:bg-gray-100 transition-colors relative"
                         >
                             <ArrowPathIcon className={`h-6 w-6 text-gray-500 mb-2 ${headerRefreshing ? 'animate-spin' : ''}`} />

@@ -142,23 +142,29 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       setIsAdmin(adminStatus);
 
       const budgetKey = `count:budget-requests-pending:${userId}`;
-      const { count } = await cachedSupabaseHeadCount(budgetKey, () =>
-        supabase!
-          .from('budget_requests')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'Pending')
-          .eq('user_id', userId),
+      const { count } = await cachedSupabaseHeadCount(
+        budgetKey,
+        () =>
+          supabase!
+            .from('budget_requests')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'Pending')
+            .eq('user_id', userId),
+        120_000,
       );
       if (alive) setPendingBudgetRequestCount(Number(count || 0));
 
       if (adminStatus) {
         const txKey = `count:shared-tx-pending:${userId}`;
-        const txRes = await cachedSupabaseHeadCount(txKey, () =>
-          supabase!
-            .from('budget_shared_transactions')
-            .select('id', { count: 'exact', head: true })
-            .eq('owner_user_id', userId)
-            .eq('status', 'Pending'),
+        const txRes = await cachedSupabaseHeadCount(
+          txKey,
+          () =>
+            supabase!
+              .from('budget_shared_transactions')
+              .select('id', { count: 'exact', head: true })
+              .eq('owner_user_id', userId)
+              .eq('status', 'Pending'),
+          120_000,
         );
         if (alive) setPendingTransactionApprovalCount(Number(txRes.count ?? 0));
       } else if (alive) {
@@ -171,7 +177,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     }, 1200);
     const timer = window.setInterval(() => {
       void loadPending();
-    }, 60000);
+    }, 120_000);
 
     return () => {
       alive = false;

@@ -4,6 +4,7 @@ import PageLanguageToggle from '../components/PageLanguageToggle';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useLiveQuotePrices } from '../hooks/useLiveQuotePrices';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -52,13 +53,13 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
   const { isLive, symbolQuoteUpdatedAt } = useMarketQuoteMeta();
   const { strictReconciliationMode } = useDashboardReconciliationPrefs(auth?.user?.id);
 
+  const simulatedPrices = useLiveQuotePrices();
   const {
     headline,
     kpiSnapshot,
     netWorth,
     liquidCashSar,
     sarPerUsd,
-    simulatedPrices,
     wealthSummary: reportModel,
     investmentAllocation,
     investmentsTotalSar,

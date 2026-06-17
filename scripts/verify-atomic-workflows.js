@@ -99,7 +99,8 @@ expectContains(read('utils/transactionLedgerFilters.ts'), 'filterTransactionsFor
 expectContains(read('utils/transactionLedgerFilters.ts'), 'budgetDrillDownDateRange', 'utils/transactionLedgerFilters.ts');
 
 const accountsPage = read('pages/Accounts.tsx');
-expectContains(accountsPage, "rpc('get_shared_accounts_for_me'", 'pages/Accounts.tsx');
+expectContains(read('services/sharedAccountsRpc.ts'), "rpc('get_shared_accounts_for_me'", 'services/sharedAccountsRpc.ts');
+expectContains(accountsPage, 'fetchSharedAccountsForMe', 'pages/Accounts.tsx');
 expectContains(accountsPage, "rpc('list_shareable_users'", 'pages/Accounts.tsx');
 expectContains(budgets, "rpc('list_shareable_users'", 'pages/Budgets.tsx');
 

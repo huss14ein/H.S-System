@@ -21,7 +21,7 @@ import PriceAlertModal from '../components/PriceAlertModal';
 import { BellAlertIcon } from '../components/icons/BellAlertIcon';
 import { BellIcon } from '../components/icons/BellIcon';
 import MiniPriceChart from '../components/charts/MiniPriceChart';
-import { useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
+import { useLiveQuotePrices } from '../hooks/useLiveQuotePrices';
 import LivePricesStatus from '../components/LivePricesStatus';
 import InfoHint from '../components/InfoHint';
 import { useAI } from '../context/AiContext';
@@ -770,7 +770,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useCanonicalSpotFx();
     const { formatCurrencyString } = useFormatCurrency();
-    const { simulatedPrices } = useInvestmentsCanonicalMetrics();
+    const simulatedPrices = useLiveQuotePrices();
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const emergencyFund = useEmergencyFund(data ?? null);
     const buyScoreBySymbol = useMemo(() => {

@@ -17,6 +17,7 @@ import { CubeIcon } from '../components/icons/CubeIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { getAICommodityPrices, formatAiError } from '../services/geminiService';
+import { safeExternalHref } from '../utils/safeExternalUrl';
 import InfoHint from '../components/InfoHint';
 import OwnerBadge from '../components/OwnerBadge';
 import PageActionsDropdown from '../components/PageActionsDropdown';
@@ -1254,9 +1255,17 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                     <div className="text-xs text-gray-500 mb-4 p-3 bg-gray-50 rounded-lg border border-slate-200">
                         <p className="font-semibold text-gray-700 mb-1">Sources</p>
                         <ul className="list-disc pl-5 space-y-0.5">
-                            {groundingChunks.map((chunk, index) => (
-                                chunk.web && <li key={index}><a href={chunk.web.uri} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{chunk.web.title || chunk.web.uri}</a></li>
-                            ))}
+                            {groundingChunks.map((chunk, index) => {
+                                const href = chunk.web ? safeExternalHref(chunk.web.uri) : null;
+                                if (!href) return null;
+                                return (
+                                    <li key={index}>
+                                        <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                                            {chunk.web.title || href}
+                                        </a>
+                                    </li>
+                                );
+                            })}
                         </ul>
                     </div>
                 )}

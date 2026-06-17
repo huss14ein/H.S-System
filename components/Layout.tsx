@@ -19,8 +19,10 @@ import { supabase } from '../services/supabaseClient';
 import { runAutoNetWorthSnapshotIfDue } from '../services/scheduledNetWorthSnapshot';
 import { canAutoCaptureNetWorthSnapshot } from '../services/netWorthSnapshotReadiness';
 import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useLiveQuotePrices } from '../hooks/useLiveQuotePrices';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
-import { registerQuoteRefreshCancel } from '../utils/navigationBridge';
+import { registerQuoteRefreshResume } from '../utils/navigationBridge';
+import { NAV_TRANSITION_PAUSE_MS } from '../utils/backgroundWorkGate';
 import { useBackgroundWorkInputPause } from '../hooks/useBackgroundWorkInputPause';
 import { PageDeferredDataProvider } from '../context/PageDeferredDataContext';
 import DeployFreshnessBanner from './DeployFreshnessBanner';
@@ -52,23 +54,45 @@ const Layout: React.FC<LayoutProps> = ({
   const auth = useContext(AuthContext);
   const { exchangeRate } = useCurrency();
   const {
-    cancelQuoteRefresh,
     isRefreshing,
     hasQueuedPriceRefresh,
+    notifyQueuedPriceRefresh,
+    isManualRefreshSession,
     symbolQuoteUpdatedAt,
     isLive,
   } = useMarketQuoteMeta();
 
+  const quoteMetaRef = useRef({
+    isRefreshing,
+    hasQueuedPriceRefresh,
+    notifyQueuedPriceRefresh,
+    isManualRefreshSession,
+  });
+  quoteMetaRef.current = {
+    isRefreshing,
+    hasQueuedPriceRefresh,
+    notifyQueuedPriceRefresh,
+    isManualRefreshSession,
+  };
+
   useEffect(() => {
-    registerQuoteRefreshCancel(cancelQuoteRefresh);
-    return () => registerQuoteRefreshCancel(null);
-  }, [cancelQuoteRefresh]);
+    registerQuoteRefreshResume(() => {
+      setTimeout(() => {
+        const m = quoteMetaRef.current;
+        if (m.isRefreshing || m.hasQueuedPriceRefresh() || m.isManualRefreshSession()) {
+          m.notifyQueuedPriceRefresh();
+        }
+      }, NAV_TRANSITION_PAUSE_MS + 32);
+    });
+    return () => registerQuoteRefreshResume(null);
+  }, []);
 
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isLiveAdvisorOpen, setIsLiveAdvisorOpen] = useState(false);
   const mainContentRef = useRef<HTMLElement>(null);
   const { ready, analysis, actionQueue } = useFinancialEnginesIntegration({ eager: false });
-  const { headline, extendedReady, simulatedPrices: canonicalSimulatedPrices } = useExtendedCanonicalMetrics();
+  const { headline, extendedReady } = useExtendedCanonicalMetrics();
+  const liveQuotePrices = useLiveQuotePrices();
 
   const skipToMainContent = () => {
     mainContentRef.current?.focus();
@@ -99,7 +123,7 @@ const Layout: React.FC<LayoutProps> = ({
         headline,
         exchangeRate,
         getAvailableCashForAccount: dataCtx.getAvailableCashForAccount,
-        simulatedPrices: canonicalSimulatedPrices,
+        simulatedPrices: liveQuotePrices,
         supabase,
         metricsExtendedReady: extendedReady,
         snapshotReadiness: {
@@ -119,7 +143,7 @@ const Layout: React.FC<LayoutProps> = ({
     dataCtx?.data,
     dataCtx?.getAvailableCashForAccount,
     exchangeRate,
-    canonicalSimulatedPrices,
+    liveQuotePrices,
     headline,
     extendedReady,
     isRefreshing,

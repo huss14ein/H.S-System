@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { computeCanonicalFinancialMetrics, buildFastCanonicalFinancialMetrics } from '../services/canonicalFinancialMetrics';
+import { overlayLiveQuoteTierOntoExtendedMetrics, buildFastCanonicalFinancialMetricsResult, buildCanonicalFinancialMetricsResult } from '../hooks/canonicalFinancialMetricsBundle';
 import type { FinancialData } from '../types';
 
 describe('computeCanonicalFinancialMetrics', () => {
@@ -121,5 +122,46 @@ describe('computeCanonicalFinancialMetrics', () => {
     expect(fast.kpiSnapshot?.netWorth).toBe(fast.netWorth);
     expect(fast.wealthSummary).toBeNull();
     expect(fast.investmentAllocation.portfolioAllocation).toEqual([]);
+  });
+
+  it('overlayLiveQuoteTierOntoExtendedMetrics replaces stale quote-driven fields', () => {
+    const data = {
+      accounts: [{ id: 'a1', name: 'Chk', type: 'Checking', balance: 5000, currency: 'SAR' }],
+      assets: [],
+      liabilities: [],
+      commodityHoldings: [],
+      investments: [
+        {
+          id: 'pf1',
+          name: 'PF',
+          accountId: 'a1',
+          currency: 'SAR',
+          holdings: [{ symbol: 'AAPL', name: 'Apple', quantity: 10, avgCost: 100, currentValue: 1000 }],
+        },
+      ],
+      transactions: [],
+      budgets: [],
+    } as unknown as FinancialData;
+    const getCash = () => ({ SAR: 0, USD: 0 });
+    const baseArgs = {
+      data,
+      exchangeRate: 3.75,
+      getAvailableCashForAccount: getCash,
+      showHydrateBanner: false as const,
+    };
+    const extended = buildCanonicalFinancialMetricsResult({
+      ...baseArgs,
+      debouncedPrices: { AAPL: { price: 100, change: 0, changePercent: 0 } },
+    });
+    const live = buildFastCanonicalFinancialMetricsResult({
+      ...baseArgs,
+      debouncedPrices: { AAPL: { price: 120, change: 2, changePercent: 2 } },
+    });
+    const merged = overlayLiveQuoteTierOntoExtendedMetrics(extended, live);
+    expect(merged.simulatedPrices.AAPL?.price).toBe(120);
+    expect(merged.investmentsTotalSar).toBe(live.investmentsTotalSar);
+    expect(merged.netWorth).toBe(live.netWorth);
+    expect(merged.wealthSummary).toBe(extended.wealthSummary);
+    expect(merged.metricsExtendedReady).toBe(true);
   });
 });

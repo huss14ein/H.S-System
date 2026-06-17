@@ -81,6 +81,12 @@ describe('currencyMath', () => {
 
   it('quoteDailyPnLInBookCurrency converts instrument-currency delta into book', () => {
     const rate = 3.75;
-    expect(quoteDailyPnLInBookCurrency(2, 5, 'AAPL', 'SAR', rate)).toBeCloseTo(37.5, 8);
+    const openSession = new Date('2026-06-03T15:00:00Z');
+    expect(quoteDailyPnLInBookCurrency(2, 5, 'AAPL', 'SAR', rate, openSession)).toBeCloseTo(37.5, 8);
+  });
+
+  it('quoteDailyPnLInBookCurrency is zero outside regular session', () => {
+    const satEt = new Date('2026-06-06T18:00:00Z');
+    expect(quoteDailyPnLInBookCurrency(2, 5, 'AAPL', 'SAR', 3.75, satEt)).toBe(0);
   });
 });

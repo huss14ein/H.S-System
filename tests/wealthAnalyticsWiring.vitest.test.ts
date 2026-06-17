@@ -69,7 +69,7 @@ describe('wealth analytics end-to-end wiring', () => {
         const dashboard = read('pages/Dashboard.tsx');
         const summary = read('pages/Summary.tsx');
         expect(dashboard).toContain('tryAutoCaptureNetWorthSnapshot');
-        expect(dashboard).toContain('dashboardDebouncedPrices');
+        expect(dashboard).toContain('useLiveQuotePrices');
         expect(summary).toContain('tryAutoCaptureNetWorthSnapshot');
         expect(summary).toContain('captureNetWorthSnapshotFromHeadline');
     });

@@ -12,7 +12,7 @@ export function approvalFlagsFromUserRow(data: Record<string, unknown> | null): 
   const hasApprovedKey = Object.prototype.hasOwnProperty.call(data, 'approved');
   const raw = data.approved;
   const approvedCol =
-    !hasApprovedKey ? true : raw === null || raw === undefined ? true : Boolean(raw);
+    !hasApprovedKey ? true : raw === null || raw === undefined ? false : Boolean(raw);
   const approved = approvedCol || isAdminRole;
   const hasRejKey = Object.prototype.hasOwnProperty.call(data, 'signup_rejected');
   const signupRejected = approved ? false : hasRejKey && Boolean(data.signup_rejected);
@@ -21,14 +21,11 @@ export function approvalFlagsFromUserRow(data: Record<string, unknown> | null): 
 
 /**
  * Whether the SPA should block unapproved signups at the shell.
- * Production defaults to enforced; set VITE_ENFORCE_SIGNUP_APPROVAL=false to disable.
+ * Always enforced in production builds.
  */
 export function isSignupApprovalEnforced(): boolean {
-  const flag = import.meta.env.VITE_ENFORCE_SIGNUP_APPROVAL;
-  if (import.meta.env.DEV) {
-    return flag === 'true';
-  }
-  return flag !== 'false';
+  if (!import.meta.env.DEV) return true;
+  return import.meta.env.VITE_ENFORCE_SIGNUP_APPROVAL === 'true';
 }
 
 export type EffectiveAppAccess = {

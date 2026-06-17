@@ -5,6 +5,7 @@ import {
   approvalFlagsFromSync,
   markAuthSignInForProfileSync,
   syncUserApprovalProfile,
+  invalidateUserApprovalProfileCache,
 } from '../services/syncUserApprovalProfile';
 import { inferIsAdmin } from '../utils/role';
 import { invalidateSupabaseQueryCache } from '../services/supabaseQueryCache';
@@ -811,12 +812,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               console.warn("Supabase client is not available because environment variables are missing. Authentication is disabled.");
             }
             setLoading(false);
-            setIsApproved(true);
+            setIsApproved(false);
             setIsSignupRejected(false);
-            setApprovalHardBlock(false);
-            setApprovalSyncIssue(null);
-            setUserRole('Admin');
-            setIsAdmin(true);
+            setApprovalHardBlock(true);
+            setApprovalSyncIssue('network');
+            setUserRole(null);
+            setIsAdmin(false);
             return;
         }
     
@@ -928,6 +929,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     const logout = async () => {
         if (!supabase) return;
+        invalidateUserApprovalProfileCache(user?.id);
         const { error } = await supabase.auth.signOut();
         if (error) {
             if (process.env.NODE_ENV === 'development') {
@@ -1200,10 +1202,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // Mobile Safari: refetch approval when returning to the app (admin may have approved while backgrounded).
     useEffect(() => {
         if (approvalHardBlock || isSignupRejected || approvalSyncIssue || !user?.id) return;
+        let lastVisibleFetch = 0;
         const onVisible = () => {
-            if (document.visibilityState === 'visible') {
-                void fetchApprovalStatus(user.id, user);
-            }
+            if (document.visibilityState !== 'visible') return;
+            const now = Date.now();
+            if (now - lastVisibleFetch < 120_000) return;
+            lastVisibleFetch = now;
+            void fetchApprovalStatus(user.id, user);
         };
         document.addEventListener('visibilitychange', onVisible);
         window.addEventListener('pageshow', onVisible);

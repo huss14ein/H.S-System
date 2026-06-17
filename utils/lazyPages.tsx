@@ -123,8 +123,8 @@ export function prefetchCommonPagesIdle(): void {
     prefetchPage(allPages[index]!);
     index += 1;
     if (index < allPages.length) {
-      scheduleIdleWork(step, 2500);
+      scheduleIdleWork(step, 1500);
     }
   };
-  scheduleIdleWork(step, 3000);
+  scheduleIdleWork(step, 2000);
 }

@@ -68,6 +68,8 @@ export interface ComputePlatformCardMetricsArgs {
    * `holdings_cost`: unrealized P/L = holdings value − sum(qty×avg cost); ROI vs that cost — matches holdings table & portfolio rows.
    */
   unrealizedPnLBasis?: 'net_capital' | 'holdings_cost';
+  /** Session clock for daily P/L (defaults to now). */
+  asOf?: Date;
 }
 
 /**
@@ -85,6 +87,7 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
     simulatedPrices,
     platformCurrency,
     unrealizedPnLBasis = 'net_capital',
+    asOf = new Date(),
   } = args;
 
   /** One implementation for position market value: {@link effectiveHoldingValueInBookCurrency} (same as holdings table / Overview). */
@@ -229,8 +232,8 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
       if (qty <= 0) return;
       const symRaw = (h.symbol || '').trim();
       const info = lookupLiveQuoteForSymbol(simulatedPrices, symRaw);
-      if (!info || !Number.isFinite(info.change)) return;
-      const d = quoteDailyPnLInBookCurrency(info.change, qty, symRaw.toUpperCase(), cur, rate);
+      if (!info) return;
+      const d = quoteDailyPnLInBookCurrency(info.change ?? 0, qty, symRaw.toUpperCase(), cur, rate, asOf);
       if (cur === 'SAR') dailySar += d;
       else dailyUsd += d;
     });

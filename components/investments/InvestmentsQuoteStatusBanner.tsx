@@ -18,8 +18,8 @@ const InvestmentsQuoteStatusBanner: React.FC<Props> = ({ isLive, lastUpdated }) 
     >
       {!isLive && (
         <p>
-          <strong>Prices are simulated</strong> — set Netlify env keys (SAHMK / Finnhub), open Market Simulator briefly,
-          then use header refresh. Shift+click refresh forces a live pull when not rate-limited.
+          <strong>Prices are simulated or cached</strong> — use <strong>Refresh prices</strong> in the header
+          (or <strong>Sync quotes</strong> on a platform) for a live pull. Cached quotes refresh automatically when stale.
         </p>
       )}
       {cooldownSec > 0 && (

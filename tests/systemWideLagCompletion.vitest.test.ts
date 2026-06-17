@@ -53,7 +53,7 @@ describe('system-wide lag completion E2E', () => {
     }
     const inv = read('pages/Investments.tsx');
     expect(inv).toContain('platformSymbolNames');
-    expect(inv).not.toMatch(/const PlatformCard[\s\S]{0,8000}useCompanyNames\(/);
+    expect(inv).not.toMatch(/const PlatformCardInner[\s\S]{0,8000}useCompanyNames\(/);
   });
 
   it('finnhub fundamentals are lazy on Watchlist and Dividend Tracker', () => {
@@ -69,7 +69,8 @@ describe('system-wide lag completion E2E', () => {
 
   it('FX map memory cache and KPI preload', () => {
     expect(read('services/fxDailySeries.ts')).toContain('fxMapMemoryCache');
-    expect(read('services/dashboardKpiSnapshot.ts')).toMatch(/loadSarPerUsdByDay\(\)/);
+    expect(read('services/fxDailySeries.ts')).toContain('lastHydrateFingerprint');
+    expect(read('services/dashboardKpiSnapshot.ts')).toContain('fxMapForKpiCompute');
     expect(read('services/dashboardKpiSnapshot.ts')).toMatch(/getSarPerUsdForCalendarDay\([^)]+fxMap/);
     expect(read('tests/fxMapMemoryCache.vitest.test.ts')).toBeTruthy();
   });
@@ -77,9 +78,10 @@ describe('system-wide lag completion E2E', () => {
   it('single navigation path with hash suppression', () => {
     const shell = read('components/AuthenticatedAppShell.tsx');
     expect(shell).toContain('suppressNextHashChangeRef');
-    expect(shell).toContain('cancelQuoteRefreshOnNav');
-    expect(shell).toContain('scheduleIdleWork(() => prefetchPage');
-    expect(read('utils/navigationBridge.ts')).toContain('registerQuoteRefreshCancel');
+    expect(shell).toContain('resumeQuoteRefreshAfterNav');
+    expect(shell).toContain('prefetchPage(page)');
+    expect(shell).toContain('NAV_TRANSITION_PAUSE_MS');
+    expect(read('utils/navigationBridge.ts')).toContain('registerQuoteRefreshResume');
     expect(read('components/Layout.tsx')).not.toContain('navigatePage = useCallback');
     expect(read('hooks/useBackgroundWorkInputPause.ts')).toContain('data-nav-link');
     expect(read('components/Header.tsx')).toContain('data-nav-link');
@@ -87,10 +89,11 @@ describe('system-wide lag completion E2E', () => {
 
   it('canonical metrics stale-while-revalidate extended bundle', () => {
     const ctx = read('context/CanonicalFinancialMetricsContext.tsx');
-    expect(ctx).toContain('extendedBundle ?? fastBundle');
+    expect(ctx).toContain('overlayLiveQuoteTierOntoExtendedMetrics');
     expect(ctx).toContain('financialDataHasHydrated(data)');
+    expect(ctx).toContain('useDeferredValue(kpiQuotePrices)');
     expect(ctx).toMatch(
-      /}, \[extendedFingerprint, metricsData, exchangeRate, getAvailableCashForAccount, debouncedPrices\]\)/,
+      /}, \[extendedFingerprint, metricsData, exchangeRate, getAvailableCashForAccount, deferredKpiPrices\]\)/,
     );
     expect(ctx).not.toMatch(/\[extendedFingerprint[\s\S]{0,120}fastBundle/);
     expect(read('pages/Dashboard.tsx')).toContain('kpisPending');
@@ -139,7 +142,7 @@ describe('system-wide lag completion E2E', () => {
 
   it('idle prefetch warms one route per slice (no parallel priority storm)', () => {
     const lazy = read('utils/lazyPages.tsx');
-    expect(lazy).toContain('scheduleIdleWork(step, 2500)');
+    expect(lazy).toContain('scheduleIdleWork(step, 1500)');
     expect(lazy).not.toMatch(/for \(const page of PRIORITY_PREFETCH_PAGES\)[\s\S]{0,80}prefetchPage/);
   });
 

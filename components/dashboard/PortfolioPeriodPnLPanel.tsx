@@ -72,12 +72,13 @@ export const PortfolioPeriodPnLPanel: React.FC<{
   const summary = precomputed?.summary ?? idlePnL.summary;
   const dailySeries = precomputed?.dailySeries ?? idlePnL.dailySeries;
   const loading = precomputed ? !precomputed.ready : !idlePnL.ready;
+  const sparklinesReady = precomputed ? Boolean(precomputed.dailySeries) : idlePnL.sparklinesReady;
 
   if (loading) {
     return <SectionLoadingPlaceholder labelKey="sectionLoading" minHeight="10rem" />;
   }
 
-  if (!summary || !dailySeries || summary.rows.length === 0) {
+  if (!summary || summary.rows.length === 0) {
     return (
       <div dir={dir} className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 p-6 text-center text-sm text-slate-600">
         {t('portfolioPeriodPnLEmpty')}
@@ -113,12 +114,16 @@ export const PortfolioPeriodPnLPanel: React.FC<{
         </div>
       </div>
 
-      <PortfolioPnLTrendCharts
-        weekly={dailySeries.weekly}
-        monthly={dailySeries.monthly}
-        weeklyTotalSar={summary.weeklyTotalSar}
-        monthlyTotalSar={summary.monthlyTotalSar}
-      />
+      {sparklinesReady && dailySeries ? (
+        <PortfolioPnLTrendCharts
+          weekly={dailySeries.weekly}
+          monthly={dailySeries.monthly}
+          weeklyTotalSar={summary.weeklyTotalSar}
+          monthlyTotalSar={summary.monthlyTotalSar}
+        />
+      ) : !sparklinesReady ? (
+        <SectionLoadingPlaceholder labelKey="sectionLoading" minHeight="8rem" />
+      ) : null}
 
       <CollapsibleSection
         title={t('portfolioDetailsTable')}

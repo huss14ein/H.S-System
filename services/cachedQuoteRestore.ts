@@ -1,6 +1,6 @@
 /**
  * Restore persisted quote cache into session state and holding notionals — no network.
- * Live provider fetches run only when the user clicks Refresh prices.
+ * Stored quotes are shown until the next successful live fetch replaces them.
  */
 
 import type { CommodityHolding, FinancialData, InvestmentPortfolio } from '../types';
@@ -9,7 +9,7 @@ import {
   loadQuoteCacheRows,
   type CachedQuoteRow,
 } from './quotePriceCache';
-import { expandLiveQuotesForRequestedSymbols, type LiveQuoteRow } from './finnhubService';
+import { expandLiveQuotesForRequestedSymbols, type LiveQuoteRow, canonicalQuoteLookupKey } from './finnhubService';
 import { getRefreshableHoldingQuoteSymbols } from './quoteRefreshSymbols';
 import {
   buildCommodityHoldingValueUpdatesFromTrustedSnapshot,
@@ -25,6 +25,27 @@ export function symbolTimestampsFromCacheRows(rows: Record<string, CachedQuoteRo
     if (!Number.isFinite(row.fetchedAt) || row.fetchedAt <= 0) continue;
     const iso = new Date(row.fetchedAt).toISOString();
     out[key.trim().toUpperCase()] = iso;
+  }
+  return out;
+}
+
+/** Map tracked tickers to cache `fetchedAt` via symbol aliases (reduces false "stale" badges). */
+export function sessionTimestampsForTrackedSymbols(
+  trackedSymbols: string[],
+  rows: Record<string, CachedQuoteRow>,
+): CachedSymbolTimestamps {
+  const out: CachedSymbolTimestamps = {};
+  for (const raw of trackedSymbols) {
+    const s = (raw || '').trim().toUpperCase();
+    if (!s) continue;
+    const candidates = [s, canonicalQuoteLookupKey(s)];
+    for (const k of candidates) {
+      const row = rows[k] ?? rows[k.toUpperCase()];
+      if (row?.fetchedAt && Number.isFinite(row.fetchedAt) && row.fetchedAt > 0) {
+        out[s] = new Date(row.fetchedAt).toISOString();
+        break;
+      }
+    }
   }
   return out;
 }
@@ -74,7 +95,6 @@ export type RestoreCachedQuotesResult = {
   hasCache: boolean;
 };
 
-/** Build local holding updates from persisted quotes only (no API). */
 export function computeRestoreCachedQuotesPatch(
   data: FinancialData,
   sarPerUsd: number,
@@ -96,5 +116,40 @@ export function computeRestoreCachedQuotesPatch(
     timestamps: symbolTimestampsFromCacheRows(rows),
     lastUpdated: latestQuoteCacheTimestamp(rows),
     hasCache: Object.keys(rows).length > 0,
+  };
+}
+
+export type SessionQuotePriceRow = { price: number; change: number; changePercent: number };
+
+/** Merge persisted quote rows into in-memory session prices (cross-tab / visibility sync). */
+export function rehydrateSessionPricesFromQuoteCache(
+  prev: Record<string, SessionQuotePriceRow>,
+  rows: Record<string, CachedQuoteRow> = loadQuoteCacheRows(),
+): { prices: Record<string, SessionQuotePriceRow>; changed: boolean; lastUpdated: Date | null } {
+  const mapped = cacheRowsToSimulatedMap(rows);
+  const next: Record<string, SessionQuotePriceRow> = { ...prev };
+  let changed = false;
+  for (const [k, v] of Object.entries(mapped)) {
+    if (!v?.price || v.price <= 0) continue;
+    const row = {
+      price: v.price,
+      change: v.change ?? 0,
+      changePercent: v.changePercent ?? 0,
+    };
+    const prevRow = prev[k];
+    if (
+      !prevRow ||
+      prevRow.price !== row.price ||
+      prevRow.change !== row.change ||
+      prevRow.changePercent !== row.changePercent
+    ) {
+      next[k] = row;
+      changed = true;
+    }
+  }
+  return {
+    prices: changed ? next : prev,
+    changed,
+    lastUpdated: latestQuoteCacheTimestamp(rows),
   };
 }

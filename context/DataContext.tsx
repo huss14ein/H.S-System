@@ -1,4 +1,4 @@
-import React, { createContext, useState, ReactNode, useEffect, useContext, useRef, useMemo, useCallback, startTransition } from 'react';
+import React, { createContext, useState, ReactNode, useEffect, useContext, useRef, useMemo, useCallback, startTransition, useDeferredValue } from 'react';
 import { flushSync } from 'react-dom';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
@@ -38,7 +38,6 @@ import { applyBuyToHolding, consolidateHoldingsBySymbol } from '../services/hold
 import { roundAvgCostPerUnit, roundMoney, roundQuantity } from '../utils/money';
 import { normalizeCoreUpsideAllocations } from '../utils/investmentPlanAllocations';
 import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/investmentPlanPerPortfolio';
-import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { financialDataHasHydrated } from '../services/financialDataHydration';
 import {
     clearWorkspaceHydrateCache,
@@ -1293,7 +1292,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                         filterOwnedRows(retry.data as any[]).map(normalizeCashTransactionRow),
                                     );
                                     if (retried.length > 0 || !retry.error) {
-                                        setData((prev) => ({ ...prev, transactions: retried }));
+                                        startTransition(() => {
+                                            setData((prev) => ({ ...prev, transactions: retried }));
+                                        });
                                     }
                                 }
                             } catch {
@@ -1575,14 +1576,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         void mergeNetWorthSnapshotsFromServer(supabase, auth.user.id);
     }, [auth?.user?.id]);
 
-    /** Keep a dense SAR/USD point per calendar day for charts/KPIs (spot + snapshot seed + forward-fill). */
+    /** FX map hydration runs idle via CanonicalFinancialMetricsProvider — avoid sync loop on data reset. */
     const fxHydrateKeyRef = useRef<number | null>(null);
     useEffect(() => {
-        if (!data) return;
-        if (fxHydrateKeyRef.current === dataResetKey) return;
         fxHydrateKeyRef.current = dataResetKey;
-        hydrateSarPerUsdDailySeries(data, DEFAULT_SAR_PER_USD);
-    }, [data, dataResetKey]);
+    }, [dataResetKey]);
 
     // Helper to add user_id to any object
     const withUser = (obj: any) => ({ ...obj, user_id: auth?.user?.id });
@@ -4283,18 +4281,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
      * Otherwise `personalInvestments: []` (all portfolios have an owner) overwrites `investments` for
      * consumers that read `personalInvestments` first, and `??` does not fall back (empty array is not nullish).
      */
+    const deferredData = useDeferredValue(data);
     const dataWithPersonal = useMemo(() => {
-        if (!data) return data;
+        if (!deferredData) return deferredData;
         return {
-            ...data,
-            personalAccounts: getPersonalAccounts(data),
-            personalAssets: getPersonalAssets(data),
-            personalLiabilities: getPersonalLiabilities(data),
-            personalInvestments: getPersonalInvestments(data),
-            personalCommodityHoldings: getPersonalCommodityHoldings(data),
-            personalTransactions: getPersonalTransactions(data),
+            ...deferredData,
+            personalAccounts: getPersonalAccounts(deferredData),
+            personalAssets: getPersonalAssets(deferredData),
+            personalLiabilities: getPersonalLiabilities(deferredData),
+            personalInvestments: getPersonalInvestments(deferredData),
+            personalCommodityHoldings: getPersonalCommodityHoldings(deferredData),
+            personalTransactions: getPersonalTransactions(deferredData),
         };
-    }, [data]);
+    }, [deferredData]);
 
     const accountsForDeployable = useMemo((): Account[] => {
         const d = dataWithPersonal as FinancialData & { personalAccounts?: Account[] };

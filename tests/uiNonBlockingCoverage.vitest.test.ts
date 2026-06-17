@@ -110,7 +110,7 @@ describe('UI non-blocking coverage', () => {
 
   it('background work pauses on input but not on nav links', () => {
     expect(read('hooks/useBackgroundWorkInputPause.ts')).toContain('data-nav-link');
-    expect(read('components/AuthenticatedAppShell.tsx')).toContain('cancelQuoteRefreshOnNav');
+    expect(read('components/AuthenticatedAppShell.tsx')).toContain('resumeQuoteRefreshAfterNav');
   });
 
   it('recovery plan sub-tab uses section placeholder suspense', () => {

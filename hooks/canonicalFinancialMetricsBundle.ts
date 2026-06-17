@@ -95,6 +95,37 @@ export function buildCanonicalFinancialMetricsResult(args: {
   return wrapMetricsResult(args, metrics, true);
 }
 
+/**
+ * Phase-2 async metrics (wealth summary) can lag behind quote ticks.
+ * Always overlay the fast sync tier so live prices reach every page.
+ */
+export function overlayLiveQuoteTierOntoExtendedMetrics(
+  extended: UseCanonicalFinancialMetricsResult,
+  live: UseCanonicalFinancialMetricsResult,
+): UseCanonicalFinancialMetricsResult {
+  return {
+    ...extended,
+    simulatedPrices: live.simulatedPrices,
+    headline: live.headline,
+    breakdown: live.breakdown,
+    kpiSnapshot: live.kpiSnapshot,
+    todaySnapshot: live.todaySnapshot,
+    netWorth: live.netWorth,
+    liquidCashSar: live.liquidCashSar,
+    sarPerUsd: live.sarPerUsd,
+    nwOptions: live.nwOptions,
+    investmentExposure: live.investmentExposure,
+    investmentsTotalSar: live.investmentsTotalSar,
+    headlineExposureParts: live.headlineExposureParts,
+    investmentAllocation: live.investmentAllocation,
+    platformsRollupSar: live.platformsRollupSar,
+    commoditiesValueSar: live.commoditiesValueSar,
+    sukukAssetsValueSar: live.sukukAssetsValueSar,
+    buckets: live.buckets,
+    metricsExtendedReady: extended.metricsExtendedReady,
+  };
+}
+
 /** Derive dashboard bundle from full canonical metrics (avoids duplicate headline/KPI compute). */
 export function pickDashboardFromMetricsResult(
   full: UseCanonicalFinancialMetricsResult,
