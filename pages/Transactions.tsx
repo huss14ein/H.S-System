@@ -48,6 +48,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, fromSAR } from '../utils/currencyMath';
 import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import { useCanonicalSpotFx, useDashboardCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { financialMonthNetCashflowSar } from '../services/dashboardKpiSnapshot';
 import { getPersonalAccounts, getScopedCashTransactions } from '../utils/wealthScope';
 import { filterTransactionsForLedgerView, filterTransactionsForLedgerExport, parseFilterByBudgetPageAction, ledgerDateRangeForFilters, formatLedgerDateYmd, budgetDrillDownDateRange, defaultLedgerMonthMode, initialLedgerMonthIso } from '../utils/transactionLedgerFilters';
@@ -137,6 +138,7 @@ const TransactionModal: React.FC<{
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [description, setDescription] = useState('');
     const [amount, setAmount] = useState('');
+    const debouncedAmount = useDebouncedValue(amount, 300);
     const [category, setCategory] = useState(allCategories[0] || '');
     const [subcategory, setSubcategory] = useState('');
     const [budgetCategory, setBudgetCategory] = useState(budgetCategories[0] || '');
@@ -321,9 +323,9 @@ const TransactionModal: React.FC<{
     }, [accounts, currentBudgetRows, existingTransactions, sarPerUsd, transactionToEdit?.id, transactionFinancialMonthBounds]);
 
     const inputAmountSar = useMemo(() => {
-        const abs = Math.abs(Number(amount) || 0);
+        const abs = Math.abs(Number(debouncedAmount) || 0);
         return toSAR(abs, selectedAccountCurrency, sarPerUsd);
-    }, [amount, selectedAccountCurrency, sarPerUsd]);
+    }, [debouncedAmount, selectedAccountCurrency, sarPerUsd]);
 
     const splitCoverage = useMemo(() => {
         if (type !== 'expense') return [];

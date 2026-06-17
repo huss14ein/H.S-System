@@ -9,7 +9,7 @@ import {
   loadQuoteCacheRows,
   type CachedQuoteRow,
 } from './quotePriceCache';
-import { expandLiveQuotesForRequestedSymbols, type LiveQuoteRow } from './finnhubService';
+import { expandLiveQuotesForRequestedSymbols, type LiveQuoteRow, canonicalQuoteLookupKey } from './finnhubService';
 import { getRefreshableHoldingQuoteSymbols } from './quoteRefreshSymbols';
 import {
   buildCommodityHoldingValueUpdatesFromTrustedSnapshot,
@@ -25,6 +25,27 @@ export function symbolTimestampsFromCacheRows(rows: Record<string, CachedQuoteRo
     if (!Number.isFinite(row.fetchedAt) || row.fetchedAt <= 0) continue;
     const iso = new Date(row.fetchedAt).toISOString();
     out[key.trim().toUpperCase()] = iso;
+  }
+  return out;
+}
+
+/** Map tracked tickers to cache `fetchedAt` via symbol aliases (reduces false "stale" badges). */
+export function sessionTimestampsForTrackedSymbols(
+  trackedSymbols: string[],
+  rows: Record<string, CachedQuoteRow>,
+): CachedSymbolTimestamps {
+  const out: CachedSymbolTimestamps = {};
+  for (const raw of trackedSymbols) {
+    const s = (raw || '').trim().toUpperCase();
+    if (!s) continue;
+    const candidates = [s, canonicalQuoteLookupKey(s)];
+    for (const k of candidates) {
+      const row = rows[k] ?? rows[k.toUpperCase()];
+      if (row?.fetchedAt && Number.isFinite(row.fetchedAt) && row.fetchedAt > 0) {
+        out[s] = new Date(row.fetchedAt).toISOString();
+        break;
+      }
+    }
   }
   return out;
 }

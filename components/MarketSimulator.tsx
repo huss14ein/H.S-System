@@ -38,7 +38,7 @@ import {
 import { isBackgroundWorkPaused, backgroundWorkPauseRemainingMs } from '../utils/backgroundWorkGate';
 import { scheduleIdleWork, scheduleIdleWorkAsync, waitUntilBackgroundWorkResumed } from '../utils/runWhenIdle';
 import { yieldToMain } from '../utils/yieldToMain';
-import { computeRestoreCachedQuotesPatch } from '../services/cachedQuoteRestore';
+import { computeRestoreCachedQuotesPatch, collectTrackedQuoteSymbols, sessionTimestampsForTrackedSymbols } from '../services/cachedQuoteRestore';
 import type { CachedQuoteRow } from '../services/quotePriceCache';
 
 const MAX_LIVE_FETCH_PER_TICK = 25;
@@ -47,6 +47,8 @@ const INTER_SCOPE_DELAY_MS = 250;
 /** During market hours, poll stale quotes via idle work (no header spinner, no nav cancel). */
 const MARKET_SESSION_POLL_MS = 5 * 60 * 1000;
 const MARKET_SESSION_POLL_INITIAL_MS = 60_000;
+/** Clear stuck "Updating…" if pause/retry never drains the queue. */
+const STUCK_REFRESH_GUARD_MS = 25_000;
 
 const applyPricesInBackground = (apply: () => void, urgent = false) => {
     if (urgent) {
@@ -131,7 +133,12 @@ const MarketSimulator: React.FC = () => {
                 }
                 marketContext?.setIsLive(true);
                 marketContext?.setQuotesPriceSource('cached');
-                marketContext?.touchQuoteTimestamps(Object.keys(patch.trusted));
+                const rows = loadQuoteCacheRows();
+                const tracked = data ? collectTrackedQuoteSymbols(data) : Object.keys(patch.trusted);
+                marketContext?.touchQuoteTimestamps([
+                    ...Object.keys(patch.trusted),
+                    ...Object.keys(sessionTimestampsForTrackedSymbols(tracked, rows)),
+                ]);
             });
             if (patch.equityUpdates.length > 0 && batchUpdateHoldingValues) {
                 batchUpdateHoldingValues(patch.equityUpdates);
@@ -175,7 +182,12 @@ const MarketSimulator: React.FC = () => {
             }
 
             didScheduleStaleRefreshRef.current = true;
-            marketContext.bumpPriceRefresh({ kind: 'all', manual: true, forceFetch: false });
+            marketContext.bumpPriceRefresh({
+                kind: 'symbols',
+                symbols: stale,
+                manual: true,
+                forceFetch: true,
+            });
         }, 2500);
 
         return () => {
@@ -236,6 +248,21 @@ const MarketSimulator: React.FC = () => {
         return () => setQuoteRefreshCooldownEndListener(null);
     }, [marketContext?.bumpPriceRefresh, marketContext?.isManualRefreshSession]);
 
+    /** If pause/retry never drains, clear header "Updating…" and re-nudge the queue. */
+    useEffect(() => {
+        if (!marketContext?.isRefreshing) return;
+        const timer = setTimeout(() => {
+            const ctx = contextRef.current.marketContext;
+            if (!ctx?.isRefreshing || tickInFlightRef.current) return;
+            if (ctx.hasQueuedPriceRefresh() || pendingLiveFetchSymbolsRef.current.length > 0) {
+                ctx.notifyQueuedPriceRefresh();
+            } else {
+                ctx.finishQuotesRefresh();
+            }
+        }, STUCK_REFRESH_GUARD_MS);
+        return () => clearTimeout(timer);
+    }, [marketContext?.isRefreshing]);
+
     useEffect(() => {
         if (!marketContext) return;
         if (marketContext.refreshTrigger === 0) return;
@@ -245,7 +272,9 @@ const MarketSimulator: React.FC = () => {
             const waitMs = Math.min(Math.max(backgroundWorkPauseRemainingMs(), 32), 500);
             refreshRetryTimerRef.current = setTimeout(() => {
                 refreshRetryTimerRef.current = null;
-                marketContext.notifyQueuedPriceRefresh();
+                void waitUntilBackgroundWorkResumed().then(() => {
+                    marketContext.notifyQueuedPriceRefresh();
+                });
             }, waitMs);
         };
 
@@ -264,10 +293,13 @@ const MarketSimulator: React.FC = () => {
                 !dataContext ||
                 !marketContext ||
                 !dataContext.data ||
-                marketContext.isQuoteRefreshCancelled() ||
-                isBackgroundWorkPaused()
+                marketContext.isQuoteRefreshCancelled()
             ) {
                 return;
+            }
+            if (isBackgroundWorkPaused()) {
+                await waitUntilBackgroundWorkResumed();
+                if (marketContext.isQuoteRefreshCancelled() || isBackgroundWorkPaused()) return;
             }
 
             const platformIdOnly =
@@ -679,8 +711,12 @@ const MarketSimulator: React.FC = () => {
         void (async () => {
             const ctx = contextRef.current.marketContext;
             try {
+                await waitUntilBackgroundWorkResumed();
                 while (ctx && !ctx.isQuoteRefreshCancelled()) {
-                    if (isBackgroundWorkPaused()) break;
+                    if (isBackgroundWorkPaused()) {
+                        await waitUntilBackgroundWorkResumed();
+                        if (ctx.isQuoteRefreshCancelled()) break;
+                    }
                     const scope = ctx.consumePriceRefreshScope();
                     if (!scope) break;
                     try {

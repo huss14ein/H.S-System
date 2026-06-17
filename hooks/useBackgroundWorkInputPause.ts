@@ -11,7 +11,9 @@ export function useBackgroundWorkInputPause(enabled = true): void {
 
     const pause = (event: Event) => {
       const target = event.target;
-      if (target instanceof Element && target.closest('[data-nav-link]')) return;
+      if (!(target instanceof Element)) return;
+      if (target.closest('[data-nav-link], [data-skip-background-pause], [role="dialog"]')) return;
+      if (target.matches('input, textarea, select, [contenteditable="true"]')) return;
       pauseBackgroundWork(INPUT_INTERACTION_PAUSE_MS);
     };
 

@@ -27,7 +27,7 @@ import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
 import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
-import { useMarketPrices } from '../context/MarketDataContext';
+import { useMarketPrices, useMarketDebouncedPrices } from '../context/MarketDataContext';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useCurrency } from '../context/CurrencyContext';
 import { useAI } from '../context/AiContext';
@@ -99,7 +99,7 @@ import {
   computePortfolioMetricsBundle,
   type PortfolioMetricsBundle,
 } from '../services/investmentPlatformCardMetrics';
-import { useCanonicalSpotFx, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx, useExtendedCanonicalMetrics, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
 import { InvestmentsMetricsProvider, useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
 import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
@@ -615,8 +615,8 @@ const RecordTradeModal: React.FC<{
         portfolioId: string;
         reason?: string;
     }> | null;
-}> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, initialData }) => {
-    const { simulatedPrices } = useMarketPrices();
+}> = React.memo(({ isOpen, onClose, onSave, investmentAccounts, portfolios, initialData }) => {
+    const { debouncedPrices } = useMarketDebouncedPrices();
     const confirmAction = useConfirmAction();
     const { formatCurrencyString } = useFormatCurrency();
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
@@ -626,6 +626,7 @@ const RecordTradeModal: React.FC<{
     const [type, setType] = useState<'buy' | 'sell' | 'dividend'>('buy');
     const [tradeCurrency, setTradeCurrency] = useState<TradeCurrency>(appCurrency);
     const [symbol, setSymbol] = useState('');
+    const debouncedSymbol = useDebouncedValue(symbol, 350);
     const [quantity, setQuantity] = useState('');
     const [price, setPrice] = useState('');
     const [dividendAmount, setDividendAmount] = useState('');
@@ -652,7 +653,8 @@ const RecordTradeModal: React.FC<{
 
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const efRunway = useEmergencyFund(data ?? null);
-    const { sarPerUsd, liquidCashSar: liquidCashSARForBuyPolicy } = useInvestmentsCanonicalMetrics();
+    const sarPerUsd = useCanonicalSpotFx();
+    const { liquidCashSar: liquidCashSARForBuyPolicy } = useExtendedCanonicalMetrics();
     const runwayMonthsForBuyPolicy = useMemo(() => {
         const exp = efRunway.monthlyCoreExpenses;
         if (exp > 0) return liquidCashSARForBuyPolicy / exp;
@@ -951,10 +953,10 @@ const RecordTradeModal: React.FC<{
     // Suggest price from market when the field is empty — convert quote to portfolio ledger currency.
     useEffect(() => {
         if (!isOpen || manualValuation || isManualExisting) return;
-        const sym = symbol.trim().toUpperCase();
+        const sym = debouncedSymbol.trim().toUpperCase();
         if (sym.length < 2) return;
         if (price.trim() !== '') return;
-        const live = simulatedPrices[sym]?.price;
+        const live = debouncedPrices[sym]?.price;
         if (live == null || !Number.isFinite(live) || live <= 0) return;
         const quoteCcy = inferInstrumentCurrencyFromSymbol(sym);
         const inLedger = convertBetweenTradeCurrencies(live, quoteCcy, tradeCurrency, sarPerUsd);
@@ -962,39 +964,21 @@ const RecordTradeModal: React.FC<{
         const pStr = Number(inLedger.toFixed(8)).toString().replace(/\.?0+$/, '') || String(inLedger);
         setPrice(pStr);
         syncQuantityFromAmountAndPriceStr(pStr);
-    }, [isOpen, symbol, manualValuation, isManualExisting, price, simulatedPrices, syncQuantityFromAmountAndPriceStr, tradeCurrency, sarPerUsd]);
-
-    // Auto-fill company name when symbol is set (new holding): debounced lookup; refresh when ticker changes
-    useEffect(() => {
-        if (!isOpen || type !== 'buy' || !isNewHolding || manualValuation) return;
-        const sym = symbol.trim().toUpperCase();
-        if (sym.length < 2) return;
-        let cancelled = false;
-        const t = setTimeout(() => {
-            fetchCompanyNameForSymbol(sym).then((name) => {
-                if (cancelled || !name) return;
-                setHoldingName(name);
-            });
-        }, 500);
-        return () => {
-            cancelled = true;
-            clearTimeout(t);
-        };
-    }, [symbol, isOpen, type, isNewHolding, manualValuation]);
+    }, [isOpen, debouncedSymbol, manualValuation, isManualExisting, price, debouncedPrices, syncQuantityFromAmountAndPriceStr, tradeCurrency, sarPerUsd]);
 
     const nbboStub = useMemo(() => {
-        if (!symbol.trim()) return null;
+        if (!debouncedSymbol.trim()) return null;
         const numPrice = parseFloat(price);
         if (!Number.isFinite(numPrice) || numPrice <= 0) return null;
-        return getNBBOStub(symbol.trim().toUpperCase(), numPrice);
-    }, [symbol, price]);
+        return getNBBOStub(debouncedSymbol.trim().toUpperCase(), numPrice);
+    }, [debouncedSymbol, price]);
 
     const { t1SettlementWarning } = useMemo(() => {
         const today = new Date().toISOString().slice(0, 10);
-        if (type !== 'sell' || !symbol.trim() || !data?.investmentTransactions?.length) {
+        if (type !== 'sell' || !debouncedSymbol.trim() || !data?.investmentTransactions?.length) {
             return { t1SettlementWarning: null as string | null };
         }
-        const normalized = symbol.toUpperCase().trim();
+        const normalized = debouncedSymbol.toUpperCase().trim();
         const recentBuys = (data.investmentTransactions as InvestmentTransaction[])
             .filter((t) => {
                 if (t.type !== 'buy') return false;
@@ -1019,9 +1003,10 @@ const RecordTradeModal: React.FC<{
             ? `T+1 settlement: You bought ${normalized} recently. Funds settle ${settlementState!.pendingSettleDate}. Ensure you have other settled cash before selling.`
             : null;
         return { t1SettlementWarning: msg };
-    }, [type, symbol, portfolioId, data?.investmentTransactions]);
+    }, [type, debouncedSymbol, portfolioId, data?.investmentTransactions]);
 
     const monthlyNetLast30d = useMemo(() => {
+        if (!isOpen || type !== 'buy') return 0;
         const txs = getPersonalTransactions(data) as Transaction[];
         const d0 = new Date();
         d0.setDate(d0.getDate() - 30);
@@ -1032,7 +1017,7 @@ const RecordTradeModal: React.FC<{
             if (countsAsExpenseForCashflowKpi(t)) net -= Math.abs(Number(t.amount) || 0);
         });
         return net;
-    }, [data, isOpen]);
+    }, [data, isOpen, type]);
 
     const buyPolicyCheck = useMemo(() => {
         if (type !== 'buy' || !portfolioId) return { allowed: true as const };
@@ -1047,7 +1032,7 @@ const RecordTradeModal: React.FC<{
             const s = (h.symbol || '').toUpperCase().trim();
             const qty = Number(h.quantity ?? 0);
             if (holdingUsesLiveQuote(h) && s) {
-                const pi = simulatedPrices[s];
+                const pi = debouncedPrices[s];
                 if (pi && Number.isFinite(pi.price) && qty > 0) {
                     return quoteNotionalInBookCurrency(pi.price, qty, s, book, sarPerUsd);
                 }
@@ -1055,7 +1040,7 @@ const RecordTradeModal: React.FC<{
             return Number.isFinite(h.currentValue) ? Number(h.currentValue) : 0;
         };
         const totalSec = (p.holdings ?? []).reduce((s, h) => s + effVal(h), 0);
-        const norm = symbol.toUpperCase().trim();
+        const norm = debouncedSymbol.toUpperCase().trim();
         const h = p.holdings.find((x) => x.symbol.toUpperCase().trim() === norm);
         const curSym = h ? effVal(h) : 0;
         const afterSym = curSym + notional;
@@ -1067,13 +1052,13 @@ const RecordTradeModal: React.FC<{
             monthlyNetLast30d,
             positionWeightAfterBuyPct: posPct,
         });
-    }, [type, portfolioId, quantity, price, symbol, portfolios, tradingPolicy, runwayMonthsForBuyPolicy, monthlyNetLast30d, simulatedPrices, sarPerUsd]);
+    }, [type, portfolioId, quantity, price, debouncedSymbol, portfolios, tradingPolicy, runwayMonthsForBuyPolicy, monthlyNetLast30d, debouncedPrices, sarPerUsd]);
 
     const sellRuleScore = useMemo(() => {
         if (type !== 'sell' || !portfolioId) return null;
         const p = portfolios.find((x) => x.id === portfolioId);
-        if (!p || !symbol.trim()) return null;
-        const norm = symbol.toUpperCase().trim();
+        if (!p || !debouncedSymbol.trim()) return null;
+        const norm = debouncedSymbol.toUpperCase().trim();
         const h = p.holdings.find((x) => x.symbol.toUpperCase().trim() === norm);
         if (!h) return null;
         const book = resolveInvestmentPortfolioCurrency(p);
@@ -1081,7 +1066,7 @@ const RecordTradeModal: React.FC<{
             const s = (x.symbol || '').toUpperCase().trim();
             const qty = Number(x.quantity ?? 0);
             if (holdingUsesLiveQuote(x) && s) {
-                const pi = simulatedPrices[s];
+                const pi = debouncedPrices[s];
                 if (pi && Number.isFinite(pi.price) && qty > 0) {
                     return quoteNotionalInBookCurrency(pi.price, qty, s, book, sarPerUsd);
                 }
@@ -1098,7 +1083,7 @@ const RecordTradeModal: React.FC<{
             ...sellScore({ aboveTargetWeightPct: Math.max(0, w - 15), needCash: w > 20 }),
             notional,
         };
-    }, [type, portfolioId, symbol, portfolios, quantity, price, simulatedPrices, sarPerUsd]);
+    }, [type, portfolioId, debouncedSymbol, portfolios, quantity, price, debouncedPrices, sarPerUsd]);
 
     const largeSellNeedsAck = Boolean(
         type === 'sell' &&
@@ -1107,14 +1092,14 @@ const RecordTradeModal: React.FC<{
     );
 
     const sorStub = useMemo(() => {
-        if (!symbol.trim()) return null;
+        if (!debouncedSymbol.trim()) return null;
         const q = parseFloat(quantity);
         const p = parseFloat(price);
         if (!Number.isFinite(q) || !Number.isFinite(p) || q <= 0 || p <= 0) return null;
         const notional = q * p;
         if (notional < 10_000) return null;
-        return getSORStub(symbol.trim().toUpperCase(), type === 'buy' ? 'BUY' : 'SELL', q, p);
-    }, [symbol, quantity, price, type]);
+        return getSORStub(debouncedSymbol.trim().toUpperCase(), type === 'buy' ? 'BUY' : 'SELL', q, p);
+    }, [debouncedSymbol, quantity, price, type]);
 
     const vwapSlices = useMemo(() => {
         
@@ -1132,15 +1117,16 @@ const RecordTradeModal: React.FC<{
         if (!portfolioId) return 'Please select a portfolio.';
         const parsedQuantity = parseFloat(quantity);
         const parsedPrice = parseFloat(price);
+        if (!debouncedSymbol.trim() && symbol.trim()) return null;
         if (!symbol.trim()) return requiresHoldingPick ? 'Select a holding from your portfolios.' : 'Symbol is required.';
-        if (requiresHoldingPick && !holdingSymbolIsOwned(holdingSymbolOptionsForPick, symbol, portfolioId)) {
+        if (requiresHoldingPick && !holdingSymbolIsOwned(holdingSymbolOptionsForPick, debouncedSymbol, portfolioId)) {
             return 'Select a holding you currently own in the chosen portfolio.';
         }
         if (type === 'dividend') {
             const parsedDividendAmount = parseFloat(dividendAmount);
             if (!Number.isFinite(parsedDividendAmount) || parsedDividendAmount <= 0) return 'Dividend amount must be greater than 0.';
             if (!date || String(date).trim().length < 10) return 'Payment date is required.';
-            const sym = symbol.toUpperCase().trim();
+            const sym = debouncedSymbol.toUpperCase().trim();
             const portfolio = portfolios.find((p) => p.id === portfolioId);
             const book = portfolio ? resolveInvestmentPortfolioCurrency(portfolio) : tradeCurrency;
             if (
@@ -1175,7 +1161,7 @@ const RecordTradeModal: React.FC<{
         }
         if (type === 'sell' && portfolioId) {
             const portfolio = portfolios.find(p => p.id === portfolioId);
-            const normalized = symbol.toUpperCase().trim();
+            const normalized = debouncedSymbol.toUpperCase().trim();
             const holding = portfolio?.holdings.find(h => h.symbol.toUpperCase().trim() == normalized);
             if (!holding) return 'Cannot sell: holding not found in selected portfolio.';
             if (holding.quantity < parsedQuantity) return `Cannot sell ${parsedQuantity}. Available quantity is ${holding.quantity}.`;
@@ -1193,7 +1179,7 @@ const RecordTradeModal: React.FC<{
             }
         }
         return null;
-    }, [portfolioId, quantity, price, dividendAmount, symbol, type, isNewHolding, holdingName, manualValuation, manualCurrentValue, isManualExisting, tradeCurrency, portfolios, availableCashInLedgerCurrency, availableCashByCurrency.SAR, availableCashByCurrency.USD, sarPerUsd, formatCurrencyString, feeAmount, requiresHoldingPick, holdingSymbolOptionsForPick, data, date, accountId, investmentAccounts]);
+    }, [portfolioId, quantity, price, dividendAmount, symbol, debouncedSymbol, type, isNewHolding, holdingName, manualValuation, manualCurrentValue, isManualExisting, tradeCurrency, portfolios, availableCashInLedgerCurrency, availableCashByCurrency.SAR, availableCashByCurrency.USD, sarPerUsd, formatCurrencyString, feeAmount, requiresHoldingPick, holdingSymbolOptionsForPick, data?.investmentTransactions, data?.accounts, date, accountId, investmentAccounts]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -1692,7 +1678,7 @@ const RecordTradeModal: React.FC<{
             )}
         </Modal>
     );
-};
+});
 
 // ... other modals ...
 
