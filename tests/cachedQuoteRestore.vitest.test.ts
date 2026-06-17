@@ -1,62 +1,24 @@
-import { describe, it, expect } from 'vitest';
-import {
-  computeRestoreCachedQuotesPatch,
-  latestQuoteCacheTimestamp,
-  symbolTimestampsFromCacheRows,
-} from '../services/cachedQuoteRestore';
-import type { FinancialData } from '../types';
+import { describe, expect, it } from 'vitest';
+import { rehydrateSessionPricesFromQuoteCache } from '../services/cachedQuoteRestore';
 
-const sampleData: FinancialData = {
-  accounts: [],
-  assets: [],
-  liabilities: [],
-  goals: [],
-  transactions: [],
-  investments: [
-    {
-      id: 'p1',
-      name: 'Test',
-      accountId: 'a1',
-      currency: 'USD',
-      holdings: [{ id: 'h1', symbol: 'AAPL', quantity: 10, currentValue: 0, avgCostPerShare: 100 }],
-    },
-  ],
-  investmentTransactions: [],
-  budgets: [],
-  watchlist: [],
-  settings: {} as FinancialData['settings'],
-  zakatPayments: [],
-  priceAlerts: [],
-  commodityHoldings: [],
-  plannedTrades: [],
-  notifications: [],
-  investmentPlan: null,
-  wealthUltraConfig: {} as FinancialData['wealthUltraConfig'],
-  portfolioUniverse: [],
-  statusChangeLog: [],
-  executionLogs: [],
-  recurringTransactions: [],
-  budgetRequests: [],
-  allTransactions: [],
-  allBudgets: [],
-};
-
-describe('cachedQuoteRestore', () => {
-  it('symbolTimestampsFromCacheRows maps fetchedAt to ISO keys', () => {
-    const ts = symbolTimestampsFromCacheRows({
-      AAPL: { price: 100, change: 0, changePercent: 0, fetchedAt: 1_700_000_000_000 },
-    });
-    expect(ts.AAPL).toBe(new Date(1_700_000_000_000).toISOString());
+describe('rehydrateSessionPricesFromQuoteCache', () => {
+  it('merges persisted rows into session prices', () => {
+    const rows = {
+      AAPL: { price: 150, change: 1, changePercent: 0.5, fetchedAt: Date.now() },
+    };
+    const { prices, changed, lastUpdated } = rehydrateSessionPricesFromQuoteCache({}, rows);
+    expect(changed).toBe(true);
+    expect(prices.AAPL?.price).toBe(150);
+    expect(lastUpdated).toBeInstanceOf(Date);
   });
 
-  it('computeRestoreCachedQuotesPatch applies cached quote to holding notionals', () => {
+  it('is no-op when session already matches cache', () => {
     const rows = {
-      AAPL: { price: 200, change: 1, changePercent: 0.5, fetchedAt: Date.now() },
+      MSFT: { price: 400, change: 0, changePercent: 0, fetchedAt: Date.now() },
     };
-    const patch = computeRestoreCachedQuotesPatch(sampleData, 3.75, rows);
-    expect(patch.hasCache).toBe(true);
-    expect(patch.equityUpdates.length).toBe(1);
-    expect(patch.equityUpdates[0]!.currentValue).toBeGreaterThan(0);
-    expect(latestQuoteCacheTimestamp(rows)).toBeTruthy();
+    const prev = { MSFT: { price: 400, change: 0, changePercent: 0 } };
+    const { prices, changed } = rehydrateSessionPricesFromQuoteCache(prev, rows);
+    expect(changed).toBe(false);
+    expect(prices).toBe(prev);
   });
 });

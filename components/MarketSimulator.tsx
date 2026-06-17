@@ -13,15 +13,16 @@ import {
 import {
     cacheRowsToSimulatedMap,
     loadQuoteCacheRows,
+    persistCommodityQuotePrices,
+    buildDisplayMapFromCachedRows,
     resolveSymbolsToLiveFetch,
-    saveQuoteCacheRows,
     symbolsNeedingLiveFetch,
-    upsertCacheFromLiveQuotes,
 } from '../services/quotePriceCache';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { portfolioBelongsToAccount, resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
 import { getRefreshableHoldingQuoteSymbols } from '../services/quoteRefreshSymbols';
 import { isTadawulQuoteSymbol } from '../services/marketQuoteRouting';
+import { isAnyEquityMarketRegularSessionOpen } from '../services/marketSessionLocal';
 import { sanitizeLiveQuoteRow } from '../services/tadawulQuoteSanity';
 import {
     buildCommodityHoldingValueUpdatesFromTrustedSnapshot,
@@ -38,10 +39,14 @@ import { isBackgroundWorkPaused, backgroundWorkPauseRemainingMs } from '../utils
 import { scheduleIdleWork, scheduleIdleWorkAsync, waitUntilBackgroundWorkResumed } from '../utils/runWhenIdle';
 import { yieldToMain } from '../utils/yieldToMain';
 import { computeRestoreCachedQuotesPatch } from '../services/cachedQuoteRestore';
+import type { CachedQuoteRow } from '../services/quotePriceCache';
 
 const MAX_LIVE_FETCH_PER_TICK = 25;
 const PARTIAL_LIVE_RATIO = 0.8;
 const INTER_SCOPE_DELAY_MS = 250;
+/** During market hours, poll stale quotes via idle work (no header spinner, no nav cancel). */
+const MARKET_SESSION_POLL_MS = 5 * 60 * 1000;
+const MARKET_SESSION_POLL_INITIAL_MS = 60_000;
 
 const applyPricesInBackground = (apply: () => void, urgent = false) => {
     if (urgent) {
@@ -49,6 +54,25 @@ const applyPricesInBackground = (apply: () => void, urgent = false) => {
         return;
     }
     scheduleIdleWork(() => startTransition(apply), 200);
+};
+
+const applyStoredQuoteFallback = (
+    symbol: string,
+    target: Record<string, { price: number; change: number; changePercent: number }>,
+    cacheRows: Record<string, CachedQuoteRow>,
+): boolean => {
+    const patch = buildDisplayMapFromCachedRows([symbol], cacheRows);
+    let applied = false;
+    for (const [k, v] of Object.entries(patch)) {
+        if (!v?.price || v.price <= 0) continue;
+        target[k] = {
+            price: v.price,
+            change: v.change ?? 0,
+            changePercent: v.changePercent ?? 0,
+        };
+        applied = true;
+    }
+    return applied || lookupLiveQuoteForSymbol(target, symbol) != null;
 };
 
 const MarketSimulator: React.FC = () => {
@@ -157,6 +181,38 @@ const MarketSimulator: React.FC = () => {
         return () => {
             cancelled = true;
             cancelIdle();
+        };
+    }, [dataContext?.data, dataContext?.showHydrateBanner, marketContext?.bumpPriceRefresh]);
+
+    /** Market-hours session poll — stale symbols only, idle-scheduled, skipped while tab hidden or nav paused. */
+    useEffect(() => {
+        const { data, showHydrateBanner } = dataContext ?? {};
+        const bump = marketContext?.bumpPriceRefresh;
+        if (!data || showHydrateBanner || !bump) return;
+
+        let cancelled = false;
+        let interval: ReturnType<typeof setInterval> | undefined;
+
+        const poll = () => {
+            if (cancelled || isBackgroundWorkPaused()) return;
+            if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+            if (!isAnyEquityMarketRegularSessionOpen()) return;
+            bump({ kind: 'all', manual: true, forceFetch: false, silent: true });
+        };
+
+        const schedulePoll = () => scheduleIdleWorkAsync(() => poll(), 0);
+
+        const initialTimer = setTimeout(() => {
+            void schedulePoll();
+            interval = setInterval(() => {
+                void schedulePoll();
+            }, MARKET_SESSION_POLL_MS);
+        }, MARKET_SESSION_POLL_INITIAL_MS);
+
+        return () => {
+            cancelled = true;
+            clearTimeout(initialTimer);
+            if (interval) clearInterval(interval);
         };
     }, [dataContext?.data, dataContext?.showHydrateBanner, marketContext?.bumpPriceRefresh]);
 
@@ -346,6 +402,7 @@ const MarketSimulator: React.FC = () => {
                     let rawApi: Record<string, LiveQuoteRow> = {};
                     if (equitySettled.status === 'fulfilled') {
                         rawApi = equitySettled.value;
+                        cacheRows = loadQuoteCacheRows();
                     } else {
                         console.error('Equity live price fetch failed:', equitySettled.reason);
                     }
@@ -359,15 +416,7 @@ const MarketSimulator: React.FC = () => {
                     }
 
                     if (uniqueSymbols.length > 0 && toFetch.length > 0) {
-                        const raw = rawApi as Record<string, LiveQuoteRow>;
-                        const sanitizedApi: Record<string, LiveQuoteRow> = {};
-                        for (const [k, row] of Object.entries(raw)) {
-                            if (!row) continue;
-                            const safe = isTadawulQuoteSymbol(k) ? sanitizeLiveQuoteRow(k, row) : row;
-                            if (safe) sanitizedApi[k] = safe;
-                        }
-                        cacheRows = upsertCacheFromLiveQuotes(cacheRows, toFetch, sanitizedApi);
-                        saveQuoteCacheRows(cacheRows);
+                        const sanitizedApi = rawApi as Record<string, LiveQuoteRow>;
                         const apiExpanded = expandLiveQuotesForRequestedSymbols(toFetch, sanitizedApi);
                         mergedEquity = { ...mergedEquity, ...apiExpanded };
                         if (priceScope.manual === true && Object.keys(sanitizedApi).length > 0) {
@@ -377,6 +426,9 @@ const MarketSimulator: React.FC = () => {
 
                     newPrices = { ...mergedEquity };
 
+                    if (commodityData.prices.length > 0) {
+                        cacheRows = persistCommodityQuotePrices(cacheRows, commodityData.prices);
+                    }
                     commodityData.prices.forEach((cp) => {
                         const oldPrice = currentSimulatedPrices[cp.symbol]?.price || cp.price;
                         const change = cp.price - oldPrice;
@@ -391,6 +443,7 @@ const MarketSimulator: React.FC = () => {
                     for (const symbol of allTickerSymbols) {
                         const row = lookupLiveQuoteForSymbol(newPrices, symbol);
                         if (row && row.price > 0) continue;
+                        if (applyStoredQuoteFallback(symbol, newPrices, cacheRows)) continue;
                         if (isTadawulQuoteSymbol(symbol)) continue;
                         simulateSymbol(symbol);
                         if (uniqueSymbols.includes(symbol)) anyEquitySimulated = true;
@@ -408,19 +461,23 @@ const MarketSimulator: React.FC = () => {
                                 liveSymbolCount === uniqueSymbols.length));
                 } catch (error) {
                     console.error('Failed to fetch real prices, falling back to cache then simulation:', error);
-                    const cacheRows = loadQuoteCacheRows();
-                    const cacheSim = cacheRowsToSimulatedMap(cacheRows);
-                    newPrices =
-                        uniqueSymbols.length > 0
-                            ? expandLiveQuotesForRequestedSymbols(
-                                  uniqueSymbols,
-                                  cacheSim as Record<string, LiveQuoteRow>,
-                              )
-                            : {};
+                    let cacheRows = loadQuoteCacheRows();
+                    newPrices = {};
+                    for (const [k, v] of Object.entries(buildDisplayMapFromCachedRows(uniqueSymbols, cacheRows))) {
+                        if (!v?.price || v.price <= 0) continue;
+                        newPrices[k] = {
+                            price: v.price,
+                            change: v.change ?? 0,
+                            changePercent: v.changePercent ?? 0,
+                        };
+                    }
 
                     try {
                         if (allCommodities.length > 0) {
                             const commodityData = await getAICommodityPrices(allCommodities, { sarPerUsd });
+                            if (commodityData.prices.length > 0) {
+                                cacheRows = persistCommodityQuotePrices(cacheRows, commodityData.prices);
+                            }
                             commodityData.prices.forEach((cp) => {
                                 const oldPrice = currentSimulatedPrices[cp.symbol]?.price || cp.price;
                                 const change = cp.price - oldPrice;
@@ -439,6 +496,7 @@ const MarketSimulator: React.FC = () => {
                     for (const symbol of allTickerSymbols) {
                         const row = lookupLiveQuoteForSymbol(newPrices, symbol);
                         if (row && row.price > 0) continue;
+                        if (applyStoredQuoteFallback(symbol, newPrices, cacheRows)) continue;
                         if (isTadawulQuoteSymbol(symbol)) continue;
                         simulateSymbol(symbol);
                         if (uniqueSymbols.includes(symbol)) anyEquitySimulated = true;
@@ -457,12 +515,28 @@ const MarketSimulator: React.FC = () => {
             }
 
             if (Object.keys(newPrices).length === 0 && (uniqueSymbols.length > 0 || commoditySymbols.length > 0)) {
-                liveStatus = false;
-                trustedQuoteSnapshot = {};
-                Array.from(new Set([...uniqueSymbols, ...commoditySymbols])).forEach((symbol) => {
-                    if (isTadawulQuoteSymbol(symbol)) return;
-                    simulateSymbol(symbol);
-                });
+                const cacheRows = loadQuoteCacheRows();
+                const fromCache = buildDisplayMapFromCachedRows(
+                    Array.from(new Set([...uniqueSymbols, ...commoditySymbols])),
+                    cacheRows,
+                );
+                for (const [k, v] of Object.entries(fromCache)) {
+                    if (!v?.price || v.price <= 0) continue;
+                    newPrices[k] = {
+                        price: v.price,
+                        change: v.change ?? 0,
+                        changePercent: v.changePercent ?? 0,
+                    };
+                }
+                trustedQuoteSnapshot = { ...newPrices };
+                liveStatus = Object.keys(fromCache).length > 0;
+                if (!liveStatus) {
+                    Array.from(new Set([...uniqueSymbols, ...commoditySymbols])).forEach((symbol) => {
+                        if (applyStoredQuoteFallback(symbol, newPrices, cacheRows)) return;
+                        if (isTadawulQuoteSymbol(symbol)) return;
+                        simulateSymbol(symbol);
+                    });
+                }
             }
 
             const holdingUpdates: { id: string, currentValue: number }[] = [];

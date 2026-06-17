@@ -1,5 +1,6 @@
 import React from 'react';
 import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useLiveQuotePrices } from '../hooks/useLiveQuotePrices';
 import type { UseCanonicalFinancialMetricsResult } from '../hooks/canonicalFinancialMetricsBundle';
 
 export type InvestmentsMetrics = UseCanonicalFinancialMetricsResult & {
@@ -12,6 +13,11 @@ export function InvestmentsMetricsProvider({ children }: { children: React.React
   return <>{children}</>;
 }
 
+/**
+ * KPI / headline from canonical bundle; per-symbol quotes always from persisted cache + live session.
+ */
 export function useInvestmentsCanonicalMetrics(): InvestmentsMetrics {
-  return useExtendedCanonicalMetrics();
+  const metrics = useExtendedCanonicalMetrics();
+  const simulatedPrices = useLiveQuotePrices();
+  return { ...metrics, simulatedPrices };
 }

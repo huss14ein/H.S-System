@@ -1,8 +1,8 @@
 import React from 'react';
 
 /**
- * Manual-only live prices mode (no focus/visibility/interval polling).
- * Stale/missing quotes are refreshed once after hydrate via MarketSimulator.
+ * Market-hours quote polling runs in MarketSimulator (silent refresh).
+ * Stale/missing quotes are also refreshed once after hydrate.
  */
 export const SystemActivityGuard: React.FC = () => null;
 

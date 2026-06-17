@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isAnyEquityMarketRegularSessionOpen,
   isEquityDailyPnLSessionOpen,
   isTadawulRegularSessionOpen,
   isUsEquityRegularSessionOpen,
@@ -30,5 +31,12 @@ describe('marketSessionLocal', () => {
     const wedEt = new Date('2026-06-03T15:00:00Z');
     expect(isEquityDailyPnLSessionOpen('AAPL', wedEt)).toBe(true);
     expect(quoteChangeForDailyPnL('AAPL', 1.5, wedEt)).toBe(1.5);
+  });
+
+  it('isAnyEquityMarketRegularSessionOpen when US or Tadawul is open', () => {
+    const wedEt = new Date('2026-06-03T15:00:00Z');
+    expect(isAnyEquityMarketRegularSessionOpen(wedEt)).toBe(true);
+    const satEt = new Date('2026-06-06T18:00:00Z');
+    expect(isAnyEquityMarketRegularSessionOpen(satEt)).toBe(false);
   });
 });

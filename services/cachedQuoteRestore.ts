@@ -1,6 +1,6 @@
 /**
  * Restore persisted quote cache into session state and holding notionals — no network.
- * Live provider fetches run only when the user clicks Refresh prices.
+ * Stored quotes are shown until the next successful live fetch replaces them.
  */
 
 import type { CommodityHolding, FinancialData, InvestmentPortfolio } from '../types';
@@ -74,7 +74,6 @@ export type RestoreCachedQuotesResult = {
   hasCache: boolean;
 };
 
-/** Build local holding updates from persisted quotes only (no API). */
 export function computeRestoreCachedQuotesPatch(
   data: FinancialData,
   sarPerUsd: number,
@@ -96,5 +95,40 @@ export function computeRestoreCachedQuotesPatch(
     timestamps: symbolTimestampsFromCacheRows(rows),
     lastUpdated: latestQuoteCacheTimestamp(rows),
     hasCache: Object.keys(rows).length > 0,
+  };
+}
+
+export type SessionQuotePriceRow = { price: number; change: number; changePercent: number };
+
+/** Merge persisted quote rows into in-memory session prices (cross-tab / visibility sync). */
+export function rehydrateSessionPricesFromQuoteCache(
+  prev: Record<string, SessionQuotePriceRow>,
+  rows: Record<string, CachedQuoteRow> = loadQuoteCacheRows(),
+): { prices: Record<string, SessionQuotePriceRow>; changed: boolean; lastUpdated: Date | null } {
+  const mapped = cacheRowsToSimulatedMap(rows);
+  const next: Record<string, SessionQuotePriceRow> = { ...prev };
+  let changed = false;
+  for (const [k, v] of Object.entries(mapped)) {
+    if (!v?.price || v.price <= 0) continue;
+    const row = {
+      price: v.price,
+      change: v.change ?? 0,
+      changePercent: v.changePercent ?? 0,
+    };
+    const prevRow = prev[k];
+    if (
+      !prevRow ||
+      prevRow.price !== row.price ||
+      prevRow.change !== row.change ||
+      prevRow.changePercent !== row.changePercent
+    ) {
+      next[k] = row;
+      changed = true;
+    }
+  }
+  return {
+    prices: changed ? next : prev,
+    changed,
+    lastUpdated: latestQuoteCacheTimestamp(rows),
   };
 }

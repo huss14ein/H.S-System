@@ -74,6 +74,11 @@ export function isEquityListingRegularSessionOpen(
   return exchange === 'US' ? isUsEquityRegularSessionOpen(now) : isTadawulRegularSessionOpen(now);
 }
 
+/** True when at least one supported equity market is in regular session (US or Tadawul). */
+export function isAnyEquityMarketRegularSessionOpen(now: Date = new Date()): boolean {
+  return isUsEquityRegularSessionOpen(now) || isTadawulRegularSessionOpen(now);
+}
+
 /** True when today's quote delta should count toward daily P/L for this symbol. */
 export function isEquityDailyPnLSessionOpen(symbol: string | null | undefined, now: Date = new Date()): boolean {
   const exchange = resolveEquityListingExchange(symbol);

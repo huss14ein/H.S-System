@@ -1,8 +1,14 @@
 /**
  * Coordinates live quote network calls: dedupes identical in-flight batches
  * so overlapping refresh scopes do not multiply provider requests.
+ * Every successful batch is sanitized and persisted to localStorage.
  */
 import { getLivePrices } from './geminiService';
+import {
+  loadQuoteCacheRows,
+  persistSanitizedLiveQuotes,
+  sanitizeLiveQuoteBatch,
+} from './quotePriceCache';
 
 type LiveQuoteRow = { price: number; change: number; changePercent: number };
 
@@ -27,9 +33,15 @@ export async function getLivePricesDeduped(symbols: string[]): Promise<Record<st
   const existing = batchInFlight.get(key);
   if (existing) return existing;
 
-  const promise = getLivePrices(normalized).finally(() => {
-    batchInFlight.delete(key);
-  });
+  const promise = getLivePrices(normalized)
+    .then((raw) => {
+      if (Object.keys(raw).length === 0) return raw;
+      persistSanitizedLiveQuotes(normalized, raw, loadQuoteCacheRows());
+      return sanitizeLiveQuoteBatch(raw);
+    })
+    .finally(() => {
+      batchInFlight.delete(key);
+    });
   batchInFlight.set(key, promise);
   return promise;
 }

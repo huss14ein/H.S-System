@@ -78,10 +78,10 @@ describe('system-wide lag completion E2E', () => {
   it('single navigation path with hash suppression', () => {
     const shell = read('components/AuthenticatedAppShell.tsx');
     expect(shell).toContain('suppressNextHashChangeRef');
-    expect(shell).toContain('cancelQuoteRefreshOnNav');
+    expect(shell).toContain('resumeQuoteRefreshAfterNav');
     expect(shell).toContain('prefetchPage(page)');
     expect(shell).toContain('NAV_TRANSITION_PAUSE_MS');
-    expect(read('utils/navigationBridge.ts')).toContain('registerQuoteRefreshCancel');
+    expect(read('utils/navigationBridge.ts')).toContain('registerQuoteRefreshResume');
     expect(read('components/Layout.tsx')).not.toContain('navigatePage = useCallback');
     expect(read('hooks/useBackgroundWorkInputPause.ts')).toContain('data-nav-link');
     expect(read('components/Header.tsx')).toContain('data-nav-link');
@@ -89,11 +89,11 @@ describe('system-wide lag completion E2E', () => {
 
   it('canonical metrics stale-while-revalidate extended bundle', () => {
     const ctx = read('context/CanonicalFinancialMetricsContext.tsx');
-    expect(ctx).toContain('extendedBundle ?? fastBundle');
+    expect(ctx).toContain('overlayLiveQuoteTierOntoExtendedMetrics');
     expect(ctx).toContain('financialDataHasHydrated(data)');
-    expect(ctx).toContain('useDeferredValue(debouncedPrices)');
+    expect(ctx).toContain('useDeferredValue(kpiQuotePrices)');
     expect(ctx).toMatch(
-      /}, \[extendedFingerprint, metricsData, exchangeRate, getAvailableCashForAccount, deferredPrices\]\)/,
+      /}, \[extendedFingerprint, metricsData, exchangeRate, getAvailableCashForAccount, deferredKpiPrices\]\)/,
     );
     expect(ctx).not.toMatch(/\[extendedFingerprint[\s\S]{0,120}fastBundle/);
     expect(read('pages/Dashboard.tsx')).toContain('kpisPending');

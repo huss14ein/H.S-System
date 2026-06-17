@@ -1,10 +1,11 @@
-/** Bridge so shell navigation can cancel in-flight quote refresh without MarketData context in the shell. */
-let cancelQuoteRefreshFn: (() => void) | null = null;
+/** Bridge so shell navigation can resume quote refresh after route pause (never abort in-flight fetches). */
+let resumeQuoteRefreshFn: (() => void) | null = null;
 
-export function registerQuoteRefreshCancel(fn: (() => void) | null): void {
-  cancelQuoteRefreshFn = fn;
+export function registerQuoteRefreshResume(fn: (() => void) | null): void {
+  resumeQuoteRefreshFn = fn;
 }
 
-export function cancelQuoteRefreshOnNav(): void {
-  cancelQuoteRefreshFn?.();
+/** After nav pause ends, nudge the quote queue — does not cancel network work. */
+export function resumeQuoteRefreshAfterNav(): void {
+  resumeQuoteRefreshFn?.();
 }

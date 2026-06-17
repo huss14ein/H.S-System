@@ -24,6 +24,40 @@ describe('live quotes E2E wiring', () => {
     expect(sim).toContain('urgentApply');
     expect(sim).toContain('MAX_LIVE_FETCH_PER_TICK = 25');
     expect(sim).toContain('pendingLiveFetchSymbolsRef.current = []');
+    expect(sim).toContain('isAnyEquityMarketRegularSessionOpen');
+    expect(sim).toContain('silent: true');
+    expect(sim).toContain('visibilityState');
+    expect(sim).toContain('forceFetch: false');
+  });
+
+  it('navigation resumes quote drain after pause (does not cancel)', () => {
+    expect(read('utils/navigationBridge.ts')).toContain('resumeQuoteRefreshAfterNav');
+    expect(read('components/Layout.tsx')).toContain('registerQuoteRefreshResume');
+    expect(read('components/AuthenticatedAppShell.tsx')).toContain('resumeQuoteRefreshAfterNav');
+    expect(read('components/AuthenticatedAppShell.tsx')).not.toContain('cancelQuoteRefreshOnNav');
+  });
+
+  it('live quote display uses MarketPricesContext not throttled KPI bundle', () => {
+    expect(read('hooks/useCanonicalFinancialMetrics.ts')).toContain('useMarketPrices().simulatedPrices');
+    expect(read('hooks/useLiveQuotePrices.ts')).toContain('useMarketPrices');
+    expect(read('pages/Investments.tsx')).toContain('useMarketPrices()');
+  });
+
+  it('every successful fetch persists to quote cache', () => {
+    const sim = read('components/MarketSimulator.tsx');
+    expect(sim).toContain('persistCommodityQuotePrices');
+    expect(sim).toContain('applyStoredQuoteFallback');
+    expect(read('services/quoteLiveFetchCoordinator.ts')).toContain('persistSanitizedLiveQuotes');
+    expect(read('context/MarketDataContext.tsx')).toContain('loadQuoteCacheRows');
+  });
+
+  it('canonical metrics overlay live quote tier on extended bundle', () => {
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain(
+      'overlayLiveQuoteTierOntoExtendedMetrics',
+    );
+    expect(read('hooks/canonicalFinancialMetricsBundle.ts')).toContain(
+      'overlayLiveQuoteTierOntoExtendedMetrics',
+    );
   });
 
   it('all user refresh entry points force-fetch', () => {

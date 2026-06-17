@@ -23,7 +23,7 @@ import { PAGE_DISPLAY_NAMES, INVESTMENT_SUB_NAV_PAGE_NAMES } from '../constants'
 import { PAGE_MODULES, prefetchCommonPagesIdle, prefetchPage, resolveShellPage } from '../utils/lazyPages';
 import { pauseBackgroundWork, NAV_TRANSITION_PAUSE_MS } from '../utils/backgroundWorkGate';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
-import { cancelQuoteRefreshOnNav } from '../utils/navigationBridge';
+import { resumeQuoteRefreshAfterNav } from '../utils/navigationBridge';
 import { CanonicalFinancialMetricsProvider } from '../context/CanonicalFinancialMetricsContext';
 import { LanguageProvider } from '../context/LanguageContext';
 
@@ -168,7 +168,7 @@ const AuthenticatedAppShell: React.FC = () => {
 
   const navigatePage = useCallback((page: Page) => {
     pauseBackgroundWork(NAV_TRANSITION_PAUSE_MS);
-    cancelQuoteRefreshOnNav();
+    resumeQuoteRefreshAfterNav();
     prefetchPage(page);
     startTransition(() => {
       if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(page)) {
@@ -218,7 +218,7 @@ const AuthenticatedAppShell: React.FC = () => {
         return;
       }
       pauseBackgroundWork(NAV_TRANSITION_PAUSE_MS);
-      cancelQuoteRefreshOnNav();
+      resumeQuoteRefreshAfterNav();
       startTransition(() => {
         const decoded = decodeHashPage();
         if (INVESTMENT_SUB_NAV_PAGE_NAMES.includes(decoded as Page)) {
@@ -240,7 +240,7 @@ const AuthenticatedAppShell: React.FC = () => {
 
   const triggerPageAction = useCallback((page: Page, action: string) => {
     pauseBackgroundWork(NAV_TRANSITION_PAUSE_MS);
-    cancelQuoteRefreshOnNav();
+    resumeQuoteRefreshAfterNav();
     prefetchPage(page);
     startTransition(() => {
       setActivePageState(resolveShellPage(page));

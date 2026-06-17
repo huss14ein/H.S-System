@@ -29,15 +29,11 @@ export {
 } from '../services/extendedMetricsPresentation';
 
 /**
- * Debounced live quotes from the shell provider (or local fallback).
- * Prefer over `useMarketData().simulatedPrices` on pages that already use canonical KPIs.
+ * Live quotes for display (holdings, watchlist, trade modals).
+ * KPI / headline paths use throttled prices inside CanonicalFinancialMetricsProvider.
  */
 export function useCanonicalSimulatedPrices(): SimulatedPriceMap {
-  const shell = useCanonicalFinancialMetricsContext();
-  const { simulatedPrices } = useMarketPrices();
-  const debounced = useDebouncedValue(simulatedPrices, 1500);
-  if (shell) return shell.full.simulatedPrices;
-  return debounced;
+  return useMarketPrices().simulatedPrices;
 }
 
 /**

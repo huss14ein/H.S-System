@@ -9,6 +9,9 @@ import {
   resolveSymbolsToLiveFetch,
   upsertCacheFromLiveQuotes,
   cacheRowsToSimulatedMap,
+  persistFetchedLiveQuotes,
+  persistCommodityQuotePrices,
+  buildDisplayMapFromCachedRows,
 } from '../services/quotePriceCache';
 
 function mockLocalStorage() {
@@ -85,6 +88,33 @@ describe('quotePriceCache', () => {
         QUOTE_CACHE_TTL_MS,
       ),
     ).toBe(false);
+  });
+
+  it('persistFetchedLiveQuotes saves every successful API symbol', () => {
+    const prior = loadQuoteCacheRows();
+    const next = persistFetchedLiveQuotes(prior, ['AAPL', 'MSFT'], {
+      AAPL: { price: 101, change: 1, changePercent: 1 },
+    });
+    expect(next.AAPL?.price).toBe(101);
+    expect(loadQuoteCacheRows().AAPL?.price).toBe(101);
+    expect(symbolsNeedingLiveFetch(['AAPL'], loadQuoteCacheRows())).toEqual([]);
+  });
+
+  it('persistCommodityQuotePrices stores commodity symbols', () => {
+    const prior = loadQuoteCacheRows();
+    const next = persistCommodityQuotePrices(prior, [{ symbol: 'XAUUSD', price: 2650 }]);
+    expect(next.XAUUSD?.price).toBe(2650);
+    expect(loadQuoteCacheRows().XAUUSD?.price).toBe(2650);
+  });
+
+  it('buildDisplayMapFromCachedRows returns stale rows until replaced', () => {
+    const staleTs = Date.now() - QUOTE_CACHE_TTL_MS - 60_000;
+    const rows = {
+      MSFT: { price: 420, change: 2, changePercent: 0.5, fetchedAt: staleTs },
+    };
+    const display = buildDisplayMapFromCachedRows(['MSFT'], rows);
+    expect(display.MSFT?.price).toBe(420);
+    expect(symbolsNeedingLiveFetch(['MSFT'], rows)).toEqual(['MSFT']);
   });
 
   it('cacheRowsToSimulatedMap drops invalid rows', () => {

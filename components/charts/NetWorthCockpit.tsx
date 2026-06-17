@@ -18,6 +18,7 @@ import { DataContext } from '../../context/DataContext';
 import { useCurrency } from '../../context/CurrencyContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { useCanonicalFinancialMetrics } from '../../hooks/useCanonicalFinancialMetrics';
+import { useLiveQuotePrices } from '../../hooks/useLiveQuotePrices';
 import type { DashboardCanonicalMetrics } from '../../services/canonicalFinancialMetrics';
 import type { SimulatedPriceMap } from '../../services/investmentPlatformCardMetrics';
 import { toSAR } from '../../utils/currencyMath';
@@ -213,7 +214,8 @@ function NetWorthCockpitContent(
     onOpenDataReconciliation,
     metrics,
   } = props;
-  const { headline, todaySnapshot, investableCashBars, sarPerUsd, simulatedPrices } = metrics;
+  const { headline, todaySnapshot, investableCashBars, sarPerUsd } = metrics;
+  const simulatedPrices = useLiveQuotePrices();
   const { data } = useContext(DataContext)!;
   const { exchangeRate } = useCurrency();
   useHydrateSarPerUsdDailySeries(data, exchangeRate);

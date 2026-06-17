@@ -143,6 +143,92 @@ export function saveQuoteCacheRows(rows: Record<string, CachedQuoteRow>): void {
 }
 
 /**
+ * Sanitize provider rows (Tadawul unit prices) before display or persistence.
+ */
+export function sanitizeLiveQuoteBatch(
+  raw: Record<string, LiveQuoteRow>,
+): Record<string, LiveQuoteRow> {
+  const sanitized: Record<string, LiveQuoteRow> = {};
+  for (const [k, row] of Object.entries(raw)) {
+    if (!row) continue;
+    const safe = isTadawulQuoteSymbol(k) ? sanitizeLiveQuoteRow(k, row) : row;
+    if (safe) sanitized[k] = safe;
+  }
+  return sanitized;
+}
+
+/**
+ * Sanitize + persist one live batch (single choke point for equity fetches).
+ */
+export function persistSanitizedLiveQuotes(
+  requestedSymbols: string[],
+  rawLive: Record<string, LiveQuoteRow>,
+  prior: Record<string, CachedQuoteRow> = loadQuoteCacheRows(),
+): Record<string, CachedQuoteRow> {
+  const sanitized = sanitizeLiveQuoteBatch(rawLive);
+  return persistFetchedLiveQuotes(prior, requestedSymbols, sanitized);
+}
+
+/**
+ * Merge a live API batch into persisted storage and save immediately.
+ * Call after every successful provider fetch (full, platform, or symbol batch).
+ */
+export function persistFetchedLiveQuotes(
+  prior: Record<string, CachedQuoteRow>,
+  requestedSymbols: string[],
+  live: Record<string, LiveQuoteRow>,
+): Record<string, CachedQuoteRow> {
+  const requested = Array.from(
+    new Set([
+      ...requestedSymbols.map((s) => (s || '').trim()).filter(Boolean),
+      ...Object.keys(live).map((k) => (k || '').trim()).filter(Boolean),
+    ]),
+  );
+  if (requested.length === 0 || Object.keys(live).length === 0) return prior;
+  const next = upsertCacheFromLiveQuotes(prior, requested, live);
+  saveQuoteCacheRows(next);
+  return next;
+}
+
+/** Persist commodity / crypto spot rows (same store as equities). */
+export function persistCommodityQuotePrices(
+  prior: Record<string, CachedQuoteRow>,
+  prices: { symbol: string; price: number }[],
+): Record<string, CachedQuoteRow> {
+  if (!prices.length) return prior;
+  const live: Record<string, LiveQuoteRow> = {};
+  const symbols: string[] = [];
+  for (const p of prices) {
+    const sym = (p.symbol || '').trim();
+    if (!sym || !Number.isFinite(p.price) || p.price <= 0) continue;
+    symbols.push(sym);
+    const candidates = [sym, sym.toUpperCase(), canonicalQuoteLookupKey(sym)];
+    let prev: CachedQuoteRow | undefined;
+    for (const k of candidates) {
+      const e = prior[k];
+      if (e?.price) {
+        prev = e;
+        break;
+      }
+    }
+    const change = prev ? p.price - prev.price : 0;
+    const changePercent = prev && prev.price > 0 ? (change / prev.price) * 100 : 0;
+    live[sym] = { price: p.price, change, changePercent };
+  }
+  return persistFetchedLiveQuotes(prior, symbols, live);
+}
+
+/** Display map for symbols from persisted rows (ignores TTL — last fetch wins until replaced). */
+export function buildDisplayMapFromCachedRows(
+  symbols: string[],
+  rows: Record<string, CachedQuoteRow> = loadQuoteCacheRows(),
+): SimulatedPriceMap {
+  if (!symbols.length) return {};
+  const cacheSim = cacheRowsToSimulatedMap(rows);
+  return expandLiveQuotesForRequestedSymbols(symbols, cacheSim as Record<string, LiveQuoteRow>) as SimulatedPriceMap;
+}
+
+/**
  * Merge cached + freshly fetched quote maps into one display map (fresh wins on key collision).
  */
 export function mergeQuoteDisplayMaps(

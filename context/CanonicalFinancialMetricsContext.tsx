@@ -12,6 +12,7 @@ import { yieldToMain } from '../utils/yieldToMain';
 import {
   buildFastCanonicalFinancialMetricsResult,
   buildFromCanonicalMetrics,
+  overlayLiveQuoteTierOntoExtendedMetrics,
   pickDashboardFromMetricsResult,
   type UseCanonicalFinancialMetricsResult,
 } from '../hooks/canonicalFinancialMetricsBundle';
@@ -58,9 +59,9 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
   const getAvailableCashForAccount = ctx?.getAvailableCashForAccount;
   const { exchangeRate } = useCurrency();
   const { simulatedPrices } = useMarketPrices();
-  const debouncedPrices = useDebouncedValue(simulatedPrices, 400);
+  const kpiQuotePrices = useDebouncedValue(simulatedPrices, 1000);
   /** Let route transitions win over quote-driven KPI recomputes. */
-  const deferredPrices = useDeferredValue(debouncedPrices);
+  const deferredKpiPrices = useDeferredValue(kpiQuotePrices);
   /** Live data for metrics — use partial/cached rows while fast tier hydrates; never block on full ledger. */
   const metricsData = showHydrateBanner && !financialDataHasHydrated(data) ? null : data;
   useHydrateSarPerUsdDailySeries(metricsData, exchangeRate);
@@ -71,7 +72,7 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
         data: null,
         exchangeRate,
         getAvailableCashForAccount,
-        debouncedPrices: deferredPrices,
+        debouncedPrices: deferredKpiPrices,
         showHydrateBanner: true,
       });
     }
@@ -79,10 +80,10 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
       data: metricsData,
       exchangeRate,
       getAvailableCashForAccount,
-      debouncedPrices: deferredPrices,
+      debouncedPrices: deferredKpiPrices,
       showHydrateBanner: false,
     });
-  }, [metricsData, exchangeRate, getAvailableCashForAccount, deferredPrices, showHydrateBanner]);
+  }, [metricsData, exchangeRate, getAvailableCashForAccount, deferredKpiPrices, showHydrateBanner]);
 
   const [extendedBundle, setExtendedBundle] = useState<UseCanonicalFinancialMetricsResult | null>(null);
 
@@ -98,11 +99,11 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
             metricsData.transactions?.length ?? 0,
             metricsData.investmentTransactions?.length ?? 0,
             metricsData.investments?.length ?? 0,
-            Object.keys(deferredPrices).length,
+            Object.keys(deferredKpiPrices).length,
             exchangeRate,
           ].join(':')
         : '',
-    [metricsData, deferredPrices, exchangeRate],
+    [metricsData, deferredKpiPrices, exchangeRate],
   );
 
   useEffect(() => {
@@ -113,7 +114,7 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
       data: metricsData,
       exchangeRate,
       getAvailableCashForAccount,
-      debouncedPrices: deferredPrices,
+      debouncedPrices: deferredKpiPrices,
       showHydrateBanner: false as const,
     };
 
@@ -125,7 +126,7 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
           data: metricsData,
           exchangeRate,
           getAvailableCashForAccount,
-          debouncedPrices: deferredPrices,
+          debouncedPrices: deferredKpiPrices,
           showHydrateBanner: false,
         }),
       );
@@ -135,7 +136,7 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
           data: metricsData,
           exchangeRate,
           getAvailableCashForAccount,
-          simulatedPrices: deferredPrices,
+          simulatedPrices: deferredKpiPrices,
         },
         { shouldAbort: () => aborted },
       );
@@ -147,13 +148,15 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
     return () => {
       aborted = true;
     };
-  }, [extendedFingerprint, metricsData, exchangeRate, getAvailableCashForAccount, deferredPrices]);
+  }, [extendedFingerprint, metricsData, exchangeRate, getAvailableCashForAccount, deferredKpiPrices]);
 
   const value = useMemo(() => {
     if (!metricsData) {
       return buildEmptyContextValue(exchangeRate, getAvailableCashForAccount);
     }
-    const full = extendedBundle ?? fastBundle;
+    const full = extendedBundle
+      ? overlayLiveQuoteTierOntoExtendedMetrics(extendedBundle, fastBundle)
+      : fastBundle;
     return buildContextValue(full);
   }, [metricsData, fastBundle, extendedBundle, exchangeRate, getAvailableCashForAccount]);
 

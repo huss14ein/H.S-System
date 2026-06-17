@@ -36,6 +36,9 @@ const steps = [
       'tests/marketSessionLocal.vitest.test.ts',
       'tests/marketSessionDailyPnLEndToEnd.vitest.test.ts',
       'tests/liveQuotesEndToEnd.vitest.test.ts',
+      'tests/quotePersistenceEndToEnd.vitest.test.ts',
+      'tests/quotePriceCache.vitest.test.ts',
+      'tests/cachedQuoteRestore.vitest.test.ts',
     ],
   },
   {

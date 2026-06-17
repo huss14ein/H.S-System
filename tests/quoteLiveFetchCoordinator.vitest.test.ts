@@ -23,4 +23,29 @@ describe('getLivePricesDeduped', () => {
     await Promise.all([a, b]);
     expect(getLivePrices).toHaveBeenCalledTimes(1);
   });
+
+  it('persists successful batches to quote cache', async () => {
+    const store: Record<string, string> = {};
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store[k] ?? null,
+      setItem: (k: string, v: string) => {
+        store[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete store[k];
+      },
+      clear: () => {
+        for (const k of Object.keys(store)) delete store[k];
+      },
+      get length() {
+        return Object.keys(store).length;
+      },
+      key: (i: number) => Object.keys(store)[i] ?? null,
+    } as Storage);
+
+    await getLivePricesDeduped(['AAPL']);
+    expect(store['finova-quote-cache-v1']).toBeTruthy();
+    const parsed = JSON.parse(store['finova-quote-cache-v1']) as { rows: Record<string, { price: number }> };
+    expect(parsed.rows.AAPL?.price).toBe(10);
+  });
 });

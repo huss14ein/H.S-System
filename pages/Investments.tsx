@@ -27,6 +27,8 @@ import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
 import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
+import { useMarketPrices } from '../context/MarketDataContext';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useCurrency } from '../context/CurrencyContext';
 import { useAI } from '../context/AiContext';
 import SafeMarkdownRenderer from '../components/SafeMarkdownRenderer';
@@ -96,7 +98,6 @@ import {
   computePlatformCardMetrics,
   computePortfolioMetricsBundle,
   type PortfolioMetricsBundle,
-  type SimulatedPriceMap,
 } from '../services/investmentPlatformCardMetrics';
 import { useCanonicalSpotFx, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
 import { InvestmentsMetricsProvider, useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
@@ -601,8 +602,6 @@ const RecordTradeModal: React.FC<{
     onSave: (trade: any, executedPlanId?: string) => void;
     investmentAccounts: Account[];
     portfolios: InvestmentPortfolio[];
-    /** Simulated/live quote by symbol — used to suggest price when the field is empty. */
-    simulatedPrices?: SimulatedPriceMap;
     initialData?: Partial<{
         tradeType: 'buy' | 'sell' | 'dividend';
         symbol: string;
@@ -616,7 +615,8 @@ const RecordTradeModal: React.FC<{
         portfolioId: string;
         reason?: string;
     }> | null;
-}> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, simulatedPrices = {}, initialData }) => {
+}> = ({ isOpen, onClose, onSave, investmentAccounts, portfolios, initialData }) => {
+    const { simulatedPrices } = useMarketPrices();
     const confirmAction = useConfirmAction();
     const { formatCurrencyString } = useFormatCurrency();
     const { getLearnedDefault, trackFormDefault } = useSelfLearning();
@@ -2192,7 +2192,7 @@ const HoldingDetailModal: React.FC<{
 
 const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (holding: Holding) => void, holding: Holding | null }> = ({ isOpen, onClose, onSave, holding }) => {
     const { data } = useContext(DataContext)!;
-    const { simulatedPrices } = useInvestmentsCanonicalMetrics();
+    const { simulatedPrices } = useMarketPrices();
     const { formatCurrencyString } = useFormatCurrency();
     const [name, setName] = useState('');
     const [zakahClass, setZakahClass] = useState<'Zakatable' | 'Non-Zakatable'>('Zakatable');
@@ -2543,7 +2543,6 @@ const PlatformCardInner: React.FC<{
     onDeletePortfolio: (portfolio: InvestmentPortfolio) => void;
     onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number; }, portfolio: InvestmentPortfolio) => void;
     onEditHolding: (holding: Holding) => void;
-    simulatedPrices: SimulatedPriceMap;
     isExpanded: boolean;
     onToggleExpanded: () => void;
     holdingsOutliers?: import('../services/holdingsOutlierAudit').HoldingOutlierRow[];
@@ -2554,7 +2553,10 @@ const PlatformCardInner: React.FC<{
     periodPnLReady: boolean;
     periodPnLSparklinesReady: boolean;
 }> = (props) => {
-    const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, symbolNames = {}, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, simulatedPrices, isExpanded, onToggleExpanded, holdingsOutliers = [], setActivePage, portfolioPeriodPnLById, portfolioWeeklySparklineById, portfolioPnLSummary, periodPnLReady, periodPnLSparklinesReady } = props;
+    const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, symbolNames = {}, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, isExpanded, onToggleExpanded, holdingsOutliers = [], setActivePage, portfolioPeriodPnLById, portfolioWeeklySparklineById, portfolioPnLSummary, periodPnLReady, periodPnLSparklinesReady } = props;
+    const { simulatedPrices: livePrices } = useMarketPrices();
+    const throttledPrices = useDebouncedValue(livePrices, 500);
+    const simulatedPrices = isExpanded ? livePrices : throttledPrices;
     const { refreshPricesForPlatform, isRefreshing: quotesRefreshing, quotesRefreshUIScope } = useMarketQuoteMeta();
     const thisPlatformSyncing =
         quotesRefreshing &&
@@ -3330,10 +3332,10 @@ const PlatformView: React.FC<{
     onDeletePortfolio: (portfolio: InvestmentPortfolio) => void;
     onHoldingClick: (holding: Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number; }, portfolio: InvestmentPortfolio) => void;
     onEditHolding: (holding: Holding) => void;
-    simulatedPrices: SimulatedPriceMap;
 }> = (props) => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { sarPerUsd, platformsRollupSar, extendedReady } = useInvestmentsCanonicalMetrics();
+    const { simulatedPrices } = useMarketPrices();
     const { setActivePage, setActiveTab, onOpenAddPortfolio } = props;
     const personalInvestments = useMemo(() => getPersonalInvestments(data), [data]);
     const personalAccounts = useMemo(() => getPersonalAccounts(data), [data]);
@@ -3342,7 +3344,7 @@ const PlatformView: React.FC<{
         portfolios: personalInvestments,
         accounts: personalAccounts,
         sarPerUsd,
-        simulatedPrices: props.simulatedPrices,
+        simulatedPrices,
     });
 
     const holdingsOutliersAll = useMemo(() => (data ? findHoldingsValueOutliers(data) : []), [data]);
@@ -3529,7 +3531,6 @@ const PlatformView: React.FC<{
                         onDeletePortfolio={props.onDeletePortfolio}
                         onHoldingClick={props.onHoldingClick}
                         onEditHolding={props.onEditHolding}
-                        simulatedPrices={props.simulatedPrices}
                         isExpanded={platformExpanded[p.account.id] ?? false}
                         onToggleExpanded={() =>
                             setPlatformExpanded((prev) => ({ ...prev, [p.account.id]: !prev[p.account.id] }))
@@ -3583,7 +3584,7 @@ const InvestmentPlan: React.FC<{
     const { formatCurrencyString } = useFormatCurrency();
     const { isAiAvailable, aiHealthChecked } = useAI();
     const sarPerUsd = useCanonicalSpotFx();
-    const { simulatedPrices } = useInvestmentsCanonicalMetrics();
+    const { simulatedPrices } = useMarketPrices();
 
     const planFromData = data?.investmentPlan;
     const planWithAnalystDefaults: InvestmentPlanSettings = useMemo(() => ({
@@ -5204,7 +5205,6 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
   );
   const { isAiAvailable, aiHealthChecked } = useAI();
   const { isLive, lastUpdated } = useMarketQuoteMeta();
-  const { simulatedPrices } = useInvestmentsCanonicalMetrics();
   const { formatCurrencyString } = useFormatCurrency();
   const { trackAction } = useSelfLearning();
   const [activeTab, setActiveTabState] = useState<InvestmentSubPage>('Overview');
@@ -5528,7 +5528,6 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
       case 'Overview': return <InvestmentOverview setActiveTab={setActiveTab} />;
       case 'Portfolios':
         return <PlatformView 
-            simulatedPrices={simulatedPrices}
             onAddPlatform={() => handleOpenPlatformModal()}
             onOpenAddPortfolio={(accountId) => handleOpenPortfolioModal(null, accountId ?? null)}
             setActivePage={setActivePage}
@@ -5841,7 +5840,6 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
         onSave={recordTradeConfirmed} 
         investmentAccounts={investmentAccounts} 
         portfolios={portfoliosForTrade}
-        simulatedPrices={simulatedPrices}
         initialData={tradeInitialData}
       />
     </div>

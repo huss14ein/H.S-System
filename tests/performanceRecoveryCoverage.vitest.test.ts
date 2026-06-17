@@ -145,7 +145,7 @@ describe('performance recovery E2E wiring', () => {
   it('cachedQuoteRestore service restores holdings without network', () => {
     expect(read('services/cachedQuoteRestore.ts')).toContain('computeRestoreCachedQuotesPatch');
     expect(read('services/cachedQuoteRestore.ts')).toContain('symbolTimestampsFromCacheRows');
-    expect(read('tests/cachedQuoteRestore.vitest.test.ts')).toContain('computeRestoreCachedQuotesPatch');
+    expect(read('tests/cachedQuoteRestore.vitest.test.ts')).toContain('rehydrateSessionPricesFromQuoteCache');
   });
 
   it('MarketDataContext exposes cached vs live quote source for header', () => {
@@ -196,7 +196,7 @@ describe('performance recovery E2E wiring', () => {
     expect(read('services/quoteRefreshCooldown.ts')).toContain('startQuoteRefreshCooldown');
     expect(read('components/MarketSimulator.tsx')).toContain('startQuoteRefreshCooldown');
     expect(read('components/Header.tsx')).toContain('quoteRefreshCooldownRemainingMs');
-    expect(read('components/Layout.tsx')).toContain('cancelQuoteRefresh');
+    expect(read('components/Layout.tsx')).toContain('registerQuoteRefreshResume');
     expect(read('pages/Budgets.tsx')).toContain('buildBudgetSpendFingerprint');
     expect(read('pages/Budgets.tsx')).toContain('sharedRpcBackoffUntilRef');
     expect(read('utils/pageActions.ts')).toMatch(/filter-plan-expense/);
@@ -205,7 +205,7 @@ describe('performance recovery E2E wiring', () => {
       /assignedBudgetMonthly > 0 \? assignedBudgetMonthly : assignedInvestmentMonthly/,
     );
     expect(read('pages/Investments.tsx')).toContain("unrealizedPnLBasis: 'net_capital'");
-    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toMatch(/useDebouncedValue\(simulatedPrices,\s*400\)/);
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toMatch(/useDebouncedValue\(simulatedPrices,\s*1000\)/);
     expect(read('services/monthlyInvestmentPlanProgress.ts')).toContain('aggregateMonthlyBudgetAcrossPortfolios');
     expect(read('components/Header.tsx')).toContain('computeMonthlyInvestmentPlanProgress');
     expect(read('pages/Budgets.tsx')).toContain('BudgetSharedRpcBanner');
@@ -244,7 +244,7 @@ describe('performance recovery E2E wiring', () => {
     expect(read('hooks/useDebouncedMarketPrices.ts')).toContain('MarketDebouncedPricesContext');
     expect(read('components/Layout.tsx')).toContain('useExtendedCanonicalMetrics');
     expect(read('pages/Summary.tsx')).not.toContain('useMarketData');
-    expect(read('pages/Investments.tsx')).toContain('const { simulatedPrices } = useInvestmentsCanonicalMetrics()');
+    expect(read('pages/Investments.tsx')).toContain('useMarketPrices()');
     expect(read('pages/Dashboard.tsx')).toContain('useDashboardCanonicalMetrics');
     expect(read('pages/Dashboard.tsx')).toContain('kpisPending');
     expect(read('pages/Dashboard.tsx')).toContain('SectionLoadingPlaceholder');
@@ -347,11 +347,11 @@ describe('performance recovery E2E wiring', () => {
   it('single navigation path with hash echo suppression', () => {
     const shell = read('components/AuthenticatedAppShell.tsx');
     expect(shell).toContain('suppressNextHashChangeRef');
-    expect(shell).toContain('cancelQuoteRefreshOnNav');
+    expect(shell).toContain('resumeQuoteRefreshAfterNav');
     expect(shell).toContain('prefetchPage(page)');
     expect(shell).toContain('NAV_TRANSITION_PAUSE_MS');
-    expect(read('utils/navigationBridge.ts')).toContain('registerQuoteRefreshCancel');
-    expect(read('components/Layout.tsx')).toContain('registerQuoteRefreshCancel');
+    expect(read('utils/navigationBridge.ts')).toContain('registerQuoteRefreshResume');
+    expect(read('components/Layout.tsx')).toContain('registerQuoteRefreshResume');
     expect(read('components/Layout.tsx')).not.toContain('navigatePage = useCallback');
     expect(read('hooks/useBackgroundWorkInputPause.ts')).toContain('data-nav-link');
   });
@@ -359,11 +359,11 @@ describe('performance recovery E2E wiring', () => {
   it('canonical extended metrics stale-while-revalidate', () => {
     const ctx = read('context/CanonicalFinancialMetricsContext.tsx');
     expect(ctx).toMatch(
-      /}, \[extendedFingerprint, metricsData, exchangeRate, getAvailableCashForAccount, deferredPrices\]\)/,
+      /}, \[extendedFingerprint, metricsData, exchangeRate, getAvailableCashForAccount, deferredKpiPrices\]\)/,
     );
-    expect(ctx).toContain('useDeferredValue(debouncedPrices)');
+    expect(ctx).toContain('useDeferredValue(kpiQuotePrices)');
     expect(ctx).not.toMatch(/\[extendedFingerprint[\s\S]{0,120}fastBundle/);
-    expect(ctx).toContain('extendedBundle ?? fastBundle');
+    expect(ctx).toContain('overlayLiveQuoteTierOntoExtendedMetrics');
   });
 
   it('notifications read-state merge and dismiss grace', () => {

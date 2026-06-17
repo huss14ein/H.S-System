@@ -22,7 +22,7 @@ import InfoHint from '../components/InfoHint';
 import { useCurrency } from '../context/CurrencyContext';
 import { supabase } from '../services/supabaseClient';
 import type { Page } from '../types';
-import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics, useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
 import { getPersonalAccounts } from '../utils/wealthScope';
 import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { usePrivacyMask } from '../context/PrivacyContext';
@@ -88,6 +88,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
     const auth = useContext(AuthContext);
     const isAdmin = Boolean(auth?.isAdmin);
     const { exchangeRate, currency: displayCurrency } = useCurrency();
+    const canonicalSimulatedPrices = useCanonicalSimulatedPrices();
     const {
         wealthSummary: reportModel,
         kpiSnapshot,
@@ -95,7 +96,6 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         todaySnapshot,
         investableCashBars,
         sarPerUsd: canonicalSarPerUsd,
-        simulatedPrices: canonicalSimulatedPrices,
         extendedReady,
     } = useExtendedCanonicalMetrics();
     const { isRefreshing, hasQueuedPriceRefresh, symbolQuoteUpdatedAt, isLive } = useMarketQuoteMeta();
