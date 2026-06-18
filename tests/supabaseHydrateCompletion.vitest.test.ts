@@ -38,7 +38,7 @@ describe('supabase hydrate completion', () => {
   it('canonical metrics use partial hydrate data when available', () => {
     const src = read('context/CanonicalFinancialMetricsContext.tsx');
     expect(src).toMatch(
-      /const metricsData = showHydrateBanner && !financialDataHasHydrated\(data\) \? null : data/,
+      /const metricsData = data && financialDataHasHydrated\(data\) \? data : null/,
     );
   });
 

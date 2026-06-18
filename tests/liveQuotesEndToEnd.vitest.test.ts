@@ -28,6 +28,8 @@ describe('live quotes E2E wiring', () => {
     expect(sim).toContain('silent: true');
     expect(sim).toContain('visibilityState');
     expect(sim).toContain('forceFetch: false');
+    expect(sim).toContain('bumpPriceRefresh(priceScope)');
+    expect(sim).toContain('nextQuotesPriceSourceAfterTick');
   });
 
   it('navigation resumes quote drain after pause (does not cancel)', () => {
@@ -40,10 +42,13 @@ describe('live quotes E2E wiring', () => {
     expect(read('components/AuthenticatedAppShell.tsx')).not.toContain('cancelQuoteRefreshOnNav');
   });
 
-  it('live quote display uses MarketPricesContext not throttled KPI bundle', () => {
-    expect(read('hooks/useCanonicalFinancialMetrics.ts')).toContain('useMarketPrices().simulatedPrices');
+  it('quote hooks split live cells vs KPI-aligned canonical map', () => {
+    const canonicalHook = read('hooks/useCanonicalFinancialMetrics.ts');
+    expect(canonicalHook).toContain('shell.full.simulatedPrices');
+    expect(canonicalHook).toContain('useDebouncedValue(simulatedPrices, 250)');
     expect(read('hooks/useLiveQuotePrices.ts')).toContain('useMarketPrices');
     expect(read('pages/Investments.tsx')).toContain('useMarketPrices()');
+    expect(read('pages/Investments.tsx')).toContain('kpiQuotePrices');
   });
 
   it('every successful fetch persists to quote cache', () => {

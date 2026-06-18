@@ -35,6 +35,7 @@ describe('Investments hub completion (E2E)', () => {
   it('daily P/L zeros outside regular session via currencyMath helper', () => {
     expect(read('utils/currencyMath.ts')).toContain('quoteChangeForDailyPnL');
     expect(read('services/investmentPlatformCardMetrics.ts')).toContain('quoteDailyPnLInBookCurrency');
+    expect(read('services/investmentPlatformCardMetrics.ts')).toContain('quoteChangeForDailyPnL');
   });
 
   it('stale quote bootstrap after hydrate', () => {
@@ -55,9 +56,15 @@ describe('Investments hub completion (E2E)', () => {
     expect(page).not.toContain('onClick={() => startTransition(onToggleExpanded)}');
   });
 
-  it('verification script registers hub completion tests', () => {
+  it('headline KPI row: single source on Investments hub', () => {
+    expect(read('pages/Investments.tsx')).toContain('buildInvestmentsHeadlineKpiRow');
+    expect(read('services/extendedMetricsPresentation.ts')).toContain('buildInvestmentsHeadlineKpiRow');
+  });
+
+  it('verification script registers hub + KPI E2E tests', () => {
     const script = read('scripts/verify-performance-recovery.mjs');
     expect(script).toContain('investmentsHubCompletion.vitest.test.ts');
+    expect(script).toContain('investmentsKpiE2E.vitest.test.ts');
     expect(script).toContain('marketDataRefresh.vitest.test.ts');
     expect(script).toContain('portfolioPeriodPnLEndToEnd.vitest.test.ts');
   });

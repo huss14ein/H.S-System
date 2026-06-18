@@ -1,11 +1,10 @@
 import type { FinancialData } from '../types';
 import { getStaleQuoteSymbols } from './dataQuality/marketDataStale';
-import { getRefreshableHoldingQuoteSymbols } from './quoteRefreshSymbols';
+import { collectTrackedQuoteSymbols } from './cachedQuoteRestore';
 
 export function getTrackedQuoteSymbolsFromData(data: FinancialData | null | undefined): string[] {
   if (!data) return [];
-  const holdings = (data.investments ?? []).flatMap((p) => p.holdings ?? []);
-  return getRefreshableHoldingQuoteSymbols(holdings);
+  return collectTrackedQuoteSymbols(data);
 }
 
 export function quoteRefreshFingerprint(

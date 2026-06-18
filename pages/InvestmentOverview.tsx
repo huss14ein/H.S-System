@@ -11,7 +11,6 @@ import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
-import { useLiveQuotePrices } from '../hooks/useLiveQuotePrices';
 import { quoteNotionalInBookCurrency, toSAR } from '../utils/currencyMath';
 import { holdingUsesLiveQuote } from '../utils/holdingValuation';
 import { getPersonalInvestments } from '../utils/wealthScope';
@@ -51,7 +50,6 @@ function holdingValueInBookCurrency(
 const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => void }> = ({ setActiveTab }) => {
     const { data } = useContext(DataContext)!;
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
-    const simulatedPrices = useLiveQuotePrices();
     const {
         sarPerUsd,
         investmentsTotalSar,
@@ -59,6 +57,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
         sukukAssetsValueSar: sukukAssetsSAR,
         investmentAllocation,
         extendedReady,
+        simulatedPrices,
     } = useExtendedCanonicalMetrics();
 
     const assetClassAllocation = investmentAllocation.assetClassAllocation;

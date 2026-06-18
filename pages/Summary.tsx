@@ -24,7 +24,6 @@ import { supabase } from '../services/supabaseClient';
 import type { Page } from '../types';
 import { useExtendedCanonicalMetrics, useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
 import { getPersonalAccounts } from '../utils/wealthScope';
-import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import { buildReviewPack, downloadReviewPackMarkdown } from '../services/reviewPack';
 import { sendReviewPackEmail } from '../services/reviewPackEmail';
@@ -308,10 +307,8 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         () =>
             kpiSnapshot
                 ? { budgetVariance: kpiSnapshot.budgetVariance, roi: kpiSnapshot.roi }
-                : data
-                  ? computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, canonicalSimulatedPrices)
-                  : { budgetVariance: Number.NaN, roi: Number.NaN },
-        [kpiSnapshot, data, exchangeRate, getAvailableCashForAccount, canonicalSimulatedPrices],
+                : { budgetVariance: Number.NaN, roi: Number.NaN },
+        [kpiSnapshot],
     );
 
     const summaryValidationWarnings = useMemo(() => {

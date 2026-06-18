@@ -5,6 +5,7 @@
 
 import type { Account, FinancialData, Holding, InvestmentPortfolio, InvestmentTransaction, TradeCurrency } from '../types';
 import { quoteDailyPnLInBookCurrency, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
+import { quoteChangeForDailyPnL, resolveEquityListingExchange } from './marketSessionLocal';
 import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote } from '../utils/holdingValuation';
 import { lookupLiveQuoteForSymbol } from '../services/finnhubService';
 import {
@@ -696,8 +697,13 @@ export function computePersonalCommoditiesContributionSAR(
     const rawSar =
       px && Number.isFinite(px.price) ? px.price * (ch.quantity ?? 0) : (ch.currentValue ?? 0);
     valueSAR += Number.isFinite(rawSar) ? rawSar : 0;
-    const chg =
-      px && px.change != null && Number.isFinite(px.change) ? px.change * (ch.quantity ?? 0) : 0;
+    const changePerShare =
+      px && px.change != null && Number.isFinite(px.change)
+        ? resolveEquityListingExchange(sym) != null
+          ? quoteChangeForDailyPnL(sym, px.change)
+          : px.change
+        : 0;
+    const chg = changePerShare * (ch.quantity ?? 0);
     dailyDeltaSAR += Number.isFinite(chg) ? chg : 0;
   }
   return { valueSAR, dailyDeltaSAR };

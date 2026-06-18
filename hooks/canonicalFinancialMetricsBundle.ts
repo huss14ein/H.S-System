@@ -6,6 +6,7 @@ import {
   type CanonicalFinancialMetrics,
 } from '../services/canonicalFinancialMetrics';
 import type { SimulatedPriceMap } from '../services/investmentPlatformCardMetrics';
+import { rescaleHeadlineInvestmentAllocation } from '../services/headlineInvestmentAllocation';
 
 export type UseCanonicalFinancialMetricsResult = CanonicalFinancialMetrics & {
   data: FinancialData | null;
@@ -32,7 +33,14 @@ function wrapMetricsResult(
   metricsExtendedReady: boolean,
 ): UseCanonicalFinancialMetricsResult {
   const { data, exchangeRate, getAvailableCashForAccount, debouncedPrices } = args;
-  const parts = metrics.headlineExposureParts;
+  const parts = metrics.investmentExposure
+    ? {
+        totalExposureSar: metrics.investmentExposure.totalExposureSar,
+        platformsRollupSar: metrics.investmentExposure.platformsRollupSar,
+        commoditiesValueSar: metrics.investmentExposure.commoditiesValueSar,
+        sukukAssetsValueSar: metrics.investmentExposure.sukukAssetsValueSar,
+      }
+    : metrics.headlineExposureParts;
   return {
     data,
     exchangeRate,
@@ -103,6 +111,20 @@ export function overlayLiveQuoteTierOntoExtendedMetrics(
   extended: UseCanonicalFinancialMetricsResult,
   live: UseCanonicalFinancialMetricsResult,
 ): UseCanonicalFinancialMetricsResult {
+  const investmentExposure = live.investmentExposure ?? extended.investmentExposure;
+  const headlineExposureParts = investmentExposure
+    ? {
+        totalExposureSar: investmentExposure.totalExposureSar,
+        platformsRollupSar: investmentExposure.platformsRollupSar,
+        commoditiesValueSar: investmentExposure.commoditiesValueSar,
+        sukukAssetsValueSar: investmentExposure.sukukAssetsValueSar,
+      }
+    : live.headlineExposureParts;
+  const investmentAllocation =
+    extended.investmentAllocation.portfolioAllocation.length > 0 ||
+    extended.investmentAllocation.assetClassAllocation.length > 0
+      ? rescaleHeadlineInvestmentAllocation(extended.investmentAllocation, headlineExposureParts)
+      : live.investmentAllocation;
   return {
     ...extended,
     simulatedPrices: live.simulatedPrices,
@@ -114,13 +136,13 @@ export function overlayLiveQuoteTierOntoExtendedMetrics(
     liquidCashSar: live.liquidCashSar,
     sarPerUsd: live.sarPerUsd,
     nwOptions: live.nwOptions,
-    investmentExposure: live.investmentExposure,
-    investmentsTotalSar: live.investmentsTotalSar,
-    headlineExposureParts: live.headlineExposureParts,
-    investmentAllocation: live.investmentAllocation,
-    platformsRollupSar: live.platformsRollupSar,
-    commoditiesValueSar: live.commoditiesValueSar,
-    sukukAssetsValueSar: live.sukukAssetsValueSar,
+    investmentExposure,
+    investmentsTotalSar: investmentExposure?.totalExposureSar ?? live.investmentsTotalSar,
+    headlineExposureParts,
+    investmentAllocation,
+    platformsRollupSar: headlineExposureParts.platformsRollupSar,
+    commoditiesValueSar: headlineExposureParts.commoditiesValueSar,
+    sukukAssetsValueSar: headlineExposureParts.sukukAssetsValueSar,
     buckets: live.buckets,
     metricsExtendedReady: extended.metricsExtendedReady,
   };

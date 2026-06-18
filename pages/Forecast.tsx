@@ -12,7 +12,6 @@ import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import { useCurrency } from '../context/CurrencyContext';
 import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
-import { useLiveQuotePrices } from '../hooks/useLiveQuotePrices';
 import { pickInvestmentsTotalSar } from '../services/extendedMetricsPresentation';
 import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
 import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
@@ -22,7 +21,6 @@ import type { Page, Transaction } from '../types';
 import { normalizedMonthlyExpenseSar, personalMonthlyNetByMonthKeySar, savingsRateSarFinancialMonth } from '../services/financeMetrics';
 import { stressTestScenario, compareStrategies } from '../services/stressScenario';
 import AIAdvisor from '../components/AIAdvisor';
-import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import { projectForecastSeries, downsampleForecastRows, type ForecastMonthRow } from '../services/forecastProjection';
@@ -34,13 +32,12 @@ const TOOLTIP_STYLE = { backgroundColor: 'white', border: '1px solid #e2e8f0', b
 
 const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
-    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data } = useContext(DataContext)!;
     const { computeData } = usePageDeferredData();
     const engineData = computeData ?? data;
     const { exchangeRate, currency: displayCurrency } = useCurrency();
     const metrics = useExtendedCanonicalMetrics();
-    const simulatedPrices = useLiveQuotePrices();
-    const { netWorth: headlineNetWorth, sarPerUsd, liquidCashSar, extendedReady } = metrics;
+    const { netWorth: headlineNetWorth, sarPerUsd, liquidCashSar, extendedReady, kpiSnapshot } = metrics;
     const investmentsTotalSar = pickInvestmentsTotalSar(metrics, extendedReady);
     const baselinesPending = metrics.showHydrateBanner || !extendedReady;
     useHydrateSarPerUsdDailySeries(data, exchangeRate);
@@ -287,11 +284,11 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const forecastValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
         const fx = sarPerUsd;
-        const kpis = computeMonthlyReportFinancialKpis(engineData, exchangeRate, getAvailableCashForAccount, simulatedPrices);
+        const referenceRoi = kpiSnapshot?.roi;
         if (!Number.isFinite(fx) || fx <= 0) warnings.push('Exchange rate is invalid — USD-linked balances may mis-state projections.');
         if (!Number.isFinite(initialValues.netWorth)) warnings.push('Net worth baseline is invalid.');
         if (!Number.isFinite(initialValues.investmentValue) || initialValues.investmentValue < 0) warnings.push('Investment baseline is invalid.');
-        if (!Number.isFinite(kpis.roi)) warnings.push('Reference ROI could not be computed.');
+        if (!Number.isFinite(referenceRoi)) warnings.push('Reference ROI could not be computed.');
         if (monthlySavings < 0) warnings.push('Monthly savings is negative; the model uses zero instead.');
         if (!Number.isFinite(stressInputs.monthlyExpense) || stressInputs.monthlyExpense <= 0) {
             warnings.push('Monthly expense estimate is thin — stress test is less meaningful.');
@@ -304,9 +301,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         return warnings;
     }, [
         engineData,
-        exchangeRate,
-        getAvailableCashForAccount,
-        simulatedPrices,
+        kpiSnapshot,
         initialValues,
         monthlySavings,
         stressInputs.monthlyExpense,

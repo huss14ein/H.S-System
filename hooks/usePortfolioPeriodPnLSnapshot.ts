@@ -15,6 +15,7 @@ import type { SimulatedPriceMap } from '../services/investmentPlatformCardMetric
 import { financialDataHasHydrated } from '../services/financialDataHydration';
 import { scheduleIdleWorkAsync, waitUntilBackgroundWorkResumed } from '../utils/runWhenIdle';
 import { yieldToMain } from '../utils/yieldToMain';
+import { useDebouncedValue } from './useDebouncedValue';
 
 type PortfolioPeriodPnLCore = {
   weeklyTotalSar: number;
@@ -56,13 +57,14 @@ export function usePortfolioPeriodPnLSnapshot(args: {
   const { getAvailableCashForAccount } = useContext(DataContext)!;
   const [snapshot, setSnapshot] = useState<PortfolioPeriodPnLCore>(EMPTY_CORE);
   const { data, portfolios, accounts, sarPerUsd, simulatedPrices, locale } = args;
+  const debouncedPrices = useDebouncedValue(simulatedPrices, 800);
 
   const fingerprint = [
     data?.accounts?.length ?? 0,
     data?.transactions?.length ?? 0,
     data?.investmentTransactions?.length ?? 0,
     portfolios.length,
-    Object.keys(simulatedPrices).length,
+    Object.keys(debouncedPrices).length,
     sarPerUsd,
   ].join(':');
 
@@ -76,7 +78,7 @@ export function usePortfolioPeriodPnLSnapshot(args: {
       return;
     }
 
-    setSnapshot((prev) => ({ ...prev, ready: false, sparklinesReady: false }));
+    setSnapshot((prev) => ({ ...prev, sparklinesReady: false }));
     let aborted = false;
     const cancelIdle = scheduleIdleWorkAsync(async () => {
       await waitUntilBackgroundWorkResumed();
@@ -88,7 +90,7 @@ export function usePortfolioPeriodPnLSnapshot(args: {
         portfolios,
         accounts,
         sarPerUsd,
-        simulatedPrices,
+        simulatedPrices: debouncedPrices,
         monthStartDay,
         getAvailableCashForAccount,
         locale: locale ?? 'en-US',
@@ -134,7 +136,7 @@ export function usePortfolioPeriodPnLSnapshot(args: {
       aborted = true;
       cancelIdle();
     };
-  }, [enabled, data, portfolios, accounts, sarPerUsd, simulatedPrices, locale, getAvailableCashForAccount, fingerprint]);
+  }, [enabled, data, portfolios, accounts, sarPerUsd, debouncedPrices, locale, getAvailableCashForAccount, fingerprint]);
 
   const pnlByPortfolioId = useMemo(
     () => (snapshot.summary ? portfolioPeriodPnLMap(snapshot.summary) : new Map()),

@@ -155,8 +155,23 @@ export function buildFastCanonicalFinancialMetrics(
   input: CanonicalFinancialMetricsInput,
 ): CanonicalFinancialMetrics {
   const dashboard = computeDashboardCanonicalMetrics(input);
-  const investmentsTotalSar = Math.max(0, dashboard.headline.buckets.investments);
+  const investmentExposure = dashboard.kpiSnapshot?.headlineInvestmentExposure ?? null;
+  const investmentsTotalSar =
+    investmentExposure?.totalExposureSar ?? Math.max(0, dashboard.headline.buckets.investments);
   const investableCashTotalSar = dashboard.investableCashBars.reduce((s, row) => s + row.sar, 0);
+  const headlineExposureParts: HeadlineExposureParts = investmentExposure
+    ? {
+        totalExposureSar: investmentExposure.totalExposureSar,
+        platformsRollupSar: investmentExposure.platformsRollupSar,
+        commoditiesValueSar: investmentExposure.commoditiesValueSar,
+        sukukAssetsValueSar: investmentExposure.sukukAssetsValueSar,
+      }
+    : {
+        totalExposureSar: investmentsTotalSar,
+        platformsRollupSar: 0,
+        commoditiesValueSar: 0,
+        sukukAssetsValueSar: 0,
+      };
   return {
     ...dashboard,
     breakdown: {
@@ -167,14 +182,9 @@ export function buildFastCanonicalFinancialMetrics(
     },
     wealthSummary: null,
     investableCashTotalSar,
-    investmentExposure: null,
+    investmentExposure,
     investmentsTotalSar,
-    headlineExposureParts: {
-      totalExposureSar: investmentsTotalSar,
-      platformsRollupSar: 0,
-      commoditiesValueSar: 0,
-      sukukAssetsValueSar: 0,
-    },
+    headlineExposureParts,
     investmentAllocation: EMPTY_INVESTMENT_ALLOCATION(investmentsTotalSar),
   };
 }

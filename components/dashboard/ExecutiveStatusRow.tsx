@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { useLanguage } from '../../context/LanguageContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import type { DashboardCanonicalMetrics } from '../../services/canonicalFinancialMetrics';
+import { pickHeadlineInvestmentsExposureSar } from '../../services/extendedMetricsPresentation';
 import { ScaleIcon } from '../icons/ScaleIcon';
 import { BanknotesIcon } from '../icons/BanknotesIcon';
 import { ArrowTrendingUpIcon } from '../icons/ArrowTrendingUpIcon';
@@ -50,8 +51,8 @@ export const ExecutiveStatusRow: React.FC<{
     /** Headline path: `computePersonalHeadlineNetWorthSar` + `computeDashboardKpiSnapshot`. */
     const netWorthSar = metrics.headline.netWorth ?? 0;
     const liquidSar = metrics.kpiSnapshot?.liquidCashSar ?? 0;
-    /** Same as Investments hub `totalExposureSar` (live quotes + platform cash). */
-    const investedSar = Math.max(0, metrics.headline.buckets?.investments ?? 0);
+    /** Same as Investments hub Total Value (`pickHeadlineInvestmentExposure`). */
+    const investedSar = pickHeadlineInvestmentsExposureSar(metrics);
     return [
       {
         title: t('netWorth'),

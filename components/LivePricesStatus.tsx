@@ -3,6 +3,8 @@ import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import { DataContext } from '../context/DataContext';
 import { collectTrackedSymbols, getStaleQuoteSymbols } from '../services/dataQuality';
 import { getExchangeMarketStatus } from '../services/finnhubService';
+import { quoteSourceDisplayLabel, isQuotesFromLiveApi } from '../services/quoteSessionStatus';
+import type { QuotesPriceSource } from '../context/MarketDataContext';
 
 function formatRelativeTime(date: Date | null): string {
   if (!date) return '—';
@@ -14,6 +16,16 @@ function formatRelativeTime(date: Date | null): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function sourceTone(source: QuotesPriceSource): { text: string; dot: string; pill: string } {
+  if (source === 'live') {
+    return { text: 'text-green-700', dot: 'bg-green-500', pill: 'bg-green-100 text-green-700' };
+  }
+  if (source === 'cached') {
+    return { text: 'text-sky-700', dot: 'bg-sky-500', pill: 'bg-sky-100 text-sky-700' };
+  }
+  return { text: 'text-amber-700', dot: 'bg-amber-500', pill: 'bg-amber-100 text-amber-700' };
+}
+
 interface LivePricesStatusProps {
   /** Inline (single line) or badge-only */
   variant?: 'inline' | 'badge';
@@ -21,19 +33,22 @@ interface LivePricesStatusProps {
 }
 
 /**
- * Shows whether prices are live or simulated and when they were last updated.
- * Use on Watchlist, Investments, and anywhere prices are shown.
+ * Shows whether prices are live, cached, or simulated and when they were last updated.
+ * Uses `quotesPriceSource` — same signal as the header refresh badge.
  */
 const LivePricesStatus: React.FC<LivePricesStatusProps> = ({ variant = 'inline', className = '' }) => {
-  const { isLive, lastUpdated, isRefreshing, quotesRefreshUIScope, symbolQuoteUpdatedAt } = useMarketQuoteMeta();
+  const { quotesPriceSource, lastUpdated, isRefreshing, quotesRefreshUIScope, symbolQuoteUpdatedAt } =
+    useMarketQuoteMeta();
   const inlineRefreshing = isRefreshing && quotesRefreshUIScope.mode === 'all';
+  const label = quoteSourceDisplayLabel(quotesPriceSource);
+  const tone = sourceTone(quotesPriceSource);
   const dataCtx = useContext(DataContext);
   const staleSymbols = useMemo(() => {
     const d = dataCtx?.data;
     if (!d || Object.keys(symbolQuoteUpdatedAt).length === 0) return [] as string[];
     const syms = collectTrackedSymbols(d as Parameters<typeof collectTrackedSymbols>[0]);
-    return getStaleQuoteSymbols(syms, symbolQuoteUpdatedAt, isLive);
-  }, [dataCtx?.data, symbolQuoteUpdatedAt, isLive]);
+    return getStaleQuoteSymbols(syms, symbolQuoteUpdatedAt, isQuotesFromLiveApi(quotesPriceSource));
+  }, [dataCtx?.data, symbolQuoteUpdatedAt, quotesPriceSource]);
   const [relativeTime, setRelativeTime] = useState(() => formatRelativeTime(lastUpdated));
   const [usSession, setUsSession] = useState<string | null>(null);
 
@@ -44,7 +59,7 @@ const LivePricesStatus: React.FC<LivePricesStatusProps> = ({ variant = 'inline',
   }, [lastUpdated]);
 
   useEffect(() => {
-    if (!isLive || !import.meta.env.VITE_FINNHUB_API_KEY) {
+    if (!isQuotesFromLiveApi(quotesPriceSource) || !import.meta.env.VITE_FINNHUB_API_KEY) {
       setUsSession(null);
       return;
     }
@@ -66,38 +81,35 @@ const LivePricesStatus: React.FC<LivePricesStatusProps> = ({ variant = 'inline',
     return () => {
       cancelled = true;
     };
-  }, [isLive]);
+  }, [quotesPriceSource]);
 
   if (variant === 'badge') {
     return (
       <span
-        className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full ${isLive ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'} ${className}`}
+        className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full ${tone.pill} ${className}`}
         title={
           [
             staleSymbols.length > 0
               ? `${staleSymbols.length} symbol(s) may need refresh: ${staleSymbols.slice(0, 5).join(', ')}`
               : null,
-            isLive ? `Live prices • Updated ${relativeTime}` : 'Simulated prices (click Refresh in header for live)',
+            `${label} prices • Updated ${relativeTime}`,
             usSession || null,
           ]
             .filter(Boolean)
             .join(' · ')
         }
       >
-        <span className={`w-1.5 h-1.5 rounded-full ${isLive ? 'bg-green-500' : 'bg-amber-500'}`} />
-        {isLive ? 'Live' : 'Simulated'}
+        <span className={`w-1.5 h-1.5 rounded-full ${tone.dot}`} />
+        {label}
       </span>
     );
   }
 
   return (
     <div className={`inline-flex items-center gap-1.5 text-xs text-slate-500 ${className}`}>
-      <span className={`inline-flex items-center gap-1.5 font-medium ${isLive ? 'text-green-700' : 'text-amber-700'}`}>
-        <span
-          className={`w-2 h-2 rounded-full flex-shrink-0 ${isLive ? 'bg-green-500' : 'bg-amber-500'}`}
-          title={isLive ? 'Live market prices' : 'Simulated prices'}
-        />
-        {isLive ? 'Live prices' : 'Simulated prices'}
+      <span className={`inline-flex items-center gap-1.5 font-medium ${tone.text}`}>
+        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${tone.dot}`} title={`${label} prices`} />
+        {label === 'Live' ? 'Live prices' : label === 'Cached' ? 'Cached prices' : 'Simulated prices'}
       </span>
       <span className="text-slate-400">·</span>
       <span className="tabular-nums whitespace-nowrap">

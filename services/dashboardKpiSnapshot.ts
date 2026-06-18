@@ -8,6 +8,7 @@ import { hydrateSarPerUsdDailySeries, fxMapForKpiCompute, getSarPerUsdForCalenda
 import { computePersonalHeadlineNetWorthSar } from './personalNetWorth';
 import {
   computeHeadlinePersonalInvestmentRoiDecimal,
+  type HeadlinePersonalInvestmentRoi,
   type InvestmentCapitalSource,
 } from './investmentKpiCore';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
@@ -99,6 +100,8 @@ export type DashboardKpiSnapshot = {
   avgMonthlyIncomeSar6Mo: number;
   /** How ROI net-capital denominator was chosen (`investmentKpiCore`). */
   investmentCapitalSource: InvestmentCapitalSource;
+  /** Full headline investment rollup (same path as Investments hub KPI cards). */
+  headlineInvestmentExposure: HeadlinePersonalInvestmentRoi;
 };
 
 export function computeDashboardKpiSnapshot(
@@ -193,6 +196,7 @@ export function computeDashboardKpiSnapshot(
       liquidCashSar,
       avgMonthlyIncomeSar6Mo,
       investmentCapitalSource,
+      headlineInvestmentExposure: headlineInv,
     };
   } catch (e) {
     console.error('computeDashboardKpiSnapshot:', e);

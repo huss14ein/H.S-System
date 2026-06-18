@@ -21,9 +21,8 @@ describe('market data refresh wiring', () => {
   it('MarketSimulator drains pending symbols after cooldown for manual sessions', () => {
     const sim = read('components/MarketSimulator.tsx');
     expect(sim).toContain('pendingLiveFetchSymbolsRef.current.length > 0');
-    expect(sim).toContain('isManualRefreshSession');
     expect(sim).toContain('pendingLiveFetchSymbolsRef.current = []');
-    expect(sim).toContain('priceScope.manual === true && forceFetch');
-    expect(sim).toContain('isManualRefreshSession?.()');
+    expect(sim).toContain('forceFetch: true, manual: true, silent: true');
+    expect(sim).toContain('subscribeQuoteRefreshCooldownEnd');
   });
 });

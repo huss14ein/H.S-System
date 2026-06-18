@@ -68,7 +68,8 @@ describe('market session daily P/L E2E', () => {
 describe('live quotes E2E wiring', () => {
   it('stale bootstrap + cooldown drain + header force refresh (desktop + mobile)', () => {
     expect(read('components/MarketSimulator.tsx')).toContain('didScheduleStaleRefreshRef');
-    expect(read('components/MarketSimulator.tsx')).toContain('During cooldown: keep isRefreshing');
+    expect(read('components/MarketSimulator.tsx')).toContain('silent: true');
+    expect(read('components/MarketSimulator.tsx')).toContain('finishQuotesRefresh');
     expect(read('components/Header.tsx')).toMatch(/refreshPrices\(\{ forceFetch: true \}\)/g);
   });
 });
