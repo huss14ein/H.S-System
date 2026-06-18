@@ -19,14 +19,14 @@ describe('market session daily P/L E2E', () => {
     expect(read('services/portfolioPeriodPnL.ts')).toContain('dailyPnLSAR');
   });
 
-  it('quoteDailyPnLInBookCurrency returns zero when US market closed', () => {
+  it('quoteDailyPnLInBookCurrency uses provider day change outside session', () => {
     const satEt = new Date('2026-06-06T18:00:00Z');
     expect(
       quoteDailyPnLInBookCurrency(2, 10, 'AAPL', 'USD', 3.75, satEt),
-    ).toBe(0);
+    ).toBe(20);
   });
 
-  it('platform card metrics zero daily P/L when session closed', () => {
+  it('platform card metrics use live quote change for daily P/L outside session', () => {
     const satEt = new Date('2026-06-06T18:00:00Z');
     const holding: Holding = {
       id: 'h1',
@@ -45,6 +45,7 @@ describe('market session daily P/L E2E', () => {
       holdings: [holding],
     };
     const account: Account = { id: 'acc1', name: 'Broker', type: 'Investment', balance: 0 };
+    const live = { AAPL: { price: 110, change: 2 } };
     const metrics = computePlatformCardMetrics({
       portfolios: [portfolio],
       transactions: [] as InvestmentTransaction[],
@@ -52,11 +53,50 @@ describe('market session daily P/L E2E', () => {
       allInvestments: [portfolio],
       sarPerUsd: 3.75,
       availableCashByCurrency: { SAR: 0, USD: 0 },
-      simulatedPrices: { AAPL: { price: 110, change: 2 } },
+      simulatedPrices: live,
+      dailyPnLPrices: live,
       platformCurrency: 'USD',
       asOf: satEt,
     });
-    expect(metrics.dailyPnLSAR).toBe(0);
+    expect(metrics.dailyPnLSAR).toBeCloseTo(20 * 3.75, 4);
+  });
+
+  it('platform card derives daily P/L from changePercent when change is zero', () => {
+    const holding: Holding = {
+      id: 'h1',
+      symbol: 'AAPL',
+      name: 'Apple',
+      quantity: 10,
+      avgCost: 100,
+      currentValue: 1100,
+      zakahClass: 'Zakatable',
+    };
+    const portfolio: InvestmentPortfolio = {
+      id: 'p1',
+      name: 'Main',
+      accountId: 'acc1',
+      currency: 'USD',
+      holdings: [holding],
+    };
+    const account: Account = { id: 'acc1', name: 'Broker', type: 'Investment', balance: 0 };
+    const live = { AAPL: { price: 110, change: 0, changePercent: 2 } };
+    const metrics = computePlatformCardMetrics({
+      portfolios: [portfolio],
+      transactions: [] as InvestmentTransaction[],
+      accounts: [account],
+      allInvestments: [portfolio],
+      sarPerUsd: 3.75,
+      availableCashByCurrency: { SAR: 0, USD: 0 },
+      simulatedPrices: live,
+      dailyPnLPrices: live,
+      platformCurrency: 'USD',
+    });
+    expect(metrics.dailyPnLSAR).toBeCloseTo(10 * 110 * 0.02 * 3.75, 2);
+  });
+
+  it('Investments platform card passes dailyPnLPrices from live quotes', () => {
+    const page = read('pages/Investments.tsx');
+    expect(page).toContain('dailyPnLPrices: throttledPrices');
   });
 
   it('headline rollup uses same platform card path', () => {

@@ -86,13 +86,12 @@ export function isEquityDailyPnLSessionOpen(symbol: string | null | undefined, n
   return isEquityListingRegularSessionOpen(exchange, now);
 }
 
-/** Daily P/L change — zero outside the symbol's regular session. */
+/** Daily P/L change per share — provider day move vs prior close (broker-style). */
 export function quoteChangeForDailyPnL(
-  symbol: string | null | undefined,
+  _symbol: string | null | undefined,
   change: number | undefined,
-  now: Date = new Date(),
+  _now: Date = new Date(),
 ): number {
   if (!Number.isFinite(change)) return 0;
-  if (!isEquityDailyPnLSessionOpen(symbol, now)) return 0;
   return change as number;
 }

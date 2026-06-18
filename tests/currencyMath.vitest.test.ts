@@ -85,8 +85,8 @@ describe('currencyMath', () => {
     expect(quoteDailyPnLInBookCurrency(2, 5, 'AAPL', 'SAR', rate, openSession)).toBeCloseTo(37.5, 8);
   });
 
-  it('quoteDailyPnLInBookCurrency is zero outside regular session', () => {
+  it('quoteDailyPnLInBookCurrency uses provider change outside regular session', () => {
     const satEt = new Date('2026-06-06T18:00:00Z');
-    expect(quoteDailyPnLInBookCurrency(2, 5, 'AAPL', 'SAR', 3.75, satEt)).toBe(0);
+    expect(quoteDailyPnLInBookCurrency(2, 5, 'AAPL', 'SAR', 3.75, satEt)).toBeCloseTo(37.5, 8);
   });
 });

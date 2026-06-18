@@ -25,6 +25,20 @@ import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolio
 
 export type SimulatedPriceMap = Record<string, { price: number; change?: number; changePercent?: number }>;
 
+/** Resolve per-share day change from quote row (change or derived from changePercent). */
+export function resolveQuoteChangePerShare(
+  info: { price?: number; change?: number; changePercent?: number } | null | undefined,
+): number {
+  if (!info) return 0;
+  if (Number.isFinite(info.change) && info.change !== 0) return info.change as number;
+  const price = info.price;
+  const pct = info.changePercent;
+  if (Number.isFinite(price) && Number.isFinite(pct) && (price as number) > 0) {
+    return ((price as number) * (pct as number)) / 100;
+  }
+  return Number.isFinite(info.change) ? (info.change as number) : 0;
+}
+
 export interface PlatformCardMetrics {
   totalValue: number;
   totalValueInSAR: number;
@@ -71,6 +85,8 @@ export interface ComputePlatformCardMetricsArgs {
   unrealizedPnLBasis?: 'net_capital' | 'holdings_cost';
   /** Session clock for daily P/L (defaults to now). */
   asOf?: Date;
+  /** Live quote map for daily P/L — defaults to `simulatedPrices`. Use session/live ticks so `change` is fresh. */
+  dailyPnLPrices?: SimulatedPriceMap;
 }
 
 /**
@@ -89,7 +105,9 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
     platformCurrency,
     unrealizedPnLBasis = 'net_capital',
     asOf = new Date(),
+    dailyPnLPrices,
   } = args;
+  const pricesForDailyPnL = dailyPnLPrices ?? simulatedPrices;
 
   /** One implementation for position market value: {@link effectiveHoldingValueInBookCurrency} (same as holdings table / Overview). */
   let holdingsValueInSAR = 0;
@@ -232,9 +250,10 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
       const qty = h.quantity ?? 0;
       if (qty <= 0) return;
       const symRaw = (h.symbol || '').trim();
-      const info = lookupLiveQuoteForSymbol(simulatedPrices, symRaw);
+      const info = lookupLiveQuoteForSymbol(pricesForDailyPnL, symRaw);
       if (!info) return;
-      const d = quoteDailyPnLInBookCurrency(info.change ?? 0, qty, symRaw.toUpperCase(), cur, rate, asOf);
+      const changePerShare = resolveQuoteChangePerShare(info);
+      const d = quoteDailyPnLInBookCurrency(changePerShare, qty, symRaw.toUpperCase(), cur, rate, asOf);
       if (cur === 'SAR') dailySar += d;
       else dailyUsd += d;
     });
@@ -450,6 +469,7 @@ export function computePortfolioMetricsBundle(args: {
   allInvestments: InvestmentPortfolio[];
   sarPerUsd: number;
   simulatedPrices: SimulatedPriceMap;
+  dailyPnLPrices?: SimulatedPriceMap;
   accountAvailableCashByCurrency: { SAR: number; USD: number };
 }): PortfolioMetricsBundle {
   const {
@@ -459,6 +479,7 @@ export function computePortfolioMetricsBundle(args: {
     allInvestments: invList,
     sarPerUsd: rate,
     simulatedPrices,
+    dailyPnLPrices,
     accountAvailableCashByCurrency,
   } = args;
 
@@ -483,6 +504,7 @@ export function computePortfolioMetricsBundle(args: {
         sarPerUsd: rate,
         availableCashByCurrency: accountAvailableCashByCurrency,
         simulatedPrices,
+        dailyPnLPrices,
         platformCurrency: pc,
         unrealizedPnLBasis: 'net_capital',
       }),
@@ -514,6 +536,7 @@ export function computePortfolioMetricsBundle(args: {
         sarPerUsd: rate,
         availableCashByCurrency: { SAR: 0, USD: 0 },
         simulatedPrices,
+        dailyPnLPrices,
         platformCurrency: pc,
         unrealizedPnLBasis: 'net_capital',
       }),
@@ -698,10 +721,10 @@ export function computePersonalCommoditiesContributionSAR(
       px && Number.isFinite(px.price) ? px.price * (ch.quantity ?? 0) : (ch.currentValue ?? 0);
     valueSAR += Number.isFinite(rawSar) ? rawSar : 0;
     const changePerShare =
-      px && px.change != null && Number.isFinite(px.change)
+      px && (px.change != null || px.changePercent != null)
         ? resolveEquityListingExchange(sym) != null
-          ? quoteChangeForDailyPnL(sym, px.change)
-          : px.change
+          ? quoteChangeForDailyPnL(sym, resolveQuoteChangePerShare(px))
+          : resolveQuoteChangePerShare(px)
         : 0;
     const chg = changePerShare * (ch.quantity ?? 0);
     dailyDeltaSAR += Number.isFinite(chg) ? chg : 0;
