@@ -2585,10 +2585,11 @@ const PlatformCardInner: React.FC<{
                 sarPerUsd,
                 availableCashByCurrency,
                 simulatedPrices: kpiQuotePrices,
+                dailyPnLPrices: throttledPrices,
                 platformCurrency,
                 unrealizedPnLBasis: 'net_capital',
             }),
-        [portfoliosForMetrics, transactions, metricsTransactions, kpiQuotePrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx?.accounts, investmentsForInfer],
+        [portfoliosForMetrics, transactions, metricsTransactions, kpiQuotePrices, throttledPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx?.accounts, investmentsForInfer],
     );
 
     /** Position values from {@link effectiveHoldingValueInBookCurrency} — matches `computePlatformCardMetrics` / portfolio KPIs. */
@@ -2641,6 +2642,7 @@ const PlatformCardInner: React.FC<{
                 allInvestments: investmentsForInfer,
                 sarPerUsd,
                 simulatedPrices: kpiQuotePrices,
+                dailyPnLPrices: throttledPrices,
                 accountAvailableCashByCurrency: availableCashByCurrency,
             });
             if (aborted) return;
@@ -2659,6 +2661,7 @@ const PlatformCardInner: React.FC<{
         investmentsForInfer,
         sarPerUsd,
         kpiQuotePrices,
+        throttledPrices,
         availableCashByCurrency,
     ]);
 

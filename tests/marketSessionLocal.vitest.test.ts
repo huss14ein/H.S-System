@@ -15,16 +15,16 @@ describe('marketSessionLocal', () => {
     expect(resolveEquityListingExchange('XAUUSD')).toBeNull();
   });
 
-  it('zeros daily change when US market is closed (weekend ET)', () => {
+  it('returns provider day change regardless of session clock', () => {
     const satEt = new Date('2026-06-06T18:00:00Z');
     expect(isUsEquityRegularSessionOpen(satEt)).toBe(false);
-    expect(quoteChangeForDailyPnL('AAPL', 2.5, satEt)).toBe(0);
+    expect(quoteChangeForDailyPnL('AAPL', 2.5, satEt)).toBe(2.5);
   });
 
-  it('zeros daily change when Tadawul is closed (Friday AST)', () => {
+  it('returns Tadawul day change when Friday AST session closed', () => {
     const friRiyadh = new Date('2026-06-05T10:00:00Z');
     expect(isTadawulRegularSessionOpen(friRiyadh)).toBe(false);
-    expect(quoteChangeForDailyPnL('2222.SR', 1.2, friRiyadh)).toBe(0);
+    expect(quoteChangeForDailyPnL('2222.SR', 1.2, friRiyadh)).toBe(1.2);
   });
 
   it('allows daily change during US regular hours', () => {
