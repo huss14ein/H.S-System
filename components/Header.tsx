@@ -568,8 +568,8 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
                         >
                             <ArrowPathIcon className={`h-6 w-6 text-gray-500 mb-2 ${headerRefreshing ? 'animate-spin' : ''}`} />
                             <span className="text-xs font-bold text-gray-700">Refresh</span>
-                            <span className={`absolute top-2 right-2 text-[8px] font-bold uppercase px-1 rounded ${isLive ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                                {isLive ? 'Live' : 'Sim'}
+                            <span className={`absolute top-2 right-2 text-[8px] font-bold uppercase px-1 rounded ${quotesPriceSource === 'live' ? 'bg-green-100 text-green-700' : quotesPriceSource === 'cached' ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-700'}`}>
+                                {quotesPriceSource === 'live' ? 'Live' : quotesPriceSource === 'cached' ? 'Cached' : 'Sim'}
                             </span>
                         </button>
                         <button 

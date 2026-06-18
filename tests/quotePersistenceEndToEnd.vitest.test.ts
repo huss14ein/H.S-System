@@ -11,6 +11,9 @@ const PRICE_DISPLAY_HOOKS = [
   'useMarketPrices',
   'useLiveQuotePrices',
   'useCanonicalSimulatedPrices',
+  'useExtendedCanonicalMetrics',
+  'useInvestmentsCanonicalMetrics',
+  'useCanonicalFinancialMetrics',
 ];
 
 describe('quote persistence E2E', () => {
@@ -66,7 +69,8 @@ describe('quote persistence E2E', () => {
     expect(read('pages/RecoveryPlanView.tsx')).toContain('useInvestmentsCanonicalMetrics');
     expect(read('components/Layout.tsx')).toContain('useLiveQuotePrices');
     expect(read('components/charts/NetWorthCockpit.tsx')).toContain('useLiveQuotePrices');
-    expect(read('pages/Forecast.tsx')).toContain('useLiveQuotePrices');
+    expect(read('pages/Forecast.tsx')).toContain('useExtendedCanonicalMetrics');
+    expect(read('pages/InvestmentOverview.tsx')).toContain('useExtendedCanonicalMetrics');
     expect(read('pages/WealthUltraDashboard.tsx')).toContain('useLiveQuotePrices');
   });
 

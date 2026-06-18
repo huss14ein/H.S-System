@@ -20,6 +20,12 @@ export type { UseCanonicalFinancialMetricsResult } from './canonicalFinancialMet
 export { buildCanonicalFinancialMetricsResult } from './canonicalFinancialMetricsBundle';
 export {
   headlineInvestmentsBucketSar,
+  pickHeadlineInvestmentsExposureSar,
+  pickHeadlineInvestmentExposure,
+  hasHeadlineInvestmentKpis,
+  buildInvestmentsHeadlineKpiRow,
+  headlineKpiMathIsConsistent,
+  pickDashboardRoiDecimal,
   pickInvestmentsTotalSar,
   pickCommoditiesValueSar,
   pickSukukAssetsValueSar,
@@ -29,11 +35,19 @@ export {
 } from '../services/extendedMetricsPresentation';
 
 /**
- * Live quotes for display (holdings, watchlist, trade modals).
- * KPI / headline paths use throttled prices inside CanonicalFinancialMetricsProvider.
+ * Quote map used for headline KPIs, exports, and reconciliation — same 250ms debounce as
+ * `CanonicalFinancialMetricsProvider` (not raw live ticks). Use `useLiveQuotePrices()` for holdings cells.
  */
 export function useCanonicalSimulatedPrices(): SimulatedPriceMap {
-  return useMarketPrices().simulatedPrices;
+  const shell = useCanonicalFinancialMetricsContext();
+  if (shell) return shell.full.simulatedPrices;
+  const { simulatedPrices } = useMarketPrices();
+  return useDebouncedValue(simulatedPrices, 250);
+}
+
+/** Alias — KPI quote map from the canonical metrics bundle. */
+export function useKpiQuotePrices(): SimulatedPriceMap {
+  return useCanonicalSimulatedPrices();
 }
 
 /**
@@ -59,7 +73,7 @@ export function useCanonicalFinancialMetricsLocal(): UseCanonicalFinancialMetric
   const getAvailableCashForAccount = ctx?.getAvailableCashForAccount;
   const { exchangeRate } = useCurrency();
   const { simulatedPrices } = useMarketPrices();
-  const debouncedPrices = useDebouncedValue(simulatedPrices, 400);
+  const debouncedPrices = useDebouncedValue(simulatedPrices, 250);
   useHydrateSarPerUsdDailySeries(data, exchangeRate);
 
   return useMemo(
@@ -95,7 +109,7 @@ export function useDashboardCanonicalMetricsLocal(): DashboardCanonicalMetrics &
   const getAvailableCashForAccount = ctx?.getAvailableCashForAccount;
   const { exchangeRate } = useCurrency();
   const { simulatedPrices } = useMarketPrices();
-  const debouncedPrices = useDebouncedValue(simulatedPrices, 400);
+  const debouncedPrices = useDebouncedValue(simulatedPrices, 250);
   useHydrateSarPerUsdDailySeries(data, exchangeRate);
 
   return useMemo(() => {

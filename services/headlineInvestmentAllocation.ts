@@ -130,6 +130,35 @@ export function buildHeadlineInvestmentAllocationSlices(
   };
 }
 
+/**
+ * Rescale extended allocation slices to live headline exposure without rebuilding chart rows.
+ */
+export function rescaleHeadlineInvestmentAllocation(
+  alloc: HeadlineInvestmentAllocationSlices,
+  exposure: Pick<
+    HeadlinePersonalInvestmentRoi,
+    'totalExposureSar' | 'platformsRollupSar' | 'commoditiesValueSar' | 'sukukAssetsValueSar'
+  >,
+): HeadlineInvestmentAllocationSlices {
+  if (alloc.portfolioAllocation.length === 0 && alloc.assetClassAllocation.length === 0) {
+    return alloc;
+  }
+  const totalSar = Math.max(0, exposure.totalExposureSar);
+  const platformCashSar = Math.max(0, Math.min(alloc.platformCashSar, exposure.platformsRollupSar));
+  const platformHoldingsSar = Math.max(0, exposure.platformsRollupSar - platformCashSar);
+  const commoditiesSar = Math.max(0, exposure.commoditiesValueSar);
+  const sukukSar = Math.max(0, exposure.sukukAssetsValueSar);
+  return {
+    totalSar,
+    platformHoldingsSar,
+    platformCashSar,
+    commoditiesSar,
+    sukukSar,
+    portfolioAllocation: scaleRows(alloc.portfolioAllocation, totalSar),
+    assetClassAllocation: scaleRows(alloc.assetClassAllocation, totalSar),
+  };
+}
+
 /** Sukuk from personal assets when exposure is unavailable (export / no cash fn). */
 export function sumPersonalSukukFromAssets(data: FinancialData | null | undefined): number {
   const { personalAssets } = getPersonalWealthData(data ?? ({} as FinancialData));

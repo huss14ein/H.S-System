@@ -14,6 +14,7 @@ function read(rel: string): string {
 describe('extended metrics end-to-end wiring', () => {
   it('shared helpers and gate components exist', () => {
     expect(read('services/extendedMetricsPresentation.ts')).toContain('pickInvestmentsTotalSar');
+    expect(read('services/extendedMetricsPresentation.ts')).toContain('hasHeadlineInvestmentKpis');
     expect(read('components/shared/ExtendedMetricGate.tsx')).toContain('SectionLoadingPlaceholder');
     expect(read('context/InvestmentsMetricsContext.tsx')).toContain('useExtendedCanonicalMetrics');
   });
@@ -36,7 +37,7 @@ describe('extended metrics end-to-end wiring', () => {
       { path: 'pages/Forecast.tsx', patterns: ['useExtendedCanonicalMetrics', 'pickInvestmentsTotalSar', 'SectionLoadingPlaceholder'] },
       { path: 'pages/Settings.tsx', patterns: ['useExtendedCanonicalMetrics', 'pickWealthSummary', 'ExtendedMetricGate'] },
       { path: 'pages/WealthUltraDashboard.tsx', patterns: ['useExtendedCanonicalMetrics', 'pickInvestmentsTotalSar', 'ExtendedMetricGate'] },
-      { path: 'pages/Investments.tsx', patterns: ['pickInvestmentsTotalSar', 'extendedReady'] },
+      { path: 'pages/Investments.tsx', patterns: ['buildInvestmentsHeadlineKpiRow', 'headlineKpisReady'] },
       { path: 'components/DashboardKpiQualityPanel.tsx', patterns: ['useExtendedCanonicalMetrics', 'pickWealthSummary', 'extendedReady'] },
     ];
     for (const { path, patterns } of checks) {

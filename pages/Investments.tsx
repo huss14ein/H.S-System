@@ -99,7 +99,7 @@ import {
   computePortfolioMetricsBundle,
   type PortfolioMetricsBundle,
 } from '../services/investmentPlatformCardMetrics';
-import { useCanonicalSpotFx, useExtendedCanonicalMetrics, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx, useExtendedCanonicalMetrics, buildInvestmentsHeadlineKpiRow } from '../hooks/useCanonicalFinancialMetrics';
 import { InvestmentsMetricsProvider, useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
 import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
@@ -2538,12 +2538,13 @@ const PlatformCardInner: React.FC<{
     portfolioPnLSummary: PortfolioPeriodPnLSummary | null;
     periodPnLReady: boolean;
     periodPnLSparklinesReady: boolean;
+    /** Canonical KPI quote map — platform card ROI/gain aligns with Investments headline cards. */
+    kpiQuotePrices: import('../services/investmentPlatformCardMetrics').SimulatedPriceMap;
 }> = (props) => {
-    const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, symbolNames = {}, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, isExpanded, onToggleExpanded, holdingsOutliers = [], setActivePage, portfolioPeriodPnLById, portfolioWeeklySparklineById, portfolioPnLSummary, periodPnLReady, periodPnLSparklinesReady } = props;
+    const { platform, portfolios, metricsPortfolios, transactions, metricsTransactions, goals, sarPerUsd, availableCashByCurrency = { SAR: 0, USD: 0 }, symbolNames = {}, onEditPlatform, onDeletePlatform, onAddPortfolio, onEditPortfolio, onDeletePortfolio, onHoldingClick, onEditHolding, isExpanded, onToggleExpanded, holdingsOutliers = [], setActivePage, portfolioPeriodPnLById, portfolioWeeklySparklineById, portfolioPnLSummary, periodPnLReady, periodPnLSparklinesReady, kpiQuotePrices } = props;
     const { simulatedPrices: livePrices } = useMarketPrices();
     const throttledPrices = useDebouncedValue(livePrices, 500);
     const simulatedPrices = isExpanded ? livePrices : throttledPrices;
-    const metricsPrices = throttledPrices;
     const { refreshPricesForPlatform, isRefreshing: quotesRefreshing, quotesRefreshUIScope } = useMarketQuoteMeta();
     const thisPlatformSyncing =
         quotesRefreshing &&
@@ -2583,11 +2584,11 @@ const PlatformCardInner: React.FC<{
                 allInvestments: investmentsForInfer,
                 sarPerUsd,
                 availableCashByCurrency,
-                simulatedPrices,
+                simulatedPrices: kpiQuotePrices,
                 platformCurrency,
                 unrealizedPnLBasis: 'net_capital',
             }),
-        [portfoliosForMetrics, transactions, metricsTransactions, simulatedPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx?.accounts, investmentsForInfer],
+        [portfoliosForMetrics, transactions, metricsTransactions, kpiQuotePrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx?.accounts, investmentsForInfer],
     );
 
     /** Position values from {@link effectiveHoldingValueInBookCurrency} — matches `computePlatformCardMetrics` / portfolio KPIs. */
@@ -2639,7 +2640,7 @@ const PlatformCardInner: React.FC<{
                 accounts: dataCtx?.accounts ?? [],
                 allInvestments: investmentsForInfer,
                 sarPerUsd,
-                simulatedPrices: metricsPrices,
+                simulatedPrices: kpiQuotePrices,
                 accountAvailableCashByCurrency: availableCashByCurrency,
             });
             if (aborted) return;
@@ -2657,7 +2658,7 @@ const PlatformCardInner: React.FC<{
         dataCtx?.accounts,
         investmentsForInfer,
         sarPerUsd,
-        metricsPrices,
+        kpiQuotePrices,
         availableCashByCurrency,
     ]);
 
@@ -3322,7 +3323,7 @@ const PlatformView: React.FC<{
     onEditHolding: (holding: Holding) => void;
 }> = (props) => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-    const { sarPerUsd, platformsRollupSar, extendedReady } = useInvestmentsCanonicalMetrics();
+    const { sarPerUsd, platformsRollupSar, simulatedPrices: kpiQuotePrices } = useInvestmentsCanonicalMetrics();
     const { simulatedPrices } = useMarketPrices();
     const { setActivePage, setActiveTab, onOpenAddPortfolio } = props;
     const personalInvestments = useMemo(() => getPersonalInvestments(data), [data]);
@@ -3448,7 +3449,7 @@ const PlatformView: React.FC<{
                             <div className="flex items-baseline gap-2">
                                 <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Your platforms total (holdings + cash, SAR)</span>
                                 <span className="text-xl sm:text-2xl text-primary tabular-nums tracking-tight inline-flex items-baseline">
-                                    {extendedReady ? (
+                                    {platformsRollupSar > 0 ? (
                                         <CurrencyDualDisplay value={aggregateValue} inCurrency="SAR" digits={2} size="xl" weight="bold" className="text-primary" />
                                     ) : (
                                         <span className="text-sm font-medium text-slate-500">Syncing metrics…</span>
@@ -3533,6 +3534,7 @@ const PlatformView: React.FC<{
                         periodPnLReady={portfolioPnL.ready}
                         periodPnLSparklinesReady={portfolioPnL.sparklinesReady}
                         symbolNames={platformSymbolNames}
+                        kpiQuotePrices={kpiQuotePrices}
                     />
                 ))}
             </div>
@@ -5194,7 +5196,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
     [recordTrade],
   );
   const { isAiAvailable, aiHealthChecked } = useAI();
-  const { isLive, lastUpdated } = useMarketQuoteMeta();
+  const { quotesPriceSource, lastUpdated } = useMarketQuoteMeta();
   const { formatCurrencyString } = useFormatCurrency();
   const { trackAction } = useSelfLearning();
   const [activeTab, setActiveTabState] = useState<InvestmentSubPage>('Overview');
@@ -5240,41 +5242,27 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
 
   const { currency: appDisplayCurrency } = useCurrency();
   const metrics = useInvestmentsCanonicalMetrics();
-  const { investmentExposure, extendedReady, kpiSnapshot } = metrics;
-  const { totalValue, totalGainLoss, roi, totalDailyPnL, trendPercentage, platformsRollupSAR, commoditiesValueSAR, sukukAssetsValueSAR } = useMemo(() => {
-    const h = investmentExposure;
-    if (h) {
-      const totalValue = h.totalExposureSar;
-      const totalGainLoss = h.totalGainLossSar;
-      const roi = Number.isFinite(h.roi) ? h.roi * 100 : 0;
-      const totalDailyPnL = h.platformsDailyPnLSar + h.commoditiesDailyPnLSar;
-      const previousTotalValue = totalValue - totalDailyPnL;
-      const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
-
-      return {
-        totalValue,
-        totalGainLoss,
-        roi,
-        totalDailyPnL,
-        trendPercentage,
-        platformsRollupSAR: h.platformsRollupSar,
-        commoditiesValueSAR: h.commoditiesValueSar,
-        sukukAssetsValueSAR: h.sukukAssetsValueSar,
-      };
-    }
-    const totalValue = pickInvestmentsTotalSar(metrics, extendedReady);
-    const roi = kpiSnapshot && Number.isFinite(kpiSnapshot.roi) ? kpiSnapshot.roi * 100 : 0;
-    return {
-      totalValue,
-      totalGainLoss: 0,
-      roi,
-      totalDailyPnL: 0,
-      trendPercentage: 0,
-      platformsRollupSAR: extendedReady ? metrics.platformsRollupSar : 0,
-      commoditiesValueSAR: extendedReady ? metrics.commoditiesValueSar : 0,
-      sukukAssetsValueSAR: extendedReady ? metrics.sukukAssetsValueSar : 0,
-    };
-  }, [investmentExposure, extendedReady, metrics, kpiSnapshot]);
+  const headlineKpis = useMemo(() => buildInvestmentsHeadlineKpiRow(metrics), [metrics]);
+  const headlineKpisReady = headlineKpis != null;
+  const {
+    totalValue,
+    totalGainLoss,
+    roi,
+    totalDailyPnL,
+    trendPercentage,
+    platformsRollupSAR,
+    commoditiesValueSAR,
+    sukukAssetsValueSAR,
+  } = headlineKpis ?? {
+    totalValue: 0,
+    totalGainLoss: 0,
+    roi: 0,
+    totalDailyPnL: 0,
+    trendPercentage: 0,
+    platformsRollupSAR: 0,
+    commoditiesValueSAR: 0,
+    sukukAssetsValueSAR: 0,
+  };
 
   const investmentsHubAiContext = useMemo(() => {
     if (!data) return undefined;
@@ -5645,12 +5633,18 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
             </div>
         </header>
 
-        <InvestmentsQuoteStatusBanner isLive={isLive} lastUpdated={lastUpdated} />
+        <InvestmentsQuoteStatusBanner quotesPriceSource={quotesPriceSource} lastUpdated={lastUpdated} />
 
         <section className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4" aria-label="Investment summary">
             <Card
                 title="Total Value"
-                value={<CurrencyDualDisplay value={totalValue} inCurrency="SAR" digits={2} size="2xl" />}
+                value={
+                    headlineKpisReady ? (
+                        <CurrencyDualDisplay value={totalValue} inCurrency="SAR" digits={2} size="2xl" />
+                    ) : (
+                        <ExtendedMetricGate ready={false} compact className="border-0 bg-transparent py-2" />
+                    )
+                }
                 density="compact"
                 indicatorColor="green"
                 valueColor="text-emerald-700"
@@ -5660,7 +5654,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
             <Card
                 title="Net Gain/Loss"
                 value={
-                    extendedReady ? (
+                    headlineKpisReady ? (
                         <CurrencyDualDisplay value={totalGainLoss} inCurrency="SAR" digits={2} colorize size="2xl" />
                     ) : (
                         <ExtendedMetricGate ready={false} compact className="border-0 bg-transparent py-2" />
@@ -5674,7 +5668,13 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
             />
             <Card
                 title="Portfolio ROI"
-                value={`${roi.toFixed(2)}%`}
+                value={
+                    headlineKpisReady ? (
+                        `${roi.toFixed(2)}%`
+                    ) : (
+                        <ExtendedMetricGate ready={false} compact className="border-0 bg-transparent py-2" />
+                    )
+                }
                 valueColor={roi >= 0 ? 'text-emerald-700' : 'text-rose-700'}
                 density="compact"
                 indicatorColor={roi >= 0 ? 'green' : 'red'}
@@ -5684,13 +5684,13 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
             <Card
                 title="Daily P/L"
                 value={
-                    extendedReady ? (
+                    headlineKpisReady ? (
                         <CurrencyDualDisplay value={totalDailyPnL} inCurrency="SAR" digits={2} colorize size="2xl" />
                     ) : (
                         <ExtendedMetricGate ready={false} compact className="border-0 bg-transparent py-2" />
                     )
                 }
-                trend={extendedReady ? getTrendString(trendPercentage) : undefined}
+                trend={headlineKpisReady ? getTrendString(trendPercentage) : undefined}
                 tooltip="Estimated change today from price moves on your holdings (live or simulated quotes). Converted the same way as total value so it lines up with your portfolio currency and FX settings. Hover the amount to see USD equivalent."
                 density="compact"
                 indicatorColor={totalDailyPnL >= 0 ? 'green' : 'red'}
@@ -5698,7 +5698,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                 icon={<ArrowsRightLeftIcon className={`h-5 w-5 ${totalDailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
             />
         </section>
-        {extendedReady && (platformsRollupSAR > 0 || commoditiesValueSAR > 0 || sukukAssetsValueSAR > 0) && (
+        {headlineKpisReady && (platformsRollupSAR > 0 || commoditiesValueSAR > 0 || sukukAssetsValueSAR > 0) && (
             <p className="text-xs text-slate-500 -mt-2 px-0.5 leading-relaxed" role="note">
                 KPIs aggregate personal portfolios in <strong>each portfolio&apos;s base currency</strong> (USD or SAR), convert to SAR using your FX settings, then show amounts in your app currency ({appDisplayCurrency}). Commodities are valued in USD and converted consistently.
                 <span className="tabular-nums block mt-1">

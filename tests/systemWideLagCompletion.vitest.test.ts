@@ -91,9 +91,9 @@ describe('system-wide lag completion E2E', () => {
     const ctx = read('context/CanonicalFinancialMetricsContext.tsx');
     expect(ctx).toContain('overlayLiveQuoteTierOntoExtendedMetrics');
     expect(ctx).toContain('financialDataHasHydrated(data)');
-    expect(ctx).toContain('useDeferredValue(kpiQuotePrices)');
+    expect(ctx).toContain('compactQuotePriceFingerprint');
     expect(ctx).toMatch(
-      /}, \[extendedFingerprint, metricsData, exchangeRate, getAvailableCashForAccount, deferredKpiPrices\]\)/,
+      /}, \[extendedFingerprint, metricsData, exchangeRate, getAvailableCashForAccount, kpiQuotePrices\]\)/,
     );
     expect(ctx).not.toMatch(/\[extendedFingerprint[\s\S]{0,120}fastBundle/);
     expect(read('pages/Dashboard.tsx')).toContain('kpisPending');

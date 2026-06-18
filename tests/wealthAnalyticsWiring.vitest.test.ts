@@ -99,7 +99,7 @@ describe('wealth analytics end-to-end wiring', () => {
     it('CanonicalFinancialMetricsProvider computes fast metrics on live data (no data debounce)', () => {
         const src = read('context/CanonicalFinancialMetricsContext.tsx');
         expect(src).toMatch(
-          /const metricsData = showHydrateBanner && !financialDataHasHydrated\(data\) \? null : data/,
+          /const metricsData = data && financialDataHasHydrated\(data\) \? data : null/,
         );
         expect(src).toContain('fastBundle');
         expect(src).not.toContain('useDebouncedValue(showHydrateBanner ? null : data');

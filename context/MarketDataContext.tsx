@@ -8,7 +8,7 @@ import {
 } from '../services/cachedQuoteRestore';
 import { quoteRefreshCooldownRemainingMs } from '../services/quoteRefreshCooldown';
 import { mergePriceRefreshScope } from '../services/quoteRefreshQueue';
-import { kickQuoteRefreshNow } from '../utils/quoteRefreshBridge';
+import { kickQuoteRefreshNow, registerQuoteCacheSessionSync } from '../utils/quoteRefreshBridge';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 interface SimulatedPrices {
@@ -59,10 +59,11 @@ export type MarketDataControlContextType = {
   isLive: boolean;
   setIsLive: (isLive: boolean) => void;
   quotesPriceSource: QuotesPriceSource;
-  setQuotesPriceSource: (source: QuotesPriceSource) => void;
+  setQuotesPriceSource: React.Dispatch<React.SetStateAction<QuotesPriceSource>>;
   refreshTrigger: number;
   symbolQuoteUpdatedAt: SymbolQuoteTimestamps;
   touchQuoteTimestamps: (symbols: string[]) => void;
+  mergeSymbolQuoteTimestamps: (patch: SymbolQuoteTimestamps) => void;
   cancelQuoteRefresh: () => void;
   isQuoteRefreshCancelled: () => boolean;
   quoteRefreshQueueLength: () => number;
@@ -97,7 +98,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [quotesRefreshUIScope, setQuotesRefreshUIScope] = useState<QuotesRefreshUIScope>({ mode: 'idle' });
     const [lastUpdated, setLastUpdated] = useState<Date | null>(() => latestQuoteCacheTimestamp(initialCacheRows));
-    const [isLive, setIsLive] = useState(() => Object.keys(initialCacheRows).length > 0);
+    const [isLive, setIsLive] = useState(false);
     const [quotesPriceSource, setQuotesPriceSource] = useState<QuotesPriceSource>(() =>
         Object.keys(initialCacheRows).length > 0 ? 'cached' : 'none',
     );
@@ -118,6 +119,11 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         });
     }, []);
 
+    const mergeSymbolQuoteTimestamps = useCallback((patch: SymbolQuoteTimestamps) => {
+        if (!Object.keys(patch).length) return;
+        setSymbolQuoteUpdatedAt((prev) => ({ ...prev, ...patch }));
+    }, []);
+
     useEffect(() => {
         if (lastUpdated) return;
         const cached = latestQuoteCacheTimestamp(loadQuoteCacheRows());
@@ -133,7 +139,8 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         });
         const ts = latestQuoteCacheTimestamp(rows);
         if (ts) setLastUpdated(ts);
-        setIsLive(true);
+        setQuotesPriceSource((prev) => (prev === 'live' ? 'live' : 'cached'));
+        setIsLive((prev) => prev);
         setSymbolQuoteUpdatedAt(symbolTimestampsFromCacheRows(rows));
     }, []);
 
@@ -154,6 +161,11 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             window.removeEventListener('storage', onStorage);
             document.removeEventListener('visibilitychange', onVisible);
         };
+    }, [applyPersistedQuoteCacheToSession]);
+
+    useEffect(() => {
+        registerQuoteCacheSessionSync(applyPersistedQuoteCacheToSession);
+        return () => registerQuoteCacheSessionSync(null);
     }, [applyPersistedQuoteCacheToSession]);
 
     const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -281,6 +293,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             refreshTrigger,
             symbolQuoteUpdatedAt,
             touchQuoteTimestamps,
+            mergeSymbolQuoteTimestamps,
             cancelQuoteRefresh,
             isQuoteRefreshCancelled,
             quoteRefreshQueueLength,
@@ -303,6 +316,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             refreshTrigger,
             symbolQuoteUpdatedAt,
             touchQuoteTimestamps,
+            mergeSymbolQuoteTimestamps,
             cancelQuoteRefresh,
             isQuoteRefreshCancelled,
             quoteRefreshQueueLength,

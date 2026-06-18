@@ -3,7 +3,7 @@
  * Stored quotes are shown until the next successful live fetch replaces them.
  */
 
-import type { CommodityHolding, FinancialData, InvestmentPortfolio } from '../types';
+import type { FinancialData } from '../types';
 import {
   cacheRowsToSimulatedMap,
   loadQuoteCacheRows,
@@ -11,6 +11,7 @@ import {
 } from './quotePriceCache';
 import { expandLiveQuotesForRequestedSymbols, type LiveQuoteRow, canonicalQuoteLookupKey } from './finnhubService';
 import { getRefreshableHoldingQuoteSymbols } from './quoteRefreshSymbols';
+import { getPersonalInvestments, getPersonalCommodityHoldings } from '../utils/wealthScope';
 import {
   buildCommodityHoldingValueUpdatesFromTrustedSnapshot,
   buildEquityHoldingValueUpdatesFromTrustedSnapshot,
@@ -68,14 +69,14 @@ export function buildTrustedSnapshotFromCacheForSymbols(
 }
 
 export function collectTrackedQuoteSymbols(data: FinancialData): string[] {
-  const inv = (data.investments ?? []) as InvestmentPortfolio[];
+  const inv = getPersonalInvestments(data);
   const holdings = inv.flatMap((p) => p.holdings ?? []);
   const holdingSymbols = getRefreshableHoldingQuoteSymbols(
     holdings as { symbol?: string; holdingType?: string; holding_type?: string }[],
   );
   const watch = data.watchlist ?? [];
   const planned = data.plannedTrades ?? [];
-  const comm = data.commodityHoldings ?? [];
+  const comm = getPersonalCommodityHoldings(data);
   return Array.from(
     new Set([
       ...holdingSymbols,
@@ -102,8 +103,8 @@ export function computeRestoreCachedQuotesPatch(
 ): RestoreCachedQuotesResult {
   const symbols = collectTrackedQuoteSymbols(data);
   const trusted = buildTrustedSnapshotFromCacheForSymbols(symbols, rows);
-  const inv = (data.investments ?? []) as InvestmentPortfolio[];
-  const comm = (data.commodityHoldings ?? []) as CommodityHolding[];
+  const inv = getPersonalInvestments(data);
+  const comm = getPersonalCommodityHoldings(data);
   const equityUpdates = filterNoOpHoldingValueUpdates(
     inv,
     buildEquityHoldingValueUpdatesFromTrustedSnapshot(inv, trusted, sarPerUsd),

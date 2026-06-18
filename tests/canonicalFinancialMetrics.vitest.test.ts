@@ -122,6 +122,8 @@ describe('computeCanonicalFinancialMetrics', () => {
     expect(fast.kpiSnapshot?.netWorth).toBe(fast.netWorth);
     expect(fast.wealthSummary).toBeNull();
     expect(fast.investmentAllocation.portfolioAllocation).toEqual([]);
+    expect(fast.investmentExposure).not.toBeNull();
+    expect(fast.investmentExposure!.roi).toBe(fast.kpiSnapshot?.roi);
   });
 
   it('overlayLiveQuoteTierOntoExtendedMetrics replaces stale quote-driven fields', () => {
@@ -163,5 +165,11 @@ describe('computeCanonicalFinancialMetrics', () => {
     expect(merged.netWorth).toBe(live.netWorth);
     expect(merged.wealthSummary).toBe(extended.wealthSummary);
     expect(merged.metricsExtendedReady).toBe(true);
+    expect(merged.investmentExposure).not.toBeNull();
+    expect(merged.investmentExposure!.totalGainLossSar).toBe(live.investmentExposure!.totalGainLossSar);
+    expect(merged.investmentExposure!.roi).toBe(live.investmentExposure!.roi);
+    expect(merged.investmentsTotalSar).toBe(merged.investmentExposure!.totalExposureSar);
+    expect(merged.investmentAllocation.portfolioAllocation.length).toBeGreaterThan(0);
+    expect(merged.investmentAllocation.totalSar).toBe(merged.investmentsTotalSar);
   });
 });
