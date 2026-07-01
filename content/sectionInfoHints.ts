@@ -267,7 +267,7 @@ const HINTS_BY_TITLE: Record<string, string> = {
   'section temporarily unavailable': 'This block failed to load or is gated—retry or navigate elsewhere.',
   'execution history': 'Record of trades or executions you logged—audit trail for review.',
   'physical assets': 'Property, vehicles, and non-broker assets—feeds net worth on Summary.',
-  'sukuk in finova': 'Sukuk holdings and income—track separately from equities where applicable.',
+  'sukuk in finova': 'Direct Sukuk contracts: Investments → Sukuk tab. Broker-held Sukuk: Record Trade with asset class Sukuk.',
   'salary & planning experts':
     'Seven AI planners for salary, cash flow, wealth, debt, automation, independence, and lifestyle. Fields prefill from Transactions, Budgets, Goals, Investment Plan, and Liabilities when available—edit before Run analysis. Use Copy prompt to paste into any chat. Outputs are educational—not financial advice.',
   'salary allocation expert':

@@ -280,8 +280,8 @@ export function generateInvestmentPlanSuggestions(args: {
         confidence: 'Low',
         severity: 'review',
         explanation: [
-          'Sukuk is tracked under Assets (not broker trades).',
-          'This creates a reminder-style plan and links you to Assets to update the Sukuk value/schedule.',
+          'Direct Sukuk contracts are on Investments → Sukuk (not broker trades).',
+          'This creates a reminder-style plan and links you to Investments to update the Sukuk schedule.',
         ],
         tags: ['sukuk', 'guidance'],
         assetId: i.assetId,

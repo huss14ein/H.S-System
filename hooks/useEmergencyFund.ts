@@ -8,6 +8,15 @@ import { getSarPerUsdForCalendarDay, hydrateSarPerUsdDailySeries } from '../serv
 import { useCurrency } from '../context/CurrencyContext';
 import { useCanonicalSpotFx } from './useCanonicalFinancialMetrics';
 import { useHydrateSarPerUsdDailySeries } from './useHydrateSarPerUsdDailySeries';
+import {
+  budgetsForFinancialMonthView,
+  dateInRange,
+  financialMonthIsoKey,
+  financialMonthKeyFromTransactionDate,
+  financialMonthLookbackStart,
+  financialMonthRange,
+  resolveMonthStartDayFromData,
+} from '../utils/financialMonth';
 
 /** Recommended months of expenses to hold as emergency cash (3–6 is common; 6 is conservative). */
 export const EMERGENCY_FUND_TARGET_MONTHS = 6;
@@ -133,7 +142,8 @@ export function computeEmergencyFundMetrics(
               }, 0);
 
     const now = new Date();
-    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+    const monthStartDay = resolveMonthStartDayFromData(data);
+    const lookbackStart = financialMonthLookbackStart(now, 6, monthStartDay);
 
     const coreExpenseTx = transactions.filter((t) => {
         const budgetCategory = String(
@@ -148,24 +158,21 @@ export function computeEmergencyFundMetrics(
     });
     const byMonth = new Map<string, number>();
     coreExpenseTx.forEach((t) => {
-        const d = new Date(t.date);
-        if (d >= sixMonthsAgo) {
-            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-            byMonth.set(
-                key,
-                (byMonth.get(key) ?? 0) +
-                    txExpenseSar(t, accById, spotSarPerUsd, data, useDailyFx, uiExchangeRate ?? 0),
-            );
-        }
+        if (!dateInRange(t.date, lookbackStart, now)) return;
+        const key = financialMonthIsoKey(financialMonthKeyFromTransactionDate(t.date, monthStartDay));
+        byMonth.set(
+            key,
+            (byMonth.get(key) ?? 0) +
+                txExpenseSar(t, accById, spotSarPerUsd, data, useDailyFx, uiExchangeRate ?? 0),
+        );
     });
 
     let monthlyCoreExpenses: number;
     if (byMonth.size > 0) {
         monthlyCoreExpenses = Array.from(byMonth.values()).reduce((a, b) => a + b, 0) / byMonth.size;
     } else {
-        const currentMonth = now.getMonth() + 1;
-        const currentYear = now.getFullYear();
-        const monthBudgets = budgets.filter((b) => b.month === currentMonth && b.year === currentYear);
+        const { key: finKey } = financialMonthRange(now, monthStartDay);
+        const monthBudgets = budgetsForFinancialMonthView(budgets, finKey, monthStartDay);
         const essentialSum = monthBudgets
             .filter((b) => CORE_BUDGET_CATEGORIES.includes(String(b.category ?? '').trim()))
             .reduce((sum, b) => sum + budgetToMonthly(b.limit ?? 0, (b as Budget).period), 0);
@@ -173,11 +180,11 @@ export function computeEmergencyFundMetrics(
             monthlyCoreExpenses = essentialSum;
         } else {
             const allExpenses = transactions.filter(
-                (t) => countsAsExpenseForCashflowKpi(t) && new Date(t.date) >= sixMonthsAgo
+                (t) => countsAsExpenseForCashflowKpi(t) && dateInRange(t.date, lookbackStart, now),
             );
             const allByMonth = new Map<string, number>();
             allExpenses.forEach((t) => {
-                const key = t.date.slice(0, 7);
+                const key = financialMonthIsoKey(financialMonthKeyFromTransactionDate(t.date, monthStartDay));
                 allByMonth.set(
                     key,
                     (allByMonth.get(key) ?? 0) +

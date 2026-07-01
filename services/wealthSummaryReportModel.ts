@@ -10,7 +10,7 @@
 import type { Account, FinancialData, TradeCurrency, Transaction } from '../types';
 import { computeEmergencyFundMetrics, type EmergencyFundMetrics } from '../hooks/useEmergencyFund';
 import { toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
-import { getPersonalAssets, getPersonalInvestments, getPersonalWealthData } from '../utils/wealthScope';
+import { getPersonalInvestments, getPersonalSukukPositions, getPersonalWealthData } from '../utils/wealthScope';
 import { buildHouseholdBudgetPlan, buildHouseholdEngineInputFromData } from './householdBudgetEngine';
 import { deriveCashflowStressSummary } from './householdBudgetStress';
 import { computeDisciplineScore, type DisciplineScoreSummary } from './disciplineScoreEngine';
@@ -31,7 +31,7 @@ import {
   financialMonthNetCashflowSar,
 } from './dashboardKpiSnapshot';
 import { countsAsExpenseForCashflowKpi } from './transactionFilters';
-import { dateInRange } from '../utils/financialMonth';
+import { dateInRange, budgetsForFinancialMonthView, resolveMonthStartDayFromData } from '../utils/financialMonth';
 import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import { getSarPerUsdForCalendarDay } from './fxDailySeries';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
@@ -114,11 +114,11 @@ export function computeMonthlyReportFinancialKpis(
 ): { budgetVariance: number; roi: number } {
   const cashflow = financialMonthNetCashflowSar(data, uiExchangeRate);
   const { currentRange } = cashflow;
-  const currentMonth = currentRange.key.month;
-  const currentYear = currentRange.key.year;
 
-  const monthlyBudgets = (data.budgets ?? []).filter(
-    (b) => b.month === currentMonth && b.year === currentYear,
+  const monthlyBudgets = budgetsForFinancialMonthView(
+    data.budgets ?? [],
+    currentRange.key,
+    resolveMonthStartDayFromData(data),
   );
 
   const transactions = getPersonalTransactions(data);
@@ -198,24 +198,24 @@ export function buildPersonalInvestmentTreemapRows(
       currentValueSar,
     };
   });
-  const sukukRows: InvestmentTreemapRow[] = getPersonalAssets(data).flatMap((a) => {
-    if (a.type !== 'Sukuk') return [];
-    const v = Math.max(0, Number(a.value) || 0);
+  const sukukRows: InvestmentTreemapRow[] = getPersonalSukukPositions(data).flatMap((p) => {
+    if (p.status === 'completed') return [];
+    const v = Math.max(0, Number(p.outstandingPrincipal) || 0);
     if (!(v > 0)) return [];
-    const pp = Number(a.purchasePrice);
+    const pp = Number(p.purchasePrice);
     const costBasis = Number.isFinite(pp) && pp > 0 ? pp : v;
     const gainLoss = v - costBasis;
     const gainLossPercent = costBasis > 0 ? (gainLoss / costBasis) * 100 : 0;
     return [
       {
         symbol: 'SUKUK',
-        name: a.name ? `${a.name} (Sukuk)` : 'Sukuk',
+        name: p.name ? `${p.name} (Sukuk)` : 'Sukuk',
         assetClass: 'Sukuk',
-        portfolioCurrency: 'SAR',
+        portfolioCurrency: p.currency === 'USD' ? 'USD' : 'SAR',
         quantity: 1,
         avgCost: costBasis,
         currentValue: v,
-        currentValueSar: v,
+        currentValueSar: p.currency === 'USD' ? toSAR(v, 'USD', sarPerUsd) : v,
         gainLoss,
         gainLossPercent,
       },

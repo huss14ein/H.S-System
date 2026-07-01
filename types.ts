@@ -143,7 +143,6 @@ export interface Account {
 
 export type AssetType =
   | 'Cash'
-  | 'Sukuk'
   | 'Property' // Residential/Commercial
   | 'Land'
   | 'Vehicle'
@@ -166,12 +165,30 @@ export interface Asset {
   monthlyRent?: number;
   goalId?: string;
   owner?: string;
-  /** Sukuk / dated instruments: issue (or subscription) date, ISO `YYYY-MM-DD`. */
-  issueDate?: string;
-  /** Sukuk / dated instruments: maturity date, ISO `YYYY-MM-DD`. */
-  maturityDate?: string;
   /** Free-form details (location, deed ref, insurance, condition, etc.). */
   notes?: string;
+}
+
+export type SukukPositionStatus = 'active' | 'completed';
+
+/** Direct Sukuk contract (investments domain — not physical assets). */
+export interface SukukPosition {
+  id: string;
+  user_id?: string;
+  name: string;
+  investmentAccountId: string;
+  currency: TradeCurrency;
+  faceValue: number;
+  outstandingPrincipal: number;
+  purchasePrice?: number | null;
+  issueDate: string;
+  maturityDate: string;
+  status: SukukPositionStatus;
+  goalId?: string | null;
+  notes?: string | null;
+  metadata?: Record<string, unknown>;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Liability {
@@ -319,13 +336,15 @@ export type SukukPayoutKind = 'coupon' | 'principal';
 export interface SukukPayoutSchedule {
   id: string;
   user_id?: string;
-  assetId: string;
+  sukukPositionId: string;
   investmentAccountId: string;
   currency: TradeCurrency;
   cadence: SukukPayoutCadence;
   dayOfMonth?: number | null;
   couponAmount?: number | null;
   principalAmount?: number | null;
+  /** Periodic principal return during contract (amortizing). */
+  principalInstallmentAmount?: number | null;
   startDate?: string | null;
   endDate?: string | null;
   enabled: boolean;
@@ -338,7 +357,7 @@ export interface SukukPayoutEvent {
   id: string;
   user_id?: string;
   scheduleId: string;
-  assetId: string;
+  sukukPositionId: string;
   investmentAccountId: string;
   kind: SukukPayoutKind;
   payoutDate: string; // YYYY-MM-DD
@@ -534,6 +553,7 @@ export interface FinancialData {
   recurringTransactions: RecurringTransaction[];
   investments: InvestmentPortfolio[];
   investmentTransactions: InvestmentTransaction[];
+  sukukPositions?: SukukPosition[];
   sukukPayoutSchedules?: SukukPayoutSchedule[];
   sukukPayoutEvents?: SukukPayoutEvent[];
   budgets: Budget[];
@@ -562,6 +582,7 @@ export interface FinancialData {
   personalLiabilities?: Liability[];
   personalInvestments?: InvestmentPortfolio[];
   personalCommodityHoldings?: CommodityHolding[];
+  personalSukukPositions?: SukukPosition[];
   /** Transactions that hit personal accounts only (for "my" income/expense). */
   personalTransactions?: Transaction[];
 }
@@ -576,6 +597,7 @@ export type DataContextFinancialData = FinancialData & {
   personalLiabilities: Liability[];
   personalInvestments: InvestmentPortfolio[];
   personalCommodityHoldings: CommodityHolding[];
+  personalSukukPositions: SukukPosition[];
   personalTransactions: Transaction[];
 };
 

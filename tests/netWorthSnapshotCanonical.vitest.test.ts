@@ -22,7 +22,19 @@ describe('buildExtendedNetWorthSnapshot', () => {
     ],
     assets: [
       { id: 'p1', name: 'Gold', type: 'Physical', value: 3000 },
-      { id: 's1', name: 'Gov Sukuk', type: 'Sukuk', value: 1500 },
+    ],
+    sukukPositions: [
+      {
+        id: 's1',
+        name: 'Gov Sukuk',
+        investmentAccountId: 'inv',
+        currency: 'SAR',
+        faceValue: 1500,
+        outstandingPrincipal: 1500,
+        issueDate: '2024-01-01',
+        maturityDate: '2027-01-01',
+        status: 'active',
+      },
     ],
     liabilities: [{ id: 'l1', name: 'Loan', amount: -1000, status: 'Active' }],
     commodityHoldings: [],

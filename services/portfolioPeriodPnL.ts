@@ -4,7 +4,7 @@ import { financialMonthRange } from '../utils/financialMonth';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { investmentTransactionCashAmountSarDated } from '../utils/investmentTransactionSar';
 import { toSAR } from '../utils/currencyMath';
-import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
+import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote } from '../utils/holdingValuation';
 import { getPersonalInvestmentTransactionsForKpis } from './investmentKpiCore';
 import { buildInvestmentAccountKpiScope } from './investmentAccountKpiScope';
 import {
@@ -270,6 +270,10 @@ export function computePortfolioSnapshotValueSar(args: {
   for (const [sym, lot] of args.state.lots) {
     if (!(lot.qty > 0)) continue;
     const holding = holdingsBySym.get(sym);
+    if (holding && !holdingUsesLiveQuote(holding)) {
+      holdingsSar += holdingLiveValueSarForLot(holding, lot.qty, book, {}, args.sarPerUsd);
+      continue;
+    }
     if (args.useLiveMark && holding) {
       holdingsSar += holdingLiveValueSarForLot(holding, lot.qty, book, args.simulatedPrices, args.sarPerUsd);
     } else {
@@ -341,7 +345,8 @@ export function computePortfolioMarkToMarketPeriodPnLSar(args: {
     state: startState,
     sarPerUsd: args.sarPerUsd,
     simulatedPrices: args.simulatedPrices,
-    useLiveMark: true,
+    /** Cost basis at period start — end uses live mark so week/month P/L reflects price movement. */
+    useLiveMark: false,
     includeCash: false,
   });
   const startCashSar =
@@ -792,7 +797,7 @@ function buildPortfolioDailySeriesInWindow(args: {
     state: replayState,
     sarPerUsd: args.sarPerUsd,
     simulatedPrices: args.simulatedPrices,
-    useLiveMark: true,
+    useLiveMark: false,
     includeCash: false,
   });
   const endCashSar = Math.max(0, args.endCashSar ?? 0);
@@ -1055,7 +1060,7 @@ async function buildPortfolioDailySeriesInWindowAsync(
     state: replayState,
     sarPerUsd: args.sarPerUsd,
     simulatedPrices: args.simulatedPrices,
-    useLiveMark: true,
+    useLiveMark: false,
     includeCash: false,
   });
   const endCashSar = Math.max(0, args.endCashSar ?? 0);

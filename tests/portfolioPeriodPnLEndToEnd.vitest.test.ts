@@ -18,7 +18,7 @@ describe('portfolio period P/L end-to-end', () => {
     expect(read('hooks/usePortfolioPeriodPnLSnapshot.ts')).toContain('computePortfolioPeriodPnLSummaryAsync');
     expect(read('components/dashboard/PortfolioPeriodPnLPanel.tsx')).toContain('usePortfolioPeriodPnLSnapshot');
     expect(read('services/wealthAnalyticsReportModel.ts')).toContain('computePortfolioPeriodPnLSummary');
-    expect(read('services/portfolioPeriodPnL.ts')).toContain('useLiveMark: true');
+    expect(read('services/portfolioPeriodPnL.ts')).toContain('useLiveMark: false');
     expect(read('services/portfolioPeriodPnL.ts')).toContain('resolvePortfolioPeriodPnLEndValueSar');
   });
 

@@ -48,4 +48,15 @@ describe('getLivePricesDeduped', () => {
     const parsed = JSON.parse(store['finova-quote-cache-v1']) as { rows: Record<string, { price: number }> };
     expect(parsed.rows.AAPL?.price).toBe(10);
   });
+
+  it('forceFetch waits for network instead of timing out to cache', async () => {
+    vi.mocked(getLivePrices).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve({ '2222.SR': { price: 32, change: 0, changePercent: 0 } }), 50);
+        }),
+    );
+    const rows = await getLivePricesDeduped(['2222.SR'], { forceFetch: true });
+    expect(rows['2222.SR']?.price).toBe(32);
+  });
 });

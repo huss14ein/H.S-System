@@ -372,7 +372,7 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
                             {title}
                             <InfoHint
                                 placement="bottom"
-                                text="Filters use your local calendar: Day ≈ yesterday–today, Week = today and the prior 7 days, Month = last 31 days. Longer ranges cut off from the start of today. Data comes from one snapshot per day (when you use the app) plus today’s live books. Sukuk recorded under Assets is included in the Investments band (same as the Investments page)."
+                                text="Filters use your local calendar: Day ≈ yesterday–today, Week = today and the prior 7 days, Month = last 31 days. Longer ranges cut off from the start of today. Data comes from one snapshot per day (when you use the app) plus today’s live books. Direct Sukuk (Investments) and broker Sukuk are included in the Investments band."
                             />
                         </h3>
                         {onOpenSummary && (
@@ -537,7 +537,7 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
                     <div className="rounded-lg border border-violet-100 bg-violet-50/60 px-2 py-1.5">
                         <p className="text-violet-900/80 font-medium">Investments</p>
                         <p className="font-semibold text-violet-950 tabular-nums">{formatCurrencyString(liveBuckets.investments, { digits: 0 })}</p>
-                        <p className="text-[10px] text-violet-700/80 mt-0.5">Includes Sukuk (Assets)</p>
+                        <p className="text-[10px] text-violet-700/80 mt-0.5">Includes direct Sukuk (Investments)</p>
                     </div>
                     <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-2 py-1.5">
                         <p className="text-emerald-900/80 font-medium">Physical &amp; comm.</p>

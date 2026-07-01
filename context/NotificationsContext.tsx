@@ -23,6 +23,14 @@ import { computeTaskCounts } from '../services/todoModel';
 import { isSupportedPageAction } from '../utils/pageActions';
 import { useEnhancementSignals } from '../hooks/useEnhancementSignals';
 import { buildNotificationsDataFingerprint } from '../services/budgetSpendFingerprint';
+import {
+  addMonthsToKey,
+  currentFinancialMonthIso,
+  financialMonthIsoKey,
+  financialMonthKeyFromTransactionDate,
+  financialMonthRange,
+  resolveMonthStartDayFromData,
+} from '../utils/financialMonth';
 import { cachedSupabaseHeadCount } from '../services/supabaseQueryCache';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
 import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
@@ -339,6 +347,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       }, 0);
     const avgMonthlyExpenseSar = normalizedMonthlyExpenseSar(transactionsForRunway, accountsForRunway, sarPerUsd, {
       monthsLookback: 6,
+      data,
     });
     const runwayMonths = cashRunwayMonths(liquidCashSar, avgMonthlyExpenseSar);
     if (avgMonthlyExpenseSar > 0 && runwayMonths > 0 && runwayMonths < 2) {
@@ -354,7 +363,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       });
     }
 
-    const salCov = salaryToExpenseCoverageSar(transactionsForRunway, accountsForRunway, sarPerUsd, 6);
+    const salCov = salaryToExpenseCoverageSar(transactionsForRunway, accountsForRunway, sarPerUsd, 6, data);
     if (salCov.ratio != null && salCov.ratio < 1 && salCov.ratio >= 0.2) {
       push({
         id: 'salary-vs-spend-heuristic',
@@ -491,19 +500,19 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     });
 
     // Smart monthly digest (external expenses only, SAR-normalized per account currency)
+    const monthStartDay = resolveMonthStartDayFromData(data);
     const accByIdRunway = new Map(accountsForRunway.map((a) => [a.id, a]));
     const monthlyExpensesByKey = new Map<string, number>();
     transactionsForRunway.forEach((t) => {
       if (!countsAsExpenseForCashflowKpi(t) || !t.date) return;
-      const d = new Date(t.date);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const key = financialMonthIsoKey(financialMonthKeyFromTransactionDate(t.date, monthStartDay));
       const cur = accByIdRunway.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
       const add = toSAR(Math.abs(Number(t.amount) || 0), cur, sarPerUsd);
       monthlyExpensesByKey.set(key, (monthlyExpensesByKey.get(key) || 0) + add);
     });
-    const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const lastMonthKey = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, '0')}`;
+    const thisMonthKey = currentFinancialMonthIso(now, monthStartDay);
+    const { key: prevFinKey } = financialMonthRange(now, monthStartDay);
+    const lastMonthKey = financialMonthIsoKey(addMonthsToKey(prevFinKey, -1));
     const thisMonthExpense = monthlyExpensesByKey.get(thisMonthKey) || 0;
     const lastMonthExpense = monthlyExpensesByKey.get(lastMonthKey) || 0;
     if (thisMonthExpense > 0 && lastMonthExpense > 0 && thisMonthExpense > lastMonthExpense * 1.2) {

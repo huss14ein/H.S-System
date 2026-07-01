@@ -1,5 +1,12 @@
 import type { Budget, FinancialData, Goal } from '../types';
 import { toSAR } from '../utils/currencyMath';
+import {
+  dateInRange,
+  financialMonthIsoKey,
+  financialMonthKeyFromTransactionDate,
+  financialMonthLookbackRange,
+  resolveMonthStartDayFromData,
+} from '../utils/financialMonth';
 import { averageRollingMonthlyNetSurplus, GOAL_NET_CASHFLOW_LOOKBACK_MONTHS } from './goalResolvedTotals';
 
 /** Monthly SAR equivalent of a budget row limit (matches Budgets page cards). */
@@ -176,20 +183,20 @@ export function goalMonthlyInvestmentContributionSar(
     return t.type === 'deposit';
   });
 
-  const cutoff = new Date();
-  cutoff.setMonth(cutoff.getMonth() - monthsBack);
+  const now = new Date();
+  const monthStartDay = resolveMonthStartDayFromData(data);
+  const { start, end } = financialMonthLookbackRange(now, monthsBack, monthStartDay);
 
   const monthlyTotals = new Map<string, number>();
   txs.forEach((t) => {
-    const d = new Date(t.date);
-    if (d <= cutoff) return;
+    if (!t.date || !dateInRange(t.date, start, end)) return;
     const cur = (t.currency ?? 'USD') as 'USD' | 'SAR';
     const amt = Math.abs(Number(t.total) || 0);
     const sar = toSAR(amt, cur, sarPerUsd);
     const pid = String(t.portfolioId ?? (t as { portfolio_id?: string }).portfolio_id ?? '').trim();
     const share = sharesByPortfolioId.get(pid)?.get(gid) ?? 0;
     if (!(share > 0)) return;
-    const monthKey = String(t.date).slice(0, 7);
+    const monthKey = financialMonthIsoKey(financialMonthKeyFromTransactionDate(t.date, monthStartDay));
     monthlyTotals.set(monthKey, (monthlyTotals.get(monthKey) ?? 0) + sar * share);
   });
 

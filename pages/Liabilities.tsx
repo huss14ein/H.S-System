@@ -27,9 +27,10 @@ import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetr
 import { toSAR } from '../utils/currencyMath';
 import { getCreditCardLinkedAccountIds } from '../services/creditCardLinking';
 import {
-    financialMonthKey,
+    dateInRange,
+    financialMonthKeyFromTransactionDate,
     financialMonthIsoKey,
-    financialMonthLookbackStart,
+    financialMonthLookbackRange,
     resolveMonthStartDayFromData,
 } from '../utils/financialMonth';
 
@@ -411,14 +412,14 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
         const liq = liquidityRatio(liquidCheckingSavingsSar, totalDebt);
         const txs = getPersonalTransactions(data);
         const now = new Date();
-        const start = financialMonthLookbackStart(now, 6, monthStartDay);
+        const { start, end } = financialMonthLookbackRange(now, 6, monthStartDay);
         const incomes = txs.filter(
             (t: { date: string; type?: string; category?: string; amount?: number }) =>
-                countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= start
+                countsAsIncomeForCashflowKpi(t) && dateInRange(t.date, start, end),
         );
         const byM = new Map<string, number>();
         incomes.forEach((t: { date: string; amount?: number }) => {
-            const k = financialMonthIsoKey(financialMonthKey(new Date(t.date), monthStartDay));
+            const k = financialMonthIsoKey(financialMonthKeyFromTransactionDate(t.date, monthStartDay));
             byM.set(k, (byM.get(k) ?? 0) + (Number(t.amount) || 0));
         });
         const avgMonthlyIncome =
@@ -448,13 +449,13 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
     const debtStress = useMemo(() => {
         const allTxs = getPersonalTransactions(data);
         const now = new Date();
-        const start = financialMonthLookbackStart(now, 6, monthStartDay);
+        const { start, end } = financialMonthLookbackRange(now, 6, monthStartDay);
         const txs = allTxs.filter(
-            (t) => countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= start
+            (t) => countsAsIncomeForCashflowKpi(t) && dateInRange(t.date, start, end),
         );
         const byM = new Map<string, number>();
         txs.forEach((t: { date: string; amount?: number }) => {
-            const k = financialMonthIsoKey(financialMonthKey(new Date(t.date), monthStartDay));
+            const k = financialMonthIsoKey(financialMonthKeyFromTransactionDate(t.date, monthStartDay));
             byM.set(k, (byM.get(k) ?? 0) + (Number(t.amount) || 0));
         });
         const grossMonthly = byM.size > 0 ? Array.from(byM.values()).reduce((a, b) => a + b, 0) / byM.size : 0;

@@ -9,7 +9,7 @@ import {
 } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries } from './fxDailySeries';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
-import { sumPersonalSukukAssetsSar } from './personalNetWorth';
+import { sumPersonalSukukPositionsSar } from './sukuk/sukukExposure';
 import {
   computePersonalCommoditiesContributionSAR,
   computePersonalPlatformsRollupSAR,
@@ -38,9 +38,9 @@ export function computeLiquidNetWorth(
   options?: LiquidNetWorthOptions
 ): {
   liquidCash: number;
-  /** Brokerage / portfolio holdings only (excludes Sukuk recorded under Assets). */
+  /** Brokerage / portfolio holdings only (excludes direct Sukuk positions). */
   portfolioHoldingsSar: number;
-  /** Sukuk rows under Assets (SAR), same bucket as Investments on Dashboard. */
+  /** Direct Sukuk contracts from sukuk_positions (SAR). */
   sukukSar: number;
   /** portfolioHoldingsSar + sukukSar — total “investment exposure” in liquid picture. */
   investmentsSAR: number;
@@ -52,7 +52,7 @@ export function computeLiquidNetWorth(
   loanAndMortgageDebtSar: number;
   shortTermDebt: number;
   liquidNetWorth: number;
-  /** Property & other physical rows under Assets (excludes Sukuk); not part of liquid total — for context only. */
+  /** Property & other physical rows under Assets; not part of liquid total — for context only. */
   illiquidPhysicalAssetsSar: number;
   contributionEstimate30d: number;
   marketMoveEstimate30d: number;
@@ -89,7 +89,7 @@ export function computeLiquidNetWorth(
           return sum + toSAR(bal, cur, fx);
         }, 0);
 
-  const sukukSar = sumPersonalSukukAssetsSar(data);
+  const sukukSar = sumPersonalSukukPositionsSar(data);
   let portfolioHoldingsSar: number;
   let commodities: number;
   if (options?.getAvailableCashForAccount) {
@@ -144,7 +144,6 @@ export function computeLiquidNetWorth(
   const rawAssets = getPersonalAssets(data);
   let illiquidPhysicalAssetsSar = 0;
   for (const a of rawAssets) {
-    if ((a as { type?: string }).type === 'Sukuk') continue;
     illiquidPhysicalAssetsSar += Math.max(0, Number((a as { value?: number }).value) || 0);
   }
   const liquidNetWorth = liquidCash + investmentsSAR + commodities + receivables - shortTermDebt;
