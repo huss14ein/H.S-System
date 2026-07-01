@@ -78,9 +78,22 @@ describe('computeCanonicalFinancialMetrics', () => {
   it('derives commodities and Sukuk slices when getAvailableCashForAccount is missing', () => {
     const data = {
       accounts: [{ id: 'a1', name: 'Chk', type: 'Checking', balance: 1000, currency: 'SAR' }],
-      assets: [{ id: 's1', name: 'Sukuk', type: 'Sukuk', value: 2000 }],
+      assets: [],
       liabilities: [],
       commodityHoldings: [{ id: 'c1', name: 'Gold', quantity: 1, currentValue: 5000, purchaseValue: 4000 }],
+      sukukPositions: [
+        {
+          id: 's1',
+          name: 'Sukuk',
+          investmentAccountId: 'a1',
+          currency: 'SAR',
+          faceValue: 2000,
+          outstandingPrincipal: 2000,
+          issueDate: '2024-01-01',
+          maturityDate: '2027-01-01',
+          status: 'active',
+        },
+      ],
       investments: [],
       transactions: [],
       budgets: [],
@@ -93,11 +106,11 @@ describe('computeCanonicalFinancialMetrics', () => {
     expect(m.investmentExposure).toBeNull();
     expect(m.investmentsTotalSar).toBe(m.headline.buckets.investments);
     expect(m.headlineExposureParts.commoditiesValueSar).toBe(5000);
-    expect(m.headlineExposureParts.sukukAssetsValueSar).toBe(2000);
+    expect(m.headlineExposureParts.sukukPositionsValueSar).toBe(2000);
     expect(
       m.headlineExposureParts.platformsRollupSar +
         m.headlineExposureParts.commoditiesValueSar +
-        m.headlineExposureParts.sukukAssetsValueSar,
+        m.headlineExposureParts.sukukPositionsValueSar,
     ).toBeCloseTo(m.investmentsTotalSar, 6);
     expect(m.investmentAllocation.commoditiesSar).toBe(5000);
   });

@@ -61,11 +61,35 @@ describe('Investments hub completion (E2E)', () => {
     expect(read('services/extendedMetricsPresentation.ts')).toContain('buildInvestmentsHeadlineKpiRow');
   });
 
+  it('portfolio-level quote sync (not platform): UI, queue, simulator, hydrate', () => {
+    const page = read('pages/Investments.tsx');
+    expect(page).toContain('refreshPricesForPortfolio');
+    expect(page).toContain('portfolioHasRefreshableQuoteSymbols');
+    expect(page).not.toContain('refreshPricesForPlatform(');
+    expect(read('context/MarketDataContext.tsx')).toContain("kind: 'portfolio'");
+    expect(read('components/MarketSimulator.tsx')).toContain('scopeIsPortfolio');
+    expect(read('components/MarketSimulator.tsx')).toContain('skipCacheSeed');
+    expect(read('components/investments/InvestmentsQuoteStatusBanner.tsx')).toContain('on a portfolio');
+  });
+
+  it('period P/L uses cost at start and live at end for quote-backed holdings', () => {
+    expect(read('services/portfolioPeriodPnL.ts')).toContain('useLiveMark: false');
+    expect(read('services/portfolioPeriodPnL.ts')).toContain('holdingUsesLiveQuote');
+  });
+
+  it('hydrate cache align does not persist stale rows into holding currentValue', () => {
+    const sim = read('components/MarketSimulator.tsx');
+    expect(sim).toContain('computeRestoreCachedQuotesPatch');
+    expect(sim).toContain('Holding notionals are updated only from manual/live sync ticks');
+    expect(sim).not.toMatch(/patch\.equityUpdates[\s\S]{0,80}batchUpdateHoldingValues/);
+  });
+
   it('verification script registers hub + KPI E2E tests', () => {
     const script = read('scripts/verify-performance-recovery.mjs');
     expect(script).toContain('investmentsHubCompletion.vitest.test.ts');
     expect(script).toContain('investmentsKpiE2E.vitest.test.ts');
     expect(script).toContain('marketDataRefresh.vitest.test.ts');
     expect(script).toContain('portfolioPeriodPnLEndToEnd.vitest.test.ts');
+    expect(script).toContain('portfolioSyncKpiCompletion.vitest.test.ts');
   });
 });

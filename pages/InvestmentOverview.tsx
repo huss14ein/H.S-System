@@ -11,8 +11,8 @@ import { useAI } from '../context/AiContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
-import { quoteNotionalInBookCurrency, toSAR } from '../utils/currencyMath';
-import { holdingUsesLiveQuote } from '../utils/holdingValuation';
+import { toSAR } from '../utils/currencyMath';
+import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { getPersonalInvestments } from '../utils/wealthScope';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import type { InvestmentPortfolio } from '../types';
@@ -29,24 +29,6 @@ type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recove
 
 const SWOT_AI_LANG_KEY = 'finova_default_ai_lang_v1';
 
-function holdingValueInBookCurrency(
-    h: Holding,
-    bookCurrency: 'USD' | 'SAR',
-    simulatedPrices: Record<string, { price?: number; change?: number } | undefined>,
-    sarPerUsd: number,
-): number {
-    const qty = Number(h.quantity || 0);
-    const avgCost = Number(h.avgCost || 0);
-    const sym = (h.symbol || '').trim().toUpperCase();
-    const priceInfo = holdingUsesLiveQuote(h) ? simulatedPrices[sym] : undefined;
-    if (priceInfo && Number.isFinite(priceInfo.price) && qty > 0) {
-        return quoteNotionalInBookCurrency(priceInfo.price as number, qty, sym, bookCurrency, sarPerUsd);
-    }
-    const marketValue = Number(h.currentValue || 0);
-    const costValue = avgCost * qty;
-    return marketValue > 0 ? marketValue : costValue > 0 ? costValue : 0;
-}
-
 const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => void }> = ({ setActiveTab }) => {
     const { data } = useContext(DataContext)!;
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
@@ -54,7 +36,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
         sarPerUsd,
         investmentsTotalSar,
         investableCashTotalSar: tradableCashSAR,
-        sukukAssetsValueSar: sukukAssetsSAR,
+        sukukPositionsValueSar: sukukPositionsSAR,
         investmentAllocation,
         extendedReady,
         simulatedPrices,
@@ -78,7 +60,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                 const qty = Number(h.quantity || 0);
                 const avgCost = Number(h.avgCost || 0);
                 const book = (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR';
-                const effectiveInBook = holdingValueInBookCurrency(h, book, simulatedPrices, sarPerUsd);
+                const effectiveInBook = effectiveHoldingValueInBookCurrency(h, book, simulatedPrices, sarPerUsd);
                 const costInBook = avgCost * qty;
                 const gainLossBook = effectiveInBook - costInBook;
                 const gainLossPercent = costInBook > 0 ? (gainLossBook / costInBook) * 100 : 0;
@@ -194,7 +176,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
         }
     }, [allHoldingsWithGains, portfolioAllocation, assetClassAllocation, companyNameMap]);
 
-    const hasNoPortfolios = portfolioAllocation.length === 0 && tradableCashSAR <= 0 && sukukAssetsSAR <= 0;
+    const hasNoPortfolios = portfolioAllocation.length === 0 && tradableCashSAR <= 0 && sukukPositionsSAR <= 0;
 
     return (
         <div className="space-y-6 mt-4">

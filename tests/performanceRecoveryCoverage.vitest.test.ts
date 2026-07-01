@@ -291,6 +291,11 @@ describe('performance recovery E2E wiring', () => {
     expect(read('components/dashboard/DeferredMount.tsx')).toContain('staggerIndex');
     expect(read('hooks/useExecutiveKpiSparklines.ts')).toContain('scheduleIdleWorkAsync');
     expect(read('hooks/usePortfolioPeriodPnLSnapshot.ts')).toContain('scheduleIdleWorkAsync');
+    expect(read('hooks/useExpenseBudgetAnalysisModel.ts')).toContain('scheduleIdleWorkAsync');
+    expect(read('hooks/useExpenseBudgetAnalysisModel.ts')).toContain('useDeferredValue');
+    expect(read('pages/Analysis.tsx')).toContain('useExpenseBudgetAnalysisModel');
+    expect(read('pages/Analysis.tsx')).not.toContain('computeExpenseBudgetAnalysisModel');
+    expect(read('components/analysis/ExpenseBudgetAnalysisPanel.tsx')).toContain('scheduleIdleWork');
     expect(read('hooks/usePortfolioPeriodPnLSnapshot.ts')).toContain('computePortfolioPeriodPnLSummaryAsync');
     expect(read('hooks/usePortfolioPeriodPnLSnapshot.ts')).toContain('computePortfolioPnLDailySeriesAsync');
     expect(read('hooks/usePortfolioPeriodPnLSnapshot.ts')).toContain('waitUntilBackgroundWorkResumed');

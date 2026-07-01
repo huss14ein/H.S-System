@@ -7,12 +7,12 @@ import {
   computePersonalHeadlineNetWorthSar,
   computePersonalNetWorthBreakdownSAR,
   computeTodayBalanceSheetSnapshotSar,
-  sumPersonalSukukAssetsSar,
   type PersonalHeadlineNetWorthResult,
   type PersonalNetWorthBreakdownSAR,
   type PersonalNetWorthOptions,
   type TodayBalanceSheetSnapshotSAR,
 } from './personalNetWorth';
+import { sumPersonalSukukPositionsSar } from './sukuk/sukukExposure';
 import { computeDashboardKpiSnapshot, type DashboardKpiSnapshot } from './dashboardKpiSnapshot';
 import { computeWealthSummaryReportModel, type WealthSummaryReportModel } from './wealthSummaryReportModel';
 import {
@@ -37,7 +37,7 @@ import {
 /** Platforms + commodities + Sukuk slice totals (matches headline investments bucket decomposition). */
 export type HeadlineExposureParts = Pick<
   HeadlinePersonalInvestmentRoi,
-  'totalExposureSar' | 'platformsRollupSar' | 'commoditiesValueSar' | 'sukukAssetsValueSar'
+  'totalExposureSar' | 'platformsRollupSar' | 'commoditiesValueSar' | 'sukukPositionsValueSar'
 >;
 
 export function deriveHeadlineExposureParts(
@@ -47,13 +47,13 @@ export function deriveHeadlineExposureParts(
   simulatedPrices: SimulatedPriceMap,
 ): HeadlineExposureParts {
   const commoditiesValueSar = computePersonalCommoditiesContributionSAR(data, sarPerUsd, simulatedPrices).valueSAR;
-  const sukukAssetsValueSar = sumPersonalSukukAssetsSar(data);
-  const platformsRollupSar = Math.max(0, investmentsTotalSar - commoditiesValueSar - sukukAssetsValueSar);
+  const sukukPositionsValueSar = sumPersonalSukukPositionsSar(data);
+  const platformsRollupSar = Math.max(0, investmentsTotalSar - commoditiesValueSar - sukukPositionsValueSar);
   return {
     totalExposureSar: investmentsTotalSar,
     platformsRollupSar,
     commoditiesValueSar,
-    sukukAssetsValueSar,
+    sukukPositionsValueSar,
   };
 }
 
@@ -164,13 +164,13 @@ export function buildFastCanonicalFinancialMetrics(
         totalExposureSar: investmentExposure.totalExposureSar,
         platformsRollupSar: investmentExposure.platformsRollupSar,
         commoditiesValueSar: investmentExposure.commoditiesValueSar,
-        sukukAssetsValueSar: investmentExposure.sukukAssetsValueSar,
+        sukukPositionsValueSar: investmentExposure.sukukPositionsValueSar,
       }
     : {
         totalExposureSar: investmentsTotalSar,
         platformsRollupSar: 0,
         commoditiesValueSar: 0,
-        sukukAssetsValueSar: 0,
+        sukukPositionsValueSar: 0,
       };
   return {
     ...dashboard,
@@ -229,7 +229,7 @@ export function extendCanonicalFinancialMetrics(
         totalExposureSar: investmentExposure.totalExposureSar,
         platformsRollupSar: investmentExposure.platformsRollupSar,
         commoditiesValueSar: investmentExposure.commoditiesValueSar,
-        sukukAssetsValueSar: investmentExposure.sukukAssetsValueSar,
+        sukukPositionsValueSar: investmentExposure.sukukPositionsValueSar,
       }
     : data
       ? deriveHeadlineExposureParts(data, dashboard.sarPerUsd, investmentsTotalSar, simulatedPrices)
@@ -237,7 +237,7 @@ export function extendCanonicalFinancialMetrics(
           totalExposureSar: 0,
           platformsRollupSar: 0,
           commoditiesValueSar: 0,
-          sukukAssetsValueSar: 0,
+          sukukPositionsValueSar: 0,
         };
   const investmentAllocation = buildHeadlineInvestmentAllocationSlices(
     data,
@@ -352,7 +352,7 @@ export function computeCanonicalFinancialMetrics(
         totalExposureSar: investmentExposure.totalExposureSar,
         platformsRollupSar: investmentExposure.platformsRollupSar,
         commoditiesValueSar: investmentExposure.commoditiesValueSar,
-        sukukAssetsValueSar: investmentExposure.sukukAssetsValueSar,
+        sukukPositionsValueSar: investmentExposure.sukukPositionsValueSar,
       }
     : data
       ? deriveHeadlineExposureParts(data, headline.sarPerUsd, investmentsTotalSar, simulatedPrices)
@@ -360,7 +360,7 @@ export function computeCanonicalFinancialMetrics(
           totalExposureSar: 0,
           platformsRollupSar: 0,
           commoditiesValueSar: 0,
-          sukukAssetsValueSar: 0,
+          sukukPositionsValueSar: 0,
         };
   const investmentAllocation = buildHeadlineInvestmentAllocationSlices(
     data,

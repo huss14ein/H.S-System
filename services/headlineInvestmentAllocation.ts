@@ -4,11 +4,12 @@
 import type { FinancialData, InvestmentPortfolio } from '../types';
 import { toSAR } from '../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
-import { getPersonalInvestments, getPersonalWealthData } from '../utils/wealthScope';
+import { getPersonalInvestments } from '../utils/wealthScope';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { normalizeInvestmentAssetClassBucket } from './investmentAssetClassBuckets';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import type { HeadlinePersonalInvestmentRoi } from './investmentKpiCore';
+import { sumPersonalSukukPositionsSar } from './sukuk/sukukExposure';
 
 export type HeadlineAllocationRow = { name: string; value: number };
 
@@ -37,7 +38,7 @@ export function buildHeadlineInvestmentAllocationSlices(
   data: FinancialData | null | undefined,
   exposure: Pick<
     HeadlinePersonalInvestmentRoi,
-    'totalExposureSar' | 'platformsRollupSar' | 'commoditiesValueSar' | 'sukukAssetsValueSar'
+    'totalExposureSar' | 'platformsRollupSar' | 'commoditiesValueSar' | 'sukukPositionsValueSar'
   >,
   sarPerUsd: number,
   investableCashTotalSar: number,
@@ -47,14 +48,14 @@ export function buildHeadlineInvestmentAllocationSlices(
   const platformCashSar = Math.max(0, Math.min(investableCashTotalSar, exposure.platformsRollupSar));
   const platformHoldingsSar = Math.max(0, exposure.platformsRollupSar - platformCashSar);
   const commoditiesSar = Math.max(0, exposure.commoditiesValueSar);
-  const sukukSar = Math.max(0, exposure.sukukAssetsValueSar);
+  const sukukSar = Math.max(0, exposure.sukukPositionsValueSar);
 
   if (!data) {
     const portfolioAllocation: HeadlineAllocationRow[] = [];
     if (platformHoldingsSar > 0) portfolioAllocation.push({ name: 'Holdings (platforms)', value: platformHoldingsSar });
     if (platformCashSar > 0) portfolioAllocation.push({ name: 'Uninvested cash (platforms)', value: platformCashSar });
     if (commoditiesSar > 0) portfolioAllocation.push({ name: 'Commodities', value: commoditiesSar });
-    if (sukukSar > 0) portfolioAllocation.push({ name: 'Sukuk (assets)', value: sukukSar });
+    if (sukukSar > 0) portfolioAllocation.push({ name: 'Sukuk (direct)', value: sukukSar });
     return {
       totalSar,
       platformHoldingsSar,
@@ -100,7 +101,7 @@ export function buildHeadlineInvestmentAllocationSlices(
     ...portfolioRows,
     ...(platformCashSar > 0 ? [{ name: 'Uninvested cash (platforms)', value: platformCashSar }] : []),
     ...(commoditiesSar > 0 ? [{ name: 'Commodities', value: commoditiesSar }] : []),
-    ...(sukukSar > 0 ? [{ name: 'Sukuk (assets)', value: sukukSar }] : []),
+    ...(sukukSar > 0 ? [{ name: 'Sukuk (direct)', value: sukukSar }] : []),
   ];
 
   const rawAsset: HeadlineAllocationRow[] = [
@@ -137,7 +138,7 @@ export function rescaleHeadlineInvestmentAllocation(
   alloc: HeadlineInvestmentAllocationSlices,
   exposure: Pick<
     HeadlinePersonalInvestmentRoi,
-    'totalExposureSar' | 'platformsRollupSar' | 'commoditiesValueSar' | 'sukukAssetsValueSar'
+    'totalExposureSar' | 'platformsRollupSar' | 'commoditiesValueSar' | 'sukukPositionsValueSar'
   >,
 ): HeadlineInvestmentAllocationSlices {
   if (alloc.portfolioAllocation.length === 0 && alloc.assetClassAllocation.length === 0) {
@@ -147,7 +148,7 @@ export function rescaleHeadlineInvestmentAllocation(
   const platformCashSar = Math.max(0, Math.min(alloc.platformCashSar, exposure.platformsRollupSar));
   const platformHoldingsSar = Math.max(0, exposure.platformsRollupSar - platformCashSar);
   const commoditiesSar = Math.max(0, exposure.commoditiesValueSar);
-  const sukukSar = Math.max(0, exposure.sukukAssetsValueSar);
+  const sukukSar = Math.max(0, exposure.sukukPositionsValueSar);
   return {
     totalSar,
     platformHoldingsSar,
@@ -159,10 +160,7 @@ export function rescaleHeadlineInvestmentAllocation(
   };
 }
 
-/** Sukuk from personal assets when exposure is unavailable (export / no cash fn). */
+/** @deprecated Use sumPersonalSukukPositionsSar */
 export function sumPersonalSukukFromAssets(data: FinancialData | null | undefined): number {
-  const { personalAssets } = getPersonalWealthData(data ?? ({} as FinancialData));
-  return (personalAssets ?? [])
-    .filter((a) => a?.type === 'Sukuk')
-    .reduce((sum, a) => sum + Math.max(0, Number(a?.value) || 0), 0);
+  return sumPersonalSukukPositionsSar(data);
 }

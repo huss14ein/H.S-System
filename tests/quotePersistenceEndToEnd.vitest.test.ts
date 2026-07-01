@@ -65,8 +65,11 @@ describe('quote persistence E2E', () => {
 
   it('investment sub-views and snapshots use live quote hook', () => {
     expect(read('pages/AIRebalancerView.tsx')).toContain('useInvestmentsCanonicalMetrics');
+    expect(read('pages/AIRebalancerView.tsx')).toContain('liveQuotePrices');
     expect(read('pages/InvestmentPlanView.tsx')).toContain('useInvestmentsCanonicalMetrics');
+    expect(read('pages/InvestmentPlanView.tsx')).toContain('liveQuotePrices');
     expect(read('pages/RecoveryPlanView.tsx')).toContain('useInvestmentsCanonicalMetrics');
+    expect(read('pages/RecoveryPlanView.tsx')).toContain('liveQuotePrices');
     expect(read('components/Layout.tsx')).toContain('useLiveQuotePrices');
     expect(read('components/charts/NetWorthCockpit.tsx')).toContain('useLiveQuotePrices');
     expect(read('pages/Forecast.tsx')).toContain('useExtendedCanonicalMetrics');

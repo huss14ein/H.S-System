@@ -519,7 +519,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                                 This month’s flow vs implied month start net worth (same as Dashboard card).
                             </p>
                         </div>
-                        <p className="text-xs text-slate-500 mt-2">Tap to review property &amp; Sukuk on Assets</p>
+                        <p className="text-xs text-slate-500 mt-2">Tap to review property and commodities on Assets; direct Sukuk on Investments</p>
                         {isAdmin && managedWealthTotal > 0 && (
                             <p className="text-xs text-amber-800 mt-2 font-medium rounded-lg bg-amber-50 px-2 py-1 border border-amber-100">Household / managed wealth on top of yours: {maskBalance(formatCurrencyString(managedWealthTotal, { digits: 0 }))}</p>
                         )}
