@@ -14,6 +14,8 @@ import {
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import {
   addMonthsToKey,
+  budgetsForFinancialMonthView,
+  dateInRange,
   effectiveMonthStartDate,
   financialMonthRange,
   financialMonthRangeFromKey,
@@ -67,10 +69,9 @@ export function financialMonthNetCashflowSar(
     return toSAR(raw, 'USD', r);
   };
 
-  const monthlyTransactions = transactions.filter((t) => {
-    const dt = new Date(t.date);
-    return dt >= currentRange.start && dt <= currentRange.end;
-  });
+  const monthlyTransactions = transactions.filter((t) =>
+    dateInRange(t.date, currentRange.start, currentRange.end),
+  );
   const monthlyIncomeSar = monthlyTransactions
     .filter((t) => countsAsIncomeForCashflowKpi(t))
     .reduce((sum, t) => sum + txCashflowSar(t), 0);
@@ -142,14 +143,17 @@ export function computeDashboardKpiSnapshot(
 
     const budgetToMonthly = (b: { limit: number; period?: string }) =>
       b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
-    const currentMonthBudgets = (data.budgets ?? []).filter((b) => b.month === currentRange.key.month && b.year === currentRange.key.year);
+    const currentMonthBudgets = budgetsForFinancialMonthView(
+      data.budgets ?? [],
+      currentRange.key,
+      monthStartDay,
+    );
     const totalBudget = currentMonthBudgets.reduce((sum, b) => sum + budgetToMonthly(b), 0);
     const budgetVariance = totalBudget - monthlyExpenses;
 
-    const lastMonthTransactions = transactions.filter((t) => {
-      const d = new Date(t.date);
-      return d >= prevRange.start && d <= prevRange.end;
-    });
+    const lastMonthTransactions = transactions.filter((t) =>
+      dateInRange(t.date, prevRange.start, prevRange.end),
+    );
     const lastMonthIncome = lastMonthTransactions
       .filter((t) => countsAsIncomeForCashflowKpi(t))
       .reduce((sum, t) => sum + txCashflowSar(t), 0);
@@ -175,7 +179,7 @@ export function computeDashboardKpiSnapshot(
     const startKey = addMonthsToKey(currentRange.key, -6);
     const sixMoStart = effectiveMonthStartDate(startKey.year, startKey.month, monthStartDay);
     const incomeLast6Mo = transactions.filter(
-      (t) => countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= sixMoStart,
+      (t) => countsAsIncomeForCashflowKpi(t) && dateInRange(t.date, sixMoStart, currentRange.end),
     );
     const incomeSumSar6Mo = incomeLast6Mo.reduce((s, t) => s + txCashflowSar(t), 0);
     const avgMonthlyIncomeSar6Mo = incomeLast6Mo.length > 0 ? incomeSumSar6Mo / 6 : 0;
@@ -242,8 +246,6 @@ export function computeDashboardValidationWarnings(
   const now = new Date();
   const monthStartDay = resolveMonthStartDayFromData(data);
   const { key } = financialMonthRange(now, monthStartDay);
-  const month = key.month;
-  const year = key.year;
 
   if (!kpi || !Number.isFinite(kpi.netWorth)) warnings.push('Net worth calculation returned an invalid number.');
   if (!kpi || !Number.isFinite(kpi.monthlyPnL)) warnings.push("This month's P&L is invalid.");
@@ -255,7 +257,7 @@ export function computeDashboardValidationWarnings(
   ).length;
   if (uncategorizedExpenseCount > 0) warnings.push(`${uncategorizedExpenseCount} expense transaction(s) are uncategorized.`);
 
-  const currentMonthBudgetCount = budgets.filter((b) => b.month === month && b.year === year).length;
+  const currentMonthBudgetCount = budgetsForFinancialMonthView(budgets, key, monthStartDay).length;
   if (currentMonthBudgetCount === 0 && txs.length > 0) warnings.push('No budgets found for the current month.');
 
   const negativeCashAccounts = accounts.filter((a) => (a.type === 'Checking' || a.type === 'Savings') && (Number(a.balance) || 0) < 0).length;

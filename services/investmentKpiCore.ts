@@ -18,7 +18,8 @@ import {
   computePersonalPlatformsRollupSAR,
   computePersonalCommoditiesContributionSAR,
 } from './investmentPlatformCardMetrics';
-import { getPersonalCommodityHoldings, getPersonalWealthData } from '../utils/wealthScope';
+import { sumPersonalSukukPositionsCostSar, sumPersonalSukukPositionsSar } from './sukuk/sukukExposure';
+import { getPersonalCommodityHoldings } from '../utils/wealthScope';
 import { brokerCashBucketsFromInvestmentAccount } from './investmentCashLedger';
 
 type GetAvailableCashFn = (accountId: string) => { SAR?: number; USD?: number } | null | undefined;
@@ -368,14 +369,14 @@ export type HeadlinePersonalInvestmentRoi = {
   capitalSource: InvestmentCapitalSource;
   platformsRollupSar: number;
   commoditiesValueSar: number;
-  sukukAssetsValueSar: number;
+  sukukPositionsValueSar: number;
   /** Intraday / live move in SAR — platforms only (same as rollup). */
   platformsDailyPnLSar: number;
   /** Approximate commodity position move in SAR (live quote × qty). */
   commoditiesDailyPnLSar: number;
   /** Same inputs as headline net capital decomposition (single source for reconciliation UI). */
   commodityCostSar: number;
-  sukukAssetsCostSar: number;
+  sukukPositionsCostSar: number;
   /** max(ledger net capital, holdings cost basis + floored broker cash) — platform slice before commodities/Sukuk. */
   platformNetForHeadlineSar: number;
   economicDeployedPlatformSar: number;
@@ -411,17 +412,10 @@ export function computeHeadlinePersonalInvestmentRoiDecimal(
     0,
   );
 
-  const { personalAssets } = getPersonalWealthData(data);
-  const sukukAssets = (personalAssets ?? []).filter((a) => a?.type === 'Sukuk');
-  const sukukAssetsValueSar = sukukAssets.reduce((sum, a) => sum + Math.max(0, Number(a?.value) || 0), 0);
-  const sukukAssetsCostSar = sukukAssets.reduce((sum, a) => {
-    const v = Math.max(0, Number(a?.value) || 0);
-    const pp = Number((a as { purchasePrice?: number }).purchasePrice);
-    const cost = Number.isFinite(pp) && pp > 0 ? pp : v;
-    return sum + cost;
-  }, 0);
+  const sukukPositionsValueSar = sumPersonalSukukPositionsSar(data);
+  const sukukPositionsCostSar = sumPersonalSukukPositionsCostSar(data);
 
-  const totalExposureSar = platformsRollupSar + commoditiesValueSar + sukukAssetsValueSar;
+  const totalExposureSar = platformsRollupSar + commoditiesValueSar + sukukPositionsValueSar;
   /**
    * Deposit/withdrawal history alone often understates capital still deployed (reinvested dividends, transfers
    * not logged as deposits). Floor platform net capital at cost basis + idle broker cash so headline ROI / gain
@@ -429,7 +423,7 @@ export function computeHeadlinePersonalInvestmentRoiDecimal(
    */
   const economicDeployedSar = Math.max(0, breakdown.holdingsCostBasisSar + breakdown.brokerageCashSar);
   const platformNetForHeadline = Math.max(breakdown.netCapitalSar, economicDeployedSar);
-  const netCapitalSar = Math.max(0, platformNetForHeadline + commodityCost + sukukAssetsCostSar);
+  const netCapitalSar = Math.max(0, platformNetForHeadline + commodityCost + sukukPositionsCostSar);
   const totalGainLossSar = totalExposureSar - netCapitalSar;
   const roi = sanitizeInvestmentRoiDecimal(
     netCapitalSar > 0 ? totalGainLossSar / netCapitalSar : 0,
@@ -443,11 +437,11 @@ export function computeHeadlinePersonalInvestmentRoiDecimal(
     capitalSource: breakdown.capitalSource,
     platformsRollupSar,
     commoditiesValueSar,
-    sukukAssetsValueSar,
+    sukukPositionsValueSar,
     platformsDailyPnLSar,
     commoditiesDailyPnLSar,
     commodityCostSar: commodityCost,
-    sukukAssetsCostSar,
+    sukukPositionsCostSar,
     platformNetForHeadlineSar: platformNetForHeadline,
     economicDeployedPlatformSar: economicDeployedSar,
   };

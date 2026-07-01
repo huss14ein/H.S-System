@@ -39,12 +39,25 @@ describe('liquid metrics currency normalization', () => {
     expect(result.creditCardDebtSar + result.loanAndMortgageDebtSar).toBeCloseTo(result.shortTermDebt, 4);
   });
 
-  it('includes Sukuk recorded under Assets in liquid investments SAR', () => {
+  it('includes direct Sukuk positions in liquid investments SAR', () => {
     const data = {
       accounts: [{ id: 'chk', name: 'Checking', type: 'Checking', balance: 1000, currency: 'SAR' }],
       investments: [],
       liabilities: [],
-      assets: [{ id: 'sk1', name: 'Government Sukuk', type: 'Sukuk', value: 25000 }],
+      assets: [],
+      sukukPositions: [
+        {
+          id: 'sk1',
+          name: 'Government Sukuk',
+          investmentAccountId: 'chk',
+          currency: 'SAR',
+          faceValue: 25000,
+          outstandingPrincipal: 25000,
+          issueDate: '2024-01-01',
+          maturityDate: '2027-01-01',
+          status: 'active',
+        },
+      ],
       transactions: [],
       wealthUltraConfig: { fxRate: 3.75 },
     } as unknown as FinancialData;
@@ -71,7 +84,20 @@ describe('liquid metrics currency normalization', () => {
       ],
       commodityHoldings: [{ id: 'c1', name: 'Gold', quantity: 1, currentValue: 5000, purchaseValue: 4000 }],
       liabilities: [],
-      assets: [{ id: 'sk1', name: 'Sukuk', type: 'Sukuk', value: 25000 }],
+      assets: [],
+      sukukPositions: [
+        {
+          id: 'sk1',
+          name: 'Sukuk',
+          investmentAccountId: 'chk',
+          currency: 'SAR',
+          faceValue: 25000,
+          outstandingPrincipal: 25000,
+          issueDate: '2024-01-01',
+          maturityDate: '2027-01-01',
+          status: 'active',
+        },
+      ],
       transactions: [],
       wealthUltraConfig: { fxRate: 3.75 },
     } as unknown as FinancialData;

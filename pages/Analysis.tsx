@@ -27,16 +27,19 @@ import { useExtendedCanonicalMetrics, useCanonicalSpotFx, useCanonicalSimulatedP
 import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
-import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { detectBudgetDrift } from '../services/budgetDrift';
 import { computeIncomeStability } from '../services/incomeStability';
+import ExpenseBudgetAnalysisPanel from '../components/analysis/ExpenseBudgetAnalysisPanel';
+import { DeferredMount } from '../components/dashboard/DeferredMount';
+import { useExpenseBudgetAnalysisModel } from '../hooks/useExpenseBudgetAnalysisModel';
 import {
     financialMonthKeysEndingAt,
     financialMonthIsoKey,
-    financialMonthRange,
     financialMonthColumnHeaderLabel,
     financialMonthRangeFromKey,
     resolveMonthStartDayFromData,
+    dateInRange,
+    financialMonthKeyFromTransactionDate,
 } from '../utils/financialMonth';
 
 const TOOLTIP_STYLE = { backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' };
@@ -57,9 +60,8 @@ function buildTrendDataSar(
 
     const earliest = financialMonthRangeFromKey(finKeys[0], monthStartDay).start;
     transactions.forEach((t) => {
-        const d = new Date(t.date);
-        if (Number.isNaN(d.getTime()) || d < earliest) return;
-        const key = financialMonthIsoKey(financialMonthRange(d, monthStartDay).key);
+        if (!dateInRange(t.date, earliest, now)) return;
+        const key = financialMonthIsoKey(financialMonthKeyFromTransactionDate(t.date, monthStartDay));
         if (!monthMap.has(key)) return;
         const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
         const amtSar = toSAR(Math.abs(Number(t.amount) ?? 0), cur, sarPerUsd);
@@ -86,7 +88,7 @@ const SpendingByCategoryChart: React.FC = () => {
     const chartData = useMemo(() => {
         const txs = data?.transactions ?? [];
         const accounts = data?.accounts ?? [];
-        return expenseTotalsByBudgetCategorySar(txs as Transaction[], accounts, fx);
+        return expenseTotalsByBudgetCategorySar(txs as Transaction[], accounts, fx, { data });
     }, [data?.transactions, data?.accounts, data, fx]);
     const isEmpty = !chartData.length;
 
@@ -208,12 +210,16 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         extendedReady,
     } = metrics;
     const investmentsTotalSar = pickInvestmentsTotalSar(metrics, extendedReady);
+    const { model: expenseBudgetAnalysis, ready: expenseBudgetReady } = useExpenseBudgetAnalysisModel(
+        engineData,
+        exchangeRate,
+    );
 
     const contextData = useMemo(() => {
         const transactions = engineData?.transactions ?? [];
         const accounts = engineData?.accounts ?? [];
 
-        const spendingData = expenseTotalsByBudgetCategorySar(transactions as Transaction[], accounts, headlineFx);
+        const spendingData = expenseTotalsByBudgetCategorySar(transactions as Transaction[], accounts, headlineFx, { data: engineData });
 
         const monthStartDay = resolveMonthStartDayFromData(engineData);
         const trendData = buildTrendDataSar(transactions as Transaction[], accounts, headlineFx, monthStartDay, 6);
@@ -227,12 +233,12 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             { name: 'Debt', value: Math.abs(nwBuckets.liabilities) },
         ];
 
-        const merchants = spendByMerchantSar(transactions as Transaction[], accounts, headlineFx, { months: 6 });
-        const salary = detectSalaryIncomeSar(transactions as Transaction[], accounts, headlineFx, 6);
-        const subs = subscriptionSpendMonthlySar(transactions as Transaction[], accounts, headlineFx, 3);
+        const merchants = spendByMerchantSar(transactions as Transaction[], accounts, headlineFx, { months: 6, data: engineData });
+        const salary = detectSalaryIncomeSar(transactions as Transaction[], accounts, headlineFx, 6, engineData);
+        const subs = subscriptionSpendMonthlySar(transactions as Transaction[], accounts, headlineFx, 3, engineData);
         const bnpl = detectBnplMentionsSar(transactions as Transaction[], accounts, headlineFx);
         const refundPairs = findRefundPairsSar(transactions as Transaction[], accounts, headlineFx, 14);
-        const salaryCoverage = salaryToExpenseCoverageSar(transactions as Transaction[], accounts, headlineFx, 6);
+        const salaryCoverage = salaryToExpenseCoverageSar(transactions as Transaction[], accounts, headlineFx, 6, engineData);
 
         return {
             spendingData,
@@ -245,8 +251,9 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             refundPairs,
             salaryCoverage,
             sarPerUsd: headlineFx,
+            expenseBudgetAnalysis: expenseBudgetReady ? expenseBudgetAnalysis : null,
         };
-    }, [engineData, exchangeRate, getAvailableCashForAccount, headlineFx, simulatedPrices]);
+    }, [engineData, exchangeRate, getAvailableCashForAccount, headlineFx, simulatedPrices, expenseBudgetAnalysis, expenseBudgetReady]);
 
     const analysisValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
@@ -256,7 +263,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 budgetVariance: kpiSnapshot.budgetVariance,
                 roi: kpiSnapshot.roi,
             }
-            : computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
+            : { budgetVariance: Number.NaN, roi: Number.NaN };
         if (!Number.isFinite(fx) || fx <= 0) warnings.push('Exchange rate is invalid — USD transactions may not convert correctly.');
         if (!Number.isFinite(monthlyKpis.budgetVariance)) warnings.push('Budget variance could not be computed.');
         if (!Number.isFinite(monthlyKpis.roi)) warnings.push('Investment ROI could not be computed.');
@@ -298,7 +305,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     return (
         <PageLayout
             title="Financial Analysis"
-            description="Patterns from your full transaction ledger and all linked accounts (household view). Amounts are converted to SAR so USD and SAR accounts can be compared fairly. Dashboard & Summary headline net worth still use personal-only scope."
+            description="Patterns from your full transaction ledger and all linked accounts (household view). The expense & budget cockpit uses every tag you enter on transactions. Amounts are converted to SAR so USD and SAR accounts can be compared fairly."
             action={
                 setActivePage ? (
                     <PageActionsDropdown
@@ -308,7 +315,8 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                             { value: 'budgets', label: 'Budgets', onClick: () => setActivePage('Budgets') },
                             { value: 'accounts', label: 'Accounts', onClick: () => setActivePage('Accounts') },
                             { value: 'summary', label: 'Financial Summary', onClick: () => setActivePage('Summary') },
-                            { value: 'assets', label: 'Assets (Sukuk)', onClick: () => setActivePage('Assets') },
+                            { value: 'assets', label: 'Physical assets', onClick: () => setActivePage('Assets') },
+                            { value: 'investments', label: 'Sukuk (Investments)', onClick: () => setActivePage('Investments') },
                             { value: 'investments', label: 'Investments', onClick: () => setActivePage('Investments') },
                         ]}
                     />
@@ -366,6 +374,10 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             )}
 
             <AIAdvisor pageContext="analysis" contextData={contextData} />
+
+            <DeferredMount minHeight="12rem" staggerIndex={1} loadingLabelKey="analyticsHealthLoading">
+                <ExpenseBudgetAnalysisPanel model={expenseBudgetAnalysis} ready={expenseBudgetReady} />
+            </DeferredMount>
 
             <div className="mb-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                 <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

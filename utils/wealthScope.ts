@@ -9,6 +9,7 @@ import type {
   Liability,
   InvestmentPortfolio,
   CommodityHolding,
+  SukukPosition,
   Transaction,
   FinancialData,
 } from '../types';
@@ -37,6 +38,7 @@ export interface PersonalWealthData {
   personalLiabilities: Liability[];
   personalInvestments: InvestmentPortfolio[];
   personalCommodityHoldings: CommodityHolding[];
+  personalSukukPositions: SukukPosition[];
   /** Transactions that hit personal accounts only (for "my" income/expense). */
   personalTransactions: Transaction[];
 }
@@ -47,6 +49,7 @@ const emptyPersonal: PersonalWealthData = {
   personalLiabilities: [],
   personalInvestments: [],
   personalCommodityHoldings: [],
+  personalSukukPositions: [],
   personalTransactions: [],
 };
 
@@ -62,6 +65,7 @@ export function getPersonalWealthData(data: FinancialData | null | undefined): P
   const personalLiabilities = (data.liabilities ?? []).filter(isPersonalWealth) as Liability[];
   const personalInvestments = (data.investments ?? []).filter(isPersonalWealth) as InvestmentPortfolio[];
   const personalCommodityHoldings = (data.commodityHoldings ?? []).filter(isPersonalWealth) as CommodityHolding[];
+  const personalSukukPositions = (data.sukukPositions ?? []) as SukukPosition[];
 
   const personalAccountIds = new Set(personalAccounts.map((a) => a.id));
   const personalTransactions = (data.transactions ?? []).filter((t) => {
@@ -76,6 +80,7 @@ export function getPersonalWealthData(data: FinancialData | null | undefined): P
     personalLiabilities,
     personalInvestments,
     personalCommodityHoldings,
+    personalSukukPositions,
     personalTransactions,
   };
 }
@@ -142,4 +147,9 @@ export function getPersonalInvestments(data: FinancialData | null | undefined): 
 export function getPersonalCommodityHoldings(data: FinancialData | null | undefined): CommodityHolding[] {
   const p = getPersonalWealthData(data);
   return p.personalCommodityHoldings.length > 0 ? p.personalCommodityHoldings : (data?.commodityHoldings ?? []);
+}
+
+export function getPersonalSukukPositions(data: FinancialData | null | undefined): SukukPosition[] {
+  const p = getPersonalWealthData(data);
+  return p.personalSukukPositions.length > 0 ? p.personalSukukPositions : (data?.sukukPositions ?? []);
 }

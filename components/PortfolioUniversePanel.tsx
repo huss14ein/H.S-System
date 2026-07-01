@@ -13,6 +13,7 @@ import { BoltIcon } from './icons/BoltIcon';
 import CurrencyDualDisplay from './CurrencyDualDisplay';
 import { getUniverseRowPlanRole } from '../services/universePlanRole';
 import { inferInstrumentCurrencyFromSymbol } from '../utils/currencyMath';
+import { lookupLiveQuoteForSymbol } from '../services/finnhubService';
 
 type UniverseSourceRow = UniverseTicker & { source?: string };
 
@@ -182,8 +183,12 @@ const PortfolioUniversePanel: React.FC<{
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [fullAutoBusy, setFullAutoBusy] = useState(false);
   const liveQuotesAny = useMemo(
-    () => Object.keys(simulatedPrices ?? {}).some((k) => simulatedPrices[k]?.price != null),
-    [simulatedPrices],
+    () =>
+      unifiedUniverse.some((t) => {
+        const sym = (t.ticker || '').trim();
+        return sym ? lookupLiveQuoteForSymbol(simulatedPrices, sym)?.price != null : false;
+      }),
+    [simulatedPrices, unifiedUniverse],
   );
 
   const filterCounts = useMemo(() => {
@@ -554,7 +559,7 @@ const PortfolioUniversePanel: React.FC<{
                         const key = `${ticker.id}::${ticker.ticker}`;
                         const isOpen = expanded.has(key);
                         const symU = (ticker.ticker || '').toUpperCase();
-                        const px = simulatedPrices[symU]?.price;
+                        const px = lookupLiveQuoteForSymbol(simulatedPrices, symU)?.price;
                         const instr = inferInstrumentCurrencyFromSymbol(symU);
                         return (
                           <React.Fragment key={key}>
@@ -675,7 +680,7 @@ const PortfolioUniversePanel: React.FC<{
                   {displayRows.map((ticker) => {
                     const rowKey = `${ticker.id}::${ticker.ticker}`;
                     const symU = (ticker.ticker || '').toUpperCase();
-                    const px = simulatedPrices[symU]?.price;
+                    const px = lookupLiveQuoteForSymbol(simulatedPrices, symU)?.price;
                     const instr = inferInstrumentCurrencyFromSymbol(symU);
                     return (
                       <div

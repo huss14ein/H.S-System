@@ -35,7 +35,7 @@ export function computeLiquidityRunwayFromData(
     transactions as any,
     accounts as any,
     sarPerUsd,
-    { monthsLookback: 6 }
+    { monthsLookback: 6, data },
   );
 
   const liquidCash = options?.getAvailableCashForAccount

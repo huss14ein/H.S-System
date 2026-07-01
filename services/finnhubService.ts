@@ -204,6 +204,16 @@ export function lookupLiveQuoteForSymbol(
     }
   }
 
+  /** Tadawul bare codes (e.g. REITF) when the map only stores suffixed keys (REITF.SR). */
+  const bareTadawul = u.match(/^([A-Z0-9]{1,8})$/);
+  if (bareTadawul && !/\.(SR|SA|SE)$/i.test(u)) {
+    const code = bareTadawul[1];
+    for (const suf of ['SR', 'SA', 'SE'] as const) {
+      const row = take(quotedMap[`${code}.${suf}`]);
+      if (row) return row;
+    }
+  }
+
   return undefined;
 }
 

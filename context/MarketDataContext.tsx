@@ -18,18 +18,20 @@ interface SimulatedPrices {
 /** ISO timestamp when each symbol’s quote was last refreshed this session. */
 export type SymbolQuoteTimestamps = Record<string, string>;
 
-/** `all` = every tracked symbol (header refresh). `platform` = one investment account’s holdings only (saves API quota). */
+/** `all` = every tracked symbol (header refresh). `portfolio` = one portfolio’s ticker holdings only. */
 export type PriceRefreshScope =
     | { kind: 'all'; forceFetch?: boolean; manual?: boolean; /** Skip header/platform spinners (session poll). */ silent?: boolean }
     | { kind: 'platform'; platformId: string; forceFetch?: boolean; manual?: boolean; silent?: boolean }
+    | { kind: 'portfolio'; portfolioId: string; forceFetch?: boolean; manual?: boolean; silent?: boolean }
     /** Pending overflow / targeted drain — fetches only listed symbols (no full portfolio rescan). */
     | { kind: 'symbols'; symbols: string[]; forceFetch?: boolean; manual?: boolean; silent?: boolean };
 
-/** Drives spinners: full refresh updates header + every platform card; platform refresh only touches one card + omits header “Updating…”. */
+/** Drives spinners: full refresh updates header; portfolio refresh only touches one portfolio row. */
 export type QuotesRefreshUIScope =
     | { mode: 'idle' }
     | { mode: 'all' }
-    | { mode: 'platform'; accountId: string };
+    | { mode: 'platform'; accountId: string }
+    | { mode: 'portfolio'; portfolioId: string };
 
 /** Where displayed quotes came from this session (cache restore vs manual live fetch). */
 export type QuotesPriceSource = 'none' | 'cached' | 'live';
@@ -50,6 +52,7 @@ export type MarketDataControlContextType = {
   finishQuotesRefresh: () => void;
   refreshPrices: (options?: { forceFetch?: boolean }) => Promise<void>;
   refreshPricesForPlatform: (platformId: string) => Promise<void>;
+  refreshPricesForPortfolio: (portfolioId: string) => Promise<void>;
   bumpPriceRefresh: (scope?: PriceRefreshScope) => void;
   consumePriceRefreshScope: () => PriceRefreshScope | null;
   hasQueuedPriceRefresh: () => boolean;
@@ -257,6 +260,20 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         [bumpPriceRefresh],
     );
 
+    const refreshPricesForPortfolio = useCallback(
+        async (portfolioId: string) => {
+            if (!portfolioId?.trim()) return;
+            const id = portfolioId.trim();
+            quoteRefreshAbortRef.current = false;
+            setQuotesRefreshUIScope({ mode: 'portfolio', portfolioId: id });
+            setIsRefreshing(true);
+            manualRefreshSessionRef.current = true;
+            bumpPriceRefresh({ kind: 'portfolio', portfolioId: id, forceFetch: true, manual: true });
+            kickQuoteRefreshNow();
+        },
+        [bumpPriceRefresh],
+    );
+
     const pricesValue = useMemo(
         (): MarketPricesContextType => ({
             simulatedPrices,
@@ -280,6 +297,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             finishQuotesRefresh,
             refreshPrices,
             refreshPricesForPlatform,
+            refreshPricesForPortfolio,
             bumpPriceRefresh,
             consumePriceRefreshScope,
             hasQueuedPriceRefresh,
@@ -306,6 +324,7 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
             finishQuotesRefresh,
             refreshPrices,
             refreshPricesForPlatform,
+            refreshPricesForPortfolio,
             bumpPriceRefresh,
             consumePriceRefreshScope,
             hasQueuedPriceRefresh,

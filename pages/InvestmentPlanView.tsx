@@ -967,7 +967,7 @@ const InvestmentPlanView: React.FC<{
     const { aiActionsEnabled } = useAI();
     const { data, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker, getAvailableCashForAccount } = useContext(DataContext)!;
     const { trackAction, trackSuggestionFeedback } = useSelfLearning();
-    const { simulatedPrices } = useInvestmentsCanonicalMetrics();
+    const { simulatedPrices, liveQuotePrices } = useInvestmentsCanonicalMetrics();
     const { symbolQuoteUpdatedAt } = useMarketQuoteMeta();
     const { exchangeRate } = useCurrency();
     const sarPerUsd = useCanonicalSpotFx();
@@ -1062,7 +1062,7 @@ const InvestmentPlanView: React.FC<{
         const plannedPrice = getTriggerPriceForComparison(plan);
         const currentPrice =
             canonicalPlan?.investmentPlan?.rows.find((r) => r.plan.id === plan.id)?.spotPrice
-            ?? lookupLiveQuoteForSymbol(simulatedPrices as any, plan.symbol ?? '')?.price;
+            ?? lookupLiveQuoteForSymbol(liveQuotePrices as any, plan.symbol ?? '')?.price;
         if (!plannedPrice || !currentPrice) return 'bg-gray-100 text-gray-600';
 
         const ratio = (currentPrice - plannedPrice) / plannedPrice;
@@ -1077,7 +1077,7 @@ const InvestmentPlanView: React.FC<{
         const plannedPrice = getTriggerPriceForComparison(plan);
         const currentPrice =
             canonicalPlan?.investmentPlan?.rows.find((r) => r.plan.id === plan.id)?.spotPrice
-            ?? lookupLiveQuoteForSymbol(simulatedPrices as any, plan.symbol ?? '')?.price;
+            ?? lookupLiveQuoteForSymbol(liveQuotePrices as any, plan.symbol ?? '')?.price;
         if (!plannedPrice || !currentPrice) return 'Waiting price';
 
         const ratio = Math.abs((currentPrice - plannedPrice) / plannedPrice);
@@ -1129,7 +1129,7 @@ const InvestmentPlanView: React.FC<{
         const instr = inferInstrumentCurrencyFromSymbol(plan.symbol ?? '');
         const currentPrice =
             canonicalPlan?.investmentPlan?.rows.find((r) => r.plan.id === plan.id)?.spotPrice
-            ?? lookupLiveQuoteForSymbol(simulatedPrices as any, plan.symbol ?? '')?.price;
+            ?? lookupLiveQuoteForSymbol(liveQuotePrices as any, plan.symbol ?? '')?.price;
         const side = plan.tradeType === 'buy' ? 'Buy when' : 'Sell when';
         return (
             <div className="space-y-1">
@@ -1261,7 +1261,7 @@ const InvestmentPlanView: React.FC<{
             if (plan.conditionType === 'price') {
                 const target = Number(plan.targetValue);
                 if (!Number.isFinite(target) || target <= 0) invalidPriceCount += 1;
-                const spot = Number(lookupLiveQuoteForSymbol(simulatedPrices, sym)?.price);
+                const spot = Number(lookupLiveQuoteForSymbol(liveQuotePrices, sym)?.price);
                 if (!Number.isFinite(spot) || spot <= 0) stalePriceCount += 1;
                 const qty = Number(plan.quantity ?? 0);
                 const amt = Number(plan.amount ?? 0);
@@ -1280,7 +1280,7 @@ const InvestmentPlanView: React.FC<{
         if (stalePriceCount > 0) out.push(`${stalePriceCount} price-triggered plan${stalePriceCount > 1 ? 's' : ''} missing live price.`);
         if (sizingMismatchCount > 0) out.push(`${sizingMismatchCount} plan${sizingMismatchCount > 1 ? 's' : ''} have amount/quantity mismatch vs target price.`);
         return out;
-    }, [data?.plannedTrades, data?.investmentPlan, simulatedPrices, sarPerUsd]);
+    }, [data?.plannedTrades, data?.investmentPlan, liveQuotePrices, sarPerUsd]);
 
     const alignmentSummaryEn = useMemo(
         () =>
@@ -1441,7 +1441,7 @@ const InvestmentPlanView: React.FC<{
                 return;
             }
 
-            const priceAnchor = lookupLiveQuoteForSymbol(simulatedPrices, candidate.symbol)?.price;
+            const priceAnchor = lookupLiveQuoteForSymbol(liveQuotePrices, candidate.symbol)?.price;
             if (priceAnchor == null || !Number.isFinite(priceAnchor) || priceAnchor <= 0) {
                 toast(`No live price for ${candidate.symbol}. Wait for a quote or set the plan manually.`, 'error');
                 return;
@@ -1502,7 +1502,7 @@ const InvestmentPlanView: React.FC<{
     const isTriggered = (plan: PlannedTrade) => {
         if (plan.status === 'Executed') return false;
         if (plan.conditionType === 'price') {
-            const priceInfo = lookupLiveQuoteForSymbol(simulatedPrices, plan.symbol);
+            const priceInfo = lookupLiveQuoteForSymbol(liveQuotePrices, plan.symbol);
             if (!priceInfo?.price) return false;
             return (plan.tradeType === 'buy' && priceInfo.price <= (plan.targetValue ?? 0)) || (plan.tradeType === 'sell' && priceInfo.price >= (plan.targetValue ?? 0));
         }
@@ -2261,7 +2261,7 @@ const InvestmentPlanView: React.FC<{
                 onSave={handleSave}
                 planToEdit={planToEdit}
                 universe={data?.portfolioUniverse ?? []}
-                simulatedPrices={simulatedPrices}
+                simulatedPrices={liveQuotePrices}
                 monthlyBudget={data?.investmentPlan?.monthlyBudget}
                 coreAllocation={data?.investmentPlan?.coreAllocation}
                 budgetCurrency={(data?.investmentPlan?.budgetCurrency as TradeCurrency) || 'SAR'}

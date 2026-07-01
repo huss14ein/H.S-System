@@ -2,14 +2,31 @@ import type { InvestmentPortfolio } from '../types';
 import { quoteNotionalInBookCurrency } from '../utils/currencyMath';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { lookupLiveQuoteForSymbol, type LiveQuoteRow } from './finnhubService';
+import { isTadawulQuoteSymbol } from './marketQuoteRouting';
 import { holdingCanUseQuoteRefresh } from './quoteRefreshSymbols';
+import { sanitizeLiveQuoteRow } from './tadawulQuoteSanity';
 
 /** Skip persisting nonsense totals if upstream data is corrupt (protects DB / UI aggregates). */
 export const MAX_HOLDING_BOOK_NOTIONAL = 1e12;
 
+function trustedQuoteRowForHolding(
+    sym: string,
+    trusted: Record<string, LiveQuoteRow>,
+    holding: { avgCost?: number; quantity?: number; currentValue?: number },
+): LiveQuoteRow | undefined {
+    const rowRaw = lookupLiveQuoteForSymbol(trusted, sym);
+    if (!rowRaw || !Number.isFinite(rowRaw.price) || rowRaw.price <= 0) return undefined;
+    if (!isTadawulQuoteSymbol(sym)) return rowRaw;
+    const avgCost = Number(holding.avgCost ?? 0);
+    return sanitizeLiveQuoteRow(sym, rowRaw, {
+        avgCostPerShare: Number.isFinite(avgCost) && avgCost > 0 ? avgCost : undefined,
+    });
+}
+
 /**
  * Persisted `currentValue` for equity holdings: only from **trusted** (cache/API) quotes, converted to each portfolio's book currency.
  * Simulated RNG fills must not be passed in `trusted` — they would corrupt stored notionals when live feeds fail.
+ * Tadawul rows are re-sanitized per holding (avg cost / stored price) so bad cache rows do not stick.
  */
 export function buildEquityHoldingValueUpdatesFromTrustedSnapshot(
     portfolios: InvestmentPortfolio[],
@@ -20,14 +37,14 @@ export function buildEquityHoldingValueUpdatesFromTrustedSnapshot(
     for (const p of portfolios) {
         const book = resolveInvestmentPortfolioCurrency(p);
         for (const holding of p.holdings ?? []) {
-            if (!holdingCanUseQuoteRefresh(holding)) continue;
+            if (!holdingCanUseQuoteRefresh(holding, { bookCurrency: book })) continue;
             const sym = holding.symbol;
             if (sym == null || !holding.id) continue;
-            const row = lookupLiveQuoteForSymbol(trusted, sym);
+            const row = trustedQuoteRowForHolding(sym, trusted, holding);
             if (!row || !Number.isFinite(row.price) || row.price <= 0) continue;
             const qty = Number(holding.quantity ?? 0);
             if (!(qty > 0)) continue;
-            const notion = quoteNotionalInBookCurrency(row.price, qty, sym, book, sarPerUsd);
+            const notion = quoteNotionalInBookCurrency(row.price, qty, sym, book, sarPerUsd, trusted);
             if (!Number.isFinite(notion) || notion <= 0 || notion > MAX_HOLDING_BOOK_NOTIONAL) continue;
             out.push({ id: holding.id, currentValue: notion });
         }

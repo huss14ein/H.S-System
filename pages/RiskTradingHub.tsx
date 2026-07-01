@@ -38,6 +38,7 @@ import { personalInvestmentTerminalValueSAR } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries } from '../services/fxDailySeries';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions, getPersonalLiabilities } from '../utils/wealthScope';
 import { countsAsIncomeForCashflowKpi, countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
+import { dateInRange, financialMonthLookbackRange, resolveMonthStartDayFromData } from '../utils/financialMonth';
 
 const RiskTradingHub: React.FC<{
   setActivePage?: (p: Page) => void;
@@ -95,20 +96,23 @@ const RiskTradingHub: React.FC<{
     [data],
   );
 
-  const reviewInputs = useMemo(() => {
-    const txs = getPersonalTransactions(data) as Transaction[];
-    const accounts = getPersonalAccounts(data);
-    const liabilities = getPersonalLiabilities(data);
-    const uncategorized = txs.filter((t) => countsAsExpenseForCashflowKpi(t) && !t.budgetCategory).length;
-    const liquid = accounts.filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: { balance?: number }) => s + Math.max(0, a.balance ?? 0), 0);
-    const monthlyDebt = liabilities
-      .filter((l) => l.status === 'Active')
-      .reduce((s, l) => s + (l.minPayment ?? 0), 0);
-    const sixMoAgo = new Date(); sixMoAgo.setMonth(sixMoAgo.getMonth() - 6);
-    const incomeSum = txs
-      .filter((t: Transaction) => countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= sixMoAgo)
-      .reduce((s: number, t: Transaction) => s + (Number(t.amount) ?? 0), 0);
-    const grossMonthlyIncome = incomeSum / 6 || 1;
+    const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data]);
+
+    const reviewInputs = useMemo(() => {
+        const txs = getPersonalTransactions(data) as Transaction[];
+        const accounts = getPersonalAccounts(data);
+        const liabilities = getPersonalLiabilities(data);
+        const uncategorized = txs.filter((t) => countsAsExpenseForCashflowKpi(t) && !t.budgetCategory).length;
+        const liquid = accounts.filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings').reduce((s: number, a: { balance?: number }) => s + Math.max(0, a.balance ?? 0), 0);
+        const monthlyDebt = liabilities
+          .filter((l) => l.status === 'Active')
+          .reduce((s, l) => s + (l.minPayment ?? 0), 0);
+        const now = new Date();
+        const { start, end } = financialMonthLookbackRange(now, 6, monthStartDay);
+        const incomeSum = txs
+          .filter((t: Transaction) => countsAsIncomeForCashflowKpi(t) && dateInRange(t.date, start, end))
+          .reduce((s: number, t: Transaction) => s + (Number(t.amount) ?? 0), 0);
+        const grossMonthlyIncome = incomeSum / 6 || 1;
     const debtStress = debtStressScore(monthlyDebt, grossMonthlyIncome, liquid);
     const staleSummary = detectStaleMarketData(marketData?.lastUpdated ?? null, marketData?.isLive ?? false);
     return {
@@ -119,7 +123,7 @@ const RiskTradingHub: React.FC<{
       missingBudgetCategories: uncategorized > 0,
       shouldSnapshot: true,
     };
-  }, [data, marketData?.lastUpdated, marketData?.isLive, liquidCashSar]);
+    }, [data, marketData?.lastUpdated, marketData?.isLive, liquidCashSar, monthStartDay]);
 
   const dailyItems = useMemo(() => dailyReviewChecklist({ hasStaleMarketData: reviewInputs.hasStaleMarketData, debtStressScore: reviewInputs.debtStressScore }), [reviewInputs.hasStaleMarketData, reviewInputs.debtStressScore]);
   const weeklyItems = useMemo(() => weeklyReviewChecklist({ budgetVariancePct: reviewInputs.budgetVariancePct, isUncategorizedSpend: reviewInputs.isUncategorizedSpend }), [reviewInputs.budgetVariancePct, reviewInputs.isUncategorizedSpend]);

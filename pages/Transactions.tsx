@@ -66,6 +66,10 @@ import {
     calendarMonthRangeFromIsoKey,
     currentCalendarMonthIso,
     currentFinancialMonthIso,
+    budgetsForFinancialMonthView,
+    dateInRange,
+    parseCalendarDateLocal,
+    addMonthsToKey,
 } from '../utils/financialMonth';
 import { sortByNewestFirst } from '../utils/sortRecency';
 import { summarizeIncomeTaxonomy } from '../services/incomeTaxonomy';
@@ -246,10 +250,11 @@ const TransactionModal: React.FC<{
                 return;
             }
             const now = new Date();
-            const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-            const end = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59, 999);
-            const startDay = start.toISOString().slice(0, 10);
-            const endDay = end.toISOString().slice(0, 10);
+            const finKey = financialMonthKey(now, monthStartDay);
+            const { start } = financialMonthRangeFromKey(addMonthsToKey(finKey, -1), monthStartDay);
+            const { end } = financialMonthRangeFromKey(addMonthsToKey(finKey, 1), monthStartDay);
+            const startDay = formatLedgerDateYmd(start);
+            const endDay = formatLedgerDateYmd(end);
             const { data: rows, error } = await supabase
                 .from('installments')
                 .select('id,sequence,due_date,amount_minor,status,installment_plans!inner(currency,metadata)')
@@ -272,7 +277,7 @@ const TransactionModal: React.FC<{
             setLinkInstallmentOptions(opts);
         };
         loadInstallmentOptions();
-    }, [isOpen, transactionToEdit, type]);
+    }, [isOpen, transactionToEdit, type, monthStartDay]);
 
     const selectedAccountCurrency = useMemo<'SAR' | 'USD'>(() => {
         const acc = accounts.find((a) => a.id === accountId);
@@ -280,13 +285,13 @@ const TransactionModal: React.FC<{
     }, [accounts, accountId]);
 
     const currentBudgetRows = useMemo(() => {
-        const parsedDate = new Date(date || new Date().toISOString().slice(0, 10));
+        const parsedDate = parseCalendarDateLocal(date || new Date().toISOString().slice(0, 10));
         const key = financialMonthKey(parsedDate, monthStartDay);
-        return budgets.filter((b) => b.month === key.month && b.year === key.year);
+        return budgetsForFinancialMonthView(budgets, key, monthStartDay);
     }, [budgets, date, monthStartDay]);
 
     const transactionFinancialMonthBounds = useMemo(() => {
-        const parsedDate = new Date(date || new Date().toISOString().slice(0, 10));
+        const parsedDate = parseCalendarDateLocal(date || new Date().toISOString().slice(0, 10));
         const key = financialMonthKey(parsedDate, monthStartDay);
         return financialMonthRangeFromKey(key, monthStartDay);
     }, [date, monthStartDay]);
@@ -298,10 +303,8 @@ const TransactionModal: React.FC<{
         existingTransactions
             .filter(
                 (t) => {
-                    const d = new Date(t.date);
                     return (
-                        d >= start &&
-                        d <= end &&
+                        dateInRange(t.date, start, end) &&
                         countsAsExpenseForCashflowKpi(t) &&
                         (t.status ?? 'Approved') === 'Approved' &&
                         t.id !== transactionToEdit?.id
@@ -1250,7 +1253,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 monthStartDay === 1
                     ? calendarMonthRangeFromIsoKey(currentCalendarMonthIso(now))
                     : financialMonthRangeFromKey(
-                          { year: now.getFullYear(), month: now.getMonth() + 1 },
+                          financialMonthKey(now, monthStartDay),
                           monthStartDay,
                       );
             if (!fallback) {

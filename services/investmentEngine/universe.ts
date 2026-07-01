@@ -1,9 +1,9 @@
 import type {
-  Asset,
   CommodityHolding,
   FinancialData,
   Holding,
   InvestmentPortfolio,
+  SukukPosition,
   TickerStatus,
   TradeCurrency,
   UniverseTicker,
@@ -39,7 +39,7 @@ export type EngineInstrument = {
   monthlyWeight?: number | null;
   maxPositionWeight?: number | null;
   /** Where this row came from (for explainability). */
-  source: 'Universe' | 'Holding' | 'Holding (auto)' | 'Commodity' | 'Asset';
+  source: 'Universe' | 'Holding' | 'Holding (auto)' | 'Commodity' | 'Asset' | 'SukukPosition';
   /** Links back to concrete rows. */
   holdingId?: string;
   portfolioId?: string;
@@ -120,8 +120,11 @@ export function buildInvestmentEngineUniverse(args: {
   const commodities = (data?.commodityHoldings ?? []) as CommodityHolding[];
   const commoditiesSarTotal = commodities.reduce((s, c) => s + Math.max(0, Number(c.currentValue) || 0), 0); // already SAR in app data
 
-  const sukukAssets = ((data?.assets ?? []) as Asset[]).filter((a) => a.type === 'Sukuk');
-  const sukukSarTotal = sukukAssets.reduce((s, a) => s + Math.max(0, Number(a.value) || 0), 0); // SAR in Assets
+  // Direct Sukuk contracts (sukuk_positions)
+  const sukukPositions = (data?.sukukPositions ?? []) as SukukPosition[];
+  const sukukSarTotal = sukukPositions
+    .filter((p) => p.status === 'active')
+    .reduce((s, p) => s + Math.max(0, Number(p.outstandingPrincipal) || 0), 0);
 
   const instruments: EngineInstrument[] = [];
 
@@ -219,24 +222,25 @@ export function buildInvestmentEngineUniverse(args: {
     });
   }
 
-  // Sukuk assets (Assets table)
-  for (const a of sukukAssets) {
-    const sym = `SUKUK:${a.id}`;
-    const valueSar = Math.max(0, Number(a.value) || 0);
+  // Direct Sukuk positions
+  for (const p of sukukPositions.filter((x) => x.status === 'active')) {
+    const sym = `SUKUK:${p.id}`;
+    const valueSar = Math.max(0, Number(p.outstandingPrincipal) || 0);
+    if (!(valueSar > 0)) continue;
     instruments.push({
-      instrumentId: `sukuk:${a.id}`,
+      instrumentId: `sukuk:${p.id}`,
       kind: 'sukuk',
       symbol: sym,
-      name: a.name ? `${a.name} (Sukuk)` : 'Sukuk',
-      instrumentCurrency: 'SAR',
-      bookCurrency: 'SAR',
+      name: p.name ? `${p.name} (Sukuk)` : 'Sukuk',
+      instrumentCurrency: p.currency === 'USD' ? 'USD' : 'SAR',
+      bookCurrency: p.currency === 'USD' ? 'USD' : 'SAR',
       positionValueBook: valueSar,
       positionValueSar: valueSar,
       status: 'Core',
       monthlyWeight: null,
       maxPositionWeight: null,
-      source: 'Asset',
-      assetId: a.id,
+      source: 'SukukPosition',
+      assetId: p.id,
     });
   }
 

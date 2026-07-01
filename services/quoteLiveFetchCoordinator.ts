@@ -32,8 +32,16 @@ function batchKey(symbols: string[]): string {
     .join('\0');
 }
 
+export type LivePriceFetchOptions = {
+  /** Manual sync — wait for network instead of returning stale cache on timeout. */
+  forceFetch?: boolean;
+};
+
 /** Same as `getLivePrices` but shares one promise per unique symbol set while in flight. */
-export async function getLivePricesDeduped(symbols: string[]): Promise<Record<string, LiveQuoteRow>> {
+export async function getLivePricesDeduped(
+  symbols: string[],
+  options?: LivePriceFetchOptions,
+): Promise<Record<string, LiveQuoteRow>> {
   const normalized = Array.from(
     new Set(symbols.map((s) => (s || '').trim()).filter(Boolean)),
   );
@@ -43,6 +51,7 @@ export async function getLivePricesDeduped(symbols: string[]): Promise<Record<st
   const existing = batchInFlight.get(key);
   if (existing) return existing;
 
+  const forceFetch = options?.forceFetch === true;
   let timedResolvedEarly = false;
 
   const promise = getLivePrices(normalized)
@@ -58,6 +67,11 @@ export async function getLivePricesDeduped(symbols: string[]): Promise<Record<st
     .finally(() => {
       batchInFlight.delete(key);
     });
+
+  if (forceFetch) {
+    batchInFlight.set(key, promise);
+    return promise;
+  }
 
   const timeoutMs = liveFetchTimeoutMs(normalized.length);
   const timed = new Promise<Record<string, LiveQuoteRow>>((resolve, reject) => {

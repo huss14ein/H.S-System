@@ -4,9 +4,10 @@
  * Matches Goals page / GoalCard `calculatedCurrentAmount` logic.
  */
 
-import type { FinancialData, Goal, Liability, InvestmentPortfolio } from '../types';
+import type { FinancialData, Goal, Liability, InvestmentPortfolio, SukukPosition } from '../types';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
+import { getPersonalSukukPositions } from '../utils/wealthScope';
 import { personalMonthlyNetByMonthKeySar } from './financeMetrics';
 import { receivableContributionForGoal } from './goalReceivableContribution';
 
@@ -53,6 +54,13 @@ export function computeGoalResolvedAmountsSar(
     const v = receivableContributionForGoal(l, gid);
     if (v > 0) add(gid, v);
   });
+
+  getPersonalSukukPositions(data)
+    .filter((p: SukukPosition) => p.goalId && p.status === 'active')
+    .forEach((p: SukukPosition) => {
+      const outstanding = Math.max(0, Number(p.outstandingPrincipal) || 0);
+      if (outstanding > 0) add(String(p.goalId), toSAR(outstanding, p.currency === 'USD' ? 'USD' : 'SAR', sarPerUsd));
+    });
 
   return map;
 }

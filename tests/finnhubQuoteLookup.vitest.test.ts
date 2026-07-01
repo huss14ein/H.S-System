@@ -18,6 +18,12 @@ describe('lookupLiveQuoteForSymbol', () => {
     expect(lookupLiveQuoteForSymbol(quoted, '2222.sa')).toEqual(tick);
   });
 
+  it('finds suffixed Tadawul keys when holding symbol is bare letters (REITF → REITF.SR)', () => {
+    const tick: LiveQuoteRow = { price: 12, change: 0, changePercent: 0 };
+    const quoted = { 'REITF.SR': tick };
+    expect(lookupLiveQuoteForSymbol(quoted, 'REITF')).toEqual(tick);
+  });
+
   it('finds by canonical key when only provider-side keys exist', () => {
     const tick: LiveQuoteRow = { price: 100, change: 1, changePercent: 1 };
     const quoted = { '1180.SE': tick };

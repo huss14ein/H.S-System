@@ -1,6 +1,44 @@
-import type { Account, Transaction } from '../types';
+import type { Account, FinancialData, Transaction } from '../types';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 import { toSAR } from '../utils/currencyMath';
+import {
+  dateInRange,
+  financialMonthIsoKey,
+  financialMonthKeyFromTransactionDate,
+  financialMonthLookbackRange,
+  financialMonthRange,
+  resolveMonthStartDayFromData,
+} from '../utils/financialMonth';
+
+type TxIntelLookbackOpts = {
+  months?: number;
+  monthsLookback?: number;
+  data?: FinancialData | null;
+};
+
+function resolveLookbackWindow(opts: TxIntelLookbackOpts | undefined, ref = new Date()) {
+  const span = opts?.months ?? opts?.monthsLookback ?? 6;
+  if (opts?.data) {
+    const monthStartDay = resolveMonthStartDayFromData(opts.data);
+    const { start, end } = financialMonthLookbackRange(ref, span, monthStartDay);
+    return { start, end, monthStartDay, financial: true as const };
+  }
+  const start = new Date(ref);
+  start.setMonth(start.getMonth() - span);
+  return { start, end: ref, monthStartDay: 1, financial: false as const };
+}
+
+function txInLookbackWindow(date: string, window: ReturnType<typeof resolveLookbackWindow>): boolean {
+  return dateInRange(date, window.start, window.end);
+}
+
+function txMonthBucketKey(date: string, window: ReturnType<typeof resolveLookbackWindow>): string {
+  if (window.financial) {
+    return financialMonthIsoKey(financialMonthKeyFromTransactionDate(date, window.monthStartDay));
+  }
+  const d = new Date(date);
+  return `${d.getFullYear()}-${d.getMonth()}`;
+}
 
 /** Normalize merchant from bank-style descriptions. */
 export function normalizeMerchant(description: string): string {
@@ -16,15 +54,13 @@ export function normalizeMerchant(description: string): string {
 
 export function spendByMerchant(
   transactions: Transaction[],
-  opts?: { months?: number }
+  opts?: TxIntelLookbackOpts,
 ): { merchant: string; total: number }[] {
-  const months = opts?.months ?? 6;
-  const start = new Date();
-  start.setMonth(start.getMonth() - months);
+  const window = resolveLookbackWindow(opts);
   const map = new Map<string, number>();
   transactions.forEach((t) => {
     if (!countsAsExpenseForCashflowKpi(t)) return;
-    if (new Date(t.date) < start) return;
+    if (!txInLookbackWindow(t.date, window)) return;
     const m = normalizeMerchant(t.description);
     map.set(m, (map.get(m) || 0) + Math.abs(Number(t.amount) || 0));
   });
@@ -40,16 +76,18 @@ export interface SalaryDetection {
   confidence: 'low' | 'medium' | 'high';
 }
 
-export function detectSalaryIncome(transactions: Transaction[], monthsLookback = 6): SalaryDetection {
-  const start = new Date();
-  start.setMonth(start.getMonth() - monthsLookback);
+export function detectSalaryIncome(
+  transactions: Transaction[],
+  monthsLookback = 6,
+  data?: FinancialData | null,
+): SalaryDetection {
+  const window = resolveLookbackWindow({ monthsLookback, data });
   const income = transactions.filter(
-    (t) => countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= start
+    (t) => countsAsIncomeForCashflowKpi(t) && txInLookbackWindow(t.date, window),
   );
   const byMonth = new Map<string, number[]>();
   income.forEach((t) => {
-    const d = new Date(t.date);
-    const k = `${d.getFullYear()}-${d.getMonth()}`;
+    const k = txMonthBucketKey(t.date, window);
     const arr = byMonth.get(k) || [];
     arr.push(Math.abs(Number(t.amount) || 0));
     byMonth.set(k, arr);
@@ -81,18 +119,17 @@ export function detectSalaryIncomeSar(
   transactions: Transaction[],
   accounts: Account[],
   sarPerUsd: number,
-  monthsLookback = 6
+  monthsLookback = 6,
+  data?: FinancialData | null,
 ): SalaryDetection {
   const accById = new Map(accounts.map((a) => [a.id, a]));
-  const start = new Date();
-  start.setMonth(start.getMonth() - monthsLookback);
+  const window = resolveLookbackWindow({ monthsLookback, data });
   const income = transactions.filter(
-    (t) => countsAsIncomeForCashflowKpi(t) && new Date(t.date) >= start
+    (t) => countsAsIncomeForCashflowKpi(t) && txInLookbackWindow(t.date, window),
   );
   const byMonth = new Map<string, number[]>();
   income.forEach((t) => {
-    const d = new Date(t.date);
-    const k = `${d.getFullYear()}-${d.getMonth()}`;
+    const k = txMonthBucketKey(t.date, window);
     const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
     const amtSar = toSAR(Math.abs(Number(t.amount) || 0), cur, sarPerUsd);
     const arr = byMonth.get(k) || [];
@@ -129,12 +166,12 @@ export function tagSubscriptionLikeExpenses(transactions: Transaction[]): Transa
 
 export function subscriptionSpendMonthly(
   transactions: Transaction[],
-  months = 3
+  months = 3,
+  data?: FinancialData | null,
 ): { monthlyEstimate: number; count: number } {
   const subs = tagSubscriptionLikeExpenses(transactions);
-  const start = new Date();
-  start.setMonth(start.getMonth() - months);
-  const recent = subs.filter((t) => new Date(t.date) >= start);
+  const window = resolveLookbackWindow({ months, data });
+  const recent = subs.filter((t) => txInLookbackWindow(t.date, window));
   const total = recent.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0);
   return { monthlyEstimate: months > 0 ? total / months : 0, count: recent.length };
 }
@@ -193,13 +230,21 @@ export function detectBnplMentions(transactions: Transaction[]): { description: 
 export function expenseTotalsByBudgetCategorySar(
   transactions: Transaction[],
   accounts: Account[],
-  sarPerUsd: number
+  sarPerUsd: number,
+  opts?: { data?: FinancialData | null; scope?: 'all' | 'current_financial_month' },
 ): { name: string; value: number }[] {
   const accById = new Map(accounts.map((a) => [a.id, a]));
   const spending = new Map<string, number>();
+  let range: { start: Date; end: Date } | null = null;
+  if (opts?.data && opts.scope !== 'all') {
+    const monthStartDay = resolveMonthStartDayFromData(opts.data);
+    const { start, end } = financialMonthRange(new Date(), monthStartDay);
+    range = { start, end };
+  }
   transactions
     .filter((t) => countsAsExpenseForCashflowKpi(t))
     .forEach((t) => {
+      if (range && !dateInRange(t.date, range.start, range.end)) return;
       const rawCategory = (t.budgetCategory || t.category || 'Uncategorized').trim();
       const category = rawCategory.length > 0 ? rawCategory : 'Uncategorized';
       const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
@@ -215,16 +260,14 @@ export function spendByMerchantSar(
   transactions: Transaction[],
   accounts: Account[],
   sarPerUsd: number,
-  opts?: { months?: number }
+  opts?: TxIntelLookbackOpts,
 ): { merchant: string; total: number }[] {
-  const months = opts?.months ?? 6;
-  const start = new Date();
-  start.setMonth(start.getMonth() - months);
+  const window = resolveLookbackWindow(opts);
   const accById = new Map(accounts.map((a) => [a.id, a]));
   const map = new Map<string, number>();
   transactions.forEach((t) => {
     if (!countsAsExpenseForCashflowKpi(t)) return;
-    if (new Date(t.date) < start) return;
+    if (!txInLookbackWindow(t.date, window)) return;
     const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
     const sar = toSAR(Math.abs(Number(t.amount) || 0), cur, sarPerUsd);
     const m = normalizeMerchant(t.description);
@@ -240,13 +283,13 @@ export function subscriptionSpendMonthlySar(
   transactions: Transaction[],
   accounts: Account[],
   sarPerUsd: number,
-  months = 3
+  months = 3,
+  data?: FinancialData | null,
 ): { monthlyEstimate: number; count: number } {
   const subs = tagSubscriptionLikeExpenses(transactions);
-  const start = new Date();
-  start.setMonth(start.getMonth() - months);
+  const window = resolveLookbackWindow({ months, data });
   const accById = new Map(accounts.map((a) => [a.id, a]));
-  const recent = subs.filter((t) => new Date(t.date) >= start);
+  const recent = subs.filter((t) => txInLookbackWindow(t.date, window));
   let total = 0;
   recent.forEach((t) => {
     const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';

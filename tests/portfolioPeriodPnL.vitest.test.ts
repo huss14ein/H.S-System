@@ -82,6 +82,76 @@ describe('portfolioPeriodPnL', () => {
     expect(ledger).toBeCloseTo(150, 0);
   });
 
+  it('mark-to-market period P/L reflects live vs cost at period start when ledger explains holdings', () => {
+    const accounts: Account[] = [{ id: 'acc-1', name: 'Broker', type: 'Investment', balance: 0 }];
+    const portfolios: InvestmentPortfolio[] = [
+      {
+        id: 'p1',
+        name: 'Core',
+        accountId: 'acc-1',
+        currency: 'SAR',
+        holdings: [
+          {
+            id: 'h1',
+            symbol: '2222.SR',
+            quantity: 100,
+            avgCost: 10,
+            currentValue: 1200,
+            zakahClass: 'Zakatable',
+            realizedPnL: 0,
+            holdingType: 'ticker',
+          },
+        ],
+      },
+    ];
+    const txs: InvestmentTransaction[] = [
+      {
+        id: 'b1',
+        accountId: 'acc-1',
+        portfolioId: 'p1',
+        date: '2026-05-01',
+        type: 'buy',
+        symbol: '2222.SR',
+        quantity: 100,
+        price: 10,
+        total: 1000,
+        currency: 'SAR',
+      },
+    ];
+    const data = {
+      accounts,
+      investments: portfolios,
+      investmentTransactions: txs,
+      personalInvestments: portfolios,
+      monthStartDay: 1,
+    } as FinancialData;
+
+    const now = new Date(2026, 4, 25);
+    const weekStart = new Date(now);
+    weekStart.setDate(weekStart.getDate() - 6);
+    weekStart.setHours(0, 0, 0, 0);
+    const weekEnd = new Date(now);
+    weekEnd.setHours(23, 59, 59, 999);
+
+    const period = computePortfolioMarkToMarketPeriodPnLSar({
+      portfolio: portfolios[0],
+      transactions: txs,
+      startMs: weekStart.getTime(),
+      endMs: weekEnd.getTime(),
+      endValueSar: 1200,
+      includeCash: true,
+      singlePortfolioOnAccount: true,
+      accounts,
+      portfolios,
+      data,
+      sarPerUsd: 3.75,
+      simulatedPrices: { '2222.SR': { price: 12, change: 0.5, changePercent: 1 } },
+    });
+
+    expect(period.totalSar).toBeCloseTo(200, 0);
+    expect(period.marketEstimateSar).toBeCloseTo(200, 0);
+  });
+
   it('mark-to-market period P/L does not multiply daily P/L by trading days', () => {
     const accounts: Account[] = [{ id: 'acc-1', name: 'Broker', type: 'Investment', balance: 0 }];
     const portfolios: InvestmentPortfolio[] = [
@@ -134,10 +204,10 @@ describe('portfolioPeriodPnL', () => {
       simulatedPrices: { '2222.SR': { price: 12, change: 0.5, changePercent: 1 } },
     });
 
-    // Same live mark at period start and end (no flows) → period P/L ≈ 0, not cost-to-live lifetime gain.
-    expect(period.totalSar).toBeCloseTo(0, 0);
+    // Same live mark at period end vs cost at start (no flows) → period P/L reflects mark vs cost.
+    expect(period.totalSar).toBeCloseTo(200, 0);
     expect(period.ledgerSar).toBeCloseTo(0, 0);
-    expect(period.marketEstimateSar).toBeCloseTo(0, 0);
+    expect(period.marketEstimateSar).toBeCloseTo(200, 0);
   });
 
   it('summary returns one row per portfolio with weekly and monthly totals', () => {
@@ -184,7 +254,7 @@ describe('portfolioPeriodPnL', () => {
 
     expect(summary.rows).toHaveLength(1);
     expect(summary.rows[0].portfolioName).toBe('Core');
-    expect(summary.rows[0].weekly.totalSar).toBeCloseTo(0, 0);
+    expect(summary.rows[0].weekly.totalSar).toBeCloseTo(200, 0);
     expect(summary.weeklyTotalSar).toBe(summary.rows[0].weekly.totalSar);
   });
 

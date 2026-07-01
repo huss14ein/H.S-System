@@ -5,7 +5,7 @@ export type ExtendedMetricsPickSource = Pick<
   UseCanonicalFinancialMetricsResult,
   | 'investmentsTotalSar'
   | 'commoditiesValueSar'
-  | 'sukukAssetsValueSar'
+  | 'sukukPositionsValueSar'
   | 'platformsRollupSar'
   | 'investableCashTotalSar'
   | 'investmentExposure'
@@ -59,15 +59,18 @@ export function pickCommoditiesValueSar(
   return metrics.commoditiesValueSar;
 }
 
-export function pickSukukAssetsValueSar(
+export function pickSukukPositionsValueSar(
   metrics: ExtendedMetricsPickSource,
   extendedReady: boolean,
 ): number | null {
   const exposure = pickHeadlineInvestmentExposure(metrics);
-  if (exposure) return exposure.sukukAssetsValueSar;
+  if (exposure) return exposure.sukukPositionsValueSar;
   if (!extendedReady) return null;
-  return metrics.sukukAssetsValueSar;
+  return metrics.sukukPositionsValueSar;
 }
+
+/** @deprecated Use pickSukukPositionsValueSar */
+export const pickSukukAssetsValueSar = pickSukukPositionsValueSar;
 
 export function pickPlatformsRollupSar(
   metrics: ExtendedMetricsPickSource,
@@ -88,7 +91,7 @@ export type InvestmentsHeadlineKpiRow = {
   trendPercentage: number;
   platformsRollupSAR: number;
   commoditiesValueSAR: number;
-  sukukAssetsValueSAR: number;
+  sukukPositionsValueSAR: number;
 };
 
 export function buildInvestmentsHeadlineKpiRow(
@@ -110,7 +113,7 @@ export function buildInvestmentsHeadlineKpiRow(
     trendPercentage,
     platformsRollupSAR: h.platformsRollupSar,
     commoditiesValueSAR: h.commoditiesValueSar,
-    sukukAssetsValueSAR: h.sukukAssetsValueSar,
+    sukukPositionsValueSAR: h.sukukPositionsValueSar,
   };
 }
 

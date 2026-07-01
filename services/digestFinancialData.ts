@@ -11,6 +11,7 @@ import type {
 import { getDefaultWealthUltraSystemConfig, mergeWealthUltraSystemConfigFromRow } from '../wealth-ultra/config';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { roundAvgCostPerUnit, roundMoney, roundQuantity } from '../utils/money';
+import { normalizeSukukPositionRow } from './sukuk/sukukPositionDb';
 
 function resolveAccountId(candidate: string | undefined, accounts: Account[]): string | undefined {
   const c = (candidate ?? '').trim();
@@ -229,6 +230,7 @@ export type WeeklyDigestFinanceRows = {
   /** `investment_portfolios` rows with nested `holdings(*)`. */
   portfoliosRaw: Record<string, unknown>[];
   commodityHoldingsRaw: Record<string, unknown>[];
+  sukukPositionsRaw?: Record<string, unknown>[];
   investmentTransactionsRaw: Record<string, unknown>[];
   wealthUltraUserRow: Record<string, unknown> | null;
   wealthUltraGlobalRow: Record<string, unknown> | null;
@@ -249,6 +251,7 @@ export function buildFinancialDataForWeeklyDigest(rows: WeeklyDigestFinanceRows)
   const investmentTransactions = (rows.investmentTransactionsRaw ?? []).map((t) =>
     digestNormalizeInvestmentTransaction(t, accounts, investments),
   );
+  const sukukPositions = (rows.sukukPositionsRaw ?? []).map((r) => normalizeSukukPositionRow(r));
 
   return {
     accounts,
@@ -295,6 +298,7 @@ export function buildFinancialDataForWeeklyDigest(rows: WeeklyDigestFinanceRows)
     allBudgets: [],
     wealthUltraConfig,
     budgetRequests: [],
+    sukukPositions,
     sukukPayoutSchedules: [],
     sukukPayoutEvents: [],
   };

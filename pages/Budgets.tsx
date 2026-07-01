@@ -97,11 +97,14 @@ import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import {
     budgetAppliesToFinancialView,
     dedupeBudgetRowsForFinancialView,
+    addMonthsToKey,
+    dateInRange,
     financialMonthKey,
     financialMonthRangeFromKey,
     resolveMonthStartDayFromData,
     type FinancialMonthKey,
 } from '../utils/financialMonth';
+import { formatLedgerDateYmd } from '../utils/transactionLedgerFilters';
 import AIAdvisor from '../components/AIAdvisor';
 import {
     dedupeSharedBudgetRows,
@@ -524,10 +527,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const loadInstallmentRowsForBudgetWindow = async () => {
             if (!supabase || !auth?.user) return;
             // Pull installments due around the current view window; budget calculation will filter into exact range.
-            const start = new Date(currentYear, currentMonth - 2, 1);
-            const end = new Date(currentYear, currentMonth + 2, 0, 23, 59, 59, 999);
-            const startDay = start.toISOString().slice(0, 10);
-            const endDay = end.toISOString().slice(0, 10);
+            const viewKey = { year: currentYear, month: currentMonth };
+            const { start } = financialMonthRangeFromKey(addMonthsToKey(viewKey, -1), monthStartDay);
+            const { end } = financialMonthRangeFromKey(addMonthsToKey(viewKey, 1), monthStartDay);
+            const startDay = formatLedgerDateYmd(start);
+            const endDay = formatLedgerDateYmd(end);
 
             const { data: rows, error } = await supabase
                 .from('installments')
@@ -565,7 +569,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             setInstallmentBudgetRows(mapped);
         };
         loadInstallmentRowsForBudgetWindow();
-    }, [auth?.user?.id, currentYear, currentMonth, budgetView, dataResetKey, (data?.transactions ?? []).length]);
+    }, [auth?.user?.id, currentYear, currentMonth, monthStartDay, budgetView, dataResetKey, (data?.transactions ?? []).length]);
 
     // Update shared transaction month filter when current month changes
     useEffect(() => {
@@ -2628,9 +2632,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             // Month filter
             if (requestMonthFilter) {
                 const [filterYear, filterMonth] = requestMonthFilter.split('-').map(Number);
-                const requestDate = new Date(r.created_at || 0);
-                const matchesMonth = requestDate.getFullYear() === filterYear && requestDate.getMonth() + 1 === filterMonth;
-                if (!matchesMonth) return false;
+                const requestDate = String(r.created_at || '').slice(0, 10);
+                if (!requestDate) return false;
+                const { start, end } = financialMonthRangeFromKey({ year: filterYear, month: filterMonth }, monthStartDay);
+                if (!dateInRange(requestDate, start, end)) return false;
             }
             
             if (!normalizedQuery) return true;
@@ -2646,7 +2651,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         });
 
         return sorted;
-    }, [budgetRequests, requestSearch, requestSort, requestStatusFilter, requestMonthFilter, governanceCategories]);
+    }, [budgetRequests, requestSearch, requestSort, requestStatusFilter, requestMonthFilter, governanceCategories, monthStartDay]);
 
     const pendingRequests = useMemo(() => sortedFilteredRequests.filter((r) => r.status === 'Pending'), [sortedFilteredRequests]);
     const allRespondedRequests = useMemo(() => budgetRequests.filter((r) => r.status !== 'Pending').sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()), [budgetRequests]);
@@ -3909,8 +3914,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                             sourceTxs
                                 .filter((t: any) => countsAsExpenseForCashflowKpi(t) && (t.status ?? 'Approved') === 'Approved')
                                 .forEach((t: any) => {
-                                    const d = new Date(t.date);
-                                    if (!(d >= rangeStart && d <= rangeEnd)) return;
+                                    if (!dateInRange(t.date, rangeStart, rangeEnd)) return;
                                     const allocations = getTransactionBudgetAllocations(t as any);
                                     allocations.forEach((allocation) => {
                                         const amountSar = txAmountSar({ ...t, amount: allocation.amount });
@@ -4543,8 +4547,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                             const [filterYear, filterMonth] = sharedTxMonthFilter.split('-').map(Number);
                             const monthValid = Number.isFinite(filterYear) && Number.isFinite(filterMonth) && filterMonth >= 1 && filterMonth <= 12;
                             const filteredTxs = (ownerSharedTransactions.length > 0 ? ownerSharedTransactions : mySharedBudgetTransactions).filter((tx) => {
-                                const txDate = new Date(tx.transaction_date || tx.date);
-                                const matchesMonth = monthValid ? (txDate.getFullYear() === filterYear && txDate.getMonth() + 1 === filterMonth) : true;
+                                const txDay = String(tx.transaction_date || tx.date || '').slice(0, 10);
+                                let matchesMonth = true;
+                                if (monthValid) {
+                                    const { start, end } = financialMonthRangeFromKey({ year: filterYear, month: filterMonth }, monthStartDay);
+                                    matchesMonth = txDay.length === 10 && dateInRange(txDay, start, end);
+                                }
                                 const matchesStatus = sharedTxStatusFilter === 'All' || (tx.status ?? 'Approved') === sharedTxStatusFilter;
                                 const matchesCategory = sharedTxCategoryFilter === 'All' || tx.budget_category === sharedTxCategoryFilter;
                                 return matchesMonth && matchesStatus && matchesCategory;

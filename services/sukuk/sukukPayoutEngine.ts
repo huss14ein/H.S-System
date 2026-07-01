@@ -3,29 +3,30 @@ export type SukukPayoutKind = 'coupon' | 'principal';
 
 export type SukukPayoutSchedule = {
   id: string;
-  assetId: string;
+  sukukPositionId: string;
   investmentAccountId: string;
   currency: 'SAR' | 'USD';
   cadence: SukukPayoutCadence;
-  dayOfMonth?: number | null; // 1-28
+  dayOfMonth?: number | null;
   couponAmount?: number | null;
   principalAmount?: number | null;
-  startDate?: string | null; // YYYY-MM-DD
-  endDate?: string | null; // YYYY-MM-DD
+  principalInstallmentAmount?: number | null;
+  startDate?: string | null;
+  endDate?: string | null;
   enabled?: boolean;
 };
 
-export type SukukAssetDates = {
+export type SukukPositionDates = {
   issueDate?: string | null;
   maturityDate?: string | null;
 };
 
 export type SukukPayoutEventDraft = {
   scheduleId: string;
-  assetId: string;
+  sukukPositionId: string;
   investmentAccountId: string;
   kind: SukukPayoutKind;
-  payoutDate: string; // YYYY-MM-DD
+  payoutDate: string;
   amount: number;
   currency: 'SAR' | 'USD';
   metadata?: Record<string, unknown>;
@@ -45,29 +46,36 @@ function toYmd(d: Date): string {
 }
 
 function addMonthsUtc(anchor: Date, months: number, dayOfMonth: number): Date {
-  // Keep on a stable day (1-28), UTC.
   return new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() + months, dayOfMonth));
 }
 
+export type MaterializeSukukPayoutEventsArgs = {
+  schedule: SukukPayoutSchedule;
+  positionDates: SukukPositionDates;
+  /** When set, maturity principal defaults to this if schedule.principalAmount is null. */
+  outstandingPrincipal?: number | null;
+};
+
 /**
  * Materialize payout events for a schedule.
- * - monthly / quarterly: emits coupon events from start→end inclusive (bounded by asset dates)
- * - maturity_only: emits principal event at maturity (and optional coupon at maturity if couponAmount provided)
+ * - monthly / quarterly: coupon events + optional principal installments + maturity remainder
+ * - maturity_only: coupon (optional) + principal at maturity (defaults to outstanding)
  * - custom: emits nothing (events are user-entered)
  */
-export function materializeSukukPayoutEvents(args: {
-  schedule: SukukPayoutSchedule;
-  assetDates: SukukAssetDates;
-}): SukukPayoutEventDraft[] {
+export function materializeSukukPayoutEvents(args: MaterializeSukukPayoutEventsArgs): SukukPayoutEventDraft[] {
   const s = args.schedule;
   if (s.enabled === false) return [];
   assert(s.currency === 'SAR' || s.currency === 'USD', 'schedule currency must be SAR or USD');
-  assert(s.cadence === 'monthly' || s.cadence === 'quarterly' || s.cadence === 'maturity_only' || s.cadence === 'custom', 'invalid cadence');
+  assert(
+    s.cadence === 'monthly' || s.cadence === 'quarterly' || s.cadence === 'maturity_only' || s.cadence === 'custom',
+    'invalid cadence',
+  );
 
-  const issue = (args.assetDates.issueDate ?? null) as string | null;
-  const maturity = (args.assetDates.maturityDate ?? null) as string | null;
+  const issue = (args.positionDates.issueDate ?? null) as string | null;
+  const maturity = (args.positionDates.maturityDate ?? null) as string | null;
   const start = (s.startDate ?? issue ?? null) as string | null;
   const end = (s.endDate ?? maturity ?? null) as string | null;
+  const outstanding = Math.max(0, Number(args.outstandingPrincipal ?? 0) || 0);
 
   if (start) assert(ISO_DAY_RE.test(start), 'startDate must be YYYY-MM-DD');
   if (end) assert(ISO_DAY_RE.test(end), 'endDate must be YYYY-MM-DD');
@@ -75,20 +83,39 @@ export function materializeSukukPayoutEvents(args: {
   if (maturity) assert(ISO_DAY_RE.test(maturity), 'maturityDate must be YYYY-MM-DD');
 
   const coupon = Number(s.couponAmount ?? 0);
-  const principal = s.principalAmount == null ? null : Number(s.principalAmount);
+  const principalConfigured = s.principalAmount == null ? null : Number(s.principalAmount);
+  const principalInstallment = Number(s.principalInstallmentAmount ?? 0);
   if (coupon < 0 || !Number.isFinite(coupon)) throw new Error('couponAmount must be a non-negative number');
-  if (principal != null && (!Number.isFinite(principal) || principal < 0)) throw new Error('principalAmount must be a non-negative number');
+  if (principalConfigured != null && (!Number.isFinite(principalConfigured) || principalConfigured < 0)) {
+    throw new Error('principalAmount must be a non-negative number');
+  }
+  if (principalInstallment < 0 || !Number.isFinite(principalInstallment)) {
+    throw new Error('principalInstallmentAmount must be a non-negative number');
+  }
+
+  const pushPrincipal = (events: SukukPayoutEventDraft[], payoutDate: string, amount: number) => {
+    if (!(amount > 0)) return;
+    events.push({
+      scheduleId: s.id,
+      sukukPositionId: s.sukukPositionId,
+      investmentAccountId: s.investmentAccountId,
+      kind: 'principal',
+      payoutDate,
+      amount,
+      currency: s.currency,
+    });
+  };
 
   const events: SukukPayoutEventDraft[] = [];
 
   if (s.cadence === 'custom') return events;
 
   if (s.cadence === 'maturity_only') {
-    assert(maturity, 'maturity-only requires asset maturityDate');
+    assert(maturity, 'maturity-only requires position maturityDate');
     if (coupon > 0) {
       events.push({
         scheduleId: s.id,
-        assetId: s.assetId,
+        sukukPositionId: s.sukukPositionId,
         investmentAccountId: s.investmentAccountId,
         kind: 'coupon',
         payoutDate: maturity,
@@ -96,65 +123,58 @@ export function materializeSukukPayoutEvents(args: {
         currency: s.currency,
       });
     }
-    if (principal != null && principal > 0) {
-      events.push({
-        scheduleId: s.id,
-        assetId: s.assetId,
-        investmentAccountId: s.investmentAccountId,
-        kind: 'principal',
-        payoutDate: maturity,
-        amount: principal,
-        currency: s.currency,
-      });
-    }
+    const matPrincipal =
+      principalConfigured != null && principalConfigured > 0 ? principalConfigured : outstanding;
+    pushPrincipal(events, maturity, matPrincipal);
     return events;
   }
 
   const stepMonths = s.cadence === 'monthly' ? 1 : 3;
   const dom = Math.max(1, Math.min(28, Math.trunc(Number(s.dayOfMonth ?? 1))));
-  assert(start, 'monthly/quarterly requires a start date (schedule.startDate or asset.issueDate)');
-  assert(end, 'monthly/quarterly requires an end date (schedule.endDate or asset.maturityDate)');
-  if (coupon <= 0) return events;
+  assert(start, 'monthly/quarterly requires a start date (schedule.startDate or position issueDate)');
+  assert(end, 'monthly/quarterly requires an end date (schedule.endDate or position maturityDate)');
 
   const startAnchor = new Date(`${start}T00:00:00Z`);
   const endAnchor = new Date(`${end}T00:00:00Z`);
-  if (Number.isNaN(startAnchor.getTime()) || Number.isNaN(endAnchor.getTime())) throw new Error('Invalid start/end date');
+  if (Number.isNaN(startAnchor.getTime()) || Number.isNaN(endAnchor.getTime())) {
+    throw new Error('Invalid start/end date');
+  }
 
-  // First payout month uses start month; we anchor to that month with configured day-of-month.
   const anchorMonth = new Date(Date.UTC(startAnchor.getUTCFullYear(), startAnchor.getUTCMonth(), dom));
+  let principalPaid = 0;
   let i = 0;
   while (true) {
     const dt = addMonthsUtc(anchorMonth, i * stepMonths, dom);
     const ymd = toYmd(dt);
     if (ymd > end) break;
     if (ymd >= start) {
-      events.push({
-        scheduleId: s.id,
-        assetId: s.assetId,
-        investmentAccountId: s.investmentAccountId,
-        kind: 'coupon',
-        payoutDate: ymd,
-        amount: coupon,
-        currency: s.currency,
-      });
+      if (coupon > 0) {
+        events.push({
+          scheduleId: s.id,
+          sukukPositionId: s.sukukPositionId,
+          investmentAccountId: s.investmentAccountId,
+          kind: 'coupon',
+          payoutDate: ymd,
+          amount: coupon,
+          currency: s.currency,
+        });
+      }
+      if (principalInstallment > 0 && ymd < (maturity ?? end)) {
+        pushPrincipal(events, ymd, principalInstallment);
+        principalPaid += principalInstallment;
+      }
     }
     i++;
-    if (i > 500) break; // safety
+    if (i > 500) break;
   }
 
-  // If principal is specified and end aligns to maturity, add it once.
-  if (principal != null && principal > 0 && maturity && end === maturity) {
-    events.push({
-      scheduleId: s.id,
-      assetId: s.assetId,
-      investmentAccountId: s.investmentAccountId,
-      kind: 'principal',
-      payoutDate: maturity,
-      amount: principal,
-      currency: s.currency,
-    });
+  if (maturity && end === maturity) {
+    const remainder =
+      principalConfigured != null && principalConfigured > 0
+        ? principalConfigured
+        : Math.max(0, outstanding - principalPaid);
+    pushPrincipal(events, maturity, remainder);
   }
 
   return events;
 }
-

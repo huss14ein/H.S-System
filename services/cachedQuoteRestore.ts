@@ -10,7 +10,7 @@ import {
   type CachedQuoteRow,
 } from './quotePriceCache';
 import { expandLiveQuotesForRequestedSymbols, type LiveQuoteRow, canonicalQuoteLookupKey } from './finnhubService';
-import { getRefreshableHoldingQuoteSymbols } from './quoteRefreshSymbols';
+import { getRefreshableHoldingQuoteSymbolsFromPortfolios } from './quoteRefreshSymbols';
 import { getPersonalInvestments, getPersonalCommodityHoldings } from '../utils/wealthScope';
 import {
   buildCommodityHoldingValueUpdatesFromTrustedSnapshot,
@@ -70,10 +70,7 @@ export function buildTrustedSnapshotFromCacheForSymbols(
 
 export function collectTrackedQuoteSymbols(data: FinancialData): string[] {
   const inv = getPersonalInvestments(data);
-  const holdings = inv.flatMap((p) => p.holdings ?? []);
-  const holdingSymbols = getRefreshableHoldingQuoteSymbols(
-    holdings as { symbol?: string; holdingType?: string; holding_type?: string }[],
-  );
+  const holdingSymbols = getRefreshableHoldingQuoteSymbolsFromPortfolios(inv);
   const watch = data.watchlist ?? [];
   const planned = data.plannedTrades ?? [];
   const comm = getPersonalCommodityHoldings(data);

@@ -53,8 +53,14 @@ import {
     financialMonthIsoKey,
     financialMonthColumnHeaderLabel,
     financialMonthRangeFromKey,
+    financialMonthLookbackRange,
+    financialMonthKey,
+    addMonthsToKey,
     resolveMonthStartDayFromData,
     dateInRange,
+    budgetsForFinancialMonthView,
+    financialMonthDaysRemaining,
+    financialMonthKeyFromTransactionDate,
 } from '../utils/financialMonth';
 import { buildPersonalInvestmentTreemapRows } from '../services/wealthSummaryReportModel';
 import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
@@ -111,10 +117,20 @@ const UpcomingBills: React.FC = () => {
         const sarPerUsd = headlineFx;
         const recurringExpenses = new Map<string, { totalSAR: number; lastAmount: number; lastDate: Date; count: number; lastAccountId?: string }>();
         const now = new Date();
+        const monthStartDay = resolveMonthStartDayFromData(data);
+        const { start: lookbackStart } = financialMonthLookbackRange(now, 12, monthStartDay);
+        const { end: dueHorizonEnd } = financialMonthRangeFromKey(
+            addMonthsToKey(financialMonthKey(now, monthStartDay), 1),
+            monthStartDay,
+        );
 
-        // Find recurring fixed expenses from the last year (personal accounts only)
         getPersonalTransactions(data)
-            .filter((t) => countsAsExpenseForCashflowKpi(t) && t.transactionNature === 'Fixed' && new Date(t.date) > new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()))
+            .filter(
+                (t) =>
+                    countsAsExpenseForCashflowKpi(t) &&
+                    t.transactionNature === 'Fixed' &&
+                    dateInRange(t.date, lookbackStart, now),
+            )
             .forEach((t: { description?: string; amount?: number; date: string; accountId?: string }) => {
                 const existing = recurringExpenses.get(t.description ?? '') || { totalSAR: 0, lastAmount: 0, lastDate: new Date(0), count: 0, lastAccountId: undefined as string | undefined };
                 const thisAmount = Math.abs(Number(t.amount) ?? 0);
@@ -136,7 +152,7 @@ const UpcomingBills: React.FC = () => {
                 // Simple assumption of monthly recurrence for this example
                 nextDueDate.setMonth(nextDueDate.getMonth() + 1);
                 
-                if (nextDueDate > now && nextDueDate < new Date(now.getFullYear(), now.getMonth() + 2, 0)) { // If due in the next ~month
+                if (nextDueDate > now && nextDueDate <= dueHorizonEnd) {
                      const avgAmountSAR = totalSAR / count;
                      bills.push({ name, date: nextDueDate, lastAmount, avgAmountSAR, lastAccountId });
                 }
@@ -204,11 +220,13 @@ const RecentTransactions: React.FC<{ transactions: Transaction[], accounts: Acco
     );
 };
 
-const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }> = ({ budgets, onClick }) => {
+const BudgetHealth: React.FC<{ budgets: ExtendedBudget[]; onClick: () => void; monthStartDay: number }> = ({
+    budgets,
+    onClick,
+    monthStartDay,
+}) => {
     const { formatCurrencyString } = useFormatCurrency();
-    const now = new Date();
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const daysLeft = daysInMonth - now.getDate();
+    const { daysLeft } = financialMonthDaysRemaining(new Date(), monthStartDay);
 
     const getStatus = (percentage: number) => {
         const p = Number(percentage) || 0;
@@ -381,13 +399,14 @@ const DashboardContent: React.FC<{
             };
 
             // Current financial month (same window as `computeDashboardKpiSnapshot` P&L) + KPI snapshot
-            const monthlyTransactions = transactions.filter((t: { date: string }) => {
-                const d0 = new Date(t.date);
-                return d0 >= currentFinMonth.start && d0 <= currentFinMonth.end;
-            });
+            const monthlyTransactions = transactions.filter((t: { date: string }) =>
+                dateInRange(t.date, currentFinMonth.start, currentFinMonth.end),
+            );
             const budgetToMonthly = (b: { limit: number; period?: string }) => b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
-            const currentMonthBudgets = (workingData?.budgets ?? []).filter(
-                (b) => b.month === currentFinMonth.key.month && b.year === currentFinMonth.key.year,
+            const currentMonthBudgets = budgetsForFinancialMonthView(
+                workingData?.budgets ?? [],
+                currentFinMonth.key,
+                monthStartDay,
             );
             const snap = kpiSnapshot;
             if (!snap) {
@@ -436,12 +455,11 @@ const DashboardContent: React.FC<{
             const monthlyCashflowMap = new Map<string, { income: number; expenses: number }>();
             finMonthKeys12.forEach((k) => monthlyCashflowMap.set(financialMonthIsoKey(k), { income: 0, expenses: 0 }));
             transactions
-                .filter((t: { date: string }) => {
-                    const d0 = new Date(t.date);
-                    return !Number.isNaN(d0.getTime()) && d0 >= earliestCashflow;
-                })
+                .filter((t: { date: string }) => dateInRange(t.date, earliestCashflow, currentFinMonth.end))
                 .forEach((t: Transaction) => {
-                    const monthKey = financialMonthIsoKey(financialMonthRange(new Date(t.date), monthStartDay).key);
+                    const monthKey = financialMonthIsoKey(
+                        financialMonthKeyFromTransactionDate(t.date, monthStartDay),
+                    );
                     if (!monthlyCashflowMap.has(monthKey)) return;
                     const current = monthlyCashflowMap.get(monthKey)!;
                     if (countsAsIncomeForCashflowKpi(t)) current.income += txCashflowSar(t);
@@ -471,11 +489,13 @@ const DashboardContent: React.FC<{
             const currentCash = liquidCashSar;
             const finMonthKeys6 = financialMonthKeysEndingAt(now, 6, monthStartDay);
             const earliestProj = financialMonthRangeFromKey(finMonthKeys6[0], monthStartDay).start;
-            const recentTx = transactions.filter((t: { date: string }) => new Date(t.date) >= earliestProj);
+            const recentTx = transactions.filter((t: { date: string }) =>
+                dateInRange(t.date, earliestProj, currentFinMonth.end),
+            );
             const monthlyNets = new Map<string, number>();
             finMonthKeys6.forEach((k) => monthlyNets.set(financialMonthIsoKey(k), 0));
             recentTx.forEach((t: Transaction) => {
-                const key = financialMonthIsoKey(financialMonthRange(new Date(t.date), monthStartDay).key);
+                const key = financialMonthIsoKey(financialMonthKeyFromTransactionDate(t.date, monthStartDay));
                 if (!monthlyNets.has(key)) return;
                 let delta = 0;
                 if (countsAsIncomeForCashflowKpi(t)) delta += txCashflowSar(t);
@@ -547,7 +567,7 @@ const DashboardContent: React.FC<{
         const txs = getPersonalTransactions(data);
         const accounts = getPersonalAccounts(data) as Account[];
         const sarPerUsd = canonicalSarPerUsd;
-        return subscriptionSpendMonthlySar(txs, accounts, sarPerUsd, 3);
+        return subscriptionSpendMonthlySar(txs, accounts, sarPerUsd, 3, data);
     }, [data, exchangeRate, canonicalSarPerUsd]);
 
     const getTrendString = (trend: number = 0) => trend.toFixed(1) + '%';
@@ -831,7 +851,11 @@ const DashboardContent: React.FC<{
             </div>
 
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 gap-4">
-                <BudgetHealth budgets={monthlyBudgets} onClick={() => setActivePage('Budgets')} />
+                <BudgetHealth
+                    budgets={monthlyBudgets}
+                    monthStartDay={resolveMonthStartDayFromData(workingData)}
+                    onClick={() => setActivePage('Budgets')}
+                />
                 <RecentTransactions transactions={recentTransactions} accounts={getPersonalAccounts(data)} onClick={() => setActivePage('Transactions')} />
             </div>
             </section>

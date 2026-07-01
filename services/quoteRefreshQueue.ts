@@ -92,6 +92,44 @@ export function mergePriceRefreshScope(
     };
   }
 
+  if (incoming.kind === 'portfolio') {
+    const portfolioId = incoming.portfolioId.trim();
+    if (!portfolioId) return { queue, changed: false };
+    const idx = queue.findIndex((s) => s.kind === 'portfolio' && s.portfolioId === portfolioId);
+    if (idx >= 0) {
+      const existing = queue[idx]!;
+      if (existing.kind !== 'portfolio') return { queue, changed: false };
+      const forceFetch = existing.forceFetch === true || incoming.forceFetch === true;
+      const manual = existing.manual === true || incoming.manual === true;
+      if (
+        forceFetch === (existing.forceFetch === true) &&
+        manual === (existing.manual === true)
+      ) {
+        return { queue, changed: false };
+      }
+      const next = [...queue];
+      next[idx] = {
+        kind: 'portfolio',
+        portfolioId,
+        forceFetch: forceFetch || undefined,
+        manual: manual || undefined,
+      };
+      return { queue: next, changed: true };
+    }
+    return {
+      queue: [
+        ...queue,
+        {
+          kind: 'portfolio',
+          portfolioId,
+          forceFetch: incoming.forceFetch || undefined,
+          manual: incoming.manual || undefined,
+        },
+      ],
+      changed: true,
+    };
+  }
+
   return { queue, changed: false };
 }
 

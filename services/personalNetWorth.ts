@@ -9,6 +9,7 @@ import {
   type SimulatedPriceMap,
 } from './investmentPlatformCardMetrics';
 import { computeHeadlinePersonalInvestmentRoiDecimal } from './investmentKpiCore';
+import { sumPersonalSukukPositionsSar } from './sukuk/sukukExposure';
 
 export type PersonalNetWorthOptions = {
   /** When set, cash sitting in investment accounts (ledger) is included in assets — matches Dashboard ROI / deployable cash. */
@@ -48,24 +49,11 @@ type BalanceSheetSlices = {
   investments: ReturnType<typeof getPersonalInvestments>;
 };
 
-/** Total SAR value of personal Sukuk rows under Assets (for snapshot audit / UI). */
-export function sumPersonalSukukAssetsSar(data: FinancialData | null | undefined): number {
-  if (!data) return 0;
-  return partitionPhysicalAssetsVsSukukSar(getPersonalAssets(data)).sukukSar;
-}
+/** @deprecated Use sumPersonalSukukPositionsSar from ./sukuk/sukukExposure */
+export { sumPersonalSukukPositionsSar as sumPersonalSukukAssetsSar } from './sukuk/sukukExposure';
 
-/** Sukuk tracked under Assets is fixed-income / capital-markets exposure — bucket with Investments for charts (aligned with Investments workspace). */
-function partitionPhysicalAssetsVsSukukSar(
-  assets: Array<{ type?: string; value?: number }>,
-): { physicalSar: number; sukukSar: number } {
-  let physicalSar = 0;
-  let sukukSar = 0;
-  for (const asset of assets) {
-    const v = Math.max(0, Number(asset?.value) || 0);
-    if (asset?.type === 'Sukuk') sukukSar += v;
-    else physicalSar += v;
-  }
-  return { physicalSar, sukukSar };
+function sumPhysicalAssetsSar(assets: Array<{ value?: number }>): number {
+  return assets.reduce((sum, asset) => sum + Math.max(0, Number(asset?.value) || 0), 0);
 }
 
 function accumulateBalanceSheetSlices(
@@ -112,7 +100,8 @@ function accumulateBalanceSheetSlices(
     (sum: number, ch: { currentValue?: number }) => sum + (ch.currentValue ?? 0),
     0
   );
-  const { physicalSar: physicalAssetsSar, sukukSar: sukukAssetsSar } = partitionPhysicalAssetsVsSukukSar(assets);
+  const physicalAssetsSar = sumPhysicalAssetsSar(assets);
+  const sukukPositionsSar = 0; // filled by caller when data context available
   const totalInvestmentsValue = getAllInvestmentsValueInSAR(investments, exchangeRate);
   let brokerageCashSAR = 0;
   if (options?.getAvailableCashForAccount) {
@@ -130,7 +119,7 @@ function accumulateBalanceSheetSlices(
     totalReceivable,
     totalCommodities,
     physicalAssetsSar,
-    sukukAssetsSar,
+    sukukPositionsSar,
     totalInvestmentsValue,
     brokerageCashSAR,
   };
@@ -152,7 +141,10 @@ function accumulatePersonalBalanceSheet(
     exchangeRate,
     options
   );
-  if (!options?.getAvailableCashForAccount) return base;
+  const sukukPositionsSar = sumPersonalSukukPositionsSar(data);
+  if (!options?.getAvailableCashForAccount) {
+    return { ...base, sukukPositionsSar };
+  }
 
   const prices = options.simulatedPrices ?? {};
   const getCash = options.getAvailableCashForAccount;
@@ -164,6 +156,7 @@ function accumulatePersonalBalanceSheet(
     totalInvestmentsValue: platform.subtotalSAR,
     brokerageCashSAR: 0,
     totalCommodities: commodities.valueSAR,
+    sukukPositionsSar,
   };
 }
 
@@ -198,11 +191,12 @@ export function computeAllNetWorthChartBucketsSAR(
     sarPerUsd,
     options
   );
+  const sukukPositionsSar = sumPersonalSukukPositionsSar(data);
   const cash = b.cashAndSavingsPositive;
   const receivables = b.totalReceivable;
   const liabilities = -b.totalDebt;
   /** Same bucket taxonomy as personal headline (commodities in investments, not physical). */
-  const investments = b.totalInvestmentsValue + b.brokerageCashSAR + b.sukukAssetsSar + b.totalCommodities;
+  const investments = b.totalInvestmentsValue + b.brokerageCashSAR + sukukPositionsSar + b.totalCommodities;
   const physicalAndCommodities = b.physicalAssetsSar;
   const netWorth = cash + investments + physicalAndCommodities + receivables + liabilities;
   return { cash, investments, physicalAndCommodities, receivables, liabilities, netWorth };
@@ -229,7 +223,7 @@ export function computePersonalNetWorthBreakdownSAR(
     b.totalCommodities +
     b.totalInvestmentsValue +
     b.brokerageCashSAR +
-    b.sukukAssetsSar;
+    b.sukukPositionsSar;
 
   /** With platform cash, investments use headline exposure (platforms + commodities + Sukuk) — match chart buckets NW. */
   const netWorth = options?.getAvailableCashForAccount
@@ -265,7 +259,7 @@ export function computePersonalNetWorthChartBucketsSAR(
         options.getAvailableCashForAccount,
         options.simulatedPrices ?? {},
       ).totalExposureSar
-    : b.totalInvestmentsValue + b.brokerageCashSAR + b.sukukAssetsSar + b.totalCommodities;
+    : b.totalInvestmentsValue + b.brokerageCashSAR + b.sukukPositionsSar + b.totalCommodities;
   const physicalAndCommodities = b.physicalAssetsSar;
   const netWorth = cash + investments + physicalAndCommodities + receivables + liabilities;
   return { cash, investments, physicalAndCommodities, receivables, liabilities, netWorth };

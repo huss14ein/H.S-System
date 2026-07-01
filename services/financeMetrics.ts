@@ -7,9 +7,12 @@ import {
 import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import {
   addMonthsToKey,
-  financialMonthKey,
   financialMonthRange,
+  financialMonthRangeFromKey,
   resolveMonthStartDayFromData,
+  dateInRange,
+  financialMonthIsoKey,
+  financialMonthKeyFromTransactionDate,
   type FinancialMonthKey,
 } from '../utils/financialMonth';
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from './fxDailySeries';
@@ -44,22 +47,40 @@ function toTransactionCalendarDay(rawDate: string): string | null {
  */
 export function normalizedMonthlyExpense(
   transactions: TxLike[],
-  opts?: { monthsLookback?: number; endDate?: Date }
+  opts?: { monthsLookback?: number; endDate?: Date; data?: FinancialData | null },
 ): number {
   const monthsLookback = opts?.monthsLookback ?? 6;
   const now = opts?.endDate ?? new Date();
-  const end = opts?.endDate ?? new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  const start = new Date(now.getFullYear(), now.getMonth() - monthsLookback, 1);
-  const startDay = toLocalCalendarDay(start);
-  const endDay = toLocalCalendarDay(end);
   const byMonth = new Map<string, number>();
-  transactions.forEach((t) => {
-    if (!countsAsExpenseForCashflowKpi(t) || !t.date) return;
-    const day = toTransactionCalendarDay(t.date);
-    if (!day || day < startDay || day > endDay) return;
-    const key = day.slice(0, 7);
-    byMonth.set(key, (byMonth.get(key) ?? 0) + Math.abs(Number(t.amount) || 0));
-  });
+
+  if (opts?.data) {
+    const monthStartDay = resolveMonthStartDayFromData(opts.data);
+    const { key: currentKey, end: currentEnd } = financialMonthRange(now, monthStartDay);
+    const keys: FinancialMonthKey[] = [];
+    for (let i = monthsLookback - 1; i >= 0; i--) keys.push(addMonthsToKey(currentKey, -i));
+    const allowedKeys = new Set(keys.map((k) => financialMonthIsoKey(k)));
+    const earliest = financialMonthRangeFromKey(keys[0]!, monthStartDay).start;
+    transactions.forEach((t) => {
+      if (!countsAsExpenseForCashflowKpi(t) || !t.date) return;
+      if (!dateInRange(t.date, earliest, currentEnd)) return;
+      const label = financialMonthIsoKey(financialMonthKeyFromTransactionDate(t.date, monthStartDay));
+      if (!allowedKeys.has(label)) return;
+      byMonth.set(label, (byMonth.get(label) ?? 0) + Math.abs(Number(t.amount) || 0));
+    });
+  } else {
+    const end = opts?.endDate ?? new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const start = new Date(now.getFullYear(), now.getMonth() - monthsLookback, 1);
+    const startDay = toLocalCalendarDay(start);
+    const endDay = toLocalCalendarDay(end);
+    transactions.forEach((t) => {
+      if (!countsAsExpenseForCashflowKpi(t) || !t.date) return;
+      const day = toTransactionCalendarDay(t.date);
+      if (!day || day < startDay || day > endDay) return;
+      const key = day.slice(0, 7);
+      byMonth.set(key, (byMonth.get(key) ?? 0) + Math.abs(Number(t.amount) || 0));
+    });
+  }
+
   if (byMonth.size === 0) return 0;
   return Array.from(byMonth.values()).reduce((a, b) => a + b, 0) / byMonth.size;
 }
@@ -71,24 +92,43 @@ export function normalizedMonthlyExpenseSar(
   transactions: Transaction[],
   accounts: Account[],
   sarPerUsd: number,
-  opts?: { monthsLookback?: number; endDate?: Date }
+  opts?: { monthsLookback?: number; endDate?: Date; data?: FinancialData | null },
 ): number {
   const accById = new Map(accounts.map((a) => [a.id, a]));
   const monthsLookback = opts?.monthsLookback ?? 6;
   const now = opts?.endDate ?? new Date();
-  const end = opts?.endDate ?? new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  const start = new Date(now.getFullYear(), now.getMonth() - monthsLookback, 1);
-  const startDay = toLocalCalendarDay(start);
-  const endDay = toLocalCalendarDay(end);
   const byMonth = new Map<string, number>();
-  transactions.forEach((t) => {
-    if (!countsAsExpenseForCashflowKpi(t) || !t.date) return;
-    const day = toTransactionCalendarDay(t.date);
-    if (!day || day < startDay || day > endDay) return;
-    const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
-    const key = day.slice(0, 7);
-    byMonth.set(key, (byMonth.get(key) ?? 0) + toSAR(Math.abs(Number(t.amount) || 0), cur, sarPerUsd));
-  });
+
+  if (opts?.data) {
+    const monthStartDay = resolveMonthStartDayFromData(opts.data);
+    const { key: currentKey, end: currentEnd } = financialMonthRange(now, monthStartDay);
+    const keys: FinancialMonthKey[] = [];
+    for (let i = monthsLookback - 1; i >= 0; i--) keys.push(addMonthsToKey(currentKey, -i));
+    const allowedKeys = new Set(keys.map((k) => financialMonthIsoKey(k)));
+    const earliest = financialMonthRangeFromKey(keys[0]!, monthStartDay).start;
+    transactions.forEach((t) => {
+      if (!countsAsExpenseForCashflowKpi(t) || !t.date) return;
+      if (!dateInRange(t.date, earliest, currentEnd)) return;
+      const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
+      const label = financialMonthIsoKey(financialMonthKeyFromTransactionDate(t.date, monthStartDay));
+      if (!allowedKeys.has(label)) return;
+      byMonth.set(label, (byMonth.get(label) ?? 0) + toSAR(Math.abs(Number(t.amount) || 0), cur, sarPerUsd));
+    });
+  } else {
+    const end = opts?.endDate ?? new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const start = new Date(now.getFullYear(), now.getMonth() - monthsLookback, 1);
+    const startDay = toLocalCalendarDay(start);
+    const endDay = toLocalCalendarDay(end);
+    transactions.forEach((t) => {
+      if (!countsAsExpenseForCashflowKpi(t) || !t.date) return;
+      const day = toTransactionCalendarDay(t.date);
+      if (!day || day < startDay || day > endDay) return;
+      const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
+      const key = day.slice(0, 7);
+      byMonth.set(key, (byMonth.get(key) ?? 0) + toSAR(Math.abs(Number(t.amount) || 0), cur, sarPerUsd));
+    });
+  }
+
   if (byMonth.size === 0) return 0;
   return Array.from(byMonth.values()).reduce((a, b) => a + b, 0) / byMonth.size;
 }
@@ -98,11 +138,22 @@ export function cashRunwayMonths(liquidCash: number, avgMonthlyExpense: number):
   return liquidCash / avgMonthlyExpense;
 }
 
-/** Net external cash flow for the calendar month of `ref` (default: current month). */
+/** Net external cash flow for the month of `ref` (default: current month). Uses fiscal month when `data` is passed. */
 export function netCashFlowForMonth(
   transactions: TxLike[],
-  ref: Date = new Date()
+  ref: Date = new Date(),
+  data?: FinancialData | null,
 ): { income: number; expenses: number; net: number } {
+  if (data) {
+    const monthStartDay = resolveMonthStartDayFromData(data);
+    const { start, end } = financialMonthRange(ref, monthStartDay);
+    const inMonth = transactions.filter((t) => t.date && dateInRange(t.date, start, end));
+    const income = inMonth.filter((t) => countsAsIncomeForCashflowKpi(t)).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+    const expenses = inMonth
+      .filter((t) => countsAsExpenseForCashflowKpi(t))
+      .reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0);
+    return { income, expenses, net: income - expenses };
+  }
   const y = ref.getFullYear();
   const m = ref.getMonth();
   const inMonth = transactions.filter((t) => {
@@ -124,14 +175,30 @@ export function netCashFlowForMonthSar(
   transactions: Transaction[],
   accounts: Account[],
   ref: Date,
-  sarPerUsd: number
+  sarPerUsd: number,
+  data?: FinancialData | null,
 ): { income: number; expenses: number; net: number } {
   const accById = new Map(accounts.map((a) => [a.id, a]));
   const curOf = (accountId: string): 'SAR' | 'USD' => (accById.get(accountId)?.currency === 'USD' ? 'USD' : 'SAR');
-  const y = ref.getFullYear();
-  const m = ref.getMonth();
   let income = 0;
   let expenses = 0;
+  if (data) {
+    const monthStartDay = resolveMonthStartDayFromData(data);
+    const { start, end } = financialMonthRange(ref, monthStartDay);
+    for (const t of transactions) {
+      if (!t.date || !dateInRange(t.date, start, end)) continue;
+      const c = curOf(t.accountId);
+      if (countsAsIncomeForCashflowKpi(t)) {
+        income += toSAR(Math.max(0, Number(t.amount) || 0), c, sarPerUsd);
+      }
+      if (countsAsExpenseForCashflowKpi(t)) {
+        expenses += toSAR(Math.abs(Number(t.amount) || 0), c, sarPerUsd);
+      }
+    }
+    return { income, expenses, net: income - expenses };
+  }
+  const y = ref.getFullYear();
+  const m = ref.getMonth();
   for (const t of transactions) {
     const d = new Date(t.date);
     if (d.getFullYear() !== y || d.getMonth() !== m) continue;
@@ -157,10 +224,27 @@ export function netCashFlowForMonthSarDated(
   const spot = resolveSarPerUsd(data, uiExchangeRate);
   const accById = new Map(accounts.map((a) => [a.id, a]));
   const curOf = (accountId: string): 'SAR' | 'USD' => (accById.get(accountId)?.currency === 'USD' ? 'USD' : 'SAR');
-  const y = ref.getFullYear();
-  const m = ref.getMonth();
   let income = 0;
   let expenses = 0;
+  if (data) {
+    const monthStartDay = resolveMonthStartDayFromData(data);
+    const { start, end } = financialMonthRange(ref, monthStartDay);
+    for (const t of transactions) {
+      if (!t.date || !dateInRange(t.date, start, end)) continue;
+      const c = curOf(t.accountId);
+      const day = t.date.slice(0, 10);
+      const r = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, uiExchangeRate) : spot;
+      if (countsAsIncomeForCashflowKpi(t)) {
+        income += toSAR(Math.max(0, Number(t.amount) || 0), c, r);
+      }
+      if (countsAsExpenseForCashflowKpi(t)) {
+        expenses += toSAR(Math.abs(Number(t.amount) || 0), c, r);
+      }
+    }
+    return { income, expenses, net: income - expenses };
+  }
+  const y = ref.getFullYear();
+  const m = ref.getMonth();
   for (const t of transactions) {
     const d = new Date(t.date);
     if (d.getFullYear() !== y || d.getMonth() !== m) continue;
@@ -225,8 +309,7 @@ export function netCashFlowForFinancialMonthSarDated(
   let income = 0;
   let expenses = 0;
   for (const t of transactions) {
-    const d = new Date(t.date);
-    if (Number.isNaN(d.getTime()) || d < start || d > end) continue;
+    if (!dateInRange(t.date, start, end)) continue;
     const c = curOf(t.accountId);
     const day = (t.date ?? '').slice(0, 10);
     const r = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, uiExchangeRate) : spot;
@@ -291,7 +374,7 @@ export function personalMonthlyNetByMonthKeySar(
   }
   for (const t of transactions) {
     if (!t.date) continue;
-    const fk = financialMonthKey(new Date(t.date), monthStartDay);
+    const fk = financialMonthKeyFromTransactionDate(t.date, monthStartDay);
     const label = `${fk.year}-${String(fk.month).padStart(2, '0')}`;
     if (!byKey.has(label)) continue;
     const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
@@ -335,7 +418,7 @@ export function personalMonthlyInflowOutflowByFinancialMonthSar(
   }
   for (const t of transactions) {
     if (!t.date || isInternalTransferTransaction(t)) continue;
-    const fk = financialMonthKey(new Date(t.date), monthStartDay);
+    const fk = financialMonthKeyFromTransactionDate(t.date, monthStartDay);
     const label = `${fk.year}-${String(fk.month).padStart(2, '0')}`;
     const row = byKey.get(label);
     if (!row) continue;

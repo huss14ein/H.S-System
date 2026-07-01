@@ -4,22 +4,15 @@ import { useLanguage } from '../../context/LanguageContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import type { FinancialData } from '../../types';
 import { personalMonthlyInflowOutflowByFinancialMonthSar } from '../../services/financeMetrics';
+import {
+  financialMonthKeyLabel,
+  financialMonthKeyOverlapsIsoRange,
+  resolveCockpitMonthStartDay,
+} from '../../services/operationsCockpitFinancialMonth';
 import { dashboardChartMargin, formatDashboardRangeLabel } from './chartLayout';
 import { DashboardVisualCard } from './DashboardVisualCard';
 
 type Row = { key: string; label: string; inflow: number; outflow: number; net: number };
-
-function monthLabel(key: string, lang: 'en' | 'ar'): string {
-  const [y, m] = key.split('-').map(Number);
-  const d = new Date(y, (m || 1) - 1, 1);
-  return d.toLocaleDateString(lang === 'ar' ? 'ar-SA' : 'en-US', { month: 'short', year: '2-digit' });
-}
-
-function inRange(monthKey: string, start?: string, end?: string): boolean {
-  if (start && monthKey < start.slice(0, 7)) return false;
-  if (end && monthKey > end.slice(0, 7)) return false;
-  return true;
-}
 
 const MomCashflowTrendChartInner: React.FC<{
   data: FinancialData | null | undefined;
@@ -33,13 +26,14 @@ const MomCashflowTrendChartInner: React.FC<{
 
   const rows = useMemo(() => {
     if (!data) return [] as Row[];
+    const monthStartDay = resolveCockpitMonthStartDay(data);
     const series = personalMonthlyInflowOutflowByFinancialMonthSar(data, uiExchangeRate, monthsBack);
     const out: Row[] = [];
     series.monthKeys.forEach((key, i) => {
-      if (!inRange(key, startIso, endIso)) return;
+      if (!financialMonthKeyOverlapsIsoRange(key, monthStartDay, startIso, endIso)) return;
       out.push({
         key,
-        label: monthLabel(key, language),
+        label: financialMonthKeyLabel(key, monthStartDay, language),
         inflow: series.inflow[i] ?? 0,
         outflow: series.outflow[i] ?? 0,
         net: series.net[i] ?? 0,

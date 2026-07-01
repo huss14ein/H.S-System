@@ -38,12 +38,18 @@ describe('system performance surface coverage', () => {
       'components/AIAdvisor.tsx',
       'components/CommandPalette.tsx',
       'components/LiveAdvisorModal.tsx',
-      'components/DashboardKpiQualityPanel.tsx',
     ]) {
       const src = read(file);
       expect(src).toContain('useCanonicalSimulatedPrices');
       expect(src).not.toMatch(/useMarketData\(\)[\s\S]{0,80}simulatedPrices/);
     }
+  });
+
+  it('DashboardKpiQualityPanel reconciles via kpiSnapshot (no ad-hoc monthly KPI recompute)', () => {
+    const src = read('components/DashboardKpiQualityPanel.tsx');
+    expect(src).toContain('useExtendedCanonicalMetrics');
+    expect(src).toContain('kpiSnapshot');
+    expect(src).not.toContain('computeMonthlyReportFinancialKpis');
   });
 
   it('investment sub-views read quote meta without price subscription', () => {

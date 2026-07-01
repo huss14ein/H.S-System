@@ -2,12 +2,13 @@ import React, { createContext, useState, ReactNode, useEffect, useContext, useRe
 import { flushSync } from 'react-dom';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
-import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, HOLDING_ASSET_CLASS_OPTIONS, type HoldingAssetClass, type TradeCurrency, type SukukPayoutSchedule, type SukukPayoutEvent } from '../types';
+import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, HOLDING_ASSET_CLASS_OPTIONS, type HoldingAssetClass, type TradeCurrency, type SukukPayoutSchedule, type SukukPayoutEvent, type SukukPosition } from '../types';
 import { getDefaultWealthUltraSystemConfig, mergeWealthUltraSystemConfigFromRow } from '../wealth-ultra/config';
 import {
   getPersonalAccounts,
   getPersonalAssets,
   getPersonalCommodityHoldings,
+  getPersonalSukukPositions,
   getPersonalInvestments,
   getPersonalLiabilities,
   getPersonalTransactions,
@@ -23,7 +24,11 @@ import {
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { auditChangeLog } from '../services/auditLog';
 import { toast } from './ToastContext';
-import { validateAccount, validateGoal, validateHolding, validateTrade, validateTransactionCore, validateSettings, validateBackup, validateLiability, validateCommodityHolding, validateBudget, validateAsset, validatePlannedTrade, validateUniverseTicker, validatePortfolio, validateRecurringTransaction, validatePriceAlert, validateZakatPayment, validateWatchlistItem, validateGoalAllocation, validateTickerStatus, validateInvestmentPlan, validateExecutionLog } from '../services/dataQuality/validation';
+import { validateAccount, validateGoal, validateHolding, validateTrade, validateTransactionCore, validateSettings, validateBackup, validateLiability, validateCommodityHolding, validateBudget, validateAsset, validatePlannedTrade, validateUniverseTicker, validatePortfolio, validateRecurringTransaction, validatePriceAlert, validateZakatPayment, validateWatchlistItem, validateGoalAllocation, validateTickerStatus, validateInvestmentPlan, validateExecutionLog, validateSukukPosition } from '../services/dataQuality/validation';
+import { normalizeSukukPositionRow, sukukPositionToRow } from '../services/sukuk/sukukPositionDb';
+import { normalizeSukukPayoutScheduleRow, normalizeSukukPayoutEventRow, sukukPayoutScheduleToRow, sukukPayoutEventToRow } from '../services/sukuk/sukukPayoutDb';
+import { saveSukukPayoutScheduleToDb } from '../services/sukuk/sukukPayoutScheduleSave';
+import { applyPrincipalPaymentToSukukPosition, buildMaturityPrincipalEventDraft, sukukPayoutInvestmentSymbol } from '../services/sukuk/sukukPayoutLifecycle';
 import { assertDividendNotDuplicate, validateDividendRecordInput } from '../services/dividendLedgerGuards';
 import {
     assertDividendUpdateNotDuplicate,
@@ -94,7 +99,7 @@ export type { RecordWriteOptions };
 const initialData: FinancialData = {
     accounts: [], assets: [], liabilities: [], goals: [], transactions: [], recurringTransactions: [],
     investments: [], investmentTransactions: [], budgets: [], commodityHoldings: [], watchlist: [],
-    sukukPayoutSchedules: [], sukukPayoutEvents: [],
+    sukukPositions: [], sukukPayoutSchedules: [], sukukPayoutEvents: [],
     settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275, monthStartDay: 28 },
     zakatPayments: [], priceAlerts: [], plannedTrades: [], notifications: [],
     investmentPlan: {
@@ -207,6 +212,23 @@ interface DataContextType {
   updateCommodityHolding: (holding: CommodityHolding) => Promise<void>;
   deleteCommodityHolding: (holdingId: string) => Promise<void>;
   batchUpdateCommodityHoldingValues: (updates: { id: string; currentValue: number }[]) => Promise<void>;
+  addSukukPosition: (position: Omit<SukukPosition, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<void>;
+  updateSukukPosition: (position: SukukPosition) => Promise<void>;
+  deleteSukukPosition: (positionId: string) => Promise<void>;
+  saveSukukPayoutSchedule: (input: {
+    position: SukukPosition;
+    existingSchedule: SukukPayoutSchedule | null;
+    investmentAccountId: string;
+    currency: 'SAR' | 'USD';
+    cadence: SukukPayoutSchedule['cadence'];
+    dayOfMonth?: number | null;
+    couponAmount?: number | null;
+    principalAmount?: number | null;
+    principalInstallmentAmount?: number | null;
+    startDate?: string | null;
+    endDate?: string | null;
+    enabled?: boolean;
+  }) => Promise<void>;
   updateSettings: (settings: Partial<Settings>) => Promise<void>;
   resetData: () => Promise<void>;
   loadDemoData: () => Promise<void>;
@@ -283,6 +305,10 @@ const DATA_CONTEXT_ACTION_KEYS = [
   'updateCommodityHolding',
   'deleteCommodityHolding',
   'batchUpdateCommodityHoldingValues',
+  'addSukukPosition',
+  'updateSukukPosition',
+  'deleteSukukPosition',
+  'saveSukukPayoutSchedule',
   'updateSettings',
   'resetData',
   'loadDemoData',
@@ -490,16 +516,6 @@ function normalizeAssetRow(raw: any): Asset {
     }
     const pp = raw.purchase_price ?? raw.purchasePrice;
     const mr = raw.monthly_rent ?? raw.monthlyRent;
-    const issueRaw = raw.issue_date ?? raw.issueDate;
-    const matRaw = raw.maturity_date ?? raw.maturityDate;
-    const issueDate =
-        issueRaw != null && String(issueRaw).trim() !== ''
-            ? String(issueRaw).trim().slice(0, 10)
-            : undefined;
-    const maturityDate =
-        matRaw != null && String(matRaw).trim() !== ''
-            ? String(matRaw).trim().slice(0, 10)
-            : undefined;
     const notesRaw = raw.notes;
     const notes =
         notesRaw != null && String(notesRaw).trim() !== '' ? String(notesRaw) : undefined;
@@ -514,20 +530,8 @@ function normalizeAssetRow(raw: any): Asset {
         monthlyRent: mr != null && mr !== '' ? roundMoney(Number(mr)) : undefined,
         goalId: raw.goal_id ?? raw.goalId,
         owner: raw.owner,
-        issueDate,
-        maturityDate,
         notes,
     };
-}
-
-/** DB columns for Sukuk dates (snake_case). Stripped from spread so we do not send duplicate camelCase keys. */
-function assetDatesForDb(asset: Asset): { issue_date: string | null; maturity_date: string | null } {
-    const idt = asset.issueDate != null && String(asset.issueDate).trim() !== '' ? String(asset.issueDate).trim().slice(0, 10) : null;
-    const mdt =
-        asset.maturityDate != null && String(asset.maturityDate).trim() !== ''
-            ? String(asset.maturityDate).trim().slice(0, 10)
-            : null;
-    return { issue_date: idt, maturity_date: mdt };
 }
 
 /** Map DB / API priority values to Goal.priority (stable for sort + UI). */
@@ -992,41 +996,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const transactionPayloadVariants = buildTransactionPayloadVariants;
 
-    const normalizeSukukPayoutScheduleRow = (r: any): SukukPayoutSchedule => ({
-        id: r.id,
-        user_id: r.user_id ?? r.userId,
-        assetId: r.asset_id ?? r.assetId,
-        investmentAccountId: r.investment_account_id ?? r.investmentAccountId,
-        currency: (r.currency ?? 'SAR') as TradeCurrency,
-        cadence: r.cadence,
-        dayOfMonth: r.day_of_month ?? r.dayOfMonth ?? null,
-        couponAmount: r.coupon_amount ?? r.couponAmount ?? null,
-        principalAmount: r.principal_amount ?? r.principalAmount ?? null,
-        startDate: r.start_date ?? r.startDate ?? null,
-        endDate: r.end_date ?? r.endDate ?? null,
-        enabled: r.enabled ?? true,
-        metadata: (r.metadata ?? {}) as Record<string, unknown>,
-        createdAt: r.created_at ?? r.createdAt,
-        updatedAt: r.updated_at ?? r.updatedAt,
-    });
-
-    const normalizeSukukPayoutEventRow = (r: any): SukukPayoutEvent => ({
-        id: r.id,
-        user_id: r.user_id ?? r.userId,
-        scheduleId: r.schedule_id ?? r.scheduleId,
-        assetId: r.asset_id ?? r.assetId,
-        investmentAccountId: r.investment_account_id ?? r.investmentAccountId,
-        kind: r.kind,
-        payoutDate: r.payout_date ?? r.payoutDate,
-        amount: roundMoney(Number(r.amount ?? 0)),
-        currency: (r.currency ?? 'SAR') as TradeCurrency,
-        posted: Boolean(r.posted),
-        postedAt: r.posted_at ?? r.postedAt ?? null,
-        postedInvestmentTransactionId: r.posted_investment_transaction_id ?? r.postedInvestmentTransactionId ?? null,
-        metadata: (r.metadata ?? {}) as Record<string, unknown>,
-        createdAt: r.created_at ?? r.createdAt,
-    });
-
     const trySelectOptionalTable = <T,>(q: PromiseLike<any>) =>
         q.then((r: any) => r, () => ({ data: [] as T[], error: { code: 'PGRST205', message: 'Table not found' } }));
 
@@ -1049,6 +1018,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const recurringPromise = trySelectOptionalTable<any>(db.from('recurring_transactions').select('*').eq('user_id', auth.user.id));
             const sukukSchedulesPromise = trySelectOptionalTable<any>(db.from('sukuk_payout_schedules').select('*').eq('user_id', auth.user.id));
             const sukukEventsPromise = trySelectOptionalTable<any>(db.from('sukuk_payout_events').select('*').eq('user_id', auth.user.id));
+            const sukukPositionsPromise = trySelectOptionalTable<any>(db.from('sukuk_positions').select('*').eq('user_id', auth.user.id));
 
             const fetchPromises = [
                 db.from('accounts').select('*').eq('user_id', auth.user.id),
@@ -1072,6 +1042,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('execution_logs').select('*').eq('user_id', auth.user.id).order('created_at', { ascending: false }).limit(150),
                 recurringPromise,
                 db.from('budget_requests').select('*').eq('user_id', auth.user.id),
+                sukukPositionsPromise,
                 sukukSchedulesPromise,
                 sukukEventsPromise,
             ];
@@ -1131,6 +1102,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             let executionLogs = emptyResult();
             let recurringTransactions = emptyResult();
             let budgetRequests = emptyResult();
+            let sukukPositions = emptyResult();
             let sukukPayoutSchedules = emptyResult();
             let sukukPayoutEvents = emptyResult();
             const allFetches = {
@@ -1183,6 +1155,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 investmentTransactions: patch.investmentTransactions ?? prev.investmentTransactions,
                 sukukPayoutSchedules: patch.sukukPayoutSchedules ?? prev.sukukPayoutSchedules,
                 sukukPayoutEvents: patch.sukukPayoutEvents ?? prev.sukukPayoutEvents,
+                sukukPositions: patch.sukukPositions ?? prev.sukukPositions,
                 budgets: patch.budgets ?? prev.budgets,
                 commodityHoldings: patch.commodityHoldings ?? prev.commodityHoldings,
                 watchlist: patch.watchlist ?? prev.watchlist,
@@ -1319,6 +1292,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         executionLogs,
                         recurringTransactions,
                         budgetRequests,
+                        sukukPositions,
                         sukukPayoutSchedules,
                         sukukPayoutEvents,
                     ] = secondaryResults;
@@ -1333,6 +1307,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         executionLogs,
                         recurringTransactions,
                         budgetRequests,
+                        sukukPositions,
                         sukukPayoutSchedules,
                         sukukPayoutEvents,
                     };
@@ -1341,6 +1316,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             console.error(`Error fetching ${key}:`, value.error);
                         }
                     });
+                    const normalizedSukukPositionsBg = filterOwnedRows(((sukukPositions.data ?? undefined) as any[] | undefined) || []).map(
+                        normalizeSukukPositionRow,
+                    );
                     const normalizedSukukSchedulesBg = filterOwnedRows(((sukukPayoutSchedules.data ?? undefined) as any[] | undefined) || []).map(
                         normalizeSukukPayoutScheduleRow,
                     );
@@ -1350,10 +1328,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     const dueSukukEventsBg = normalizedSukukEventsBg
                         .filter((e) => !e.posted && e.amount > 0 && String(e.payoutDate) <= todayYmd)
                         .slice(0, 50);
+                    const matureSukukDirectPosts = normalizedSukukPositionsBg
+                        .map((p) => {
+                            const draft = buildMaturityPrincipalEventDraft(p, todayYmd);
+                            if (!draft) return null;
+                            const hasPrincipalEvent = normalizedSukukEventsBg.some(
+                                (e) => e.sukukPositionId === p.id && e.kind === 'principal',
+                            );
+                            if (hasPrincipalEvent) return null;
+                            return { position: p, draft };
+                        })
+                        .filter((x): x is { position: SukukPosition; draft: NonNullable<ReturnType<typeof buildMaturityPrincipalEventDraft>> } => x != null);
                     await yieldToMain();
                     applyFinancialDataPatch(
                         {
                             accounts: ownedAccounts,
+                            sukukPositions: normalizedSukukPositionsBg,
                             sukukPayoutSchedules: normalizedSukukSchedulesBg,
                             sukukPayoutEvents: normalizedSukukEventsBg,
                             commodityHoldings: filterOwnedRows((commodityHoldings.data ?? undefined) as any[] | undefined).map(normalizeCommodityHolding),
@@ -1431,12 +1421,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             console.warn('Optional wealth_ultra_config load skipped:', e);
                         }
                     }
-                    if (dueSukukEventsBg.length && auth.user) {
+                    if ((dueSukukEventsBg.length || matureSukukDirectPosts.length) && auth.user) {
                         const userId = auth.user.id;
                         void (async () => {
                             try {
                                 const appendedInvestmentTx: InvestmentTransaction[] = [];
                                 const postedEventIds = new Set<string>();
+                                const updatedPositions = new Map<string, SukukPosition>();
                                 const sukukPostDeadline = Date.now() + 5000;
                                 for (const ev of dueSukukEventsBg) {
                                     if (Date.now() > sukukPostDeadline) {
@@ -1445,7 +1436,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                         );
                                         break;
                                     }
-                                    const symbol = `SUKUK:${String(ev.assetId).slice(0, 8)}:${ev.kind.toUpperCase()}`;
+                                    const symbol = sukukPayoutInvestmentSymbol(ev.sukukPositionId, ev.kind);
                                     const txType: InvestmentTransaction['type'] =
                                         ev.kind === 'principal' ? 'deposit' : 'dividend';
                                     const payload: Omit<InvestmentTransaction, 'id' | 'user_id'> = {
@@ -1491,10 +1482,87 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                         } else {
                                             appendedInvestmentTx.push(normalizeInvestmentTransaction(inserted));
                                             postedEventIds.add(ev.id);
+                                            if (ev.kind === 'principal') {
+                                                const current =
+                                                    updatedPositions.get(ev.sukukPositionId) ??
+                                                    dataRef.current.sukukPositions?.find((p) => p.id === ev.sukukPositionId);
+                                                if (current) {
+                                                    const next = applyPrincipalPaymentToSukukPosition(
+                                                        current,
+                                                        ev.amount,
+                                                        ev.payoutDate,
+                                                    );
+                                                    const merged: SukukPosition = {
+                                                        ...current,
+                                                        outstandingPrincipal: next.outstandingPrincipal,
+                                                        status: next.status,
+                                                    };
+                                                    updatedPositions.set(ev.sukukPositionId, merged);
+                                                    try {
+                                                        await db
+                                                            .from('sukuk_positions')
+                                                            .update({
+                                                                outstanding_principal: merged.outstandingPrincipal,
+                                                                status: merged.status,
+                                                            })
+                                                            .eq('id', ev.sukukPositionId)
+                                                            .eq('user_id', userId);
+                                                    } catch {
+                                                        // position update best-effort; refresh will reconcile
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                                if (!appendedInvestmentTx.length && postedEventIds.size === 0) return;
+                                for (const { position, draft } of matureSukukDirectPosts) {
+                                    if (Date.now() > sukukPostDeadline) break;
+                                    const symbol = sukukPayoutInvestmentSymbol(draft.sukukPositionId, 'principal');
+                                    const payload: Omit<InvestmentTransaction, 'id' | 'user_id'> = {
+                                        accountId: draft.investmentAccountId,
+                                        date: draft.payoutDate,
+                                        type: 'deposit',
+                                        symbol,
+                                        quantity: 0,
+                                        price: 0,
+                                        total: draft.amount,
+                                        currency: draft.currency,
+                                    };
+                                    let inserted: any | null = null;
+                                    for (const variant of tradePayloadVariants(payload)) {
+                                        const res = await db
+                                            .from('investment_transactions')
+                                            .insert(withUser(variant))
+                                            .select('*')
+                                            .maybeSingle();
+                                        if (!res.error && res.data) {
+                                            inserted = res.data;
+                                            break;
+                                        }
+                                    }
+                                    if (!inserted?.id) continue;
+                                    appendedInvestmentTx.push(normalizeInvestmentTransaction(inserted));
+                                    const next = applyPrincipalPaymentToSukukPosition(position, draft.amount, draft.payoutDate);
+                                    const merged: SukukPosition = {
+                                        ...position,
+                                        outstandingPrincipal: next.outstandingPrincipal,
+                                        status: next.status,
+                                    };
+                                    updatedPositions.set(position.id, merged);
+                                    try {
+                                        await db
+                                            .from('sukuk_positions')
+                                            .update({
+                                                outstanding_principal: merged.outstandingPrincipal,
+                                                status: merged.status,
+                                            })
+                                            .eq('id', position.id)
+                                            .eq('user_id', userId);
+                                    } catch {
+                                        // best-effort
+                                    }
+                                }
+                                if (!appendedInvestmentTx.length && postedEventIds.size === 0 && updatedPositions.size === 0) return;
                                 setData((prev) => ({
                                     ...prev,
                                     investmentTransactions: appendedInvestmentTx.length
@@ -1505,6 +1573,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                               postedEventIds.has(e.id) ? { ...e, posted: true } : e,
                                           )
                                         : prev.sukukPayoutEvents,
+                                    sukukPositions:
+                                        updatedPositions.size > 0
+                                            ? (prev.sukukPositions ?? []).map((p) =>
+                                                  updatedPositions.has(p.id) ? updatedPositions.get(p.id)! : p,
+                                              )
+                                            : prev.sukukPositions,
                                 }));
                             } catch (e) {
                                 console.warn('Sukuk auto-post skipped:', e);
@@ -1598,6 +1672,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             'investment_plan', 'portfolio_universe', 'status_change_log', 'execution_logs',
             'recurring_transactions',
             'budget_requests',
+            'sukuk_payout_events',
+            'sukuk_payout_schedules',
+            'sukuk_positions',
         ];
         // allSettled so missing tables (e.g. recurring_transactions) don't fail the whole reset
         await Promise.allSettled(tables.map(table => db.from(table).delete().eq('user_id', auth.user!.id)));
@@ -1661,6 +1738,36 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     if (error) console.warn(`Restore ${dbTable}:`, error);
                 }
             }
+            const sukukPositionsBackup = arr(backup.sukukPositions);
+            if (sukukPositionsBackup.length) {
+                const rows = sukukPositionsBackup.map((p: SukukPosition) => ({
+                    id: p.id,
+                    user_id: uid,
+                    ...sukukPositionToRow(p),
+                }));
+                const { error } = await db.from('sukuk_positions').insert(rows);
+                if (error) console.warn('Restore sukuk_positions:', error);
+            }
+            const sukukSchedulesBackup = arr(backup.sukukPayoutSchedules);
+            if (sukukSchedulesBackup.length) {
+                const rows = sukukSchedulesBackup.map((s: SukukPayoutSchedule) => ({
+                    id: s.id,
+                    user_id: uid,
+                    ...sukukPayoutScheduleToRow(s),
+                }));
+                const { error } = await db.from('sukuk_payout_schedules').insert(rows);
+                if (error) console.warn('Restore sukuk_payout_schedules:', error);
+            }
+            const sukukEventsBackup = arr(backup.sukukPayoutEvents);
+            if (sukukEventsBackup.length) {
+                const rows = sukukEventsBackup.map((e: SukukPayoutEvent) => ({
+                    id: e.id,
+                    user_id: uid,
+                    ...sukukPayoutEventToRow(e),
+                }));
+                const { error } = await db.from('sukuk_payout_events').insert(rows);
+                if (error) console.warn('Restore sukuk_payout_events:', error);
+            }
             const investments = arr(backup.investments);
             if (investments.length) {
                 const portfolioRows = investments.map((p: any) => {
@@ -1719,8 +1826,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             name: sanitized.name,
             type: sanitized.type,
             value: sanitized.value,
-            issueDate: sanitized.issueDate,
-            maturityDate: sanitized.maturityDate,
         });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const assetOk = await guardRecordWrite(opts, {
@@ -1731,13 +1836,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
         if (!assetOk) return;
         const db = supabase;
-        const { id: _omitId, user_id: _omitUid, issueDate, maturityDate, notes: notesForDb, ...insertRest } = sanitized;
-        const dates = assetDatesForDb(sanitized);
+        const { id: _omitId, user_id: _omitUid, notes: notesForDb, ...insertRest } = sanitized;
         const notesPayload =
             notesForDb != null && String(notesForDb).trim() !== '' ? String(notesForDb).trim() : null;
         const { data: newAsset, error } = await db
             .from('assets')
-            .insert(withUser({ ...insertRest, ...dates, notes: notesPayload }))
+            .insert(withUser({ ...insertRest, notes: notesPayload }))
             .select()
             .single();
         if (error) { 
@@ -1754,19 +1858,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             name: sanitized.name,
             type: sanitized.type,
             value: sanitized.value,
-            issueDate: sanitized.issueDate,
-            maturityDate: sanitized.maturityDate,
             notes: sanitized.notes,
         });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
-        const { id: _assetId, user_id: _uid, issueDate, maturityDate, notes: notesForDb, ...updateRest } = sanitized;
-        const dates = assetDatesForDb(sanitized);
+        const { id: _assetId, user_id: _uid, notes: notesForDb, ...updateRest } = sanitized;
         const notesPayload =
             notesForDb != null && String(notesForDb).trim() !== '' ? String(notesForDb).trim() : null;
         const { error } = await db
             .from('assets')
-            .update({ ...updateRest, ...dates, notes: notesPayload })
+            .update({ ...updateRest, notes: notesPayload })
             .match({ id: sanitized.id, user_id: auth.user.id });
         if (error) console.error("Error updating asset:", error);
         else setData(prev => ({ ...prev, assets: prev.assets.map(a => a.id === sanitized.id ? sanitized : a) }));
@@ -3967,6 +4068,129 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
     };
 
+    const addSukukPosition = async (position: Omit<SukukPosition, 'id' | 'user_id'>, _opts?: RecordWriteOptions) => {
+        if (!supabase) return;
+        const v = validateSukukPosition({
+            name: position.name,
+            investmentAccountId: position.investmentAccountId,
+            faceValue: position.faceValue,
+            outstandingPrincipal: position.outstandingPrincipal ?? position.faceValue,
+            issueDate: position.issueDate,
+            maturityDate: position.maturityDate,
+            currency: position.currency,
+        });
+        if (!v.valid) {
+            toast(v.errors.join('\n'), 'error');
+            return;
+        }
+        const row = sukukPositionToRow({
+            ...position,
+            outstandingPrincipal: position.outstandingPrincipal ?? position.faceValue,
+            status: position.status ?? 'active',
+        });
+        const { data: inserted, error } = await supabase.from('sukuk_positions').insert(withUser(row)).select().single();
+        if (error) {
+            console.error('Error adding Sukuk position:', error);
+            throw new Error(`Failed to add Sukuk: ${formatDbError(error)}`);
+        }
+        if (inserted) {
+            setData((prev) => ({
+                ...prev,
+                sukukPositions: [...(prev.sukukPositions ?? []), normalizeSukukPositionRow(inserted)],
+            }));
+        }
+    };
+
+    const updateSukukPosition = async (position: SukukPosition) => {
+        if (!supabase || !auth?.user) return;
+        const v = validateSukukPosition({
+            name: position.name,
+            investmentAccountId: position.investmentAccountId,
+            faceValue: position.faceValue,
+            outstandingPrincipal: position.outstandingPrincipal,
+            issueDate: position.issueDate,
+            maturityDate: position.maturityDate,
+            currency: position.currency,
+        });
+        if (!v.valid) {
+            toast(v.errors.join('\n'), 'error');
+            return;
+        }
+        const row = sukukPositionToRow(position);
+        const { error } = await supabase
+            .from('sukuk_positions')
+            .update(row)
+            .match({ id: position.id, user_id: auth.user.id });
+        if (error) {
+            console.error(error);
+            throw new Error(`Failed to update Sukuk: ${formatDbError(error)}`);
+        }
+        setData((prev) => ({
+            ...prev,
+            sukukPositions: (prev.sukukPositions ?? []).map((p) => (p.id === position.id ? position : p)),
+        }));
+    };
+
+    const deleteSukukPosition = async (positionId: string) => {
+        if (!supabase || !auth?.user) return;
+        const { error } = await supabase.from('sukuk_positions').delete().match({ id: positionId, user_id: auth.user.id });
+        if (error) console.error(error);
+        else {
+            setData((prev) => ({
+                ...prev,
+                sukukPositions: (prev.sukukPositions ?? []).filter((p) => p.id !== positionId),
+                sukukPayoutSchedules: (prev.sukukPayoutSchedules ?? []).filter((s) => s.sukukPositionId !== positionId),
+                sukukPayoutEvents: (prev.sukukPayoutEvents ?? []).filter((e) => e.sukukPositionId !== positionId),
+            }));
+        }
+    };
+
+    const saveSukukPayoutSchedule = async (input: {
+        position: SukukPosition;
+        existingSchedule: SukukPayoutSchedule | null;
+        investmentAccountId: string;
+        currency: 'SAR' | 'USD';
+        cadence: SukukPayoutSchedule['cadence'];
+        dayOfMonth?: number | null;
+        couponAmount?: number | null;
+        principalAmount?: number | null;
+        principalInstallmentAmount?: number | null;
+        startDate?: string | null;
+        endDate?: string | null;
+        enabled?: boolean;
+    }) => {
+        if (!supabase || !auth?.user) return;
+        const { schedule, events } = await saveSukukPayoutScheduleToDb(supabase as any, {
+            userId: auth.user.id,
+            position: input.position,
+            existingSchedule: input.existingSchedule,
+            investmentAccountId: input.investmentAccountId,
+            currency: input.currency,
+            cadence: input.cadence,
+            dayOfMonth: input.dayOfMonth,
+            couponAmount: input.couponAmount,
+            principalAmount: input.principalAmount,
+            principalInstallmentAmount: input.principalInstallmentAmount,
+            startDate: input.startDate,
+            endDate: input.endDate,
+            enabled: input.enabled,
+            scheduleId: input.existingSchedule?.id,
+        });
+        setData((prev) => {
+            const scheduleId = schedule.id;
+            const postedForSchedule = (prev.sukukPayoutEvents ?? []).filter(
+                (e) => e.scheduleId === scheduleId && e.posted,
+            );
+            const otherSchedules = (prev.sukukPayoutSchedules ?? []).filter((s) => s.id !== scheduleId);
+            const otherEvents = (prev.sukukPayoutEvents ?? []).filter((e) => e.scheduleId !== scheduleId);
+            return {
+                ...prev,
+                sukukPayoutSchedules: [...otherSchedules, schedule],
+                sukukPayoutEvents: [...otherEvents, ...postedForSchedule, ...events],
+            };
+        });
+    };
+
 
     // --- Watchlist, Alerts, Zakat, Settings ---
     const addWatchlistItem = async (item: WatchlistItem, opts?: RecordWriteOptions) => {
@@ -4291,6 +4515,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             personalLiabilities: getPersonalLiabilities(deferredData),
             personalInvestments: getPersonalInvestments(deferredData),
             personalCommodityHoldings: getPersonalCommodityHoldings(deferredData),
+            personalSukukPositions: getPersonalSukukPositions(deferredData),
             personalTransactions: getPersonalTransactions(deferredData),
         };
     }, [deferredData]);
@@ -4429,6 +4654,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         updateCommodityHolding,
         deleteCommodityHolding,
         batchUpdateCommodityHoldingValues,
+        addSukukPosition,
+        updateSukukPosition,
+        deleteSukukPosition,
+        saveSukukPayoutSchedule,
         updateSettings,
         resetData,
         loadDemoData,

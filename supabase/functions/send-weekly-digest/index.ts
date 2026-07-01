@@ -198,6 +198,7 @@ async function calculateNetWorth(supabase: any, userId: string): Promise<number>
     { data: liabilitiesRaw, error: eLiab },
     { data: portfoliosRaw, error: ePort },
     { data: commodityHoldingsRaw, error: eComm },
+    { data: sukukPositionsRaw, error: eSukuk },
     { data: investmentTransactionsRaw, error: eTx },
     { data: wealthUltraUser, error: eWuUser },
     { data: wealthUltraGlobal, error: eWuGlobal },
@@ -207,6 +208,7 @@ async function calculateNetWorth(supabase: any, userId: string): Promise<number>
     supabase.from('liabilities').select('*').eq('user_id', userId),
     supabase.from('investment_portfolios').select('*, holdings(*)').eq('user_id', userId),
     supabase.from('commodity_holdings').select('*').eq('user_id', userId),
+    supabase.from('sukuk_positions').select('*').eq('user_id', userId),
     supabase.from('investment_transactions').select('*').eq('user_id', userId),
     supabase.from('wealth_ultra_config').select('*').eq('user_id', userId).maybeSingle(),
     supabase.from('wealth_ultra_config').select('*').is('user_id', null).limit(1).maybeSingle(),
@@ -217,6 +219,7 @@ async function calculateNetWorth(supabase: any, userId: string): Promise<number>
   if (eLiab) console.error('weekly-digest liabilities:', eLiab.message);
   if (ePort) console.error('weekly-digest investment_portfolios:', ePort.message);
   if (eComm) console.error('weekly-digest commodity_holdings:', eComm.message);
+  if (eSukuk) console.error('weekly-digest sukuk_positions:', eSukuk.message);
   if (eTx) console.error('weekly-digest investment_transactions:', eTx.message);
   if (eWuUser) console.warn('weekly-digest wealth_ultra_config (user):', eWuUser.message);
   if (eWuGlobal) console.warn('weekly-digest wealth_ultra_config (global):', eWuGlobal.message);
@@ -227,6 +230,7 @@ async function calculateNetWorth(supabase: any, userId: string): Promise<number>
     liabilitiesRaw: (liabilitiesRaw ?? []) as Record<string, unknown>[],
     portfoliosRaw: (portfoliosRaw ?? []) as Record<string, unknown>[],
     commodityHoldingsRaw: (commodityHoldingsRaw ?? []) as Record<string, unknown>[],
+    sukukPositionsRaw: (sukukPositionsRaw ?? []) as Record<string, unknown>[],
     investmentTransactionsRaw: (investmentTransactionsRaw ?? []) as Record<string, unknown>[],
     wealthUltraUserRow: wealthUltraUser ? (wealthUltraUser as Record<string, unknown>) : null,
     wealthUltraGlobalRow: wealthUltraGlobal ? (wealthUltraGlobal as Record<string, unknown>) : null,

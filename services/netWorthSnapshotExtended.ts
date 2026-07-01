@@ -1,9 +1,9 @@
 import type { FinancialData } from '../types';
 import {
   computePersonalHeadlineNetWorthSar,
-  sumPersonalSukukAssetsSar,
   type PersonalHeadlineNetWorthResult,
 } from './personalNetWorth';
+import { sumPersonalSukukPositionsSar } from './sukuk/sukukExposure';
 import { bucketSumMatchesNetWorth } from './netWorthReconciliation';
 import { totalLiquidCashSARFromAccounts } from '../utils/currencyMath';
 import { debtStressScore } from './debtEngines';
@@ -25,7 +25,7 @@ export function buildNetWorthSnapshotFromHeadline(
   data: FinancialData,
 ): NetWorthSnapshot {
   const buckets = headline.buckets;
-  const sukukAudit = sumPersonalSukukAssetsSar(data);
+  const sukukAudit = sumPersonalSukukPositionsSar(data);
   return {
     at: new Date().toISOString(),
     netWorth: headline.netWorth,
@@ -81,7 +81,7 @@ export function buildExtendedNetWorthSnapshot(
     .filter((l) => (l.status ?? 'Active') === 'Active' && (l.amount ?? 0) < 0)
     .reduce((s, l) => s + Math.abs(l.amount ?? 0), 0);
   const liquidCash = totalLiquidCashSARFromAccounts(accounts, getAvailableCashForAccount, headline.sarPerUsd);
-  const monthlyExpense = normalizedMonthlyExpenseSar(txs, accounts, uiExchangeRate, { monthsLookback: 6 });
+  const monthlyExpense = normalizedMonthlyExpenseSar(txs, accounts, uiExchangeRate, { monthsLookback: 6, data });
   const runway = cashRunwayMonths(liquidCash, monthlyExpense);
   const goals = data.goals ?? [];
   const goalProgressPct =

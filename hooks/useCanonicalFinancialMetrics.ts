@@ -28,6 +28,7 @@ export {
   pickDashboardRoiDecimal,
   pickInvestmentsTotalSar,
   pickCommoditiesValueSar,
+  pickSukukPositionsValueSar,
   pickSukukAssetsValueSar,
   pickPlatformsRollupSar,
   pickInvestableCashTotalSar,

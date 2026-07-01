@@ -2,12 +2,10 @@ import React, { useContext, useMemo, useEffect, useState } from 'react';
 import SectionCard from './SectionCard';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
-import { useCurrency } from '../context/CurrencyContext';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
-import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { reconcileDashboardVsSummaryKpis } from '../services/kpiReconciliation';
-import { useExtendedCanonicalMetrics, useCanonicalSimulatedPrices, pickWealthSummary } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics, pickWealthSummary } from '../hooks/useCanonicalFinancialMetrics';
 import { ExtendedMetricGate } from './shared/ExtendedMetricGate';
 import { computeDashboardValidationWarnings } from '../services/dashboardKpiSnapshot';
 import { listRecentKpiReconciliationDrift, type KpiDriftEvent } from '../services/kpiDriftTelemetry';
@@ -17,10 +15,8 @@ import { useDashboardReconciliationPrefs } from '../hooks/useDashboardReconcilia
  * Dashboard validation, KPI reconciliation, and drift diagnostics — shown on System & APIs Health.
  */
 const DashboardKpiQualityPanel: React.FC = () => {
-    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
-    const { exchangeRate } = useCurrency();
-    const simulatedPrices = useCanonicalSimulatedPrices();
     const { formatCurrencyString } = useFormatCurrency();
     const emergencyFund = useEmergencyFund(data);
     const { strictReconciliationMode, setStrictReconciliationMode, hardBlockOnMismatch, setHardBlockOnMismatch } =
@@ -36,9 +32,9 @@ const DashboardKpiQualityPanel: React.FC = () => {
     );
 
     const summaryMonthlyKpisForReconciliation = useMemo(() => {
-        if (!data) return null;
-        return computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
+        if (!kpiSnapshot) return null;
+        return { budgetVariance: kpiSnapshot.budgetVariance, roi: kpiSnapshot.roi };
+    }, [kpiSnapshot]);
 
     const kpiReconciliation = useMemo(() => {
         if (!summaryModelForReconciliation || !summaryMonthlyKpisForReconciliation || !kpiSnapshot) return null;

@@ -24,6 +24,9 @@ export type WorkspaceHydrateCachePayload = {
     | 'watchlist'
     | 'settings'
     | 'commodityHoldings'
+    | 'sukukPositions'
+    | 'sukukPayoutSchedules'
+    | 'sukukPayoutEvents'
   >;
 };
 
@@ -56,6 +59,9 @@ export function buildWorkspaceHydrateCachePayload(
       watchlist: data.watchlist ?? [],
       settings: data.settings,
       commodityHoldings: data.commodityHoldings ?? [],
+      sukukPositions: data.sukukPositions ?? [],
+      sukukPayoutSchedules: data.sukukPayoutSchedules ?? [],
+      sukukPayoutEvents: data.sukukPayoutEvents ?? [],
     },
   };
 }
@@ -80,6 +86,9 @@ export function readWorkspaceHydrateCache(userId: string): FinancialData | null 
       watchlist: parsed.data.watchlist ?? [],
       settings: parsed.data.settings,
       commodityHoldings: parsed.data.commodityHoldings ?? [],
+      sukukPositions: parsed.data.sukukPositions ?? [],
+      sukukPayoutSchedules: parsed.data.sukukPayoutSchedules ?? [],
+      sukukPayoutEvents: parsed.data.sukukPayoutEvents ?? [],
     } as FinancialData;
     return financialDataHasHydrated(merged) ? merged : null;
   } catch {

@@ -20,6 +20,7 @@ export const HYDRATE_FETCH_KEYS = [
   'executionLogs',
   'recurringTransactions',
   'budgetRequests',
+  'sukukPositions',
   'sukukPayoutSchedules',
   'sukukPayoutEvents',
 ] as const;
