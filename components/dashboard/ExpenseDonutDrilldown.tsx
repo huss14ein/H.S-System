@@ -191,7 +191,16 @@ const ExpenseDonutDrilldownInner: React.FC<{
   };
 
   const drillCategory = (name: string) => {
-    if (name === 'Fixed' || name === 'Variable' || name === 'Spouse' || name === 'Education') return;
+    const isArabic = t('apply') === 'تطبيق';
+    const aggregateLabels = new Set([
+      isArabic ? 'ثابت' : 'Fixed',
+      isArabic ? 'متغير' : 'Variable',
+      t('spouse'),
+      t('educationKids'),
+      isArabic ? 'أخرى' : 'Other',
+      'Education',
+    ]);
+    if (aggregateLabels.has(name)) return;
     triggerSpendingDrillDown(
       triggerPageAction,
       setActivePage,

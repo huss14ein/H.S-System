@@ -127,10 +127,7 @@ export function useWealthAnalyticsDeferredInsights(args: {
             emergencyFundMonths: Number(emergencyFundMonths ?? 0),
           },
           summaryMetrics: reportModel.financialMetricsWithEf,
-          summaryMonthlyExtras: {
-            budgetVariance: kpiSnapshot.budgetVariance ?? 0,
-            roi: kpiSnapshot.roi ?? 0,
-          },
+          summaryMonthlyExtras: reportModel.monthlyReportFinancialKpis,
         });
       }
 

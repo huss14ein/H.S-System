@@ -14,7 +14,12 @@ import { syncQuoteCacheToSessionNow } from '../utils/quoteRefreshBridge';
 
 type LiveQuoteRow = { price: number; change: number; changePercent: number };
 
-const batchInFlight = new Map<string, Promise<Record<string, LiveQuoteRow>>>();
+type InFlightBatch = {
+  network: Promise<Record<string, LiveQuoteRow>>;
+  shared: Promise<Record<string, LiveQuoteRow>>;
+};
+
+const batchInFlight = new Map<string, InFlightBatch>();
 
 /** Finnhub queue gap (~1.1s/symbol) — timeout must exceed worst-case batch size. */
 export const FINNHUB_MIN_GAP_MS = 1100;
@@ -48,13 +53,14 @@ export async function getLivePricesDeduped(
   if (normalized.length === 0) return {};
 
   const key = batchKey(normalized);
-  const existing = batchInFlight.get(key);
-  if (existing) return existing;
-
   const forceFetch = options?.forceFetch === true;
-  let timedResolvedEarly = false;
+  const existing = batchInFlight.get(key);
+  if (existing) return forceFetch ? existing.network : existing.shared;
 
-  const promise = getLivePrices(normalized)
+  let timedResolvedEarly = false;
+  let entry: InFlightBatch;
+
+  const network = getLivePrices(normalized)
     .then((raw) => {
       if (Object.keys(raw).length === 0) return raw;
       persistSanitizedLiveQuotes(normalized, raw, loadQuoteCacheRows());
@@ -65,12 +71,15 @@ export async function getLivePricesDeduped(
       return sanitized;
     })
     .finally(() => {
-      batchInFlight.delete(key);
+      if (batchInFlight.get(key) === entry) {
+        batchInFlight.delete(key);
+      }
     });
 
   if (forceFetch) {
-    batchInFlight.set(key, promise);
-    return promise;
+    entry = { network, shared: network };
+    batchInFlight.set(key, entry);
+    return network;
   }
 
   const timeoutMs = liveFetchTimeoutMs(normalized.length);
@@ -87,7 +96,7 @@ export async function getLivePricesDeduped(
       }
       reject(new Error('Live quote fetch timed out'));
     }, timeoutMs);
-    promise.then(
+    network.then(
       (rows) => {
         clearTimeout(timer);
         timedResolvedEarly = false;
@@ -100,7 +109,8 @@ export async function getLivePricesDeduped(
     );
   });
 
-  batchInFlight.set(key, timed);
+  entry = { network, shared: timed };
+  batchInFlight.set(key, entry);
   return timed;
 }
 

@@ -27,15 +27,14 @@ export const SpendingCommandCenter: React.FC<Props> = ({
   const workspace = useAnalyticsWorkspaceOptional();
   const summary = model?.summary;
 
-  const daysInMonth = 30;
-  const dayOfMonth = new Date().getDate();
-  const { daysLeft } = financialMonthDaysRemaining(new Date(), model?.monthStartDay ?? 1);
+  const monthStartDay = model?.monthStartDay ?? 1;
+  const { daysTotal, daysElapsed, daysLeft } = financialMonthDaysRemaining(new Date(), monthStartDay);
   const burnPace =
-    summary && dayOfMonth > 0 ? (summary.expenseSar / dayOfMonth) * daysInMonth : 0;
+    summary && daysElapsed > 0 ? (summary.expenseSar / daysElapsed) * daysTotal : 0;
 
   const kpis = (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-      <KpiCard label="Spent MTD" value={formatCurrencyString(summary?.expenseSar ?? 0, { digits: 0 })} />
+      <KpiCard label="Spent FMTD" value={formatCurrencyString(summary?.expenseSar ?? 0, { digits: 0 })} />
       <KpiCard label="Envelope" value={formatCurrencyString(summary?.budgetedSar ?? 0, { digits: 0 })} />
       <KpiCard
         label="Variance"
@@ -90,7 +89,7 @@ export const SpendingCommandCenter: React.FC<Props> = ({
                     triggerSpendingDrillDown(
                       triggerPageAction,
                       setActivePage,
-                      buildBudgetDrillDownAction({ budgetCategory: c.category }),
+                      buildBudgetDrillDownAction({ budgetCategory: c.category, monthStartDay: model.monthStartDay }),
                       { setSelectedCategory: workspace?.setSelectedCategory },
                     )
                   }
@@ -128,7 +127,7 @@ export const SpendingCommandCenter: React.FC<Props> = ({
                     triggerSpendingDrillDown(
                       triggerPageAction,
                       setActivePage,
-                      buildBudgetDrillDownAction({ budgetCategory: d.category }),
+                      buildBudgetDrillDownAction({ budgetCategory: d.category, monthStartDay: model.monthStartDay }),
                       { setSelectedCategory: workspace?.setSelectedCategory },
                     )
                   }

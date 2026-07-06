@@ -11,13 +11,14 @@ export type SpendingDrillDownArgs = {
   year?: number;
   month?: number;
   anchorDate?: string;
+  monthStartDay?: number;
 };
 
 /** Build Transactions page action for budget drill-down (full filter-by-budget contract). */
 export function buildBudgetDrillDownAction(args: SpendingDrillDownArgs): string {
   const cat = encodeURIComponent(args.budgetCategory.trim());
   const ref = new Date();
-  const monthStartDay = resolveMonthStartDayFromData(args.data ?? null);
+  const monthStartDay = args.monthStartDay ?? resolveMonthStartDayFromData(args.data ?? null);
   const finIso = args.monthKey ?? currentFinancialMonthIso(ref, monthStartDay);
   const [yStr, mStr] = finIso.split('-');
   const year = args.year ?? (Number(yStr) || ref.getFullYear());

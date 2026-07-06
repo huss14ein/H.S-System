@@ -17,6 +17,7 @@ import { dashboardChartMargin } from './chartLayout';
 
 type ChartRow = {
   label: string;
+  fullName: string;
   spent: number;
   remaining: number;
   pct: number;
@@ -70,6 +71,7 @@ const BudgetBurnRatePanelInner: React.FC<{
           const status: ChartRow['status'] = pct >= 1 ? 'over' : pct >= 0.85 ? 'near' : 'ok';
           return {
             label: cat.length > 14 ? `${cat.slice(0, 14)}…` : cat,
+            fullName: cat,
             spent,
             remaining: Math.max(0, lim - spent),
             pct,
@@ -87,6 +89,7 @@ const BudgetBurnRatePanelInner: React.FC<{
       .filter(([, spent]) => spent > 0)
       .map(([cat, spent]) => ({
         label: cat.length > 14 ? `${cat.slice(0, 14)}…` : cat,
+        fullName: cat,
         spent,
         remaining: 0,
         pct: 1,
@@ -125,7 +128,7 @@ const BudgetBurnRatePanelInner: React.FC<{
           </p>
           <ul className="space-y-2">
             {rows.map((r) => (
-              <li key={r.label} className="flex justify-between gap-2 text-sm">
+              <li key={r.fullName} className="flex justify-between gap-2 text-sm">
                 <button
                   type="button"
                   className="text-slate-700 truncate text-left hover:text-primary hover:underline"
@@ -133,7 +136,7 @@ const BudgetBurnRatePanelInner: React.FC<{
                     triggerSpendingDrillDown(
                       triggerPageAction,
                       setActivePage,
-                      buildBudgetDrillDownAction({ budgetCategory: r.label.replace(/…$/, ''), data }),
+                      buildBudgetDrillDownAction({ budgetCategory: r.fullName, data }),
                     )
                   }
                 >
@@ -158,10 +161,10 @@ const BudgetBurnRatePanelInner: React.FC<{
                   if (!active || !payload?.length) return null;
                   const spent = Number(payload.find((p) => p.dataKey === 'spent')?.value ?? 0);
                   const rem = Number(payload.find((p) => p.dataKey === 'remaining')?.value ?? 0);
-                  const row = rows.find((r) => r.label === label);
+                  const row = payload[0]?.payload as ChartRow | undefined;
                   return (
                     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg">
-                      <p className="font-semibold text-slate-800">{label}</p>
+                      <p className="font-semibold text-slate-800">{row?.fullName ?? label}</p>
                       <p className="text-rose-700 tabular-nums">
                         {t('burnRate')}: {formatCurrencyString(spent, { digits: 0 })}
                       </p>
@@ -177,18 +180,18 @@ const BudgetBurnRatePanelInner: React.FC<{
                 stackId="a"
                 radius={[0, 0, 0, 0]}
                 onClick={(row) => {
-                  const label = String(row?.label ?? row?.payload?.label ?? '');
-                  if (!label) return;
+                  const fullName = String(row?.payload?.fullName ?? row?.fullName ?? '');
+                  if (!fullName) return;
                   triggerSpendingDrillDown(
                     triggerPageAction,
                     setActivePage,
-                    buildBudgetDrillDownAction({ budgetCategory: label.replace(/…$/, ''), data }),
+                    buildBudgetDrillDownAction({ budgetCategory: fullName, data }),
                   );
                 }}
                 className="cursor-pointer"
               >
                 {rows.map((r) => (
-                  <Cell key={`s-${r.label}`} fill={statusColor(r.status)} />
+                  <Cell key={`s-${r.fullName}`} fill={statusColor(r.status)} />
                 ))}
               </Bar>
               <Bar dataKey="remaining" stackId="a" fill="#e2e8f0" radius={[0, 6, 6, 0]} />

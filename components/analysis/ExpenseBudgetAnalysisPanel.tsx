@@ -90,7 +90,7 @@ const ExpenseBudgetAnalysisPanel: React.FC<Props> = ({ model, ready, setActivePa
     triggerSpendingDrillDown(
       triggerPageAction,
       setActivePage,
-      buildBudgetDrillDownAction({ budgetCategory: category }),
+      buildBudgetDrillDownAction({ budgetCategory: category, monthStartDay: model.monthStartDay }),
       { setSelectedCategory: workspace?.setSelectedCategory },
     );
 

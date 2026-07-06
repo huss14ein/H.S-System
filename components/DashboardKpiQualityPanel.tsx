@@ -32,9 +32,9 @@ const DashboardKpiQualityPanel: React.FC = () => {
     );
 
     const summaryMonthlyKpisForReconciliation = useMemo(() => {
-        if (!kpiSnapshot) return null;
-        return { budgetVariance: kpiSnapshot.budgetVariance, roi: kpiSnapshot.roi };
-    }, [kpiSnapshot]);
+        if (!summaryModelForReconciliation) return null;
+        return summaryModelForReconciliation.monthlyReportFinancialKpis;
+    }, [summaryModelForReconciliation]);
 
     const kpiReconciliation = useMemo(() => {
         if (!summaryModelForReconciliation || !summaryMonthlyKpisForReconciliation || !kpiSnapshot) return null;

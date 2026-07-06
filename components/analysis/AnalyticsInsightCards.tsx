@@ -39,7 +39,7 @@ export const AnalyticsInsightCards: React.FC<Props> = ({
     triggerSpendingDrillDown(
       triggerPageAction,
       setActivePage,
-      buildBudgetDrillDownAction({ budgetCategory: category }),
+      buildBudgetDrillDownAction({ budgetCategory: category, monthStartDay: model?.monthStartDay }),
     );
 
   return (

@@ -84,6 +84,8 @@ export interface WealthSummaryReportModel {
   managedWealthTotal: number;
   emergencyFund: EmergencyFundMetrics;
   financialMetricsWithEf: FinancialMetricsWithEf;
+  /** Summary-style monthly KPI extras used for Dashboard vs Summary reconciliation. */
+  monthlyReportFinancialKpis: { budgetVariance: number; roi: number };
   householdStress: CashflowStressSummary | null;
   riskLane: RiskLaneContext;
   liquidityRunway: LiquidityRunwaySummary | null;
@@ -318,6 +320,12 @@ export function computeWealthSummaryReportModel(
     emergencyShortfall: emergencyFund.shortfall,
     emergencyTargetAmount: emergencyFund.targetAmount,
   };
+  const monthlyReportFinancialKpis = computeMonthlyReportFinancialKpis(
+    data,
+    uiExchangeRate,
+    getAvailableCashForAccount,
+    simulatedPrices,
+  );
 
   const householdInput = buildHouseholdEngineInputFromData(
     getPersonalTransactions(data) as { date: string; type?: string; amount?: number }[],
@@ -454,6 +462,7 @@ export function computeWealthSummaryReportModel(
     managedWealthTotal,
     emergencyFund,
     financialMetricsWithEf,
+    monthlyReportFinancialKpis,
     householdStress,
     riskLane,
     liquidityRunway,
