@@ -2,8 +2,10 @@ import React, { useMemo } from 'react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useLanguage } from '../../context/LanguageContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
-import type { FinancialData } from '../../types';
+import type { FinancialData, Page } from '../../types';
 import { personalMonthlyInflowOutflowByFinancialMonthSar } from '../../services/financeMetrics';
+import { buildFiscalMonthDrillDownAction, triggerSpendingDrillDown } from '../../services/spendingDrillDown';
+import { useAnalyticsWorkspaceOptional } from '../../context/AnalyticsWorkspaceContext';
 import {
   financialMonthKeyLabel,
   financialMonthKeyOverlapsIsoRange,
@@ -20,9 +22,12 @@ const MomCashflowTrendChartInner: React.FC<{
   startIso?: string;
   endIso?: string;
   monthsBack?: number;
-}> = ({ data, uiExchangeRate, startIso, endIso, monthsBack = 12 }) => {
+  setActivePage?: (page: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
+}> = ({ data, uiExchangeRate, startIso, endIso, monthsBack = 12, setActivePage, triggerPageAction }) => {
   const { t, dir, language } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
+  const workspace = useAnalyticsWorkspaceOptional();
 
   const rows = useMemo(() => {
     if (!data) return [] as Row[];
@@ -91,7 +96,23 @@ const MomCashflowTrendChartInner: React.FC<{
               }}
             />
             <Bar dataKey="inflow" name={t('inflow')} fill="#10b981" radius={[8, 8, 0, 0]} />
-            <Bar dataKey="outflow" name={t('outflow')} fill="#fb7185" radius={[8, 8, 0, 0]} />
+            <Bar
+              dataKey="outflow"
+              name={t('outflow')}
+              fill="#fb7185"
+              radius={[8, 8, 0, 0]}
+              onClick={(row) => {
+                const payload = row?.payload as Row | undefined;
+                if (!payload?.key) return;
+                workspace?.setSelectedMonthKey?.(payload.key);
+                triggerSpendingDrillDown(
+                  triggerPageAction,
+                  setActivePage,
+                  buildFiscalMonthDrillDownAction(payload.key),
+                );
+              }}
+              className="cursor-pointer"
+            />
           </BarChart>
         </ResponsiveContainer>
       </div>

@@ -2,7 +2,9 @@ import React, { useMemo, useState, useContext, useEffect, useRef, useCallback } 
 import BudgetCardShell from '../components/BudgetCardShell';
 import BudgetCardMetricsBlocks from '../components/BudgetCardMetricsBlocks';
 import HouseholdEngineSkeleton from '../components/HouseholdEngineSkeleton';
-import BudgetOwnPortfolioCard from '../components/BudgetOwnPortfolioCard';
+import BudgetOwnPortfolioCard, { type OwnPortfolioBudgetRow } from '../components/BudgetOwnPortfolioCard';
+import BudgetCategorySlideOver from '../components/budgets/BudgetCategorySlideOver';
+import { buildBudgetCategorySlideOverModel } from '../services/budgetCategorySlideOverModel';
 import BudgetUsageDial from '../components/BudgetUsageDial';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';
@@ -94,6 +96,8 @@ import { useSelfLearning } from '../context/SelfLearningContext';
 import { toSAR } from '../utils/currencyMath';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { usePageDeferredData } from '../context/PageDeferredDataContext';
+import { useSpendingCommandCenterModel } from '../hooks/useSpendingCommandCenterModel';
+import SpendingCommandCenter from '../components/spending/SpendingCommandCenter';
 import {
     budgetAppliesToFinancialView,
     dedupeBudgetRowsForFinancialView,
@@ -421,6 +425,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const { exchangeRate, currency: displayCurrency } = useCurrency();
     const emergencyFund = useEmergencyFund(data);
+    const { model: spendingExecModel, ready: spendingExecReady } = useSpendingCommandCenterModel(engineData, exchangeRate, 'personal');
     const financialEnhancementInsights = useFinancialEnhancementInsights(emergencyFund.monthsCovered);
     const [isAdmin, setIsAdmin] = useState(false);
     const [permittedCategories, setPermittedCategories] = useState<string[]>([]);
@@ -2059,6 +2064,23 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
     }, []);
 
+    const [slideOverBudget, setSlideOverBudget] = useState<OwnPortfolioBudgetRow | null>(null);
+
+    const handleOpenBudgetSlideOver = useCallback((budget: Pick<OwnPortfolioBudgetRow, 'category' | 'month' | 'year' | 'id'>) => {
+        setSlideOverBudget(budget as OwnPortfolioBudgetRow);
+    }, []);
+
+    const slideOverModel = useMemo(() => {
+        if (!slideOverBudget || !data) return null;
+        return buildBudgetCategorySlideOverModel({
+            data,
+            category: slideOverBudget.category,
+            exchangeRate: sarPerUsd,
+            month: slideOverBudget.month ?? currentMonth,
+            year: slideOverBudget.year ?? currentYear,
+        });
+    }, [slideOverBudget, data, sarPerUsd, currentMonth, currentYear]);
+
     const handleOwnPortfolioNavigate = useCallback(
         (budget: BudgetRow) => {
             if (triggerPageAction) {
@@ -2699,6 +2721,13 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 visible={sharedBudgetRpcUnavailable}
                 syncing={sharedTotalsSyncing}
                 onRetry={retrySharedBudgetRpc}
+            />
+            <SpendingCommandCenter
+                model={spendingExecModel}
+                ready={spendingExecReady}
+                compact
+                setActivePage={setActivePage}
+                triggerPageAction={triggerPageAction}
             />
             <BudgetMonthOpenBanner
                 hints={monthOpenHints}
@@ -4174,7 +4203,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                         key={`shared-card-${budget.id}`}
                                         type="button"
                                         className="group flex h-full min-h-0 w-full flex-col text-left transition-transform duration-300 hover:-translate-y-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary/80"
-                                        onClick={() => handleOwnPortfolioNavigate(budget)}
+                                        onClick={() => handleOpenBudgetSlideOver(budget)}
                                     >
                                         <BudgetCardShell utilizationLabel={utilLabel} budgetTier={budget.budgetTier ?? 'Optional'}>
                                             <div className="flex min-h-0 flex-1 flex-col">
@@ -4687,6 +4716,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         getCategoryHint={getCategoryHint}
                         formatCurrencyString={formatCurrencyString}
                         onNavigateToTransactions={handleOwnPortfolioNavigate}
+                        onOpenSlideOver={handleOpenBudgetSlideOver}
                         onToggleExpand={toggleBudgetCardSize}
                         onEdit={handleOwnPortfolioEdit}
                         onDelete={handleOwnPortfolioDelete}
@@ -4727,6 +4757,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 </div>
             )}
 
+            {slideOverModel && slideOverBudget && (
+                <BudgetCategorySlideOver
+                    model={slideOverModel}
+                    formatCurrency={(n) => formatCurrencyString(n, { digits: 0 })}
+                    onClose={() => setSlideOverBudget(null)}
+                    onViewAll={() => {
+                        handleOwnPortfolioNavigate(slideOverBudget);
+                        setSlideOverBudget(null);
+                    }}
+                />
+            )}
             <BudgetModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBudget} budgetToEdit={budgetToEdit} currentMonth={currentMonth} currentYear={currentYear} />
             {suggestedAdjustments && (
                 <Modal isOpen onClose={() => { trackSuggestionFeedback('budget-suggested-adjustments', 'Budgets', false); setSuggestedAdjustments(null); }} title="Suggested budget adjustments">

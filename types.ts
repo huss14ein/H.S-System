@@ -328,6 +328,47 @@ export interface InvestmentTransaction {
   currency?: TradeCurrency;
   /** For deposits/withdrawals: the linked cash account ID (source for deposits, destination for withdrawals) */
   linkedCashAccountId?: string;
+  /** Idempotent replay guard for system-generated rows (DRIP, corporate actions). */
+  idempotencyKey?: string;
+}
+
+export type CorporateActionDbType =
+  | 'stock_split'
+  | 'reverse_stock_split'
+  | 'cash_in_lieu'
+  | 'spinoff'
+  | 'merger'
+  | 'dividend_cash'
+  | 'dividend_drip';
+
+export interface CorporateActionEvent {
+  id: string;
+  user_id?: string;
+  portfolioId: string;
+  actionType: CorporateActionDbType;
+  symbol: string;
+  linkedSymbol?: string | null;
+  executionDate: string;
+  ratioNumerator?: number | null;
+  ratioDenominator?: number | null;
+  cashPerShare?: number | null;
+  costBasisAllocationPct?: number | null;
+  idempotencyKey: string;
+  status?: 'applied' | 'reversed';
+}
+
+export interface InvestmentCostLot {
+  id: string;
+  user_id?: string;
+  portfolioId: string;
+  symbol: string;
+  market: 'US' | 'Tadawul' | 'Other';
+  acquisitionDate: string;
+  quantityRemaining: number;
+  costPerShare: number;
+  bookCurrency: 'SAR' | 'USD';
+  sourceTransactionId?: string | null;
+  sourceCorporateActionId?: string | null;
 }
 
 export type SukukPayoutCadence = 'monthly' | 'quarterly' | 'maturity_only' | 'custom';
@@ -469,6 +510,8 @@ export interface Settings {
      * 1 = calendar month. 2–31 shifts the preferred window start; short months cap to the last day (e.g. 31 → Feb 28/29).
      */
     monthStartDay?: number;
+    /** Spouse / education category mapping for fixed-vs-variable donut (synced to settings). */
+    spendingIntelMapping?: { spouseCats?: string[]; educationCats?: string[] };
     /** Optional: nisab amount override (e.g. in SAR). When set, Zakat uses this instead of goldPrice * 85. */
     nisabAmount?: number;
 }
@@ -553,6 +596,8 @@ export interface FinancialData {
   recurringTransactions: RecurringTransaction[];
   investments: InvestmentPortfolio[];
   investmentTransactions: InvestmentTransaction[];
+  corporateActionEvents?: CorporateActionEvent[];
+  investmentCostLots?: InvestmentCostLot[];
   sukukPositions?: SukukPosition[];
   sukukPayoutSchedules?: SukukPayoutSchedule[];
   sukukPayoutEvents?: SukukPayoutEvent[];

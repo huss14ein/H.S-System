@@ -412,8 +412,8 @@ export function computeHeadlinePersonalInvestmentRoiDecimal(
     0,
   );
 
-  const sukukPositionsValueSar = sumPersonalSukukPositionsSar(data);
-  const sukukPositionsCostSar = sumPersonalSukukPositionsCostSar(data);
+  const sukukPositionsValueSar = sumPersonalSukukPositionsSar(data, sarPerUsd);
+  const sukukPositionsCostSar = sumPersonalSukukPositionsCostSar(data, sarPerUsd);
 
   const totalExposureSar = platformsRollupSar + commoditiesValueSar + sukukPositionsValueSar;
   /**

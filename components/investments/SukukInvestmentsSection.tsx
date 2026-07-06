@@ -292,7 +292,16 @@ export const SukukInvestmentsSection: React.FC = () => {
       </div>
 
       {filtered.length === 0 ? (
-        <p className="text-sm text-slate-500 border border-dashed border-slate-200 rounded-xl p-8 text-center">No Sukuk contracts in this view.</p>
+        <div className="text-sm text-slate-500 border border-dashed border-slate-200 rounded-xl p-8 text-center space-y-2">
+          <p>No Sukuk contracts in this view.</p>
+          {positions.length > 0 && statusFilter === 'active' && (
+            <p className="text-xs text-slate-600">
+              {positions.length - filtered.length > 0
+                ? `${positions.length - filtered.length} completed or matured contract(s) — switch to All or Completed.`
+                : 'Try switching to All to see every contract.'}
+            </p>
+          )}
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filtered.map((p) => {

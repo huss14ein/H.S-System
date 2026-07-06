@@ -47,7 +47,7 @@ export function deriveHeadlineExposureParts(
   simulatedPrices: SimulatedPriceMap,
 ): HeadlineExposureParts {
   const commoditiesValueSar = computePersonalCommoditiesContributionSAR(data, sarPerUsd, simulatedPrices).valueSAR;
-  const sukukPositionsValueSar = sumPersonalSukukPositionsSar(data);
+  const sukukPositionsValueSar = sumPersonalSukukPositionsSar(data, sarPerUsd);
   const platformsRollupSar = Math.max(0, investmentsTotalSar - commoditiesValueSar - sukukPositionsValueSar);
   return {
     totalExposureSar: investmentsTotalSar,

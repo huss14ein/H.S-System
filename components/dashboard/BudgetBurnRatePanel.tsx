@@ -2,7 +2,8 @@ import React, { useMemo } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useLanguage } from '../../context/LanguageContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
-import type { Account, Budget, FinancialData, Transaction } from '../../types';
+import type { Account, Budget, FinancialData, Page, Transaction } from '../../types';
+import { buildBudgetDrillDownAction, triggerSpendingDrillDown } from '../../services/spendingDrillDown';
 import {
   budgetsForFinancialMonthView,
   financialMonthLabel,
@@ -29,7 +30,9 @@ const BudgetBurnRatePanelInner: React.FC<{
   transactions: Transaction[];
   accounts: Account[];
   uiExchangeRate: number;
-}> = ({ data, budgets, transactions, accounts, uiExchangeRate }) => {
+  setActivePage?: (page: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
+}> = ({ data, budgets, transactions, accounts, uiExchangeRate, setActivePage, triggerPageAction }) => {
   const { t, dir } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
 
@@ -123,7 +126,19 @@ const BudgetBurnRatePanelInner: React.FC<{
           <ul className="space-y-2">
             {rows.map((r) => (
               <li key={r.label} className="flex justify-between gap-2 text-sm">
-                <span className="text-slate-700 truncate">{r.label}</span>
+                <button
+                  type="button"
+                  className="text-slate-700 truncate text-left hover:text-primary hover:underline"
+                  onClick={() =>
+                    triggerSpendingDrillDown(
+                      triggerPageAction,
+                      setActivePage,
+                      buildBudgetDrillDownAction({ budgetCategory: r.label.replace(/…$/, ''), data }),
+                    )
+                  }
+                >
+                  {r.label}
+                </button>
                 <span className="font-semibold tabular-nums text-slate-900 shrink-0">
                   {formatCurrencyString(r.spent, { digits: 0 })}
                 </span>
@@ -157,7 +172,21 @@ const BudgetBurnRatePanelInner: React.FC<{
                   );
                 }}
               />
-              <Bar dataKey="spent" stackId="a" radius={[0, 0, 0, 0]}>
+              <Bar
+                dataKey="spent"
+                stackId="a"
+                radius={[0, 0, 0, 0]}
+                onClick={(row) => {
+                  const label = String(row?.label ?? row?.payload?.label ?? '');
+                  if (!label) return;
+                  triggerSpendingDrillDown(
+                    triggerPageAction,
+                    setActivePage,
+                    buildBudgetDrillDownAction({ budgetCategory: label.replace(/…$/, ''), data }),
+                  );
+                }}
+                className="cursor-pointer"
+              >
                 {rows.map((r) => (
                   <Cell key={`s-${r.label}`} fill={statusColor(r.status)} />
                 ))}

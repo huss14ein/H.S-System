@@ -3,8 +3,7 @@ import Card from '../components/Card';
 import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
 
 const DraggableResizableGrid = lazy(() => import('../components/DraggableResizableGrid'));
-import { Transaction, Page, Budget, Account } from '../types';
-import ProgressBar from '../components/ProgressBar';
+import { Transaction, Page, Account } from '../types';
 import CashflowChart from '../components/charts/CashflowChart';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
@@ -47,6 +46,8 @@ import { usePrivacyMask } from '../context/PrivacyContext';
 import type { InvestmentCapitalSource } from '../services/investmentKpiCore';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
+import { useSpendingCommandCenterModel } from '../hooks/useSpendingCommandCenterModel';
+import SpendingCommandCenter from '../components/spending/SpendingCommandCenter';
 import {
     financialMonthRange,
     financialMonthKeysEndingAt,
@@ -59,7 +60,6 @@ import {
     resolveMonthStartDayFromData,
     dateInRange,
     budgetsForFinancialMonthView,
-    financialMonthDaysRemaining,
     financialMonthKeyFromTransactionDate,
 } from '../utils/financialMonth';
 import { buildPersonalInvestmentTreemapRows } from '../services/wealthSummaryReportModel';
@@ -68,12 +68,6 @@ import PlanCompareContextBanner from '../components/PlanCompareContextBanner';
 import WealthAnalyticsGuideBanner from '../components/WealthAnalyticsGuideBanner';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import { useLanguage } from '../context/LanguageContext';
-
-interface ExtendedBudget extends Budget {
-    spent: number;
-    percentage: number;
-    monthlyLimit?: number;
-}
 
 const AccountsOverview: React.FC<{ accounts: Account[], onClick: () => void }> = ({ accounts, onClick }) => {
     const { formatCurrencyString } = useFormatCurrency();
@@ -220,54 +214,6 @@ const RecentTransactions: React.FC<{ transactions: Transaction[], accounts: Acco
     );
 };
 
-const BudgetHealth: React.FC<{ budgets: ExtendedBudget[]; onClick: () => void; monthStartDay: number }> = ({
-    budgets,
-    onClick,
-    monthStartDay,
-}) => {
-    const { formatCurrencyString } = useFormatCurrency();
-    const { daysLeft } = financialMonthDaysRemaining(new Date(), monthStartDay);
-
-    const getStatus = (percentage: number) => {
-        const p = Number(percentage) || 0;
-        if (p > 100) return { text: 'Over Budget', colorClass: 'bg-danger', textColorClass: 'text-danger' };
-        if (p > 75) return { text: 'Nearing Limit', colorClass: 'bg-warning', textColorClass: 'text-warning' };
-        return { text: 'On Track', colorClass: 'bg-success', textColorClass: 'text-success' };
-    };
-
-    return (
-        <div className="section-card-hover" onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onClick()}>
-            <h3 className="text-lg font-semibold mb-4 text-dark">Budget Health (This Month)</h3>
-            <div className="space-y-4">
-                {(budgets ?? []).slice(0, 4).map((budget, index) => {
-                    const status = getStatus(budget?.percentage ?? 0);
-                    return (
-                        <div key={budget?.category ?? `budget-${index}`} className="border-t pt-3 first:border-t-0">
-                            <div className="flex justify-between items-center mb-1">
-                                <span className="font-bold text-dark">{budget?.category ?? '—'}</span>
-                                <span className={`text-sm font-semibold flex items-center gap-1.5 ${status.textColorClass}`}>
-                                    <span className={`w-2 h-2 rounded-full ${status.colorClass}`}></span>
-                                    {status.text}
-                                </span>
-                            </div>
-                            <ProgressBar value={budget?.spent ?? 0} max={budget?.monthlyLimit ?? budget?.limit ?? 1} color={status.colorClass} />
-                            <div className="flex justify-between items-baseline text-xs text-slate-500 mt-1">
-                                <span>
-                                    <span className="font-semibold text-dark">{formatCurrencyString(budget?.spent ?? 0, { digits: 0 })}</span> / {formatCurrencyString(budget?.monthlyLimit ?? budget?.limit ?? 0, { digits: 0 })}
-                                    <span className="font-medium text-slate-600"> ({(budget?.percentage ?? 0).toFixed(0)}%)</span>
-                                </span>
-                                <span>
-                                    {daysLeft} days left
-                                </span>
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
-        </div>
-    );
-};
-
 type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'emergencyFund' | 'budgetVariance' | 'investmentRoi' | 'investmentPlan' | 'wealthUltra' | 'marketEvents';
 
 const KPI_CARD_ORDER: KpiCardKey[] = ['netWorth', 'monthlyPnL', 'emergencyFund', 'budgetVariance', 'investmentRoi', 'investmentPlan'];
@@ -298,6 +244,7 @@ const DashboardContent: React.FC<{
     const { maskBalance } = usePrivacyMask();
     const { dir } = useLanguage();
     const workingData = showHydrateBanner ? null : data;
+    const { model: spendingModel, ready: spendingReady } = useSpendingCommandCenterModel(workingData, exchangeRate, 'personal');
     const kpisPending = Boolean(workingData && !kpiSnapshot);
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
     const kpiDensity = 'compact' as const;
@@ -369,7 +316,7 @@ const DashboardContent: React.FC<{
     }, [data, exchangeRate, canonicalSarPerUsd]);
 
 
-    const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions, projectedCash30d, currentCash } = useMemo(() => {
+    const { kpiSummary, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions, projectedCash30d, currentCash } = useMemo(() => {
         try {
             if (!workingData || showHydrateBanner || !kpiSnapshot) {
                 return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
@@ -851,10 +798,12 @@ const DashboardContent: React.FC<{
             </div>
 
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 gap-4">
-                <BudgetHealth
-                    budgets={monthlyBudgets}
-                    monthStartDay={resolveMonthStartDayFromData(workingData)}
-                    onClick={() => setActivePage('Budgets')}
+                <SpendingCommandCenter
+                    model={spendingModel}
+                    ready={spendingReady}
+                    compact
+                    setActivePage={setActivePage}
+                    triggerPageAction={triggerPageAction}
                 />
                 <RecentTransactions transactions={recentTransactions} accounts={getPersonalAccounts(data)} onClick={() => setActivePage('Transactions')} />
             </div>

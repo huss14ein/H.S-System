@@ -1,8 +1,10 @@
 import React from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, Cell } from 'recharts';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, CHART_COLORS } from './chartTheme';
 import ChartContainer from './ChartContainer';
+import type { FinancialData, Page } from '../../types';
+import { buildBudgetDrillDownAction, triggerSpendingDrillDown } from '../../services/spendingDrillDown';
 
 interface ChartData {
   name: string;
@@ -11,12 +13,30 @@ interface ChartData {
 
 interface ExpenseBreakdownChartProps {
   data: ChartData[];
+  dataContext?: FinancialData | null;
+  setActivePage?: (page: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
 }
 
-const ExpenseBreakdownChart: React.FC<ExpenseBreakdownChartProps> = ({ data }) => {
+const ExpenseBreakdownChart: React.FC<ExpenseBreakdownChartProps> = ({
+  data,
+  dataContext,
+  setActivePage,
+  triggerPageAction,
+}) => {
   const { formatCurrencyString } = useFormatCurrency();
   const isEmpty = !data?.length;
   const chartData = data?.length ? data.slice(0, 7).reverse() : [];
+  const canDrill = Boolean(triggerPageAction || setActivePage);
+
+  const drillCategory = (name: string) => {
+    if (!canDrill) return;
+    triggerSpendingDrillDown(
+      triggerPageAction,
+      setActivePage,
+      buildBudgetDrillDownAction({ budgetCategory: name, data: dataContext }),
+    );
+  };
 
   return (
     <ChartContainer height="100%" isEmpty={isEmpty} emptyMessage="No expense data for this period.">
@@ -37,7 +57,18 @@ const ExpenseBreakdownChart: React.FC<ExpenseBreakdownChartProps> = ({ data }) =
             formatter={(value: number) => [formatCurrencyString(value), 'Spent']}
             contentStyle={{ backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' }}
           />
-          <Bar dataKey="value" name="Amount Spent" fill={CHART_COLORS.primary} radius={[0, 4, 4, 0]} barSize={20}>
+          <Bar
+            dataKey="value"
+            name="Amount Spent"
+            fill={CHART_COLORS.primary}
+            radius={[0, 4, 4, 0]}
+            barSize={20}
+            cursor={canDrill ? 'pointer' : undefined}
+            onClick={(row: { name?: string }) => row?.name && drillCategory(row.name)}
+          >
+            {chartData.map((entry) => (
+              <Cell key={entry.name} fill={CHART_COLORS.primary} />
+            ))}
             <LabelList
               dataKey="value"
               position="right"

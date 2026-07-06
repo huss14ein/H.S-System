@@ -1,19 +1,33 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useContext, useEffect } from 'react';
 import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { useLanguage } from '../../context/LanguageContext';
-import type { Account, FinancialData, Transaction } from '../../types';
+import type { Account, FinancialData, Page, Transaction } from '../../types';
+import { buildBudgetDrillDownAction, triggerSpendingDrillDown } from '../../services/spendingDrillDown';
 import { countsAsExpenseForCashflowKpi, isInternalTransferTransaction } from '../../services/transactionFilters';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { expenseAmountSarForBudget } from '../../services/budgetSpendMath';
 import { getTransactionBudgetAllocations } from '../../services/transactionBudgetAllocations';
 import { financialMonthLabel, financialMonthRange, resolveMonthStartDayFromData, dateInRange } from '../../utils/financialMonth';
 import { DashboardVisualCard } from './DashboardVisualCard';
+import { DataContext } from '../../context/DataContext';
+import { useAnalyticsWorkspaceOptional } from '../../context/AnalyticsWorkspaceContext';
 
 const STORAGE_KEY = 'finova_expense_intel_mapping_v1';
 
 type Mapping = { spouseCats: string[]; educationCats: string[] };
 
-function loadMapping(): Mapping {
+function mappingFromSettings(data: FinancialData | null | undefined): Mapping | null {
+  const raw = data?.settings?.spendingIntelMapping;
+  if (!raw) return null;
+  return {
+    spouseCats: Array.isArray(raw.spouseCats) ? raw.spouseCats.filter(Boolean) : [],
+    educationCats: Array.isArray(raw.educationCats) ? raw.educationCats.filter(Boolean) : [],
+  };
+}
+
+function loadMapping(data?: FinancialData | null): Mapping {
+  const fromSettings = data ? mappingFromSettings(data) : null;
+  if (fromSettings) return fromSettings;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     const parsed = raw ? (JSON.parse(raw) as Partial<Mapping>) : {};
@@ -26,7 +40,7 @@ function loadMapping(): Mapping {
   }
 }
 
-function saveMapping(m: Mapping) {
+function saveMappingLocal(m: Mapping) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(m));
   } catch {
@@ -45,17 +59,29 @@ function isFixedExpense(tx: Transaction): boolean {
   return false;
 }
 
-function DonutLegend({ slices, format }: { slices: Slice[]; format: (n: number) => string }) {
+function DonutLegend({
+  slices,
+  format,
+  onCategoryClick,
+}: {
+  slices: Slice[];
+  format: (n: number) => string;
+  onCategoryClick?: (name: string) => void;
+}) {
   if (!slices.length) return null;
   const total = slices.reduce((s, x) => s + x.value, 0);
   return (
     <ul className="mt-2 space-y-1 px-1">
       {slices.map((s) => (
         <li key={s.name} className="flex items-center justify-between gap-2 text-xs">
-          <span className="flex items-center gap-1.5 min-w-0">
+          <button
+            type="button"
+            className="flex items-center gap-1.5 min-w-0 text-left hover:text-primary"
+            onClick={() => onCategoryClick?.(s.name)}
+          >
             <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} aria-hidden />
             <span className="text-slate-700 truncate">{s.name}</span>
-          </span>
+          </button>
           <span className="tabular-nums font-semibold text-slate-800 shrink-0">
             {format(s.value)}
             {total > 0 ? <span className="text-slate-400 font-normal ml-1">({((s.value / total) * 100).toFixed(0)}%)</span> : null}
@@ -71,11 +97,19 @@ const ExpenseDonutDrilldownInner: React.FC<{
   transactions: Transaction[];
   accounts: Account[];
   uiExchangeRate: number;
-}> = ({ data, transactions, accounts, uiExchangeRate }) => {
+  setActivePage?: (page: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
+}> = ({ data, transactions, accounts, uiExchangeRate, setActivePage, triggerPageAction }) => {
   const { t, dir } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
-  const [mapping, setMapping] = useState<Mapping>(() => loadMapping());
+  const dataCtx = useContext(DataContext);
+  const workspace = useAnalyticsWorkspaceOptional();
+  const [mapping, setMapping] = useState<Mapping>(() => loadMapping(data));
   const [isConfigOpen, setIsConfigOpen] = useState(false);
+
+  useEffect(() => {
+    setMapping(loadMapping(data));
+  }, [data?.settings?.spendingIntelMapping]);
 
   const accountCurrencyById = useMemo(
     () => new Map<string, 'SAR' | 'USD'>(accounts.map((a) => [a.id, a.currency === 'USD' ? 'USD' : 'SAR'])),
@@ -142,13 +176,28 @@ const ExpenseDonutDrilldownInner: React.FC<{
     };
   }, [accountCurrencyById, data, mapping.educationCats, mapping.spouseCats, t, transactions, uiExchangeRate]);
 
+  const persistMapping = (next: Mapping) => {
+    setMapping(next);
+    saveMappingLocal(next);
+    void dataCtx?.updateSettings?.({ spendingIntelMapping: next });
+  };
+
   const toggle = (kind: keyof Mapping, cat: string) => {
     const next: Mapping = {
       ...mapping,
       [kind]: mapping[kind].includes(cat) ? mapping[kind].filter((c) => c !== cat) : [...mapping[kind], cat],
     };
-    setMapping(next);
-    saveMapping(next);
+    persistMapping(next);
+  };
+
+  const drillCategory = (name: string) => {
+    if (name === 'Fixed' || name === 'Variable' || name === 'Spouse' || name === 'Education') return;
+    triggerSpendingDrillDown(
+      triggerPageAction,
+      setActivePage,
+      buildBudgetDrillDownAction({ budgetCategory: name, data }),
+      { setSelectedCategory: workspace?.setSelectedCategory },
+    );
   };
 
   const fmt = (n: number) => formatCurrencyString(n, { digits: 0 });
@@ -191,7 +240,7 @@ const ExpenseDonutDrilldownInner: React.FC<{
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-              <DonutLegend slices={slices.fixedVar} format={fmt} />
+              <DonutLegend slices={slices.fixedVar} format={fmt} onCategoryClick={drillCategory} />
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-2">
@@ -210,7 +259,7 @@ const ExpenseDonutDrilldownInner: React.FC<{
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-              <DonutLegend slices={slices.household} format={fmt} />
+              <DonutLegend slices={slices.household} format={fmt} onCategoryClick={drillCategory} />
             </div>
           </>
         )}

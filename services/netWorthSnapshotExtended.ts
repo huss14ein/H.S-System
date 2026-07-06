@@ -25,7 +25,7 @@ export function buildNetWorthSnapshotFromHeadline(
   data: FinancialData,
 ): NetWorthSnapshot {
   const buckets = headline.buckets;
-  const sukukAudit = sumPersonalSukukPositionsSar(data);
+  const sukukAudit = sumPersonalSukukPositionsSar(data, headline.sarPerUsd);
   return {
     at: new Date().toISOString(),
     netWorth: headline.netWorth,

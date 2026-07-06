@@ -46,6 +46,7 @@ export function sukukPayoutInvestmentSymbol(positionId: string, kind: SukukPayou
 export function buildMaturityPrincipalEventDraft(
   position: SukukPosition,
   todayYmd: string,
+  opts?: { hasPayoutSchedule?: boolean; autoCloseOnMaturity?: boolean },
 ): {
   sukukPositionId: string;
   investmentAccountId: string;
@@ -55,6 +56,8 @@ export function buildMaturityPrincipalEventDraft(
   currency: SukukPosition['currency'];
 } | null {
   if (position.status !== 'active') return null;
+  if (opts?.autoCloseOnMaturity === false) return null;
+  if (!opts?.hasPayoutSchedule && opts?.autoCloseOnMaturity !== true) return null;
   const outstanding = Math.max(0, Number(position.outstandingPrincipal) || 0);
   if (!(outstanding > 0)) return null;
   const maturity = String(position.maturityDate ?? '').slice(0, 10);

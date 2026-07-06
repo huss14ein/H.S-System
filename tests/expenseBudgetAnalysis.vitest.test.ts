@@ -99,18 +99,19 @@ describe('computeExpenseBudgetAnalysisModel', () => {
 });
 
 describe('Analysis page wiring', () => {
-  it('includes expense budget analysis panel', async () => {
+  it('includes spending command center (embeds expense budget panel)', async () => {
     const { readFileSync } = await import('node:fs');
     const page = readFileSync('pages/Analysis.tsx', 'utf8');
     const panel = readFileSync('components/analysis/ExpenseBudgetAnalysisPanel.tsx', 'utf8');
-    const hook = readFileSync('hooks/useExpenseBudgetAnalysisModel.ts', 'utf8');
-    expect(page).toContain('ExpenseBudgetAnalysisPanel');
-    expect(page).toContain('useExpenseBudgetAnalysisModel');
-    expect(page).toContain('DeferredMount');
+    const hook = readFileSync('hooks/useSpendingCommandCenterModel.ts', 'utf8');
+    const scc = readFileSync('components/spending/SpendingCommandCenter.tsx', 'utf8');
+    expect(page).toContain('SpendingCommandCenter');
+    expect(page).toContain('useSpendingCommandCenterModel');
+    expect(scc).toContain('ExpenseBudgetAnalysisPanel');
+    expect(scc).toContain('DeferredMount');
     expect(page).not.toContain('computeExpenseBudgetAnalysisModel');
     expect(panel).toContain('expense-budget-analysis');
     expect(panel).toContain('model: ExpenseBudgetAnalysisModel');
-    expect(panel).toContain('scheduleIdleWork');
     expect(hook).toContain('scheduleIdleWorkAsync');
     expect(hook).toContain('useDeferredValue');
   });

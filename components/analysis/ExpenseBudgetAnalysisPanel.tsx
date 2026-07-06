@@ -1,5 +1,8 @@
 import React, { useMemo, useState, useEffect, startTransition } from 'react';
 import type { ExpenseBudgetCategoryRow, ExpenseBudgetAnalysisModel } from '../../services/expenseBudgetAnalysisModel';
+import type { Page } from '../../types';
+import { buildBudgetDrillDownAction, buildFiscalMonthDrillDownAction, triggerSpendingDrillDown } from '../../services/spendingDrillDown';
+import { useAnalyticsWorkspaceOptional } from '../../context/AnalyticsWorkspaceContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { CHART_COLORS, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber } from '../charts/chartTheme';
 import ChartContainer from '../charts/ChartContainer';
@@ -39,10 +42,14 @@ function priorityDot(p: 'high' | 'medium' | 'low') {
 type Props = {
   model: ExpenseBudgetAnalysisModel | null;
   ready: boolean;
+  setActivePage?: (page: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
 };
 
-const ExpenseBudgetAnalysisPanel: React.FC<Props> = ({ model, ready }) => {
+const ExpenseBudgetAnalysisPanel: React.FC<Props> = ({ model, ready, setActivePage, triggerPageAction }) => {
   const { formatCurrencyString } = useFormatCurrency();
+  const workspace = useAnalyticsWorkspaceOptional();
+  const selectedCategory = workspace?.selectedCategory ?? null;
   const [chartsReady, setChartsReady] = useState(false);
 
   useEffect(() => {
@@ -79,6 +86,13 @@ const ExpenseBudgetAnalysisPanel: React.FC<Props> = ({ model, ready }) => {
   const { summary, categories, insights, monthlyTrend, topTransactions, dataQuality } = model;
   const fmt = (n: number, digits = 0) => formatCurrencyString(n, { digits });
   const hasExpenses = summary.expenseSar > 0 || categories.some((c) => c.spentSar > 0);
+  const drill = (category: string) =>
+    triggerSpendingDrillDown(
+      triggerPageAction,
+      setActivePage,
+      buildBudgetDrillDownAction({ budgetCategory: category }),
+      { setSelectedCategory: workspace?.setSelectedCategory },
+    );
 
   return (
     <div className="space-y-5" id="expense-budget-analysis">
@@ -141,9 +155,14 @@ const ExpenseBudgetAnalysisPanel: React.FC<Props> = ({ model, ready }) => {
                 className="flex gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2.5 text-sm"
               >
                 <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${priorityDot(ins.priority)}`} aria-hidden />
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <p className="font-semibold text-slate-900">{ins.title}</p>
                   <p className="text-slate-600 mt-0.5">{ins.detail}</p>
+                  {ins.category && (triggerPageAction || setActivePage) && (
+                    <button type="button" className="text-xs text-primary hover:underline mt-1" onClick={() => drill(ins.category!)}>
+                      View transactions
+                    </button>
+                  )}
                 </div>
               </li>
             ))}
@@ -161,6 +180,15 @@ const ExpenseBudgetAnalysisPanel: React.FC<Props> = ({ model, ready }) => {
                 <span className="block tabular-nums">
                   {dq.count} tx · {fmt(dq.amountSar)}
                 </span>
+                {setActivePage && (
+                  <button
+                    type="button"
+                    className="mt-1 text-primary hover:underline"
+                    onClick={() => setActivePage('Transactions')}
+                  >
+                    Review in Transactions →
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -189,7 +217,14 @@ const ExpenseBudgetAnalysisPanel: React.FC<Props> = ({ model, ready }) => {
                     contentStyle={TOOLTIP_STYLE}
                   />
                   <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />
-                  <Bar dataKey="spent" name="Spent" fill={CHART_COLORS.negative} radius={[3, 3, 0, 0]} />
+                  <Bar
+                    dataKey="spent"
+                    name="Spent"
+                    fill={CHART_COLORS.negative}
+                    radius={[3, 3, 0, 0]}
+                    cursor="pointer"
+                    onClick={(row: { fullName?: string }) => row?.fullName && drill(row.fullName)}
+                  />
                   <Bar dataKey="limit" name="Limit" fill={CHART_COLORS.primary} radius={[3, 3, 0, 0]} opacity={0.55} />
                 </BarChart>
               </ResponsiveContainer>
@@ -211,7 +246,21 @@ const ExpenseBudgetAnalysisPanel: React.FC<Props> = ({ model, ready }) => {
                   <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} stroke={CHART_AXIS_COLOR} fontSize={11} />
                   <Tooltip formatter={(v) => fmt(Number(v))} contentStyle={TOOLTIP_STYLE} />
                   <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />
-                  <Bar dataKey="expenseSar" name="Expenses" fill={CHART_COLORS.negative} radius={[2, 2, 0, 0]} />
+                  <Bar
+                    dataKey="expenseSar"
+                    name="Expenses"
+                    fill={CHART_COLORS.negative}
+                    radius={[2, 2, 0, 0]}
+                    cursor="pointer"
+                    onClick={(row: { monthKey?: string }) =>
+                      row?.monthKey &&
+                      triggerSpendingDrillDown(
+                        triggerPageAction,
+                        setActivePage,
+                        buildFiscalMonthDrillDownAction(row.monthKey),
+                      )
+                    }
+                  />
                   <Bar dataKey="budgetedSar" name="Budgeted" fill={CHART_COLORS.primary} radius={[2, 2, 0, 0]} opacity={0.45} />
                   <Line type="monotone" dataKey="incomeSar" name="Income" stroke={CHART_COLORS.positive} strokeWidth={2} dot={false} />
                 </ComposedChart>
@@ -240,7 +289,13 @@ const ExpenseBudgetAnalysisPanel: React.FC<Props> = ({ model, ready }) => {
             </thead>
             <tbody>
               {categories.filter((c) => c.spentSar > 0 || c.limitSar > 0).map((c) => (
-                <tr key={c.category} className="border-b border-slate-50 hover:bg-slate-50/50">
+                <tr
+                  key={c.category}
+                  className={`border-b border-slate-50 hover:bg-slate-50/50 cursor-pointer ${
+                    selectedCategory === c.category ? 'bg-indigo-50 ring-1 ring-inset ring-indigo-200' : ''
+                  }`}
+                  onClick={() => (triggerPageAction || setActivePage) && drill(c.category)}
+                >
                   <td className="py-2 pr-3 font-medium text-slate-900">{c.category}</td>
                   <td className="py-2 pr-3 text-right tabular-nums">{fmt(c.spentSar)}</td>
                   <td className="py-2 pr-3 text-right tabular-nums text-slate-600">
@@ -326,7 +381,14 @@ const ExpenseBudgetAnalysisPanel: React.FC<Props> = ({ model, ready }) => {
               </thead>
               <tbody>
                 {topTransactions.map((t) => (
-                  <tr key={t.id} className="border-b border-slate-50">
+                  <tr
+                    key={t.id}
+                    className="border-b border-slate-50 hover:bg-slate-50/60 cursor-pointer"
+                    onClick={() => {
+                      const cat = t.budgetCategory || t.category;
+                      if (cat) drill(cat);
+                    }}
+                  >
                     <td className="py-2 pr-2 text-slate-600 whitespace-nowrap">{t.date.slice(0, 10)}</td>
                     <td className="py-2 pr-2 text-slate-800 max-w-[200px] truncate" title={t.description}>
                       {t.description}

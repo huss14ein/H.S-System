@@ -89,7 +89,7 @@ export function computeLiquidNetWorth(
           return sum + toSAR(bal, cur, fx);
         }, 0);
 
-  const sukukSar = sumPersonalSukukPositionsSar(data);
+  const sukukSar = sumPersonalSukukPositionsSar(data, fx);
   let portfolioHoldingsSar: number;
   let commodities: number;
   if (options?.getAvailableCashForAccount) {

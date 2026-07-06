@@ -141,7 +141,7 @@ function accumulatePersonalBalanceSheet(
     exchangeRate,
     options
   );
-  const sukukPositionsSar = sumPersonalSukukPositionsSar(data);
+  const sukukPositionsSar = sumPersonalSukukPositionsSar(data, exchangeRate);
   if (!options?.getAvailableCashForAccount) {
     return { ...base, sukukPositionsSar };
   }
@@ -191,7 +191,7 @@ export function computeAllNetWorthChartBucketsSAR(
     sarPerUsd,
     options
   );
-  const sukukPositionsSar = sumPersonalSukukPositionsSar(data);
+  const sukukPositionsSar = sumPersonalSukukPositionsSar(data, sarPerUsd);
   const cash = b.cashAndSavingsPositive;
   const receivables = b.totalReceivable;
   const liabilities = -b.totalDebt;

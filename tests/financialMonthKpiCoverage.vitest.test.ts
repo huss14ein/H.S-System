@@ -8,7 +8,7 @@ describe('financial month KPI coverage', () => {
     expect(read('services/dashboardKpiSnapshot.ts')).toContain('dateInRange');
     expect(read('services/dashboardKpiSnapshot.ts')).toContain('budgetsForFinancialMonthView');
     expect(read('pages/Dashboard.tsx')).toContain('budgetsForFinancialMonthView');
-    expect(read('pages/Dashboard.tsx')).toContain('financialMonthDaysRemaining');
+    expect(read('components/spending/SpendingCommandCenter.tsx')).toContain('financialMonthDaysRemaining');
     expect(read('components/dashboard/BudgetBurnRatePanel.tsx')).toContain('budgetsForFinancialMonthView');
     expect(read('components/dashboard/BudgetBurnRatePanel.tsx')).toContain('financialMonthLabel');
     expect(read('components/dashboard/ExpenseDonutDrilldown.tsx')).toContain('dateInRange');

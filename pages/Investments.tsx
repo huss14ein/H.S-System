@@ -11,6 +11,7 @@ import {
 import { InvestmentPortfolio, Holding, HoldingAssetClass, HOLDING_ASSET_CLASS_OPTIONS, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog, UniverseTicker, TradeCurrency } from '../types';
 import type { Page } from '../types';
 import SukukInvestmentsSection from '../components/investments/SukukInvestmentsSection';
+import CorporateActionApplyPanel from '../components/investments/CorporateActionApplyPanel';
 import Modal from '../components/Modal';
 import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
 import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
@@ -5190,7 +5191,7 @@ interface InvestmentsProps {
 }
 
 const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
-  const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
+  const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, applyCorporateActionEvent, reverseCorporateActionEvent } = useContext(DataContext)!;
   const recordTradeConfirmed = useCallback(
     (trade: Parameters<typeof recordTrade>[0], executedPlanId?: string) =>
       recordTrade(trade, executedPlanId, { confirmed: true }),
@@ -5504,7 +5505,18 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'Overview': return <InvestmentOverview setActiveTab={setActiveTab} />;
+      case 'Overview':
+        return (
+          <div className="space-y-6">
+            <InvestmentOverview setActiveTab={setActiveTab} />
+            <CorporateActionApplyPanel
+              portfolios={portfoliosForTrade}
+              events={data?.corporateActionEvents ?? []}
+              onApply={applyCorporateActionEvent}
+              onUndo={reverseCorporateActionEvent}
+            />
+          </div>
+        );
       case 'Portfolios':
         return <PlatformView 
             onAddPlatform={() => handleOpenPlatformModal()}

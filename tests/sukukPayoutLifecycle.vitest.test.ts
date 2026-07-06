@@ -41,6 +41,7 @@ describe('sukukPayoutLifecycle', () => {
     const draft = buildMaturityPrincipalEventDraft(
       { ...basePosition, maturityDate: '2020-01-01' },
       '2026-06-27',
+      { hasPayoutSchedule: false, autoCloseOnMaturity: true },
     );
     expect(draft?.amount).toBe(10000);
     expect(draft?.kind).toBe('principal');

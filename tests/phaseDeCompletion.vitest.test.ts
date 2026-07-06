@@ -26,11 +26,12 @@ describe('Phase D — P/L charts E2E', () => {
 describe('Phase E — Executive KPI grid E2E', () => {
   it('Wealth Analytics uses canonical KPI grid, health strip, and quote badge', () => {
     const wa = read('pages/WealthAnalytics.tsx');
+    const overview = read('components/analytics/zones/OverviewZone.tsx');
     const deferred = read('components/analytics/WealthAnalyticsDeferredSections.tsx');
     expect(deferred).toContain('ExecutiveKpiGrid');
-    expect(wa).toContain('WealthHealthIndicatorsDeferredSection');
+    expect(overview).toContain('WealthHealthIndicatorsDeferredSection');
     expect(wa).toContain('WealthAnalyticsExportMenuSection');
-    expect(wa).toContain('useCanonicalFinancialMetrics');
+    expect(wa).toContain('useExtendedCanonicalMetrics');
     expect(wa).not.toContain('ExecutiveStatusRow');
   });
 

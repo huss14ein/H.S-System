@@ -22,6 +22,12 @@ export type TransactionLedgerFilters = {
   nature: 'all' | 'Fixed' | 'Variable';
   expenseType: 'all' | 'Core' | 'Discretionary';
   budgetCategory: 'all' | string;
+  /** Free-text search on description, category, merchant. */
+  searchText?: string;
+  /** Approval status filter. */
+  approvalStatus?: 'all' | 'Approved' | 'Pending' | 'Rejected';
+  /** Merchant substring filter (from analytics drill-down). */
+  merchantQuery?: string;
 };
 
 /** Owner (admin) sees the full ledger; collaborators see only mapped shared/permitted budget spend. */
@@ -180,7 +186,30 @@ export function filterTransactionsForLedgerView(
       t.type !== 'expense' ||
       txExpenseType === normalizeExpenseType(filters.expenseType);
     const isBudgetMatch = transactionMatchesBudgetCategory(t, filters.budgetCategory);
-    return isMonthMatch && isAccountMatch && isNatureMatch && isExpenseTypeMatch && isBudgetMatch;
+    const search = String(filters.searchText ?? '').trim().toLowerCase();
+    const isSearchMatch =
+      !search ||
+      [t.description, t.category, t.budgetCategory]
+        .map((v) => String(v ?? '').toLowerCase())
+        .some((v) => v.includes(search));
+    const status = String(t.status ?? 'Approved').trim();
+    const isStatusMatch =
+      !filters.approvalStatus ||
+      filters.approvalStatus === 'all' ||
+      status.toLowerCase() === filters.approvalStatus.toLowerCase();
+    const merchantQ = String(filters.merchantQuery ?? '').trim().toLowerCase();
+    const isMerchantMatch =
+      !merchantQ || String(t.description ?? '').toLowerCase().includes(merchantQ);
+    return (
+      isMonthMatch &&
+      isAccountMatch &&
+      isNatureMatch &&
+      isExpenseTypeMatch &&
+      isBudgetMatch &&
+      isSearchMatch &&
+      isStatusMatch &&
+      isMerchantMatch
+    );
   });
 }
 

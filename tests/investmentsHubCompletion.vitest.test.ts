@@ -92,4 +92,12 @@ describe('Investments hub completion (E2E)', () => {
     expect(script).toContain('portfolioPeriodPnLEndToEnd.vitest.test.ts');
     expect(script).toContain('portfolioSyncKpiCompletion.vitest.test.ts');
   });
+
+  it('corporate actions panel wired on Investments hub', () => {
+    const page = read('pages/Investments.tsx');
+    expect(page).toContain('CorporateActionApplyPanel');
+    expect(page).toContain('applyCorporateActionEvent');
+    expect(page).toContain('reverseCorporateActionEvent');
+    expect(read('components/investments/CorporateActionApplyPanel.tsx')).toContain('cashInLieuPrice');
+  });
 });

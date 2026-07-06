@@ -12,19 +12,26 @@ import { countsAsExpenseForCashflowKpi } from './transactionFilters';
 import { detectBudgetDrift, type BudgetDriftRow } from './budgetDrift';
 import { detectPlanExpenseOutliers } from './planExpenseOutliers';
 import {
-  addMonthsToKey,
   budgetsForFinancialMonthView,
   dateInRange,
   financialMonthColumnHeaderLabel,
   financialMonthIsoKey,
   financialMonthKeyFromTransactionDate,
   financialMonthKeysEndingAt,
-  financialMonthRange,
   financialMonthRangeFromKey,
   resolveMonthStartDayFromData,
   type FinancialMonthKey,
 } from '../utils/financialMonth';
-import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
+import { getPersonalAccounts, getPersonalTransactions, getScopedCashTransactions } from '../utils/wealthScope';
+import {
+  priorAnalyticsSpendWindow,
+  resolveAnalyticsSpendWindow,
+  type AnalyticsPeriodPreset,
+} from './analyticsPeriodRange';
+
+export type { AnalyticsPeriodPreset };
+
+export type ExpenseAnalysisScope = 'personal' | 'household';
 
 export type ExpenseBudgetStatus = 'healthy' | 'watch' | 'critical' | 'over' | 'no_budget';
 
@@ -89,10 +96,15 @@ export type ExpenseMonthTrendPoint = {
 
 export type ExpenseBudgetAnalysisModel = {
   periodLabel: string;
+  periodPreset: AnalyticsPeriodPreset;
   monthStartDay: number;
+  scope: ExpenseAnalysisScope;
   summary: {
     incomeSar: number;
+    /** Approved expenses only — used for envelope variance. */
     expenseSar: number;
+    approvedExpenseSar: number;
+    pendingExpenseSar: number;
     netSar: number;
     budgetedSar: number;
     budgetVarianceSar: number;
@@ -171,20 +183,32 @@ export function computeExpenseBudgetAnalysisModel(
   data: FinancialData | null | undefined,
   exchangeRate: number,
   ref = new Date(),
+  scope: ExpenseAnalysisScope = 'personal',
+  periodPreset: AnalyticsPeriodPreset = 'MTD',
 ): ExpenseBudgetAnalysisModel | null {
   if (!data) return null;
 
   const monthStartDay = resolveMonthStartDayFromData(data);
   const msd = Number(monthStartDay) || 1;
-  const currentRange = financialMonthRange(ref, monthStartDay);
-  const finKey = currentRange.key;
-  const prevKey = addMonthsToKey(finKey, -1);
-  const prevRange = financialMonthRangeFromKey(prevKey, monthStartDay);
+  const window = resolveAnalyticsSpendWindow(ref, monthStartDay, periodPreset);
+  const currentRange = { start: window.start, end: window.end, key: window.currentFinKey };
+  const finKey = window.currentFinKey;
+  const priorWindow = priorAnalyticsSpendWindow(window, monthStartDay);
+  const prevRange = { start: priorWindow.start, end: priorWindow.end, key: priorWindow.finKeys[priorWindow.finKeys.length - 1]! };
 
-  const transactions = getPersonalTransactions(data) as Transaction[];
-  const accounts = getPersonalAccounts(data) as Account[];
-  const accountCurrencyById = new Map(accounts.map((a) => [String(a.id), (a.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD']));
-  const accountNameById = new Map(accounts.map((a) => [String(a.id), a.name || 'Account']));
+  const personalAccounts = getPersonalAccounts(data) as Account[];
+  const allAccounts = (data.accounts ?? personalAccounts) as Account[];
+  const scopeAccounts = scope === 'household' ? allAccounts : personalAccounts;
+  const accountIds = scopeAccounts.map((a) => a.id);
+  const transactions = (
+    scope === 'household'
+      ? getScopedCashTransactions(data, accountIds)
+      : getPersonalTransactions(data)
+  ) as Transaction[];
+  const accountCurrencyById = new Map(
+    scopeAccounts.map((a) => [String(a.id), (a.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD']),
+  );
+  const accountNameById = new Map(scopeAccounts.map((a) => [String(a.id), a.name || 'Account']));
 
   const currentSpend = aggregatePersonalBudgetCategorySpendSar(
     transactions,
@@ -204,8 +228,15 @@ export function computeExpenseBudgetAnalysisModel(
   );
 
   const budgets = data.budgets ?? [];
-  const currentLimits = budgetLimitsForMonth(budgets, finKey, msd);
-  const budgetedSar = sumBudgetedSar(budgets, finKey, msd);
+  const currentLimits = new Map<string, { limitSar: number; tier?: BudgetTier }>();
+  let budgetedSar = 0;
+  for (const k of window.finKeys) {
+    budgetedSar += sumBudgetedSar(budgets, k, msd);
+    for (const [cat, lim] of budgetLimitsForMonth(budgets, k, msd)) {
+      const prev = currentLimits.get(cat) ?? { limitSar: 0, tier: lim.tier };
+      currentLimits.set(cat, { limitSar: prev.limitSar + lim.limitSar, tier: lim.tier ?? prev.tier });
+    }
+  }
   const tierByCategory = new Map<string, BudgetTier | undefined>();
   for (const [cat, lim] of currentLimits) tierByCategory.set(cat, lim.tier);
 
@@ -254,6 +285,7 @@ export function computeExpenseBudgetAnalysisModel(
   let unbudgetedCount = 0;
   let pendingCount = 0;
   let pendingSar = 0;
+  let approvedExpenseSar = 0;
   let noMetadataCount = 0;
   let noMetadataSar = 0;
   let categorizedSar = 0;
@@ -276,9 +308,13 @@ export function computeExpenseBudgetAnalysisModel(
     if ((t.status ?? 'Approved') === 'Pending') {
       pendingCount += 1;
       pendingSar += amtSar;
+      continue;
     }
 
+    if ((t.status ?? 'Approved') !== 'Approved') continue;
+
     expenseSar += amtSar;
+    approvedExpenseSar += amtSar;
 
     const allocCat = String(t.budgetCategory ?? t.category ?? '').trim();
     if (!allocCat || allocCat === 'Uncategorized') {
@@ -494,17 +530,18 @@ export function computeExpenseBudgetAnalysisModel(
     return rank[a.priority] - rank[b.priority];
   });
 
-  const periodLabel =
-    msd === 1
-      ? new Date(finKey.year, finKey.month - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-      : financialMonthColumnHeaderLabel(finKey.year, finKey.month, monthStartDay);
+  const periodLabel = window.periodLabel;
 
   return {
     periodLabel,
+    periodPreset,
     monthStartDay: msd,
+    scope,
     summary: {
       incomeSar,
       expenseSar,
+      approvedExpenseSar,
+      pendingExpenseSar: pendingSar,
       netSar: incomeSar - expenseSar,
       budgetedSar,
       budgetVarianceSar,
