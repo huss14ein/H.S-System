@@ -21,9 +21,10 @@ describe('quote refresh symbols', () => {
     ).toBe(false);
   });
 
-  it('allows normal ticker holdings', () => {
+  it('allows legacy equity and normal ticker holdings', () => {
     expect(holdingCanUseQuoteRefresh({ symbol: 'AAPL', holdingType: 'ticker' })).toBe(true);
     expect(holdingCanUseQuoteRefresh({ symbol: 'MSFT' })).toBe(true);
+    expect(holdingCanUseQuoteRefresh({ symbol: '2222.SR', holdingType: 'equity' })).toBe(true);
   });
 
   it('allows Tadawul aliases (normalized to .SR for fetch)', () => {

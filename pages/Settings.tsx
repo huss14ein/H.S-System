@@ -29,7 +29,6 @@ import {
 } from '../services/reportingEngine';
 import { useCurrency } from '../context/CurrencyContext';
 import { useLanguage } from '../context/LanguageContext';
-import { useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
 import { useNotifications } from '../context/NotificationsContext';
 import { toSAR } from '../utils/currencyMath';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
@@ -53,7 +52,6 @@ import {
   countPortfolioDriftAttention,
   countTrackedSymbolsForFeed,
 } from '../services/settingsSnapshot';
-import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { computeMaxAbsSleeveDriftPercent } from '../services/settingsDecisionPreview';
 import type { FinancialData } from '../types';
 import { financialMonthRange, resolveMonthStartDayFromData } from '../utils/financialMonth';
@@ -83,12 +81,11 @@ const FINANCIAL_PREFERENCE_PRESETS: Record<string, { riskProfile: RiskProfile; b
 };
 
 const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
-    const { data, updateSettings, restoreFromBackup, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { data, updateSettings, restoreFromBackup } = useContext(DataContext)!;
     const { showToast } = useToast();
     const auth = useContext(AuthContext)!;
-    const { exchangeRate, currency, setCurrency } = useCurrency();
+    const { currency, setCurrency } = useCurrency();
     const { language, setLanguage, t } = useLanguage();
-    const simulatedPrices = useCanonicalSimulatedPrices();
     const notifCtx = useNotifications();
     const [localSettings, setLocalSettings] = useState(data?.settings ?? {});
     const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
@@ -112,7 +109,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     const { maskSensitive, setMaskSensitive, playNotificationSound, setPlayNotificationSound } = usePrivacyMask();
 
     const metrics = useExtendedCanonicalMetrics();
-    const { sarPerUsd, liquidCashSar, extendedReady } = metrics;
+    const { sarPerUsd, liquidCashSar, extendedReady, kpiSnapshot } = metrics;
     const wealthSummary = pickWealthSummary(metrics, extendedReady);
 
     const sleeveDriftPct = useMemo(() => computeMaxAbsSleeveDriftPercent(data), [data]);
@@ -1140,16 +1137,11 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                     <button
                         type="button"
                         onClick={() => {
-                            if (!data || !wealthSummaryPayload) {
+                            if (!data || !wealthSummaryPayload || !kpiSnapshot) {
                                 showToast('Add accounts and data to generate a monthly report.', 'warning');
                                 return;
                             }
-                            const { budgetVariance, roi } = computeMonthlyReportFinancialKpis(
-                                data,
-                                exchangeRate,
-                                getAvailableCashForAccount,
-                                simulatedPrices,
-                            );
+                            const { budgetVariance, roi } = kpiSnapshot;
                             const report = generateMonthlyReport({
                                 periodLabel: new Date().toISOString().slice(0, 7),
                                 netWorth: wealthSummaryPayload.netWorth,

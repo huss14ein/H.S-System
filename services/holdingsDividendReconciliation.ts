@@ -1,6 +1,7 @@
 import type { FinancialData, Holding, InvestmentTransaction } from '../types';
 import { getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import { getPersonalInvestmentTransactionsForKpis } from './investmentKpiCore';
+import { reconcileHoldingsWithCorporateActionsSync } from './reconciliationEngine';
 
 export type HoldingsReconcileSeverity = 'ok' | 'warn' | 'fail';
 
@@ -39,21 +40,30 @@ function ledgerQtyBySymbol(
   return m;
 }
 
+/** @deprecated Raw buy-sell only — use reconcileHoldingsWithCorporateActionsSync for split-aware qty. */
+export { ledgerQtyBySymbol };
+
 /** Compare holding quantity vs buy/sell ledger per portfolio; flag dividend tx without cash mirror. */
 export function buildHoldingsDividendReconciliationReport(data: FinancialData): HoldingsDividendReconciliationReport {
   const rows: HoldingsReconcileRow[] = [];
   const portfolios = getPersonalInvestments(data);
   const invTxs = getPersonalInvestmentTransactionsForKpis(data);
   const cashTxs = getPersonalTransactions(data);
+  const corporateActionEvents = data.corporateActionEvents ?? [];
 
   for (const p of portfolios) {
-    const ledger = ledgerQtyBySymbol(invTxs, p.id);
     for (const h of (p.holdings ?? []) as Holding[]) {
       if (h.holdingType === 'commodity') continue;
       const sym = String(h.symbol ?? '').trim().toUpperCase();
       if (!sym) continue;
       const held = Number(h.quantity) || 0;
-      const led = ledger.get(sym) ?? 0;
+      const rec = reconcileHoldingsWithCorporateActionsSync({
+        portfolio: p,
+        symbol: sym,
+        transactions: invTxs,
+        corporateActionEvents,
+      });
+      const led = rec.ledgerQuantity;
       const drift = Math.abs(held - led);
       if (drift > 0.0001) {
         rows.push({
@@ -62,7 +72,7 @@ export function buildHoldingsDividendReconciliationReport(data: FinancialData): 
           category: 'holdings_qty',
           symbol: sym,
           portfolioId: p.id,
-          message: `Holding qty ${held} vs ledger net ${led} (${drift > 0 ? '+' : ''}${(held - led).toFixed(4)})`,
+          message: `Holding qty ${held} vs ledger replay ${led} (${drift > 0 ? '+' : ''}${(held - led).toFixed(4)})`,
           expected: led,
           actual: held,
           drillTarget: 'Investments',

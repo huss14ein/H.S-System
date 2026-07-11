@@ -86,7 +86,7 @@ export async function extendCanonicalFinancialMetricsAsync(
         totalExposureSar: investmentExposure.totalExposureSar,
         platformsRollupSar: investmentExposure.platformsRollupSar,
         commoditiesValueSar: investmentExposure.commoditiesValueSar,
-        sukukAssetsValueSar: investmentExposure.sukukAssetsValueSar,
+        sukukPositionsValueSar: investmentExposure.sukukPositionsValueSar,
       }
     : data
       ? deriveHeadlineExposureParts(data, dashboard.sarPerUsd, investmentsTotalSar, simulatedPrices)
@@ -94,7 +94,7 @@ export async function extendCanonicalFinancialMetricsAsync(
           totalExposureSar: 0,
           platformsRollupSar: 0,
           commoditiesValueSar: 0,
-          sukukAssetsValueSar: 0,
+          sukukPositionsValueSar: 0,
         };
   const investmentAllocation = buildHeadlineInvestmentAllocationSlices(
     data,

@@ -279,9 +279,11 @@ describe('performance recovery E2E wiring', () => {
     expect(read('context/DataContext.tsx')).toContain('secondaryFetchPromise');
     expect(read('utils/backgroundWorkGate.ts')).toContain('NAV_TRANSITION_PAUSE_MS');
     expect(read('context/DataContext.tsx')).toContain('yieldToMain');
-    expect(read('pages/WealthAnalytics.tsx')).toContain('WealthAnalyticsExecutiveKpiSection');
-    expect(read('components/analytics/WealthAnalyticsDeferredSections.tsx')).toContain('hideWeeklyPnL');
-    expect(read('pages/WealthAnalytics.tsx')).not.toContain('usePortfolioPeriodPnLSnapshot');
+    expect(read('pages/WealthAnalytics.tsx')).toContain('OverviewZone');
+    expect(read('components/analytics/zones/OverviewZone.tsx')).toContain('WealthAnalyticsExecutiveKpiSection');
+    expect(read('pages/WealthAnalytics.tsx')).toContain('usePortfolioPeriodPnLSnapshot');
+    expect(read('components/analytics/WealthAnalyticsDeferredSections.tsx')).toContain('portfolioPeriodPnL');
+    expect(read('components/analytics/zones/InvestmentsZone.tsx')).toContain('precomputed');
     expect(read('components/analytics/ExecutiveKpiCard.tsx')).toContain('KpiSparklineSvg');
     expect(read('components/analytics/ExecutiveKpiCard.tsx')).not.toContain('recharts');
     expect(read('pages/Transactions.tsx')).toContain('scheduleIdleWork');
@@ -291,6 +293,12 @@ describe('performance recovery E2E wiring', () => {
     expect(read('components/dashboard/DeferredMount.tsx')).toContain('staggerIndex');
     expect(read('hooks/useExecutiveKpiSparklines.ts')).toContain('scheduleIdleWorkAsync');
     expect(read('hooks/usePortfolioPeriodPnLSnapshot.ts')).toContain('scheduleIdleWorkAsync');
+    expect(read('hooks/useExpenseBudgetAnalysisModel.ts')).toContain('scheduleIdleWorkAsync');
+    expect(read('hooks/useExpenseBudgetAnalysisModel.ts')).toContain('useDeferredValue');
+    expect(read('pages/Analysis.tsx')).toContain('useSpendingCommandCenterModel');
+    expect(read('pages/Analysis.tsx')).not.toContain('computeExpenseBudgetAnalysisModel');
+    expect(read('components/analysis/ExpenseBudgetAnalysisPanel.tsx')).toContain('scheduleIdleWork');
+    expect(read('hooks/usePortfolioPeriodPnLSnapshot.ts')).toContain('portfolioPeriodPnLInputsFingerprint');
     expect(read('hooks/usePortfolioPeriodPnLSnapshot.ts')).toContain('computePortfolioPeriodPnLSummaryAsync');
     expect(read('hooks/usePortfolioPeriodPnLSnapshot.ts')).toContain('computePortfolioPnLDailySeriesAsync');
     expect(read('hooks/usePortfolioPeriodPnLSnapshot.ts')).toContain('waitUntilBackgroundWorkResumed');

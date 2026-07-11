@@ -1,5 +1,6 @@
 import type { Account, Transaction } from '../types';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { getTransactionBudgetAllocations } from './transactionBudgetAllocations';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from './transactionFilters';
 
 export function transactionApprovalStatus(t: Pick<Transaction, 'status'>): 'Approved' | 'Pending' | 'Rejected' {
@@ -51,8 +52,19 @@ export function computeMonthlyCashflowKpisSar(args: {
   approved
     .filter((t) => countsAsExpenseForCashflowKpi(t))
     .forEach((t) => {
-      const key = expenseGroupLabel(t);
-      spending.set(key, (spending.get(key) || 0) + Math.abs(cashTransactionAmountSar({ tx: t, accountsById, sarPerUsd })));
+      const amtSarAbs = Math.abs(cashTransactionAmountSar({ tx: t, accountsById, sarPerUsd }));
+      const allocations = getTransactionBudgetAllocations(t);
+      if (allocations.length > 0) {
+        const splitTotal = allocations.reduce((sum, line) => sum + line.amount, 0);
+        const scale = splitTotal > 0 ? amtSarAbs / splitTotal : 1;
+        allocations.forEach((line) => {
+          const key = line.category.trim() || 'Uncategorized';
+          spending.set(key, (spending.get(key) || 0) + line.amount * scale);
+        });
+      } else {
+        const key = expenseGroupLabel(t);
+        spending.set(key, (spending.get(key) || 0) + amtSarAbs);
+      }
     });
 
   const expenseBreakdown = Array.from(spending, ([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);

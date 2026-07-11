@@ -11,7 +11,7 @@ import { computeCapitalDeployment } from '../services/capitalDeploymentOrchestra
 import { getPersonalLiabilities, getPersonalTransactions } from '../utils/wealthScope';
 import { invokeAI, formatAiError, buildLiveAdvisorSystemInstruction } from '../services/geminiService';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
-import { financialMonthRange, resolveMonthStartDayFromData } from '../utils/financialMonth';
+import { financialMonthRange, resolveMonthStartDayFromData, dateInRange } from '../utils/financialMonth';
 import { HeadsetIcon } from './icons/HeadsetIcon';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { SendIcon } from './icons/SendIcon';
@@ -97,10 +97,14 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         const monthlyLimit = budget.period === 'yearly' ? budget.limit / 12 : budget.period === 'weekly' ? budget.limit * (52 / 12) : budget.period === 'daily' ? budget.limit * (365 / 12) : budget.limit;
         const now = new Date();
         const monthStartDay = resolveMonthStartDayFromData(data);
-        const { start: firstDayOfMonth } = financialMonthRange(now, monthStartDay);
+        const { start: firstDayOfMonth, end: lastDayOfMonth } = financialMonthRange(now, monthStartDay);
         const transactions = getPersonalTransactions(data);
         const spent = transactions
-            .filter((t: { type?: string; date: string; budgetCategory?: string; category?: string }) => countsAsExpenseForCashflowKpi(t) && new Date(t.date) >= firstDayOfMonth && t.budgetCategory === budget.category)
+            .filter((t: { type?: string; date: string; budgetCategory?: string; category?: string }) =>
+                countsAsExpenseForCashflowKpi(t) &&
+                dateInRange(t.date, firstDayOfMonth, lastDayOfMonth) &&
+                t.budgetCategory === budget.category,
+            )
             .reduce((sum: number, t: { amount?: number }) => sum + Math.abs(t.amount ?? 0), 0);
         return { limit: monthlyLimit, spent, remaining: monthlyLimit - spent };
     }, [data]);

@@ -143,7 +143,6 @@ export interface Account {
 
 export type AssetType =
   | 'Cash'
-  | 'Sukuk'
   | 'Property' // Residential/Commercial
   | 'Land'
   | 'Vehicle'
@@ -166,12 +165,30 @@ export interface Asset {
   monthlyRent?: number;
   goalId?: string;
   owner?: string;
-  /** Sukuk / dated instruments: issue (or subscription) date, ISO `YYYY-MM-DD`. */
-  issueDate?: string;
-  /** Sukuk / dated instruments: maturity date, ISO `YYYY-MM-DD`. */
-  maturityDate?: string;
   /** Free-form details (location, deed ref, insurance, condition, etc.). */
   notes?: string;
+}
+
+export type SukukPositionStatus = 'active' | 'completed';
+
+/** Direct Sukuk contract (investments domain — not physical assets). */
+export interface SukukPosition {
+  id: string;
+  user_id?: string;
+  name: string;
+  investmentAccountId: string;
+  currency: TradeCurrency;
+  faceValue: number;
+  outstandingPrincipal: number;
+  purchasePrice?: number | null;
+  issueDate: string;
+  maturityDate: string;
+  status: SukukPositionStatus;
+  goalId?: string | null;
+  notes?: string | null;
+  metadata?: Record<string, unknown>;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Liability {
@@ -311,6 +328,48 @@ export interface InvestmentTransaction {
   currency?: TradeCurrency;
   /** For deposits/withdrawals: the linked cash account ID (source for deposits, destination for withdrawals) */
   linkedCashAccountId?: string;
+  /** Idempotent replay guard for system-generated rows (DRIP, corporate actions). */
+  idempotencyKey?: string;
+}
+
+export type CorporateActionDbType =
+  | 'stock_split'
+  | 'reverse_stock_split'
+  | 'cash_in_lieu'
+  | 'spinoff'
+  | 'merger'
+  | 'dividend_cash'
+  | 'dividend_drip';
+
+export interface CorporateActionEvent {
+  id: string;
+  user_id?: string;
+  portfolioId: string;
+  actionType: CorporateActionDbType;
+  symbol: string;
+  linkedSymbol?: string | null;
+  executionDate: string;
+  ratioNumerator?: number | null;
+  ratioDenominator?: number | null;
+  cashPerShare?: number | null;
+  cashInLieuPrice?: number | null;
+  costBasisAllocationPct?: number | null;
+  idempotencyKey: string;
+  status?: 'applied' | 'reversed';
+}
+
+export interface InvestmentCostLot {
+  id: string;
+  user_id?: string;
+  portfolioId: string;
+  symbol: string;
+  market: 'US' | 'Tadawul' | 'Other';
+  acquisitionDate: string;
+  quantityRemaining: number;
+  costPerShare: number;
+  bookCurrency: 'SAR' | 'USD';
+  sourceTransactionId?: string | null;
+  sourceCorporateActionId?: string | null;
 }
 
 export type SukukPayoutCadence = 'monthly' | 'quarterly' | 'maturity_only' | 'custom';
@@ -319,13 +378,15 @@ export type SukukPayoutKind = 'coupon' | 'principal';
 export interface SukukPayoutSchedule {
   id: string;
   user_id?: string;
-  assetId: string;
+  sukukPositionId: string;
   investmentAccountId: string;
   currency: TradeCurrency;
   cadence: SukukPayoutCadence;
   dayOfMonth?: number | null;
   couponAmount?: number | null;
   principalAmount?: number | null;
+  /** Periodic principal return during contract (amortizing). */
+  principalInstallmentAmount?: number | null;
   startDate?: string | null;
   endDate?: string | null;
   enabled: boolean;
@@ -338,7 +399,7 @@ export interface SukukPayoutEvent {
   id: string;
   user_id?: string;
   scheduleId: string;
-  assetId: string;
+  sukukPositionId: string;
   investmentAccountId: string;
   kind: SukukPayoutKind;
   payoutDate: string; // YYYY-MM-DD
@@ -450,6 +511,8 @@ export interface Settings {
      * 1 = calendar month. 2–31 shifts the preferred window start; short months cap to the last day (e.g. 31 → Feb 28/29).
      */
     monthStartDay?: number;
+    /** Spouse / education category mapping for fixed-vs-variable donut (synced to settings). */
+    spendingIntelMapping?: { spouseCats?: string[]; educationCats?: string[] };
     /** Optional: nisab amount override (e.g. in SAR). When set, Zakat uses this instead of goldPrice * 85. */
     nisabAmount?: number;
 }
@@ -534,6 +597,9 @@ export interface FinancialData {
   recurringTransactions: RecurringTransaction[];
   investments: InvestmentPortfolio[];
   investmentTransactions: InvestmentTransaction[];
+  corporateActionEvents?: CorporateActionEvent[];
+  investmentCostLots?: InvestmentCostLot[];
+  sukukPositions?: SukukPosition[];
   sukukPayoutSchedules?: SukukPayoutSchedule[];
   sukukPayoutEvents?: SukukPayoutEvent[];
   budgets: Budget[];
@@ -562,6 +628,7 @@ export interface FinancialData {
   personalLiabilities?: Liability[];
   personalInvestments?: InvestmentPortfolio[];
   personalCommodityHoldings?: CommodityHolding[];
+  personalSukukPositions?: SukukPosition[];
   /** Transactions that hit personal accounts only (for "my" income/expense). */
   personalTransactions?: Transaction[];
 }
@@ -576,6 +643,7 @@ export type DataContextFinancialData = FinancialData & {
   personalLiabilities: Liability[];
   personalInvestments: InvestmentPortfolio[];
   personalCommodityHoldings: CommodityHolding[];
+  personalSukukPositions: SukukPosition[];
   personalTransactions: Transaction[];
 };
 

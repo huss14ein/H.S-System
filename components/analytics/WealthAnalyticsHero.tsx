@@ -6,9 +6,25 @@ export const WealthAnalyticsHero: React.FC<{
   netWorthDisplay: string;
   monthlyPnLDisplay: string;
   monthlyPnLPositive: boolean;
+  weeklyPnLDisplay?: string;
+  weeklyPnLPositive?: boolean;
   roiDisplay: string;
   roiPositive: boolean;
-}> = ({ netWorthDisplay, monthlyPnLDisplay, monthlyPnLPositive, roiDisplay, roiPositive }) => {
+  onExplainMonthlyPnL?: () => void;
+  onExplainWeeklyPnL?: () => void;
+  onExplainInvestmentRoi?: () => void;
+}> = ({
+  netWorthDisplay,
+  monthlyPnLDisplay,
+  monthlyPnLPositive,
+  weeklyPnLDisplay,
+  weeklyPnLPositive = true,
+  roiDisplay,
+  roiPositive,
+  onExplainMonthlyPnL,
+  onExplainWeeklyPnL,
+  onExplainInvestmentRoi,
+}) => {
   const { t, dir } = useLanguage();
 
   return (
@@ -25,9 +41,29 @@ export const WealthAnalyticsHero: React.FC<{
         </div>
         <QuotesAsOfBadge className="shrink-0" />
       </div>
-      <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="rounded-xl border border-slate-200/80 bg-white/80 px-4 py-3 backdrop-blur-sm">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{t('monthlyPnLKpi')}</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{t('weeklyPnLKpi')}</p>
+            {onExplainWeeklyPnL ? (
+              <button type="button" className="text-[10px] font-semibold text-primary hover:underline" onClick={onExplainWeeklyPnL}>
+                Explain
+              </button>
+            ) : null}
+          </div>
+          <p className={`mt-1 text-xl font-bold tabular-nums ${weeklyPnLPositive ? 'text-cyan-700' : 'text-rose-700'}`}>
+            {weeklyPnLDisplay ?? '—'}
+          </p>
+        </div>
+        <div className="rounded-xl border border-slate-200/80 bg-white/80 px-4 py-3 backdrop-blur-sm">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{t('monthlyPnLKpi')}</p>
+            {onExplainMonthlyPnL ? (
+              <button type="button" className="text-[10px] font-semibold text-primary hover:underline" onClick={onExplainMonthlyPnL}>
+                Explain
+              </button>
+            ) : null}
+          </div>
           <p className={`mt-1 text-xl font-bold tabular-nums ${monthlyPnLPositive ? 'text-emerald-700' : 'text-rose-700'}`}>
             {monthlyPnLDisplay}
           </p>
@@ -40,7 +76,14 @@ export const WealthAnalyticsHero: React.FC<{
           </span>
         </div>
         <div className="rounded-xl border border-slate-200/80 bg-white/80 px-4 py-3 backdrop-blur-sm">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{t('investmentRoi')}</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{t('investmentRoi')}</p>
+            {onExplainInvestmentRoi ? (
+              <button type="button" className="text-[10px] font-semibold text-primary hover:underline" onClick={onExplainInvestmentRoi}>
+                Explain
+              </button>
+            ) : null}
+          </div>
           <p className={`mt-1 text-xl font-bold tabular-nums ${roiPositive ? 'text-violet-700' : 'text-rose-700'}`}>
             {roiDisplay}
           </p>

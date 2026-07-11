@@ -813,7 +813,9 @@ export function generateWealthMetricPassportHtml(
   if (metric === 'netWorth') {
     sectionC = `Headline balance sheet net worth from computePersonalHeadlineNetWorthSar. Investments total ${money(model.investmentsTotalSar)}. Liquid cash ${money(model.liquidCashSar)}.`;
   } else if (metric === 'monthlyPnL') {
-    sectionC = `Financial-month income minus expenses (transaction-dated FX). Portfolio week P/L ${money(model.weeklyPnLTotalSar)}; month P/L ${money(model.monthlyPnLTotalSar)} (mark-to-market from period start).`;
+    sectionC = `Financial-month income minus expenses (transaction-dated FX). Portfolio week P/L ${money(model.weeklyPnLTotalSar)}; month portfolio P/L ${money(model.monthlyPnLTotalSar)} (mark-to-market from period start).`;
+  } else if (metric === 'weeklyPnL' || metric === 'portfolioPeriodPnL') {
+    sectionC = `Portfolio mark-to-market P/L: week ${money(model.weeklyPnLTotalSar)}, financial month ${money(model.monthlyPnLTotalSar)}. Ledger + market estimate from period start. Not the same as Dashboard cashflow monthly P/L.`;
   } else if (metric === 'investmentRoi') {
     sectionC = `Platform rollup + commodities + Sukuk vs net capital (computeHeadlinePersonalInvestmentRoiDecimal). Total exposure ${money(model.investmentsTotalSar)}.`;
   } else if (metric === 'budgetVariance') {
@@ -822,7 +824,12 @@ export function generateWealthMetricPassportHtml(
     sectionC = `Target ${model.executiveKpis.find((k) => k.key === 'emergencyFund')?.targetDisplay ?? '6 mo'}. Liquid cash ${money(model.liquidCashSar)}.`;
   }
 
-  const pnlSeries = metric === 'monthlyPnL' ? model.monthlyPnLCumulative : kpi?.sparkline ?? [];
+  const pnlSeries =
+    metric === 'monthlyPnL'
+      ? model.monthlyPnLCumulative
+      : metric === 'weeklyPnL' || metric === 'portfolioPeriodPnL'
+        ? model.weeklyPnLCumulative
+        : kpi?.sparkline ?? [];
   const tone = kpi?.tone ?? 'neutral';
   const accent = kpi?.accentColor ?? '#6366f1';
 

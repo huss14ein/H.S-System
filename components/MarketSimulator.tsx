@@ -20,7 +20,7 @@ import {
 } from '../services/quotePriceCache';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { portfolioBelongsToAccount, resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
-import { getRefreshableHoldingQuoteSymbols } from '../services/quoteRefreshSymbols';
+import { getRefreshableHoldingQuoteSymbolsFromPortfolios } from '../services/quoteRefreshSymbols';
 import { isTadawulQuoteSymbol } from '../services/marketQuoteRouting';
 import { isAnyEquityMarketRegularSessionOpen } from '../services/marketSessionLocal';
 import { sanitizeLiveQuoteRow } from '../services/tadawulQuoteSanity';
@@ -127,8 +127,7 @@ const MarketSimulator: React.FC = () => {
 
     /** After hydrate, align holding marks with persisted quotes — no live API fetch. */
     useEffect(() => {
-        const { data, showHydrateBanner, batchUpdateHoldingValues, batchUpdateCommodityHoldingValues } =
-            dataContext ?? {};
+        const { data, showHydrateBanner, batchUpdateCommodityHoldingValues } = dataContext ?? {};
         if (!data || showHydrateBanner || didAlignHoldingsFromCacheRef.current) return;
 
         let cancelled = false;
@@ -171,9 +170,8 @@ const MarketSimulator: React.FC = () => {
                 const tracked = data ? collectTrackedQuoteSymbols(data) : Object.keys(patch.trusted);
                 marketContext?.mergeSymbolQuoteTimestamps(sessionTimestampsForTrackedSymbols(tracked, rows));
             });
-            if (patch.equityUpdates.length > 0 && batchUpdateHoldingValues) {
-                batchUpdateHoldingValues(patch.equityUpdates);
-            }
+            // Holding notionals are updated only from manual/live sync ticks — not cache hydrate
+            // (avoids stale Tadawul cache overwriting fresh SAHMK quotes).
             if (patch.commodityUpdates.length > 0 && batchUpdateCommodityHoldingValues) {
                 batchUpdateCommodityHoldingValues(patch.commodityUpdates);
             }
@@ -200,13 +198,7 @@ const MarketSimulator: React.FC = () => {
             const allInvestments = ((data as { personalInvestments?: InvestmentPortfolio[] }).personalInvestments ??
                 data.investments ??
                 []) as InvestmentPortfolio[];
-            const holdingSymbols = getRefreshableHoldingQuoteSymbols(
-                allInvestments.flatMap((p) => p.holdings ?? []) as {
-                    symbol?: string;
-                    holdingType?: string;
-                    holding_type?: string;
-                }[],
-            );
+            const holdingSymbols = getRefreshableHoldingQuoteSymbolsFromPortfolios(allInvestments);
             const watchSymbols = (data.watchlist ?? [])
                 .map((w) => w.symbol)
                 .filter((s): s is string => Boolean(s));
@@ -351,7 +343,11 @@ const MarketSimulator: React.FC = () => {
 
             const platformIdOnly =
                 priceScope.kind === 'platform' ? resolveCanonicalAccountId(priceScope.platformId, dataContext.data.accounts ?? []) : null;
+            const portfolioIdOnly =
+                priceScope.kind === 'portfolio' ? priceScope.portfolioId.trim() : '';
             const scopeIsPlatform = platformIdOnly != null;
+            const scopeIsPortfolio = portfolioIdOnly.length > 0;
+            const scopeIsNarrow = scopeIsPlatform || scopeIsPortfolio;
             const scopeIsSymbolsOnly = priceScope.kind === 'symbols';
             const forceFetch = priceScope.forceFetch === true;
 
@@ -361,12 +357,13 @@ const MarketSimulator: React.FC = () => {
 
             const accounts = data.accounts ?? [];
             const allInvestments = ((data as any)?.personalInvestments ?? data?.investments ?? []) as InvestmentPortfolio[];
-            const portfoliosInScope = platformIdOnly
-                ? allInvestments.filter((p) => portfolioBelongsToAccount(p, { id: platformIdOnly }, accounts))
-                : allInvestments;
+            const portfoliosInScope = portfolioIdOnly
+                ? allInvestments.filter((p) => p.id === portfolioIdOnly)
+                : platformIdOnly
+                  ? allInvestments.filter((p) => portfolioBelongsToAccount(p, { id: platformIdOnly }, accounts))
+                  : allInvestments;
 
             let uniqueSymbols: string[];
-            let allHoldings: unknown[];
             let allWatchlistItems: { symbol?: string }[];
             let allPlannedTrades: { symbol?: string }[];
             let allCommodities: CommodityHolding[];
@@ -379,18 +376,14 @@ const MarketSimulator: React.FC = () => {
                             .filter(Boolean),
                     ),
                 );
-                allHoldings = portfoliosInScope.flatMap((p) => p.holdings ?? []);
                 allWatchlistItems = [];
                 allPlannedTrades = [];
                 allCommodities = [];
             } else {
-                allHoldings = portfoliosInScope.flatMap((p) => p.holdings ?? []);
-                const holdingSymbols = getRefreshableHoldingQuoteSymbols(
-                    allHoldings as { symbol?: string; holdingType?: string; holding_type?: string }[],
-                );
-                allWatchlistItems = scopeIsPlatform ? [] : (data?.watchlist ?? []);
-                allPlannedTrades = scopeIsPlatform ? [] : (data?.plannedTrades ?? []);
-                allCommodities = scopeIsPlatform
+                const holdingSymbols = getRefreshableHoldingQuoteSymbolsFromPortfolios(portfoliosInScope);
+                allWatchlistItems = scopeIsNarrow ? [] : (data?.watchlist ?? []);
+                allPlannedTrades = scopeIsNarrow ? [] : (data?.plannedTrades ?? []);
+                allCommodities = scopeIsNarrow
                     ? []
                     : (((data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? []) as CommodityHolding[]);
 
@@ -439,10 +432,11 @@ const MarketSimulator: React.FC = () => {
                         const safe = isTadawulQuoteSymbol(k) ? sanitizeLiveQuoteRow(k, row) : row;
                         if (safe) cacheForEquity[k] = safe;
                     }
-                    let mergedEquity: Record<string, LiveQuoteRow> =
-                        uniqueSymbols.length > 0
-                            ? expandLiveQuotesForRequestedSymbols(uniqueSymbols, cacheForEquity)
-                            : {};
+                    let mergedEquity: Record<string, LiveQuoteRow> = {};
+                    const skipCacheSeed = forceFetch && priceScope.manual === true;
+                    if (!skipCacheSeed && uniqueSymbols.length > 0) {
+                        mergedEquity = expandLiveQuotesForRequestedSymbols(uniqueSymbols, cacheForEquity);
+                    }
                     const toFetchAll = resolveSymbolsToLiveFetch(uniqueSymbols, cacheRows, { forceFetch });
                     const mergedFetch = Array.from(
                         new Set([...pendingLiveFetchSymbolsRef.current, ...toFetchAll]),
@@ -461,7 +455,7 @@ const MarketSimulator: React.FC = () => {
                     /** Equity and commodities are independent: a thrown/rejected equity batch must not discard commodity quotes. */
                     const equityFetchPromise: Promise<Record<string, LiveQuoteRow>> =
                         uniqueSymbols.length > 0 && toFetch.length > 0 && !rateLimited
-                            ? getLivePricesDeduped(toFetch).catch((err) => {
+                            ? getLivePricesDeduped(toFetch, { forceFetch }).catch((err) => {
                                   if (isRateLimitError(err)) startQuoteRefreshCooldown();
                                   throw err;
                               })
@@ -527,11 +521,12 @@ const MarketSimulator: React.FC = () => {
                     trustedQuoteSnapshot = { ...newPrices };
 
                     const allTickerSymbols = Array.from(new Set([...uniqueSymbols, ...commoditySymbols]));
+                    const allowCacheFallback = !(forceFetch && priceScope.manual === true);
                     let anyEquitySimulated = false;
                     for (const symbol of allTickerSymbols) {
                         const row = lookupLiveQuoteForSymbol(newPrices, symbol);
                         if (row && row.price > 0) continue;
-                        if (applyStoredQuoteFallback(symbol, newPrices, cacheRows)) continue;
+                        if (allowCacheFallback && applyStoredQuoteFallback(symbol, newPrices, cacheRows)) continue;
                         if (isTadawulQuoteSymbol(symbol)) continue;
                         simulateSymbol(symbol);
                         if (uniqueSymbols.includes(symbol)) anyEquitySimulated = true;
@@ -580,11 +575,12 @@ const MarketSimulator: React.FC = () => {
                     trustedQuoteSnapshot = { ...newPrices };
 
                     const allTickerSymbols = Array.from(new Set([...uniqueSymbols, ...commoditySymbols]));
+                    const allowCacheFallback = !(forceFetch && priceScope.manual === true);
                     let anyEquitySimulated = false;
                     for (const symbol of allTickerSymbols) {
                         const row = lookupLiveQuoteForSymbol(newPrices, symbol);
                         if (row && row.price > 0) continue;
-                        if (applyStoredQuoteFallback(symbol, newPrices, cacheRows)) continue;
+                        if (allowCacheFallback && applyStoredQuoteFallback(symbol, newPrices, cacheRows)) continue;
                         if (isTadawulQuoteSymbol(symbol)) continue;
                         simulateSymbol(symbol);
                         if (uniqueSymbols.includes(symbol)) anyEquitySimulated = true;
@@ -662,13 +658,13 @@ const MarketSimulator: React.FC = () => {
                 const hasTrustedQuotes =
                     Object.keys(trustedQuoteSnapshot).length > 0 || Object.keys(newPrices).length > 0;
                 if (networkFetchedThisTick) {
-                    if (!scopeIsPlatform || priceScope.manual === true) {
+                    if (!scopeIsNarrow || priceScope.manual === true) {
                         setQuotesPriceSource('live');
                         setIsLive(true);
                     }
                     return;
                 }
-                if (scopeIsPlatform) return;
+                if (scopeIsNarrow) return;
                 setQuotesPriceSource((prev) =>
                     nextQuotesPriceSourceAfterTick(prev, false, hasTrustedQuotes),
                 );
@@ -685,7 +681,7 @@ const MarketSimulator: React.FC = () => {
                 if (Object.keys(cachedTs).length > 0) mergeSymbolQuoteTimestamps(cachedTs);
             };
             const applyGlobalLastUpdated = () => {
-                if (!setLastUpdated || scopeIsPlatform) return;
+                if (!setLastUpdated || scopeIsNarrow) return;
                 if (networkFetchedThisTick) {
                     setLastUpdated(new Date());
                     return;
@@ -698,7 +694,7 @@ const MarketSimulator: React.FC = () => {
             // Apply quote updates — manual refresh paints immediately; background ticks stay low priority.
             applyPricesInBackground(() => {
                 if (marketContext.isQuoteRefreshCancelled()) return;
-                if (scopeIsPlatform) {
+                if (scopeIsNarrow) {
                     setSimulatedPrices((prev) => {
                         let changed = false;
                         const next = { ...prev };

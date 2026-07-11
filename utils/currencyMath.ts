@@ -149,6 +149,26 @@ export function inferInstrumentCurrencyFromSymbol(symbol: string): TradeCurrency
 }
 
 /**
+ * Instrument currency for a live quote row — uses map keys to distinguish Tadawul bare codes (REITF → REITF.SR)
+ * from US tickers held in SAR books (AAPL priced in USD).
+ */
+export function resolveInstrumentCurrencyForQuote(
+  symbol: string,
+  bookCurrency: TradeCurrency,
+  quoteMap?: Record<string, unknown>,
+): TradeCurrency {
+  const s = (symbol || '').trim().toUpperCase();
+  if (/(\.SR|\.SA|\.SE)$/i.test(s) || /^[0-9]{4,6}$/.test(s) || /^TADAWUL:/i.test(s)) return 'SAR';
+  if (bookCurrency === 'SAR' && /^[A-Z]{3,6}$/.test(s) && !s.includes('.') && quoteMap) {
+    const keys = Object.keys(quoteMap).map((k) => k.toUpperCase());
+    const hasDirect = keys.includes(s);
+    const hasSuffixed = keys.some((k) => k === `${s}.SR` || k === `${s}.SA` || k === `${s}.SE`);
+    if (hasSuffixed && !hasDirect) return 'SAR';
+  }
+  return inferInstrumentCurrencyFromSymbol(symbol);
+}
+
+/**
  * Tradable cash on an investment platform, expressed in the portfolio ledger currency (same rule as `recordTrade` in DataContext).
  */
 export function availableTradableCashInLedgerCurrency(
@@ -186,8 +206,9 @@ export function quoteNotionalInBookCurrency(
   symbol: string,
   bookCurrency: TradeCurrency,
   sarPerUsd: number,
+  quoteMap?: Record<string, { price?: number } | undefined>,
 ): number {
-  const inst = inferInstrumentCurrencyFromSymbol(symbol);
+  const inst = resolveInstrumentCurrencyForQuote(symbol, bookCurrency, quoteMap);
   const q = Number.isFinite(quantity) ? Math.max(0, quantity) : 0;
   const p = Number.isFinite(pricePerUnit) ? pricePerUnit : 0;
   const raw = p * q;

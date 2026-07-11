@@ -712,7 +712,7 @@ export function computePersonalCommoditiesContributionSAR(
   let dailyDeltaSAR = 0;
   for (const ch of commodities) {
     const sym = (ch.symbol || '').trim().toUpperCase();
-    const px = simulatedPrices[sym];
+    const px = lookupLiveQuoteForSymbol(simulatedPrices, sym);
     /**
      * Commodity prices/current values are stored in SAR in Finova (save flow + market refresh).
      * Do not apply USD→SAR conversion again here, otherwise values are overstated by FX.

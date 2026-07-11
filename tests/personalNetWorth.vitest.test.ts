@@ -142,12 +142,22 @@ describe('personalNetWorth', () => {
     expect(headline.buckets.investments).toBeGreaterThan(wrongUiBuckets.investments);
   });
 
-  it('puts Sukuk (Assets) into the investments bucket, not physical assets', () => {
+  it('puts direct Sukuk positions into the investments bucket, not physical assets', () => {
     const data: any = {
-      accounts: [{ type: 'Checking', balance: 0 }],
-      assets: [
-        { type: 'Sukuk', value: 1200 },
-        { type: 'Property', value: 4800 },
+      accounts: [{ id: 'inv', type: 'Investment', balance: 0 }],
+      assets: [{ type: 'Property', value: 4800 }],
+      sukukPositions: [
+        {
+          id: 'sk1',
+          name: 'Gov Sukuk',
+          investmentAccountId: 'inv',
+          currency: 'SAR',
+          faceValue: 1200,
+          outstandingPrincipal: 1200,
+          issueDate: '2024-01-01',
+          maturityDate: '2027-01-01',
+          status: 'active',
+        },
       ],
       liabilities: [],
       commodityHoldings: [],

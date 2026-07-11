@@ -44,6 +44,12 @@ export const SECTION_HINT_KEYS: Record<string, string> = {
     'Choose one path per holding: position recycling (no new cash) or recovery buy ladder (deployable cash)—then export limits to Investment Plan.',
   'key.recovery.positionRecycling':
     'Pick recycling OR buy ladder (not both). Recycling: core shares stay, sell/rebuy tranches on rebounds with sale proceeds only.',
+  'key.investments.platformPeriodPnL':
+    'Portfolio mark-to-market P/L from period start (7 days or current financial month). Includes ledger realized P/L and price-change estimate. Not the same as Dashboard cashflow monthly P/L.',
+  'key.investments.portfolioPeriodPnL':
+    'Sum of personal portfolio week/month P/L — same engine as Wealth Analytics executive KPIs. FIFO lots used when available.',
+  'key.metricPassport.explain':
+    'Metric passport: formula, inputs, freshness, and caveats for this KPI. Educational context only—not financial advice.',
 };
 
 /**
@@ -195,7 +201,7 @@ const HINTS_BY_TITLE: Record<string, string> = {
   'ux guardrails':
     'Microcopy and validation helpers for forms. Reuse fieldHintEngine and userInputGuard on new modals for consistent UX.',
   'corporate actions (demo)':
-    'Shows how a 2:1 split adjusts share count and average cost. Cash dividends leave quantity/cost unchanged in this simple model.',
+    'Stock split (e.g. 2:1) doubles share count and halves average cost; reverse split does the opposite. Total cost basis stays unchanged; cached quotes are split-adjusted on apply so headline net worth stays stable. Fractional reverse splits can cash out the remainder when you enter a cash-in-lieu price.',
   'risk lane':
     'Combines household cashflow stress, emergency months, and Wealth Ultra performance snapshots into Cautious / Balanced / Opportunity with a suggested risk profile.',
   'next best actions':
@@ -267,7 +273,7 @@ const HINTS_BY_TITLE: Record<string, string> = {
   'section temporarily unavailable': 'This block failed to load or is gated—retry or navigate elsewhere.',
   'execution history': 'Record of trades or executions you logged—audit trail for review.',
   'physical assets': 'Property, vehicles, and non-broker assets—feeds net worth on Summary.',
-  'sukuk in finova': 'Sukuk holdings and income—track separately from equities where applicable.',
+  'sukuk in finova': 'Direct Sukuk contracts: Investments → Sukuk tab. Broker-held Sukuk: Record Trade with asset class Sukuk.',
   'salary & planning experts':
     'Seven AI planners for salary, cash flow, wealth, debt, automation, independence, and lifestyle. Fields prefill from Transactions, Budgets, Goals, Investment Plan, and Liabilities when available—edit before Run analysis. Use Copy prompt to paste into any chat. Outputs are educational—not financial advice.',
   'salary allocation expert':

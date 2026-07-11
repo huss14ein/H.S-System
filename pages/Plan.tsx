@@ -46,6 +46,7 @@ import { goalsWithResolvedCurrentAmount } from '../services/goalResolvedTotals';
 import { computeGoalMonthlyFundingEnvelopeSar } from '../services/goalProjectionFunding';
 import {
     currentFinancialMonthColumnEndIndex,
+    dateInRange,
     financialMonthColumnHeadersForPlanYear,
     financialMonthLabel,
     financialMonthKeysEndingAt,
@@ -600,12 +601,11 @@ const AnnualFinancialPlan: React.FC<{
     const predictiveSpend = useMemo(() => {
         const now = new Date();
         const lookbackKeys = financialMonthKeysEndingAt(now, 3, monthStartDay);
-        const earliest = financialMonthRangeFromKey(lookbackKeys[0], monthStartDay).start;
+        const { start: earliest, end: lookbackEnd } = financialMonthRangeFromKey(lookbackKeys[0], monthStartDay);
         const currentFinMonth = financialMonthKeysEndingAt(now, 1, monthStartDay)[0]?.month ?? now.getMonth() + 1;
-        const recentTx = (transactions as any[]).filter((t: { date: string }) => {
-            const d = new Date(t.date);
-            return d >= earliest;
-        });
+        const recentTx = (transactions as any[]).filter((t: { date: string }) =>
+            dateInRange(t.date, earliest, lookbackEnd),
+        );
         return generatePredictiveSpend(dynamicBaselines, currentFinMonth, recentTx, []);
     }, [dynamicBaselines, transactions, monthStartDay]);
 

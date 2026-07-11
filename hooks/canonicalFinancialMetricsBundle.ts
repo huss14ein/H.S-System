@@ -16,7 +16,7 @@ export type UseCanonicalFinancialMetricsResult = CanonicalFinancialMetrics & {
   buckets: CanonicalFinancialMetrics['headline']['buckets'];
   platformsRollupSar: number;
   commoditiesValueSar: number;
-  sukukAssetsValueSar: number;
+  sukukPositionsValueSar: number;
   /** True once phase-2 wealth summary / allocation has been merged. */
   metricsExtendedReady: boolean;
 };
@@ -38,7 +38,7 @@ function wrapMetricsResult(
         totalExposureSar: metrics.investmentExposure.totalExposureSar,
         platformsRollupSar: metrics.investmentExposure.platformsRollupSar,
         commoditiesValueSar: metrics.investmentExposure.commoditiesValueSar,
-        sukukAssetsValueSar: metrics.investmentExposure.sukukAssetsValueSar,
+        sukukPositionsValueSar: metrics.investmentExposure.sukukPositionsValueSar,
       }
     : metrics.headlineExposureParts;
   return {
@@ -50,7 +50,7 @@ function wrapMetricsResult(
     buckets: metrics.headline.buckets,
     platformsRollupSar: parts.platformsRollupSar,
     commoditiesValueSar: parts.commoditiesValueSar,
-    sukukAssetsValueSar: parts.sukukAssetsValueSar,
+    sukukPositionsValueSar: parts.sukukPositionsValueSar,
     metricsExtendedReady,
   };
 }
@@ -117,7 +117,7 @@ export function overlayLiveQuoteTierOntoExtendedMetrics(
         totalExposureSar: investmentExposure.totalExposureSar,
         platformsRollupSar: investmentExposure.platformsRollupSar,
         commoditiesValueSar: investmentExposure.commoditiesValueSar,
-        sukukAssetsValueSar: investmentExposure.sukukAssetsValueSar,
+        sukukPositionsValueSar: investmentExposure.sukukPositionsValueSar,
       }
     : live.headlineExposureParts;
   const investmentAllocation =
@@ -142,7 +142,7 @@ export function overlayLiveQuoteTierOntoExtendedMetrics(
     investmentAllocation,
     platformsRollupSar: headlineExposureParts.platformsRollupSar,
     commoditiesValueSar: headlineExposureParts.commoditiesValueSar,
-    sukukAssetsValueSar: headlineExposureParts.sukukAssetsValueSar,
+    sukukPositionsValueSar: headlineExposureParts.sukukPositionsValueSar,
     buckets: live.buckets,
     metricsExtendedReady: extended.metricsExtendedReady,
   };

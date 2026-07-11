@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import type { Account, Budget, FinancialData, Goal, Transaction } from '../../types';
+import type { Account, Budget, FinancialData, Goal, Page, Transaction } from '../../types';
 import { DashboardSectionHeader } from './DashboardSectionHeader';
 import {
   createDashboardDateRange,
@@ -25,6 +25,8 @@ export const DashboardOperationsCockpit: React.FC<{
   showSectionHeader?: boolean;
   showLanguageToggle?: boolean;
   className?: string;
+  setActivePage?: (page: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
 }> = ({
   data,
   personalTransactions,
@@ -37,6 +39,8 @@ export const DashboardOperationsCockpit: React.FC<{
   showSectionHeader = true,
   showLanguageToggle = true,
   className = '',
+  setActivePage,
+  triggerPageAction,
 }) => {
   const [suiteRange, setSuiteRange] = useState<DashboardDateRange>(() => createDashboardDateRange('6M'));
   const suiteMonthsBack = useMemo(() => dashboardSuiteMonthsBack(suiteRange), [suiteRange]);
@@ -65,6 +69,8 @@ export const DashboardOperationsCockpit: React.FC<{
         startIso={suiteRange.startIso}
         endIso={suiteRange.endIso}
         monthsBack={suiteMonthsBack}
+        setActivePage={setActivePage}
+        triggerPageAction={triggerPageAction}
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -74,12 +80,16 @@ export const DashboardOperationsCockpit: React.FC<{
           transactions={personalTransactions}
           accounts={personalAccounts}
           uiExchangeRate={sarPerUsd}
+          setActivePage={setActivePage}
+          triggerPageAction={triggerPageAction}
         />
         <ExpenseDonutDrilldown
           data={data}
           transactions={personalTransactions}
           accounts={personalAccounts}
           uiExchangeRate={sarPerUsd}
+          setActivePage={setActivePage}
+          triggerPageAction={triggerPageAction}
         />
       </div>
       <div className="mt-4">

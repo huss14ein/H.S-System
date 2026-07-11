@@ -18,30 +18,34 @@ describe('wealth analytics end-to-end wiring', () => {
 
     it('Wealth Analytics page uses canonical metrics and advanced widgets', () => {
         const src = read('pages/WealthAnalytics.tsx');
+        const overview = read('components/analytics/zones/OverviewZone.tsx');
+        const wealth = read('components/analytics/zones/WealthZone.tsx');
+        const investments = read('components/analytics/zones/InvestmentsZone.tsx');
+        const cash = read('components/analytics/zones/CashSpendZone.tsx');
         const deferred = read('components/analytics/WealthAnalyticsDeferredSections.tsx');
-        expect(src).toContain('useCanonicalFinancialMetrics');
+        expect(src).toContain('useExtendedCanonicalMetrics');
         expect(src).not.toContain('useDashboardCanonicalMetrics');
         expect(src).toContain('netWorth');
         expect(src).toContain('liquidCashSar');
         expect(src).not.toContain('resolveSarPerUsd');
         expect(src).not.toContain('useMarketData');
-        expect(src).toContain('WealthAnalyticsExecutiveKpiSection');
+        expect(overview).toContain('WealthAnalyticsExecutiveKpiSection');
         expect(deferred).toContain('ExecutiveKpiGrid');
-        expect(src).toContain('PortfolioPeriodPnLPanelSection');
+        expect(investments).toContain('PortfolioPeriodPnLPanelSection');
         expect(src).toContain('WealthAnalyticsExportMenuSection');
-        expect(src).toContain('WealthHealthIndicatorsDeferredSection');
-        expect(src).toContain('DashboardOperationsCockpitSection');
-        expect(src).toContain('SummaryWealthAtlasSection');
+        expect(overview).toContain('WealthHealthIndicatorsDeferredSection');
+        expect(cash).toContain('DashboardOperationsCockpitSection');
+        expect(wealth).toContain('SummaryWealthAtlasSection');
         expect(src).toContain('WealthAnalyticsDetailsSectionLazy');
-        expect(src).toContain('PortfolioHoldingsGridSection');
-        expect(src).toContain('portfolioId={holdingsPortfolioId');
-        expect(src).toContain('wealth-analytics-portfolio');
-        expect(src).toContain('CostAveragingCalculatorSection');
-        expect(src).toContain('Goals2030TimelineSection');
+        expect(investments).toContain('PortfolioHoldingsGridSection');
+        expect(investments).toContain('portfolioId={props.holdingsPortfolioId');
+        expect(investments).toContain('wealth-analytics-portfolio');
+        expect(investments).toContain('CostAveragingCalculatorSection');
+        expect(investments).toContain('Goals2030TimelineSection');
         expect(deferred).toContain('useExecutiveKpiSparklines');
         expect(deferred).toContain('useEnhancementSignals');
         expect(src).toContain('extendedReady');
-        expect(src).toContain('staggerIndex');
+        expect(investments).toContain('staggerIndex');
         expect(src).not.toContain('Loading analytics');
         expect(read('components/analytics/wealthAnalyticsLazySections.tsx')).toContain('WealthHealthIndicators');
         expect(read('components/analytics/wealthAnalyticsLazySections.tsx')).toContain('SummaryWealthAtlas');
@@ -74,10 +78,16 @@ describe('wealth analytics end-to-end wiring', () => {
         expect(summary).toContain('captureNetWorthSnapshotFromHeadline');
     });
 
+    it('Dashboard includes deferred operations cockpit and Can I invest card', () => {
+        const dashboard = read('pages/Dashboard.tsx');
+        expect(dashboard).toContain('DashboardOperationsCockpitSection');
+        expect(dashboard).toContain('DashboardCanIInvestCard');
+        expect(dashboard).toContain('DeferredMount');
+    });
+
     it('Dashboard and Summary stay lean (heavy widgets on Wealth Analytics only)', () => {
         const dashboard = read('pages/Dashboard.tsx');
         const summary = read('pages/Summary.tsx');
-        expect(dashboard).not.toContain('DashboardOperationsCockpit');
         expect(dashboard).not.toContain('SummaryWealthAtlas');
         expect(summary).not.toContain('WealthAnalyticsSummaryPanels');
         expect(dashboard).toContain('Wealth Analytics');

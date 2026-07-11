@@ -34,9 +34,11 @@ describe('budget owner manage & manual-only creation', () => {
     expect(src).toContain('handleCopyBudgets');
   });
 
-  it('Dashboard and Summary use reorganized layout (no ops cockpit / atlas on page)', () => {
-    expect(read('pages/Dashboard.tsx')).not.toContain('DashboardOperationsCockpit');
-    expect(read('pages/WealthAnalytics.tsx')).toContain('DashboardOperationsCockpitSection');
+  it('Dashboard and Wealth Analytics cockpit layout', () => {
+    expect(read('pages/Dashboard.tsx')).toContain('DashboardOperationsCockpitSection');
+    expect(read('pages/Dashboard.tsx')).toContain('DeferredMount');
+    expect(read('pages/WealthAnalytics.tsx')).toContain('CashSpendZone');
+    expect(read('components/analytics/zones/CashSpendZone.tsx')).toContain('DashboardOperationsCockpitSection');
     expect(read('utils/lazyPages.tsx')).toContain("'Wealth Analytics'");
     expect(read('pages/Summary.tsx')).not.toContain('SummaryWealthAtlas');
     expect(read('pages/Dashboard.tsx')).toContain('dashboard-kpi-row');

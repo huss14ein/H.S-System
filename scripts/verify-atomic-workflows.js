@@ -83,9 +83,8 @@ expectContains(dataContext, "rpc('create_investment_cash_transfer_with_fee'", 'c
 const budgets = read('pages/Budgets.tsx');
 expectContains(budgets, "rpc('finalize_advance_budget_request'", 'pages/Budgets.tsx');
 expectContains(budgets, "rpc('get_shared_budgets_for_me'", 'pages/Budgets.tsx');
-expectContains(budgets, 'encodeURIComponent(budget.category)', 'pages/Budgets.tsx filter-by-budget');
-expectContains(budgets, 'toISOString().slice(0, 10)', 'pages/Budgets.tsx budget drill-down anchor');
-expectContains(budgets, 'handleOwnPortfolioNavigate', 'pages/Budgets.tsx budget drill-down');
+expectContains(budgets, 'buildBudgetDrillDownAction', 'pages/Budgets.tsx filter-by-budget');
+expectContains(budgets, 'triggerSpendingDrillDown', 'pages/Budgets.tsx budget drill-down navigation');
 expectContains(read('services/sharedBudgetConsumedRpc.ts'), "rpc('get_shared_budget_consumed_for_me'", 'services/sharedBudgetConsumedRpc.ts');
 expectContains(budgets, 'fetchSharedConsumedMap', 'pages/Budgets.tsx');
 

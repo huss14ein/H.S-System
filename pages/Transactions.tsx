@@ -66,6 +66,10 @@ import {
     calendarMonthRangeFromIsoKey,
     currentCalendarMonthIso,
     currentFinancialMonthIso,
+    budgetsForFinancialMonthView,
+    dateInRange,
+    parseCalendarDateLocal,
+    addMonthsToKey,
 } from '../utils/financialMonth';
 import { sortByNewestFirst } from '../utils/sortRecency';
 import { summarizeIncomeTaxonomy } from '../services/incomeTaxonomy';
@@ -246,10 +250,11 @@ const TransactionModal: React.FC<{
                 return;
             }
             const now = new Date();
-            const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-            const end = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59, 999);
-            const startDay = start.toISOString().slice(0, 10);
-            const endDay = end.toISOString().slice(0, 10);
+            const finKey = financialMonthKey(now, monthStartDay);
+            const { start } = financialMonthRangeFromKey(addMonthsToKey(finKey, -1), monthStartDay);
+            const { end } = financialMonthRangeFromKey(addMonthsToKey(finKey, 1), monthStartDay);
+            const startDay = formatLedgerDateYmd(start);
+            const endDay = formatLedgerDateYmd(end);
             const { data: rows, error } = await supabase
                 .from('installments')
                 .select('id,sequence,due_date,amount_minor,status,installment_plans!inner(currency,metadata)')
@@ -272,7 +277,7 @@ const TransactionModal: React.FC<{
             setLinkInstallmentOptions(opts);
         };
         loadInstallmentOptions();
-    }, [isOpen, transactionToEdit, type]);
+    }, [isOpen, transactionToEdit, type, monthStartDay]);
 
     const selectedAccountCurrency = useMemo<'SAR' | 'USD'>(() => {
         const acc = accounts.find((a) => a.id === accountId);
@@ -280,13 +285,13 @@ const TransactionModal: React.FC<{
     }, [accounts, accountId]);
 
     const currentBudgetRows = useMemo(() => {
-        const parsedDate = new Date(date || new Date().toISOString().slice(0, 10));
+        const parsedDate = parseCalendarDateLocal(date || new Date().toISOString().slice(0, 10));
         const key = financialMonthKey(parsedDate, monthStartDay);
-        return budgets.filter((b) => b.month === key.month && b.year === key.year);
+        return budgetsForFinancialMonthView(budgets, key, monthStartDay);
     }, [budgets, date, monthStartDay]);
 
     const transactionFinancialMonthBounds = useMemo(() => {
-        const parsedDate = new Date(date || new Date().toISOString().slice(0, 10));
+        const parsedDate = parseCalendarDateLocal(date || new Date().toISOString().slice(0, 10));
         const key = financialMonthKey(parsedDate, monthStartDay);
         return financialMonthRangeFromKey(key, monthStartDay);
     }, [date, monthStartDay]);
@@ -298,10 +303,8 @@ const TransactionModal: React.FC<{
         existingTransactions
             .filter(
                 (t) => {
-                    const d = new Date(t.date);
                     return (
-                        d >= start &&
-                        d <= end &&
+                        dateInRange(t.date, start, end) &&
                         countsAsExpenseForCashflowKpi(t) &&
                         (t.status ?? 'Approved') === 'Approved' &&
                         t.id !== transactionToEdit?.id
@@ -1210,13 +1213,16 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         nature: 'all' as 'all' | 'Fixed' | 'Variable',
         expenseType: 'all' as 'all' | 'Core' | 'Discretionary',
         budgetCategory: 'all' as 'all' | string,
+        searchText: '',
+        approvalStatus: 'all' as 'all' | 'Approved' | 'Pending' | 'Rejected',
+        merchantQuery: '',
     });
     const [transactionsVisibleCount, setTransactionsVisibleCount] = useState(TRANSACTIONS_LIST_PAGE_SIZE);
     const transactionListRef = React.useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         setTransactionsVisibleCount(TRANSACTIONS_LIST_PAGE_SIZE);
-    }, [filters.accountId, filters.month, filters.allMonths, filters.nature, filters.expenseType, filters.budgetCategory]);
+    }, [filters.accountId, filters.month, filters.allMonths, filters.nature, filters.expenseType, filters.budgetCategory, filters.searchText, filters.approvalStatus, filters.merchantQuery]);
 
     useEffect(() => {
         setFilters((f) => {
@@ -1250,7 +1256,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 monthStartDay === 1
                     ? calendarMonthRangeFromIsoKey(currentCalendarMonthIso(now))
                     : financialMonthRangeFromKey(
-                          { year: now.getFullYear(), month: now.getMonth() + 1 },
+                          financialMonthKey(now, monthStartDay),
                           monthStartDay,
                       );
             if (!fallback) {
@@ -1689,7 +1695,8 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             const { category, period, year, month } = parsed;
             const monthIso = `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}`;
             if (period === 'monthly') {
-                setFilters({
+                setFilters((prev) => ({
+                    ...prev,
                     accountId: 'all',
                     month: monthIso,
                     allMonths: false,
@@ -1698,10 +1705,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     nature: 'all',
                     expenseType: 'all',
                     budgetCategory: category || 'all',
-                });
+                }));
             } else {
                 const range = budgetDrillDownDateRange(parsed, monthStartDay);
-                setFilters({
+                setFilters((prev) => ({
+                    ...prev,
                     accountId: 'all',
                     month: monthIso,
                     allMonths: false,
@@ -1710,11 +1718,34 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     nature: 'all',
                     expenseType: 'all',
                     budgetCategory: category || 'all',
-                });
+                }));
             }
             window.setTimeout(() => {
                 transactionListRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }, 120);
+            clearPageAction?.();
+            return;
+        }
+        if (pageAction.startsWith('filter-by-month:')) {
+            const monthKey = decodeURIComponent(pageAction.slice('filter-by-month:'.length));
+            setFilters((prev) => ({
+                ...prev,
+                month: monthKey,
+                allMonths: false,
+                monthMode: defaultLedgerMonthMode(monthStartDay),
+                dateRangeOverride: undefined,
+                budgetCategory: 'all',
+            }));
+            clearPageAction?.();
+            return;
+        }
+        if (pageAction.startsWith('filter-by-merchant:')) {
+            const merchant = decodeURIComponent(pageAction.slice('filter-by-merchant:'.length));
+            setFilters((prev) => ({
+                ...prev,
+                merchantQuery: merchant,
+                searchText: merchant,
+            }));
             clearPageAction?.();
             return;
         }
@@ -1729,9 +1760,14 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 monthMode: defaultLedgerMonthMode(monthStartDay),
                 dateRangeOverride: undefined,
                 budgetCategory: category || 'all',
-                type: 'expense',
+                nature: 'all',
+                expenseType: 'all',
             }));
+            window.setTimeout(() => {
+                transactionListRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 120);
             clearPageAction?.();
+            return;
         }
     }, [pageAction, clearPageAction, monthStartDay]);
 
@@ -2238,7 +2274,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             <div className="cards-grid grid grid-cols-1 lg:grid-cols-2">
                  <AIAdvisor pageContext="cashflow" contextData={{ transactions: filteredTransactions, budgets: data?.budgets ?? [] }} />
                  <SectionCard title="Expense Breakdown" className="h-[400px] flex flex-col" collapsible collapsibleSummary="Category chart" defaultExpanded>
-                    <div className="flex-1 min-h-0"><ExpenseBreakdownChart data={expenseBreakdown} /></div>
+                    <div className="flex-1 min-h-0"><ExpenseBreakdownChart data={expenseBreakdown} dataContext={data} setActivePage={setActivePage} triggerPageAction={triggerPageAction} /></div>
                 </SectionCard>
             </div>
 
@@ -2331,6 +2367,25 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                     <select value={filters.accountId} onChange={(e) => setFilters({...filters, accountId: e.target.value})} className="select-base w-auto min-w-[160px]">
                         <option value="all">All Accounts</option>
                         {availableAccounts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    <input
+                        type="search"
+                        placeholder="Search description / merchant"
+                        value={filters.searchText}
+                        onChange={(e) => setFilters((f) => ({ ...f, searchText: e.target.value }))}
+                        className="input-base w-auto min-w-[180px] text-sm"
+                        aria-label="Search transactions"
+                    />
+                    <select
+                        value={filters.approvalStatus}
+                        onChange={(e) => setFilters((f) => ({ ...f, approvalStatus: e.target.value as typeof filters.approvalStatus }))}
+                        className="select-base w-auto min-w-[120px] text-sm"
+                        aria-label="Approval status"
+                    >
+                        <option value="all">All statuses</option>
+                        <option value="Approved">Approved</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Rejected">Rejected</option>
                     </select>
                     <div className="flex items-center gap-1">
                         <span className="text-xs font-medium text-slate-500 mr-1">Nature:</span>

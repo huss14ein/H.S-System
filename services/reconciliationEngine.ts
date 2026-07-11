@@ -3,9 +3,15 @@
  * Holdings vs buy/sell ledger; dividends vs cash; liability vs payments; exception report.
  */
 
-import type { Holding, InvestmentTransaction, Liability, Transaction } from '../types';
+import type { CorporateActionEvent, Holding, InvestmentPortfolio, InvestmentTransaction, Liability, Transaction } from '../types';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
+import { applyCorporateAction } from './corporateActions';
+import {
+  corporateActionFromEvent,
+  corporateActionEventToRow,
+  resolveManualPortfolioInitialHoldings,
+} from './corporateActionApply';
 
 /** Compare sum of (buy - sell) quantity to current holding quantity. */
 export function reconcileHoldings(args: {
@@ -23,6 +29,64 @@ export function reconcileHoldings(args: {
   const drift = stored - ledger;
   const ok = Math.abs(drift) < 0.0001;
   return { ledgerQuantity: ledger, storedQuantity: stored, drift, ok };
+}
+
+/** Replay-aware holdings reconcile — accounts for stock splits and other corporate actions. */
+export function reconcileHoldingsWithCorporateActionsSync(args: {
+  portfolio: InvestmentPortfolio;
+  symbol: string;
+  transactions: InvestmentTransaction[];
+  corporateActionEvents: CorporateActionEvent[];
+}): { ledgerQuantity: number; storedQuantity: number; drift: number; ok: boolean } {
+  const sym = String(args.symbol ?? '').toUpperCase();
+  const holding = args.portfolio.holdings?.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
+  const stored = Math.max(0, Number(holding?.quantity) || 0);
+  const portfolioTxs = args.transactions.filter(
+    (t) => (t.portfolioId === args.portfolio.id || !t.portfolioId) && String(t.symbol ?? '').toUpperCase() === sym,
+  );
+  const hasSymbolBuys = portfolioTxs.some((t) => isInvestmentTransactionType(t.type, 'buy'));
+  const events = args.corporateActionEvents
+    .filter(
+      (e) =>
+        e.portfolioId === args.portfolio.id &&
+        e.status !== 'reversed' &&
+        String(e.symbol ?? '').toUpperCase() === sym,
+    )
+    .sort((a, b) => String(a.executionDate).localeCompare(String(b.executionDate)));
+  const rows = events.map(corporateActionEventToRow);
+
+  let holdingLike: { quantity: number; avgCost: number };
+  if (hasSymbolBuys) {
+    let ledgerQty = 0;
+    portfolioTxs.forEach((t) => {
+      if (isInvestmentTransactionType(t.type, 'buy')) ledgerQty += Math.max(0, Number(t.quantity) || 0);
+      if (isInvestmentTransactionType(t.type, 'sell')) ledgerQty -= Math.max(0, Number(t.quantity) || 0);
+    });
+    holdingLike = { quantity: Math.max(0, ledgerQty), avgCost: Number(holding?.avgCost) || 0 };
+  } else if (events.length > 0) {
+    const seed = resolveManualPortfolioInitialHoldings(args.portfolio, rows, 'replay_derived').find(
+      (h) => h.symbol === sym,
+    );
+    holdingLike = seed ?? { quantity: stored, avgCost: Number(holding?.avgCost) || 0 };
+  } else {
+    holdingLike = { quantity: 0, avgCost: Number(holding?.avgCost) || 0 };
+  }
+
+  for (const ev of events) {
+    const applied = applyCorporateAction({
+      action: corporateActionFromEvent(ev),
+      holding: holdingLike,
+    });
+    holdingLike = { quantity: applied.quantity, avgCost: applied.avgCost };
+  }
+  const expected = holdingLike.quantity;
+  const drift = stored - expected;
+  return {
+    ledgerQuantity: expected,
+    storedQuantity: stored,
+    drift,
+    ok: Math.abs(drift) < 0.0001,
+  };
 }
 
 /** Sum dividend transactions for an account vs expected (from holdings); simplified. */

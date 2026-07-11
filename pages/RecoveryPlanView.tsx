@@ -105,7 +105,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const { data, getAvailableCashForAccount, addPlannedTrade } = ctx;
   const { exchangeRate } = useCurrency();
   const { trackAction } = useSelfLearning();
-  const { simulatedPrices } = useInvestmentsCanonicalMetrics();
+  const { simulatedPrices, liveQuotePrices } = useInvestmentsCanonicalMetrics();
   const { symbolQuoteUpdatedAt } = useMarketQuoteMeta();
   const { formatCurrencyString } = useFormatCurrency();
   const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
@@ -325,12 +325,12 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
   const watchlistScores = useMemo(() => {
     const changeBySymbol: Record<string, number> = {};
-    for (const [sym, q] of Object.entries(simulatedPrices ?? {})) {
+    for (const [sym, q] of Object.entries(liveQuotePrices ?? {})) {
       const ch = Number((q as { change?: number })?.change);
       if (Number.isFinite(ch)) changeBySymbol[sym.toUpperCase()] = ch;
     }
     return buildWatchlistScoresFromItems(data?.watchlist ?? [], changeBySymbol);
-  }, [data?.watchlist, simulatedPrices]);
+  }, [data?.watchlist, liveQuotePrices]);
 
   const unifiedRecoveryPlan = useMemo(() => {
     if (!selected || !selectedPlan || selectedPlan.currentPrice <= 0) return null;

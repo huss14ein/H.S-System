@@ -1,10 +1,17 @@
-import type { Account, FinancialData, Holding, InvestmentPortfolio, InvestmentTransaction } from '../types';
+import type {
+  Account,
+  FinancialData,
+  Holding,
+  InvestmentCostLot,
+  InvestmentPortfolio,
+  InvestmentTransaction,
+} from '../types';
 import { calendarDayStartMs } from '../utils/financialMonth';
 import { financialMonthRange } from '../utils/financialMonth';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { investmentTransactionCashAmountSarDated } from '../utils/investmentTransactionSar';
 import { toSAR } from '../utils/currencyMath';
-import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
+import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote } from '../utils/holdingValuation';
 import { getPersonalInvestmentTransactionsForKpis } from './investmentKpiCore';
 import { buildInvestmentAccountKpiScope } from './investmentAccountKpiScope';
 import {
@@ -20,6 +27,12 @@ import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolio
 import { resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
 import { yieldToMain } from '../utils/yieldToMain';
+import {
+  allocateFifoSell,
+  openCostLotFromBuy,
+  type CostLot,
+  type LotSellAllocation,
+} from './investmentCostLots';
 
 export type PortfolioPeriodPnLBreakdown = {
   /** Realized on sells + dividends − fees/vat in the window (ledger, SAR). */
@@ -37,6 +50,9 @@ export type PortfolioPeriodPnLRow = {
   bookCurrency: ReturnType<typeof resolveInvestmentPortfolioCurrency>;
   valueSar: number;
   dailyPnLSar: number;
+  /** Cash slice at period end — aligns daily series with summary mark-to-market. */
+  endCashSar: number;
+  singlePortfolioOnAccount: boolean;
   weekly: PortfolioPeriodPnLBreakdown;
   monthly: PortfolioPeriodPnLBreakdown;
 };
@@ -211,6 +227,22 @@ function ledgerLotsMatchHoldings(lots: Map<string, Lot>, portfolio: InvestmentPo
 
 type SeededLedgerState = { state: LedgerReplayState; ledgerExplainsHoldings: boolean };
 
+function symbolsWithBuysInRange(
+  transactions: InvestmentTransaction[],
+  startMs: number,
+  endMs: number,
+): Set<string> {
+  const out = new Set<string>();
+  for (const tx of transactions) {
+    if (!isInvestmentTransactionType(tx.type, 'buy')) continue;
+    const day = txDayMs(tx);
+    if (Number.isNaN(day) || day < startMs || day > endMs) continue;
+    const sym = String(tx.symbol ?? '').trim().toUpperCase();
+    if (sym) out.add(sym);
+  }
+  return out;
+}
+
 /**
  * When ledger replay cannot explain current holdings (imported positions, missing buys),
  * seed lots from holdings and avoid orphan deposit cash that would double-count vs end value.
@@ -219,20 +251,35 @@ function seedLedgerStateFromHoldingsIfEmpty(
   state: LedgerReplayState,
   portfolio: InvestmentPortfolio,
   sarPerUsd: number,
+  options?: { excludeSymbols?: Set<string> },
 ): SeededLedgerState {
-  if (state.lots.size > 0 && ledgerLotsMatchHoldings(state.lots, portfolio)) {
+  const exclude = options?.excludeSymbols ?? new Set<string>();
+  const filteredHoldings = (portfolio.holdings ?? []).filter((h) => {
+    const sym = String(h.symbol ?? '').trim().toUpperCase();
+    return sym && !exclude.has(sym);
+  });
+  const portfolioForMatch =
+    filteredHoldings.length === (portfolio.holdings ?? []).length
+      ? portfolio
+      : { ...portfolio, holdings: filteredHoldings };
+
+  if (state.lots.size > 0 && ledgerLotsMatchHoldings(state.lots, portfolioForMatch)) {
     return { state, ledgerExplainsHoldings: true };
   }
   const book = resolveInvestmentPortfolioCurrency(portfolio);
   const lots = new Map<string, Lot>();
-  for (const h of portfolio.holdings ?? []) {
+  for (const h of filteredHoldings) {
     const sym = String(h.symbol ?? '').trim().toUpperCase();
     const qty = Number(h.quantity ?? 0);
     const avg = Number(h.avgCost ?? 0);
     if (!(sym && qty > 0 && avg > 0)) continue;
     lots.set(sym, { qty, avgCostSar: toSAR(avg, book, sarPerUsd) });
   }
-  return { state: { lots, cashSar: 0 }, ledgerExplainsHoldings: false };
+  const seededFromHoldings = lots.size > 0;
+  return {
+    state: { lots, cashSar: seededFromHoldings ? 0 : state.cashSar },
+    ledgerExplainsHoldings: seededFromHoldings ? false : state.lots.size > 0,
+  };
 }
 
 function holdingLiveValueSarForLot(
@@ -270,6 +317,10 @@ export function computePortfolioSnapshotValueSar(args: {
   for (const [sym, lot] of args.state.lots) {
     if (!(lot.qty > 0)) continue;
     const holding = holdingsBySym.get(sym);
+    if (holding && !holdingUsesLiveQuote(holding)) {
+      holdingsSar += holdingLiveValueSarForLot(holding, lot.qty, book, {}, args.sarPerUsd);
+      continue;
+    }
     if (args.useLiveMark && holding) {
       holdingsSar += holdingLiveValueSarForLot(holding, lot.qty, book, args.simulatedPrices, args.sarPerUsd);
     } else {
@@ -322,8 +373,11 @@ export function computePortfolioMarkToMarketPeriodPnLSar(args: {
   data: FinancialData;
   sarPerUsd: number;
   simulatedPrices: SimulatedPriceMap;
+  /** When non-empty for this portfolio, realized sells use FIFO instead of WAC replay. */
+  costLots?: InvestmentCostLot[];
 }): PortfolioPeriodPnLBreakdown {
   const startThroughMs = Math.max(0, args.startMs - 1);
+  const inPeriodBuySymbols = symbolsWithBuysInRange(args.transactions, args.startMs, args.endMs);
   const { state: startState, ledgerExplainsHoldings } = seedLedgerStateFromHoldingsIfEmpty(
     replayPortfolioLedgerStateThrough({
       transactions: args.transactions,
@@ -335,13 +389,15 @@ export function computePortfolioMarkToMarketPeriodPnLSar(args: {
     }),
     args.portfolio,
     args.sarPerUsd,
+    { excludeSymbols: inPeriodBuySymbols },
   );
   const holdingsStartSar = computePortfolioSnapshotValueSar({
     portfolio: args.portfolio,
     state: startState,
     sarPerUsd: args.sarPerUsd,
     simulatedPrices: args.simulatedPrices,
-    useLiveMark: true,
+    /** Cost basis at period start — end uses live mark so week/month P/L reflects price movement. */
+    useLiveMark: false,
     includeCash: false,
   });
   const startCashSar =
@@ -362,7 +418,7 @@ export function computePortfolioMarkToMarketPeriodPnLSar(args: {
     sarPerUsd: args.sarPerUsd,
   });
 
-  const ledgerSar = computePortfolioLedgerPnLSarInRange({
+  const ledgerSar = computePortfolioLedgerPnLSarInRangeWithFifo({
     transactions: args.transactions,
     startMs: args.startMs,
     endMs: args.endMs,
@@ -370,6 +426,8 @@ export function computePortfolioMarkToMarketPeriodPnLSar(args: {
     portfolios: args.portfolios,
     data: args.data,
     sarPerUsd: args.sarPerUsd,
+    portfolioId: args.portfolio.id,
+    costLots: args.costLots,
   });
 
   const totalSar = args.endValueSar - startValueSar - externalFlowSar;
@@ -428,6 +486,129 @@ export function computePortfolioLedgerPnLSarInRange(args: {
   return realized + dividends - fees;
 }
 
+/** Active FIFO cost lots for a portfolio (presence gates FIFO ledger path). */
+export function investmentCostLotsForPortfolio(
+  costLots: InvestmentCostLot[] | null | undefined,
+  portfolioId: string,
+): InvestmentCostLot[] {
+  return (costLots ?? []).filter(
+    (l) => l.portfolioId === portfolioId && (l.quantityRemaining ?? 0) > 1e-9,
+  );
+}
+
+export function portfolioUsesFifoLedger(
+  costLots: InvestmentCostLot[] | null | undefined,
+  portfolioId: string,
+): boolean {
+  return investmentCostLotsForPortfolio(costLots, portfolioId).length > 0;
+}
+
+function txSellPricePerShare(tx: InvestmentTransaction): number {
+  const qty = Math.abs(Number(tx.quantity) || 0);
+  const total = Math.abs(Number(tx.total) || Number(tx.price) * qty || 0);
+  return qty > 0 ? total / qty : Number(tx.price) || 0;
+}
+
+function txBookCurrency(tx: InvestmentTransaction, fallback: 'SAR' | 'USD'): 'SAR' | 'USD' {
+  return tx.currency === 'USD' || tx.currency === 'SAR' ? tx.currency : fallback;
+}
+
+function fifoAllocationCostSar(
+  allocations: LotSellAllocation[],
+  lotsBeforeSell: CostLot[],
+  fallbackBook: 'SAR' | 'USD',
+  sarPerUsd: number,
+): number {
+  const lotBookById = new Map(lotsBeforeSell.map((l) => [l.id, l.bookCurrency]));
+  return allocations.reduce((s, a) => {
+    const book = lotBookById.get(a.lotId) ?? fallbackBook;
+    return s + toSAR(a.quantity * a.costPerShare, book, sarPerUsd);
+  }, 0);
+}
+
+function applyFifoBuy(fifoLots: CostLot[], tx: InvestmentTransaction, defaultBook: 'SAR' | 'USD'): void {
+  const sym = String(tx.symbol ?? '').trim().toUpperCase();
+  const qty = Math.abs(Number(tx.quantity) || 0);
+  if (!(sym && qty > 0)) return;
+  fifoLots.push(
+    openCostLotFromBuy({
+      id: `lot-${tx.id}`,
+      symbol: sym,
+      acquisitionDate: String(tx.date ?? '').slice(0, 10),
+      quantity: qty,
+      costPerShare: txSellPricePerShare(tx),
+      bookCurrency: txBookCurrency(tx, defaultBook),
+    }),
+  );
+}
+
+/** Ledger P/L in [startMs, endMs]: FIFO realized sells when cost lots exist; else WAC replay. */
+export function computePortfolioLedgerPnLSarInRangeWithFifo(args: {
+  transactions: InvestmentTransaction[];
+  startMs: number;
+  endMs: number;
+  accounts: Account[];
+  portfolios: InvestmentPortfolio[];
+  data: FinancialData;
+  sarPerUsd: number;
+  portfolioId: string;
+  costLots?: InvestmentCostLot[];
+}): number {
+  const lotsForPortfolio = investmentCostLotsForPortfolio(
+    args.costLots ?? args.data.investmentCostLots,
+    args.portfolioId,
+  );
+  if (lotsForPortfolio.length === 0) {
+    return computePortfolioLedgerPnLSarInRange(args);
+  }
+
+  const portfolio = args.portfolios.find((p) => p.id === args.portfolioId);
+  const defaultBook = portfolio ? resolveInvestmentPortfolioCurrency(portfolio) : 'SAR';
+
+  let fifoLots: CostLot[] = [];
+  let realized = 0;
+  let dividends = 0;
+  let fees = 0;
+  const sorted = [...args.transactions].sort(sortTxsAsc);
+
+  for (const tx of sorted) {
+    const day = txDayMs(tx);
+    if (Number.isNaN(day)) continue;
+    const sym = String(tx.symbol ?? '').trim().toUpperCase();
+    const qty = Math.abs(Number(tx.quantity) || 0);
+    const txCashSar = cashSarForTx({ tx, ...args });
+    const book = txBookCurrency(tx, defaultBook);
+
+    if (day < args.startMs) {
+      if (isInvestmentTransactionType(tx.type, 'buy') && sym && qty > 0) {
+        applyFifoBuy(fifoLots, tx, defaultBook);
+      } else if (isInvestmentTransactionType(tx.type, 'sell') && sym && qty > 0) {
+        const sellPx = txSellPricePerShare(tx);
+        fifoLots = allocateFifoSell(fifoLots, sym, qty, sellPx).remainingLots;
+      }
+      continue;
+    }
+    if (day > args.endMs) continue;
+
+    if (isInvestmentTransactionType(tx.type, 'buy') && sym && qty > 0) {
+      applyFifoBuy(fifoLots, tx, defaultBook);
+    } else if (isInvestmentTransactionType(tx.type, 'sell') && sym && qty > 0) {
+      const sellPx = txSellPricePerShare(tx);
+      const lotsBefore = fifoLots;
+      const { allocations, remainingLots } = allocateFifoSell(fifoLots, sym, qty, sellPx);
+      fifoLots = remainingLots;
+      const costSar = fifoAllocationCostSar(allocations, lotsBefore, book, args.sarPerUsd);
+      realized += txCashSar - costSar;
+    } else if (isInvestmentTransactionType(tx.type, 'dividend')) {
+      dividends += txCashSar;
+    } else if (isInvestmentTransactionType(tx.type, 'fee') || isInvestmentTransactionType(tx.type, 'vat')) {
+      fees += txCashSar;
+    }
+  }
+
+  return realized + dividends - fees;
+}
+
 function weekWindowMs(now: Date): { startMs: number; endMs: number } {
   const end = new Date(now);
   end.setHours(23, 59, 59, 999);
@@ -472,6 +653,7 @@ export function computePortfolioPeriodPnLSummary(args: {
 
   const allTx = getPersonalInvestmentTransactionsForKpis(data);
   const allInvestments = data.investments ?? [];
+  const allCostLots = data.investmentCostLots ?? [];
   const week = weekWindowMs(now);
   const month = financialMonthWindowMs(now, monthStartDay);
 
@@ -581,6 +763,7 @@ export function computePortfolioPeriodPnLSummary(args: {
         data,
         sarPerUsd,
         simulatedPrices,
+        costLots: allCostLots,
       });
       const monthly = computePortfolioMarkToMarketPeriodPnLSar({
         portfolio: p,
@@ -596,6 +779,7 @@ export function computePortfolioPeriodPnLSummary(args: {
         data,
         sarPerUsd,
         simulatedPrices,
+        costLots: allCostLots,
       });
 
       rows.push({
@@ -605,6 +789,8 @@ export function computePortfolioPeriodPnLSummary(args: {
         bookCurrency: book,
         valueSar: endValueSar,
         dailyPnLSar: metrics.dailyPnLSAR,
+        endCashSar,
+        singlePortfolioOnAccount: sorted.length === 1,
         weekly,
         monthly,
       });
@@ -623,6 +809,64 @@ export function computePortfolioPeriodPnLSummary(args: {
 /** Lookup map for UI surfaces (Investments portfolio rows, etc.). */
 export function portfolioPeriodPnLMap(summary: PortfolioPeriodPnLSummary): Map<string, PortfolioPeriodPnLRow> {
   return new Map(summary.rows.map((r) => [r.portfolioId, r]));
+}
+
+/** Stable fingerprint for React hooks — holdings, txs, and live marks all invalidate period P/L. */
+export function portfolioPeriodPnLInputsFingerprint(args: {
+  data: FinancialData | null | undefined;
+  portfolios: InvestmentPortfolio[];
+  sarPerUsd: number;
+  monthStartDay: number;
+  simulatedPrices: SimulatedPriceMap;
+}): string {
+  const holdingSig = args.portfolios
+    .map((p) =>
+      (p.holdings ?? [])
+        .map((h) =>
+          [
+            h.id ?? '',
+            h.symbol ?? '',
+            h.quantity ?? 0,
+            h.currentValue ?? 0,
+            h.avgCost ?? 0,
+            h.holdingType ?? '',
+          ].join(','),
+        )
+        .join('|'),
+    )
+    .join(';');
+  const priceSig = Object.keys(args.simulatedPrices)
+    .sort()
+    .map((k) => {
+      const row = args.simulatedPrices[k];
+      return `${k}:${row?.price ?? ''}:${row?.changePercent ?? ''}`;
+    })
+    .join('|');
+  const costLotSig = (args.data?.investmentCostLots ?? [])
+    .map((l) =>
+      [
+        l.portfolioId,
+        l.symbol,
+        l.quantityRemaining,
+        l.costPerShare,
+        l.acquisitionDate,
+      ].join(':'),
+    )
+    .sort()
+    .join('|');
+  return [
+    args.data?.investmentTransactions?.length ?? 0,
+    args.portfolios.length,
+    args.portfolios
+      .map((p) => p.id)
+      .sort()
+      .join(','),
+    holdingSig,
+    priceSig,
+    costLotSig,
+    args.sarPerUsd,
+    args.monthStartDay,
+  ].join(':');
 }
 
 export type PortfolioPnLDailyPoint = {
@@ -751,6 +995,59 @@ function seedLedgerPnLLotsBeforeWindow(
   }
 }
 
+function seedLedgerFifoLotsBeforeWindow(
+  transactions: InvestmentTransaction[],
+  startMs: number,
+  defaultBook: 'SAR' | 'USD',
+): CostLot[] {
+  let fifoLots: CostLot[] = [];
+  const sorted = [...transactions].sort(sortTxsAsc);
+  for (const tx of sorted) {
+    const day = txDayMs(tx);
+    if (Number.isNaN(day) || day >= startMs) break;
+    const sym = String(tx.symbol ?? '').trim().toUpperCase();
+    const qty = Math.abs(Number(tx.quantity) || 0);
+    if (isInvestmentTransactionType(tx.type, 'buy') && sym && qty > 0) {
+      applyFifoBuy(fifoLots, tx, defaultBook);
+    } else if (isInvestmentTransactionType(tx.type, 'sell') && sym && qty > 0) {
+      const sellPx = txSellPricePerShare(tx);
+      fifoLots = allocateFifoSell(fifoLots, sym, qty, sellPx).remainingLots;
+    }
+  }
+  return fifoLots;
+}
+
+function applyTxToLedgerPnLFifo(
+  fifoLots: CostLot[],
+  tx: InvestmentTransaction,
+  ctx: LedgerTxContext,
+  defaultBook: 'SAR' | 'USD',
+): { lots: CostLot[]; delta: number } {
+  const sym = String(tx.symbol ?? '').trim().toUpperCase();
+  const qty = Math.abs(Number(tx.quantity) || 0);
+  const txCashSar = cashSarForTx({ tx, ...ctx });
+  const book = txBookCurrency(tx, defaultBook);
+
+  if (isInvestmentTransactionType(tx.type, 'buy') && sym && qty > 0) {
+    applyFifoBuy(fifoLots, tx, defaultBook);
+    return { lots: fifoLots, delta: 0 };
+  }
+  if (isInvestmentTransactionType(tx.type, 'sell') && sym && qty > 0) {
+    const sellPx = txSellPricePerShare(tx);
+    const lotsBefore = fifoLots;
+    const { allocations, remainingLots } = allocateFifoSell(fifoLots, sym, qty, sellPx);
+    const costSar = fifoAllocationCostSar(allocations, lotsBefore, book, ctx.sarPerUsd);
+    return { lots: remainingLots, delta: txCashSar - costSar };
+  }
+  if (isInvestmentTransactionType(tx.type, 'dividend')) {
+    return { lots: fifoLots, delta: txCashSar };
+  }
+  if (isInvestmentTransactionType(tx.type, 'fee') || isInvestmentTransactionType(tx.type, 'vat')) {
+    return { lots: fifoLots, delta: -txCashSar };
+  }
+  return { lots: fifoLots, delta: 0 };
+}
+
 function buildPortfolioDailySeriesInWindow(args: {
   portfolio: InvestmentPortfolio;
   transactions: InvestmentTransaction[];
@@ -778,6 +1075,7 @@ function buildPortfolioDailySeriesInWindow(args: {
   };
   const sorted = [...args.transactions].sort(sortTxsAsc);
   const startThroughMs = Math.max(0, args.startMs - 1);
+  const inPeriodBuySymbols = symbolsWithBuysInRange(args.transactions, args.startMs, args.endMs);
   const { state: replayState, ledgerExplainsHoldings } = seedLedgerStateFromHoldingsIfEmpty(
     replayPortfolioLedgerStateThrough({
       transactions: args.transactions,
@@ -786,13 +1084,14 @@ function buildPortfolioDailySeriesInWindow(args: {
     }),
     args.portfolio,
     args.sarPerUsd,
+    { excludeSymbols: inPeriodBuySymbols },
   );
   const holdingsStartSar = computePortfolioSnapshotValueSar({
     portfolio: args.portfolio,
     state: replayState,
     sarPerUsd: args.sarPerUsd,
     simulatedPrices: args.simulatedPrices,
-    useLiveMark: true,
+    useLiveMark: false,
     includeCash: false,
   });
   const endCashSar = Math.max(0, args.endCashSar ?? 0);
@@ -804,8 +1103,16 @@ function buildPortfolioDailySeriesInWindow(args: {
         : 0;
   const startValueSar = holdingsStartSar + startCashSar;
 
+  const defaultBook = resolveInvestmentPortfolioCurrency(args.portfolio);
+  const useFifoLedger = portfolioUsesFifoLedger(args.data.investmentCostLots, args.portfolio.id);
+
   const ledgerLots = new Map<string, Lot>();
-  seedLedgerPnLLotsBeforeWindow(ledgerLots, args.transactions, args.startMs, ctx);
+  let fifoLedgerLots: CostLot[] = [];
+  if (useFifoLedger) {
+    fifoLedgerLots = seedLedgerFifoLotsBeforeWindow(args.transactions, args.startMs, defaultBook);
+  } else {
+    seedLedgerPnLLotsBeforeWindow(ledgerLots, args.transactions, args.startMs, ctx);
+  }
 
   let txIdx = 0;
   while (txIdx < sorted.length && txDayMs(sorted[txIdx]!) < args.startMs) txIdx++;
@@ -825,7 +1132,13 @@ function buildPortfolioDailySeriesInWindow(args: {
       if (Number.isNaN(dayMs) || dayMs > dayEndMs) break;
       if (dayMs >= args.startMs) {
         applyTxToLedgerReplayState(replayState, tx, ctx);
-        ledgerToDate += applyTxToLedgerPnLLots(ledgerLots, tx, ctx);
+        if (useFifoLedger) {
+          const { lots, delta } = applyTxToLedgerPnLFifo(fifoLedgerLots, tx, ctx, defaultBook);
+          fifoLedgerLots = lots;
+          ledgerToDate += delta;
+        } else {
+          ledgerToDate += applyTxToLedgerPnLLots(ledgerLots, tx, ctx);
+        }
         const cashSar = cashSarForTx({ tx, ...ctx });
         if (isInvestmentTransactionType(tx.type, 'deposit')) externalToDate += cashSar;
         else if (isInvestmentTransactionType(tx.type, 'withdrawal')) externalToDate -= cashSar;
@@ -970,6 +1283,8 @@ export function computePortfolioPnLDailySeries(args: {
         startMs: week.startMs,
         endMs: week.endMs,
         endValueSar: row.valueSar,
+        endCashSar: row.endCashSar,
+        singlePortfolioOnAccount: row.singlePortfolioOnAccount,
         includeCash: true,
         accounts: args.accounts,
         portfolios: args.portfolios,
@@ -984,6 +1299,8 @@ export function computePortfolioPnLDailySeries(args: {
         startMs: month.startMs,
         endMs: month.endMs,
         endValueSar: row.valueSar,
+        endCashSar: row.endCashSar,
+        singlePortfolioOnAccount: row.singlePortfolioOnAccount,
         includeCash: true,
         accounts: args.accounts,
         portfolios: args.portfolios,
@@ -1041,6 +1358,7 @@ async function buildPortfolioDailySeriesInWindowAsync(
   };
   const sorted = [...args.transactions].sort(sortTxsAsc);
   const startThroughMs = Math.max(0, args.startMs - 1);
+  const inPeriodBuySymbols = symbolsWithBuysInRange(args.transactions, args.startMs, args.endMs);
   const { state: replayState, ledgerExplainsHoldings } = seedLedgerStateFromHoldingsIfEmpty(
     replayPortfolioLedgerStateThrough({
       transactions: args.transactions,
@@ -1049,13 +1367,14 @@ async function buildPortfolioDailySeriesInWindowAsync(
     }),
     args.portfolio,
     args.sarPerUsd,
+    { excludeSymbols: inPeriodBuySymbols },
   );
   const holdingsStartSar = computePortfolioSnapshotValueSar({
     portfolio: args.portfolio,
     state: replayState,
     sarPerUsd: args.sarPerUsd,
     simulatedPrices: args.simulatedPrices,
-    useLiveMark: true,
+    useLiveMark: false,
     includeCash: false,
   });
   const endCashSar = Math.max(0, args.endCashSar ?? 0);
@@ -1067,8 +1386,16 @@ async function buildPortfolioDailySeriesInWindowAsync(
         : 0;
   const startValueSar = holdingsStartSar + startCashSar;
 
+  const defaultBook = resolveInvestmentPortfolioCurrency(args.portfolio);
+  const useFifoLedger = portfolioUsesFifoLedger(args.data.investmentCostLots, args.portfolio.id);
+
   const ledgerLots = new Map<string, Lot>();
-  seedLedgerPnLLotsBeforeWindow(ledgerLots, args.transactions, args.startMs, ctx);
+  let fifoLedgerLots: CostLot[] = [];
+  if (useFifoLedger) {
+    fifoLedgerLots = seedLedgerFifoLotsBeforeWindow(args.transactions, args.startMs, defaultBook);
+  } else {
+    seedLedgerPnLLotsBeforeWindow(ledgerLots, args.transactions, args.startMs, ctx);
+  }
 
   let txIdx = 0;
   while (txIdx < sorted.length && txDayMs(sorted[txIdx]!) < args.startMs) txIdx++;
@@ -1090,7 +1417,13 @@ async function buildPortfolioDailySeriesInWindowAsync(
       if (Number.isNaN(dayMs) || dayMs > dayEndMs) break;
       if (dayMs >= args.startMs) {
         applyTxToLedgerReplayState(replayState, tx, ctx);
-        ledgerToDate += applyTxToLedgerPnLLots(ledgerLots, tx, ctx);
+        if (useFifoLedger) {
+          const { lots, delta } = applyTxToLedgerPnLFifo(fifoLedgerLots, tx, ctx, defaultBook);
+          fifoLedgerLots = lots;
+          ledgerToDate += delta;
+        } else {
+          ledgerToDate += applyTxToLedgerPnLLots(ledgerLots, tx, ctx);
+        }
         const cashSar = cashSarForTx({ tx, ...ctx });
         if (isInvestmentTransactionType(tx.type, 'deposit')) externalToDate += cashSar;
         else if (isInvestmentTransactionType(tx.type, 'withdrawal')) externalToDate -= cashSar;
@@ -1157,6 +1490,7 @@ export async function computePortfolioPeriodPnLSummaryAsync(
 
   const allTx = getPersonalInvestmentTransactionsForKpis(data);
   const allInvestments = data.investments ?? [];
+  const allCostLots = data.investmentCostLots ?? [];
   const week = weekWindowMs(now);
   const month = financialMonthWindowMs(now, monthStartDay);
 
@@ -1268,6 +1602,7 @@ export async function computePortfolioPeriodPnLSummaryAsync(
         data,
         sarPerUsd,
         simulatedPrices,
+        costLots: allCostLots,
       });
       const monthly = computePortfolioMarkToMarketPeriodPnLSar({
         portfolio: p,
@@ -1283,6 +1618,7 @@ export async function computePortfolioPeriodPnLSummaryAsync(
         data,
         sarPerUsd,
         simulatedPrices,
+        costLots: allCostLots,
       });
 
       rows.push({
@@ -1292,6 +1628,8 @@ export async function computePortfolioPeriodPnLSummaryAsync(
         bookCurrency: book,
         valueSar: endValueSar,
         dailyPnLSar: metrics.dailyPnLSAR,
+        endCashSar,
+        singlePortfolioOnAccount: sorted.length === 1,
         weekly,
         monthly,
       });
@@ -1374,6 +1712,8 @@ export async function computePortfolioPnLDailySeriesAsync(
         portfolio: p,
         transactions: txsForLedger,
         endValueSar: row.valueSar,
+        endCashSar: row.endCashSar,
+        singlePortfolioOnAccount: row.singlePortfolioOnAccount,
         includeCash: true as const,
         accounts: args.accounts,
         portfolios: args.portfolios,

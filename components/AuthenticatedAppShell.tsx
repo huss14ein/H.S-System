@@ -25,6 +25,8 @@ import { pauseBackgroundWork, NAV_TRANSITION_PAUSE_MS } from '../utils/backgroun
 import { scheduleIdleWork } from '../utils/runWhenIdle';
 import { resumeQuoteRefreshAfterNav } from '../utils/navigationBridge';
 import { CanonicalFinancialMetricsProvider } from '../context/CanonicalFinancialMetricsContext';
+import { AnalyticsWorkspaceProvider } from '../context/AnalyticsWorkspaceContext';
+import { MetricPassportProvider } from '../context/MetricPassportContext';
 import { LanguageProvider } from '../context/LanguageContext';
 
 const VALID_PAGES: Page[] = [
@@ -267,6 +269,8 @@ const AuthenticatedAppShell: React.FC = () => {
                 <ExchangeRateSync />
                 <MarketDataProvider>
                   <CanonicalFinancialMetricsProvider>
+                  <MetricPassportProvider>
+                  <AnalyticsWorkspaceProvider>
                   <TodosProvider>
                     <NotificationsProvider>
                       <StatementProcessingProvider>
@@ -299,6 +303,8 @@ const AuthenticatedAppShell: React.FC = () => {
                       </StatementProcessingProvider>
                     </NotificationsProvider>
                   </TodosProvider>
+                  </AnalyticsWorkspaceProvider>
+                  </MetricPassportProvider>
                   </CanonicalFinancialMetricsProvider>
                 </MarketDataProvider>
               </CurrencyProvider>

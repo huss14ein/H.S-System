@@ -55,7 +55,9 @@ describe('live quotes E2E wiring', () => {
     const sim = read('components/MarketSimulator.tsx');
     expect(sim).toContain('persistCommodityQuotePrices');
     expect(sim).toContain('applyStoredQuoteFallback');
+    expect(sim).toContain('getLivePricesDeduped(toFetch, { forceFetch })');
     expect(read('services/quoteLiveFetchCoordinator.ts')).toContain('persistSanitizedLiveQuotes');
+    expect(read('services/quoteLiveFetchCoordinator.ts')).toContain('forceFetch');
     expect(read('context/MarketDataContext.tsx')).toContain('loadQuoteCacheRows');
   });
 
@@ -71,7 +73,9 @@ describe('live quotes E2E wiring', () => {
   it('all user refresh entry points force-fetch', () => {
     const header = read('components/Header.tsx');
     expect(header).toMatch(/refreshPrices\(\{ forceFetch: true \}\)/g);
-    expect(read('pages/Investments.tsx')).toContain('refreshPricesForPlatform');
+    expect(read('pages/Investments.tsx')).toContain('refreshPricesForPortfolio');
+    expect(read('pages/Investments.tsx')).toContain('portfolioHasRefreshableQuoteSymbols');
+    expect(read('context/MarketDataContext.tsx')).toContain('refreshPricesForPortfolio');
     expect(read('context/MarketDataContext.tsx')).toContain('forceFetch: true, manual: true');
   });
 

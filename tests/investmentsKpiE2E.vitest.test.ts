@@ -25,7 +25,20 @@ const portfolioData = {
     { id: 'chk', name: 'Checking', type: 'Checking', balance: 10000, currency: 'SAR' },
     { id: 'inv', name: 'Broker', type: 'Investment', balance: 0, currency: 'SAR' },
   ],
-  assets: [{ id: 's1', name: 'Sukuk', type: 'Sukuk', value: 3000 }],
+  assets: [],
+  sukukPositions: [
+    {
+      id: 's1',
+      name: 'Sukuk',
+      investmentAccountId: 'inv',
+      currency: 'SAR',
+      faceValue: 3000,
+      outstandingPrincipal: 3000,
+      issueDate: '2024-01-01',
+      maturityDate: '2027-01-01',
+      status: 'active',
+    },
+  ],
   liabilities: [],
   commodityHoldings: [{ id: 'c1', name: 'Gold', quantity: 2, currentValue: 8000, purchaseValue: 7000 }],
   investments: [
@@ -73,7 +86,7 @@ describe('Investments headline KPI E2E', () => {
       exposure!.platformsDailyPnLSar + exposure!.commoditiesDailyPnLSar,
       6,
     );
-    expect(row!.platformsRollupSAR + row!.commoditiesValueSAR + row!.sukukAssetsValueSAR).toBeCloseTo(
+    expect(row!.platformsRollupSAR + row!.commoditiesValueSAR + row!.sukukPositionsValueSAR).toBeCloseTo(
       row!.totalValue,
       0,
     );
@@ -126,8 +139,15 @@ describe('Investments headline KPI E2E', () => {
     expect(page).toContain('simulatedPrices: kpiQuotePrices');
   });
 
+  it('Investments metrics context exposes liveQuotePrices without overriding KPI map', () => {
+    const ctx = read('context/InvestmentsMetricsContext.tsx');
+    expect(ctx).toContain('liveQuotePrices');
+    expect(ctx).not.toContain('return { ...metrics, simulatedPrices }');
+  });
+
   it('InvestmentOverview weights use canonical metrics simulatedPrices', () => {
     const page = read('pages/InvestmentOverview.tsx');
+    expect(page).toContain('effectiveHoldingValueInBookCurrency');
     expect(page).toContain('simulatedPrices');
     expect(page).not.toContain('useLiveQuotePrices');
   });

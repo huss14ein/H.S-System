@@ -10,6 +10,17 @@ import {
 } from '../services/geminiService';
 import { InvestmentPortfolio, Holding, HoldingAssetClass, HOLDING_ASSET_CLASS_OPTIONS, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog, UniverseTicker, TradeCurrency } from '../types';
 import type { Page } from '../types';
+import SukukInvestmentsSection from '../components/investments/SukukInvestmentsSection';
+import CorporateActionApplyPanel from '../components/investments/CorporateActionApplyPanel';
+import CorporateActionWizard from '../components/investments/corporateActions/CorporateActionWizard';
+import {
+  clearCorporateActionWizardPlan,
+  readCorporateActionWizardPlan,
+} from '../services/corporateActionNavigation';
+import {
+  createInitialWizardState,
+  isCorporateActionWizardActionType,
+} from '../services/corporateActionWizardModel';
 import Modal from '../components/Modal';
 import { ArrowsRightLeftIcon } from '../components/icons/ArrowsRightLeftIcon';
 import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
@@ -27,6 +38,7 @@ import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
 import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
+import { portfolioHasRefreshableQuoteSymbols } from '../services/quoteRefreshSymbols';
 import { useMarketPrices, useMarketDebouncedPrices } from '../context/MarketDataContext';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useCurrency } from '../context/CurrencyContext';
@@ -80,10 +92,16 @@ import {
     quoteNotionalInBookCurrency,
     quoteDailyPnLInBookCurrency,
 } from '../utils/currencyMath';
-import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
+import { effectiveHoldingValueInBookCurrency, effectiveHoldingUnitPriceInBookCurrency, holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import type { PortfolioPeriodPnLRow, PortfolioPnLDailyPoint, PortfolioPeriodPnLSummary } from '../services/portfolioPeriodPnL';
 import { platformPeriodPnLFromSummary } from '../services/portfolioPeriodPnL';
+import PortfolioQuoteHealthChip from '../components/investments/PortfolioQuoteHealthChip';
+import { PortfolioPeriodPnLBreakdownDrawer } from '../components/investments/PortfolioPeriodPnLBreakdownDrawer';
+import { useMetricPassport } from '../context/MetricPassportContext';
+import { buildMetricPassportModel } from '../services/metricPassportModel';
+import { SECTION_HINT_KEYS } from '../content/sectionInfoHints';
+import { resolveZakatHoldingBadgeState, zakatHoldingBadgeLabel } from '../services/zakatHoldingBadge';
 import { usePortfolioPeriodPnLSnapshot } from '../hooks/usePortfolioPeriodPnLSnapshot';
 import { buildInvestmentAccountKpiScope } from '../services/investmentAccountKpiScope';
 import MiniPnLSparkline from '../components/analytics/MiniPnLSparkline';
@@ -120,7 +138,7 @@ import {
     financialMonthRange,
     financialMonthKeysEndingAt,
     financialMonthIsoKey,
-    financialMonthKey,
+    financialMonthKeyFromTransactionDate,
     financialMonthRangeFromKey,
     resolveMonthStartDayFromData,
     dateInRange,
@@ -135,7 +153,7 @@ const AIRebalancerView = lazy(() => import('./AIRebalancerView'));
 const WatchlistView = lazy(() => import('./WatchlistView'));
 const ExecutionHistoryView = lazy(() => import('./ExecutionHistoryView'));
 
-type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
+type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Sukuk' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
 
 function prefetchInvestmentTab(tab: InvestmentSubPage): void {
   switch (tab) {
@@ -207,6 +225,7 @@ class InvestmentTabErrorBoundary extends React.Component<
 const INVESTMENT_SUB_PAGES: { name: InvestmentSubPage; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [
     { name: 'Overview', icon: ChartPieIcon },
     { name: 'Portfolios', icon: Squares2X2Icon },
+    { name: 'Sukuk', icon: BuildingLibraryIcon },
     { name: 'Investment Plan', icon: ClipboardDocumentListIcon },
     { name: 'Recovery Plan', icon: ArrowsRightLeftIcon },
     { name: 'Dividend Tracker', icon: CurrencyDollarIcon },
@@ -1691,7 +1710,8 @@ const HoldingDetailModal: React.FC<{
     holding: (Holding & { gainLoss: number; gainLossPercent: number; priceChangePercent?: number }) | null;
     portfolio: InvestmentPortfolio | null;
     onRecordSell?: () => void;
-}> = ({ isOpen, onClose, holding, portfolio, onRecordSell }) => {
+    onCorporateAction?: () => void;
+}> = ({ isOpen, onClose, holding, portfolio, onRecordSell, onCorporateAction }) => {
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const sarPerUsd = useCanonicalSpotFx();
@@ -2160,15 +2180,26 @@ const HoldingDetailModal: React.FC<{
                         </div>
                     )}
                 </div>
-                {onRecordSell && holding && portfolio && (
+                {(onRecordSell || onCorporateAction) && holding && portfolio && (
                     <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-200">
-                        <button
-                            type="button"
-                            onClick={onRecordSell}
-                            className="px-4 py-2 text-sm font-semibold rounded-lg bg-rose-600 text-white hover:bg-rose-700 transition-colors"
-                        >
-                            Record sell for {holding.symbol}
-                        </button>
+                        {onCorporateAction && (
+                            <button
+                                type="button"
+                                onClick={onCorporateAction}
+                                className="px-4 py-2 text-sm font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                            >
+                                Corporate action…
+                            </button>
+                        )}
+                        {onRecordSell && (
+                            <button
+                                type="button"
+                                onClick={onRecordSell}
+                                className="px-4 py-2 text-sm font-semibold rounded-lg bg-rose-600 text-white hover:bg-rose-700 transition-colors"
+                            >
+                                Record sell for {holding.symbol}
+                            </button>
+                        )}
                     </div>
                 )}
             </div>
@@ -2224,8 +2255,9 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
     const needsManualMarketValue = useMemo(() => {
         if (!holding) return false;
         if (!holdingUsesLiveQuote(holding)) return true;
-        const sym = (holding.symbol || '').trim().toUpperCase();
-        const px = simulatedPrices[sym]?.price;
+        const sym = (holding.symbol || '').trim();
+        const row = lookupLiveQuoteForSymbol(simulatedPrices, sym);
+        const px = row?.price;
         return !(px != null && Number.isFinite(px) && px > 0);
     }, [holding, simulatedPrices]);
 
@@ -2545,16 +2577,18 @@ const PlatformCardInner: React.FC<{
     const { simulatedPrices: livePrices } = useMarketPrices();
     const throttledPrices = useDebouncedValue(livePrices, 500);
     const simulatedPrices = isExpanded ? livePrices : throttledPrices;
-    const { refreshPricesForPlatform, isRefreshing: quotesRefreshing, quotesRefreshUIScope } = useMarketQuoteMeta();
-    const thisPlatformSyncing =
-        quotesRefreshing &&
-        (quotesRefreshUIScope.mode === 'all' ||
-            (quotesRefreshUIScope.mode === 'platform' && quotesRefreshUIScope.accountId === platform.id));
+    const { refreshPricesForPortfolio, isRefreshing: quotesRefreshing, quotesRefreshUIScope, symbolQuoteUpdatedAt } = useMarketQuoteMeta();
     const portfoliosForMetrics = metricsPortfolios ?? portfolios;
     const showPersonalScopeNote = portfolios.length > portfoliosForMetrics.length;
     const { formatCurrencyString } = useFormatCurrency();
     const { data: dataCtx } = useContext(DataContext)!;
+    const { openPassport } = useMetricPassport();
     const [isTxnModalOpen, setIsTxnModalOpen] = useState(false);
+    const [pnlBreakdown, setPnlBreakdown] = useState<{
+        portfolioId: string;
+        portfolioName: string;
+        period: 'weekly' | 'monthly';
+    } | null>(null);
     const investmentsForInfer = useMemo(() => {
         if (!dataCtx) return [] as InvestmentPortfolio[];
         const pi = getPersonalInvestments(dataCtx);
@@ -2612,6 +2646,10 @@ const PlatformCardInner: React.FC<{
         () => [...portfolios].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })),
         [portfolios],
     );
+    const metricsSortedPortfolios = useMemo(
+        () => [...portfoliosForMetrics].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })),
+        [portfoliosForMetrics],
+    );
     useEffect(() => {
         if (sortedPortfolios.length === 0) return;
         setPortfolioExpanded((prev) => {
@@ -2636,7 +2674,7 @@ const PlatformCardInner: React.FC<{
             await yieldToMain();
             if (aborted) return;
             const bundle = computePortfolioMetricsBundle({
-                siblingPortfolios: sortedPortfolios,
+                siblingPortfolios: metricsSortedPortfolios,
                 transactions: metricsTransactions ?? transactions,
                 accounts: dataCtx?.accounts ?? [],
                 allInvestments: investmentsForInfer,
@@ -2654,7 +2692,7 @@ const PlatformCardInner: React.FC<{
         };
     }, [
         isExpanded,
-        sortedPortfolios,
+        metricsSortedPortfolios,
         transactions,
         metricsTransactions,
         dataCtx?.accounts,
@@ -2693,6 +2731,29 @@ const PlatformCardInner: React.FC<{
         }
         return { weekly, monthly, hasRow };
     }, [platform.id, metricsPortfolios, portfolios, portfolioPeriodPnLById, portfolioPnLSummary]);
+
+    const explainPlatformPeriodPnL = (key: 'weeklyPnL' | 'portfolioPeriodPnL', totalSar: number) => {
+        const model = buildMetricPassportModel(null, key, {
+            valueDisplay: formatCurrencyString(totalSar, { digits: 0 }),
+            statusLabel: totalSar >= 0 ? 'Gain' : 'Loss',
+            sarPerUsd,
+        });
+        if (model) openPassport(model);
+    };
+
+    const openPlatformBreakdown = (period: 'weekly' | 'monthly') => {
+        setPnlBreakdown({ portfolioId: platform.id, portfolioName: platform.name, period });
+    };
+
+    const breakdownData =
+        pnlBreakdown && portfolioPnLSummary
+            ? pnlBreakdown.portfolioId === platform.id
+                ? platformPeriodPnLFromSummary(portfolioPnLSummary, platform.id)[pnlBreakdown.period]
+                : (() => {
+                    const row = portfolioPnLSummary.rows.find((r) => r.portfolioId === pnlBreakdown.portfolioId);
+                    return row ? row[pnlBreakdown.period] : null;
+                })()
+            : null;
 
     return (
         <article className="platform-card w-full max-w-full bg-white rounded-2xl shadow-md flex flex-col overflow-hidden border border-slate-200 hover:shadow-md transition-shadow duration-300 ease-in-out min-w-0">
@@ -2739,22 +2800,52 @@ const PlatformCardInner: React.FC<{
                                     Managed portfolios on this platform are listed below; totals above reflect <strong>your</strong> portfolios and this account&apos;s cash only.
                                 </p>
                             ) : null}
+                            {portfolios.length > 0 ? (
+                                <div className="mt-3 flex flex-wrap items-center gap-4 text-sm" aria-label="Platform period P/L">
+                                    <div>
+                                        <div className="flex items-center gap-1">
+                                            <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">Week P/L</p>
+                                            <button type="button" className="text-[10px] font-semibold text-primary hover:underline" onClick={() => explainPlatformPeriodPnL('weeklyPnL', platformPeriodPnL.weekly)}>
+                                                Explain
+                                            </button>
+                                        </div>
+                                        <p className="font-bold tabular-nums" aria-busy={!periodPnLReady}>
+                                            {!periodPnLReady ? (
+                                                <span className="text-slate-400">…</span>
+                                            ) : platformPeriodPnL.hasRow ? (
+                                                <button type="button" className="hover:underline" onClick={() => openPlatformBreakdown('weekly')}>
+                                                    <CurrencyDualDisplay value={platformPeriodPnL.weekly} inCurrency="SAR" digits={0} size="base" colorize weight="bold" />
+                                                </button>
+                                            ) : (
+                                                <span className="text-slate-400">—</span>
+                                            )}
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <div className="flex items-center gap-1">
+                                            <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">Month P/L</p>
+                                            <button type="button" className="text-[10px] font-semibold text-primary hover:underline" onClick={() => explainPlatformPeriodPnL('portfolioPeriodPnL', platformPeriodPnL.monthly)}>
+                                                Explain
+                                            </button>
+                                        </div>
+                                        <p className="font-bold tabular-nums" aria-busy={!periodPnLReady}>
+                                            {!periodPnLReady ? (
+                                                <span className="text-slate-400">…</span>
+                                            ) : platformPeriodPnL.hasRow ? (
+                                                <button type="button" className="hover:underline" onClick={() => openPlatformBreakdown('monthly')}>
+                                                    <CurrencyDualDisplay value={platformPeriodPnL.monthly} inCurrency="SAR" digits={0} size="base" colorize weight="bold" />
+                                                </button>
+                                            ) : (
+                                                <span className="text-slate-400">—</span>
+                                            )}
+                                        </p>
+                                    </div>
+                                    <InfoHint text={SECTION_HINT_KEYS['key.investments.platformPeriodPnL']} hintId="platform-period-pnl" hintPage="Investments" />
+                                </div>
+                            ) : null}
                         </div>
                     </div>
                     <div className="flex flex-col sm:flex-row gap-2 shrink-0 w-full sm:w-auto">
-                        <button
-                            type="button"
-                            onClick={() => void refreshPricesForPlatform(platform.id)}
-                            disabled={thisPlatformSyncing}
-                            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-slate-700 rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50 transition-colors"
-                            title="Live quotes for this platform’s tickers only"
-                        >
-                            <ArrowPathIcon className={`h-4 w-4 ${thisPlatformSyncing ? 'animate-spin' : ''}`} aria-hidden />
-                            {thisPlatformSyncing ? 'Updating…' : 'Sync quotes (this platform)'}
-                        </button>
-                        <span className="hidden sm:inline-flex items-center self-center">
-                            <InfoHint text="Fetches market data only for symbols in this platform’s portfolios. Does not refresh watchlist, planned trades, or commodities — fewer API calls than the global Refresh prices control in the header." />
-                        </span>
                         <button type="button" onClick={() => setIsTxnModalOpen(true)} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-primary rounded-xl border-2 border-primary/30 hover:bg-primary/5 transition-colors">
                             <ArrowsRightLeftIcon className="h-4 w-4" /> Transaction Log
                         </button>
@@ -2826,44 +2917,6 @@ const PlatformCardInner: React.FC<{
                             <CurrencyDualDisplay value={dailyPnLSAR} inCurrency="SAR" digits={0} size="lg" colorize weight="bold" />
                         </dd>
                     </div>
-                    {portfolios.length > 0 ? (
-                        <>
-                            <div className="rounded-2xl bg-gradient-to-b from-white to-indigo-50/40 border border-indigo-100/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
-                                <dt
-                                    className="metric-label w-full text-[11px] font-semibold text-indigo-600 uppercase tracking-[0.14em] leading-tight"
-                                    title="Sum of portfolio week P/L on this platform — mark-to-market from 7 days ago, net of attributed deposits/withdrawals."
-                                >
-                                    Week P/L
-                                </dt>
-                                <dd className="metric-value w-full mt-1.5 flex justify-center" aria-busy={!periodPnLReady}>
-                                    {!periodPnLReady ? (
-                                        <span className="text-slate-400 text-lg font-bold tabular-nums">…</span>
-                                    ) : platformPeriodPnL.hasRow ? (
-                                        <CurrencyDualDisplay value={platformPeriodPnL.weekly} inCurrency="SAR" digits={0} size="lg" colorize weight="bold" />
-                                    ) : (
-                                        <span className="text-slate-400 text-sm">—</span>
-                                    )}
-                                </dd>
-                            </div>
-                            <div className="rounded-2xl bg-gradient-to-b from-white to-violet-50/40 border border-violet-100/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
-                                <dt
-                                    className="metric-label w-full text-[11px] font-semibold text-violet-600 uppercase tracking-[0.14em] leading-tight"
-                                    title="Sum of portfolio month P/L — current financial month, same rules as each portfolio row below."
-                                >
-                                    Month P/L
-                                </dt>
-                                <dd className="metric-value w-full mt-1.5 flex justify-center" aria-busy={!periodPnLReady}>
-                                    {!periodPnLReady ? (
-                                        <span className="text-slate-400 text-lg font-bold tabular-nums">…</span>
-                                    ) : platformPeriodPnL.hasRow ? (
-                                        <CurrencyDualDisplay value={platformPeriodPnL.monthly} inCurrency="SAR" digits={0} size="lg" colorize weight="bold" />
-                                    ) : (
-                                        <span className="text-slate-400 text-sm">—</span>
-                                    )}
-                                </dd>
-                            </div>
-                        </>
-                    ) : null}
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
                         <dt
                             className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight"
@@ -2932,6 +2985,12 @@ const PlatformCardInner: React.FC<{
                     const portfolioCashSAR = tradableCashBucketToSAR(availableCashByCurrency, sarPerUsd);
                     const portfolioRoi = pk?.roi ?? 0;
                     const positionsTotalForAlloc = pk != null ? pk.holdingsValue : portfolioValue;
+                    const portfolioCanSyncQuotes = portfolioHasRefreshableQuoteSymbols(portfolio);
+                    const isPersonalPortfolio = portfoliosForMetrics.some((p) => p.id === portfolio.id);
+                    const thisPortfolioSyncing =
+                        quotesRefreshing &&
+                        quotesRefreshUIScope.mode === 'portfolio' &&
+                        quotesRefreshUIScope.portfolioId === portfolio.id;
                     return (
                         <section key={portfolio.id} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
                             {/* Portfolio header: name, value, goal, actions — contained in box */}
@@ -2969,10 +3028,57 @@ const PlatformCardInner: React.FC<{
                                     )}
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
+                                    <PortfolioQuoteHealthChip portfolio={portfolio} symbolQuoteUpdatedAt={symbolQuoteUpdatedAt} />
+                                    {portfolioCanSyncQuotes ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => void refreshPricesForPortfolio(portfolio.id)}
+                                            disabled={thisPortfolioSyncing}
+                                            className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-medium text-slate-600 border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50 transition-colors"
+                                            title="Live quotes for this portfolio’s ticker holdings only (manual funds are skipped)"
+                                        >
+                                            <ArrowPathIcon className={`h-4 w-4 ${thisPortfolioSyncing ? 'animate-spin' : ''}`} aria-hidden />
+                                            {thisPortfolioSyncing ? 'Syncing…' : 'Sync quotes'}
+                                        </button>
+                                    ) : null}
                                     <button type="button" onClick={() => onEditPortfolio(portfolio)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-primary/5 transition-colors" title="Edit portfolio" aria-label="Edit portfolio"><PencilIcon className="h-4 w-4"/></button>
                                     <button type="button" onClick={() => onDeletePortfolio(portfolio)} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors" title="Remove portfolio" aria-label="Remove portfolio"><TrashIcon className="h-4 w-4"/></button>
                                 </div>
                             </div>
+                            {isPersonalPortfolio && !isExpanded && (
+                                <dl
+                                    className="flex flex-wrap items-center justify-end gap-4 sm:gap-6 px-4 sm:px-5 py-2.5 border-b border-slate-100 bg-slate-50/60 text-sm"
+                                    aria-label={`Period P/L for ${portfolio.name ?? 'portfolio'}`}
+                                >
+                                    <div className="text-center min-w-[5.5rem]">
+                                        <dt className="text-[10px] font-semibold uppercase tracking-wider text-indigo-700">Week P/L</dt>
+                                        <dd className="mt-0.5 font-bold tabular-nums" aria-busy={!periodPnLReady}>
+                                            {!periodPnLReady ? (
+                                                <span className="text-slate-400">…</span>
+                                            ) : periodPnL != null ? (
+                                                <CurrencyDualDisplay value={periodPnL.weekly.totalSar} inCurrency="SAR" digits={0} size="base" colorize weight="bold" />
+                                            ) : (
+                                                <span className="text-slate-400">—</span>
+                                            )}
+                                        </dd>
+                                    </div>
+                                    <div className="text-center min-w-[5.5rem]">
+                                        <dt className="text-[10px] font-semibold uppercase tracking-wider text-violet-700">Month P/L</dt>
+                                        <dd className="mt-0.5 font-bold tabular-nums" aria-busy={!periodPnLReady}>
+                                            {!periodPnLReady ? (
+                                                <span className="text-slate-400">…</span>
+                                            ) : periodPnL != null ? (
+                                                <CurrencyDualDisplay value={periodPnL.monthly.totalSar} inCurrency="SAR" digits={0} size="base" colorize weight="bold" />
+                                            ) : (
+                                                <span className="text-slate-400">—</span>
+                                            )}
+                                        </dd>
+                                    </div>
+                                    {periodPnLSparklinesReady && weekSparkline.length > 0 ? (
+                                        <MiniPnLSparkline points={weekSparkline} height={28} className="max-w-[72px] shrink-0" />
+                                    ) : null}
+                                </dl>
+                            )}
                             {pk != null && (
                                 <>
                                     <p className="px-4 sm:px-5 pt-3 pb-2 text-[11px] text-slate-600 leading-snug bg-gradient-to-r from-slate-50/90 to-teal-50/30 border-b border-slate-100/80">
@@ -2992,7 +3098,7 @@ const PlatformCardInner: React.FC<{
                                         )}
                                     </p>
                                     <dl
-                                        className="portfolio-inline-kpis grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-9 gap-3 px-4 sm:px-5 py-4 bg-gradient-to-b from-white via-slate-50/30 to-teal-50/20 border-b border-slate-100 items-stretch"
+                                        className="portfolio-inline-kpis grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 px-4 sm:px-5 py-4 bg-gradient-to-b from-white via-slate-50/30 to-teal-50/20 border-b border-slate-100 items-stretch"
                                         aria-label={`Portfolio metrics for ${portfolio.name ?? 'portfolio'}`}
                                     >
                                         <div className="rounded-2xl bg-gradient-to-b from-white to-teal-50/45 border border-teal-100/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
@@ -3059,35 +3165,6 @@ const PlatformCardInner: React.FC<{
                                                 <CurrencyDualDisplay value={pk.dailyPnLSAR} inCurrency="SAR" digits={0} size="base" colorize weight="bold" />
                                             </dd>
                                         </div>
-                                        {periodPnLReady && periodPnL != null && (
-                                            <>
-                                                <div className="rounded-2xl bg-gradient-to-b from-white to-indigo-50/40 border border-indigo-100/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
-                                                    <dt
-                                                        className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-indigo-700 uppercase tracking-[0.12em] leading-tight px-0.5"
-                                                        title="Last 7 days: end value − start-of-week snapshot − net deposits/withdrawals (same as Wealth Analytics)."
-                                                    >
-                                                        Week P/L
-                                                    </dt>
-                                                    <dd className="metric-value flex flex-1 flex-col items-center justify-center mt-2 min-h-0 gap-1">
-                                                        <CurrencyDualDisplay value={periodPnL.weekly.totalSar} inCurrency="SAR" digits={0} size="base" colorize weight="bold" />
-                                                        {periodPnLSparklinesReady && weekSparkline.length > 0 ? (
-                                                            <MiniPnLSparkline points={weekSparkline} height={32} className="max-w-[88px]" />
-                                                        ) : null}
-                                                    </dd>
-                                                </div>
-                                                <div className="rounded-2xl bg-gradient-to-b from-white to-violet-50/40 border border-violet-100/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
-                                                    <dt
-                                                        className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-violet-700 uppercase tracking-[0.12em] leading-tight px-0.5"
-                                                        title="Current financial month: mark-to-market from month start — not daily P/L × days."
-                                                    >
-                                                        Month P/L
-                                                    </dt>
-                                                    <dd className="metric-value flex flex-1 flex-col items-center justify-center mt-2 min-h-0">
-                                                        <CurrencyDualDisplay value={periodPnL.monthly.totalSar} inCurrency="SAR" digits={0} size="base" colorize weight="bold" />
-                                                    </dd>
-                                                </div>
-                                            </>
-                                        )}
                                         <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
                                             <dt
                                                 className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-[0.12em] leading-tight px-0.5"
@@ -3180,6 +3257,12 @@ const PlatformCardInner: React.FC<{
                                                     const purchasedCostDisplay = (h.avgCost ?? 0) * (h.quantity || 0);
                                                     const gainLossDisplay = h.gainLoss;
                                                     const rowDailyPnLDisplay = rowDailyPnL;
+                                                    const zakatBadge = resolveZakatHoldingBadgeState({
+                                                        holding: h,
+                                                        portfolio,
+                                                        investmentTransactions: metricsTransactions ?? transactions,
+                                                    });
+                                                    const zakatLabel = zakatHoldingBadgeLabel(zakatBadge);
                                                     return (
                                                         <tr key={h.id} className="group hover:bg-slate-50/80 transition-colors">
                                                             <td className="px-4 py-3 min-w-0 max-w-[200px]">
@@ -3286,7 +3369,18 @@ const PlatformCardInner: React.FC<{
                                                                 />
                                                             </td>
                                                             <td className="px-3 py-3 text-center">
-                                                                <span className={`inline-block px-2 py-0.5 text-[10px] font-semibold rounded-full ${h.zakahClass === 'Zakatable' ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-600'}`}>{h.zakahClass === 'Zakatable' ? 'Zak.' : 'Non'}</span>
+                                                                <span
+                                                                    className={`inline-block px-2 py-0.5 text-[10px] font-semibold rounded-full ${
+                                                                        zakatBadge === 'zakatable'
+                                                                            ? 'bg-blue-100 text-blue-800'
+                                                                            : zakatBadge === 'in_hawl'
+                                                                              ? 'bg-amber-50 text-amber-900'
+                                                                              : 'bg-slate-100 text-slate-600'
+                                                                    }`}
+                                                                    title="Lunar hawl eligibility from buy/acquisition date"
+                                                                >
+                                                                    {zakatLabel}
+                                                                </span>
                                                             </td>
                                                             <td className="px-1 py-3">
                                                                 <button type="button" onClick={() => onEditHolding(h)} className="p-1.5 rounded-md text-slate-300 group-hover:text-primary hover:bg-primary/5 transition-all" title="Edit holding" aria-label="Edit holding"><PencilIcon className="h-4 w-4" /></button>
@@ -3306,6 +3400,16 @@ const PlatformCardInner: React.FC<{
             </div>}
 
             <TransactionHistoryModal isOpen={isTxnModalOpen} onClose={() => setIsTxnModalOpen(false)} transactions={transactions} platformName={platform.name} />
+            {pnlBreakdown && breakdownData ? (
+                <PortfolioPeriodPnLBreakdownDrawer
+                    portfolioName={pnlBreakdown.portfolioName}
+                    period={pnlBreakdown.period}
+                    breakdown={breakdownData}
+                    formatCurrency={(n) => formatCurrencyString(n, { digits: 0 })}
+                    onClose={() => setPnlBreakdown(null)}
+                    onOpenInvestments={setActivePage ? () => setActivePage('Investments') : undefined}
+                />
+            ) : null}
         </article>
     );
 };
@@ -3327,7 +3431,6 @@ const PlatformView: React.FC<{
 }> = (props) => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { sarPerUsd, platformsRollupSar, simulatedPrices: kpiQuotePrices } = useInvestmentsCanonicalMetrics();
-    const { simulatedPrices } = useMarketPrices();
     const { setActivePage, setActiveTab, onOpenAddPortfolio } = props;
     const personalInvestments = useMemo(() => getPersonalInvestments(data), [data]);
     const personalAccounts = useMemo(() => getPersonalAccounts(data), [data]);
@@ -3336,7 +3439,7 @@ const PlatformView: React.FC<{
         portfolios: personalInvestments,
         accounts: personalAccounts,
         sarPerUsd,
-        simulatedPrices,
+        simulatedPrices: kpiQuotePrices,
     });
 
     const holdingsOutliersAll = useMemo(() => (data ? findHoldingsValueOutliers(data) : []), [data]);
@@ -3780,12 +3883,13 @@ const InvestmentPlan: React.FC<{
 
         const monthStartDay = resolveMonthStartDayFromData(data);
         const finKeys6 = financialMonthKeysEndingAt(new Date(), 6, monthStartDay);
-        const earliestBuy = financialMonthRangeFromKey(finKeys6[0], monthStartDay).start;
+        const { start: earliestBuy } = financialMonthRangeFromKey(finKeys6[0], monthStartDay);
+        const { end: lookbackEnd } = financialMonthRange(new Date(), monthStartDay);
         const buys = (data?.investmentTransactions ?? []).filter(t => t.type === 'buy');
-        const recent = buys.filter(t => new Date(t.date) >= earliestBuy);
+        const recent = buys.filter(t => dateInRange(t.date, earliestBuy, lookbackEnd));
         const byMonth = new Map<string, number>();
         recent.forEach(t => {
-            const key = financialMonthIsoKey(financialMonthKey(new Date(t.date), monthStartDay));
+            const key = financialMonthIsoKey(financialMonthKeyFromTransactionDate(t.date, monthStartDay));
             const txnCurrency = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
             const rawAmount = getInvestmentTransactionCashAmount(t as any);
             const convertedAmount = convertAmount(rawAmount, txnCurrency, budgetCurrency);
@@ -4295,7 +4399,8 @@ Save anyway?`)) return;
         const amountInTradeCurrency = tradeCurrency === planCurrency
             ? trade.amount
             : (typeof trade.amountInTradeCurrency === 'number' ? trade.amountInTradeCurrency : trade.amount);
-        const rawQuote = simulatedPrices[symbol]?.price;
+        const row = lookupLiveQuoteForSymbol(simulatedPrices, symbol);
+        const rawQuote = row?.price;
         let suggestedPrice = 0;
         if (rawQuote != null && Number.isFinite(rawQuote) && rawQuote > 0) {
             suggestedPrice = convertBetweenTradeCurrencies(
@@ -4367,24 +4472,15 @@ Save anyway?`)) return;
                 let livePrice: number;
                 let liveValue: number;
                 if (useLive) {
-                    const rawPx = simulatedPrices[symbol]?.price;
-                    if (rawPx != null && Number.isFinite(rawPx) && rawPx > 0 && qty > 0) {
-                        liveValue = quoteNotionalInBookCurrency(rawPx, qty, symbol, book, fx);
-                        livePrice = convertBetweenTradeCurrencies(
-                            rawPx,
-                            inferInstrumentCurrencyFromSymbol(symbol),
-                            book,
-                            fx,
-                        );
-                    } else {
-                        const fromStored = qty > 0 ? (holding.currentValue || 0) / qty : 0;
+                    liveValue = effectiveHoldingValueInBookCurrency(holding as Holding, book, simulatedPrices, fx);
+                    livePrice = effectiveHoldingUnitPriceInBookCurrency(holding as Holding, book, simulatedPrices, fx);
+                    if (!(liveValue > 0) && qty > 0) {
+                        const fromStored = (holding.currentValue || 0) / qty;
                         livePrice =
                             Number.isFinite(fromStored) && fromStored > 0
                                 ? fromStored
                                 : (holding.avgCost || 0);
-                        if (!Number.isFinite(livePrice)) livePrice = 0;
-                        liveValue =
-                            livePrice > 0 ? livePrice * qty : (holding.currentValue || 0);
+                        liveValue = livePrice > 0 ? livePrice * qty : (holding.currentValue || 0);
                     }
                 } else {
                     liveValue = Number.isFinite(holding.currentValue) ? holding.currentValue : 0;
@@ -5192,7 +5288,7 @@ interface InvestmentsProps {
 }
 
 const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
-  const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding } = useContext(DataContext)!;
+  const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, applyCorporateActionEvent, reverseCorporateActionEvent } = useContext(DataContext)!;
   const recordTradeConfirmed = useCallback(
     (trade: Parameters<typeof recordTrade>[0], executedPlanId?: string) =>
       recordTrade(trade, executedPlanId, { confirmed: true }),
@@ -5228,6 +5324,10 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
   
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
   const [tradeInitialData, setTradeInitialData] = useState<any>(null);
+  const [isCorporateActionWizardOpen, setIsCorporateActionWizardOpen] = useState(false);
+  const [corporateActionWizardInitial, setCorporateActionWizardInitial] = useState<
+    ReturnType<typeof createInitialWizardState> | undefined
+  >(undefined);
   const [stagedAddOnToPlan, setStagedAddOnToPlan] = useState<{
     key: number;
     symbol: string;
@@ -5255,7 +5355,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
     trendPercentage,
     platformsRollupSAR,
     commoditiesValueSAR,
-    sukukAssetsValueSAR,
+    sukukPositionsValueSAR,
   } = headlineKpis ?? {
     totalValue: 0,
     totalGainLoss: 0,
@@ -5264,7 +5364,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
     trendPercentage: 0,
     platformsRollupSAR: 0,
     commoditiesValueSAR: 0,
-    sukukAssetsValueSAR: 0,
+    sukukPositionsValueSAR: 0,
   };
 
   const investmentsHubAiContext = useMemo(() => {
@@ -5284,11 +5384,11 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
       roiPct: roi,
       dailyPnLSAR: totalDailyPnL,
       commoditiesValueSAR,
-      sukukAssetsValueSAR,
+      sukukPositionsValueSAR,
       appDisplayCurrency,
       executionLogCount,
     };
-  }, [data, activeTab, totalValue, totalGainLoss, roi, totalDailyPnL, commoditiesValueSAR, sukukAssetsValueSAR, appDisplayCurrency]);
+  }, [data, activeTab, totalValue, totalGainLoss, roi, totalDailyPnL, commoditiesValueSAR, sukukPositionsValueSAR, appDisplayCurrency]);
 
   const getTrendString = (trend: number) => {
     return `${trend >= 0 ? '+' : ''}${trend.toFixed(2)}%`;
@@ -5363,6 +5463,26 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
         setActiveTab('Dividend Tracker');
         // DividendTrackerView scrolls to the SMS panel and clears the action.
         return;
+    }
+    if (pageAction?.startsWith('open-corporate-action-wizard')) {
+        setActiveTab('Overview');
+        let plan = pageAction === 'open-corporate-action-wizard:from-plan' ? readCorporateActionWizardPlan() : null;
+        if (pageAction === 'open-corporate-action-wizard:from-plan') {
+            clearCorporateActionWizardPlan();
+        }
+        setCorporateActionWizardInitial(
+            createInitialWizardState({
+                portfolioId: plan?.portfolioId,
+                symbol: plan?.symbol,
+                actionType:
+                    plan?.actionType && isCorporateActionWizardActionType(plan.actionType)
+                        ? plan.actionType
+                        : undefined,
+                step: plan?.symbol ? 'details' : 'action',
+            }),
+        );
+        setIsCorporateActionWizardOpen(true);
+        clearPageAction?.();
     }
     if (pageAction?.startsWith('investment-tab:')) {
         const raw = pageAction.slice('investment-tab:'.length);
@@ -5480,6 +5600,24 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
       setTradeInitialData(null);
   };
 
+  const openLaunchCorporateActionWizard = useCallback(
+      (prefill?: { portfolioId?: string; symbol?: string; actionType?: string }) => {
+          setCorporateActionWizardInitial(
+              createInitialWizardState({
+                  portfolioId: prefill?.portfolioId,
+                  symbol: prefill?.symbol,
+                  actionType:
+                      prefill?.actionType && isCorporateActionWizardActionType(prefill.actionType)
+                          ? prefill.actionType
+                          : undefined,
+                  step: prefill?.symbol ? 'details' : 'action',
+              }),
+          );
+          setIsCorporateActionWizardOpen(true);
+      },
+      [],
+  );
+
   const openRecordSellForHolding = useCallback(
       (holding: Holding, portfolio: InvestmentPortfolio) => {
           const opts = buildHoldingSymbolOptions(portfoliosForTrade);
@@ -5506,7 +5644,20 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'Overview': return <InvestmentOverview setActiveTab={setActiveTab} />;
+      case 'Overview':
+        return (
+          <div className="space-y-6">
+            <InvestmentOverview setActiveTab={setActiveTab} />
+            <CorporateActionApplyPanel
+              portfolios={portfoliosForTrade}
+              events={data?.corporateActionEvents ?? []}
+              investmentTransactions={data?.investmentTransactions ?? []}
+              onApply={applyCorporateActionEvent}
+              onUndo={reverseCorporateActionEvent}
+              onLaunchWizard={openLaunchCorporateActionWizard}
+            />
+          </div>
+        );
       case 'Portfolios':
         return <PlatformView 
             onAddPlatform={() => handleOpenPlatformModal()}
@@ -5520,6 +5671,8 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
             onHoldingClick={handleHoldingClick}
             onEditHolding={handleOpenHoldingEditModal}
         />;
+      case 'Sukuk':
+        return <SukukInvestmentsSection />;
       case 'Investment Plan': return (
                 <div className="flex flex-col gap-16 sm:gap-20">
                     <InvestmentPlanView
@@ -5652,7 +5805,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                 indicatorColor="green"
                 valueColor="text-emerald-700"
                 icon={<ChartPieIcon className="h-5 w-5 text-emerald-600" aria-hidden />}
-                tooltip="Everything you have invested right now: stocks and funds at today's prices, idle cash sitting on your broker accounts, commodities, and Sukuk tracked in Assets. US-listed prices are converted into riyals using your FX rate so the number matches your net worth view. Hover the amount to see the USD equivalent."
+                tooltip="Everything you have invested right now: stocks and funds at today's prices, idle cash on broker accounts, commodities, and direct Sukuk contracts. US-listed prices use your FX rate so the total matches net worth."
             />
             <Card
                 title="Net Gain/Loss"
@@ -5667,7 +5820,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                 indicatorColor={totalGainLoss >= 0 ? 'green' : 'red'}
                 valueColor={totalGainLoss >= 0 ? 'text-emerald-700' : 'text-rose-700'}
                 icon={<ArrowsRightLeftIcon className={`h-5 w-5 ${totalGainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
-                tooltip="Net gain/loss vs your net contributions: current value minus (deposits − withdrawals) minus commodity purchase cost minus Sukuk purchase cost (from Assets). It updates when prices refresh; it can be negative if the market moved down, if fees were paid, or if entries are missing."
+                tooltip="Net gain/loss vs net contributions: current value minus (deposits − withdrawals) minus commodity and direct Sukuk purchase costs."
             />
             <Card
                 title="Portfolio ROI"
@@ -5701,13 +5854,13 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                 icon={<ArrowsRightLeftIcon className={`h-5 w-5 ${totalDailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
             />
         </section>
-        {headlineKpisReady && (platformsRollupSAR > 0 || commoditiesValueSAR > 0 || sukukAssetsValueSAR > 0) && (
+        {headlineKpisReady && (platformsRollupSAR > 0 || commoditiesValueSAR > 0 || sukukPositionsValueSAR > 0) && (
             <p className="text-xs text-slate-500 -mt-2 px-0.5 leading-relaxed" role="note">
                 KPIs aggregate personal portfolios in <strong>each portfolio&apos;s base currency</strong> (USD or SAR), convert to SAR using your FX settings, then show amounts in your app currency ({appDisplayCurrency}). Commodities are valued in USD and converted consistently.
                 <span className="tabular-nums block mt-1">
                     SAR breakdown: {formatCurrencyString(platformsRollupSAR, { inCurrency: 'SAR', digits: 0 })} platforms + tradable cash;{' '}
                     {formatCurrencyString(commoditiesValueSAR, { inCurrency: 'SAR', digits: 0 })} commodities;{' '}
-                    {formatCurrencyString(sukukAssetsValueSAR, { inCurrency: 'SAR', digits: 0 })} sukuk.
+                    {formatCurrencyString(sukukPositionsValueSAR, { inCurrency: 'SAR', digits: 0 })} direct Sukuk.
                 </span>
             </p>
         )}
@@ -5814,6 +5967,28 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                   ? () => openRecordSellForHolding(selectedHolding, selectedPortfolio)
                   : undefined
           }
+          onCorporateAction={
+              selectedHolding && selectedPortfolio
+                  ? () => {
+                        setIsHoldingModalOpen(false);
+                        openLaunchCorporateActionWizard({
+                            portfolioId: selectedPortfolio.id,
+                            symbol: selectedHolding.symbol,
+                        });
+                        setSelectedHolding(null);
+                        setSelectedPortfolio(null);
+                    }
+                  : undefined
+          }
+      />
+      <CorporateActionWizard
+        isOpen={isCorporateActionWizardOpen}
+        onClose={() => setIsCorporateActionWizardOpen(false)}
+        portfolios={portfoliosForTrade}
+        transactions={data?.investmentTransactions ?? []}
+        corporateActionEvents={data?.corporateActionEvents ?? []}
+        initialState={corporateActionWizardInitial}
+        onApply={applyCorporateActionEvent}
       />
       <HoldingEditModal isOpen={isHoldingEditModalOpen} onClose={() => setIsHoldingEditModalOpen(false)} onSave={handleSaveHolding} holding={holdingToEdit} />
       <PlatformModal isOpen={isPlatformModalOpen} onClose={() => setIsPlatformModalOpen(false)} onSave={handleSavePlatform} platformToEdit={platformToEdit} />

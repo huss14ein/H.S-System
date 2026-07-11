@@ -6,6 +6,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.91.1";
 import { buildFinancialDataForWeeklyDigest } from "../../../services/digestFinancialData.ts";
 import { computeWeeklyDigestPersonalNetWorthSar } from "../../../services/weeklyDigestNetWorthSar.ts";
+import { computeWeeklyDigestPortfolioPnLSar } from "../../../services/portfolioPeriodPnLDigest.ts";
 import { financialMonthRange, resolveMonthStartDayFromData } from "../../../utils/financialMonth.ts";
 
 declare const Deno: {
@@ -24,6 +25,8 @@ interface WeeklyDigestPayload {
     overCategories: string[];
   };
   netWorth: number;
+  portfolioWeekPnLSar: number;
+  portfolioMonthPnLSar: number;
   alerts: string[];
 }
 
@@ -87,6 +90,12 @@ function renderEmailTemplate(payload: WeeklyDigestPayload): string {
       <section style="margin-bottom: 24px;">
         <h2 style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.05em;">Net worth</h2>
         <p style="margin: 0; font-size: 20px; font-weight: 700; color: #0f172a;">${payload.netWorth}</p>
+      </section>
+      <section style="margin-bottom: 24px;">
+        <h2 style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.05em;">Portfolio P/L</h2>
+        <p style="margin: 0 0 6px; font-size: 14px; color: #64748b;">Week (mark-to-market): <strong style="color:#0f172a">${payload.portfolioWeekPnLSar}</strong> SAR</p>
+        <p style="margin: 0; font-size: 14px; color: #64748b;">Financial month: <strong style="color:#0f172a">${payload.portfolioMonthPnLSar}</strong> SAR</p>
+        <p style="margin: 8px 0 0; font-size: 12px; color: #94a3b8;">Stored marks only — not live quote fetch in email.</p>
       </section>
       ${alertsHtml}
       <p style="margin: 24px 0 0; font-size: 13px; color: #94a3b8;">You're receiving this because Weekly Email Reports are enabled in Settings. Open the app to see full details.</p>
@@ -189,7 +198,13 @@ function sarPerUsd(): number {
  * `buildFinancialDataForWeeklyDigest` → `computeWeeklyDigestPersonalNetWorthSar`
  * (`computePersonalNetWorthBreakdownSAR` + FX from `wealth_ultra_config` / env + investment ledger cash).
  */
-async function calculateNetWorth(supabase: any, userId: string): Promise<number> {
+async function buildUserDigestFinancialData(supabase: any, userId: string): Promise<{
+  data: ReturnType<typeof buildFinancialDataForWeeklyDigest>;
+  fx: number;
+  netWorth: number;
+  portfolioWeekPnLSar: number;
+  portfolioMonthPnLSar: number;
+}> {
   const fallbackFx = sarPerUsd();
 
   const [
@@ -198,7 +213,9 @@ async function calculateNetWorth(supabase: any, userId: string): Promise<number>
     { data: liabilitiesRaw, error: eLiab },
     { data: portfoliosRaw, error: ePort },
     { data: commodityHoldingsRaw, error: eComm },
+    { data: sukukPositionsRaw, error: eSukuk },
     { data: investmentTransactionsRaw, error: eTx },
+    { data: investmentCostLotsRaw, error: eLots },
     { data: wealthUltraUser, error: eWuUser },
     { data: wealthUltraGlobal, error: eWuGlobal },
   ] = await Promise.all([
@@ -207,7 +224,9 @@ async function calculateNetWorth(supabase: any, userId: string): Promise<number>
     supabase.from('liabilities').select('*').eq('user_id', userId),
     supabase.from('investment_portfolios').select('*, holdings(*)').eq('user_id', userId),
     supabase.from('commodity_holdings').select('*').eq('user_id', userId),
+    supabase.from('sukuk_positions').select('*').eq('user_id', userId),
     supabase.from('investment_transactions').select('*').eq('user_id', userId),
+    supabase.from('investment_cost_lots').select('*').eq('user_id', userId),
     supabase.from('wealth_ultra_config').select('*').eq('user_id', userId).maybeSingle(),
     supabase.from('wealth_ultra_config').select('*').is('user_id', null).limit(1).maybeSingle(),
   ]);
@@ -217,7 +236,9 @@ async function calculateNetWorth(supabase: any, userId: string): Promise<number>
   if (eLiab) console.error('weekly-digest liabilities:', eLiab.message);
   if (ePort) console.error('weekly-digest investment_portfolios:', ePort.message);
   if (eComm) console.error('weekly-digest commodity_holdings:', eComm.message);
+  if (eSukuk) console.error('weekly-digest sukuk_positions:', eSukuk.message);
   if (eTx) console.error('weekly-digest investment_transactions:', eTx.message);
+  if (eLots) console.warn('weekly-digest investment_cost_lots:', eLots.message);
   if (eWuUser) console.warn('weekly-digest wealth_ultra_config (user):', eWuUser.message);
   if (eWuGlobal) console.warn('weekly-digest wealth_ultra_config (global):', eWuGlobal.message);
 
@@ -227,12 +248,28 @@ async function calculateNetWorth(supabase: any, userId: string): Promise<number>
     liabilitiesRaw: (liabilitiesRaw ?? []) as Record<string, unknown>[],
     portfoliosRaw: (portfoliosRaw ?? []) as Record<string, unknown>[],
     commodityHoldingsRaw: (commodityHoldingsRaw ?? []) as Record<string, unknown>[],
+    sukukPositionsRaw: (sukukPositionsRaw ?? []) as Record<string, unknown>[],
     investmentTransactionsRaw: (investmentTransactionsRaw ?? []) as Record<string, unknown>[],
+    investmentCostLotsRaw: (investmentCostLotsRaw ?? []) as Record<string, unknown>[],
     wealthUltraUserRow: wealthUltraUser ? (wealthUltraUser as Record<string, unknown>) : null,
     wealthUltraGlobalRow: wealthUltraGlobal ? (wealthUltraGlobal as Record<string, unknown>) : null,
   });
 
-  return computeWeeklyDigestPersonalNetWorthSar(data, fallbackFx);
+  const netWorth = computeWeeklyDigestPersonalNetWorthSar(data, fallbackFx);
+  const pnl = computeWeeklyDigestPortfolioPnLSar({ data, sarPerUsd: fallbackFx, simulatedPrices: {} });
+  return {
+    data,
+    fx: fallbackFx,
+    netWorth,
+    portfolioWeekPnLSar: pnl.weeklyTotalSar,
+    portfolioMonthPnLSar: pnl.monthlyTotalSar,
+  };
+}
+
+/** @deprecated use buildUserDigestFinancialData */
+async function calculateNetWorth(supabase: any, userId: string): Promise<number> {
+  const ctx = await buildUserDigestFinancialData(supabase, userId);
+  return ctx.netWorth;
 }
 
 type BudgetSummaryRow = {
@@ -315,15 +352,17 @@ serve(async (req: Request) => {
         const userEmail = authUser.user.email;
 
         // Calculate digest data
+        const digestCtx = await buildUserDigestFinancialData(supabase, setting.user_id);
         const budgetSummary = await calculateBudgetSummary(supabase, setting.user_id, periodEnd);
-        const netWorth = await calculateNetWorth(supabase, setting.user_id);
         const alerts = getAlerts(budgetSummary);
 
         const payload: WeeklyDigestPayload = {
           userName,
           periodEnd: periodEndStr,
           budgetSummary,
-          netWorth,
+          netWorth: digestCtx.netWorth,
+          portfolioWeekPnLSar: Math.round(digestCtx.portfolioWeekPnLSar),
+          portfolioMonthPnLSar: Math.round(digestCtx.portfolioMonthPnLSar),
           alerts,
         };
 

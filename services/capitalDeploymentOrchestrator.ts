@@ -24,7 +24,7 @@ export function computeCapitalDeployment(
   const liquidCash = accounts
     .filter((a) => a.type === 'Checking' || a.type === 'Savings')
     .reduce((s, a) => s + Math.max(0, getAvailableCashForAccount(a.id).SAR), 0);
-  const monthlyExpense = normalizedMonthlyExpenseSar(txs, accounts, uiExchangeRate, { monthsLookback: 6 });
+  const monthlyExpense = normalizedMonthlyExpenseSar(txs, accounts, uiExchangeRate, { monthsLookback: 6, data });
   const runway = cashRunwayMonths(liquidCash, monthlyExpense);
   const efTarget = Math.max(1, emergencyFundTargetMonths) * monthlyExpense;
   const efComplete = emergencyFundMonths >= emergencyFundTargetMonths;

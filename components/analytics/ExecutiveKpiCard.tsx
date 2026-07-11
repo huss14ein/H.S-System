@@ -85,6 +85,7 @@ export const ExecutiveKpiCard: React.FC<{
   sparkline: number[];
   sparklineTarget?: number;
   accentStroke?: string;
+  onExplain?: () => void;
 }> = ({
   title,
   currentValue,
@@ -95,6 +96,7 @@ export const ExecutiveKpiCard: React.FC<{
   sparkline,
   sparklineTarget,
   accentStroke = '#6366f1',
+  onExplain,
 }) => {
   const styles = STATUS_STYLES[status];
 
@@ -104,9 +106,21 @@ export const ExecutiveKpiCard: React.FC<{
     >
       <div className="flex items-start justify-between gap-2">
         <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">{title}</p>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${styles.badge} ${styles.badgeText}`}>
-          {statusLabel}
-        </span>
+        <div className="flex items-center gap-1 shrink-0">
+          {onExplain && (
+            <button
+              type="button"
+              className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
+              onClick={onExplain}
+              aria-label={`Explain ${title}`}
+            >
+              Explain
+            </button>
+          )}
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${styles.badge} ${styles.badgeText}`}>
+            {statusLabel}
+          </span>
+        </div>
       </div>
       <p className="mt-2 text-2xl font-bold text-slate-900 tabular-nums truncate">{currentValue}</p>
       {targetValue && (

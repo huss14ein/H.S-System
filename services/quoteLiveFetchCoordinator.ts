@@ -14,7 +14,12 @@ import { syncQuoteCacheToSessionNow } from '../utils/quoteRefreshBridge';
 
 type LiveQuoteRow = { price: number; change: number; changePercent: number };
 
-const batchInFlight = new Map<string, Promise<Record<string, LiveQuoteRow>>>();
+type InFlightBatch = {
+  network: Promise<Record<string, LiveQuoteRow>>;
+  shared: Promise<Record<string, LiveQuoteRow>>;
+};
+
+const batchInFlight = new Map<string, InFlightBatch>();
 
 /** Finnhub queue gap (~1.1s/symbol) — timeout must exceed worst-case batch size. */
 export const FINNHUB_MIN_GAP_MS = 1100;
@@ -32,20 +37,30 @@ function batchKey(symbols: string[]): string {
     .join('\0');
 }
 
+export type LivePriceFetchOptions = {
+  /** Manual sync — wait for network instead of returning stale cache on timeout. */
+  forceFetch?: boolean;
+};
+
 /** Same as `getLivePrices` but shares one promise per unique symbol set while in flight. */
-export async function getLivePricesDeduped(symbols: string[]): Promise<Record<string, LiveQuoteRow>> {
+export async function getLivePricesDeduped(
+  symbols: string[],
+  options?: LivePriceFetchOptions,
+): Promise<Record<string, LiveQuoteRow>> {
   const normalized = Array.from(
     new Set(symbols.map((s) => (s || '').trim()).filter(Boolean)),
   );
   if (normalized.length === 0) return {};
 
   const key = batchKey(normalized);
+  const forceFetch = options?.forceFetch === true;
   const existing = batchInFlight.get(key);
-  if (existing) return existing;
+  if (existing) return forceFetch ? existing.network : existing.shared;
 
   let timedResolvedEarly = false;
+  let entry: InFlightBatch;
 
-  const promise = getLivePrices(normalized)
+  const network = getLivePrices(normalized)
     .then((raw) => {
       if (Object.keys(raw).length === 0) return raw;
       persistSanitizedLiveQuotes(normalized, raw, loadQuoteCacheRows());
@@ -56,8 +71,16 @@ export async function getLivePricesDeduped(symbols: string[]): Promise<Record<st
       return sanitized;
     })
     .finally(() => {
-      batchInFlight.delete(key);
+      if (batchInFlight.get(key) === entry) {
+        batchInFlight.delete(key);
+      }
     });
+
+  if (forceFetch) {
+    entry = { network, shared: network };
+    batchInFlight.set(key, entry);
+    return network;
+  }
 
   const timeoutMs = liveFetchTimeoutMs(normalized.length);
   const timed = new Promise<Record<string, LiveQuoteRow>>((resolve, reject) => {
@@ -73,7 +96,7 @@ export async function getLivePricesDeduped(symbols: string[]): Promise<Record<st
       }
       reject(new Error('Live quote fetch timed out'));
     }, timeoutMs);
-    promise.then(
+    network.then(
       (rows) => {
         clearTimeout(timer);
         timedResolvedEarly = false;
@@ -86,7 +109,8 @@ export async function getLivePricesDeduped(symbols: string[]): Promise<Record<st
     );
   });
 
-  batchInFlight.set(key, timed);
+  entry = { network, shared: timed };
+  batchInFlight.set(key, entry);
   return timed;
 }
 

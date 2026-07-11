@@ -203,12 +203,65 @@ export function dateInRange(txDate: Date | string, start: Date, end: Date): bool
   return txMs >= startMs && txMs <= endMs;
 }
 
+/** Financial month key for a transaction date (local calendar parse — avoids UTC shift on ISO strings). */
+export function financialMonthKeyFromTransactionDate(
+  txDate: string | Date,
+  monthStartDay: unknown,
+): FinancialMonthKey {
+  return financialMonthKey(parseCalendarDateLocal(txDate), monthStartDay);
+}
+
+/** Days elapsed / remaining in the financial month containing `ref`. */
+export function financialMonthDaysRemaining(
+  ref: Date,
+  monthStartDay: unknown,
+): { daysTotal: number; daysElapsed: number; daysLeft: number } {
+  const { start, end } = financialMonthRange(ref, monthStartDay);
+  const startMs = calendarDayStartMs(start);
+  const endMs = calendarDayStartMs(end);
+  const refMs = calendarDayStartMs(ref);
+  const msPerDay = 86_400_000;
+  const daysTotal = Math.floor((endMs - startMs) / msPerDay) + 1;
+  const daysElapsed = Math.min(daysTotal, Math.floor((refMs - startMs) / msPerDay) + 1);
+  const daysLeft = Math.max(0, daysTotal - daysElapsed);
+  return { daysTotal, daysElapsed, daysLeft };
+}
+
+/** Budget rows for the active financial month (one per category; legacy calendar rows included). */
+export function budgetsForFinancialMonthView<
+  T extends { category: string; year: number; month: number; period?: string | null; limit?: number },
+>(budgets: T[], viewKey: FinancialMonthKey, monthStartDay: unknown): T[] {
+  const normalized = budgets.map((b) => {
+    const y = Number(b.year);
+    const m = Number(b.month);
+    return {
+      ...b,
+      year: Number.isFinite(y) && y >= 1 ? y : viewKey.year,
+      month: Number.isFinite(m) && m >= 1 && m <= 12 ? m : viewKey.month,
+    };
+  });
+  return dedupeBudgetRowsForFinancialView(normalized, viewKey, monthStartDay, 'Monthly');
+}
+
 /** Start of the financial month `monthsBack` periods before the month containing `ref` (inclusive window). */
 export function financialMonthLookbackStart(ref: Date, monthsBack: number, monthStartDay: unknown): Date {
   const pref = clampMonthStartDay(monthStartDay, 1);
   const current = financialMonthKey(ref, pref);
   const startKey = addMonthsToKey(current, -(Math.max(1, monthsBack) - 1));
   return financialMonthRangeFromKey(startKey, pref).start;
+}
+
+/** Inclusive `{ start, end }` spanning the last `monthsBack` financial months ending at `ref`. */
+export function financialMonthLookbackRange(
+  ref: Date,
+  monthsBack: number,
+  monthStartDay: unknown,
+): { start: Date; end: Date } {
+  const pref = clampMonthStartDay(monthStartDay, 1);
+  const keys = financialMonthKeysEndingAt(ref, Math.max(1, monthsBack), pref);
+  const start = financialMonthRangeFromKey(keys[0]!, pref).start;
+  const end = financialMonthRangeFromKey(keys[keys.length - 1]!, pref).end;
+  return { start, end };
 }
 
 /** Parse `YYYY-MM` financial month key → range (invalid → current financial month). */

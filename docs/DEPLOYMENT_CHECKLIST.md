@@ -132,6 +132,13 @@ If enabling weekly emails:
 
 ### 8. Post-Deployment Verification
 
+- [ ] **Sukuk positions (direct contracts):** Run read-only diagnostic after `20260627120000_sukuk_positions` migration:
+  ```bash
+  SUPABASE_URL=https://YOUR_PROJECT.supabase.co \
+  SUPABASE_SERVICE_ROLE_KEY=your_service_role_key \
+  node scripts/diagnose-sukuk-positions.mjs
+  ```
+  Pass: `legacy assets.type=Sukuk` count is **0**; active `sukuk_positions` SAR matches Investments → Sukuk section. Optional scope: `USER_ID=<uuid>`.
 - [ ] **Authentication:** Sign up, login, logout work
 - [ ] **Data CRUD:** Create/edit/delete accounts, transactions, budgets, goals
 - [ ] **Transactions schema compatibility:** Run `supabase/verify_transactions_schema_compat.sql` and confirm required columns + pending RPC health

@@ -19,6 +19,8 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
     return (
       action === 'open-transaction-modal' ||
       /^filter-by-budget:.+:(monthly|weekly|daily|yearly):\d{4}:(?:[1-9]|1[0-2])(?::\d{4}-\d{2}-\d{2})?$/i.test(action) ||
+      /^filter-by-month:\d{4}-\d{2}$/i.test(action) ||
+      /^filter-by-merchant:.+$/i.test(action) ||
       /^filter-plan-expense:\d{4}:(?:[1-9]|1[0-2]):.+$/.test(action)
     );
   }
@@ -53,6 +55,8 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
       action === 'investment-tab:Watchlist' ||
       action === 'focus-investment-plan' ||
       action === 'focus-dividend-sms' ||
+      action === 'open-corporate-action-wizard' ||
+      action === 'open-corporate-action-wizard:from-plan' ||
       /^focus-symbol:.+/.test(action) ||
       action === 'openRiskTradingHub'
     );

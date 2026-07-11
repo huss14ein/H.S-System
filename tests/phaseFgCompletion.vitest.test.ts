@@ -16,16 +16,25 @@ describe('Phase F — Wealth Analytics layout E2E', () => {
     expect(wa).not.toContain('ExecutiveStatusRow');
   });
 
-  it('above-fold order: KPI grid → P/L → atlas → cockpit', () => {
-    const wa = read('pages/WealthAnalytics.tsx');
-    const kpi = wa.indexOf('<WealthAnalyticsExecutiveKpiSection');
-    const pnl = wa.indexOf('<PortfolioPeriodPnLPanelSection');
-    const atlas = wa.indexOf('aria-label="Wealth atlas"');
-    const cockpit = wa.indexOf('aria-label="Operations cockpit"');
-    expect(kpi).toBeGreaterThan(-1);
-    expect(pnl).toBeGreaterThan(kpi);
-    expect(atlas).toBeGreaterThan(pnl);
-    expect(cockpit).toBeGreaterThan(atlas);
+  it('above-fold order: overview KPI → investments P/L → wealth atlas → cash cockpit', () => {
+    const overview = read('components/analytics/zones/OverviewZone.tsx');
+    const investments = read('components/analytics/zones/InvestmentsZone.tsx');
+    const wealth = read('components/analytics/zones/WealthZone.tsx');
+    const cash = read('components/analytics/zones/CashSpendZone.tsx');
+    const hero = overview.indexOf('WealthAnalyticsHero');
+    const kpi = overview.indexOf('WealthAnalyticsExecutiveKpiSection');
+    const pulse = overview.indexOf('WealthPulseRing');
+    const waterfall = overview.indexOf('WealthChangeWaterfallChart');
+    const pnl = investments.indexOf('PortfolioPeriodPnLPanelSection');
+    const atlas = wealth.indexOf('aria-label="Wealth atlas"');
+    const cockpit = cash.indexOf('aria-label="Operations cockpit"');
+    expect(hero).toBeGreaterThan(-1);
+    expect(pulse).toBeGreaterThan(hero);
+    expect(waterfall).toBeGreaterThan(pulse);
+    expect(kpi).toBeGreaterThan(waterfall);
+    expect(pnl).toBeGreaterThan(-1);
+    expect(atlas).toBeGreaterThan(-1);
+    expect(cockpit).toBeGreaterThan(-1);
   });
 
   it('prose and AI panels collapsed under Details section', () => {

@@ -43,7 +43,7 @@ const WhatIfSandboxInner: React.FC<{
     if (!data) return 0;
     const accounts = getPersonalAccounts(data);
     const txs = getPersonalTransactions(data);
-    const avg = normalizedMonthlyExpenseSar(txs, accounts, sarPerUsd, { monthsLookback: 1 });
+    const avg = normalizedMonthlyExpenseSar(txs, accounts, sarPerUsd, { monthsLookback: 1, data });
     const eduTagged = txs.filter((tx) => {
       const cat = String(tx.budgetCategory ?? tx.category ?? '').toLowerCase();
       return /(edu|school|tuition|university|college|kids|child)/i.test(cat);

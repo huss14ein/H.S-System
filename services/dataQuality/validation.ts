@@ -9,7 +9,7 @@ const VALID_ACCOUNT_TYPES = ['Checking', 'Savings', 'Investment', 'Credit'] as c
 const VALID_RISK_PROFILES = ['Conservative', 'Moderate', 'Aggressive'] as const;
 const VALID_LIABILITY_TYPES = ['Mortgage', 'Loan', 'Credit Card', 'Personal Loan', 'Receivable'] as const;
 const VALID_LIABILITY_STATUS = ['Active', 'Paid'] as const;
-const VALID_ASSET_TYPES = ['Cash', 'Sukuk', 'Property', 'Land', 'Vehicle', 'Jewelry', 'Artworks and collectibles', 'Islamic finance instruments', 'Accounts receivable', 'Household Goods', 'Electronics', 'Other'] as const;
+const VALID_ASSET_TYPES = ['Cash', 'Property', 'Land', 'Vehicle', 'Jewelry', 'Artworks and collectibles', 'Islamic finance instruments', 'Accounts receivable', 'Household Goods', 'Electronics', 'Other'] as const;
 const VALID_TRADE_TYPES = ['buy', 'sell'] as const;
 const VALID_CONDITION_TYPES = ['price', 'date'] as const;
 const VALID_PRIORITIES = ['High', 'Medium', 'Low'] as const;
@@ -278,18 +278,51 @@ export function validateAsset(input: {
   if (Number.isNaN(val) || !Number.isFinite(val)) errors.push('Asset value must be a valid number.');
   else if (val < 0) errors.push('Asset value cannot be negative.');
 
-  const isoDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s.trim());
-  if (type === 'Sukuk') {
-    const issue = String(input.issueDate ?? '').trim();
-    const maturity = String(input.maturityDate ?? '').trim();
-    if (!issue) errors.push('Sukuk requires an issue (or subscription) date (YYYY-MM-DD).');
-    else if (!isoDate(issue)) errors.push('Sukuk issue date must be a complete calendar date (YYYY-MM-DD).');
-    if (!maturity) errors.push('Sukuk requires a maturity date (YYYY-MM-DD).');
-    else if (!isoDate(maturity)) errors.push('Sukuk maturity date must be a complete calendar date (YYYY-MM-DD).');
-    if (issue && maturity && isoDate(issue) && isoDate(maturity) && issue > maturity) {
-      errors.push('Sukuk maturity date must be on or after the issue date.');
-    }
+  return { valid: errors.length === 0, errors };
+}
+
+/** Validate direct Sukuk position before add/update */
+export function validateSukukPosition(input: {
+  name?: string;
+  investmentAccountId?: string;
+  faceValue?: unknown;
+  outstandingPrincipal?: unknown;
+  issueDate?: string;
+  maturityDate?: string;
+  currency?: string;
+}): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  const name = String(input.name ?? '').trim();
+  if (!name) errors.push('Sukuk name is required.');
+  else if (name.length > MAX_NAME_LEN) errors.push(`Sukuk name must be at most ${MAX_NAME_LEN} characters.`);
+
+  if (!String(input.investmentAccountId ?? '').trim()) {
+    errors.push('Mapped investment account is required.');
   }
+
+  const face = safeNumber(input.faceValue, NaN);
+  if (Number.isNaN(face) || !Number.isFinite(face) || face < 0) {
+    errors.push('Face value must be a non-negative number.');
+  }
+
+  const outstanding = safeNumber(input.outstandingPrincipal ?? input.faceValue, NaN);
+  if (Number.isNaN(outstanding) || !Number.isFinite(outstanding) || outstanding < 0) {
+    errors.push('Outstanding principal must be a non-negative number.');
+  }
+
+  const isoDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s.trim());
+  const issue = String(input.issueDate ?? '').trim();
+  const maturity = String(input.maturityDate ?? '').trim();
+  if (!issue) errors.push('Issue date is required (YYYY-MM-DD).');
+  else if (!isoDate(issue)) errors.push('Issue date must be YYYY-MM-DD.');
+  if (!maturity) errors.push('Maturity date is required (YYYY-MM-DD).');
+  else if (!isoDate(maturity)) errors.push('Maturity date must be YYYY-MM-DD.');
+  if (issue && maturity && isoDate(issue) && isoDate(maturity) && issue > maturity) {
+    errors.push('Maturity date must be on or after issue date.');
+  }
+
+  const cur = String(input.currency ?? 'SAR').toUpperCase();
+  if (cur !== 'SAR' && cur !== 'USD') errors.push('Currency must be SAR or USD.');
 
   return { valid: errors.length === 0, errors };
 }
@@ -574,6 +607,23 @@ export function validateBackup(backup: unknown): { valid: boolean; errors: strin
       if (l && typeof l === 'object') {
         const v = validateLiability({ name: l.name, type: l.type, amount: l.amount ?? l.balance, status: l.status });
         if (!v.valid && i === 0) errors.push(`Liability validation: ${v.errors[0]}`);
+      }
+    }
+  }
+  if (Array.isArray(b.sukukPositions)) {
+    for (let i = 0; i < Math.min(b.sukukPositions.length, 3); i++) {
+      const p = b.sukukPositions[i] as any;
+      if (p && typeof p === 'object') {
+        const v = validateSukukPosition({
+          name: p.name,
+          investmentAccountId: p.investmentAccountId ?? p.investment_account_id,
+          faceValue: p.faceValue ?? p.face_value,
+          outstandingPrincipal: p.outstandingPrincipal ?? p.outstanding_principal,
+          issueDate: p.issueDate ?? p.issue_date,
+          maturityDate: p.maturityDate ?? p.maturity_date,
+          currency: p.currency,
+        });
+        if (!v.valid && i === 0) errors.push(`Sukuk position validation: ${v.errors[0]}`);
       }
     }
   }

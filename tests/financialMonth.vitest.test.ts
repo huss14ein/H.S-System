@@ -19,6 +19,8 @@ import {
   budgetAppliesToFinancialView,
   budgetRowViewMatchScore,
   dedupeBudgetRowsForFinancialView,
+  financialMonthKeyFromTransactionDate,
+  financialMonthDaysRemaining,
 } from '../utils/financialMonth';
 
 describe('financialMonthRangeFromKey vs calendar reference', () => {
@@ -196,5 +198,19 @@ describe('resolveMonthStartDayFromData', () => {
   it('reads camelCase and snake_case stored values', () => {
     expect(resolveMonthStartDayFromData({ settings: { monthStartDay: 1 } })).toBe(1);
     expect(resolveMonthStartDayFromData({ settings: { month_start_day: 25 } })).toBe(25);
+  });
+});
+
+describe('financialMonthKeyFromTransactionDate and days remaining', () => {
+  it('maps ISO transaction dates to financial keys without UTC shift', () => {
+    expect(financialMonthKeyFromTransactionDate('2026-06-01', 28)).toEqual({ year: 2026, month: 5 });
+    expect(financialMonthKeyFromTransactionDate('2026-06-28', 28)).toEqual({ year: 2026, month: 6 });
+  });
+
+  it('financialMonthDaysRemaining uses fiscal window not calendar month', () => {
+    const ref = new Date(2026, 5, 5);
+    const { daysTotal, daysLeft } = financialMonthDaysRemaining(ref, 28);
+    expect(daysTotal).toBeGreaterThan(27);
+    expect(daysLeft).toBe(22);
   });
 });

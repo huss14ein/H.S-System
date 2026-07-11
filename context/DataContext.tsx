@@ -2,12 +2,13 @@ import React, { createContext, useState, ReactNode, useEffect, useContext, useRe
 import { flushSync } from 'react-dom';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
-import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, HOLDING_ASSET_CLASS_OPTIONS, type HoldingAssetClass, type TradeCurrency, type SukukPayoutSchedule, type SukukPayoutEvent } from '../types';
+import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, HOLDING_ASSET_CLASS_OPTIONS, type HoldingAssetClass, type TradeCurrency, type SukukPayoutSchedule, type SukukPayoutEvent, type SukukPosition, type CorporateActionEvent } from '../types';
 import { getDefaultWealthUltraSystemConfig, mergeWealthUltraSystemConfigFromRow } from '../wealth-ultra/config';
 import {
   getPersonalAccounts,
   getPersonalAssets,
   getPersonalCommodityHoldings,
+  getPersonalSukukPositions,
   getPersonalInvestments,
   getPersonalLiabilities,
   getPersonalTransactions,
@@ -23,8 +24,27 @@ import {
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { auditChangeLog } from '../services/auditLog';
 import { toast } from './ToastContext';
-import { validateAccount, validateGoal, validateHolding, validateTrade, validateTransactionCore, validateSettings, validateBackup, validateLiability, validateCommodityHolding, validateBudget, validateAsset, validatePlannedTrade, validateUniverseTicker, validatePortfolio, validateRecurringTransaction, validatePriceAlert, validateZakatPayment, validateWatchlistItem, validateGoalAllocation, validateTickerStatus, validateInvestmentPlan, validateExecutionLog } from '../services/dataQuality/validation';
+import { validateAccount, validateGoal, validateHolding, validateTrade, validateTransactionCore, validateSettings, validateBackup, validateLiability, validateCommodityHolding, validateBudget, validateAsset, validatePlannedTrade, validateUniverseTicker, validatePortfolio, validateRecurringTransaction, validatePriceAlert, validateZakatPayment, validateWatchlistItem, validateGoalAllocation, validateTickerStatus, validateInvestmentPlan, validateExecutionLog, validateSukukPosition } from '../services/dataQuality/validation';
+import { normalizeSukukPositionRow, sukukPositionToRow } from '../services/sukuk/sukukPositionDb';
+import { normalizeSukukPayoutScheduleRow, normalizeSukukPayoutEventRow, sukukPayoutScheduleToRow, sukukPayoutEventToRow } from '../services/sukuk/sukukPayoutDb';
+import { saveSukukPayoutScheduleToDb } from '../services/sukuk/sukukPayoutScheduleSave';
+import { applyPrincipalPaymentToSukukPosition, buildMaturityPrincipalEventDraft, sukukPayoutInvestmentSymbol } from '../services/sukuk/sukukPayoutLifecycle';
 import { assertDividendNotDuplicate, validateDividendRecordInput } from '../services/dividendLedgerGuards';
+import type { CorporateAction } from '../services/corporateActions';
+import {
+  buildCorporateActionEventPayload,
+  buildReverseCorporateAction,
+  computeCashInLieuDepositSar,
+  corporateActionCashDepositIdempotencyKey,
+  corporateActionCashDepositIdempotencyKeysForEvent,
+  corporateActionDepositsCash,
+  corporateActionFromEvent,
+  normalizeCorporateActionEventRow,
+  validateCorporateActionApplyPrerequisites,
+} from '../services/corporateActionApply';
+import { adjustQuotesForCorporateActionNow } from '../utils/corporateActionQuoteBridge';
+import { normalizeInvestmentCostLotRow } from '../services/investmentCostLotDb';
+import { syncPortfolioLedgerAfterChange } from '../services/portfolioLedgerSync';
 import {
     assertDividendUpdateNotDuplicate,
     computeInvestmentTxCashDelta,
@@ -34,7 +54,7 @@ import {
 } from '../services/investmentTransactionLedger';
 import { canPostTransactionToAccount } from '../services/dataQuality/accountPostingPolicy';
 import { parseSplitsFromNote } from '../services/transactionSplitNote';
-import { applyBuyToHolding, consolidateHoldingsBySymbol } from '../services/holdingMath';
+import { consolidateHoldingsBySymbol } from '../services/holdingMath';
 import { roundAvgCostPerUnit, roundMoney, roundQuantity } from '../utils/money';
 import { normalizeCoreUpsideAllocations } from '../utils/investmentPlanAllocations';
 import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/investmentPlanPerPortfolio';
@@ -94,7 +114,7 @@ export type { RecordWriteOptions };
 const initialData: FinancialData = {
     accounts: [], assets: [], liabilities: [], goals: [], transactions: [], recurringTransactions: [],
     investments: [], investmentTransactions: [], budgets: [], commodityHoldings: [], watchlist: [],
-    sukukPayoutSchedules: [], sukukPayoutEvents: [],
+    sukukPositions: [], sukukPayoutSchedules: [], sukukPayoutEvents: [], corporateActionEvents: [], investmentCostLots: [],
     settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275, monthStartDay: 28 },
     zakatPayments: [], priceAlerts: [], plannedTrades: [], notifications: [],
     investmentPlan: {
@@ -124,7 +144,6 @@ function normalizeMinCoverageThreshold(raw: unknown, fallback = initialData.inve
 
 /** Stable fallback for deployable accounts so memo deps don’t churn each render when lists are missing. */
 const EMPTY_ACCOUNTS_FOR_DEPLOY: Account[] = [];
-const HOLDING_QUANTITY_EPSILON = 0.00001;
 interface DataContextType {
   data: FinancialData;
   loading: boolean;
@@ -189,6 +208,14 @@ interface DataContextType {
   }>;
   updateInvestmentTransaction: (tx: InvestmentTransaction, opts?: RecordWriteOptions) => Promise<void>;
   deleteInvestmentTransaction: (transactionId: string, opts?: RecordWriteOptions) => Promise<void>;
+  applyCorporateActionEvent: (args: {
+    portfolioId: string;
+    symbol: string;
+    executionDate: string;
+    action: CorporateAction;
+    linkedSymbol?: string;
+  }) => Promise<void>;
+  reverseCorporateActionEvent: (eventId: string) => Promise<void>;
   addWatchlistItem: (item: WatchlistItem, opts?: RecordWriteOptions) => Promise<void>;
   updateWatchlistItem: (item: WatchlistItem) => Promise<void>;
   deleteWatchlistItem: (symbol: string) => Promise<void>;
@@ -207,6 +234,23 @@ interface DataContextType {
   updateCommodityHolding: (holding: CommodityHolding) => Promise<void>;
   deleteCommodityHolding: (holdingId: string) => Promise<void>;
   batchUpdateCommodityHoldingValues: (updates: { id: string; currentValue: number }[]) => Promise<void>;
+  addSukukPosition: (position: Omit<SukukPosition, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<void>;
+  updateSukukPosition: (position: SukukPosition) => Promise<void>;
+  deleteSukukPosition: (positionId: string) => Promise<void>;
+  saveSukukPayoutSchedule: (input: {
+    position: SukukPosition;
+    existingSchedule: SukukPayoutSchedule | null;
+    investmentAccountId: string;
+    currency: 'SAR' | 'USD';
+    cadence: SukukPayoutSchedule['cadence'];
+    dayOfMonth?: number | null;
+    couponAmount?: number | null;
+    principalAmount?: number | null;
+    principalInstallmentAmount?: number | null;
+    startDate?: string | null;
+    endDate?: string | null;
+    enabled?: boolean;
+  }) => Promise<void>;
   updateSettings: (settings: Partial<Settings>) => Promise<void>;
   resetData: () => Promise<void>;
   loadDemoData: () => Promise<void>;
@@ -265,6 +309,8 @@ const DATA_CONTEXT_ACTION_KEYS = [
   'recordTrade',
   'updateInvestmentTransaction',
   'deleteInvestmentTransaction',
+  'applyCorporateActionEvent',
+  'reverseCorporateActionEvent',
   'addWatchlistItem',
   'updateWatchlistItem',
   'deleteWatchlistItem',
@@ -283,6 +329,10 @@ const DATA_CONTEXT_ACTION_KEYS = [
   'updateCommodityHolding',
   'deleteCommodityHolding',
   'batchUpdateCommodityHoldingValues',
+  'addSukukPosition',
+  'updateSukukPosition',
+  'deleteSukukPosition',
+  'saveSukukPayoutSchedule',
   'updateSettings',
   'resetData',
   'loadDemoData',
@@ -490,16 +540,6 @@ function normalizeAssetRow(raw: any): Asset {
     }
     const pp = raw.purchase_price ?? raw.purchasePrice;
     const mr = raw.monthly_rent ?? raw.monthlyRent;
-    const issueRaw = raw.issue_date ?? raw.issueDate;
-    const matRaw = raw.maturity_date ?? raw.maturityDate;
-    const issueDate =
-        issueRaw != null && String(issueRaw).trim() !== ''
-            ? String(issueRaw).trim().slice(0, 10)
-            : undefined;
-    const maturityDate =
-        matRaw != null && String(matRaw).trim() !== ''
-            ? String(matRaw).trim().slice(0, 10)
-            : undefined;
     const notesRaw = raw.notes;
     const notes =
         notesRaw != null && String(notesRaw).trim() !== '' ? String(notesRaw) : undefined;
@@ -514,20 +554,8 @@ function normalizeAssetRow(raw: any): Asset {
         monthlyRent: mr != null && mr !== '' ? roundMoney(Number(mr)) : undefined,
         goalId: raw.goal_id ?? raw.goalId,
         owner: raw.owner,
-        issueDate,
-        maturityDate,
         notes,
     };
-}
-
-/** DB columns for Sukuk dates (snake_case). Stripped from spread so we do not send duplicate camelCase keys. */
-function assetDatesForDb(asset: Asset): { issue_date: string | null; maturity_date: string | null } {
-    const idt = asset.issueDate != null && String(asset.issueDate).trim() !== '' ? String(asset.issueDate).trim().slice(0, 10) : null;
-    const mdt =
-        asset.maturityDate != null && String(asset.maturityDate).trim() !== ''
-            ? String(asset.maturityDate).trim().slice(0, 10)
-            : null;
-    return { issue_date: idt, maturity_date: mdt };
 }
 
 /** Map DB / API priority values to Goal.priority (stable for sort + UI). */
@@ -763,6 +791,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [dataResetKey, setDataResetKey] = useState(0);
     const auth = useContext(AuthContext);
     const tradeSubmissionInFlightRef = useRef(false);
+    const corporateActionInFlightRef = useRef(false);
     const duplicateHoldingsReconcileInFlightRef = useRef(false);
     const duplicateHoldingsLastSignatureRef = useRef<string>('');
     /** After first successful Supabase hydrate, refetches refresh in the background without blocking pages. */
@@ -829,6 +858,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             type: normalizedType,
             currency,
             linkedCashAccountId: transaction.linkedCashAccountId ?? transaction.linked_cash_account_id,
+            idempotencyKey: transaction.idempotencyKey ?? transaction.idempotency_key ?? undefined,
         };
     };
 
@@ -985,47 +1015,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const tradePayloadVariants = (trade: Omit<InvestmentTransaction, 'id' | 'user_id'>) => {
-        const baseRow = { account_id: trade.accountId, date: trade.date, type: trade.type, symbol: trade.symbol, quantity: trade.quantity, price: trade.price, total: trade.total };
+        const baseRow: Record<string, unknown> = {
+            account_id: trade.accountId,
+            date: trade.date,
+            type: trade.type,
+            symbol: trade.symbol,
+            quantity: trade.quantity,
+            price: trade.price,
+            total: trade.total,
+        };
+        const portfolioId = trade.portfolioId ?? (trade as { portfolio_id?: string }).portfolio_id;
+        if (portfolioId) baseRow.portfolio_id = portfolioId;
+        const idem = trade.idempotencyKey ?? (trade as { idempotency_key?: string }).idempotency_key;
+        if (idem) baseRow.idempotency_key = idem;
         const withCurrency = trade.currency ? { ...baseRow, currency: trade.currency } : baseRow;
         return [withCurrency, baseRow];
     };
 
     const transactionPayloadVariants = buildTransactionPayloadVariants;
-
-    const normalizeSukukPayoutScheduleRow = (r: any): SukukPayoutSchedule => ({
-        id: r.id,
-        user_id: r.user_id ?? r.userId,
-        assetId: r.asset_id ?? r.assetId,
-        investmentAccountId: r.investment_account_id ?? r.investmentAccountId,
-        currency: (r.currency ?? 'SAR') as TradeCurrency,
-        cadence: r.cadence,
-        dayOfMonth: r.day_of_month ?? r.dayOfMonth ?? null,
-        couponAmount: r.coupon_amount ?? r.couponAmount ?? null,
-        principalAmount: r.principal_amount ?? r.principalAmount ?? null,
-        startDate: r.start_date ?? r.startDate ?? null,
-        endDate: r.end_date ?? r.endDate ?? null,
-        enabled: r.enabled ?? true,
-        metadata: (r.metadata ?? {}) as Record<string, unknown>,
-        createdAt: r.created_at ?? r.createdAt,
-        updatedAt: r.updated_at ?? r.updatedAt,
-    });
-
-    const normalizeSukukPayoutEventRow = (r: any): SukukPayoutEvent => ({
-        id: r.id,
-        user_id: r.user_id ?? r.userId,
-        scheduleId: r.schedule_id ?? r.scheduleId,
-        assetId: r.asset_id ?? r.assetId,
-        investmentAccountId: r.investment_account_id ?? r.investmentAccountId,
-        kind: r.kind,
-        payoutDate: r.payout_date ?? r.payoutDate,
-        amount: roundMoney(Number(r.amount ?? 0)),
-        currency: (r.currency ?? 'SAR') as TradeCurrency,
-        posted: Boolean(r.posted),
-        postedAt: r.posted_at ?? r.postedAt ?? null,
-        postedInvestmentTransactionId: r.posted_investment_transaction_id ?? r.postedInvestmentTransactionId ?? null,
-        metadata: (r.metadata ?? {}) as Record<string, unknown>,
-        createdAt: r.created_at ?? r.createdAt,
-    });
 
     const trySelectOptionalTable = <T,>(q: PromiseLike<any>) =>
         q.then((r: any) => r, () => ({ data: [] as T[], error: { code: 'PGRST205', message: 'Table not found' } }));
@@ -1049,6 +1056,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const recurringPromise = trySelectOptionalTable<any>(db.from('recurring_transactions').select('*').eq('user_id', auth.user.id));
             const sukukSchedulesPromise = trySelectOptionalTable<any>(db.from('sukuk_payout_schedules').select('*').eq('user_id', auth.user.id));
             const sukukEventsPromise = trySelectOptionalTable<any>(db.from('sukuk_payout_events').select('*').eq('user_id', auth.user.id));
+            const sukukPositionsPromise = trySelectOptionalTable<any>(db.from('sukuk_positions').select('*').eq('user_id', auth.user.id));
+            const corporateActionEventsPromise = trySelectOptionalTable<any>(
+                db.from('corporate_action_events').select('*').eq('user_id', auth.user.id).order('execution_date', { ascending: false }),
+            );
+            const investmentCostLotsPromise = trySelectOptionalTable<any>(
+                db.from('investment_cost_lots').select('*').eq('user_id', auth.user.id),
+            );
 
             const fetchPromises = [
                 db.from('accounts').select('*').eq('user_id', auth.user.id),
@@ -1072,8 +1086,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 db.from('execution_logs').select('*').eq('user_id', auth.user.id).order('created_at', { ascending: false }).limit(150),
                 recurringPromise,
                 db.from('budget_requests').select('*').eq('user_id', auth.user.id),
+                sukukPositionsPromise,
                 sukukSchedulesPromise,
                 sukukEventsPromise,
+                corporateActionEventsPromise,
+                investmentCostLotsPromise,
             ];
             const keys = HYDRATE_FETCH_KEYS;
             const emptyResult = (err?: any) => ({ data: null, error: err || { code: 'FETCH_FAILED' } });
@@ -1131,8 +1148,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             let executionLogs = emptyResult();
             let recurringTransactions = emptyResult();
             let budgetRequests = emptyResult();
+            let sukukPositions = emptyResult();
             let sukukPayoutSchedules = emptyResult();
             let sukukPayoutEvents = emptyResult();
+            let corporateActionEvents = emptyResult();
+            let investmentCostLots = emptyResult();
             const allFetches = {
                 accounts,
                 goals,
@@ -1183,6 +1203,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 investmentTransactions: patch.investmentTransactions ?? prev.investmentTransactions,
                 sukukPayoutSchedules: patch.sukukPayoutSchedules ?? prev.sukukPayoutSchedules,
                 sukukPayoutEvents: patch.sukukPayoutEvents ?? prev.sukukPayoutEvents,
+                sukukPositions: patch.sukukPositions ?? prev.sukukPositions,
+                corporateActionEvents: patch.corporateActionEvents ?? prev.corporateActionEvents,
+                investmentCostLots: patch.investmentCostLots ?? prev.investmentCostLots,
                 budgets: patch.budgets ?? prev.budgets,
                 commodityHoldings: patch.commodityHoldings ?? prev.commodityHoldings,
                 watchlist: patch.watchlist ?? prev.watchlist,
@@ -1319,8 +1342,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         executionLogs,
                         recurringTransactions,
                         budgetRequests,
+                        sukukPositions,
                         sukukPayoutSchedules,
                         sukukPayoutEvents,
+                        corporateActionEvents,
+                        investmentCostLots,
                     ] = secondaryResults;
                     const secondaryFetches = {
                         zakatPayments,
@@ -1333,14 +1359,35 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         executionLogs,
                         recurringTransactions,
                         budgetRequests,
+                        sukukPositions,
                         sukukPayoutSchedules,
                         sukukPayoutEvents,
+                        corporateActionEvents,
+                        investmentCostLots,
                     };
                     Object.entries(secondaryFetches).forEach(([key, value]) => {
                         if (value?.error && value.error.code !== 'PGRST116') {
                             console.error(`Error fetching ${key}:`, value.error);
+                            if (key === 'sukukPositions' && value.error.code === 'PGRST205') {
+                                console.warn(
+                                    'sukuk_positions table missing — apply migration 20260627120000_sukuk_positions.sql on Supabase.',
+                                );
+                            }
+                            if (key === 'corporateActionEvents' && value.error.code === 'PGRST205') {
+                                console.warn(
+                                    'corporate_action_events table missing — apply migration 20260706130000_corporate_actions_and_cost_lots.sql.',
+                                );
+                            }
+                            if (key === 'investmentCostLots' && value.error.code === 'PGRST205') {
+                                console.warn(
+                                    'investment_cost_lots table missing — apply migration 20260706130000_corporate_actions_and_cost_lots.sql.',
+                                );
+                            }
                         }
                     });
+                    const normalizedSukukPositionsBg = filterOwnedRows(((sukukPositions.data ?? undefined) as any[] | undefined) || []).map(
+                        normalizeSukukPositionRow,
+                    );
                     const normalizedSukukSchedulesBg = filterOwnedRows(((sukukPayoutSchedules.data ?? undefined) as any[] | undefined) || []).map(
                         normalizeSukukPayoutScheduleRow,
                     );
@@ -1350,12 +1397,39 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     const dueSukukEventsBg = normalizedSukukEventsBg
                         .filter((e) => !e.posted && e.amount > 0 && String(e.payoutDate) <= todayYmd)
                         .slice(0, 50);
+                    const matureSukukDirectPosts = normalizedSukukPositionsBg
+                        .map((p) => {
+                            const hasSchedule = normalizedSukukSchedulesBg.some((s) => s.sukukPositionId === p.id);
+                            const meta = (p as SukukPosition & { metadata?: { autoCloseOnMaturity?: boolean } }).metadata;
+                            const autoClose =
+                                meta && typeof meta.autoCloseOnMaturity === 'boolean' ? meta.autoCloseOnMaturity : undefined;
+                            const draft = buildMaturityPrincipalEventDraft(p, todayYmd, {
+                                hasPayoutSchedule: hasSchedule,
+                                autoCloseOnMaturity: autoClose,
+                            });
+                            if (!draft) return null;
+                            const hasPrincipalEvent = normalizedSukukEventsBg.some(
+                                (e) => e.sukukPositionId === p.id && e.kind === 'principal',
+                            );
+                            if (hasPrincipalEvent) return null;
+                            return { position: p, draft };
+                        })
+                        .filter((x): x is { position: SukukPosition; draft: NonNullable<ReturnType<typeof buildMaturityPrincipalEventDraft>> } => x != null);
+                    const normalizedCorporateActionEventsBg = filterOwnedRows(
+                        ((corporateActionEvents.data ?? undefined) as any[] | undefined) || [],
+                    ).map((row) => normalizeCorporateActionEventRow(row));
+                    const normalizedCostLotsBg = filterOwnedRows(
+                        ((investmentCostLots.data ?? undefined) as any[] | undefined) || [],
+                    ).map((row) => normalizeInvestmentCostLotRow(row as Record<string, unknown>));
                     await yieldToMain();
                     applyFinancialDataPatch(
                         {
                             accounts: ownedAccounts,
+                            sukukPositions: normalizedSukukPositionsBg,
                             sukukPayoutSchedules: normalizedSukukSchedulesBg,
                             sukukPayoutEvents: normalizedSukukEventsBg,
+                            corporateActionEvents: normalizedCorporateActionEventsBg,
+                            investmentCostLots: normalizedCostLotsBg,
                             commodityHoldings: filterOwnedRows((commodityHoldings.data ?? undefined) as any[] | undefined).map(normalizeCommodityHolding),
                             zakatPayments: sortByNewestFirst(filterOwnedRows((zakatPayments.data ?? undefined) as any[] | undefined)),
                             priceAlerts: filterOwnedRows((priceAlerts.data ?? undefined) as any[] | undefined).map(normalizePriceAlert),
@@ -1431,12 +1505,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             console.warn('Optional wealth_ultra_config load skipped:', e);
                         }
                     }
-                    if (dueSukukEventsBg.length && auth.user) {
+                    if ((dueSukukEventsBg.length || matureSukukDirectPosts.length) && auth.user) {
                         const userId = auth.user.id;
                         void (async () => {
                             try {
                                 const appendedInvestmentTx: InvestmentTransaction[] = [];
                                 const postedEventIds = new Set<string>();
+                                const updatedPositions = new Map<string, SukukPosition>();
                                 const sukukPostDeadline = Date.now() + 5000;
                                 for (const ev of dueSukukEventsBg) {
                                     if (Date.now() > sukukPostDeadline) {
@@ -1445,7 +1520,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                         );
                                         break;
                                     }
-                                    const symbol = `SUKUK:${String(ev.assetId).slice(0, 8)}:${ev.kind.toUpperCase()}`;
+                                    const symbol = sukukPayoutInvestmentSymbol(ev.sukukPositionId, ev.kind);
                                     const txType: InvestmentTransaction['type'] =
                                         ev.kind === 'principal' ? 'deposit' : 'dividend';
                                     const payload: Omit<InvestmentTransaction, 'id' | 'user_id'> = {
@@ -1491,10 +1566,87 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                         } else {
                                             appendedInvestmentTx.push(normalizeInvestmentTransaction(inserted));
                                             postedEventIds.add(ev.id);
+                                            if (ev.kind === 'principal') {
+                                                const current =
+                                                    updatedPositions.get(ev.sukukPositionId) ??
+                                                    dataRef.current.sukukPositions?.find((p) => p.id === ev.sukukPositionId);
+                                                if (current) {
+                                                    const next = applyPrincipalPaymentToSukukPosition(
+                                                        current,
+                                                        ev.amount,
+                                                        ev.payoutDate,
+                                                    );
+                                                    const merged: SukukPosition = {
+                                                        ...current,
+                                                        outstandingPrincipal: next.outstandingPrincipal,
+                                                        status: next.status,
+                                                    };
+                                                    updatedPositions.set(ev.sukukPositionId, merged);
+                                                    try {
+                                                        await db
+                                                            .from('sukuk_positions')
+                                                            .update({
+                                                                outstanding_principal: merged.outstandingPrincipal,
+                                                                status: merged.status,
+                                                            })
+                                                            .eq('id', ev.sukukPositionId)
+                                                            .eq('user_id', userId);
+                                                    } catch {
+                                                        // position update best-effort; refresh will reconcile
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                                if (!appendedInvestmentTx.length && postedEventIds.size === 0) return;
+                                for (const { position, draft } of matureSukukDirectPosts) {
+                                    if (Date.now() > sukukPostDeadline) break;
+                                    const symbol = sukukPayoutInvestmentSymbol(draft.sukukPositionId, 'principal');
+                                    const payload: Omit<InvestmentTransaction, 'id' | 'user_id'> = {
+                                        accountId: draft.investmentAccountId,
+                                        date: draft.payoutDate,
+                                        type: 'deposit',
+                                        symbol,
+                                        quantity: 0,
+                                        price: 0,
+                                        total: draft.amount,
+                                        currency: draft.currency,
+                                    };
+                                    let inserted: any | null = null;
+                                    for (const variant of tradePayloadVariants(payload)) {
+                                        const res = await db
+                                            .from('investment_transactions')
+                                            .insert(withUser(variant))
+                                            .select('*')
+                                            .maybeSingle();
+                                        if (!res.error && res.data) {
+                                            inserted = res.data;
+                                            break;
+                                        }
+                                    }
+                                    if (!inserted?.id) continue;
+                                    appendedInvestmentTx.push(normalizeInvestmentTransaction(inserted));
+                                    const next = applyPrincipalPaymentToSukukPosition(position, draft.amount, draft.payoutDate);
+                                    const merged: SukukPosition = {
+                                        ...position,
+                                        outstandingPrincipal: next.outstandingPrincipal,
+                                        status: next.status,
+                                    };
+                                    updatedPositions.set(position.id, merged);
+                                    try {
+                                        await db
+                                            .from('sukuk_positions')
+                                            .update({
+                                                outstanding_principal: merged.outstandingPrincipal,
+                                                status: merged.status,
+                                            })
+                                            .eq('id', position.id)
+                                            .eq('user_id', userId);
+                                    } catch {
+                                        // best-effort
+                                    }
+                                }
+                                if (!appendedInvestmentTx.length && postedEventIds.size === 0 && updatedPositions.size === 0) return;
                                 setData((prev) => ({
                                     ...prev,
                                     investmentTransactions: appendedInvestmentTx.length
@@ -1505,6 +1657,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                               postedEventIds.has(e.id) ? { ...e, posted: true } : e,
                                           )
                                         : prev.sukukPayoutEvents,
+                                    sukukPositions:
+                                        updatedPositions.size > 0
+                                            ? (prev.sukukPositions ?? []).map((p) =>
+                                                  updatedPositions.has(p.id) ? updatedPositions.get(p.id)! : p,
+                                              )
+                                            : prev.sukukPositions,
                                 }));
                             } catch (e) {
                                 console.warn('Sukuk auto-post skipped:', e);
@@ -1598,6 +1756,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             'investment_plan', 'portfolio_universe', 'status_change_log', 'execution_logs',
             'recurring_transactions',
             'budget_requests',
+            'sukuk_payout_events',
+            'sukuk_payout_schedules',
+            'sukuk_positions',
         ];
         // allSettled so missing tables (e.g. recurring_transactions) don't fail the whole reset
         await Promise.allSettled(tables.map(table => db.from(table).delete().eq('user_id', auth.user!.id)));
@@ -1661,6 +1822,36 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     if (error) console.warn(`Restore ${dbTable}:`, error);
                 }
             }
+            const sukukPositionsBackup = arr(backup.sukukPositions);
+            if (sukukPositionsBackup.length) {
+                const rows = sukukPositionsBackup.map((p: SukukPosition) => ({
+                    id: p.id,
+                    user_id: uid,
+                    ...sukukPositionToRow(p),
+                }));
+                const { error } = await db.from('sukuk_positions').insert(rows);
+                if (error) console.warn('Restore sukuk_positions:', error);
+            }
+            const sukukSchedulesBackup = arr(backup.sukukPayoutSchedules);
+            if (sukukSchedulesBackup.length) {
+                const rows = sukukSchedulesBackup.map((s: SukukPayoutSchedule) => ({
+                    id: s.id,
+                    user_id: uid,
+                    ...sukukPayoutScheduleToRow(s),
+                }));
+                const { error } = await db.from('sukuk_payout_schedules').insert(rows);
+                if (error) console.warn('Restore sukuk_payout_schedules:', error);
+            }
+            const sukukEventsBackup = arr(backup.sukukPayoutEvents);
+            if (sukukEventsBackup.length) {
+                const rows = sukukEventsBackup.map((e: SukukPayoutEvent) => ({
+                    id: e.id,
+                    user_id: uid,
+                    ...sukukPayoutEventToRow(e),
+                }));
+                const { error } = await db.from('sukuk_payout_events').insert(rows);
+                if (error) console.warn('Restore sukuk_payout_events:', error);
+            }
             const investments = arr(backup.investments);
             if (investments.length) {
                 const portfolioRows = investments.map((p: any) => {
@@ -1719,8 +1910,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             name: sanitized.name,
             type: sanitized.type,
             value: sanitized.value,
-            issueDate: sanitized.issueDate,
-            maturityDate: sanitized.maturityDate,
         });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const assetOk = await guardRecordWrite(opts, {
@@ -1731,13 +1920,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
         if (!assetOk) return;
         const db = supabase;
-        const { id: _omitId, user_id: _omitUid, issueDate, maturityDate, notes: notesForDb, ...insertRest } = sanitized;
-        const dates = assetDatesForDb(sanitized);
+        const { id: _omitId, user_id: _omitUid, notes: notesForDb, ...insertRest } = sanitized;
         const notesPayload =
             notesForDb != null && String(notesForDb).trim() !== '' ? String(notesForDb).trim() : null;
         const { data: newAsset, error } = await db
             .from('assets')
-            .insert(withUser({ ...insertRest, ...dates, notes: notesPayload }))
+            .insert(withUser({ ...insertRest, notes: notesPayload }))
             .select()
             .single();
         if (error) { 
@@ -1754,19 +1942,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             name: sanitized.name,
             type: sanitized.type,
             value: sanitized.value,
-            issueDate: sanitized.issueDate,
-            maturityDate: sanitized.maturityDate,
             notes: sanitized.notes,
         });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
-        const { id: _assetId, user_id: _uid, issueDate, maturityDate, notes: notesForDb, ...updateRest } = sanitized;
-        const dates = assetDatesForDb(sanitized);
+        const { id: _assetId, user_id: _uid, notes: notesForDb, ...updateRest } = sanitized;
         const notesPayload =
             notesForDb != null && String(notesForDb).trim() !== '' ? String(notesForDb).trim() : null;
         const { error } = await db
             .from('assets')
-            .update({ ...updateRest, ...dates, notes: notesPayload })
+            .update({ ...updateRest, notes: notesPayload })
             .match({ id: sanitized.id, user_id: auth.user.id });
         if (error) console.error("Error updating asset:", error);
         else setData(prev => ({ ...prev, assets: prev.assets.map(a => a.id === sanitized.id ? sanitized : a) }));
@@ -2822,9 +3007,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!supabase || !auth?.user) return { applied: false, skipped: true };
 
         const monthStartDay = resolveMonthStartDayFromData(data);
-        const postDate = effectiveMonthStartDate(year, month, rule.dayOfMonth);
+        const finKey = { year, month };
+        const { start, end } = financialMonthRangeFromKey(finKey, monthStartDay);
+        let postDate: Date;
+        if (monthStartDay === 1) {
+            postDate = effectiveMonthStartDate(year, month, rule.dayOfMonth);
+        } else {
+            const preferred = effectiveMonthStartDate(finKey.year, finKey.month, rule.dayOfMonth);
+            postDate =
+                preferred.getTime() >= start.getTime() && preferred.getTime() <= end.getTime()
+                    ? preferred
+                    : start;
+        }
         const date = postDate.toISOString().slice(0, 10);
-        const { start, end } = financialMonthRangeFromKey({ year, month }, monthStartDay);
         const already = (data?.transactions ?? []).some((t) => {
             const rid = t.recurringId ?? (t as any).recurring_id;
             if (rid !== rule.id) return false;
@@ -3199,6 +3394,270 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }))
         }));
     };
+    const syncPortfolioAfterLedgerMutation = async (
+        portfolioId: string,
+        overrides?: {
+            corporateActionEvents?: CorporateActionEvent[];
+            investmentTransactions?: InvestmentTransaction[];
+            holdingsBaselineMode?: import('../services/corporateActionApply').HoldingsReplayBaselineMode;
+        },
+    ) => {
+        if (!auth?.user) return;
+        const snapshot = dataRef.current;
+        const portfolio = (snapshot?.investments ?? []).find((p) => p.id === portfolioId);
+        if (!portfolio) return;
+        await syncPortfolioLedgerAfterChange({
+            portfolio,
+            investmentTransactions: overrides?.investmentTransactions ?? snapshot?.investmentTransactions ?? [],
+            corporateActionEvents: overrides?.corporateActionEvents ?? snapshot?.corporateActionEvents ?? [],
+            updateHolding,
+            addHolding,
+            deleteHolding,
+            supabase,
+            userId: auth.user.id,
+            holdingsBaselineMode: overrides?.holdingsBaselineMode ?? 'replay_derived',
+            onLotsUpdated: (updatedLots) => {
+                setData((prev) => ({
+                    ...prev,
+                    investmentCostLots: [
+                        ...updatedLots,
+                        ...(prev.investmentCostLots ?? []).filter((l) => l.portfolioId !== portfolioId),
+                    ],
+                }));
+            },
+        });
+    };
+    const applyCorporateActionEvent = async (args: {
+        portfolioId: string;
+        symbol: string;
+        executionDate: string;
+        action: CorporateAction;
+        linkedSymbol?: string;
+    }) => {
+        if (!supabase || !auth?.user) return;
+        if (corporateActionInFlightRef.current) {
+            throw new Error('A corporate action is already in progress. Please wait.');
+        }
+        corporateActionInFlightRef.current = true;
+        try {
+        const snapshot = dataRef.current;
+        const portfolio = (snapshot?.investments ?? []).find((p) => p.id === args.portfolioId);
+        if (!portfolio) throw new Error('Portfolio not found');
+        const symUpper = args.symbol.trim().toUpperCase();
+        const holding = portfolio.holdings?.find((h) => String(h.symbol ?? '').toUpperCase() === symUpper);
+        if (!holding || (Number(holding.quantity) || 0) <= 0) {
+            throw new Error(`No holding for ${args.symbol} in this portfolio.`);
+        }
+        const prereq = validateCorporateActionApplyPrerequisites({
+            portfolioId: args.portfolioId,
+            symbol: args.symbol,
+            transactions: snapshot?.investmentTransactions ?? [],
+            corporateActionEvents: snapshot?.corporateActionEvents ?? [],
+        });
+        if (!prereq.valid) throw new Error(prereq.error ?? 'Corporate action prerequisites not met.');
+        const payload = buildCorporateActionEventPayload({
+            portfolioId: args.portfolioId,
+            symbol: args.symbol,
+            executionDate: args.executionDate,
+            action: args.action,
+            linkedSymbol: args.linkedSymbol,
+        });
+        const row = withUser({
+            portfolio_id: payload.portfolio_id,
+            action_type: payload.action_type,
+            symbol: payload.symbol,
+            linked_symbol: payload.linked_symbol,
+            execution_date: payload.execution_date,
+            ratio_numerator: payload.ratio_numerator,
+            ratio_denominator: payload.ratio_denominator,
+            cash_per_share: payload.cash_per_share,
+            price_per_share: payload.price_per_share ?? null,
+            cost_basis_allocation_pct: payload.cost_basis_allocation_pct,
+            metadata: payload.metadata ?? {},
+            idempotency_key: payload.idempotency_key,
+            status: payload.status ?? 'applied',
+        });
+        const { data: inserted, error } = await supabase.from('corporate_action_events').insert(row).select().single();
+        if (error) {
+            if (error.code === 'PGRST205') {
+                console.warn('corporate_action_events table missing — apply migration 20260706130000_corporate_actions_and_cost_lots.sql');
+                return;
+            }
+            if (error.code === '23505') {
+                return;
+            }
+            throw error;
+        }
+        if (!inserted) return;
+
+        const ev: CorporateActionEvent = normalizeCorporateActionEventRow(inserted as Record<string, unknown>);
+        const mergedEvents = [ev, ...(snapshot?.corporateActionEvents ?? [])];
+        setData((prev) => ({
+            ...prev,
+            corporateActionEvents: mergedEvents,
+        }));
+        await yieldToMain();
+        await syncPortfolioAfterLedgerMutation(args.portfolioId, {
+            corporateActionEvents: mergedEvents,
+            holdingsBaselineMode: 'as_stored',
+        });
+
+        adjustQuotesForCorporateActionNow({
+            symbol: args.symbol,
+            action: args.action,
+            portfolioId: args.portfolioId,
+        });
+
+        if (corporateActionDepositsCash(args.action) && portfolio.accountId) {
+            const preHolding = holding;
+            const cashInLieu = computeCashInLieuDepositSar({
+                action: args.action,
+                holding: {
+                    quantity: preHolding?.quantity ?? 0,
+                    avgCost: preHolding?.avgCost ?? 0,
+                },
+            });
+            if (cashInLieu > 0) {
+                const depositKey = corporateActionCashDepositIdempotencyKey(
+                    args.action.type === 'cash_in_lieu' ? 'cash_in_lieu' : 'reverse_stock_split',
+                    payload.idempotency_key,
+                );
+                await recordTrade(
+                    {
+                        portfolioId: portfolio.id,
+                        accountId: portfolio.accountId,
+                        type: 'deposit',
+                        symbol: args.symbol.toUpperCase(),
+                        quantity: 0,
+                        price: 0,
+                        total: cashInLieu,
+                        date: args.executionDate,
+                        idempotencyKey: depositKey,
+                    },
+                    undefined,
+                    { system: true },
+                );
+            }
+        }
+        } finally {
+            corporateActionInFlightRef.current = false;
+        }
+    };
+
+    const removeCorporateActionCashDeposits = async (idempotencyKey: string) => {
+        if (!supabase || !auth?.user) return;
+        const keys = corporateActionCashDepositIdempotencyKeysForEvent(idempotencyKey);
+        const snapshot = dataRef.current;
+
+        const { data: dbRows, error: fetchErr } = await supabase
+            .from('investment_transactions')
+            .select('*')
+            .eq('user_id', auth.user.id)
+            .eq('type', 'deposit')
+            .in('idempotency_key', keys);
+        if (fetchErr && fetchErr.code !== 'PGRST205') {
+            console.warn('Corporate action deposit lookup failed:', fetchErr);
+        }
+
+        const depositsById = new Map<string, InvestmentTransaction>();
+        for (const row of dbRows ?? []) {
+            const normalized = normalizeInvestmentTransaction(row);
+            if (normalized.id) depositsById.set(normalized.id, normalized);
+        }
+        for (const t of snapshot?.investmentTransactions ?? []) {
+            if (t.type === 'deposit' && t.idempotencyKey && keys.includes(String(t.idempotencyKey)) && t.id) {
+                depositsById.set(t.id, t);
+            }
+        }
+
+        for (const deposit of depositsById.values()) {
+            if (!deposit.id) continue;
+            const { error } = await supabase
+                .from('investment_transactions')
+                .delete()
+                .match({ id: deposit.id, user_id: auth.user.id });
+            if (error) {
+                console.warn('Corporate action deposit reversal failed:', error);
+                continue;
+            }
+            const reverseDelta = -computeInvestmentTxCashDelta(deposit);
+            setData((prev) => ({
+                ...prev,
+                investmentTransactions: prev.investmentTransactions.filter((t) => t.id !== deposit.id),
+            }));
+            const accountId = resolveCanonicalAccountId(deposit.accountId, snapshot?.accounts ?? []);
+            if (reverseDelta !== 0) {
+                await applyInvestmentAccountDeltaForTrade(accountId, reverseDelta);
+            }
+        }
+    };
+
+    const reverseCorporateActionEvent = async (eventId: string) => {
+        if (!supabase || !auth?.user) return;
+        if (corporateActionInFlightRef.current) {
+            throw new Error('A corporate action is already in progress. Please wait.');
+        }
+        corporateActionInFlightRef.current = true;
+        try {
+        const snapshot = dataRef.current;
+        const ev = (snapshot?.corporateActionEvents ?? []).find((e) => e.id === eventId);
+        if (!ev || ev.status === 'reversed') throw new Error('Corporate action not found or already reversed.');
+        const portfolio = (snapshot?.investments ?? []).find((p) => p.id === ev.portfolioId);
+        if (!portfolio) throw new Error('Portfolio not found.');
+
+        const reverseAction = buildReverseCorporateAction(corporateActionFromEvent(ev));
+        const payload = buildCorporateActionEventPayload({
+            portfolioId: ev.portfolioId,
+            symbol: ev.symbol,
+            executionDate: ev.executionDate,
+            action: reverseAction,
+            linkedSymbol: ev.linkedSymbol ?? undefined,
+        });
+        const reverseRow = withUser({
+            ...payload,
+            idempotency_key: `${payload.idempotency_key}|reverse|${eventId}`,
+            status: 'applied',
+        });
+        const { data: inserted, error: insertErr } = await supabase
+            .from('corporate_action_events')
+            .insert(reverseRow)
+            .select()
+            .single();
+        if (insertErr && insertErr.code !== 'PGRST205' && insertErr.code !== '23505') throw insertErr;
+
+        const { error: markErr } = await supabase
+            .from('corporate_action_events')
+            .update({ status: 'reversed', reversed_by_event_id: inserted?.id ?? null })
+            .match({ id: eventId, user_id: auth.user.id });
+        if (markErr && markErr.code !== 'PGRST205') throw markErr;
+
+        const reversalEv: CorporateActionEvent | null = inserted
+            ? normalizeCorporateActionEventRow(inserted as Record<string, unknown>)
+            : null;
+        const updatedEvents = (snapshot?.corporateActionEvents ?? []).map((e) =>
+            e.id === eventId ? { ...e, status: 'reversed' as const } : e,
+        );
+        const mergedEvents = reversalEv ? [reversalEv, ...updatedEvents] : updatedEvents;
+        setData((prev) => ({
+            ...prev,
+            corporateActionEvents: mergedEvents,
+        }));
+        await removeCorporateActionCashDeposits(ev.idempotencyKey);
+        await yieldToMain();
+        await syncPortfolioAfterLedgerMutation(ev.portfolioId, {
+            corporateActionEvents: mergedEvents,
+            holdingsBaselineMode: 'as_stored',
+        });
+        adjustQuotesForCorporateActionNow({
+            symbol: ev.symbol,
+            action: reverseAction,
+            portfolioId: ev.portfolioId,
+        });
+        } finally {
+            corporateActionInFlightRef.current = false;
+        }
+    };
+
     const batchUpdateHoldingValues = (updates: { id: string; currentValue: number }[]) => {
       startTransition(() => {
         setData(prevData => {
@@ -3562,6 +4021,25 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             newTransaction = result.data;
             txError = result.error;
             if (!txError) break;
+            if (txError.code === '23505') {
+                const idem =
+                    trade.idempotencyKey ??
+                    (trade as { idempotency_key?: string }).idempotency_key ??
+                    (tradePayload as { idempotency_key?: string }).idempotency_key;
+                if (idem) {
+                    const { data: existing } = await supabase
+                        .from('investment_transactions')
+                        .select('*')
+                        .eq('user_id', auth.user.id)
+                        .eq('idempotency_key', idem)
+                        .maybeSingle();
+                    if (existing) {
+                        newTransaction = existing;
+                        txError = null;
+                        break;
+                    }
+                }
+            }
             if (!isMissingColumnError(txError)) break;
         }
         if (txError) { console.error("Error recording transaction:", txError); throw txError; }
@@ -3599,7 +4077,36 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         if (tradeData.type === 'dividend') {
+            const dripHolding = existingHolding;
+            const divId = insertedInvestmentTransactionId;
             tradeSubmissionInFlightRef.current = false;
+            if (
+                dripHolding?.dividendDistribution === 'Reinvest' &&
+                tradeTotal > 0 &&
+                tradeData.price > 0 &&
+                portfolio?.id &&
+                divId
+            ) {
+                try {
+                    await recordTrade(
+                        {
+                            portfolioId: portfolio.id,
+                            accountId: accountIdForInsert,
+                            type: 'buy',
+                            symbol: normalizedSymbol,
+                            quantity: tradeTotal / tradeData.price,
+                            price: tradeData.price,
+                            total: tradeTotal,
+                            date: trade.date,
+                            idempotencyKey: `drip|${divId}|${normalizedSymbol}`,
+                        },
+                        undefined,
+                        { system: true },
+                    );
+                } catch (dripErr) {
+                    console.warn('DRIP reinvest after dividend failed:', dripErr);
+                }
+            }
             return {
                 insertedInvestmentTransactionId,
                 insertedTradeTransactions,
@@ -3612,65 +4119,29 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         try {
             if (!portfolio) throw new Error('Portfolio not found');
+            if (
+                tradeData.type === 'buy' &&
+                incomingHoldingType === 'manual_fund' &&
+                !existingHolding &&
+                (manualCv == null || manualCv <= 0)
+            ) {
+                throw new Error(
+                    'For manual valuation, enter the current position value (e.g. Mashora balance, retirement account value).',
+                );
+            }
             if (symbolHoldingsForTrade.length > 1 && existingHolding) {
                 await updateHolding(existingHolding);
                 for (const duplicateHolding of symbolHoldingsForTrade.slice(1)) {
                     await deleteHolding(duplicateHolding.id);
                 }
             }
-            
-            if (tradeData.type === 'buy') {
-                const qAdd = tradeData.quantity;
-                const px = tradeData.price;
-                const newManualFund = incomingHoldingType === 'manual_fund';
-                if (newManualFund && !existingHolding && (manualCv == null || manualCv <= 0)) {
-                    throw new Error('For manual valuation, enter the current position value (e.g. Mashora balance, retirement account value).');
-                }
-                if (existingHolding && qAdd > 0) {
-                    const merged =
-                        existingHolding.holdingType === 'manual_fund'
-                            ? applyBuyToHolding(existingHolding, qAdd, px, {
-                                  currentValueAdd: manualCv ?? qAdd * px,
-                              })
-                            : applyBuyToHolding(existingHolding, qAdd, px);
-                    await updateHolding({
-                        ...existingHolding,
-                        name: name || existingHolding.name || tradeData.symbol,
-                        quantity: merged.quantity,
-                        avgCost: merged.avgCost,
-                        currentValue: merged.currentValue,
-                    });
-                } else {
-                    const resolvedClass = (normalizeAssetClassForDb(tradeAssetClass) ?? 'Stock') as HoldingAssetClass;
-                    const newHoldingData: Omit<Holding, 'id' | 'user_id'> = {
-                        portfolio_id: portfolio.id,
-                        symbol: tradeData.symbol,
-                        name: name || tradeData.symbol,
-                        quantity: qAdd,
-                        avgCost: px,
-                        currentValue: newManualFund && manualCv != null ? manualCv : px * qAdd,
-                        assetClass: resolvedClass,
-                        zakahClass: 'Zakatable' as const,
-                        realizedPnL: 0,
-                        holdingType: newManualFund ? 'manual_fund' : 'ticker',
-                    };
-                    await addHolding(newHoldingData);
-                }
-            } else if (tradeData.type === 'sell') {
-                if (!existingHolding) throw new Error("Cannot sell a holding you don't own.");
-                const holdingForSell = existingHolding;
-                const newQuantity = holdingForSell.quantity - tradeData.quantity;
-                const realizedGain = (tradeData.price - holdingForSell.avgCost) * tradeData.quantity;
-                const newRealizedPnL = holdingForSell.realizedPnL + realizedGain;
-
-                if (newQuantity > HOLDING_QUANTITY_EPSILON) { // Use a small epsilon for floating point comparison
-                    await updateHolding({ ...holdingForSell, quantity: newQuantity, realizedPnL: newRealizedPnL });
-                } else {
-                    await deleteHolding(holdingForSell.id);
-                }
-            } else {
-                throw new Error(`Unsupported trade type for holding update: ${tradeData.type}`);
-            }
+            const mergedTxs = newTransaction
+                ? [
+                      normalizeInvestmentTransaction(newTransaction),
+                      ...(data?.investmentTransactions ?? []).filter((t) => t.id !== newTransaction.id),
+                  ]
+                : [...(data?.investmentTransactions ?? [])];
+            await syncPortfolioAfterLedgerMutation(portfolio.id, { investmentTransactions: mergedTxs });
         } catch (error) {
             console.error("Error updating holdings after trade:", error);
             let rollbackSucceeded = false;
@@ -3964,6 +4435,129 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 )
             };
         });
+        });
+    };
+
+    const addSukukPosition = async (position: Omit<SukukPosition, 'id' | 'user_id'>, _opts?: RecordWriteOptions) => {
+        if (!supabase) return;
+        const v = validateSukukPosition({
+            name: position.name,
+            investmentAccountId: position.investmentAccountId,
+            faceValue: position.faceValue,
+            outstandingPrincipal: position.outstandingPrincipal ?? position.faceValue,
+            issueDate: position.issueDate,
+            maturityDate: position.maturityDate,
+            currency: position.currency,
+        });
+        if (!v.valid) {
+            toast(v.errors.join('\n'), 'error');
+            return;
+        }
+        const row = sukukPositionToRow({
+            ...position,
+            outstandingPrincipal: position.outstandingPrincipal ?? position.faceValue,
+            status: position.status ?? 'active',
+        });
+        const { data: inserted, error } = await supabase.from('sukuk_positions').insert(withUser(row)).select().single();
+        if (error) {
+            console.error('Error adding Sukuk position:', error);
+            throw new Error(`Failed to add Sukuk: ${formatDbError(error)}`);
+        }
+        if (inserted) {
+            setData((prev) => ({
+                ...prev,
+                sukukPositions: [...(prev.sukukPositions ?? []), normalizeSukukPositionRow(inserted)],
+            }));
+        }
+    };
+
+    const updateSukukPosition = async (position: SukukPosition) => {
+        if (!supabase || !auth?.user) return;
+        const v = validateSukukPosition({
+            name: position.name,
+            investmentAccountId: position.investmentAccountId,
+            faceValue: position.faceValue,
+            outstandingPrincipal: position.outstandingPrincipal,
+            issueDate: position.issueDate,
+            maturityDate: position.maturityDate,
+            currency: position.currency,
+        });
+        if (!v.valid) {
+            toast(v.errors.join('\n'), 'error');
+            return;
+        }
+        const row = sukukPositionToRow(position);
+        const { error } = await supabase
+            .from('sukuk_positions')
+            .update(row)
+            .match({ id: position.id, user_id: auth.user.id });
+        if (error) {
+            console.error(error);
+            throw new Error(`Failed to update Sukuk: ${formatDbError(error)}`);
+        }
+        setData((prev) => ({
+            ...prev,
+            sukukPositions: (prev.sukukPositions ?? []).map((p) => (p.id === position.id ? position : p)),
+        }));
+    };
+
+    const deleteSukukPosition = async (positionId: string) => {
+        if (!supabase || !auth?.user) return;
+        const { error } = await supabase.from('sukuk_positions').delete().match({ id: positionId, user_id: auth.user.id });
+        if (error) console.error(error);
+        else {
+            setData((prev) => ({
+                ...prev,
+                sukukPositions: (prev.sukukPositions ?? []).filter((p) => p.id !== positionId),
+                sukukPayoutSchedules: (prev.sukukPayoutSchedules ?? []).filter((s) => s.sukukPositionId !== positionId),
+                sukukPayoutEvents: (prev.sukukPayoutEvents ?? []).filter((e) => e.sukukPositionId !== positionId),
+            }));
+        }
+    };
+
+    const saveSukukPayoutSchedule = async (input: {
+        position: SukukPosition;
+        existingSchedule: SukukPayoutSchedule | null;
+        investmentAccountId: string;
+        currency: 'SAR' | 'USD';
+        cadence: SukukPayoutSchedule['cadence'];
+        dayOfMonth?: number | null;
+        couponAmount?: number | null;
+        principalAmount?: number | null;
+        principalInstallmentAmount?: number | null;
+        startDate?: string | null;
+        endDate?: string | null;
+        enabled?: boolean;
+    }) => {
+        if (!supabase || !auth?.user) return;
+        const { schedule, events } = await saveSukukPayoutScheduleToDb(supabase as any, {
+            userId: auth.user.id,
+            position: input.position,
+            existingSchedule: input.existingSchedule,
+            investmentAccountId: input.investmentAccountId,
+            currency: input.currency,
+            cadence: input.cadence,
+            dayOfMonth: input.dayOfMonth,
+            couponAmount: input.couponAmount,
+            principalAmount: input.principalAmount,
+            principalInstallmentAmount: input.principalInstallmentAmount,
+            startDate: input.startDate,
+            endDate: input.endDate,
+            enabled: input.enabled,
+            scheduleId: input.existingSchedule?.id,
+        });
+        setData((prev) => {
+            const scheduleId = schedule.id;
+            const postedForSchedule = (prev.sukukPayoutEvents ?? []).filter(
+                (e) => e.scheduleId === scheduleId && e.posted,
+            );
+            const otherSchedules = (prev.sukukPayoutSchedules ?? []).filter((s) => s.id !== scheduleId);
+            const otherEvents = (prev.sukukPayoutEvents ?? []).filter((e) => e.scheduleId !== scheduleId);
+            return {
+                ...prev,
+                sukukPayoutSchedules: [...otherSchedules, schedule],
+                sukukPayoutEvents: [...otherEvents, ...postedForSchedule, ...events],
+            };
         });
     };
 
@@ -4291,6 +4885,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             personalLiabilities: getPersonalLiabilities(deferredData),
             personalInvestments: getPersonalInvestments(deferredData),
             personalCommodityHoldings: getPersonalCommodityHoldings(deferredData),
+            personalSukukPositions: getPersonalSukukPositions(deferredData),
             personalTransactions: getPersonalTransactions(deferredData),
         };
     }, [deferredData]);
@@ -4411,6 +5006,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         recordTrade,
         updateInvestmentTransaction,
         deleteInvestmentTransaction,
+        applyCorporateActionEvent,
+        reverseCorporateActionEvent,
         addWatchlistItem,
         updateWatchlistItem,
         deleteWatchlistItem,
@@ -4429,6 +5026,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         updateCommodityHolding,
         deleteCommodityHolding,
         batchUpdateCommodityHoldingValues,
+        addSukukPosition,
+        updateSukukPosition,
+        deleteSukukPosition,
+        saveSukukPayoutSchedule,
         updateSettings,
         resetData,
         loadDemoData,

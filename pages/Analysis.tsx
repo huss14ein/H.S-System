@@ -1,6 +1,6 @@
-import React, { useMemo, useContext } from 'react';
+import React, { useMemo, useContext, Suspense, lazy } from 'react';
 import { DataContext } from '../context/DataContext';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar } from 'recharts';
+import { BarChart, Bar, Cell, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import AIAdvisor from '../components/AIAdvisor';
 import AiProxyUnavailableHint from '../components/AiProxyUnavailableHint';
@@ -23,25 +23,46 @@ import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { computeAllNetWorthChartBucketsSAR } from '../services/personalNetWorth';
-import { useExtendedCanonicalMetrics, useCanonicalSpotFx, useCanonicalSimulatedPrices, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics, useCanonicalSimulatedPrices, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
 import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
-import { computeMonthlyReportFinancialKpis } from '../services/wealthSummaryReportModel';
 import { detectBudgetDrift } from '../services/budgetDrift';
-import { computeIncomeStability } from '../services/incomeStability';
+import SpendingCommandCenter from '../components/spending/SpendingCommandCenter';
+import AnalyticsPeriodScopeBar from '../components/analytics/AnalyticsPeriodScopeBar';
+import AnalyticsInsightRail from '../components/analytics/AnalyticsInsightRail';
+import { useMetricPassport } from '../context/MetricPassportContext';
+import { buildMetricPassportModel } from '../services/metricPassportModel';
+import WealthPulseRing from '../components/analytics/WealthPulseRing';
+import AnalyticsVisitDeltaChips from '../components/analytics/AnalyticsVisitDeltaChips';
+import AnalysisStudioTabs from '../components/analysis/AnalysisStudioTabs';
+import AnalysisExplorerTabs from '../components/analysis/AnalysisExplorerTabs';
+import AnalysisExplorerContent from '../components/analysis/AnalysisExplorerContent';
+import { downloadSpendingBriefCsv, downloadSpendingBriefPdf } from '../services/spendingReportExport';
+import { useSpendingCommandCenterModel } from '../hooks/useSpendingCommandCenterModel';
+import { useAnalyticsWorkspace } from '../context/AnalyticsWorkspaceContext';
+import { DeferredMount } from '../components/dashboard/DeferredMount';
+import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
+import {
+    buildVisitSnapshotFromModel,
+    computeVisitDelta,
+    loadAnalyticsVisitSnapshot,
+    saveAnalyticsVisitSnapshot,
+} from '../services/analyticsVisitSnapshot';
 import {
     financialMonthKeysEndingAt,
     financialMonthIsoKey,
-    financialMonthRange,
     financialMonthColumnHeaderLabel,
     financialMonthRangeFromKey,
     resolveMonthStartDayFromData,
+    dateInRange,
+    financialMonthKeyFromTransactionDate,
 } from '../utils/financialMonth';
+
+const LazyExpenseBudgetAnalysisPanel = lazy(() => import('../components/analysis/ExpenseBudgetAnalysisPanel'));
 
 const TOOLTIP_STYLE = { backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' };
 
-/** Income vs expense — last N financial months, amounts in SAR. */
 function buildTrendDataSar(
     transactions: Transaction[],
     accounts: Account[],
@@ -57,9 +78,8 @@ function buildTrendDataSar(
 
     const earliest = financialMonthRangeFromKey(finKeys[0], monthStartDay).start;
     transactions.forEach((t) => {
-        const d = new Date(t.date);
-        if (Number.isNaN(d.getTime()) || d < earliest) return;
-        const key = financialMonthIsoKey(financialMonthRange(d, monthStartDay).key);
+        if (!dateInRange(t.date, earliest, now)) return;
+        const key = financialMonthIsoKey(financialMonthKeyFromTransactionDate(t.date, monthStartDay));
         if (!monthMap.has(key)) return;
         const cur = accById.get(t.accountId)?.currency === 'USD' ? 'USD' : 'SAR';
         const amtSar = toSAR(Math.abs(Number(t.amount) ?? 0), cur, sarPerUsd);
@@ -78,60 +98,6 @@ function buildTrendDataSar(
         return { monthKey: key, name, ...(monthMap.get(key) || { income: 0, expenses: 0 }) };
     });
 }
-
-const SpendingByCategoryChart: React.FC = () => {
-    const { data } = useContext(DataContext)!;
-    const { formatCurrencyString } = useFormatCurrency();
-    const fx = useCanonicalSpotFx();
-    const chartData = useMemo(() => {
-        const txs = data?.transactions ?? [];
-        const accounts = data?.accounts ?? [];
-        return expenseTotalsByBudgetCategorySar(txs as Transaction[], accounts, fx);
-    }, [data?.transactions, data?.accounts, data, fx]);
-    const isEmpty = !chartData.length;
-
-    return (
-        <ChartContainer height={300} isEmpty={isEmpty} emptyMessage="No categorized spending yet. Tag expenses with a category or budget group in Transactions.">
-            <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                    <Pie data={chartData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} paddingAngle={2}>
-                        {chartData.map((_entry, index) => <Cell key={`cell-${index}`} fill={CHART_COLORS.categorical[index % CHART_COLORS.categorical.length]} stroke="white" strokeWidth={1} />)}
-                    </Pie>
-                    <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })} contentStyle={TOOLTIP_STYLE} />
-                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                </PieChart>
-            </ResponsiveContainer>
-        </ChartContainer>
-    );
-};
-
-const IncomeExpenseTrendChart: React.FC = () => {
-    const { data } = useContext(DataContext)!;
-    const { formatCurrencyString } = useFormatCurrency();
-    const fx = useCanonicalSpotFx();
-    const chartData = useMemo(() => {
-        const monthStartDay = resolveMonthStartDayFromData(data);
-        return buildTrendDataSar(data?.transactions ?? [], data?.accounts ?? [], fx, monthStartDay, 6);
-    }, [data?.transactions, data?.accounts, data, fx]);
-    const hasSignal = chartData.some((x) => x.income > 0 || x.expenses > 0);
-    const isEmpty = !hasSignal;
-
-    return (
-        <ChartContainer height={300} isEmpty={isEmpty} emptyMessage="No income or expense signal in the last 6 months (SAR-normalized).">
-            <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray={CHART_GRID_STROKE} stroke={CHART_GRID_COLOR} />
-                    <XAxis dataKey="name" stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
-                    <YAxis tickFormatter={(v) => formatAxisNumber(Number(v))} stroke={CHART_AXIS_COLOR} fontSize={12} tickLine={false} />
-                    <Tooltip formatter={(value) => formatCurrencyString(Number(value), { digits: 0 })} contentStyle={TOOLTIP_STYLE} />
-                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                    <Line type="monotone" dataKey="income" stroke={CHART_COLORS.positive} strokeWidth={2} name="Income (SAR)" dot={{ fill: CHART_COLORS.positive }} />
-                    <Line type="monotone" dataKey="expenses" stroke={CHART_COLORS.negative} strokeWidth={2} name="Expenses (SAR)" dot={{ fill: CHART_COLORS.negative }} />
-                </LineChart>
-            </ResponsiveContainer>
-        </ChartContainer>
-    );
-};
 
 const AssetLiabilityChart: React.FC = () => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
@@ -190,7 +156,10 @@ const AssetLiabilityChart: React.FC = () => {
     );
 };
 
-const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
+const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({
+    setActivePage,
+    triggerPageAction,
+}) => {
     const { aiHealthChecked, isAiAvailable } = useAI();
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { computeData } = usePageDeferredData();
@@ -208,12 +177,26 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
         extendedReady,
     } = metrics;
     const investmentsTotalSar = pickInvestmentsTotalSar(metrics, extendedReady);
+    const { scope, periodPreset, analysisStudioTab, setAnalysisStudioTab } = useAnalyticsWorkspace();
+    const { openPassport } = useMetricPassport();
+    const { model: expenseBudgetAnalysis, ready: expenseBudgetReady } = useSpendingCommandCenterModel(
+        engineData,
+        exchangeRate,
+        scope,
+        analysisStudioTab === 'explore' || analysisStudioTab === 'command',
+        periodPreset,
+    );
+
+    const pageDescription =
+        scope === 'household'
+            ? 'Patterns from your full transaction ledger and all linked accounts (household view). The expense & budget cockpit uses every tag you enter on transactions. Amounts are converted to SAR so USD and SAR accounts can be compared fairly.'
+            : 'Patterns from your personal transaction ledger and linked personal accounts. The expense & budget cockpit uses every tag you enter on transactions. Amounts are converted to SAR so USD and SAR accounts can be compared fairly.';
 
     const contextData = useMemo(() => {
         const transactions = engineData?.transactions ?? [];
         const accounts = engineData?.accounts ?? [];
 
-        const spendingData = expenseTotalsByBudgetCategorySar(transactions as Transaction[], accounts, headlineFx);
+        const spendingData = expenseTotalsByBudgetCategorySar(transactions as Transaction[], accounts, headlineFx, { data: engineData });
 
         const monthStartDay = resolveMonthStartDayFromData(engineData);
         const trendData = buildTrendDataSar(transactions as Transaction[], accounts, headlineFx, monthStartDay, 6);
@@ -227,12 +210,12 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             { name: 'Debt', value: Math.abs(nwBuckets.liabilities) },
         ];
 
-        const merchants = spendByMerchantSar(transactions as Transaction[], accounts, headlineFx, { months: 6 });
-        const salary = detectSalaryIncomeSar(transactions as Transaction[], accounts, headlineFx, 6);
-        const subs = subscriptionSpendMonthlySar(transactions as Transaction[], accounts, headlineFx, 3);
+        const merchants = spendByMerchantSar(transactions as Transaction[], accounts, headlineFx, { months: 6, data: engineData });
+        const salary = detectSalaryIncomeSar(transactions as Transaction[], accounts, headlineFx, 6, engineData);
+        const subs = subscriptionSpendMonthlySar(transactions as Transaction[], accounts, headlineFx, 3, engineData);
         const bnpl = detectBnplMentionsSar(transactions as Transaction[], accounts, headlineFx);
         const refundPairs = findRefundPairsSar(transactions as Transaction[], accounts, headlineFx, 14);
-        const salaryCoverage = salaryToExpenseCoverageSar(transactions as Transaction[], accounts, headlineFx, 6);
+        const salaryCoverage = salaryToExpenseCoverageSar(transactions as Transaction[], accounts, headlineFx, 6, engineData);
 
         return {
             spendingData,
@@ -245,8 +228,9 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             refundPairs,
             salaryCoverage,
             sarPerUsd: headlineFx,
+            expenseBudgetAnalysis: expenseBudgetReady ? expenseBudgetAnalysis : null,
         };
-    }, [engineData, exchangeRate, getAvailableCashForAccount, headlineFx, simulatedPrices]);
+    }, [engineData, exchangeRate, getAvailableCashForAccount, headlineFx, simulatedPrices, expenseBudgetAnalysis, expenseBudgetReady]);
 
     const analysisValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
@@ -256,7 +240,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 budgetVariance: kpiSnapshot.budgetVariance,
                 roi: kpiSnapshot.roi,
             }
-            : computeMonthlyReportFinancialKpis(data, exchangeRate, getAvailableCashForAccount, simulatedPrices);
+            : { budgetVariance: Number.NaN, roi: Number.NaN };
         if (!Number.isFinite(fx) || fx <= 0) warnings.push('Exchange rate is invalid — USD transactions may not convert correctly.');
         if (!Number.isFinite(monthlyKpis.budgetVariance)) warnings.push('Budget variance could not be computed.');
         if (!Number.isFinite(monthlyKpis.roi)) warnings.push('Investment ROI could not be computed.');
@@ -289,29 +273,57 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, contextData, headlineFx, kpiSnapshot, personalNetWorth, personalBuckets, investmentsTotalSar, extendedReady]);
 
     const budgetDriftRows = useMemo(() => detectBudgetDrift(engineData ?? null, exchangeRate), [engineData, exchangeRate]);
-    const incomeStability = useMemo(() => computeIncomeStability(engineData ?? null), [engineData]);
+    const visitDelta = React.useMemo(() => {
+        const current = buildVisitSnapshotFromModel(personalNetWorth, expenseBudgetReady ? expenseBudgetAnalysis : null);
+        const prior = loadAnalyticsVisitSnapshot();
+        return computeVisitDelta(prior, current);
+    }, [personalNetWorth, expenseBudgetAnalysis, expenseBudgetReady]);
 
-    const cov = contextData.salaryCoverage;
-    const coverageTone =
-        cov.healthy === true ? 'border-l-emerald-500 bg-emerald-50/50' : cov.healthy === false ? 'border-l-amber-500 bg-amber-50/50' : 'border-l-slate-300 bg-slate-50/80';
+    React.useEffect(() => {
+        if (!expenseBudgetReady) return;
+        const snap = buildVisitSnapshotFromModel(personalNetWorth, expenseBudgetAnalysis);
+        const onLeave = () => saveAnalyticsVisitSnapshot(snap);
+        window.addEventListener('visibilitychange', onLeave);
+        return () => window.removeEventListener('visibilitychange', onLeave);
+    }, [personalNetWorth, expenseBudgetAnalysis, expenseBudgetReady]);
 
     return (
         <PageLayout
             title="Financial Analysis"
-            description="Patterns from your full transaction ledger and all linked accounts (household view). Amounts are converted to SAR so USD and SAR accounts can be compared fairly. Dashboard & Summary headline net worth still use personal-only scope."
+            description={pageDescription}
             action={
                 setActivePage ? (
-                    <PageActionsDropdown
+                    <div className="flex flex-wrap items-center gap-2">
+                        {expenseBudgetReady && expenseBudgetAnalysis && (
+                            <>
+                            <button
+                                type="button"
+                                className="btn-secondary text-sm"
+                                onClick={() => downloadSpendingBriefCsv(expenseBudgetAnalysis)}
+                            >
+                                Export CSV
+                            </button>
+                            <button
+                                type="button"
+                                className="btn-secondary text-sm"
+                                onClick={() => downloadSpendingBriefPdf(expenseBudgetAnalysis)}
+                            >
+                                Print PDF brief
+                            </button>
+                            </>
+                        )}
+                        <PageActionsDropdown
                         ariaLabel="Analysis quick links"
                         actions={[
                             { value: 'tx', label: 'Transactions', onClick: () => setActivePage('Transactions') },
                             { value: 'budgets', label: 'Budgets', onClick: () => setActivePage('Budgets') },
                             { value: 'accounts', label: 'Accounts', onClick: () => setActivePage('Accounts') },
                             { value: 'summary', label: 'Financial Summary', onClick: () => setActivePage('Summary') },
-                            { value: 'assets', label: 'Assets (Sukuk)', onClick: () => setActivePage('Assets') },
+                            { value: 'assets', label: 'Physical assets', onClick: () => setActivePage('Assets') },
                             { value: 'investments', label: 'Investments', onClick: () => setActivePage('Investments') },
                         ]}
                     />
+                    </div>
                 ) : undefined
             }
         >
@@ -341,6 +353,20 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                     <div>
                         <p className="text-slate-600">Net worth</p>
                         <p className="font-bold text-slate-900 tabular-nums">{formatCurrencyString(personalNetWorth, { digits: 0 })}</p>
+                        <button
+                            type="button"
+                            className="text-[10px] font-semibold text-primary hover:underline mt-0.5"
+                            onClick={() => {
+                                const m = buildMetricPassportModel(null, 'netWorth', {
+                                    valueDisplay: formatCurrencyString(personalNetWorth, { digits: 0 }),
+                                    statusLabel: 'Headline',
+                                    sarPerUsd: headlineFx,
+                                });
+                                if (m) openPassport(m);
+                            }}
+                        >
+                            Explain
+                        </button>
                     </div>
                     <div>
                         <p className="text-slate-600">Investments</p>
@@ -356,198 +382,138 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                         <p className="text-slate-600">Investment ROI (headline)</p>
                         <ExtendedMetricGate ready={extendedReady} compact>
                             <p className="font-bold text-slate-900 tabular-nums">{kpiSnapshot ? `${(kpiSnapshot.roi * 100).toFixed(1)}%` : '—'}</p>
+                            {kpiSnapshot ? (
+                                <button
+                                    type="button"
+                                    className="text-[10px] font-semibold text-primary hover:underline mt-0.5"
+                                    onClick={() => {
+                                        const m = buildMetricPassportModel(null, 'investmentRoi', {
+                                            valueDisplay: `${(kpiSnapshot.roi * 100).toFixed(1)}%`,
+                                            statusLabel: kpiSnapshot.roi >= 0 ? 'Gain' : 'Loss',
+                                            sarPerUsd: headlineFx,
+                                        });
+                                        if (m) openPassport(m);
+                                    }}
+                                >
+                                    Explain
+                                </button>
+                            ) : null}
                         </ExtendedMetricGate>
                     </div>
                 </div>
             </div>
 
-            {aiHealthChecked && !isAiAvailable && (
-                <AiProxyUnavailableHint className="mb-4" variant="banner" title="Spend insights coach needs the AI proxy" />
+            <AnalyticsPeriodScopeBar className="mb-4" />
+
+            {visitDelta && (
+                <AnalyticsVisitDeltaChips
+                    delta={visitDelta}
+                    formatCurrencyString={formatCurrencyString}
+                    setActivePage={setActivePage}
+                    onReviewNetWorth={() => setActivePage?.('Wealth Analytics')}
+                    onReviewSpending={() => setAnalysisStudioTab('command')}
+                    className="mb-4"
+                />
             )}
 
-            <AIAdvisor pageContext="analysis" contextData={contextData} />
+            <AnalysisStudioTabs className="mb-4" />
 
-            <div className="mb-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                    <p className="font-semibold text-slate-900">Income stability</p>
-                    <p className="mt-1 text-slate-700">
-                        Score <strong>{incomeStability.score}</strong> / 100 ({incomeStability.label}) · CV {incomeStability.cvPct.toFixed(0)}%
-                    </p>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                    <p className="font-semibold text-slate-900">Budget drift (vs 3-mo avg)</p>
-                    {budgetDriftRows.length === 0 ? (
-                        <p className="mt-1 text-slate-600">No categories drifted ≥15% this financial month.</p>
-                    ) : (
-                        <ul className="mt-1 text-slate-700 space-y-0.5 list-disc pl-4">
-                            {budgetDriftRows.slice(0, 4).map((r) => (
-                                <li key={r.category}>
-                                    {r.category}: {r.driftPct >= 0 ? '+' : ''}
-                                    {r.driftPct.toFixed(0)}%
-                                </li>
-                            ))}
-                        </ul>
-                    )}
-                </div>
-            </div>
-
-            {analysisValidationWarnings.length > 0 && (
-                <div className="mb-4 rounded-2xl border-l-4 border-l-amber-500 bg-amber-50/90 border border-amber-100 px-4 py-3 shadow-sm" role="status">
-                    <p className="text-sm font-semibold text-amber-950">Data checks</p>
-                    <p className="text-xs text-amber-900/90 mt-1 mb-2">Fix these for the most reliable analysis.</p>
-                    <ul className="text-xs text-amber-950 space-y-1 list-disc pl-4">
-                        {analysisValidationWarnings.slice(0, 10).map((w, i) => (
-                            <li key={`av-${i}`}>{w}</li>
-                        ))}
-                    </ul>
-                </div>
-            )}
-
-            <div className={`rounded-2xl border border-slate-200 bg-white p-5 shadow-sm mb-4 ${coverageTone} border-l-4`}>
-                <div className="flex flex-wrap items-center gap-2 mb-2">
-                    <h3 className="text-lg font-semibold text-slate-900">Salary vs typical spending</h3>
-                    {cov.healthy === true && (
-                        <span className="text-[11px] font-bold uppercase rounded-full bg-emerald-100 text-emerald-900 px-2 py-0.5 ring-1 ring-emerald-200">Comfortable band</span>
-                    )}
-                    {cov.healthy === false && (
-                        <span className="text-[11px] font-bold uppercase rounded-full bg-amber-100 text-amber-950 px-2 py-0.5 ring-1 ring-amber-200">Tight</span>
-                    )}
-                    {cov.healthy === null && (
-                        <span className="text-[11px] font-bold uppercase rounded-full bg-slate-100 text-slate-700 px-2 py-0.5 ring-1 ring-slate-200">Needs signal</span>
-                    )}
-                </div>
-                <p className="text-sm text-slate-700 mb-2">
-                    {cov.ratio != null ? (
-                        <>
-                            <strong className="text-2xl tabular-nums text-slate-900">{cov.ratio.toFixed(2)}×</strong>
-                            <span className="text-slate-600 ml-2">{cov.label}</span>
-                            {cov.healthy === false && (
-                                <span className="block mt-3 text-amber-900 text-sm rounded-lg bg-amber-50/80 px-3 py-2 border border-amber-100">
-                                    Typical spend is close to or above the detected salary pattern — review subscriptions and large categories, or confirm income is categorized as salary.
-                                </span>
-                            )}
-                            {cov.healthy === true && (
-                                <span className="block mt-3 text-emerald-900 text-sm rounded-lg bg-emerald-50/80 px-3 py-2 border border-emerald-100">
-                                    Detected salary signal is above average spending — room for saving or investing if that matches your reality.
-                                </span>
-                            )}
-                        </>
-                    ) : (
-                        <span className="text-slate-600">{cov.label}</span>
-                    )}
-                </p>
-                <p className="text-xs text-slate-500">
-                    Heuristic: largest monthly <strong>credits</strong> vs average <strong>external expenses</strong> (both in SAR). Not payroll-grade — use it as a directional check.
-                </p>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm mb-4">
-                <h3 className="text-lg font-semibold text-slate-900 mb-4">Spend intelligence</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4">
-                        <h4 className="font-semibold text-slate-800 mb-2 flex items-center gap-2">
-                            <span className="h-2 w-2 rounded-full bg-violet-500" aria-hidden />
-                            Top places (6 mo, SAR)
-                        </h4>
-                        <ul className="space-y-1.5 text-slate-700 max-h-48 overflow-y-auto pr-1">
-                            {(contextData.merchants?.length ?? 0) === 0 ? (
-                                <li className="text-slate-500">No expense history in this window.</li>
-                            ) : (
-                                contextData.merchants.slice(0, 10).map((m, idx) => (
-                                    <li key={m.merchant} className="flex justify-between gap-2">
-                                        <span className="truncate text-slate-700">
-                                            <span className="text-slate-400 mr-1">{idx + 1}.</span>
-                                            {m.merchant}
-                                        </span>
-                                        <span className="font-semibold shrink-0 tabular-nums text-slate-900">{formatCurrencyString(m.total, { digits: 0 })}</span>
-                                    </li>
-                                ))
-                            )}
-                        </ul>
+            {analysisStudioTab === 'explore' && (
+                <>
+                    <AnalysisExplorerTabs className="mb-4" />
+                    <div className="mb-4">
+                        <AnalysisExplorerContent
+                            data={engineData}
+                            model={expenseBudgetReady ? expenseBudgetAnalysis : null}
+                            setActivePage={setActivePage}
+                            triggerPageAction={triggerPageAction}
+                        />
                     </div>
-                    <div className="space-y-4">
-                        <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
-                            <h4 className="font-semibold text-slate-800 mb-1">Salary pattern</h4>
-                            <p className="text-slate-700">
-                                {contextData.salary?.detected
-                                    ? `${contextData.salary.label} · ${contextData.salary.confidence} confidence`
-                                    : contextData.salary?.label ?? '—'}
-                            </p>
+                    {aiHealthChecked && !isAiAvailable && (
+                        <AiProxyUnavailableHint className="mb-4 mt-4" variant="banner" title="Spend insights coach needs the AI proxy" />
+                    )}
+                    <AIAdvisor
+                        pageContext="analysis"
+                        contextData={{
+                            ...contextData,
+                            expenseBudgetAnalysis: expenseBudgetReady ? expenseBudgetAnalysis : null,
+                            periodPreset,
+                            scope,
+                        }}
+                    />
+                    {analysisValidationWarnings.length > 0 && (
+                        <div className="mb-4 rounded-2xl border-l-4 border-l-amber-500 bg-amber-50/90 border border-amber-100 px-4 py-3 shadow-sm mt-4" role="status">
+                            <p className="text-sm font-semibold text-amber-950">Data checks</p>
+                            <p className="text-xs text-amber-900/90 mt-1 mb-2">Fix these for the most reliable analysis.</p>
+                            <ul className="text-xs text-amber-950 space-y-1 list-disc pl-4">
+                                {analysisValidationWarnings.slice(0, 10).map((w, i) => (
+                                    <li key={`av-${i}`}>{w}</li>
+                                ))}
+                            </ul>
                         </div>
-                        <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
-                            <h4 className="font-semibold text-slate-800 mb-1">Subscription-style spend (3 mo avg)</h4>
-                            <p className="text-slate-700">
-                                ~{formatCurrencyString(contextData.subs?.monthlyEstimate ?? 0, { digits: 0 })}/mo · {contextData.subs?.count ?? 0} matching
-                                transactions <span className="text-slate-500">(keyword heuristic)</span>
-                            </p>
+                    )}
+                </>
+            )}
+
+            {analysisStudioTab === 'command' && (
+                <div className="space-y-4 mb-4">
+                    <div className="grid grid-cols-1 xl:grid-cols-[1fr_280px] gap-4 items-start">
+                        <div className="min-w-0 space-y-4">
+                    <SpendingCommandCenter
+                        model={expenseBudgetAnalysis}
+                        ready={expenseBudgetReady}
+                        hideDetailPanel
+                        setActivePage={setActivePage}
+                        triggerPageAction={triggerPageAction}
+                    />
+                    <DeferredMount minHeight="12rem" staggerIndex={0}>
+                        <Suspense fallback={<SectionLoadingPlaceholder labelKey="sectionLoading" minHeight="12rem" />}>
+                            <LazyExpenseBudgetAnalysisPanel
+                                model={expenseBudgetAnalysis}
+                                ready={expenseBudgetReady}
+                                setActivePage={setActivePage}
+                                triggerPageAction={triggerPageAction}
+                            />
+                        </Suspense>
+                    </DeferredMount>
                         </div>
-                        {(contextData.bnpl?.length ?? 0) > 0 && (
-                            <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
-                                <h4 className="font-semibold text-amber-950 mb-1">Buy-now-pay-later mentions</h4>
-                                <p className="text-xs text-amber-900/90 mb-2">Flagged from descriptions — consider tracking balances if you use these services.</p>
-                                <ul className="text-xs text-amber-950 space-y-1">
-                                    {contextData.bnpl.slice(0, 6).map((b, i) => (
-                                        <li key={i} className="flex justify-between gap-2">
-                                            <span className="truncate">{b.description?.slice(0, 52)}</span>
-                                            <span className="font-medium shrink-0 tabular-nums">{formatCurrencyString(b.amount, { digits: 0 })}</span>
-                                        </li>
-                                    ))}
-                                </ul>
-                            </div>
+                        {expenseBudgetReady && (
+                            <AnalyticsInsightRail
+                                model={expenseBudgetAnalysis}
+                                driftRows={budgetDriftRows}
+                                visitDelta={visitDelta}
+                                setActivePage={setActivePage}
+                                triggerPageAction={triggerPageAction}
+                                className="xl:sticky xl:top-4"
+                            />
                         )}
                     </div>
                 </div>
-            </div>
-
-            {(contextData.refundPairs?.length ?? 0) > 0 && (
-                <div className="rounded-2xl border border-sky-200 bg-sky-50/40 p-5 shadow-sm mb-4">
-                    <h3 className="text-lg font-semibold text-slate-900 mb-1">Possible refunds</h3>
-                    <p className="text-xs text-slate-600 mb-3">
-                        Expense and income with similar <strong>SAR</strong> amounts within 14 days. Confirm in Transactions before relying on it.
-                    </p>
-                    <ul className="text-sm space-y-2">
-                        {contextData.refundPairs.slice(0, 15).map((r) => {
-                            const txs = data?.transactions ?? [];
-                            const ex = txs.find((t: Transaction) => t.id === r.expenseId);
-                            const inc = txs.find((t: Transaction) => t.id === r.incomeId);
-                            return (
-                                <li key={`${r.expenseId}-${r.incomeId}`} className="flex flex-wrap gap-x-3 gap-y-1 border-b border-sky-100 pb-2">
-                                    <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(r.amount, { digits: 0 })}</span>
-                                    <span className="text-slate-500">{r.daysApart.toFixed(1)}d apart</span>
-                                    <span className="text-slate-600 truncate max-w-full">Out: {ex?.description?.slice(0, 40) ?? r.expenseId}</span>
-                                    <span className="text-slate-600 truncate max-w-full">In: {inc?.description?.slice(0, 40) ?? r.incomeId}</span>
-                                </li>
-                            );
-                        })}
-                    </ul>
-                </div>
             )}
 
-            <div className="cards-grid grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm min-h-[380px] flex flex-col">
-                    <h3 className="text-base font-semibold text-slate-900 mb-1">Spending by category</h3>
-                    <p className="text-xs text-slate-500 mb-3">Split of expenses by budget/category (SAR).</p>
-                    <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden">
-                        <SpendingByCategoryChart />
+            {analysisStudioTab === 'position' && (
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm mb-4 min-h-[380px] flex flex-col border-t-4 border-t-primary/30 space-y-4">
+                    <div>
+                        <h3 className="text-base font-semibold text-slate-900 mb-1">Current financial position</h3>
+                        <p className="text-xs text-slate-500">Major buckets that build your net worth (same SAR math as Investments &amp; Assets).</p>
                     </div>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm min-h-[380px] flex flex-col">
-                    <h3 className="text-base font-semibold text-slate-900 mb-1">Monthly income vs expense</h3>
-                    <p className="text-xs text-slate-500 mb-3">Last 6 calendar months, SAR-normalized.</p>
-                    <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden">
-                        <IncomeExpenseTrendChart />
-                    </div>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:col-span-2 min-h-[380px] flex flex-col border-t-4 border-t-primary/30">
-                    <h3 className="text-base font-semibold text-slate-900 mb-1">Current financial position</h3>
-                    <p className="text-xs text-slate-500 mb-3">Major buckets that build your net worth (same SAR math as Investments &amp; Assets).</p>
-                    <ExtendedMetricGate ready={extendedReady} className="flex-1 min-h-[300px]">
-                        <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden">
+                    <ExtendedMetricGate ready={extendedReady} className="flex flex-col sm:flex-row items-center gap-6">
+                        <WealthPulseRing
+                            netWorthSar={personalNetWorth ?? 0}
+                            segments={[
+                                { id: 'cash', label: 'Cash', valueSar: personalBuckets.cash, color: '#10b981', onClick: () => setActivePage?.('Accounts') },
+                                { id: 'inv', label: 'Invest', valueSar: personalBuckets.investments, color: '#8b5cf6', onClick: () => setActivePage?.('Investments') },
+                                { id: 'phys', label: 'Physical', valueSar: personalBuckets.physicalAndCommodities, color: '#f59e0b', onClick: () => setActivePage?.('Assets') },
+                                { id: 'debt', label: 'Debt', valueSar: Math.abs(personalBuckets.liabilities), color: '#f43f5e', onClick: () => setActivePage?.('Liabilities') },
+                            ]}
+                            formatCurrency={(n) => formatCurrencyString(n, { digits: 0 })}
+                        />
+                        <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden w-full">
                             <AssetLiabilityChart />
                         </div>
                     </ExtendedMetricGate>
                 </div>
-            </div>
+            )}
         </PageLayout>
     );
 };

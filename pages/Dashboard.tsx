@@ -3,8 +3,7 @@ import Card from '../components/Card';
 import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
 
 const DraggableResizableGrid = lazy(() => import('../components/DraggableResizableGrid'));
-import { Transaction, Page, Budget, Account } from '../types';
-import ProgressBar from '../components/ProgressBar';
+import { Transaction, Page, Account } from '../types';
 import CashflowChart from '../components/charts/CashflowChart';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
@@ -47,14 +46,29 @@ import { usePrivacyMask } from '../context/PrivacyContext';
 import type { InvestmentCapitalSource } from '../services/investmentKpiCore';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
+import { useSpendingCommandCenterModel } from '../hooks/useSpendingCommandCenterModel';
+import SpendingCommandCenter from '../components/spending/SpendingCommandCenter';
+import AnalyticsCrossFilterRibbon from '../components/analytics/AnalyticsCrossFilterRibbon';
+import { detectBudgetDrift } from '../services/budgetDrift';
+import { useAnalyticsWorkspace } from '../context/AnalyticsWorkspaceContext';
+import { DeferredMount } from '../components/dashboard/DeferredMount';
+import { DashboardOperationsCockpitSection } from '../components/analytics/wealthAnalyticsLazySections';
+import DashboardCanIInvestCard from '../components/dashboard/DashboardCanIInvestCard';
+import { useMetricPassport } from '../context/MetricPassportContext';
+import { buildMetricPassportModel } from '../services/metricPassportModel';
 import {
     financialMonthRange,
     financialMonthKeysEndingAt,
     financialMonthIsoKey,
     financialMonthColumnHeaderLabel,
     financialMonthRangeFromKey,
+    financialMonthLookbackRange,
+    financialMonthKey,
+    addMonthsToKey,
     resolveMonthStartDayFromData,
     dateInRange,
+    budgetsForFinancialMonthView,
+    financialMonthKeyFromTransactionDate,
 } from '../utils/financialMonth';
 import { buildPersonalInvestmentTreemapRows } from '../services/wealthSummaryReportModel';
 import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
@@ -62,12 +76,6 @@ import PlanCompareContextBanner from '../components/PlanCompareContextBanner';
 import WealthAnalyticsGuideBanner from '../components/WealthAnalyticsGuideBanner';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import { useLanguage } from '../context/LanguageContext';
-
-interface ExtendedBudget extends Budget {
-    spent: number;
-    percentage: number;
-    monthlyLimit?: number;
-}
 
 const AccountsOverview: React.FC<{ accounts: Account[], onClick: () => void }> = ({ accounts, onClick }) => {
     const { formatCurrencyString } = useFormatCurrency();
@@ -111,10 +119,20 @@ const UpcomingBills: React.FC = () => {
         const sarPerUsd = headlineFx;
         const recurringExpenses = new Map<string, { totalSAR: number; lastAmount: number; lastDate: Date; count: number; lastAccountId?: string }>();
         const now = new Date();
+        const monthStartDay = resolveMonthStartDayFromData(data);
+        const { start: lookbackStart } = financialMonthLookbackRange(now, 12, monthStartDay);
+        const { end: dueHorizonEnd } = financialMonthRangeFromKey(
+            addMonthsToKey(financialMonthKey(now, monthStartDay), 1),
+            monthStartDay,
+        );
 
-        // Find recurring fixed expenses from the last year (personal accounts only)
         getPersonalTransactions(data)
-            .filter((t) => countsAsExpenseForCashflowKpi(t) && t.transactionNature === 'Fixed' && new Date(t.date) > new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()))
+            .filter(
+                (t) =>
+                    countsAsExpenseForCashflowKpi(t) &&
+                    t.transactionNature === 'Fixed' &&
+                    dateInRange(t.date, lookbackStart, now),
+            )
             .forEach((t: { description?: string; amount?: number; date: string; accountId?: string }) => {
                 const existing = recurringExpenses.get(t.description ?? '') || { totalSAR: 0, lastAmount: 0, lastDate: new Date(0), count: 0, lastAccountId: undefined as string | undefined };
                 const thisAmount = Math.abs(Number(t.amount) ?? 0);
@@ -136,7 +154,7 @@ const UpcomingBills: React.FC = () => {
                 // Simple assumption of monthly recurrence for this example
                 nextDueDate.setMonth(nextDueDate.getMonth() + 1);
                 
-                if (nextDueDate > now && nextDueDate < new Date(now.getFullYear(), now.getMonth() + 2, 0)) { // If due in the next ~month
+                if (nextDueDate > now && nextDueDate <= dueHorizonEnd) {
                      const avgAmountSAR = totalSAR / count;
                      bills.push({ name, date: nextDueDate, lastAmount, avgAmountSAR, lastAccountId });
                 }
@@ -204,52 +222,6 @@ const RecentTransactions: React.FC<{ transactions: Transaction[], accounts: Acco
     );
 };
 
-const BudgetHealth: React.FC<{ budgets: ExtendedBudget[], onClick: () => void }> = ({ budgets, onClick }) => {
-    const { formatCurrencyString } = useFormatCurrency();
-    const now = new Date();
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const daysLeft = daysInMonth - now.getDate();
-
-    const getStatus = (percentage: number) => {
-        const p = Number(percentage) || 0;
-        if (p > 100) return { text: 'Over Budget', colorClass: 'bg-danger', textColorClass: 'text-danger' };
-        if (p > 75) return { text: 'Nearing Limit', colorClass: 'bg-warning', textColorClass: 'text-warning' };
-        return { text: 'On Track', colorClass: 'bg-success', textColorClass: 'text-success' };
-    };
-
-    return (
-        <div className="section-card-hover" onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onClick()}>
-            <h3 className="text-lg font-semibold mb-4 text-dark">Budget Health (This Month)</h3>
-            <div className="space-y-4">
-                {(budgets ?? []).slice(0, 4).map((budget, index) => {
-                    const status = getStatus(budget?.percentage ?? 0);
-                    return (
-                        <div key={budget?.category ?? `budget-${index}`} className="border-t pt-3 first:border-t-0">
-                            <div className="flex justify-between items-center mb-1">
-                                <span className="font-bold text-dark">{budget?.category ?? '—'}</span>
-                                <span className={`text-sm font-semibold flex items-center gap-1.5 ${status.textColorClass}`}>
-                                    <span className={`w-2 h-2 rounded-full ${status.colorClass}`}></span>
-                                    {status.text}
-                                </span>
-                            </div>
-                            <ProgressBar value={budget?.spent ?? 0} max={budget?.monthlyLimit ?? budget?.limit ?? 1} color={status.colorClass} />
-                            <div className="flex justify-between items-baseline text-xs text-slate-500 mt-1">
-                                <span>
-                                    <span className="font-semibold text-dark">{formatCurrencyString(budget?.spent ?? 0, { digits: 0 })}</span> / {formatCurrencyString(budget?.monthlyLimit ?? budget?.limit ?? 0, { digits: 0 })}
-                                    <span className="font-medium text-slate-600"> ({(budget?.percentage ?? 0).toFixed(0)}%)</span>
-                                </span>
-                                <span>
-                                    {daysLeft} days left
-                                </span>
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
-        </div>
-    );
-};
-
 type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'emergencyFund' | 'budgetVariance' | 'investmentRoi' | 'investmentPlan' | 'wealthUltra' | 'marketEvents';
 
 const KPI_CARD_ORDER: KpiCardKey[] = ['netWorth', 'monthlyPnL', 'emergencyFund', 'budgetVariance', 'investmentRoi', 'investmentPlan'];
@@ -280,7 +252,30 @@ const DashboardContent: React.FC<{
     const { maskBalance } = usePrivacyMask();
     const { dir } = useLanguage();
     const workingData = showHydrateBanner ? null : data;
+    const { model: spendingModel, ready: spendingReady } = useSpendingCommandCenterModel(workingData, exchangeRate, 'personal');
+    const { selectedCategory, setSelectedCategory } = useAnalyticsWorkspace();
+    const budgetDriftRows = useMemo(
+        () => (workingData ? detectBudgetDrift(workingData, canonicalSarPerUsd) : []),
+        [workingData, canonicalSarPerUsd],
+    );
+    const { openPassport } = useMetricPassport();
+    const openMonthlyPnLPassport = useCallback(() => {
+        const m = buildMetricPassportModel(null, 'monthlyPnL', {
+            valueDisplay: formatCurrencyString(kpiSnapshot?.monthlyPnL ?? 0, { digits: 0 }),
+            statusLabel: (kpiSnapshot?.monthlyPnL ?? 0) >= 0 ? 'Surplus' : 'Deficit',
+        });
+        if (m) openPassport(m);
+    }, [openPassport, formatCurrencyString, kpiSnapshot?.monthlyPnL]);
+    const openInvestmentRoiPassport = useCallback(() => {
+        const roi = kpiSnapshot?.roi ?? 0;
+        const m = buildMetricPassportModel(null, 'investmentRoi', {
+            valueDisplay: `${(roi * 100).toFixed(1)}%`,
+            statusLabel: roi >= 0 ? 'Gain' : 'Loss',
+        });
+        if (m) openPassport(m);
+    }, [openPassport, kpiSnapshot?.roi]);
     const kpisPending = Boolean(workingData && !kpiSnapshot);
+    const liquidCashSarTop = kpiSnapshot?.liquidCashSar ?? 0;
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
     const kpiDensity = 'compact' as const;
 
@@ -351,7 +346,7 @@ const DashboardContent: React.FC<{
     }, [data, exchangeRate, canonicalSarPerUsd]);
 
 
-    const { kpiSummary, monthlyBudgets, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions, projectedCash30d, currentCash } = useMemo(() => {
+    const { kpiSummary, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions, projectedCash30d, currentCash } = useMemo(() => {
         try {
             if (!workingData || showHydrateBanner || !kpiSnapshot) {
                 return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
@@ -381,13 +376,14 @@ const DashboardContent: React.FC<{
             };
 
             // Current financial month (same window as `computeDashboardKpiSnapshot` P&L) + KPI snapshot
-            const monthlyTransactions = transactions.filter((t: { date: string }) => {
-                const d0 = new Date(t.date);
-                return d0 >= currentFinMonth.start && d0 <= currentFinMonth.end;
-            });
+            const monthlyTransactions = transactions.filter((t: { date: string }) =>
+                dateInRange(t.date, currentFinMonth.start, currentFinMonth.end),
+            );
             const budgetToMonthly = (b: { limit: number; period?: string }) => b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
-            const currentMonthBudgets = (workingData?.budgets ?? []).filter(
-                (b) => b.month === currentFinMonth.key.month && b.year === currentFinMonth.key.year,
+            const currentMonthBudgets = budgetsForFinancialMonthView(
+                workingData?.budgets ?? [],
+                currentFinMonth.key,
+                monthStartDay,
             );
             const snap = kpiSnapshot;
             if (!snap) {
@@ -436,12 +432,11 @@ const DashboardContent: React.FC<{
             const monthlyCashflowMap = new Map<string, { income: number; expenses: number }>();
             finMonthKeys12.forEach((k) => monthlyCashflowMap.set(financialMonthIsoKey(k), { income: 0, expenses: 0 }));
             transactions
-                .filter((t: { date: string }) => {
-                    const d0 = new Date(t.date);
-                    return !Number.isNaN(d0.getTime()) && d0 >= earliestCashflow;
-                })
+                .filter((t: { date: string }) => dateInRange(t.date, earliestCashflow, currentFinMonth.end))
                 .forEach((t: Transaction) => {
-                    const monthKey = financialMonthIsoKey(financialMonthRange(new Date(t.date), monthStartDay).key);
+                    const monthKey = financialMonthIsoKey(
+                        financialMonthKeyFromTransactionDate(t.date, monthStartDay),
+                    );
                     if (!monthlyCashflowMap.has(monthKey)) return;
                     const current = monthlyCashflowMap.get(monthKey)!;
                     if (countsAsIncomeForCashflowKpi(t)) current.income += txCashflowSar(t);
@@ -471,11 +466,13 @@ const DashboardContent: React.FC<{
             const currentCash = liquidCashSar;
             const finMonthKeys6 = financialMonthKeysEndingAt(now, 6, monthStartDay);
             const earliestProj = financialMonthRangeFromKey(finMonthKeys6[0], monthStartDay).start;
-            const recentTx = transactions.filter((t: { date: string }) => new Date(t.date) >= earliestProj);
+            const recentTx = transactions.filter((t: { date: string }) =>
+                dateInRange(t.date, earliestProj, currentFinMonth.end),
+            );
             const monthlyNets = new Map<string, number>();
             finMonthKeys6.forEach((k) => monthlyNets.set(financialMonthIsoKey(k), 0));
             recentTx.forEach((t: Transaction) => {
-                const key = financialMonthIsoKey(financialMonthRange(new Date(t.date), monthStartDay).key);
+                const key = financialMonthIsoKey(financialMonthKeyFromTransactionDate(t.date, monthStartDay));
                 if (!monthlyNets.has(key)) return;
                 let delta = 0;
                 if (countsAsIncomeForCashflowKpi(t)) delta += txCashflowSar(t);
@@ -547,7 +544,7 @@ const DashboardContent: React.FC<{
         const txs = getPersonalTransactions(data);
         const accounts = getPersonalAccounts(data) as Account[];
         const sarPerUsd = canonicalSarPerUsd;
-        return subscriptionSpendMonthlySar(txs, accounts, sarPerUsd, 3);
+        return subscriptionSpendMonthlySar(txs, accounts, sarPerUsd, 3, data);
     }, [data, exchangeRate, canonicalSarPerUsd]);
 
     const getTrendString = (trend: number = 0) => trend.toFixed(1) + '%';
@@ -586,19 +583,21 @@ const DashboardContent: React.FC<{
                 onClick={() => setActivePage('Summary')}
                 icon={<ScaleIcon className="h-5 w-5 text-slate-400" />}
             />,
-            monthlyPnL: <Card {...cardProps} title="This Month's P&L" value={formatCurrency(kpiSummary.monthlyPnL || 0, { colorize: true })} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'Surplus' : 'Deficit'} indicatorColor={(kpiSummary.monthlyPnL || 0) >= 0 ? 'green' : 'red'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-slate-400" />} />,
+            monthlyPnL: <Card {...cardProps} title="This Month's P&L" value={formatCurrency(kpiSummary.monthlyPnL || 0, { colorize: true })} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'Surplus' : 'Deficit'} indicatorColor={(kpiSummary.monthlyPnL || 0) >= 0 ? 'green' : 'red'} tooltip="Financial-month cashflow P/L (income minus expenses). Not portfolio mark-to-market — use Wealth Analytics or Investments for portfolio week/month P/L." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-slate-400" />} footer={<button type="button" className="text-left text-xs font-semibold text-primary hover:underline" onClick={(e) => { e.stopPropagation(); openMonthlyPnLPassport(); }}>Explain this metric →</button>} />,
             emergencyFund: <Card {...cardProps} title="Emergency Fund" value={emergencyFund.hasEssentialExpenseEstimate ? `${emergencyFund.monthsCovered.toFixed(1)} mo` : '—'} trend={efTrend} indicatorColor={efColor} tooltip={emergencyFund.hasEssentialExpenseEstimate ? `Liquid cash (bank + idle cash on investment platforms from Accounts) covers ${emergencyFund.monthsCovered.toFixed(1)} months of essential expenses. Target: ${EMERGENCY_FUND_TARGET_MONTHS} months.${emergencyFund.shortfall > 0 ? ` Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : ''}` : 'Categorize essential spending or add budgets so we can estimate months of coverage.'} onClick={() => setActivePage('Summary')} icon={<ShieldCheckIcon className="h-5 w-5 text-slate-400" />} />,
             budgetVariance: <Card {...cardProps} title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, { colorize: true })} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'Under budget' : 'Over budget'} indicatorColor={(kpiSummary.budgetVariance || 0) >= 0 ? 'green' : 'red'} tooltip="Money saved from budget this month (positive = under budget). Over budget is shown in red." onClick={() => setActivePage('Budgets')} icon={<PiggyBankIcon className="h-5 w-5 text-slate-400" />} />,
             investmentRoi: <Card {...cardProps} title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="Same formula as Investments: platform value (live rollup) + commodities + Sukuk vs net capital (deposits or fallback) including commodity and Sukuk cost. Uses your live quote feed when available." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" />} footer={invCapitalSrc === 'ledger_inferred' ? (
                 <button type="button" className="text-left w-full font-medium text-primary hover:underline" onClick={(e) => { e.stopPropagation(); goToInvestmentKpiReconciliation(); }}>
                     Ledger-inferred capital — open Investment KPI reconciliation →
                 </button>
-            ) : undefined} />,
+            ) : (
+                <button type="button" className="text-left text-xs font-semibold text-primary hover:underline" onClick={(e) => { e.stopPropagation(); openInvestmentRoiPassport(); }}>Explain this metric →</button>
+            )} />,
             investmentPlan: <Card {...cardProps} title="Investment Plan" value={`${investmentProgress.percent.toFixed(0)}%`} trend={investmentProgress.percent >= 100 ? 'Target met' : `${investmentProgress.percent.toFixed(0)}% of target`} indicatorColor={investmentProgress.percent >= 100 ? 'green' : 'yellow'} tooltip={`Progress: ${formatCurrencyString(investmentProgress.amount, { digits: 0, inCurrency: investmentProgress.planCurrency })} / ${formatCurrencyString(investmentProgress.target, { digits: 0, inCurrency: investmentProgress.planCurrency })} monthly.`} onClick={() => setActivePage('Investment Plan')} icon={<ArrowPathIcon className="h-5 w-5 text-primary" />} />,
             wealthUltra: <Card {...cardProps} title="Wealth Ultra" value="Engine" trend="Active" indicatorColor="green" tooltip="Automated portfolio allocation and order generation with performance tracking." onClick={() => setActivePage('Wealth Ultra')} icon={<ScaleIcon className="h-5 w-5 text-primary" />} />,
             marketEvents: <Card {...cardProps} title="Market Events" value="Calendar" trend="Upcoming" indicatorColor="yellow" tooltip="View upcoming FOMC meetings, earnings, and market-impacting events with AI insights." onClick={() => setActivePage('Market Events')} icon={<CalendarDaysIcon className="h-5 w-5 text-indigo-500" />} />,
         };
-    }, [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, emergencyFund, setActivePage, kpiDensity, maskBalance, goToInvestmentKpiReconciliation]);
+    }, [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, emergencyFund, setActivePage, kpiDensity, maskBalance, goToInvestmentKpiReconciliation, openMonthlyPnLPassport, openInvestmentRoiPassport]);
     
     const accounts = getPersonalAccounts(data);
     const goals = data?.goals ?? [];
@@ -622,6 +621,13 @@ const DashboardContent: React.FC<{
                 dashboardMonthlyPnLSar={kpiSnapshot?.monthlyPnL ?? 0}
                 onOpenPlan={() => setActivePage('Plan')}
             />
+            {selectedCategory ? (
+                <AnalyticsCrossFilterRibbon
+                    category={selectedCategory}
+                    onClear={() => setSelectedCategory(null)}
+                    className="mb-4"
+                />
+            ) : null}
             {setActivePage && <WealthAnalyticsGuideBanner setActivePage={setActivePage} />}
 
             {isNewUser && (
@@ -831,8 +837,44 @@ const DashboardContent: React.FC<{
             </div>
 
             <div className="cards-grid grid grid-cols-1 md:grid-cols-2 gap-4">
-                <BudgetHealth budgets={monthlyBudgets} onClick={() => setActivePage('Budgets')} />
+                <SpendingCommandCenter
+                    model={spendingModel}
+                    ready={spendingReady}
+                    compact
+                    setActivePage={setActivePage}
+                    triggerPageAction={triggerPageAction}
+                />
                 <RecentTransactions transactions={recentTransactions} accounts={getPersonalAccounts(data)} onClick={() => setActivePage('Transactions')} />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
+                <div className="lg:col-span-2">
+                    <DeferredMount minHeight="16rem" staggerIndex={1} rootMargin="320px" loadingLabelKey="sectionLoading">
+                        {workingData ? (
+                            <DashboardOperationsCockpitSection
+                                data={workingData}
+                                personalTransactions={getPersonalTransactions(workingData)}
+                                personalAccounts={getPersonalAccounts(workingData)}
+                                budgets={workingData.budgets ?? []}
+                                goals={workingData.goals ?? []}
+                                sarPerUsd={canonicalSarPerUsd}
+                                liquidCashSar={liquidCashSarTop}
+                                investmentsTotalSar={headline.buckets.investments}
+                                showLanguageToggle={false}
+                                setActivePage={setActivePage}
+                                triggerPageAction={triggerPageAction}
+                            />
+                        ) : null}
+                    </DeferredMount>
+                </div>
+                <DashboardCanIInvestCard
+                    emergencyFundMonths={emergencyFund.monthsCovered}
+                    sarPerUsd={canonicalSarPerUsd}
+                    setActivePage={setActivePage}
+                    triggerPageAction={triggerPageAction}
+                    setSelectedCategory={setSelectedCategory}
+                    budgetDriftRows={budgetDriftRows}
+                />
             </div>
             </section>
 

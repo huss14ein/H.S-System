@@ -106,6 +106,28 @@ describe('marketSimulatorHoldingPersist', () => {
         expect(buildEquityHoldingValueUpdatesFromTrustedSnapshot(portfolios, trusted, sarPerUsd)).toEqual([]);
     });
 
+    it('re-sanitizes Tadawul trusted rows with holding avg cost before persisting', () => {
+        const portfolios: InvestmentPortfolio[] = [
+            {
+                id: 'p1',
+                currency: 'SAR',
+                holdings: [
+                    {
+                        id: 'h-tdwl',
+                        symbol: '2222.SR',
+                        quantity: 100,
+                        avgCost: 32,
+                        currentValue: 3200,
+                        holdingType: 'ticker',
+                    } as any,
+                ],
+            } as any,
+        ];
+        const trusted = { '2222.SR': { price: 3200, change: 0, changePercent: 0 } };
+        const updates = buildEquityHoldingValueUpdatesFromTrustedSnapshot(portfolios, trusted, sarPerUsd);
+        expect(updates).toEqual([{ id: 'h-tdwl', currentValue: 3200 }]);
+    });
+
     it('buildCommodityHoldingValueUpdatesFromTrustedSnapshot skips when trusted lacks commodity row', () => {
         const rows = [{ id: 'c1', symbol: 'XAU', quantity: 1 }];
         expect(buildCommodityHoldingValueUpdatesFromTrustedSnapshot(rows, {})).toEqual([]);

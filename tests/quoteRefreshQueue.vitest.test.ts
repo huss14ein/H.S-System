@@ -36,4 +36,15 @@ describe('mergePriceRefreshScope', () => {
     expect(changed).toBe(false);
     expect(next).toHaveLength(1);
   });
+
+  it('dedupes portfolio scopes by portfolio id', () => {
+    const queue: PriceRefreshScope[] = [{ kind: 'portfolio', portfolioId: 'pf-1' }];
+    const { queue: next, changed } = mergePriceRefreshScope(queue, {
+      kind: 'portfolio',
+      portfolioId: 'pf-1',
+      forceFetch: true,
+    });
+    expect(changed).toBe(true);
+    expect(next).toEqual([{ kind: 'portfolio', portfolioId: 'pf-1', forceFetch: true }]);
+  });
 });

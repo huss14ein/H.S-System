@@ -13,10 +13,12 @@ import {
   financialMonthLabel,
   financialMonthRange,
   resolveMonthStartDayFromData,
+  dateInRange,
+  budgetsForFinancialMonthView,
 } from '../utils/financialMonth';
 import { countsAsExpenseForCashflowKpi } from './transactionFilters';
 import { sortByNewestFirst } from '../utils/sortRecency';
-import { getPersonalTransactions } from '../utils/wealthScope';
+import { getPersonalTransactions, getPersonalSukukPositions } from '../utils/wealthScope';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 
 export type AiGroundingBuildOptions = {
@@ -78,6 +80,18 @@ function topHoldingsLines(
     .map((r) => `${r.symbol}: ${fmt(r.valueSar)} SAR`);
 }
 
+function directSukukLines(data: FinancialData, sarPerUsd: number, limit = 3): string[] {
+  return getPersonalSukukPositions(data)
+    .filter((p) => p.status === 'active' && (p.outstandingPrincipal ?? 0) > 0)
+    .map((p) => ({
+      name: p.name,
+      valueSar: toSAR(Math.max(0, Number(p.outstandingPrincipal) || 0), p.currency === 'USD' ? 'USD' : 'SAR', sarPerUsd),
+    }))
+    .sort((a, b) => b.valueSar - a.valueSar)
+    .slice(0, limit)
+    .map((r) => `Sukuk ${r.name}: ${fmt(r.valueSar)} SAR`);
+}
+
 export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): AiPersonalWealthGrounding {
   const { data } = opts;
   const exchangeRate = opts.exchangeRate ?? resolveSarPerUsd(data, undefined);
@@ -97,14 +111,10 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
   const cf = financialMonthNetCashflowSar(data, exchangeRate);
 
   const personalTx = sortByNewestFirst(getPersonalTransactions(data));
-  const monthlyTx = personalTx.filter((t) => {
-    const d = new Date(t.date);
-    return d >= finRange.start && d <= finRange.end;
-  });
+  const monthlyTx = personalTx.filter((t) => dateInRange(t.date, finRange.start, finRange.end));
 
   const overspentBudgetLines: string[] = [];
-  for (const budget of data.budgets ?? []) {
-    if (budget.month !== finRange.key.month || budget.year !== finRange.key.year) continue;
+  for (const budget of budgetsForFinancialMonthView(data.budgets ?? [], finRange.key, monthStartDay)) {
     const spent = monthlyTx
       .filter((t) => countsAsExpenseForCashflowKpi(t) && (t.budgetCategory === budget.category || t.category === budget.category))
       .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
@@ -117,6 +127,7 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
 
   const goalsProgress = formatGoalsProgressForPrompt(data, headline.sarPerUsd);
   const holdings = topHoldingsLines(data, headline.sarPerUsd, simulatedPrices);
+  const sukukLines = directSukukLines(data, headline.sarPerUsd);
   const recentTxLines = personalTx.slice(0, 8).map((t) => {
     const cat = t.budgetCategory || t.category || 'Uncategorized';
     return `${t.date?.slice(0, 10) ?? ''}: ${(t.description || '').slice(0, 48)} | ${fmt(Math.abs(Number(t.amount) || 0))} SAR | ${cat}`;
@@ -134,6 +145,7 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
     overspentBudgetLines.length ? `Budget pressure (≥75% used): ${overspentBudgetLines.join('; ')}` : 'Budget pressure: none ≥75% this month',
     `Goals (resolved linked wealth): ${goalsProgress || 'none set'}`,
     holdings.length ? `Top holdings: ${holdings.join('; ')}` : 'Top holdings: none',
+    sukukLines.length ? `Direct Sukuk contracts: ${sukukLines.join('; ')}` : 'Direct Sukuk contracts: none',
     recentTxLines.length ? `Recent transactions (newest first): ${recentTxLines.join(' | ')}` : 'Recent transactions: none',
     '=== END GROUND TRUTH ===',
   ].join('\n');
@@ -192,10 +204,10 @@ export function buildCategorySuggestionGrounding(
 
   const spendByCat = new Map<string, number>();
   const monthStartDay = resolveMonthStartDayFromData(data);
-  const { start } = financialMonthRange(new Date(), monthStartDay);
+  const { start, end } = financialMonthRange(new Date(), monthStartDay);
   for (const t of txs) {
     if (!countsAsExpenseForCashflowKpi(t)) continue;
-    if (new Date(t.date) < start) continue;
+    if (!dateInRange(t.date, start, end)) continue;
     const cat = (t.budgetCategory || t.category || '').trim();
     if (!cat) continue;
     spendByCat.set(cat, (spendByCat.get(cat) ?? 0) + Math.abs(Number(t.amount) || 0));

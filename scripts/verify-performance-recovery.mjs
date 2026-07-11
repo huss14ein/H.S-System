@@ -31,6 +31,8 @@ const steps = [
       'tests/workspaceHydrateCache.vitest.test.ts',
       'tests/marketDataRefresh.vitest.test.ts',
       'tests/portfolioPeriodPnLEndToEnd.vitest.test.ts',
+      'tests/portfolioSyncKpiCompletion.vitest.test.ts',
+      'tests/systemWideQuoteKpiE2E.vitest.test.ts',
       'tests/investmentAccountKpiScope.vitest.test.ts',
       'tests/investmentsHubCompletion.vitest.test.ts',
       'tests/investmentsKpiE2E.vitest.test.ts',

@@ -1893,6 +1893,8 @@ export interface InvestmentHubAiMeta {
   /** Estimated one-day change SAR. */
   dailyPnLSAR?: number;
   commoditiesValueSAR?: number;
+  /** Direct Sukuk contracts (sukuk_positions) in SAR — separate from broker holdings. */
+  sukukPositionsValueSAR?: number;
   appDisplayCurrency?: string;
   executionLogCount?: number;
 }
@@ -1900,7 +1902,7 @@ export interface InvestmentHubAiMeta {
 export const getInvestmentAIAnalysis = async (holdings: Holding[], meta?: InvestmentHubAiMeta): Promise<string> => {
   const symKey = holdings.map((h) => (h.symbol ?? '') + h.quantity).join(',');
   const metaKey = meta
-    ? `${meta.activeTab ?? ''}|${meta.portfolioCount ?? ''}|${meta.holdingCount ?? ''}|${meta.watchlistCount ?? ''}|${meta.totalValueSAR ?? ''}|${meta.unrealizedGainLossSAR ?? ''}|${meta.roiPct ?? ''}|${meta.dailyPnLSAR ?? ''}|${meta.commoditiesValueSAR ?? ''}|${meta.executionLogCount ?? ''}`
+    ? `${meta.activeTab ?? ''}|${meta.portfolioCount ?? ''}|${meta.holdingCount ?? ''}|${meta.watchlistCount ?? ''}|${meta.totalValueSAR ?? ''}|${meta.unrealizedGainLossSAR ?? ''}|${meta.roiPct ?? ''}|${meta.dailyPnLSAR ?? ''}|${meta.commoditiesValueSAR ?? ''}|${meta.sukukPositionsValueSAR ?? ''}|${meta.executionLogCount ?? ''}`
     : '';
   const cacheKey = `getInvestmentAIAnalysis:${symKey}:${metaKey}`;
   const cached = getFromCache(cacheKey);
@@ -1915,6 +1917,9 @@ export const getInvestmentAIAnalysis = async (holdings: Holding[], meta?: Invest
       if (typeof meta.roiPct === 'number' && Number.isFinite(meta.roiPct)) facts.push(`Portfolio ROI (%): ${meta.roiPct.toFixed(2)}.`);
       if (typeof meta.dailyPnLSAR === 'number') facts.push(`Estimated daily P/L (SAR): ${meta.dailyPnLSAR.toFixed(0)}.`);
       if (typeof meta.commoditiesValueSAR === 'number') facts.push(`Commodities value (SAR): ${meta.commoditiesValueSAR.toFixed(0)}.`);
+      if (typeof meta.sukukPositionsValueSAR === 'number' && meta.sukukPositionsValueSAR > 0) {
+        facts.push(`Direct Sukuk contracts (SAR, off-platform): ${meta.sukukPositionsValueSAR.toFixed(0)}. Broker Sukuk are inside portfolio holdings.`);
+      }
       facts.push(`App display currency label: ${meta.appDisplayCurrency ?? 'SAR'}.`);
       if (typeof meta.executionLogCount === 'number') facts.push(`Stored plan execution log rows: ${meta.executionLogCount}.`);
     }

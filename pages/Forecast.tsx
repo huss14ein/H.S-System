@@ -243,7 +243,10 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
     const stressInputs = useMemo(() => {
         const accounts = getPersonalAccounts(engineData);
         const txs = getPersonalTransactions(engineData);
-        const monthlyExpense = normalizedMonthlyExpenseSar(txs as Transaction[], accounts, sarPerUsd, { monthsLookback: 6 });
+        const monthlyExpense = normalizedMonthlyExpenseSar(txs as Transaction[], accounts, sarPerUsd, {
+            monthsLookback: 6,
+            data: engineData,
+        });
         return { liquidCash: liquidCashSar, monthlyExpense };
     }, [engineData, sarPerUsd, liquidCashSar]);
 

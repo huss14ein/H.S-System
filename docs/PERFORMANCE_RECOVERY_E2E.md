@@ -43,6 +43,14 @@ npm run test:e2e -- e2e/performance-recovery.spec.ts
 | Plan spike | Worst month/category link opens Transactions with `filter-plan-expense:YYYY:M:category` |
 | Plan vs Dashboard | **Compare on Dashboard** → Dashboard KPI row + violet banner (Plan YTD from session vs NW / monthly P&amp;L) |
 | Plan grid copy | **How planned columns work** + grid InfoHint explain income vs expense planned rules (not one merged number) |
+| P/L parity | Investments portfolio week/month matches Wealth Analytics Investments zone panel (same snapshot) |
+| FIFO sell | Record sell → period week P/L realized leg matches FIFO lots when cost lots exist |
+| Dashboard cockpit | Deferred `DashboardOperationsCockpitSection` mounts below fold; donut drill → Transactions |
+| Corporate action | Apply 2:1 split on Investments → holding doubles, avg cost halves, Dashboard/WA/Summary NW unchanged, System Health no holding drift, undo restores |
+| Portfolio quotes | Portfolio Sync updates only that portfolio; no platform-wide spinner |
+| Sukuk diagnostic | `node scripts/diagnose-sukuk-positions.mjs` — legacy `assets.type=Sukuk` count is 0 |
+| Weekly digest | Test send includes portfolio week/month P/L section |
+| Metric passport | Dashboard monthly P/L **Explain** opens in-app drawer |
 | Quote proxies | Repeat SAHMK/Stooq requests within 15m on same warm function → `X-Quote-Cache: HIT` in response headers |
 | Budgets panels | Budget Intelligence uses extracted RPC status + recurring bills panel; shared RPC retries once on failure |
 

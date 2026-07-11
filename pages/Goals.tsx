@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
 import { getGoalAIPlan } from '../services/geminiService';
-import { FinancialData, Goal, Liability, Page, InvestmentPortfolio } from '../types';
+import { FinancialData, Goal, Liability, Page, InvestmentPortfolio, SukukPosition } from '../types';
 import { RocketLaunchIcon } from '../components/icons/RocketLaunchIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
@@ -475,8 +475,22 @@ const GoalCard: React.FC<{
                 linkedItems.push({ name: `${l.name || 'Receivable'} (owed to you)`, value: v });
             });
 
+            const sukukPositions = (data as { personalSukukPositions?: SukukPosition[] }).personalSukukPositions
+                ?? data?.sukukPositions
+                ?? [];
+            sukukPositions
+                .filter((p) => p.goalId === goal.id && p.status === 'active')
+                .forEach((p) => {
+                    const outstanding = Math.max(0, Number(p.outstandingPrincipal) || 0);
+                    if (outstanding <= 0) return;
+                    linkedItems.push({
+                        name: `Sukuk: ${p.name}`,
+                        value: toSAR(outstanding, p.currency === 'USD' ? 'USD' : 'SAR', sarPerUsd),
+                    });
+                });
+
             return { linkedAssets: linkedItems };
-        }, [data?.assets, data?.investments, goal.id, sarPerUsd, goalHoldingNames, personalLiabilities]);
+        }, [data?.assets, data?.investments, data?.sukukPositions, goal.id, sarPerUsd, goalHoldingNames, personalLiabilities]);
 
     const fundingEnvelope = useMemo(
         () => computeGoalMonthlyFundingEnvelopeSar({ goal, data: data ?? null, sarPerUsd }),

@@ -100,7 +100,7 @@ const BudgetOwnPortfolioCard: React.FC<BudgetOwnPortfolioCardProps> = React.memo
                                 </div>
                             </div>
                             <p className="mt-2 text-[11px] text-slate-500 leading-snug">
-                                Tap to open matching transactions for this view.
+                                Tap to open all transactions for this budget.
                             </p>
                         </div>
                     </div>

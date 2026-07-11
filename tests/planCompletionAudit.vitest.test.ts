@@ -40,15 +40,18 @@ describe('Plan completion audit (A–I)', () => {
   it('Phase E — executive KPI grid includes weekly P/L card', () => {
     expect(read('components/analytics/ExecutiveKpiGrid.tsx')).toContain('weeklyPnLKpi');
     expect(read('components/analytics/ExecutiveKpiGrid.tsx')).toContain('weeklyPnLSar');
-    expect(read('components/analytics/WealthAnalyticsDeferredSections.tsx')).toContain('hideWeeklyPnL');
+    expect(read('components/analytics/WealthAnalyticsDeferredSections.tsx')).toContain('weeklyPnLLoading');
   });
 
   it('Phase F/G — layout order + PDF export + language toggle', () => {
     const wa = read('pages/WealthAnalytics.tsx');
+    const overview = read('components/analytics/zones/OverviewZone.tsx');
+    const investments = read('components/analytics/zones/InvestmentsZone.tsx');
     const deferred = read('components/analytics/WealthAnalyticsDeferredSections.tsx');
     expect(wa).toContain('WealthAnalyticsExportMenuSection');
     expect(deferred).toContain('ExecutiveKpiGrid');
-    expect(wa.indexOf('<WealthAnalyticsExecutiveKpiSection')).toBeLessThan(wa.indexOf('<PortfolioPeriodPnLPanelSection'));
+    expect(overview).toContain('WealthAnalyticsExecutiveKpiSection');
+    expect(investments).toContain('PortfolioPeriodPnLPanelSection');
     expect(read('components/analytics/WealthAnalyticsExportMenu.tsx')).toContain('PageLanguageToggle');
     expect(read('services/reportingEngine.ts')).toContain('generateWealthExecutiveSummaryHtml');
     expect(read('services/reportingEngine.ts')).toContain('sparklineSvg');

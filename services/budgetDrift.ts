@@ -1,6 +1,14 @@
-import type { FinancialData } from '../types';
-import { resolveMonthStartDayFromData, financialMonthKeysEndingAt, financialMonthRangeFromKey } from '../utils/financialMonth';
-import { getPersonalTransactions } from '../utils/wealthScope';
+/**
+ * Unified budget drift — same SAR + cashflow rules as expenseBudgetAnalysisModel.
+ */
+import type { Account, FinancialData } from '../types';
+import {
+  financialMonthKeysEndingAt,
+  financialMonthRangeFromKey,
+  resolveMonthStartDayFromData,
+} from '../utils/financialMonth';
+import { aggregatePersonalBudgetCategorySpendSar } from './budgetSpendMath';
+import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 
 export type BudgetDriftRow = {
   category: string;
@@ -9,29 +17,34 @@ export type BudgetDriftRow = {
   driftPct: number;
 };
 
-/** Rolling 3-financial-month average vs current month spend by budget category. */
+/** Rolling 3-financial-month average vs current month spend by budget category (SAR, approved expenses). */
 export function detectBudgetDrift(
   data: FinancialData,
-  _exchangeRate: number,
+  exchangeRate: number,
   ref = new Date(),
 ): BudgetDriftRow[] {
   const msd = resolveMonthStartDayFromData(data);
   const keys = financialMonthKeysEndingAt(ref, 4, msd);
   const currentKey = keys[keys.length - 1]!;
   const baselineKeys = keys.slice(0, 3);
-  const txs = getPersonalTransactions(data);
-  const sumByCat = (key: typeof currentKey) => {
+  const transactions = getPersonalTransactions(data);
+  const accounts = getPersonalAccounts(data) as Account[];
+  const accountCurrencyById = new Map(
+    accounts.map((a) => [String(a.id), (a.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD']),
+  );
+
+  const sumByCat = (key: (typeof keys)[number]) => {
     const { start, end } = financialMonthRangeFromKey(key, msd);
-    const m = new Map<string, number>();
-    for (const t of txs) {
-      if (t.type !== 'expense') continue;
-      const d = new Date(t.date);
-      if (d < start || d > end) continue;
-      const cat = String(t.budgetCategory ?? t.category ?? 'Other');
-      m.set(cat, (m.get(cat) ?? 0) + Math.abs(Number(t.amount) || 0));
-    }
-    return m;
+    return aggregatePersonalBudgetCategorySpendSar(
+      transactions,
+      start,
+      end,
+      accountCurrencyById,
+      data,
+      exchangeRate,
+    );
   };
+
   const current = sumByCat(currentKey);
   const baselineTotals = new Map<string, number[]>();
   for (const k of baselineKeys) {
@@ -41,6 +54,7 @@ export function detectBudgetDrift(
       baselineTotals.set(cat, arr);
     }
   }
+
   const rows: BudgetDriftRow[] = [];
   for (const [cat, cur] of current) {
     const hist = baselineTotals.get(cat) ?? [];

@@ -4,6 +4,7 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { useAI } from '../context/AiContext';
 import { useExtendedCanonicalMetrics, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
 import { useLiveQuotePrices } from '../hooks/useLiveQuotePrices';
+import { lookupLiveQuoteForSymbol } from '../services/finnhubService';
 import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { aggregateMonthlyBudgetAcrossPortfolios } from '../utils/investmentPlanPerPortfolio';
 import type { InvestmentPlanSettings, UniverseTicker } from '../types';
@@ -187,12 +188,18 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
     const personalAccounts = (data as any)?.personalAccounts ?? data?.accounts ?? [];
     const allHoldings = personalInvestments.flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []);
     const priceMap: Record<string, number> = {};
-    Object.entries(simulatedPrices).forEach(([sym, o]) => {
-      priceMap[sym.toUpperCase()] = (o as { price: number }).price;
-    });
     allHoldings.forEach((h: { symbol?: string; quantity?: number; currentValue?: number }) => {
-      const sym = (h.symbol || '').toUpperCase();
-      if (!priceMap[sym] && (h.quantity ?? 0) > 0) priceMap[sym] = (h.currentValue ?? 0) / (h.quantity ?? 1);
+      const sym = String(h.symbol ?? '').trim();
+      if (!sym) return;
+      const symU = sym.toUpperCase();
+      const livePx = lookupLiveQuoteForSymbol(simulatedPrices, sym)?.price;
+      if (livePx != null && Number.isFinite(livePx) && livePx > 0) {
+        priceMap[symU] = livePx;
+        return;
+      }
+      if (!priceMap[symU] && (h.quantity ?? 0) > 0) {
+        priceMap[symU] = (h.currentValue ?? 0) / (h.quantity ?? 1);
+      }
     });
     const scenario = SCENARIO_OPTIONS.find(s => s.id === scenarioId) ?? SCENARIO_OPTIONS[0];
     if (scenario.multiplier !== 1) {

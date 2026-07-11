@@ -24,8 +24,8 @@ const InvestmentsQuoteStatusBanner: React.FC<Props> = ({ quotesPriceSource, last
           <strong>
             {quotesPriceSource === 'cached' ? 'Prices are from your saved cache' : 'Prices are simulated'}
           </strong>{' '}
-          — use <strong>Refresh prices</strong> in the header (or <strong>Sync quotes</strong> on a platform) for a
-          live pull.
+          — use <strong>Refresh prices</strong> in the header or <strong>Sync quotes</strong> on a portfolio
+          (manual-fund portfolios are skipped) for a live pull.
         </p>
       )}
       {cooldownMs > 0 && (

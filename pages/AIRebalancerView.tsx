@@ -36,7 +36,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab: _o
   const { data, getAvailableCashForAccount } = useContext(DataContext)!;
   const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
   const { trackAction } = useSelfLearning();
-  const { simulatedPrices } = useInvestmentsCanonicalMetrics();
+  const { simulatedPrices, liveQuotePrices } = useInvestmentsCanonicalMetrics();
   const { symbolQuoteUpdatedAt } = useMarketQuoteMeta();
   const { exchangeRate } = useCurrency();
   const { formatCurrencyString } = useFormatCurrency();
@@ -145,11 +145,11 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab: _o
     const book = resolveInvestmentPortfolioCurrency(selectedPortfolio);
     return (selectedPortfolio.holdings ?? [])
       .map((h: Holding) => {
-        const v = effectiveHoldingValueInBookCurrency(h, book, simulatedPrices, sarPerUsd);
+        const v = effectiveHoldingValueInBookCurrency(h, book, liveQuotePrices, sarPerUsd);
         return { name: h.symbol ?? '', value: v };
       })
       .filter((row: { name: string; value: number }) => Number.isFinite(row.value) && row.value > 0);
-  }, [selectedPortfolio, canonical, simulatedPrices, sarPerUsd]);
+  }, [selectedPortfolio, canonical, liveQuotePrices, sarPerUsd]);
 
   const totalPortfolioValueBook = useMemo(() => {
     if (!selectedPortfolio) return 0;
@@ -177,7 +177,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab: _o
         bookCurrency: portfolioBookCurrency,
         sarPerUsd,
         portfolioName: selectedPortfolio.name,
-        simulatedPrices,
+        simulatedPrices: liveQuotePrices,
       });
       if (!plan || plan.trim().length === 0) {
         setPlanError('AI returned an empty plan. Please try again.');
@@ -189,7 +189,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab: _o
     } finally {
       setIsLoading(false);
     }
-  }, [selectedPortfolio, riskProfile, trackAction, portfolioBookCurrency, sarPerUsd, simulatedPrices, totalPortfolioValueBook]);
+  }, [selectedPortfolio, riskProfile, trackAction, portfolioBookCurrency, sarPerUsd, liveQuotePrices, totalPortfolioValueBook]);
 
   const runArabicTranslation = useCallback(async () => {
     if (!rebalancingPlan.trim() || !aiActionsEnabled) return;
@@ -233,7 +233,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab: _o
     const withVal = (selectedPortfolio.holdings ?? [])
       .map((h: Holding) => ({
         h,
-        v: effectiveHoldingValueInBookCurrency(h, book, simulatedPrices, sarPerUsd),
+        v: effectiveHoldingValueInBookCurrency(h, book, liveQuotePrices, sarPerUsd),
       }))
       .filter((x: { h: Holding; v: number }) => x.v > 0);
     if (withVal.length < 2) return null;
@@ -249,7 +249,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab: _o
     const res = meanVarianceOptimization({ expectedReturns, covarianceMatrix: cov, riskFreeRate: 0.04 / 12 });
     const labels = holdings.map((h: Holding) => h.symbol ?? '');
     return { ...res, labels };
-  }, [selectedPortfolio, simulatedPrices, sarPerUsd]);
+  }, [selectedPortfolio, liveQuotePrices, sarPerUsd]);
 
   return (
     <div className="page-container space-y-6">

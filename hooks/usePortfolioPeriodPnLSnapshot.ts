@@ -5,6 +5,7 @@ import { resolveMonthStartDayFromData } from '../utils/financialMonth';
 import {
   computePortfolioPeriodPnLSummaryAsync,
   computePortfolioPnLDailySeriesAsync,
+  portfolioPeriodPnLInputsFingerprint,
   portfolioPeriodPnLMap,
   type PortfolioPeriodPnLSummary,
   type PortfolioPnLDailySeries,
@@ -57,16 +58,16 @@ export function usePortfolioPeriodPnLSnapshot(args: {
   const { getAvailableCashForAccount } = useContext(DataContext)!;
   const [snapshot, setSnapshot] = useState<PortfolioPeriodPnLCore>(EMPTY_CORE);
   const { data, portfolios, accounts, sarPerUsd, simulatedPrices, locale } = args;
-  const debouncedPrices = useDebouncedValue(simulatedPrices, 800);
+  const debouncedPrices = useDebouncedValue(simulatedPrices, 500);
 
-  const fingerprint = [
-    data?.accounts?.length ?? 0,
-    data?.transactions?.length ?? 0,
-    data?.investmentTransactions?.length ?? 0,
-    portfolios.length,
-    Object.keys(debouncedPrices).length,
+  const monthStartDay = data ? resolveMonthStartDayFromData(data) : 1;
+  const fingerprint = portfolioPeriodPnLInputsFingerprint({
+    data,
+    portfolios,
     sarPerUsd,
-  ].join(':');
+    monthStartDay,
+    simulatedPrices: debouncedPrices,
+  });
 
   useEffect(() => {
     if (!enabled) {
@@ -84,7 +85,6 @@ export function usePortfolioPeriodPnLSnapshot(args: {
       await waitUntilBackgroundWorkResumed();
       if (aborted) return;
 
-      const monthStartDay = resolveMonthStartDayFromData(data);
       const computeArgs = {
         data,
         portfolios,
@@ -94,6 +94,7 @@ export function usePortfolioPeriodPnLSnapshot(args: {
         monthStartDay,
         getAvailableCashForAccount,
         locale: locale ?? 'en-US',
+        costLots: data.investmentCostLots ?? [],
       };
       const shouldAbort = () => aborted;
 

@@ -19,6 +19,8 @@ import { wealthKpiAccent, wealthKpiToneFromStatus, type WealthKpiTone } from './
 export type WealthMetricPassportKey =
   | 'netWorth'
   | 'monthlyPnL'
+  | 'weeklyPnL'
+  | 'portfolioPeriodPnL'
   | 'investmentRoi'
   | 'budgetVariance'
   | 'emergencyFund';
@@ -216,7 +218,9 @@ export function buildWealthAnalyticsReportModel(input: {
 
 export const WEALTH_METRIC_PASSPORT_LABELS: Record<WealthMetricPassportKey, string> = {
   netWorth: 'Net Worth',
-  monthlyPnL: 'Monthly P/L',
+  monthlyPnL: 'Monthly P/L (cashflow)',
+  weeklyPnL: 'Portfolio week P/L',
+  portfolioPeriodPnL: 'Portfolio period P/L',
   investmentRoi: 'Investment ROI',
   budgetVariance: 'Budget Variance',
   emergencyFund: 'Emergency Fund',

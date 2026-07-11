@@ -82,4 +82,13 @@ describe('security wiring', () => {
       'wealth_ultra_config_select_own_or_global',
     );
   });
+
+  it('corporate_action_events and investment_cost_lots have RLS policies', () => {
+    const migration = read('supabase/migrations/20260706130000_corporate_actions_and_cost_lots.sql');
+    expect(migration).toContain('alter table public.corporate_action_events enable row level security');
+    expect(migration).toContain('Users manage own corporate_action_events');
+    expect(migration).toContain('alter table public.investment_cost_lots enable row level security');
+    expect(migration).toContain('Users manage own investment_cost_lots');
+    expect(migration).toMatch(/auth\.uid\(\)\s*=\s*user_id/);
+  });
 });
