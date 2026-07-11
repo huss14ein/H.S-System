@@ -36,6 +36,24 @@ export function splitRatio(action: CorporateAction): number {
   return num / den;
 }
 
+export function splitProducesFraction(quantity: number, action: CorporateAction): boolean {
+  const ratio = splitRatio(action);
+  const newQty = quantity * ratio;
+  return newQty - Math.floor(newQty) > 1e-9;
+}
+
+/** Reverse split floors fractional shares when cash-in-lieu price is provided. */
+export function reverseSplitFloorsFraction(action: CorporateAction, quantity: number): boolean {
+  if (action.type !== 'reverse_stock_split') return false;
+  if (!splitProducesFraction(quantity, action)) return false;
+  return (Number(action.cashInLieuPrice) || 0) > 0;
+}
+
+export function shouldFloorSplitQuantity(action: CorporateAction, quantity: number): boolean {
+  if (action.type === 'cash_in_lieu') return true;
+  return reverseSplitFloorsFraction(action, quantity);
+}
+
 export function recalculateCostBasisAfterAction(args: {
   action: CorporateAction;
   holding: HoldingLike;
@@ -44,9 +62,17 @@ export function recalculateCostBasisAfterAction(args: {
   const avgCost = Math.max(0, Number(args.holding.avgCost) || 0);
   const action = args.action;
 
-  if (action.type === 'stock_split' || action.type === 'reverse_stock_split' || action.type === 'stock_dividend') {
+  if (action.type === 'stock_split' || action.type === 'stock_dividend') {
     const ratio = splitRatio(action);
     const newQuantity = q * ratio;
+    const newAvgCost = ratio > 0 ? avgCost / ratio : avgCost;
+    return { quantity: newQuantity, avgCost: newAvgCost };
+  }
+
+  if (action.type === 'reverse_stock_split') {
+    const ratio = splitRatio(action);
+    const newQtyRaw = q * ratio;
+    const newQuantity = shouldFloorSplitQuantity(action, q) ? Math.floor(newQtyRaw) : newQtyRaw;
     const newAvgCost = ratio > 0 ? avgCost / ratio : avgCost;
     return { quantity: newQuantity, avgCost: newAvgCost };
   }
@@ -104,6 +130,19 @@ export function applyCorporateAction(args: {
     const fraction = newQty - whole;
     const price = Math.max(0, Number(action.cashInLieuPrice) || 0);
     return { ...base, quantity: whole, cashInLieu: fraction * price };
+  }
+
+  if (action.type === 'reverse_stock_split' && shouldFloorSplitQuantity(action, q)) {
+    const ratio = splitRatio(action);
+    const newQtyRaw = q * ratio;
+    const whole = Math.floor(newQtyRaw);
+    const fraction = newQtyRaw - whole;
+    const price = Math.max(0, Number(action.cashInLieuPrice) || 0);
+    return {
+      quantity: whole,
+      avgCost: ratio > 0 ? avgCost / ratio : avgCost,
+      cashInLieu: fraction * price,
+    };
   }
 
   if (action.type === 'spinoff' && action.linkedSymbol) {

@@ -1,11 +1,15 @@
 import React, { useMemo, useState } from 'react';
-import type { CorporateActionEvent, InvestmentPortfolio } from '../../types';
+import type { CorporateActionEvent, InvestmentPortfolio, InvestmentTransaction } from '../../types';
 import type { CorporateAction, CorporateActionType } from '../../services/corporateActions';
-import { buildCorporateActionEventPayload } from '../../services/corporateActionApply';
+import { splitProducesFraction } from '../../services/corporateActions';
+import { buildCorporateActionEventPayload, validateCorporateActionApplyPrerequisites } from '../../services/corporateActionApply';
+import { validateCorporateActionWizardPortfolioAccess } from '../../services/corporateActionWizardModel';
+import { toast } from '../../context/ToastContext';
 
 type Props = {
   portfolios: InvestmentPortfolio[];
   events?: CorporateActionEvent[];
+  investmentTransactions?: InvestmentTransaction[];
   onApply: (args: {
     portfolioId: string;
     symbol: string;
@@ -14,6 +18,7 @@ type Props = {
     linkedSymbol?: string;
   }) => Promise<void>;
   onUndo?: (eventId: string) => Promise<void>;
+  onLaunchWizard?: (prefill?: { portfolioId?: string; symbol?: string; actionType?: CorporateActionType }) => void;
 };
 
 const ACTION_TYPES: { value: CorporateActionType; label: string }[] = [
@@ -24,7 +29,14 @@ const ACTION_TYPES: { value: CorporateActionType; label: string }[] = [
   { value: 'merger', label: 'Merger / acquisition' },
 ];
 
-export const CorporateActionApplyPanel: React.FC<Props> = ({ portfolios, events = [], onApply, onUndo }) => {
+export const CorporateActionApplyPanel: React.FC<Props> = ({
+  portfolios,
+  events = [],
+  investmentTransactions = [],
+  onApply,
+  onUndo,
+  onLaunchWizard,
+}) => {
   const [portfolioId, setPortfolioId] = useState(portfolios[0]?.id ?? '');
   const [symbol, setSymbol] = useState('');
   const [actionType, setActionType] = useState<CorporateActionType>('stock_split');
@@ -52,6 +64,21 @@ export const CorporateActionApplyPanel: React.FC<Props> = ({ portfolios, events 
     return Array.from(set).sort();
   }, [portfolio]);
 
+  const selectedHolding = useMemo(
+    () => portfolio?.holdings?.find((h) => String(h.symbol ?? '').toUpperCase() === symbol.toUpperCase()),
+    [portfolio, symbol],
+  );
+
+  const reverseSplitNeedsCashInLieu = useMemo(() => {
+    if (actionType !== 'reverse_stock_split' || !symbol) return false;
+    const action: CorporateAction = {
+      type: 'reverse_stock_split',
+      ratioNumerator: Number(ratioNum) || 1,
+      ratioDenominator: Number(ratioDen) || 1,
+    };
+    return splitProducesFraction(Number(selectedHolding?.quantity) || 0, action);
+  }, [actionType, ratioDen, ratioNum, selectedHolding?.quantity, symbol]);
+
   const recentEvents = useMemo(
     () =>
       [...events]
@@ -69,6 +96,12 @@ export const CorporateActionApplyPanel: React.FC<Props> = ({ portfolios, events 
     setError(null);
     setBusy(true);
     try {
+      const access = validateCorporateActionWizardPortfolioAccess(portfolio.id, portfolios);
+      if (!access.valid) {
+        setError(access.error ?? 'Invalid portfolio.');
+        setBusy(false);
+        return;
+      }
       const action: CorporateAction = {
         type: actionType,
         ratioNumerator: Number(ratioNum) || 1,
@@ -79,6 +112,25 @@ export const CorporateActionApplyPanel: React.FC<Props> = ({ portfolios, events 
         cashInLieuPrice: cashInLieuPrice ? Number(cashInLieuPrice) : undefined,
         conversionRatio: (Number(ratioNum) || 1) / (Number(ratioDen) || 1),
       };
+      if (actionType === 'cash_in_lieu' || reverseSplitNeedsCashInLieu) {
+        const price = Number(cashInLieuPrice);
+        if (!Number.isFinite(price) || price < 0) {
+          setError('Cash-in-lieu price per fractional share is required.');
+          setBusy(false);
+          return;
+        }
+      }
+      const prereq = validateCorporateActionApplyPrerequisites({
+        portfolioId: portfolio.id,
+        symbol: symbol.trim(),
+        transactions: investmentTransactions,
+        corporateActionEvents: events,
+      });
+      if (!prereq.valid) {
+        setError(prereq.error ?? 'Corporate action prerequisites not met.');
+        setBusy(false);
+        return;
+      }
       buildCorporateActionEventPayload({
         portfolioId: portfolio.id,
         symbol: symbol.trim(),
@@ -93,6 +145,9 @@ export const CorporateActionApplyPanel: React.FC<Props> = ({ portfolios, events 
         action,
         linkedSymbol: linkedSymbol.trim() || undefined,
       });
+      if (actionType === 'stock_split' || actionType === 'reverse_stock_split') {
+        toast('Split applied — net worth unchanged; share count and avg cost updated.', 'success');
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to apply corporate action.');
     } finally {
@@ -117,12 +172,29 @@ export const CorporateActionApplyPanel: React.FC<Props> = ({ portfolios, events 
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
-      <div>
-        <h3 className="text-base font-semibold text-slate-900">Corporate actions</h3>
-        <p className="text-xs text-slate-500 mt-1">
-          Splits, spinoffs, and mergers update cost basis for P/L — not tax reporting (KSA scope). Double-apply is
-          blocked by idempotency; undo restores holdings.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="text-base font-semibold text-slate-900">Corporate actions</h3>
+          <p className="text-xs text-slate-500 mt-1">
+            Splits, spinoffs, and mergers update cost basis for P/L — not tax reporting (KSA scope). Double-apply is
+            blocked by idempotency; undo restores holdings.
+          </p>
+        </div>
+        {onLaunchWizard && (
+          <button
+            type="button"
+            className="btn-secondary text-sm shrink-0"
+            onClick={() =>
+              onLaunchWizard({
+                portfolioId: portfolio?.id,
+                symbol: symbol || undefined,
+                actionType,
+              })
+            }
+          >
+            Guided wizard…
+          </button>
+        )}
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
         <label className="space-y-1">
@@ -190,7 +262,7 @@ export const CorporateActionApplyPanel: React.FC<Props> = ({ portfolios, events 
             <input className="input-base w-full" value={cashPerShare} onChange={(e) => setCashPerShare(e.target.value)} />
           </label>
         )}
-        {(actionType === 'cash_in_lieu' || actionType === 'reverse_stock_split') && (
+        {(actionType === 'cash_in_lieu' || reverseSplitNeedsCashInLieu) && (
           <label className="space-y-1 sm:col-span-2">
             <span className="text-slate-600">Cash-in-lieu price per fractional share</span>
             <input

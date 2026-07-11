@@ -10,6 +10,7 @@ import { ExtendedMetricGate } from './shared/ExtendedMetricGate';
 import { computeDashboardValidationWarnings } from '../services/dashboardKpiSnapshot';
 import { listRecentKpiReconciliationDrift, type KpiDriftEvent } from '../services/kpiDriftTelemetry';
 import { useDashboardReconciliationPrefs } from '../hooks/useDashboardReconciliationPrefs';
+import { portfolioUsesFifoLedger } from '../services/portfolioPeriodPnL';
 
 /**
  * Dashboard validation, KPI reconciliation, and drift diagnostics — shown on System & APIs Health.
@@ -73,6 +74,13 @@ const DashboardKpiQualityPanel: React.FC = () => {
             window.clearInterval(timer);
         };
     }, [auth?.user?.id, strictReconciliationMode, hardBlockOnMismatch, kpiReconciliation?.mismatchCount]);
+
+    const fifoLedgerDiagnostics = useMemo(() => {
+        const lots = data?.investmentCostLots ?? [];
+        const portfolios = data?.personalInvestments ?? data?.investments ?? [];
+        const fifoCount = portfolios.filter((p) => portfolioUsesFifoLedger(lots, p.id)).length;
+        return { fifoCount, portfolioCount: portfolios.length, lotCount: lots.length };
+    }, [data?.investmentCostLots, data?.personalInvestments, data?.investments]);
 
     if (!data) return null;
 
@@ -205,6 +213,18 @@ const DashboardKpiQualityPanel: React.FC = () => {
                         ))}
                     </div>
                 )}
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+                <p className="text-sm font-semibold text-slate-900">Portfolio period P/L — FIFO ledger</p>
+                <p className="mt-1 text-xs text-slate-600">
+                    Realized sell P/L uses FIFO cost lots when{' '}
+                    <code className="text-[11px]">investment_cost_lots</code> exist; otherwise weighted-average replay.
+                </p>
+                <p className="mt-2 text-xs text-slate-700">
+                    {fifoLedgerDiagnostics.fifoCount} of {fifoLedgerDiagnostics.portfolioCount} portfolio(s) on FIFO path
+                    ({fifoLedgerDiagnostics.lotCount} open lot row(s) hydrated).
+                </p>
             </div>
 
         </div>

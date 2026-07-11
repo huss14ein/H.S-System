@@ -1,6 +1,7 @@
 import React from 'react';
 import type { FinancialData, Page } from '../../../types';
 import type { SimulatedPriceMap } from '../../../services/investmentPlatformCardMetrics';
+import type { PortfolioPeriodPnLSnapshot } from '../../../hooks/usePortfolioPeriodPnLSnapshot';
 import { DeferredMount } from '../../dashboard/DeferredMount';
 import { DashboardSectionHeader } from '../../dashboard/DashboardSectionHeader';
 import {
@@ -17,7 +18,10 @@ type Props = {
   personalInvestments: FinancialData['investments'];
   personalAccounts: FinancialData['accounts'];
   sarPerUsd: number;
-  simulatedPrices: SimulatedPriceMap;
+  /** Debounced KPI quote map — same as Investments hub period P/L. */
+  kpiQuotePrices: SimulatedPriceMap;
+  /** Live session ticks for holdings cells. */
+  liveQuotePrices: SimulatedPriceMap;
   monthStartDay: number;
   getAvailableCashForAccount: (id: string) => { SAR: number; USD: number };
   setActivePage?: (page: Page) => void;
@@ -25,6 +29,7 @@ type Props = {
   holdingsPortfolioId: string;
   onHoldingsPortfolioChange: (id: string) => void;
   portfoliosWithHoldings: { id: string; name?: string }[];
+  portfolioPeriodPnL: PortfolioPeriodPnLSnapshot;
   t: (key: string) => string;
 };
 
@@ -36,10 +41,15 @@ export const InvestmentsZone: React.FC<Props> = (props) => (
         portfolios={props.personalInvestments}
         accounts={props.personalAccounts}
         sarPerUsd={props.sarPerUsd}
-        simulatedPrices={props.simulatedPrices}
+        simulatedPrices={props.kpiQuotePrices}
         monthStartDay={props.monthStartDay}
         getAvailableCashForAccount={props.getAvailableCashForAccount}
         setActivePage={props.setActivePage}
+        precomputed={{
+          summary: props.portfolioPeriodPnL.summary,
+          dailySeries: props.portfolioPeriodPnL.dailySeries,
+          ready: props.portfolioPeriodPnL.ready,
+        }}
       />
     </section>
     <section className="min-w-0 w-full" aria-label="Holdings and tools">
@@ -71,7 +81,7 @@ export const InvestmentsZone: React.FC<Props> = (props) => (
         <div className="space-y-4">
           <PortfolioHoldingsGridSection
             portfolios={props.personalInvestments}
-            simulatedPrices={props.simulatedPrices}
+            simulatedPrices={props.liveQuotePrices}
             sarPerUsd={props.sarPerUsd}
             portfolioId={props.holdingsPortfolioId || null}
           />

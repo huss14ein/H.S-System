@@ -54,8 +54,12 @@ describe('Wealth Analytics completion (E2E)', () => {
     expect(page).toContain('wealthAnalyticsLazySections');
     expect(overview).toContain('SectionLoadingPlaceholder');
     expect(page).toContain('extendedReady');
-    expect(deferred).toContain('hideWeeklyPnL');
-    expect(page).not.toContain('usePortfolioPeriodPnLSnapshot');
+    expect(page).toContain('usePortfolioPeriodPnLSnapshot');
+    expect(page).toContain('kpiQuotePrices');
+    expect(page).toContain('portfolioPeriodPnL={portfolioPeriodPnL}');
+    expect(read('components/analytics/zones/InvestmentsZone.tsx')).toContain('precomputed');
+    expect(deferred).toContain('portfolioPeriodPnL');
+    expect(deferred).toContain('weeklyPnLLoading');
     expect(deferred).toContain('useExecutiveKpiSparklines');
     expect(page).not.toContain('Loading analytics');
     expect(page).not.toContain('Preparing analytics');

@@ -23,10 +23,13 @@ export const ExecutiveKpiGrid: React.FC<{
   emergencyFundTargetSar?: number;
   weeklyPnLSar?: number;
   weeklyPnLSparkline?: number[];
+  /** When true, weekly P/L card shows … instead of 0 while idle compute runs. */
+  weeklyPnLLoading?: boolean;
   /** Deferred NW history sparkline (Wealth Analytics). Falls back to two-point until ready. */
   netWorthSparklineOverride?: number[];
   /** Omit weekly P/L card — Wealth Analytics computes it in the deferred P/L panel below. */
   hideWeeklyPnL?: boolean;
+  onExplain?: (key: string) => void;
 }> = ({
   headline,
   kpiSnapshot,
@@ -34,8 +37,10 @@ export const ExecutiveKpiGrid: React.FC<{
   emergencyFundTargetSar,
   weeklyPnLSar = 0,
   weeklyPnLSparkline,
+  weeklyPnLLoading = false,
   netWorthSparklineOverride,
   hideWeeklyPnL = false,
+  onExplain,
 }) => {
   const { t } = useLanguage();
   const { formatCurrencyString } = useFormatCurrency();
@@ -136,11 +141,15 @@ export const ExecutiveKpiGrid: React.FC<{
             {
               key: 'weeklyPnL',
               title: t('weeklyPnLKpi'),
-              currentValue: formatCurrencyString(weeklyPnLSar, { digits: 0 }),
+              currentValue: weeklyPnLLoading ? '…' : formatCurrencyString(weeklyPnLSar, { digits: 0 }),
               targetValue: formatCurrencyString(0, { digits: 0 }),
               targetLabel: t('kpiTargetBreakEven'),
-              status: statusFromSigned(weeklyPnLSar),
-              statusLabel: weeklyPnLSar >= 0 ? t('kpiStatusGain') : t('kpiStatusLoss'),
+              status: weeklyPnLLoading ? 'neutral' : statusFromSigned(weeklyPnLSar),
+              statusLabel: weeklyPnLLoading
+                ? t('sectionLoading')
+                : weeklyPnLSar >= 0
+                  ? t('kpiStatusGain')
+                  : t('kpiStatusLoss'),
               sparkline: weekSpark,
               sparklineTarget: 0,
               accentStroke: '#06b6d4',
@@ -154,8 +163,10 @@ export const ExecutiveKpiGrid: React.FC<{
     emergencyFundTargetSar,
     weeklyPnLSar,
     weeklyPnLSparkline,
+    weeklyPnLLoading,
     netWorthSparklineOverride,
     hideWeeklyPnL,
+    onExplain,
     formatCurrencyString,
     t,
   ]);
@@ -168,7 +179,7 @@ export const ExecutiveKpiGrid: React.FC<{
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 auto-rows-fr">
         {cards.map(({ key, ...card }) => (
-          <ExecutiveKpiCard key={key} {...card} />
+          <ExecutiveKpiCard key={key} {...card} onExplain={onExplain ? () => onExplain(key) : undefined} />
         ))}
       </div>
     </section>

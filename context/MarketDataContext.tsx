@@ -1,14 +1,16 @@
 
 import React, { createContext, useState, useCallback, ReactNode, useContext, useEffect, useRef, useMemo } from 'react';
-import { cacheRowsToSimulatedMap, loadQuoteCacheRows, QUOTE_CACHE_STORAGE_KEY } from '../services/quotePriceCache';
+import { cacheRowsToSimulatedMap, loadQuoteCacheRows, QUOTE_CACHE_STORAGE_KEY, saveQuoteCacheRows } from '../services/quotePriceCache';
 import {
   latestQuoteCacheTimestamp,
   rehydrateSessionPricesFromQuoteCache,
   symbolTimestampsFromCacheRows,
 } from '../services/cachedQuoteRestore';
+import { scaleQuoteRowForSplit, scaleQuotesForCorporateAction, splitQuoteAdjustRatio } from '../services/corporateActionQuoteAdjust';
 import { quoteRefreshCooldownRemainingMs } from '../services/quoteRefreshCooldown';
 import { mergePriceRefreshScope } from '../services/quoteRefreshQueue';
 import { kickQuoteRefreshNow, registerQuoteCacheSessionSync } from '../utils/quoteRefreshBridge';
+import { registerCorporateActionQuoteAdjust } from '../utils/corporateActionQuoteBridge';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 interface SimulatedPrices {
@@ -247,7 +249,11 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
     }, [bumpPriceRefresh]);
 
     const refreshPricesForPlatform = useCallback(
+        /** @deprecated Use refreshPricesForPortfolio — platform-wide refresh is not exposed in UI. */
         async (platformId: string) => {
+            if (import.meta.env?.DEV) {
+                console.warn('[MarketData] refreshPricesForPlatform is deprecated; use refreshPricesForPortfolio');
+            }
             if (!platformId?.trim()) return;
             const id = platformId.trim();
             quoteRefreshAbortRef.current = false;
@@ -273,6 +279,39 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         },
         [bumpPriceRefresh],
     );
+
+    const adjustQuotesForCorporateAction = useCallback(
+        (args: { symbol: string; action: import('../services/corporateActions').CorporateAction; portfolioId?: string }) => {
+            const ratio = splitQuoteAdjustRatio(args.action);
+            if (ratio == null) return;
+            const upper = args.symbol.toUpperCase();
+            setSimulatedPrices((prev) => {
+                const { prices, changed } = scaleQuotesForCorporateAction(prev, upper, args.action);
+                return changed ? prices : prev;
+            });
+            const prior = loadQuoteCacheRows();
+            const next = { ...prior };
+            let cacheChanged = false;
+            for (const [k, v] of Object.entries(prior)) {
+                if (k.toUpperCase() !== upper || !v?.price || v.price <= 0) continue;
+                next[k] = {
+                    ...v,
+                    ...scaleQuoteRowForSplit(
+                        { price: v.price, change: v.change ?? 0, changePercent: v.changePercent ?? 0 },
+                        ratio,
+                    ),
+                };
+                cacheChanged = true;
+            }
+            if (cacheChanged) saveQuoteCacheRows(next);
+        },
+        [],
+    );
+
+    useEffect(() => {
+        registerCorporateActionQuoteAdjust(adjustQuotesForCorporateAction);
+        return () => registerCorporateActionQuoteAdjust(null);
+    }, [adjustQuotesForCorporateAction]);
 
     const pricesValue = useMemo(
         (): MarketPricesContextType => ({

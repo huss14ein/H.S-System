@@ -1,5 +1,7 @@
 import React from 'react';
 import type { FinancialData, Page } from '../../../types';
+import { useAnalyticsWorkspace } from '../../../context/AnalyticsWorkspaceContext';
+import AnalyticsCrossFilterRibbon from '../AnalyticsCrossFilterRibbon';
 import { DeferredMount } from '../../dashboard/DeferredMount';
 import SpendingCommandCenter from '../../spending/SpendingCommandCenter';
 import { DashboardOperationsCockpitSection } from '../wealthAnalyticsLazySections';
@@ -23,8 +25,14 @@ type Props = {
   triggerPageAction?: (page: Page, action: string) => void;
 };
 
-export const CashSpendZone: React.FC<Props> = (props) => (
+export const CashSpendZone: React.FC<Props> = (props) => {
+  const { selectedCategory, setSelectedCategory } = useAnalyticsWorkspace();
+
+  return (
   <section className="min-w-0 w-full space-y-4" aria-label="Operations cockpit">
+    {selectedCategory && (
+      <AnalyticsCrossFilterRibbon category={selectedCategory} onClear={() => setSelectedCategory(null)} />
+    )}
     <div className="flex flex-wrap items-center justify-between gap-2">
       <SpendingCommandCenter
         model={props.spendingModel}
@@ -59,6 +67,7 @@ export const CashSpendZone: React.FC<Props> = (props) => (
       />
     </DeferredMount>
   </section>
-);
+  );
+};
 
 export default CashSpendZone;

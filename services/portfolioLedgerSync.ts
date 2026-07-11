@@ -4,13 +4,14 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   corporateActionEventToRow,
+  corporateActionFromRow,
   persistHoldingsFromReplayMap,
   replayPortfolioHoldingsFromEvents,
+  type HoldingsReplayBaselineMode,
 } from './corporateActionApply';
-import { investmentCostLotToRow, normalizeInvestmentCostLotRow } from './investmentCostLotDb';
+import { investmentCostLotToRow } from './investmentCostLotDb';
 import { rebuildCostLotsFromEvents } from './portfolioLotReplayEngine';
 import type { CorporateActionReplayEvent } from './portfolioReplayEngine';
-import { corporateActionFromRow } from './corporateActionApply';
 import type {
   CorporateActionEvent,
   Holding,
@@ -29,6 +30,8 @@ export type SyncPortfolioLedgerArgs = {
   supabase?: SupabaseClient | null;
   userId?: string;
   onLotsUpdated?: (lots: InvestmentCostLot[]) => void;
+  /** Manual-only portfolios: as_stored on fresh apply/undo; replay_derived on re-sync. */
+  holdingsBaselineMode?: HoldingsReplayBaselineMode;
 };
 
 function corporateEventsToReplay(events: CorporateActionEvent[], portfolioId: string): CorporateActionReplayEvent[] {
@@ -58,6 +61,7 @@ export async function syncPortfolioLedgerAfterChange(
     portfolio: args.portfolio,
     transactions: args.investmentTransactions,
     corporateActionEvents: args.corporateActionEvents,
+    holdingsBaselineMode: args.holdingsBaselineMode ?? 'replay_derived',
   });
 
   await persistHoldingsFromReplayMap({
@@ -113,17 +117,3 @@ export async function persistInvestmentCostLotsForPortfolio(
   const { error: insErr } = await supabase.from('investment_cost_lots').insert(rows);
   if (insErr && insErr.code !== 'PGRST205') throw insErr;
 }
-
-export async function fetchInvestmentCostLotsForUser(
-  supabase: SupabaseClient,
-  userId: string,
-): Promise<InvestmentCostLot[]> {
-  const { data, error } = await supabase.from('investment_cost_lots').select('*').eq('user_id', userId);
-  if (error) {
-    if (error.code === 'PGRST205') return [];
-    throw error;
-  }
-  return (data ?? []).map((row) => normalizeInvestmentCostLotRow(row as Record<string, unknown>));
-}
-
-export { normalizeInvestmentCostLotRow };

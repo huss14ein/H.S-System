@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   computePortfolioLedgerPnLSarInRange,
+  computePortfolioLedgerPnLSarInRangeWithFifo,
   computePortfolioMarkToMarketPeriodPnLSar,
   computePortfolioPeriodPnLSummary,
   computePortfolioPnLDailySeries,
   platformPeriodPnLFromSummary,
+  portfolioPeriodPnLInputsFingerprint,
   resolvePortfolioPeriodPnLEndValueSar,
 } from '../services/portfolioPeriodPnL';
 import { computePlatformCardMetrics } from '../services/investmentPlatformCardMetrics';
-import type { Account, FinancialData, InvestmentPortfolio, InvestmentTransaction } from '../types';
+import type { Account, FinancialData, InvestmentCostLot, InvestmentPortfolio, InvestmentTransaction } from '../types';
 
 describe('portfolioPeriodPnL', () => {
   it('ledger P/L counts sell gain and dividends in range', () => {
@@ -80,6 +82,115 @@ describe('portfolioPeriodPnL', () => {
     });
     // Sell: 600 - 5*100 = 100; dividend 50
     expect(ledger).toBeCloseTo(150, 0);
+  });
+
+  it('FIFO ledger P/L uses oldest lot cost when investment_cost_lots exist', () => {
+    const accounts: Account[] = [{ id: 'acc-1', name: 'Broker', type: 'Investment', balance: 0 }];
+    const portfolios: InvestmentPortfolio[] = [
+      {
+        id: 'p1',
+        name: 'Growth',
+        accountId: 'acc-1',
+        currency: 'SAR',
+        holdings: [],
+      },
+    ];
+    const txs: InvestmentTransaction[] = [
+      {
+        id: 'b1',
+        accountId: 'acc-1',
+        portfolioId: 'p1',
+        date: '2026-05-01',
+        type: 'buy',
+        symbol: 'AAA.SR',
+        quantity: 5,
+        price: 100,
+        total: 500,
+        currency: 'SAR',
+      },
+      {
+        id: 'b2',
+        accountId: 'acc-1',
+        portfolioId: 'p1',
+        date: '2026-05-05',
+        type: 'buy',
+        symbol: 'AAA.SR',
+        quantity: 5,
+        price: 200,
+        total: 1000,
+        currency: 'SAR',
+      },
+      {
+        id: 's1',
+        accountId: 'acc-1',
+        portfolioId: 'p1',
+        date: '2026-05-20',
+        type: 'sell',
+        symbol: 'AAA.SR',
+        quantity: 5,
+        price: 150,
+        total: 750,
+        currency: 'SAR',
+      },
+    ];
+    const costLots: InvestmentCostLot[] = [
+      {
+        id: 'l1',
+        portfolioId: 'p1',
+        symbol: 'AAA.SR',
+        market: 'Tadawul',
+        acquisitionDate: '2026-05-01',
+        quantityRemaining: 5,
+        costPerShare: 100,
+        bookCurrency: 'SAR',
+      },
+      {
+        id: 'l2',
+        portfolioId: 'p1',
+        symbol: 'AAA.SR',
+        market: 'Tadawul',
+        acquisitionDate: '2026-05-05',
+        quantityRemaining: 5,
+        costPerShare: 200,
+        bookCurrency: 'SAR',
+      },
+    ];
+    const data = {
+      accounts,
+      investments: portfolios,
+      investmentTransactions: txs,
+      personalInvestments: portfolios,
+      investmentCostLots: costLots,
+    } as FinancialData;
+
+    const startMs = new Date(2026, 4, 15).getTime();
+    const endMs = new Date(2026, 4, 28, 23, 59, 59).getTime();
+
+    const wacLedger = computePortfolioLedgerPnLSarInRange({
+      transactions: txs,
+      startMs,
+      endMs,
+      accounts,
+      portfolios,
+      data,
+      sarPerUsd: 3.75,
+    });
+    // WAC avg cost 150 → sell 5 @ 150 → zero realized
+    expect(wacLedger).toBeCloseTo(0, 0);
+
+    const fifoLedger = computePortfolioLedgerPnLSarInRangeWithFifo({
+      transactions: txs,
+      startMs,
+      endMs,
+      accounts,
+      portfolios,
+      data,
+      sarPerUsd: 3.75,
+      portfolioId: 'p1',
+      costLots,
+    });
+    // FIFO oldest lot @ 100 → sell 5 @ 150 → 250 realized
+    expect(fifoLedger).toBeCloseTo(250, 0);
   });
 
   it('mark-to-market period P/L reflects live vs cost at period start when ledger explains holdings', () => {
@@ -503,5 +614,128 @@ describe('portfolioPeriodPnL', () => {
     expect(Math.abs(row.monthly.totalSar)).toBeLessThan(5000);
     const platform = platformPeriodPnLFromSummary(summary, 'acc-1');
     expect(Math.abs(platform.weekly.totalSar)).toBeLessThan(5000);
+  });
+
+  it('week P/L reflects buy during period with mark-to-market gain', () => {
+    const accounts: Account[] = [{ id: 'acc-1', name: 'Broker', type: 'Investment', balance: 0 }];
+    const p1: InvestmentPortfolio = {
+      id: 'p1',
+      name: 'Core',
+      accountId: 'acc-1',
+      currency: 'SAR',
+      holdings: [
+        {
+          id: 'h1',
+          symbol: '2222.SR',
+          quantity: 100,
+          avgCost: 10,
+          currentValue: 1200,
+          zakahClass: 'Zakatable',
+          realizedPnL: 0,
+          holdingType: 'equity',
+        },
+      ],
+    };
+    const now = new Date(2026, 4, 25);
+    const buyDate = '2026-05-20';
+    const depositDate = '2026-05-20';
+    const txs: InvestmentTransaction[] = [
+      {
+        id: 'dep1',
+        accountId: 'acc-1',
+        portfolioId: 'p1',
+        type: 'deposit',
+        date: depositDate,
+        total: 1000,
+        currency: 'SAR',
+      },
+      {
+        id: 'buy1',
+        accountId: 'acc-1',
+        portfolioId: 'p1',
+        symbol: '2222.SR',
+        type: 'buy',
+        date: buyDate,
+        quantity: 100,
+        total: 1000,
+        currency: 'SAR',
+      },
+    ];
+    const data = {
+      accounts,
+      investments: [p1],
+      investmentTransactions: txs,
+      personalInvestments: [p1],
+      personalAccounts: accounts,
+      monthStartDay: 1,
+    } as FinancialData;
+
+    const summary = computePortfolioPeriodPnLSummary({
+      data,
+      portfolios: [p1],
+      accounts,
+      sarPerUsd: 3.75,
+      simulatedPrices: { '2222.SR': { price: 12, change: 0, changePercent: 0 } },
+      monthStartDay: 1,
+      now,
+    });
+
+    const row = summary.rows[0]!;
+    expect(row.weekly.totalSar).toBeCloseTo(200, 0);
+    expect(row.monthly.totalSar).toBeCloseTo(200, 0);
+
+    const series = computePortfolioPnLDailySeries({
+      data,
+      portfolios: [p1],
+      accounts,
+      sarPerUsd: 3.75,
+      simulatedPrices: { '2222.SR': { price: 12, change: 0, changePercent: 0 } },
+      monthStartDay: 1,
+      now,
+      summary,
+    });
+    expect(series.weekly[series.weekly.length - 1]?.cumulativeSar).toBeCloseTo(200, 0);
+  });
+
+  it('portfolioPeriodPnLInputsFingerprint changes when holding currentValue updates', () => {
+    const p1: InvestmentPortfolio = {
+      id: 'p1',
+      name: 'Core',
+      accountId: 'acc-1',
+      currency: 'SAR',
+      holdings: [
+        {
+          id: 'h1',
+          symbol: '2222.SR',
+          quantity: 10,
+          avgCost: 30,
+          currentValue: 300,
+          zakahClass: 'Zakatable',
+          realizedPnL: 0,
+          holdingType: 'manual_fund',
+        },
+      ],
+    };
+    const data = { investmentTransactions: [] } as FinancialData;
+    const a = portfolioPeriodPnLInputsFingerprint({
+      data,
+      portfolios: [p1],
+      sarPerUsd: 3.75,
+      monthStartDay: 1,
+      simulatedPrices: {},
+    });
+    const b = portfolioPeriodPnLInputsFingerprint({
+      data,
+      portfolios: [
+        {
+          ...p1,
+          holdings: [{ ...p1.holdings![0], currentValue: 350 }],
+        },
+      ],
+      sarPerUsd: 3.75,
+      monthStartDay: 1,
+      simulatedPrices: {},
+    });
+    expect(a).not.toBe(b);
   });
 });

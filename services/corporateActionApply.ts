@@ -7,6 +7,7 @@ import {
   applyCorporateAction,
   buildCorporateActionIdempotencyKey,
   inverseCorporateAction,
+  recalculateCostBasisAfterAction,
   type CorporateActionType,
 } from './corporateActions';
 import { rebuildPortfolioFromEvents } from './portfolioReplayEngine';
@@ -24,6 +25,8 @@ export type CorporateActionEventRow = {
   ratio_denominator?: number | null;
   cash_per_share?: number | null;
   cost_basis_allocation_pct?: number | null;
+  price_per_share?: number | null;
+  metadata?: Record<string, unknown> | null;
   idempotency_key: string;
   status?: 'applied' | 'reversed';
 };
@@ -39,12 +42,23 @@ export function corporateActionFromRow(row: CorporateActionEventRow): CorporateA
     merger: 'merger',
   };
   const type = typeMap[String(row.action_type)] ?? (row.action_type as CorporateActionType);
+  const metadata = (row as { metadata?: Record<string, unknown> }).metadata ?? {};
+  const cashInLieuFromMeta =
+    metadata.cashInLieuPrice != null
+      ? Number(metadata.cashInLieuPrice)
+      : row.price_per_share != null &&
+          (type === 'reverse_stock_split' || type === 'cash_in_lieu') &&
+          row.cash_per_share == null
+        ? Number(row.price_per_share)
+        : undefined;
+  const isDividendType = type === 'cash_dividend' || type === 'dividend_drip';
   return {
     type,
     ratioNumerator: row.ratio_numerator != null ? Number(row.ratio_numerator) : undefined,
     ratioDenominator: row.ratio_denominator != null ? Number(row.ratio_denominator) : undefined,
-    dividendPerShare: row.cash_per_share != null ? Number(row.cash_per_share) : undefined,
-    cashPerShare: row.cash_per_share != null ? Number(row.cash_per_share) : undefined,
+    dividendPerShare: isDividendType && row.cash_per_share != null ? Number(row.cash_per_share) : undefined,
+    cashPerShare: !isDividendType && row.cash_per_share != null ? Number(row.cash_per_share) : undefined,
+    cashInLieuPrice: cashInLieuFromMeta,
     costBasisAllocationPct:
       row.cost_basis_allocation_pct != null ? Number(row.cost_basis_allocation_pct) : undefined,
     linkedSymbol: row.linked_symbol ?? undefined,
@@ -77,6 +91,18 @@ export function buildCorporateActionEventPayload(args: {
       : args.action.type === 'dividend_drip'
         ? 'dividend_drip'
         : args.action.type;
+  const metadata: Record<string, unknown> = {};
+  if (args.action.cashInLieuPrice != null && Number.isFinite(args.action.cashInLieuPrice)) {
+    metadata.cashInLieuPrice = args.action.cashInLieuPrice;
+  }
+  const cashPerShare =
+    args.action.type === 'cash_dividend' || args.action.type === 'dividend_drip'
+      ? args.action.dividendPerShare ?? null
+      : args.action.cashPerShare ?? null;
+  const pricePerShare =
+    args.action.cashInLieuPrice != null && Number.isFinite(args.action.cashInLieuPrice)
+      ? args.action.cashInLieuPrice
+      : null;
   return {
     portfolio_id: args.portfolioId,
     action_type: dbType as CorporateActionEventRow['action_type'],
@@ -85,8 +111,10 @@ export function buildCorporateActionEventPayload(args: {
     execution_date: args.executionDate.slice(0, 10),
     ratio_numerator: args.action.ratioNumerator ?? null,
     ratio_denominator: args.action.ratioDenominator ?? null,
-    cash_per_share: args.action.dividendPerShare ?? args.action.cashPerShare ?? null,
+    cash_per_share: cashPerShare,
+    price_per_share: pricePerShare,
     cost_basis_allocation_pct: args.action.costBasisAllocationPct ?? null,
+    metadata: Object.keys(metadata).length > 0 ? metadata : {},
     idempotency_key: key,
     status: 'applied',
   };
@@ -148,28 +176,81 @@ export function applyCorporateActionToHoldings(
   return next;
 }
 
+/** How manual-only portfolios (no buy txs) seed replay — avoids double-applying corporate actions on re-sync. */
+export type HoldingsReplayBaselineMode = 'as_stored' | 'replay_derived';
+
+export function mapPortfolioToReplayHoldings(
+  portfolio: InvestmentPortfolio,
+): { symbol: string; quantity: number; avgCost: number }[] {
+  return portfolio.holdings
+    .map((h) => ({
+      symbol: String(h.symbol ?? '').toUpperCase(),
+      quantity: Number(h.quantity) || 0,
+      avgCost: Number(h.avgCost) || 0,
+    }))
+    .filter((h) => h.symbol);
+}
+
+/** Undo stored post-CA qty/avgCost to pre-timeline baseline by inverse-applying active events. */
+export function deriveManualBaselineHoldingsByInverse(
+  portfolio: InvestmentPortfolio,
+  rows: CorporateActionEventRow[],
+): { symbol: string; quantity: number; avgCost: number }[] {
+  const bySymbol = new Map<string, { quantity: number; avgCost: number }>();
+  for (const h of portfolio.holdings) {
+    const sym = String(h.symbol ?? '').toUpperCase();
+    if (!sym) continue;
+    bySymbol.set(sym, { quantity: Number(h.quantity) || 0, avgCost: Number(h.avgCost) || 0 });
+  }
+  const sorted = [...rows]
+    .filter((r) => r.status !== 'reversed')
+    .sort((a, b) => String(b.execution_date).localeCompare(String(a.execution_date)));
+  for (const row of sorted) {
+    const sym = String(row.symbol ?? '').toUpperCase();
+    const cur = bySymbol.get(sym);
+    if (!cur) continue;
+    const inv = inverseCorporateAction(corporateActionFromRow(row));
+    const next = recalculateCostBasisAfterAction({ action: inv, holding: cur });
+    bySymbol.set(sym, { quantity: next.quantity, avgCost: next.avgCost });
+  }
+  return [...bySymbol.entries()].map(([symbol, h]) => ({ symbol, ...h }));
+}
+
+export function resolveManualPortfolioInitialHoldings(
+  portfolio: InvestmentPortfolio,
+  rows: CorporateActionEventRow[],
+  mode: HoldingsReplayBaselineMode,
+): { symbol: string; quantity: number; avgCost: number }[] {
+  const active = rows.filter((r) => r.status !== 'reversed');
+  if (active.length === 0) return mapPortfolioToReplayHoldings(portfolio);
+  if (mode === 'as_stored') return mapPortfolioToReplayHoldings(portfolio);
+  return deriveManualBaselineHoldingsByInverse(portfolio, rows);
+}
+
 export async function replayPortfolioHoldings(args: {
   portfolio: InvestmentPortfolio;
   transactions: InvestmentTransaction[];
   corporateEvents: CorporateActionEventRow[];
-  /** When false (default), rebuild from trades + corporate events only — avoids double-counting. */
-  seedFromCurrentHoldings?: boolean;
+  holdingsBaselineMode?: HoldingsReplayBaselineMode;
 }): Promise<Map<string, { quantity: number; avgCost: number }>> {
-  const caEvents = args.corporateEvents.map((row) => ({
-    id: row.id,
-    executionDate: row.execution_date,
-    symbol: row.symbol,
-    action: corporateActionFromRow(row),
-  }));
-  const initialHoldings = args.seedFromCurrentHoldings
-    ? args.portfolio.holdings.map((h) => ({
-        symbol: h.symbol,
-        quantity: h.quantity,
-        avgCost: h.avgCost,
-      }))
-    : [];
+  const caEvents = args.corporateEvents
+    .filter((r) => r.status !== 'reversed')
+    .map((row) => ({
+      id: row.id,
+      executionDate: row.execution_date,
+      symbol: row.symbol,
+      action: corporateActionFromRow(row),
+    }));
+  const portfolioTxs = args.transactions.filter(
+    (t) => t.portfolioId === args.portfolio.id || !t.portfolioId,
+  );
+  let initialHoldings: { symbol: string; quantity: number; avgCost: number }[] = [];
+  if (portfolioTxs.length === 0) {
+    const mode = args.holdingsBaselineMode ?? 'replay_derived';
+    initialHoldings = resolveManualPortfolioInitialHoldings(args.portfolio, args.corporateEvents, mode);
+  }
   const result = await rebuildPortfolioFromEvents({
-    transactions: args.transactions.filter((t) => t.portfolioId === args.portfolio.id || !t.portfolioId),
+    transactions: portfolioTxs,
     corporateActions: caEvents,
     initialHoldings,
   });
@@ -191,6 +272,8 @@ export function corporateActionFromEvent(ev: CorporateActionEvent): CorporateAct
     ratio_numerator: ev.ratioNumerator ?? null,
     ratio_denominator: ev.ratioDenominator ?? null,
     cash_per_share: ev.cashPerShare ?? null,
+    price_per_share: ev.cashInLieuPrice ?? null,
+    metadata: ev.cashInLieuPrice != null ? { cashInLieuPrice: ev.cashInLieuPrice } : {},
     cost_basis_allocation_pct: ev.costBasisAllocationPct ?? null,
     idempotency_key: ev.idempotencyKey,
     status: ev.status,
@@ -198,6 +281,14 @@ export function corporateActionFromEvent(ev: CorporateActionEvent): CorporateAct
 }
 
 export function normalizeCorporateActionEventRow(row: Record<string, unknown>): CorporateActionEvent {
+  const metadata = (row.metadata as Record<string, unknown> | null) ?? {};
+  const cashInLieuPrice =
+    metadata.cashInLieuPrice != null
+      ? Number(metadata.cashInLieuPrice)
+      : row.price_per_share != null &&
+          (row.action_type === 'reverse_stock_split' || row.action_type === 'cash_in_lieu')
+        ? Number(row.price_per_share)
+        : undefined;
   return {
     id: String(row.id ?? ''),
     user_id: row.user_id as string | undefined,
@@ -209,6 +300,7 @@ export function normalizeCorporateActionEventRow(row: Record<string, unknown>): 
     ratioNumerator: row.ratio_numerator != null ? Number(row.ratio_numerator) : undefined,
     ratioDenominator: row.ratio_denominator != null ? Number(row.ratio_denominator) : undefined,
     cashPerShare: row.cash_per_share != null ? Number(row.cash_per_share) : undefined,
+    cashInLieuPrice: cashInLieuPrice != null && Number.isFinite(cashInLieuPrice) ? cashInLieuPrice : undefined,
     costBasisAllocationPct:
       row.cost_basis_allocation_pct != null ? Number(row.cost_basis_allocation_pct) : undefined,
     idempotencyKey: String(row.idempotency_key ?? ''),
@@ -217,6 +309,10 @@ export function normalizeCorporateActionEventRow(row: Record<string, unknown>): 
 }
 
 export function corporateActionEventToRow(ev: CorporateActionEvent): CorporateActionEventRow {
+  const metadata: Record<string, unknown> = {};
+  if (ev.cashInLieuPrice != null && Number.isFinite(ev.cashInLieuPrice)) {
+    metadata.cashInLieuPrice = ev.cashInLieuPrice;
+  }
   return {
     id: ev.id,
     portfolio_id: ev.portfolioId,
@@ -227,7 +323,9 @@ export function corporateActionEventToRow(ev: CorporateActionEvent): CorporateAc
     ratio_numerator: ev.ratioNumerator ?? null,
     ratio_denominator: ev.ratioDenominator ?? null,
     cash_per_share: ev.cashPerShare ?? null,
+    price_per_share: ev.cashInLieuPrice ?? null,
     cost_basis_allocation_pct: ev.costBasisAllocationPct ?? null,
+    metadata: Object.keys(metadata).length > 0 ? metadata : {},
     idempotency_key: ev.idempotencyKey,
     status: ev.status ?? 'applied',
   };
@@ -237,6 +335,7 @@ export async function replayPortfolioHoldingsFromEvents(args: {
   portfolio: InvestmentPortfolio;
   transactions: InvestmentTransaction[];
   corporateActionEvents: CorporateActionEvent[];
+  holdingsBaselineMode?: HoldingsReplayBaselineMode;
 }): Promise<Map<string, { quantity: number; avgCost: number }>> {
   const portfolioTxs = args.transactions.filter(
     (t) => t.portfolioId === args.portfolio.id || !t.portfolioId,
@@ -248,7 +347,7 @@ export async function replayPortfolioHoldingsFromEvents(args: {
     portfolio: args.portfolio,
     transactions: args.transactions,
     corporateEvents: rows,
-    seedFromCurrentHoldings: portfolioTxs.length === 0,
+    holdingsBaselineMode: args.holdingsBaselineMode ?? (portfolioTxs.length === 0 ? 'replay_derived' : undefined),
   });
 }
 
@@ -275,6 +374,8 @@ export async function persistHoldingsFromReplayMap(args: {
         ...existing,
         quantity: r.quantity,
         avgCost: r.avgCost,
+        // Total market exposure unchanged until quote tick; qty×price stays consistent after split-adjusted quotes.
+        currentValue: existing.currentValue,
       });
     } else {
       await args.addHolding({
@@ -308,4 +409,76 @@ export function computeCashInLieuDepositSar(args: {
 }): number {
   const applied = applyCorporateAction({ action: args.action, holding: args.holding });
   return Math.max(0, applied.cashInLieu ?? 0);
+}
+
+export function corporateActionCashDepositIdempotencyKey(
+  actionType: 'cash_in_lieu' | 'reverse_stock_split',
+  corporateActionKey: string,
+): string {
+  if (actionType === 'cash_in_lieu') return `cash-in-lieu|${corporateActionKey}`;
+  return `reverse-split-fraction|${corporateActionKey}`;
+}
+
+export function corporateActionCashDepositIdempotencyKeysForEvent(
+  idempotencyKey: string,
+): string[] {
+  return [`cash-in-lieu|${idempotencyKey}`, `reverse-split-fraction|${idempotencyKey}`];
+}
+
+export function corporateActionDepositsCash(action: CorporateAction): boolean {
+  return action.type === 'cash_in_lieu' || action.type === 'reverse_stock_split';
+}
+
+export function portfolioHasBuyHistoryForSymbol(args: {
+  portfolioId: string;
+  symbol: string;
+  transactions: InvestmentTransaction[];
+}): boolean {
+  const sym = args.symbol.toUpperCase();
+  return args.transactions.some(
+    (t) =>
+      (t.portfolioId === args.portfolioId || !t.portfolioId) &&
+      String(t.symbol ?? '').toUpperCase() === sym &&
+      t.type === 'buy',
+  );
+}
+
+export function portfolioHasAppliedCorporateActionForSymbol(args: {
+  portfolioId: string;
+  symbol: string;
+  corporateActionEvents: CorporateActionEvent[];
+}): boolean {
+  const sym = args.symbol.toUpperCase();
+  return args.corporateActionEvents.some(
+    (e) =>
+      e.portfolioId === args.portfolioId &&
+      e.status !== 'reversed' &&
+      String(e.symbol ?? '').toUpperCase() === sym,
+  );
+}
+
+export function validateCorporateActionApplyPrerequisites(args: {
+  portfolioId: string;
+  symbol: string;
+  transactions: InvestmentTransaction[];
+  corporateActionEvents: CorporateActionEvent[];
+}): { valid: boolean; error?: string } {
+  const hasBuys = portfolioHasBuyHistoryForSymbol(args);
+  if (hasBuys) return { valid: true };
+  if (
+    portfolioHasAppliedCorporateActionForSymbol({
+      portfolioId: args.portfolioId,
+      symbol: args.symbol,
+      corporateActionEvents: args.corporateActionEvents,
+    })
+  ) {
+    return {
+      valid: false,
+      error:
+        'Record a buy transaction for this symbol before applying another corporate action, or replay may double-adjust manual holdings.',
+    };
+  }
+  return {
+    valid: true,
+  };
 }

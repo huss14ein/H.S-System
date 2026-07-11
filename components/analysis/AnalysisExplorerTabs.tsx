@@ -1,11 +1,10 @@
 import React from 'react';
 import { useAnalyticsWorkspace } from '../../context/AnalyticsWorkspaceContext';
 
-const TABS: { id: 'categories' | 'merchants' | 'cashflow' | 'position' | 'refunds'; label: string }[] = [
+const TABS: { id: 'categories' | 'merchants' | 'cashflow' | 'refunds'; label: string }[] = [
   { id: 'categories', label: 'Categories' },
   { id: 'merchants', label: 'Merchants' },
   { id: 'cashflow', label: 'Cashflow' },
-  { id: 'position', label: 'Position' },
   { id: 'refunds', label: 'Refunds' },
 ];
 

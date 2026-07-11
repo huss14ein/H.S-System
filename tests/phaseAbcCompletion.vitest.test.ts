@@ -25,7 +25,9 @@ describe('Phase A — Transactions E2E', () => {
 
     it('budget drill-down uses fiscal month and scrolls to list', () => {
         expect(read('pages/Transactions.tsx')).toContain("monthMode: 'fiscal'");
-        expect(read('pages/Budgets.tsx')).toContain('filter-by-budget:');
+        expect(read('pages/Budgets.tsx')).toContain('buildBudgetDrillDownAction');
+        expect(read('pages/Budgets.tsx')).toContain('triggerSpendingDrillDown');
+        expect(read('services/spendingDrillDown.ts')).toContain('filter-by-budget:');
         expect(read('pages/Budgets.tsx')).toContain('budget.period');
         expect(read('pages/Transactions.tsx')).toContain('transactionListRef');
         expect(read('pages/Transactions.tsx')).toContain('scrollIntoView');

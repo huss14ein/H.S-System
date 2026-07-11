@@ -65,8 +65,8 @@ export async function rebuildPortfolioFromEvents(args: {
     return 0;
   });
 
-  let processed = 0;
-  for (let i = 0; i < timeline.length; i++) {
+  let i = 0;
+  for (; i < timeline.length; i++) {
     if (args.signal?.aborted) break;
     if (i > 0 && i % CHUNK_SIZE === 0) {
       await yieldToMain();
@@ -125,7 +125,6 @@ export async function rebuildPortfolioFromEvents(args: {
         });
       }
     }
-    processed++;
   }
 
   args.onProgress?.(100);

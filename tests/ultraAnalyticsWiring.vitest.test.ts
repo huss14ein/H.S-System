@@ -65,15 +65,19 @@ describe('ultraAnalyticsWiring', () => {
   it('drill-down sets cross-filter category in workspace', () => {
     expect(read('services/spendingDrillDown.ts')).toContain('setSelectedCategory');
     expect(read('components/analysis/ExpenseBudgetAnalysisPanel.tsx')).toContain('selectedCategory');
-    expect(read('pages/WealthAnalytics.tsx')).toContain('selectedCategory');
+    expect(read('components/analytics/zones/OverviewZone.tsx')).toContain('AnalyticsCrossFilterRibbon');
+    expect(read('components/analytics/zones/CashSpendZone.tsx')).toContain('selectedCategory');
   });
 
   it('merchant treemap and corporate action hydrate exist', () => {
     expect(read('components/analysis/AnalysisExplorerContent.tsx')).toContain('SpendingMerchantTreemap');
-    expect(read('components/analysis/AnalysisExplorerContent.tsx')).toContain("analysisExplorerTab === 'position'");
-    expect(read('components/analysis/AnalysisExplorerContent.tsx')).toContain('Balance sheet position');
     expect(read('context/DataContext.tsx')).toContain('corporate_action_events');
     expect(read('services/analyticsInsightEngine.ts')).toContain('buildAnalyticsInsightFeed');
     expect(read('components/analysis/AnalyticsInsightCards.tsx')).toContain('buildAnalyticsInsightFeed');
+  });
+
+  it('Analysis explorer tabs exclude position (studio tab owns position)', () => {
+    expect(read('components/analysis/AnalysisExplorerTabs.tsx')).not.toContain("'position'");
+    expect(read('pages/Analysis.tsx')).toContain("analysisStudioTab === 'position'");
   });
 });

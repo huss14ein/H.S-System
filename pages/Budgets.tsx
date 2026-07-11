@@ -2,9 +2,7 @@ import React, { useMemo, useState, useContext, useEffect, useRef, useCallback } 
 import BudgetCardShell from '../components/BudgetCardShell';
 import BudgetCardMetricsBlocks from '../components/BudgetCardMetricsBlocks';
 import HouseholdEngineSkeleton from '../components/HouseholdEngineSkeleton';
-import BudgetOwnPortfolioCard, { type OwnPortfolioBudgetRow } from '../components/BudgetOwnPortfolioCard';
-import BudgetCategorySlideOver from '../components/budgets/BudgetCategorySlideOver';
-import { buildBudgetCategorySlideOverModel } from '../services/budgetCategorySlideOverModel';
+import BudgetOwnPortfolioCard from '../components/BudgetOwnPortfolioCard';
 import BudgetUsageDial from '../components/BudgetUsageDial';
 import { DataContext } from '../context/DataContext';
 import Modal from '../components/Modal';
@@ -32,6 +30,7 @@ import PageActionsDropdown from '../components/PageActionsDropdown';
 import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
+import { buildBudgetDrillDownAction, triggerSpendingDrillDown } from '../services/spendingDrillDown';
 import { buildBudgetSpendFingerprint } from '../services/budgetSpendFingerprint';
 import { fetchSharedConsumedMap } from '../services/sharedBudgetConsumedRpc';
 import BudgetSharedRpcStatusLine from '../components/budgets/BudgetSharedRpcStatusLine';
@@ -2064,38 +2063,27 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
     }, []);
 
-    const [slideOverBudget, setSlideOverBudget] = useState<OwnPortfolioBudgetRow | null>(null);
-
-    const handleOpenBudgetSlideOver = useCallback((budget: Pick<OwnPortfolioBudgetRow, 'category' | 'month' | 'year' | 'id'>) => {
-        setSlideOverBudget(budget as OwnPortfolioBudgetRow);
-    }, []);
-
-    const slideOverModel = useMemo(() => {
-        if (!slideOverBudget || !data) return null;
-        return buildBudgetCategorySlideOverModel({
-            data,
-            category: slideOverBudget.category,
-            exchangeRate: sarPerUsd,
-            month: slideOverBudget.month ?? currentMonth,
-            year: slideOverBudget.year ?? currentYear,
-        });
-    }, [slideOverBudget, data, sarPerUsd, currentMonth, currentYear]);
-
     const handleOwnPortfolioNavigate = useCallback(
         (budget: BudgetRow) => {
-            if (triggerPageAction) {
-                const periodRaw = String(budget.period ?? 'monthly').toLowerCase();
-                const periodTag =
-                    periodRaw === 'weekly' || periodRaw === 'daily' || periodRaw === 'yearly'
-                        ? periodRaw
-                        : 'monthly';
-                triggerPageAction(
-                    'Transactions',
-                    `filter-by-budget:${encodeURIComponent(budget.category)}:${periodTag}:${budget.year || currentYear}:${budget.month || currentMonth}:${currentDate.toISOString().slice(0, 10)}`,
-                );
-            }
+            const periodRaw = String(budget.period ?? 'monthly').toLowerCase();
+            const periodTag =
+                periodRaw === 'weekly' || periodRaw === 'daily' || periodRaw === 'yearly'
+                    ? periodRaw
+                    : 'monthly';
+            triggerSpendingDrillDown(
+                triggerPageAction,
+                setActivePage,
+                buildBudgetDrillDownAction({
+                    budgetCategory: budget.category,
+                    data,
+                    period: periodTag,
+                    year: budget.year || currentYear,
+                    month: budget.month || currentMonth,
+                    anchorDate: currentDate.toISOString().slice(0, 10),
+                }),
+            );
         },
-        [triggerPageAction, currentYear, currentMonth, currentDate],
+        [triggerPageAction, setActivePage, data, currentYear, currentMonth, currentDate],
     );
 
     const handleOwnPortfolioDelete = useCallback(
@@ -4203,7 +4191,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                         key={`shared-card-${budget.id}`}
                                         type="button"
                                         className="group flex h-full min-h-0 w-full flex-col text-left transition-transform duration-300 hover:-translate-y-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary/80"
-                                        onClick={() => handleOpenBudgetSlideOver(budget)}
+                                        onClick={() => handleOwnPortfolioNavigate(budget)}
                                     >
                                         <BudgetCardShell utilizationLabel={utilLabel} budgetTier={budget.budgetTier ?? 'Optional'}>
                                             <div className="flex min-h-0 flex-1 flex-col">
@@ -4716,7 +4704,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         getCategoryHint={getCategoryHint}
                         formatCurrencyString={formatCurrencyString}
                         onNavigateToTransactions={handleOwnPortfolioNavigate}
-                        onOpenSlideOver={handleOpenBudgetSlideOver}
                         onToggleExpand={toggleBudgetCardSize}
                         onEdit={handleOwnPortfolioEdit}
                         onDelete={handleOwnPortfolioDelete}
@@ -4757,17 +4744,6 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 </div>
             )}
 
-            {slideOverModel && slideOverBudget && (
-                <BudgetCategorySlideOver
-                    model={slideOverModel}
-                    formatCurrency={(n) => formatCurrencyString(n, { digits: 0 })}
-                    onClose={() => setSlideOverBudget(null)}
-                    onViewAll={() => {
-                        handleOwnPortfolioNavigate(slideOverBudget);
-                        setSlideOverBudget(null);
-                    }}
-                />
-            )}
             <BudgetModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveBudget} budgetToEdit={budgetToEdit} currentMonth={currentMonth} currentYear={currentYear} />
             {suggestedAdjustments && (
                 <Modal isOpen onClose={() => { trackSuggestionFeedback('budget-suggested-adjustments', 'Budgets', false); setSuggestedAdjustments(null); }} title="Suggested budget adjustments">

@@ -35,9 +35,14 @@ import {
   buildCorporateActionEventPayload,
   buildReverseCorporateAction,
   computeCashInLieuDepositSar,
+  corporateActionCashDepositIdempotencyKey,
+  corporateActionCashDepositIdempotencyKeysForEvent,
+  corporateActionDepositsCash,
   corporateActionFromEvent,
   normalizeCorporateActionEventRow,
+  validateCorporateActionApplyPrerequisites,
 } from '../services/corporateActionApply';
+import { adjustQuotesForCorporateActionNow } from '../utils/corporateActionQuoteBridge';
 import { normalizeInvestmentCostLotRow } from '../services/investmentCostLotDb';
 import { syncPortfolioLedgerAfterChange } from '../services/portfolioLedgerSync';
 import {
@@ -786,6 +791,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [dataResetKey, setDataResetKey] = useState(0);
     const auth = useContext(AuthContext);
     const tradeSubmissionInFlightRef = useRef(false);
+    const corporateActionInFlightRef = useRef(false);
     const duplicateHoldingsReconcileInFlightRef = useRef(false);
     const duplicateHoldingsLastSignatureRef = useRef<string>('');
     /** After first successful Supabase hydrate, refetches refresh in the background without blocking pages. */
@@ -852,6 +858,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             type: normalizedType,
             currency,
             linkedCashAccountId: transaction.linkedCashAccountId ?? transaction.linked_cash_account_id,
+            idempotencyKey: transaction.idempotencyKey ?? transaction.idempotency_key ?? undefined,
         };
     };
 
@@ -1008,7 +1015,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const tradePayloadVariants = (trade: Omit<InvestmentTransaction, 'id' | 'user_id'>) => {
-        const baseRow = { account_id: trade.accountId, date: trade.date, type: trade.type, symbol: trade.symbol, quantity: trade.quantity, price: trade.price, total: trade.total };
+        const baseRow: Record<string, unknown> = {
+            account_id: trade.accountId,
+            date: trade.date,
+            type: trade.type,
+            symbol: trade.symbol,
+            quantity: trade.quantity,
+            price: trade.price,
+            total: trade.total,
+        };
+        const portfolioId = trade.portfolioId ?? (trade as { portfolio_id?: string }).portfolio_id;
+        if (portfolioId) baseRow.portfolio_id = portfolioId;
+        const idem = trade.idempotencyKey ?? (trade as { idempotency_key?: string }).idempotency_key;
+        if (idem) baseRow.idempotency_key = idem;
         const withCurrency = trade.currency ? { ...baseRow, currency: trade.currency } : baseRow;
         return [withCurrency, baseRow];
     };
@@ -3380,6 +3399,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         overrides?: {
             corporateActionEvents?: CorporateActionEvent[];
             investmentTransactions?: InvestmentTransaction[];
+            holdingsBaselineMode?: import('../services/corporateActionApply').HoldingsReplayBaselineMode;
         },
     ) => {
         if (!auth?.user) return;
@@ -3395,6 +3415,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             deleteHolding,
             supabase,
             userId: auth.user.id,
+            holdingsBaselineMode: overrides?.holdingsBaselineMode ?? 'replay_derived',
             onLotsUpdated: (updatedLots) => {
                 setData((prev) => ({
                     ...prev,
@@ -3414,8 +3435,26 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         linkedSymbol?: string;
     }) => {
         if (!supabase || !auth?.user) return;
-        const portfolio = (data?.investments ?? []).find((p) => p.id === args.portfolioId);
+        if (corporateActionInFlightRef.current) {
+            throw new Error('A corporate action is already in progress. Please wait.');
+        }
+        corporateActionInFlightRef.current = true;
+        try {
+        const snapshot = dataRef.current;
+        const portfolio = (snapshot?.investments ?? []).find((p) => p.id === args.portfolioId);
         if (!portfolio) throw new Error('Portfolio not found');
+        const symUpper = args.symbol.trim().toUpperCase();
+        const holding = portfolio.holdings?.find((h) => String(h.symbol ?? '').toUpperCase() === symUpper);
+        if (!holding || (Number(holding.quantity) || 0) <= 0) {
+            throw new Error(`No holding for ${args.symbol} in this portfolio.`);
+        }
+        const prereq = validateCorporateActionApplyPrerequisites({
+            portfolioId: args.portfolioId,
+            symbol: args.symbol,
+            transactions: snapshot?.investmentTransactions ?? [],
+            corporateActionEvents: snapshot?.corporateActionEvents ?? [],
+        });
+        if (!prereq.valid) throw new Error(prereq.error ?? 'Corporate action prerequisites not met.');
         const payload = buildCorporateActionEventPayload({
             portfolioId: args.portfolioId,
             symbol: args.symbol,
@@ -3432,7 +3471,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             ratio_numerator: payload.ratio_numerator,
             ratio_denominator: payload.ratio_denominator,
             cash_per_share: payload.cash_per_share,
+            price_per_share: payload.price_per_share ?? null,
             cost_basis_allocation_pct: payload.cost_basis_allocation_pct,
+            metadata: payload.metadata ?? {},
             idempotency_key: payload.idempotency_key,
             status: payload.status ?? 'applied',
         });
@@ -3450,17 +3491,25 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!inserted) return;
 
         const ev: CorporateActionEvent = normalizeCorporateActionEventRow(inserted as Record<string, unknown>);
-        const mergedEvents = [ev, ...(data?.corporateActionEvents ?? [])];
+        const mergedEvents = [ev, ...(snapshot?.corporateActionEvents ?? [])];
         setData((prev) => ({
             ...prev,
             corporateActionEvents: mergedEvents,
         }));
-        await syncPortfolioAfterLedgerMutation(args.portfolioId, { corporateActionEvents: mergedEvents });
+        await yieldToMain();
+        await syncPortfolioAfterLedgerMutation(args.portfolioId, {
+            corporateActionEvents: mergedEvents,
+            holdingsBaselineMode: 'as_stored',
+        });
 
-        if (args.action.type === 'cash_in_lieu' && portfolio.accountId) {
-            const preHolding = portfolio.holdings.find(
-                (h) => String(h.symbol ?? '').toUpperCase() === args.symbol.toUpperCase(),
-            );
+        adjustQuotesForCorporateActionNow({
+            symbol: args.symbol,
+            action: args.action,
+            portfolioId: args.portfolioId,
+        });
+
+        if (corporateActionDepositsCash(args.action) && portfolio.accountId) {
+            const preHolding = holding;
             const cashInLieu = computeCashInLieuDepositSar({
                 action: args.action,
                 holding: {
@@ -3469,34 +3518,91 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 },
             });
             if (cashInLieu > 0) {
-                try {
-                    await recordTrade(
-                        {
-                            portfolioId: portfolio.id,
-                            accountId: portfolio.accountId,
-                            type: 'deposit',
-                            symbol: args.symbol.toUpperCase(),
-                            quantity: 0,
-                            price: 0,
-                            total: cashInLieu,
-                            date: args.executionDate,
-                            idempotencyKey: `cash-in-lieu|${payload.idempotency_key}`,
-                        },
-                        undefined,
-                        { system: true },
-                    );
-                } catch (cashErr) {
-                    console.warn('Cash-in-lieu deposit failed:', cashErr);
-                }
+                const depositKey = corporateActionCashDepositIdempotencyKey(
+                    args.action.type === 'cash_in_lieu' ? 'cash_in_lieu' : 'reverse_stock_split',
+                    payload.idempotency_key,
+                );
+                await recordTrade(
+                    {
+                        portfolioId: portfolio.id,
+                        accountId: portfolio.accountId,
+                        type: 'deposit',
+                        symbol: args.symbol.toUpperCase(),
+                        quantity: 0,
+                        price: 0,
+                        total: cashInLieu,
+                        date: args.executionDate,
+                        idempotencyKey: depositKey,
+                    },
+                    undefined,
+                    { system: true },
+                );
+            }
+        }
+        } finally {
+            corporateActionInFlightRef.current = false;
+        }
+    };
+
+    const removeCorporateActionCashDeposits = async (idempotencyKey: string) => {
+        if (!supabase || !auth?.user) return;
+        const keys = corporateActionCashDepositIdempotencyKeysForEvent(idempotencyKey);
+        const snapshot = dataRef.current;
+
+        const { data: dbRows, error: fetchErr } = await supabase
+            .from('investment_transactions')
+            .select('*')
+            .eq('user_id', auth.user.id)
+            .eq('type', 'deposit')
+            .in('idempotency_key', keys);
+        if (fetchErr && fetchErr.code !== 'PGRST205') {
+            console.warn('Corporate action deposit lookup failed:', fetchErr);
+        }
+
+        const depositsById = new Map<string, InvestmentTransaction>();
+        for (const row of dbRows ?? []) {
+            const normalized = normalizeInvestmentTransaction(row);
+            if (normalized.id) depositsById.set(normalized.id, normalized);
+        }
+        for (const t of snapshot?.investmentTransactions ?? []) {
+            if (t.type === 'deposit' && t.idempotencyKey && keys.includes(String(t.idempotencyKey)) && t.id) {
+                depositsById.set(t.id, t);
+            }
+        }
+
+        for (const deposit of depositsById.values()) {
+            if (!deposit.id) continue;
+            const { error } = await supabase
+                .from('investment_transactions')
+                .delete()
+                .match({ id: deposit.id, user_id: auth.user.id });
+            if (error) {
+                console.warn('Corporate action deposit reversal failed:', error);
+                continue;
+            }
+            const reverseDelta = -computeInvestmentTxCashDelta(deposit);
+            setData((prev) => ({
+                ...prev,
+                investmentTransactions: prev.investmentTransactions.filter((t) => t.id !== deposit.id),
+            }));
+            const accountId = resolveCanonicalAccountId(deposit.accountId, snapshot?.accounts ?? []);
+            if (reverseDelta !== 0) {
+                await applyInvestmentAccountDeltaForTrade(accountId, reverseDelta);
             }
         }
     };
 
     const reverseCorporateActionEvent = async (eventId: string) => {
         if (!supabase || !auth?.user) return;
-        const ev = (data?.corporateActionEvents ?? []).find((e) => e.id === eventId);
+        if (corporateActionInFlightRef.current) {
+            throw new Error('A corporate action is already in progress. Please wait.');
+        }
+        corporateActionInFlightRef.current = true;
+        try {
+        const snapshot = dataRef.current;
+        const ev = (snapshot?.corporateActionEvents ?? []).find((e) => e.id === eventId);
         if (!ev || ev.status === 'reversed') throw new Error('Corporate action not found or already reversed.');
-        const portfolio = (data?.investments ?? []).find((p) => p.id === ev.portfolioId);
+        const portfolio = (snapshot?.investments ?? []).find((p) => p.id === ev.portfolioId);
         if (!portfolio) throw new Error('Portfolio not found.');
 
         const reverseAction = buildReverseCorporateAction(corporateActionFromEvent(ev));
@@ -3528,7 +3634,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const reversalEv: CorporateActionEvent | null = inserted
             ? normalizeCorporateActionEventRow(inserted as Record<string, unknown>)
             : null;
-        const updatedEvents = (data?.corporateActionEvents ?? []).map((e) =>
+        const updatedEvents = (snapshot?.corporateActionEvents ?? []).map((e) =>
             e.id === eventId ? { ...e, status: 'reversed' as const } : e,
         );
         const mergedEvents = reversalEv ? [reversalEv, ...updatedEvents] : updatedEvents;
@@ -3536,7 +3642,20 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             ...prev,
             corporateActionEvents: mergedEvents,
         }));
-        await syncPortfolioAfterLedgerMutation(ev.portfolioId, { corporateActionEvents: mergedEvents });
+        await removeCorporateActionCashDeposits(ev.idempotencyKey);
+        await yieldToMain();
+        await syncPortfolioAfterLedgerMutation(ev.portfolioId, {
+            corporateActionEvents: mergedEvents,
+            holdingsBaselineMode: 'as_stored',
+        });
+        adjustQuotesForCorporateActionNow({
+            symbol: ev.symbol,
+            action: reverseAction,
+            portfolioId: ev.portfolioId,
+        });
+        } finally {
+            corporateActionInFlightRef.current = false;
+        }
     };
 
     const batchUpdateHoldingValues = (updates: { id: string; currentValue: number }[]) => {
@@ -3902,6 +4021,25 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             newTransaction = result.data;
             txError = result.error;
             if (!txError) break;
+            if (txError.code === '23505') {
+                const idem =
+                    trade.idempotencyKey ??
+                    (trade as { idempotency_key?: string }).idempotency_key ??
+                    (tradePayload as { idempotency_key?: string }).idempotency_key;
+                if (idem) {
+                    const { data: existing } = await supabase
+                        .from('investment_transactions')
+                        .select('*')
+                        .eq('user_id', auth.user.id)
+                        .eq('idempotency_key', idem)
+                        .maybeSingle();
+                    if (existing) {
+                        newTransaction = existing;
+                        txError = null;
+                        break;
+                    }
+                }
+            }
             if (!isMissingColumnError(txError)) break;
         }
         if (txError) { console.error("Error recording transaction:", txError); throw txError; }

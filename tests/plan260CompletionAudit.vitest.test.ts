@@ -55,7 +55,8 @@ describe('plan 2.6.0.0 completion audit', () => {
   it('Track C — spending command center + drill-downs + exports + budget slide-over', () => {
     expect(read('components/spending/SpendingCommandCenter.tsx')).toContain('SpendingCommandCenter');
     expect(read('pages/Dashboard.tsx')).toContain('useSpendingCommandCenterModel');
-    expect(read('pages/Budgets.tsx')).toContain('BudgetCategorySlideOver');
+    expect(read('pages/Budgets.tsx')).toContain('handleOwnPortfolioNavigate');
+    expect(read('pages/Budgets.tsx')).toContain('buildBudgetDrillDownAction');
     expect(read('services/budgetCategorySlideOverModel.ts')).toContain('buildBudgetCategorySlideOverModel');
     expect(read('pages/Budgets.tsx')).toContain('SpendingCommandCenter');
     expect(read('services/spendingDrillDown.ts')).toContain('buildBudgetDrillDownAction');

@@ -25,6 +25,7 @@ describe('portfolio sync + KPI completion', () => {
     expect(read('pages/Investments.tsx')).toContain('refreshPricesForPortfolio');
     expect(read('pages/Investments.tsx')).toContain('portfolioHasRefreshableQuoteSymbols');
     expect(read('pages/Investments.tsx')).not.toContain('refreshPricesForPlatform(');
+    expect(read('pages/Investments.tsx')).not.toContain("quotesRefreshUIScope.mode === 'all'");
     expect(read('components/investments/InvestmentsQuoteStatusBanner.tsx')).toContain('Sync quotes');
     expect(read('components/investments/InvestmentsQuoteStatusBanner.tsx')).not.toContain('on a platform');
   });

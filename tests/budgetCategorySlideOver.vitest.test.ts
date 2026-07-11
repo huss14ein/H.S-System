@@ -1,5 +1,5 @@
 /**
- * Budget category slide-over E2E wiring.
+ * Budget card → Transactions drill-down E2E wiring.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -9,14 +9,20 @@ import type { FinancialData } from '../types';
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
 
-describe('budgetCategorySlideOver', () => {
-  it('Budgets page opens slide-over before Transactions navigation', () => {
-    expect(read('pages/Budgets.tsx')).toContain('BudgetCategorySlideOver');
-    expect(read('pages/Budgets.tsx')).toContain('handleOpenBudgetSlideOver');
-    expect(read('components/BudgetOwnPortfolioCard.tsx')).toContain('onOpenSlideOver');
+describe('budgetCardTransactionsDrillDown', () => {
+  it('own-portfolio and shared cards navigate to filtered Transactions', () => {
+    const card = read('components/BudgetOwnPortfolioCard.tsx');
+    const budgets = read('pages/Budgets.tsx');
+    expect(card).toContain('onNavigateToTransactions(budget)');
+    expect(card).not.toContain('onOpenSlideOver');
+    expect(budgets).toContain('handleOwnPortfolioNavigate');
+    expect(budgets).toContain('buildBudgetDrillDownAction');
+    expect(budgets).toContain('triggerSpendingDrillDown');
+    expect(budgets).toContain('handleOwnPortfolioNavigate(budget)');
+    expect(budgets).not.toContain('BudgetCategorySlideOver');
   });
 
-  it('builds last 20 txs and 6-month sparkline with full-period total', () => {
+  it('slide-over model helper still available for exports/previews', () => {
     const data = {
       settings: { monthStartDay: 1 },
       accounts: [{ id: 'a1', name: 'Checking', type: 'Checking', balance: 0, currency: 'SAR' }],
@@ -45,15 +51,5 @@ describe('budgetCategorySlideOver', () => {
     expect(model.transactions.length).toBeLessThanOrEqual(20);
     expect(model.momSparkline.length).toBe(6);
     expect(model.totalSpentSar).toBeCloseTo(25 * 50, 0);
-  });
-
-  it('shared budget cards open slide-over before Transactions navigation', () => {
-    const budgets = read('pages/Budgets.tsx');
-    expect(budgets).toContain('handleOpenBudgetSlideOver(budget)');
-    expect(budgets).toContain('shared-card-');
-  });
-
-  it('slide-over supports Escape to close', () => {
-    expect(read('components/budgets/BudgetCategorySlideOver.tsx')).toContain("e.key === 'Escape'");
   });
 });

@@ -42,7 +42,8 @@ export const WealthHealthIndicators: React.FC<{
   investmentAllocation: HeadlineInvestmentAllocationSlices;
   budgetDriftTopCategory?: string;
   budgetDriftPct?: number;
-}> = ({ discipline, liquidityRunway, investmentAllocation, budgetDriftTopCategory, budgetDriftPct }) => {
+  setActivePage?: (page: import('../../types').Page) => void;
+}> = ({ discipline, liquidityRunway, investmentAllocation, budgetDriftTopCategory, budgetDriftPct, setActivePage }) => {
   const { t, dir } = useLanguage();
 
   const items = useMemo(() => {
@@ -64,6 +65,7 @@ export const WealthHealthIndicators: React.FC<{
         value: disciplineScore > 0 ? `${Math.round(disciplineScore)}/100` : '—',
         detail: discipline?.label ?? t('healthDisciplineDetail'),
         tone: disciplineTone,
+        onClick: setActivePage ? () => setActivePage('Plan') : undefined,
       },
       {
         key: 'runway',
@@ -74,6 +76,7 @@ export const WealthHealthIndicators: React.FC<{
             ? t('healthRunwayDetail')
             : t('healthRunwayDetail'),
         tone: runwayTone,
+        onClick: setActivePage ? () => setActivePage('Accounts') : undefined,
       },
       {
         key: 'allocation',
@@ -94,6 +97,7 @@ export const WealthHealthIndicators: React.FC<{
     budgetDriftTopCategory,
     budgetDriftPct,
     t,
+    setActivePage,
   ]);
 
   return (
@@ -106,7 +110,11 @@ export const WealthHealthIndicators: React.FC<{
         {items.map((item) => (
           <div
             key={item.key}
-            className={`rounded-xl border px-3 py-2.5 shadow-sm h-full flex flex-col ${toneClasses(item.tone)}`}
+            role={item.onClick ? 'button' : undefined}
+            tabIndex={item.onClick ? 0 : undefined}
+            onClick={item.onClick}
+            onKeyDown={item.onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') item.onClick?.(); } : undefined}
+            className={`rounded-xl border px-3 py-2.5 shadow-sm h-full flex flex-col ${toneClasses(item.tone)} ${item.onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
           >
             <div className="flex items-start justify-between gap-2">
               <p className="text-[10px] font-bold uppercase tracking-wider opacity-80">{item.label}</p>

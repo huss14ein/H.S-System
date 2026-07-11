@@ -31,8 +31,16 @@ describe('corporateActionSecurity', () => {
   });
 
   it('apply path is wired in DataContext and Investments overview UI', () => {
-    expect(read('context/DataContext.tsx')).toContain('applyCorporateActionEvent');
-    expect(read('context/DataContext.tsx')).toContain('reverseCorporateActionEvent');
+    const ctx = read('context/DataContext.tsx');
+    expect(ctx).toContain('applyCorporateActionEvent');
+    expect(ctx).toContain('reverseCorporateActionEvent');
+    expect(ctx).toContain('corporateActionInFlightRef');
+    expect(ctx).toContain('idempotency_key');
+    expect(ctx).toContain('.in(\'idempotency_key\', keys)');
     expect(read('pages/Investments.tsx')).toContain('CorporateActionApplyPanel');
+    expect(read('pages/Investments.tsx')).toContain('CorporateActionWizard');
+    expect(read('services/corporateActionWizardModel.ts')).toContain('validateCorporateActionWizardPortfolioAccess');
+    expect(read('components/investments/CorporateActionApplyPanel.tsx')).toContain('validateCorporateActionWizardPortfolioAccess');
+    expect(read('services/corporateActionNavigation.ts')).toContain('openCorporateActionWizard');
   });
 });

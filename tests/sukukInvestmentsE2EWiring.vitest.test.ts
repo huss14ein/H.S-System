@@ -81,10 +81,12 @@ describe('sukuk investments E2E wiring', () => {
     expect(src).not.toContain('asset_id');
   });
 
-  it('weekly digest edge function fetches sukuk_positions', () => {
+  it('weekly digest edge function fetches sukuk_positions and portfolio P/L', () => {
     const src = read('supabase/functions/send-weekly-digest/index.ts');
     expect(src).toContain("from('sukuk_positions')");
     expect(src).toContain('sukukPositionsRaw');
+    expect(src).toContain('computeWeeklyDigestPortfolioPnLSar');
+    expect(src).toContain('portfolioWeekPnLSar');
   });
 
   it('weekly digest NW includes direct Sukuk in headline path', () => {
@@ -158,5 +160,24 @@ describe('sukuk investments E2E wiring', () => {
     expect(src).toContain('Direct Sukuk contracts');
     const inv = read('pages/Investments.tsx');
     expect(inv).toContain('sukukPositionsValueSAR');
+  });
+
+  it('diagnose-sukuk-positions script exists and is read-only', () => {
+    const script = read('scripts/diagnose-sukuk-positions.mjs');
+    expect(script).toContain("'sukuk_positions'");
+    expect(script).toContain("type', 'Sukuk'");
+    expect(script).toContain('read-only');
+    expect(script).not.toContain('.delete(');
+    expect(script).not.toContain('.insert(');
+  });
+
+  it('SukukInvestmentsSection is wired on Investments page', () => {
+    const inv = read('pages/Investments.tsx');
+    expect(inv).toContain('SukukInvestmentsSection');
+  });
+
+  it('deploy checklist documents Sukuk diagnostic', () => {
+    const doc = read('docs/DEPLOYMENT_CHECKLIST.md');
+    expect(doc).toContain('diagnose-sukuk-positions.mjs');
   });
 });

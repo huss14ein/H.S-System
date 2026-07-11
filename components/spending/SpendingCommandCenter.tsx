@@ -12,6 +12,7 @@ type Props = {
   model: ExpenseBudgetAnalysisModel | null;
   ready: boolean;
   compact?: boolean;
+  hideDetailPanel?: boolean;
   setActivePage?: (page: Page) => void;
   triggerPageAction?: (page: Page, action: string) => void;
 };
@@ -20,11 +21,13 @@ export const SpendingCommandCenter: React.FC<Props> = ({
   model,
   ready,
   compact = false,
+  hideDetailPanel = false,
   setActivePage,
   triggerPageAction,
 }) => {
   const { formatCurrencyString } = useFormatCurrency();
   const workspace = useAnalyticsWorkspaceOptional();
+  const selectedCategory = workspace?.selectedCategory ?? null;
   const summary = model?.summary;
 
   const monthStartDay = model?.monthStartDay ?? 1;
@@ -81,7 +84,7 @@ export const SpendingCommandCenter: React.FC<Props> = ({
         {ready && model && model.overBudgetCategories.length > 0 && (
           <ul className="text-sm space-y-1">
             {model.overBudgetCategories.slice(0, 4).map((c: { category: string; utilizationPct: number }) => (
-              <li key={c.category} className="flex justify-between gap-2">
+              <li key={c.category} className={`flex justify-between gap-2 rounded-lg px-1 ${selectedCategory === c.category ? 'bg-indigo-50 ring-1 ring-inset ring-indigo-200' : ''}`}>
                 <button
                   type="button"
                   className="text-primary hover:underline text-left truncate"
@@ -119,7 +122,7 @@ export const SpendingCommandCenter: React.FC<Props> = ({
           <h3 className="text-sm font-semibold text-slate-900 mb-2">Budget drift vs 3-month baseline</h3>
           <ul className="divide-y divide-slate-100 text-sm">
             {model.driftRows.slice(0, 6).map((d) => (
-              <li key={d.category} className="flex justify-between gap-3 py-2">
+              <li key={d.category} className={`flex justify-between gap-3 py-2 rounded-lg px-1 ${selectedCategory === d.category ? 'bg-indigo-50 ring-1 ring-inset ring-indigo-200' : ''}`}>
                 <button
                   type="button"
                   className="text-primary hover:underline text-left truncate"
@@ -143,6 +146,7 @@ export const SpendingCommandCenter: React.FC<Props> = ({
           </ul>
         </div>
       )}
+      {!hideDetailPanel && (
       <DeferredMount minHeight="12rem" staggerIndex={0}>
         <ExpenseBudgetAnalysisPanel
           model={model}
@@ -151,6 +155,7 @@ export const SpendingCommandCenter: React.FC<Props> = ({
           triggerPageAction={triggerPageAction}
         />
       </DeferredMount>
+      )}
     </div>
   );
 };

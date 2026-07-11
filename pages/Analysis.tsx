@@ -1,4 +1,4 @@
-import React, { useMemo, useContext } from 'react';
+import React, { useMemo, useContext, Suspense, lazy } from 'react';
 import { DataContext } from '../context/DataContext';
 import { BarChart, Bar, Cell, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -28,15 +28,21 @@ import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
 import { detectBudgetDrift } from '../services/budgetDrift';
-import { computeIncomeStability } from '../services/incomeStability';
-import AnalyticsInsightCards from '../components/analysis/AnalyticsInsightCards';
 import SpendingCommandCenter from '../components/spending/SpendingCommandCenter';
 import AnalyticsPeriodScopeBar from '../components/analytics/AnalyticsPeriodScopeBar';
+import AnalyticsInsightRail from '../components/analytics/AnalyticsInsightRail';
+import { useMetricPassport } from '../context/MetricPassportContext';
+import { buildMetricPassportModel } from '../services/metricPassportModel';
+import WealthPulseRing from '../components/analytics/WealthPulseRing';
+import AnalyticsVisitDeltaChips from '../components/analytics/AnalyticsVisitDeltaChips';
+import AnalysisStudioTabs from '../components/analysis/AnalysisStudioTabs';
 import AnalysisExplorerTabs from '../components/analysis/AnalysisExplorerTabs';
 import AnalysisExplorerContent from '../components/analysis/AnalysisExplorerContent';
 import { downloadSpendingBriefCsv, downloadSpendingBriefPdf } from '../services/spendingReportExport';
 import { useSpendingCommandCenterModel } from '../hooks/useSpendingCommandCenterModel';
 import { useAnalyticsWorkspace } from '../context/AnalyticsWorkspaceContext';
+import { DeferredMount } from '../components/dashboard/DeferredMount';
+import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
 import {
     buildVisitSnapshotFromModel,
     computeVisitDelta,
@@ -53,9 +59,10 @@ import {
     financialMonthKeyFromTransactionDate,
 } from '../utils/financialMonth';
 
+const LazyExpenseBudgetAnalysisPanel = lazy(() => import('../components/analysis/ExpenseBudgetAnalysisPanel'));
+
 const TOOLTIP_STYLE = { backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' };
 
-/** Income vs expense — last N financial months, amounts in SAR. */
 function buildTrendDataSar(
     transactions: Transaction[],
     accounts: Account[],
@@ -170,14 +177,20 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         extendedReady,
     } = metrics;
     const investmentsTotalSar = pickInvestmentsTotalSar(metrics, extendedReady);
-    const { scope, periodPreset } = useAnalyticsWorkspace();
+    const { scope, periodPreset, analysisStudioTab, setAnalysisStudioTab } = useAnalyticsWorkspace();
+    const { openPassport } = useMetricPassport();
     const { model: expenseBudgetAnalysis, ready: expenseBudgetReady } = useSpendingCommandCenterModel(
         engineData,
         exchangeRate,
         scope,
-        true,
+        analysisStudioTab === 'explore' || analysisStudioTab === 'command',
         periodPreset,
     );
+
+    const pageDescription =
+        scope === 'household'
+            ? 'Patterns from your full transaction ledger and all linked accounts (household view). The expense & budget cockpit uses every tag you enter on transactions. Amounts are converted to SAR so USD and SAR accounts can be compared fairly.'
+            : 'Patterns from your personal transaction ledger and linked personal accounts. The expense & budget cockpit uses every tag you enter on transactions. Amounts are converted to SAR so USD and SAR accounts can be compared fairly.';
 
     const contextData = useMemo(() => {
         const transactions = engineData?.transactions ?? [];
@@ -260,9 +273,6 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, contextData, headlineFx, kpiSnapshot, personalNetWorth, personalBuckets, investmentsTotalSar, extendedReady]);
 
     const budgetDriftRows = useMemo(() => detectBudgetDrift(engineData ?? null, exchangeRate), [engineData, exchangeRate]);
-    const incomeStability = useMemo(() => computeIncomeStability(engineData ?? null), [engineData]);
-
-    const cov = contextData.salaryCoverage;
     const visitDelta = React.useMemo(() => {
         const current = buildVisitSnapshotFromModel(personalNetWorth, expenseBudgetReady ? expenseBudgetAnalysis : null);
         const prior = loadAnalyticsVisitSnapshot();
@@ -280,7 +290,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     return (
         <PageLayout
             title="Financial Analysis"
-            description="Patterns from your full transaction ledger and all linked accounts (household view). The expense & budget cockpit uses every tag you enter on transactions. Amounts are converted to SAR so USD and SAR accounts can be compared fairly."
+            description={pageDescription}
             action={
                 setActivePage ? (
                     <div className="flex flex-wrap items-center gap-2">
@@ -310,7 +320,6 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                             { value: 'accounts', label: 'Accounts', onClick: () => setActivePage('Accounts') },
                             { value: 'summary', label: 'Financial Summary', onClick: () => setActivePage('Summary') },
                             { value: 'assets', label: 'Physical assets', onClick: () => setActivePage('Assets') },
-                            { value: 'investments', label: 'Sukuk (Investments)', onClick: () => setActivePage('Investments') },
                             { value: 'investments', label: 'Investments', onClick: () => setActivePage('Investments') },
                         ]}
                     />
@@ -344,6 +353,20 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                     <div>
                         <p className="text-slate-600">Net worth</p>
                         <p className="font-bold text-slate-900 tabular-nums">{formatCurrencyString(personalNetWorth, { digits: 0 })}</p>
+                        <button
+                            type="button"
+                            className="text-[10px] font-semibold text-primary hover:underline mt-0.5"
+                            onClick={() => {
+                                const m = buildMetricPassportModel(null, 'netWorth', {
+                                    valueDisplay: formatCurrencyString(personalNetWorth, { digits: 0 }),
+                                    statusLabel: 'Headline',
+                                    sarPerUsd: headlineFx,
+                                });
+                                if (m) openPassport(m);
+                            }}
+                        >
+                            Explain
+                        </button>
                     </div>
                     <div>
                         <p className="text-slate-600">Investments</p>
@@ -359,6 +382,22 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                         <p className="text-slate-600">Investment ROI (headline)</p>
                         <ExtendedMetricGate ready={extendedReady} compact>
                             <p className="font-bold text-slate-900 tabular-nums">{kpiSnapshot ? `${(kpiSnapshot.roi * 100).toFixed(1)}%` : '—'}</p>
+                            {kpiSnapshot ? (
+                                <button
+                                    type="button"
+                                    className="text-[10px] font-semibold text-primary hover:underline mt-0.5"
+                                    onClick={() => {
+                                        const m = buildMetricPassportModel(null, 'investmentRoi', {
+                                            valueDisplay: `${(kpiSnapshot.roi * 100).toFixed(1)}%`,
+                                            statusLabel: kpiSnapshot.roi >= 0 ? 'Gain' : 'Loss',
+                                            sarPerUsd: headlineFx,
+                                        });
+                                        if (m) openPassport(m);
+                                    }}
+                                >
+                                    Explain
+                                </button>
+                            ) : null}
                         </ExtendedMetricGate>
                     </div>
                 </div>
@@ -366,83 +405,115 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
 
             <AnalyticsPeriodScopeBar className="mb-4" />
 
-            <AnalysisExplorerTabs className="mb-4" />
-
-            <div className="mb-4">
-                <AnalysisExplorerContent
-                    data={engineData}
-                    model={expenseBudgetReady ? expenseBudgetAnalysis : null}
-                    setActivePage={setActivePage}
-                    triggerPageAction={triggerPageAction}
-                />
-            </div>
-
             {visitDelta && (
-                <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50/60 px-4 py-3 text-sm text-slate-800">
-                    Since your last visit ({visitDelta.daysSince}d): net worth{' '}
-                    <strong className={visitDelta.netWorthDeltaSar >= 0 ? 'text-emerald-700' : 'text-rose-700'}>
-                        {visitDelta.netWorthDeltaSar >= 0 ? '+' : ''}
-                        {formatCurrencyString(visitDelta.netWorthDeltaSar, { digits: 0 })}
-                    </strong>
-                    {' · '}
-                    spending pace{' '}
-                    <strong>{visitDelta.expenseDeltaSar >= 0 ? '+' : ''}{formatCurrencyString(visitDelta.expenseDeltaSar, { digits: 0 })}</strong>
+                <AnalyticsVisitDeltaChips
+                    delta={visitDelta}
+                    formatCurrencyString={formatCurrencyString}
+                    setActivePage={setActivePage}
+                    onReviewNetWorth={() => setActivePage?.('Wealth Analytics')}
+                    onReviewSpending={() => setAnalysisStudioTab('command')}
+                    className="mb-4"
+                />
+            )}
+
+            <AnalysisStudioTabs className="mb-4" />
+
+            {analysisStudioTab === 'explore' && (
+                <>
+                    <AnalysisExplorerTabs className="mb-4" />
+                    <div className="mb-4">
+                        <AnalysisExplorerContent
+                            data={engineData}
+                            model={expenseBudgetReady ? expenseBudgetAnalysis : null}
+                            setActivePage={setActivePage}
+                            triggerPageAction={triggerPageAction}
+                        />
+                    </div>
+                    {aiHealthChecked && !isAiAvailable && (
+                        <AiProxyUnavailableHint className="mb-4 mt-4" variant="banner" title="Spend insights coach needs the AI proxy" />
+                    )}
+                    <AIAdvisor
+                        pageContext="analysis"
+                        contextData={{
+                            ...contextData,
+                            expenseBudgetAnalysis: expenseBudgetReady ? expenseBudgetAnalysis : null,
+                            periodPreset,
+                            scope,
+                        }}
+                    />
+                    {analysisValidationWarnings.length > 0 && (
+                        <div className="mb-4 rounded-2xl border-l-4 border-l-amber-500 bg-amber-50/90 border border-amber-100 px-4 py-3 shadow-sm mt-4" role="status">
+                            <p className="text-sm font-semibold text-amber-950">Data checks</p>
+                            <p className="text-xs text-amber-900/90 mt-1 mb-2">Fix these for the most reliable analysis.</p>
+                            <ul className="text-xs text-amber-950 space-y-1 list-disc pl-4">
+                                {analysisValidationWarnings.slice(0, 10).map((w, i) => (
+                                    <li key={`av-${i}`}>{w}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                </>
+            )}
+
+            {analysisStudioTab === 'command' && (
+                <div className="space-y-4 mb-4">
+                    <div className="grid grid-cols-1 xl:grid-cols-[1fr_280px] gap-4 items-start">
+                        <div className="min-w-0 space-y-4">
+                    <SpendingCommandCenter
+                        model={expenseBudgetAnalysis}
+                        ready={expenseBudgetReady}
+                        hideDetailPanel
+                        setActivePage={setActivePage}
+                        triggerPageAction={triggerPageAction}
+                    />
+                    <DeferredMount minHeight="12rem" staggerIndex={0}>
+                        <Suspense fallback={<SectionLoadingPlaceholder labelKey="sectionLoading" minHeight="12rem" />}>
+                            <LazyExpenseBudgetAnalysisPanel
+                                model={expenseBudgetAnalysis}
+                                ready={expenseBudgetReady}
+                                setActivePage={setActivePage}
+                                triggerPageAction={triggerPageAction}
+                            />
+                        </Suspense>
+                    </DeferredMount>
+                        </div>
+                        {expenseBudgetReady && (
+                            <AnalyticsInsightRail
+                                model={expenseBudgetAnalysis}
+                                driftRows={budgetDriftRows}
+                                visitDelta={visitDelta}
+                                setActivePage={setActivePage}
+                                triggerPageAction={triggerPageAction}
+                                className="xl:sticky xl:top-4"
+                            />
+                        )}
+                    </div>
                 </div>
             )}
 
-            <SpendingCommandCenter
-                model={expenseBudgetAnalysis}
-                ready={expenseBudgetReady}
-                setActivePage={setActivePage}
-                triggerPageAction={triggerPageAction}
-            />
-
-            <AnalyticsInsightCards
-                salaryCoverage={cov}
-                salary={contextData.salary}
-                subs={contextData.subs}
-                incomeStability={incomeStability}
-                driftRows={budgetDriftRows}
-                model={expenseBudgetReady ? expenseBudgetAnalysis : null}
-                setActivePage={setActivePage}
-                triggerPageAction={triggerPageAction}
-            />
-
-            {aiHealthChecked && !isAiAvailable && (
-                <AiProxyUnavailableHint className="mb-4 mt-4" variant="banner" title="Spend insights coach needs the AI proxy" />
-            )}
-
-            <AIAdvisor
-                pageContext="analysis"
-                contextData={{
-                    ...contextData,
-                    expenseBudgetAnalysis: expenseBudgetReady ? expenseBudgetAnalysis : null,
-                    periodPreset,
-                    scope,
-                }}
-            />
-
-            {analysisValidationWarnings.length > 0 && (
-                <div className="mb-4 rounded-2xl border-l-4 border-l-amber-500 bg-amber-50/90 border border-amber-100 px-4 py-3 shadow-sm" role="status">
-                    <p className="text-sm font-semibold text-amber-950">Data checks</p>
-                    <p className="text-xs text-amber-900/90 mt-1 mb-2">Fix these for the most reliable analysis.</p>
-                    <ul className="text-xs text-amber-950 space-y-1 list-disc pl-4">
-                        {analysisValidationWarnings.slice(0, 10).map((w, i) => (
-                            <li key={`av-${i}`}>{w}</li>
-                        ))}
-                    </ul>
-                </div>
-            )}
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm mb-4 lg:col-span-2 min-h-[380px] flex flex-col border-t-4 border-t-primary/30 mt-4">
-                    <h3 className="text-base font-semibold text-slate-900 mb-1">Current financial position</h3>
-                    <p className="text-xs text-slate-500 mb-3">Major buckets that build your net worth (same SAR math as Investments &amp; Assets).</p>
-                    <ExtendedMetricGate ready={extendedReady} className="flex-1 min-h-[300px]">
-                        <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden">
+            {analysisStudioTab === 'position' && (
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm mb-4 min-h-[380px] flex flex-col border-t-4 border-t-primary/30 space-y-4">
+                    <div>
+                        <h3 className="text-base font-semibold text-slate-900 mb-1">Current financial position</h3>
+                        <p className="text-xs text-slate-500">Major buckets that build your net worth (same SAR math as Investments &amp; Assets).</p>
+                    </div>
+                    <ExtendedMetricGate ready={extendedReady} className="flex flex-col sm:flex-row items-center gap-6">
+                        <WealthPulseRing
+                            netWorthSar={personalNetWorth ?? 0}
+                            segments={[
+                                { id: 'cash', label: 'Cash', valueSar: personalBuckets.cash, color: '#10b981', onClick: () => setActivePage?.('Accounts') },
+                                { id: 'inv', label: 'Invest', valueSar: personalBuckets.investments, color: '#8b5cf6', onClick: () => setActivePage?.('Investments') },
+                                { id: 'phys', label: 'Physical', valueSar: personalBuckets.physicalAndCommodities, color: '#f59e0b', onClick: () => setActivePage?.('Assets') },
+                                { id: 'debt', label: 'Debt', valueSar: Math.abs(personalBuckets.liabilities), color: '#f43f5e', onClick: () => setActivePage?.('Liabilities') },
+                            ]}
+                            formatCurrency={(n) => formatCurrencyString(n, { digits: 0 })}
+                        />
+                        <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden w-full">
                             <AssetLiabilityChart />
                         </div>
                     </ExtendedMetricGate>
                 </div>
+            )}
         </PageLayout>
     );
 };

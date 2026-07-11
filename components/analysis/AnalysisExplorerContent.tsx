@@ -2,7 +2,6 @@ import React, { useMemo } from 'react';
 import type { Page } from '../../types';
 import { useAnalyticsWorkspace } from '../../context/AnalyticsWorkspaceContext';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
-import type { ExpenseBudgetAnalysisModel } from '../../services/expenseBudgetAnalysisModel';
 import {
   buildBudgetDrillDownAction,
   buildFiscalMonthDrillDownAction,
@@ -11,6 +10,7 @@ import {
 } from '../../services/spendingDrillDown';
 import { spendByMerchantSar, findRefundPairsSar } from '../../services/transactionIntelligence';
 import { useCanonicalSpotFx } from '../../hooks/useCanonicalFinancialMetrics';
+import type { ExpenseBudgetAnalysisModel } from '../../services/expenseBudgetAnalysisModel';
 import type { FinancialData, Transaction, Account } from '../../types';
 import { getPersonalAccounts, getPersonalTransactions } from '../../utils/wealthScope';
 import SpendingMerchantTreemap from '../spending/SpendingMerchantTreemap';
@@ -138,41 +138,6 @@ export const AnalysisExplorerContent: React.FC<Props> = ({
           </li>
         ))}
       </ul>
-    );
-  }
-
-  if (analysisExplorerTab === 'position') {
-    return (
-      <section
-        className="rounded-xl border border-slate-200 bg-slate-50/80 p-4 text-sm text-slate-700"
-        aria-labelledby="analysis-explorer-position-heading"
-      >
-        <h3 id="analysis-explorer-position-heading" className="text-base font-semibold text-slate-900 mb-1">
-          Balance sheet position
-        </h3>
-        <p>
-          Net worth buckets (cash, investments, physical assets, debt) live in{' '}
-          <strong>Current financial position</strong> below — same SAR math as Dashboard and Investments.
-        </p>
-        {setActivePage && (
-          <div className="mt-3 flex flex-wrap gap-3">
-            <button
-              type="button"
-              className="text-primary text-sm font-medium hover:underline"
-              onClick={() => setActivePage('Summary')}
-            >
-              Open Financial Summary →
-            </button>
-            <button
-              type="button"
-              className="text-primary text-sm font-medium hover:underline"
-              onClick={() => setActivePage('Wealth Analytics')}
-            >
-              Open Wealth Analytics →
-            </button>
-          </div>
-        )}
-      </section>
     );
   }
 

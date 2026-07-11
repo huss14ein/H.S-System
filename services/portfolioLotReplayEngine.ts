@@ -3,7 +3,7 @@
  * KSA product: realized P/L in SAR/USD book currency, not tax reporting.
  */
 import type { CorporateAction } from './corporateActions';
-import { splitRatio } from './corporateActions';
+import { splitRatio, shouldFloorSplitQuantity } from './corporateActions';
 import { allocateFifoSell, openCostLotFromBuy, type CostLot } from './investmentCostLots';
 import { costLotToInvestmentCostLot } from './investmentCostLotDb';
 import type { CorporateActionReplayEvent } from './portfolioReplayEngine';
@@ -29,8 +29,31 @@ function applyCorporateActionToCostLots(
   const symLots = lots.filter((l) => l.symbol.toUpperCase() === sym);
   const other = lots.filter((l) => l.symbol.toUpperCase() !== sym);
 
-  if (action.type === 'stock_split' || action.type === 'reverse_stock_split' || action.type === 'stock_dividend') {
+  if (action.type === 'stock_split' || action.type === 'stock_dividend') {
     const ratio = splitRatio(action);
+    const updated = symLots.map((l) => ({
+      ...l,
+      quantityRemaining: l.quantityRemaining * ratio,
+      costPerShare: ratio > 0 ? l.costPerShare / ratio : l.costPerShare,
+    }));
+    return [...other, ...updated];
+  }
+
+  if (action.type === 'reverse_stock_split') {
+    const ratio = splitRatio(action);
+    const totalQty = symLots.reduce((s, l) => s + l.quantityRemaining, 0);
+    if (shouldFloorSplitQuantity(action, totalQty)) {
+      const updated = symLots.map((l) => {
+        const newQty = l.quantityRemaining * ratio;
+        const whole = Math.floor(newQty);
+        return {
+          ...l,
+          quantityRemaining: whole,
+          costPerShare: ratio > 0 ? l.costPerShare / ratio : l.costPerShare,
+        };
+      });
+      return [...other, ...updated.filter((l) => l.quantityRemaining > 1e-9)];
+    }
     const updated = symLots.map((l) => ({
       ...l,
       quantityRemaining: l.quantityRemaining * ratio,

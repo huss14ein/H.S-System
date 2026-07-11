@@ -48,6 +48,14 @@ import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccou
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
 import { useSpendingCommandCenterModel } from '../hooks/useSpendingCommandCenterModel';
 import SpendingCommandCenter from '../components/spending/SpendingCommandCenter';
+import AnalyticsCrossFilterRibbon from '../components/analytics/AnalyticsCrossFilterRibbon';
+import { detectBudgetDrift } from '../services/budgetDrift';
+import { useAnalyticsWorkspace } from '../context/AnalyticsWorkspaceContext';
+import { DeferredMount } from '../components/dashboard/DeferredMount';
+import { DashboardOperationsCockpitSection } from '../components/analytics/wealthAnalyticsLazySections';
+import DashboardCanIInvestCard from '../components/dashboard/DashboardCanIInvestCard';
+import { useMetricPassport } from '../context/MetricPassportContext';
+import { buildMetricPassportModel } from '../services/metricPassportModel';
 import {
     financialMonthRange,
     financialMonthKeysEndingAt,
@@ -245,7 +253,29 @@ const DashboardContent: React.FC<{
     const { dir } = useLanguage();
     const workingData = showHydrateBanner ? null : data;
     const { model: spendingModel, ready: spendingReady } = useSpendingCommandCenterModel(workingData, exchangeRate, 'personal');
+    const { selectedCategory, setSelectedCategory } = useAnalyticsWorkspace();
+    const budgetDriftRows = useMemo(
+        () => (workingData ? detectBudgetDrift(workingData, canonicalSarPerUsd) : []),
+        [workingData, canonicalSarPerUsd],
+    );
+    const { openPassport } = useMetricPassport();
+    const openMonthlyPnLPassport = useCallback(() => {
+        const m = buildMetricPassportModel(null, 'monthlyPnL', {
+            valueDisplay: formatCurrencyString(kpiSnapshot?.monthlyPnL ?? 0, { digits: 0 }),
+            statusLabel: (kpiSnapshot?.monthlyPnL ?? 0) >= 0 ? 'Surplus' : 'Deficit',
+        });
+        if (m) openPassport(m);
+    }, [openPassport, formatCurrencyString, kpiSnapshot?.monthlyPnL]);
+    const openInvestmentRoiPassport = useCallback(() => {
+        const roi = kpiSnapshot?.roi ?? 0;
+        const m = buildMetricPassportModel(null, 'investmentRoi', {
+            valueDisplay: `${(roi * 100).toFixed(1)}%`,
+            statusLabel: roi >= 0 ? 'Gain' : 'Loss',
+        });
+        if (m) openPassport(m);
+    }, [openPassport, kpiSnapshot?.roi]);
     const kpisPending = Boolean(workingData && !kpiSnapshot);
+    const liquidCashSarTop = kpiSnapshot?.liquidCashSar ?? 0;
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
     const kpiDensity = 'compact' as const;
 
@@ -553,19 +583,21 @@ const DashboardContent: React.FC<{
                 onClick={() => setActivePage('Summary')}
                 icon={<ScaleIcon className="h-5 w-5 text-slate-400" />}
             />,
-            monthlyPnL: <Card {...cardProps} title="This Month's P&L" value={formatCurrency(kpiSummary.monthlyPnL || 0, { colorize: true })} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'Surplus' : 'Deficit'} indicatorColor={(kpiSummary.monthlyPnL || 0) >= 0 ? 'green' : 'red'} tooltip="Income minus expenses for the current month." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-slate-400" />} />,
+            monthlyPnL: <Card {...cardProps} title="This Month's P&L" value={formatCurrency(kpiSummary.monthlyPnL || 0, { colorize: true })} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'Surplus' : 'Deficit'} indicatorColor={(kpiSummary.monthlyPnL || 0) >= 0 ? 'green' : 'red'} tooltip="Financial-month cashflow P/L (income minus expenses). Not portfolio mark-to-market — use Wealth Analytics or Investments for portfolio week/month P/L." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-slate-400" />} footer={<button type="button" className="text-left text-xs font-semibold text-primary hover:underline" onClick={(e) => { e.stopPropagation(); openMonthlyPnLPassport(); }}>Explain this metric →</button>} />,
             emergencyFund: <Card {...cardProps} title="Emergency Fund" value={emergencyFund.hasEssentialExpenseEstimate ? `${emergencyFund.monthsCovered.toFixed(1)} mo` : '—'} trend={efTrend} indicatorColor={efColor} tooltip={emergencyFund.hasEssentialExpenseEstimate ? `Liquid cash (bank + idle cash on investment platforms from Accounts) covers ${emergencyFund.monthsCovered.toFixed(1)} months of essential expenses. Target: ${EMERGENCY_FUND_TARGET_MONTHS} months.${emergencyFund.shortfall > 0 ? ` Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : ''}` : 'Categorize essential spending or add budgets so we can estimate months of coverage.'} onClick={() => setActivePage('Summary')} icon={<ShieldCheckIcon className="h-5 w-5 text-slate-400" />} />,
             budgetVariance: <Card {...cardProps} title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, { colorize: true })} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'Under budget' : 'Over budget'} indicatorColor={(kpiSummary.budgetVariance || 0) >= 0 ? 'green' : 'red'} tooltip="Money saved from budget this month (positive = under budget). Over budget is shown in red." onClick={() => setActivePage('Budgets')} icon={<PiggyBankIcon className="h-5 w-5 text-slate-400" />} />,
             investmentRoi: <Card {...cardProps} title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="Same formula as Investments: platform value (live rollup) + commodities + Sukuk vs net capital (deposits or fallback) including commodity and Sukuk cost. Uses your live quote feed when available." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" />} footer={invCapitalSrc === 'ledger_inferred' ? (
                 <button type="button" className="text-left w-full font-medium text-primary hover:underline" onClick={(e) => { e.stopPropagation(); goToInvestmentKpiReconciliation(); }}>
                     Ledger-inferred capital — open Investment KPI reconciliation →
                 </button>
-            ) : undefined} />,
+            ) : (
+                <button type="button" className="text-left text-xs font-semibold text-primary hover:underline" onClick={(e) => { e.stopPropagation(); openInvestmentRoiPassport(); }}>Explain this metric →</button>
+            )} />,
             investmentPlan: <Card {...cardProps} title="Investment Plan" value={`${investmentProgress.percent.toFixed(0)}%`} trend={investmentProgress.percent >= 100 ? 'Target met' : `${investmentProgress.percent.toFixed(0)}% of target`} indicatorColor={investmentProgress.percent >= 100 ? 'green' : 'yellow'} tooltip={`Progress: ${formatCurrencyString(investmentProgress.amount, { digits: 0, inCurrency: investmentProgress.planCurrency })} / ${formatCurrencyString(investmentProgress.target, { digits: 0, inCurrency: investmentProgress.planCurrency })} monthly.`} onClick={() => setActivePage('Investment Plan')} icon={<ArrowPathIcon className="h-5 w-5 text-primary" />} />,
             wealthUltra: <Card {...cardProps} title="Wealth Ultra" value="Engine" trend="Active" indicatorColor="green" tooltip="Automated portfolio allocation and order generation with performance tracking." onClick={() => setActivePage('Wealth Ultra')} icon={<ScaleIcon className="h-5 w-5 text-primary" />} />,
             marketEvents: <Card {...cardProps} title="Market Events" value="Calendar" trend="Upcoming" indicatorColor="yellow" tooltip="View upcoming FOMC meetings, earnings, and market-impacting events with AI insights." onClick={() => setActivePage('Market Events')} icon={<CalendarDaysIcon className="h-5 w-5 text-indigo-500" />} />,
         };
-    }, [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, emergencyFund, setActivePage, kpiDensity, maskBalance, goToInvestmentKpiReconciliation]);
+    }, [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, emergencyFund, setActivePage, kpiDensity, maskBalance, goToInvestmentKpiReconciliation, openMonthlyPnLPassport, openInvestmentRoiPassport]);
     
     const accounts = getPersonalAccounts(data);
     const goals = data?.goals ?? [];
@@ -589,6 +621,13 @@ const DashboardContent: React.FC<{
                 dashboardMonthlyPnLSar={kpiSnapshot?.monthlyPnL ?? 0}
                 onOpenPlan={() => setActivePage('Plan')}
             />
+            {selectedCategory ? (
+                <AnalyticsCrossFilterRibbon
+                    category={selectedCategory}
+                    onClear={() => setSelectedCategory(null)}
+                    className="mb-4"
+                />
+            ) : null}
             {setActivePage && <WealthAnalyticsGuideBanner setActivePage={setActivePage} />}
 
             {isNewUser && (
@@ -806,6 +845,36 @@ const DashboardContent: React.FC<{
                     triggerPageAction={triggerPageAction}
                 />
                 <RecentTransactions transactions={recentTransactions} accounts={getPersonalAccounts(data)} onClick={() => setActivePage('Transactions')} />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
+                <div className="lg:col-span-2">
+                    <DeferredMount minHeight="16rem" staggerIndex={1} rootMargin="320px" loadingLabelKey="sectionLoading">
+                        {workingData ? (
+                            <DashboardOperationsCockpitSection
+                                data={workingData}
+                                personalTransactions={getPersonalTransactions(workingData)}
+                                personalAccounts={getPersonalAccounts(workingData)}
+                                budgets={workingData.budgets ?? []}
+                                goals={workingData.goals ?? []}
+                                sarPerUsd={canonicalSarPerUsd}
+                                liquidCashSar={liquidCashSarTop}
+                                investmentsTotalSar={headline.buckets.investments}
+                                showLanguageToggle={false}
+                                setActivePage={setActivePage}
+                                triggerPageAction={triggerPageAction}
+                            />
+                        ) : null}
+                    </DeferredMount>
+                </div>
+                <DashboardCanIInvestCard
+                    emergencyFundMonths={emergencyFund.monthsCovered}
+                    sarPerUsd={canonicalSarPerUsd}
+                    setActivePage={setActivePage}
+                    triggerPageAction={triggerPageAction}
+                    setSelectedCategory={setSelectedCategory}
+                    budgetDriftRows={budgetDriftRows}
+                />
             </div>
             </section>
 

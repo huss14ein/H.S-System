@@ -5,6 +5,7 @@ import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { useLiveQuotePrices } from '../hooks/useLiveQuotePrices';
+import { usePortfolioPeriodPnLSnapshot } from '../hooks/usePortfolioPeriodPnLSnapshot';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -18,8 +19,10 @@ import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import { resolveMonthStartDayFromData } from '../utils/financialMonth';
 import WealthAnalyticsZoneTabs from '../components/analytics/WealthAnalyticsZoneTabs';
 import AnalyticsPeriodScopeBar from '../components/analytics/AnalyticsPeriodScopeBar';
+import AnalyticsVisitDeltaChips from '../components/analytics/AnalyticsVisitDeltaChips';
 import { useAnalyticsWorkspace } from '../context/AnalyticsWorkspaceContext';
 import { useSpendingCommandCenterModel } from '../hooks/useSpendingCommandCenterModel';
+import { detectBudgetDrift } from '../services/budgetDrift';
 import OverviewZone from '../components/analytics/zones/OverviewZone';
 import WealthZone from '../components/analytics/zones/WealthZone';
 import InvestmentsZone from '../components/analytics/zones/InvestmentsZone';
@@ -48,7 +51,7 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
   const { isLive, symbolQuoteUpdatedAt } = useMarketQuoteMeta();
   const { strictReconciliationMode } = useDashboardReconciliationPrefs(auth?.user?.id);
 
-  const simulatedPrices = useLiveQuotePrices();
+  const liveQuotePrices = useLiveQuotePrices();
   const {
     headline,
     kpiSnapshot,
@@ -59,14 +62,23 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
     investmentAllocation,
     investmentsTotalSar,
     extendedReady,
+    simulatedPrices: kpiQuotePrices,
   } = useExtendedCanonicalMetrics();
 
   const personalTransactions = useMemo(() => getPersonalTransactions(engineData), [engineData]);
   const personalAccounts = useMemo(() => getPersonalAccounts(engineData), [engineData]);
   const personalInvestments = useMemo(() => getPersonalInvestments(engineData), [engineData]);
+  const portfolioPeriodPnL = usePortfolioPeriodPnLSnapshot({
+    data: showHydrateBanner ? null : data,
+    portfolios: personalInvestments,
+    accounts: personalAccounts,
+    sarPerUsd,
+    simulatedPrices: kpiQuotePrices,
+    enabled: !showHydrateBanner && !!data && personalInvestments.length > 0,
+  });
   const goals = data?.goals ?? [];
   const budgets = data?.budgets ?? [];
-  const { wealthZone, periodPreset, scope, selectedCategory } = useAnalyticsWorkspace();
+  const { wealthZone, periodPreset, scope, setWealthZone, setAnalysisStudioTab } = useAnalyticsWorkspace();
   const spendingEnabled = wealthZone === 'overview' || wealthZone === 'cash';
   const { model: spendingModel, ready: spendingReady } = useSpendingCommandCenterModel(
     engineData,
@@ -75,6 +87,7 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
     spendingEnabled,
     periodPreset,
   );
+  const budgetDriftRows = useMemo(() => detectBudgetDrift(engineData ?? null, sarPerUsd), [engineData, sarPerUsd]);
 
   const portfoliosWithHoldings = useMemo(
     () => personalInvestments.filter((p) => (p.holdings?.length ?? 0) > 0),
@@ -116,7 +129,7 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
         headline={headline}
         kpiSnapshot={kpiSnapshot}
         sarPerUsd={sarPerUsd}
-        simulatedPrices={simulatedPrices}
+        simulatedPrices={kpiQuotePrices}
         investmentsTotalSar={investmentsTotalSar}
         getAvailableCashForAccount={getAvailableCashForAccount}
         quotesAsOfIso={quotesAsOfIso}
@@ -141,105 +154,121 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
         <AnalyticsPeriodScopeBar className="mb-1" />
 
         {visitDelta && (
-          <p className="text-sm text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2">
-            Since your last visit ({visitDelta.daysSince}d): net worth{' '}
-            <strong className={visitDelta.netWorthDeltaSar >= 0 ? 'text-emerald-700' : 'text-rose-700'}>
-              {visitDelta.netWorthDeltaSar >= 0 ? '+' : ''}
-              {formatCurrencyString(visitDelta.netWorthDeltaSar, { digits: 0 })}
-            </strong>
-            {' · '}
-            spending pace{' '}
-            <strong>
-              {visitDelta.expenseDeltaSar >= 0 ? '+' : ''}
-              {formatCurrencyString(visitDelta.expenseDeltaSar, { digits: 0 })}
-            </strong>
-          </p>
-        )}
-
-        {selectedCategory && (wealthZone === 'cash' || wealthZone === 'overview') && (
-          <p className="text-sm text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
-            Cross-filter: <strong>{selectedCategory}</strong> highlighted on spending charts (synced with Analysis).
-          </p>
-        )}
-
-        <WealthAnalyticsZoneTabs className="mb-2" />
-
-        {wealthZone === 'overview' && (
-          <OverviewZone
-            netWorthDisplay={maskBalance(formatCurrencyString(netWorth ?? 0, { digits: 0 }))}
-            netWorthSar={netWorth ?? 0}
-            monthlyPnLDisplay={maskBalance(formatCurrencyString(kpiSnapshot?.monthlyPnL ?? 0, { digits: 0 }))}
-            monthlyPnLPositive={(kpiSnapshot?.monthlyPnL ?? 0) >= 0}
-            roiDisplay={`${((kpiSnapshot?.roi ?? 0) * 100).toFixed(1)}%`}
-            roiPositive={(kpiSnapshot?.roi ?? 0) >= 0}
-            headline={headline}
-            kpiSnapshot={kpiSnapshot}
-            data={data}
-            showHydrateBanner={showHydrateBanner}
-            extendedReady={extendedReady}
-            reportModel={reportModel}
-            investmentAllocation={investmentAllocation}
-            sarPerUsd={sarPerUsd}
-            spendingModel={spendingModel}
-            spendingReady={spendingReady}
+          <AnalyticsVisitDeltaChips
+            delta={visitDelta}
             formatCurrencyString={formatCurrencyString}
             setActivePage={setActivePage}
-            triggerPageAction={triggerPageAction}
+            onReviewNetWorth={() => setWealthZone('overview')}
+            onReviewSpending={() => {
+              setWealthZone('cash');
+              setAnalysisStudioTab('command');
+            }}
           />
         )}
 
-        {wealthZone === 'wealth' && (
-          <WealthZone
-            dir={dir}
-            extendedReady={extendedReady}
-            headline={headline}
-            netWorthSar={netWorth ?? 0}
-            investmentAllocation={investmentAllocation}
-            investmentsTotalSar={extendedReady ? investmentsTotalSar : headline.buckets.investments}
-            personalInvestments={personalInvestments}
-            simulatedPrices={simulatedPrices}
-            sarPerUsd={sarPerUsd}
-            data={data}
-            goals={goals}
-            reportModel={reportModel}
-            setActivePage={setActivePage}
-          />
-        )}
+        <div className="min-w-0 space-y-6">
+            <WealthAnalyticsZoneTabs className="mb-2" />
 
-        {wealthZone === 'investments' && (
-          <InvestmentsZone
-            data={data}
-            personalInvestments={personalInvestments}
-            personalAccounts={personalAccounts}
-            sarPerUsd={sarPerUsd}
-            simulatedPrices={simulatedPrices}
-            monthStartDay={resolveMonthStartDayFromData(data)}
-            getAvailableCashForAccount={getAvailableCashForAccount}
-            setActivePage={setActivePage}
-            goals={goals}
-            holdingsPortfolioId={holdingsPortfolioId}
-            onHoldingsPortfolioChange={setHoldingsPortfolioId}
-            portfoliosWithHoldings={portfoliosWithHoldings}
-            t={t}
-          />
-        )}
+            {wealthZone === 'overview' && (
+              <OverviewZone
+                netWorthDisplay={maskBalance(formatCurrencyString(netWorth ?? 0, { digits: 0 }))}
+                netWorthSar={netWorth ?? 0}
+                monthlyPnLDisplay={maskBalance(formatCurrencyString(kpiSnapshot?.monthlyPnL ?? 0, { digits: 0 }))}
+                monthlyPnLPositive={(kpiSnapshot?.monthlyPnL ?? 0) >= 0}
+                roiDisplay={`${((kpiSnapshot?.roi ?? 0) * 100).toFixed(1)}%`}
+                roiPositive={(kpiSnapshot?.roi ?? 0) >= 0}
+                headline={headline}
+                kpiSnapshot={kpiSnapshot}
+                data={data}
+                showHydrateBanner={showHydrateBanner}
+                extendedReady={extendedReady}
+                reportModel={reportModel}
+                investmentAllocation={investmentAllocation}
+                sarPerUsd={sarPerUsd}
+                simulatedPrices={kpiQuotePrices}
+                investmentsTotalSar={investmentsTotalSar}
+                getAvailableCashForAccount={getAvailableCashForAccount}
+                quotesAsOfIso={quotesAsOfIso}
+                quotesLive={isLive}
+                spendingModel={spendingModel}
+                spendingReady={spendingReady}
+                formatCurrencyString={formatCurrencyString}
+                setActivePage={setActivePage}
+                triggerPageAction={triggerPageAction}
+                portfolioPeriodPnL={portfolioPeriodPnL}
+                onWaterfallMarketClick={() => setWealthZone('investments')}
+                onWaterfallCashflowClick={() => {
+                  setActivePage?.('Transactions');
+                  triggerPageAction?.('Transactions', 'open-ledger');
+                }}
+                visitDelta={visitDelta}
+                budgetDriftRows={budgetDriftRows}
+              />
+            )}
 
-        {wealthZone === 'cash' && (
-          <CashSpendZone
-            data={data}
-            personalTransactions={personalTransactions}
-            personalAccounts={personalAccounts}
-            budgets={budgets}
-            goals={goals}
-            sarPerUsd={sarPerUsd}
-            liquidCashSar={liquidCashSar}
-            investmentsTotalSar={extendedReady ? investmentsTotalSar : headline.buckets.investments}
-            spendingModel={spendingModel}
-            spendingReady={spendingReady}
-            setActivePage={setActivePage}
-            triggerPageAction={triggerPageAction}
-          />
-        )}
+            {wealthZone === 'wealth' && (
+              <WealthZone
+                dir={dir}
+                extendedReady={extendedReady}
+                headline={headline}
+                kpiSnapshot={kpiSnapshot}
+                netWorthSar={netWorth ?? 0}
+                investmentAllocation={investmentAllocation}
+                investmentsTotalSar={extendedReady ? investmentsTotalSar : headline.buckets.investments}
+                personalInvestments={personalInvestments}
+                simulatedPrices={liveQuotePrices}
+                sarPerUsd={sarPerUsd}
+                data={data}
+                goals={goals}
+                reportModel={reportModel}
+                formatCurrencyString={formatCurrencyString}
+                setActivePage={setActivePage}
+                triggerPageAction={triggerPageAction}
+                onWaterfallMarketClick={() => setWealthZone('investments')}
+                onWaterfallCashflowClick={() => {
+                  setActivePage?.('Transactions');
+                  triggerPageAction?.('Transactions', 'open-ledger');
+                }}
+              />
+            )}
+
+            {wealthZone === 'investments' && (
+              <InvestmentsZone
+                data={data}
+                personalInvestments={personalInvestments}
+                personalAccounts={personalAccounts}
+                sarPerUsd={sarPerUsd}
+                kpiQuotePrices={kpiQuotePrices}
+                liveQuotePrices={liveQuotePrices}
+                monthStartDay={resolveMonthStartDayFromData(data)}
+                getAvailableCashForAccount={getAvailableCashForAccount}
+                setActivePage={setActivePage}
+                goals={goals}
+                holdingsPortfolioId={holdingsPortfolioId}
+                onHoldingsPortfolioChange={setHoldingsPortfolioId}
+                portfoliosWithHoldings={portfoliosWithHoldings}
+                portfolioPeriodPnL={portfolioPeriodPnL}
+                t={t}
+              />
+            )}
+
+            {wealthZone === 'cash' && (
+              <CashSpendZone
+                data={data}
+                personalTransactions={personalTransactions}
+                personalAccounts={personalAccounts}
+                budgets={budgets}
+                goals={goals}
+                sarPerUsd={sarPerUsd}
+                liquidCashSar={liquidCashSar}
+                investmentsTotalSar={extendedReady ? investmentsTotalSar : headline.buckets.investments}
+                spendingModel={spendingModel}
+                spendingReady={spendingReady}
+                setActivePage={setActivePage}
+                triggerPageAction={triggerPageAction}
+              />
+            )}
+        </div>
 
         <CollapsibleSection
           title={t('analyticsDetailsTitle')}

@@ -18,14 +18,18 @@ describe('spendingCommandCenterCoverage', () => {
     }
   });
 
+  it('Dashboard mounts deferred operations cockpit', () => {
+    expect(read('pages/Dashboard.tsx')).toContain('DashboardOperationsCockpitSection');
+  });
+
   it('Analysis studio wires explorer tabs, content, period bar, and SAR export', () => {
     const analysis = read('pages/Analysis.tsx');
     expect(analysis).toContain('AnalyticsPeriodScopeBar');
     expect(analysis).toContain('AnalysisExplorerTabs');
     expect(analysis).toContain('AnalysisExplorerContent');
     expect(analysis).toContain('downloadSpendingBriefCsv');
-    expect(analysis).toContain('AnalyticsInsightCards');
-    expect(read('components/analysis/AnalyticsInsightCards.tsx')).toContain('buildAnalyticsInsightFeed');
+    expect(analysis).toMatch(/analysisStudioTab === 'command'[\s\S]*AnalyticsInsightRail/);
+    expect(read('components/analysis/AnalysisExplorerTabs.tsx')).not.toContain("'position'");
   });
 
   it('NotificationsContext surfaces budget drift, envelope, and anomaly alerts with drill-down', () => {

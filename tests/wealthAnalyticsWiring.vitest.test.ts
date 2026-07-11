@@ -78,10 +78,16 @@ describe('wealth analytics end-to-end wiring', () => {
         expect(summary).toContain('captureNetWorthSnapshotFromHeadline');
     });
 
+    it('Dashboard includes deferred operations cockpit and Can I invest card', () => {
+        const dashboard = read('pages/Dashboard.tsx');
+        expect(dashboard).toContain('DashboardOperationsCockpitSection');
+        expect(dashboard).toContain('DashboardCanIInvestCard');
+        expect(dashboard).toContain('DeferredMount');
+    });
+
     it('Dashboard and Summary stay lean (heavy widgets on Wealth Analytics only)', () => {
         const dashboard = read('pages/Dashboard.tsx');
         const summary = read('pages/Summary.tsx');
-        expect(dashboard).not.toContain('DashboardOperationsCockpit');
         expect(dashboard).not.toContain('SummaryWealthAtlas');
         expect(summary).not.toContain('WealthAnalyticsSummaryPanels');
         expect(dashboard).toContain('Wealth Analytics');

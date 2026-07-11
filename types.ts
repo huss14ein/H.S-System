@@ -352,6 +352,7 @@ export interface CorporateActionEvent {
   ratioNumerator?: number | null;
   ratioDenominator?: number | null;
   cashPerShare?: number | null;
+  cashInLieuPrice?: number | null;
   costBasisAllocationPct?: number | null;
   idempotencyKey: string;
   status?: 'applied' | 'reversed';

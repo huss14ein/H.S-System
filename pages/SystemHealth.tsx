@@ -25,7 +25,7 @@ import { CloudIcon } from '../components/icons/CloudIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 import { reconcileCashAccountBalance, reconcileCreditAccountBalance, buildFinancialIntegrityReport } from '../services/dataQuality';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
-import { reconcileHoldings, reconciliationExceptionReport } from '../services/reconciliationEngine';
+import { reconcileHoldingsWithCorporateActionsSync, reconciliationExceptionReport } from '../services/reconciliationEngine';
 import { buildHoldingsDividendReconciliationReport } from '../services/holdingsDividendReconciliation';
 import { findHoldingsValueOutliers, type HoldingOutlierRow } from '../services/holdingsOutlierAudit';
 import type { HoldingsReconcileRow } from '../services/holdingsDividendReconciliation';
@@ -38,7 +38,7 @@ import {
   clearExceptionQueue,
   getExceptionQueue,
 } from '../services/exceptionHandlingEngine';
-import type { Holding, Transaction, Account, Goal, Liability } from '../types';
+import type { Transaction, Account, Goal, Liability } from '../types';
 
 const EMPTY_SIMULATED_PRICES: SimulatedPriceMap = {};
 
@@ -467,7 +467,6 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       })
       .filter((x): x is NonNullable<typeof x> => x != null);
 
-    const holdings: Holding[] = getPersonalInvestments(financialData).flatMap((p) => (p.holdings ?? [])) as Holding[];
     /** Same attribution as `computePersonalInvestmentKpiBreakdown` (includes portfolio-linked rows). */
     const investmentTxs = getPersonalInvestmentTransactionsForKpis(financialData);
 
@@ -570,30 +569,27 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
       };
     })();
 
-    const storedBySymbol = new Map<string, number>();
-    holdings.forEach((h) => {
-      const sym = String(h.symbol ?? '').toUpperCase();
-      if (!sym) return;
-      storedBySymbol.set(sym, (storedBySymbol.get(sym) ?? 0) + (Number(h.quantity) || 0));
-    });
-
-    const tradesBySymbol: Record<string, { symbol: string; type: 'buy' | 'sell'; quantity: number }[]> = {};
-    investmentTxs.forEach((t) => {
-      if (t.type !== 'buy' && t.type !== 'sell') return;
-      const sym = String(t.symbol ?? '').toUpperCase();
-      if (!sym) return;
-      if (!tradesBySymbol[sym]) tradesBySymbol[sym] = [];
-      tradesBySymbol[sym].push({ symbol: sym, type: t.type, quantity: Number(t.quantity) || 0 });
-    });
-
-    const allSymbols = new Set<string>([...storedBySymbol.keys(), ...Object.keys(tradesBySymbol)]);
-    const holdingExceptions = Array.from(allSymbols).map((symbol) => {
-      const stored = storedBySymbol.get(symbol) ?? 0;
-      const trades = tradesBySymbol[symbol] ?? [];
-      const holding = { id: `h-${symbol}`, symbol, quantity: stored };
-      const rec = reconcileHoldings({ holding: holding as any, trades: trades as any });
-      return { symbol, drift: rec.drift };
-    }).filter((h) => Math.abs(h.drift) >= 0.0001);
+    const portfolios = getPersonalInvestments(financialData);
+    const corporateActionEvents = financialData.corporateActionEvents ?? [];
+    const holdingExceptions: { symbol: string; drift: number }[] = [];
+    for (const portfolio of portfolios) {
+      for (const h of portfolio.holdings ?? []) {
+        const sym = String(h.symbol ?? '').toUpperCase();
+        if (!sym) continue;
+        const rec = reconcileHoldingsWithCorporateActionsSync({
+          portfolio,
+          symbol: sym,
+          transactions: investmentTxs,
+          corporateActionEvents,
+        });
+        if (!rec.ok) {
+          holdingExceptions.push({
+            symbol: portfolios.length > 1 ? `${sym} (${portfolio.name ?? portfolio.id})` : sym,
+            drift: rec.drift,
+          });
+        }
+      }
+    }
 
     const reconciliation = reconciliationExceptionReport({
       cashExceptions: [...cashExceptions, ...creditExceptions],

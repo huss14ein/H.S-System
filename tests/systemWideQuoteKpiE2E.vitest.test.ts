@@ -42,6 +42,12 @@ describe('system-wide quote + KPI E2E', () => {
     expect(offenders, offenders.join('\n')).toEqual([]);
   });
 
+  it('refreshPricesForPlatform is deprecated in MarketDataContext', () => {
+    const src = read('context/MarketDataContext.tsx');
+    expect(src).toContain('@deprecated');
+    expect(src).toContain('refreshPricesForPlatform');
+  });
+
   it('wealth pages use canonical or live quote hooks (no ad-hoc NW recompute)', () => {
     const exempt = new Set([
       'pages/LoginPage.tsx',

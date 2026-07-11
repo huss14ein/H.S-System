@@ -30,7 +30,6 @@ export type BudgetOwnPortfolioCardProps = {
     getCategoryHint: (category: string) => string;
     formatCurrencyString: (amount: number, opts?: { digits?: number }) => string;
     onNavigateToTransactions: (budget: OwnPortfolioBudgetRow) => void;
-    onOpenSlideOver?: (budget: OwnPortfolioBudgetRow) => void;
     onToggleExpand: (id: string) => void;
     onEdit: (budget: OwnPortfolioBudgetRow) => void;
     onDelete: (budget: OwnPortfolioBudgetRow) => void;
@@ -48,7 +47,6 @@ const BudgetOwnPortfolioCard: React.FC<BudgetOwnPortfolioCardProps> = React.memo
     getCategoryHint,
     formatCurrencyString,
     onNavigateToTransactions,
-    onOpenSlideOver,
     onToggleExpand,
     onEdit,
     onDelete,
@@ -71,7 +69,7 @@ const BudgetOwnPortfolioCard: React.FC<BudgetOwnPortfolioCardProps> = React.memo
             type="button"
             data-budget-category={dataBudgetCategory ?? budget.category}
             className={`group flex h-full min-h-0 w-full flex-col text-left rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary/80 transition-shadow duration-200 hover:shadow-md ${expanded ? 'md:col-span-2' : ''}`}
-            onClick={() => (onOpenSlideOver ? onOpenSlideOver(budget) : onNavigateToTransactions(budget))}
+            onClick={() => onNavigateToTransactions(budget)}
         >
             <BudgetCardShell utilizationLabel={utilLabel} budgetTier={budget.budgetTier ?? 'Optional'}>
                 <div className="flex min-h-0 flex-1 flex-col">
@@ -102,7 +100,7 @@ const BudgetOwnPortfolioCard: React.FC<BudgetOwnPortfolioCardProps> = React.memo
                                 </div>
                             </div>
                             <p className="mt-2 text-[11px] text-slate-500 leading-snug">
-                                Tap for category detail and recent transactions.
+                                Tap to open all transactions for this budget.
                             </p>
                         </div>
                     </div>

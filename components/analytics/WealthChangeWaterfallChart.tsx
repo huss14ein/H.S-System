@@ -12,20 +12,28 @@ type Props = {
   steps: WaterfallStep[];
   formatCurrency: (n: number) => string;
   className?: string;
+  onStepClick?: (stepName: string) => void;
+  compact?: boolean;
 };
 
 /** Bridge chart: prior net worth → market → cashflow → current net worth. */
-export const WealthChangeWaterfallChart: React.FC<Props> = ({ steps, formatCurrency, className = '' }) => {
+export const WealthChangeWaterfallChart: React.FC<Props> = ({
+  steps,
+  formatCurrency,
+  className = '',
+  onStepClick,
+  compact = false,
+}) => {
   const data = steps.map((s) => ({ ...s, abs: Math.abs(s.deltaSar) }));
 
   return (
     <InteractiveChartShell
-      title="Net worth bridge"
-      subtitle="Month-over-month change drivers (SAR)"
+      title={compact ? 'NW bridge' : 'Net worth bridge'}
+      subtitle={compact ? 'MoM drivers (SAR)' : 'Month-over-month change drivers (SAR)'}
       className={className}
-      footnote="Market = investment P/L; cashflow = income minus expenses."
+      footnote={onStepClick ? 'Click Market or Cashflow to drill down.' : 'Market = investment P/L; cashflow = income minus expenses.'}
     >
-      <div className="h-52 w-full">
+      <div className={compact ? 'h-36 w-full' : 'h-52 w-full'}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
             <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={48} />
@@ -36,7 +44,15 @@ export const WealthChangeWaterfallChart: React.FC<Props> = ({ steps, formatCurre
                 'Change',
               ]}
             />
-            <Bar dataKey="abs" radius={[4, 4, 0, 0]}>
+            <Bar
+              dataKey="abs"
+              radius={[4, 4, 0, 0]}
+              cursor={onStepClick ? 'pointer' : undefined}
+              onClick={(bar) => {
+                const name = (bar as { payload?: WaterfallStep })?.payload?.name;
+                if (name) onStepClick?.(name);
+              }}
+            >
               {data.map((entry) => (
                 <Cell key={entry.name} fill={entry.fill} />
               ))}
