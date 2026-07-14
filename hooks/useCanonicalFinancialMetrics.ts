@@ -38,12 +38,13 @@ export {
 /**
  * Quote map used for headline KPIs, exports, and reconciliation — same 250ms debounce as
  * `CanonicalFinancialMetricsProvider` (not raw live ticks). Use `useLiveQuotePrices()` for holdings cells.
+ * Always call the same hooks (Rules of Hooks) — prefer shell map when the provider is mounted.
  */
 export function useCanonicalSimulatedPrices(): SimulatedPriceMap {
   const shell = useCanonicalFinancialMetricsContext();
-  if (shell) return shell.full.simulatedPrices;
   const { simulatedPrices } = useMarketPrices();
-  return useDebouncedValue(simulatedPrices, 250);
+  const debounced = useDebouncedValue(simulatedPrices, 250);
+  return shell?.full.simulatedPrices ?? debounced;
 }
 
 /** Alias — KPI quote map from the canonical metrics bundle. */
@@ -67,11 +68,15 @@ export function useCanonicalSpotFx(): number {
 }
 
 /** Isolated renders / unit tests without AuthenticatedAppShell. */
-export function useCanonicalFinancialMetricsLocal(): UseCanonicalFinancialMetricsResult {
+export function useCanonicalFinancialMetricsLocal(options?: {
+  /** When true, skip expensive compute (shell provider already owns the bundle). */
+  skip?: boolean;
+}): UseCanonicalFinancialMetricsResult {
+  const skip = options?.skip === true;
   const ctx = useContext(DataContext);
-  const data = ctx?.data ?? null;
-  const showHydrateBanner = ctx?.showHydrateBanner ?? false;
-  const getAvailableCashForAccount = ctx?.getAvailableCashForAccount;
+  const data = skip ? null : (ctx?.data ?? null);
+  const showHydrateBanner = skip ? true : (ctx?.showHydrateBanner ?? false);
+  const getAvailableCashForAccount = skip ? undefined : ctx?.getAvailableCashForAccount;
   const { exchangeRate } = useCurrency();
   const { simulatedPrices } = useMarketPrices();
   const debouncedPrices = useDebouncedValue(simulatedPrices, 250);
@@ -93,21 +98,24 @@ export function useCanonicalFinancialMetricsLocal(): UseCanonicalFinancialMetric
 /** Canonical personal NW + KPI — reads shell provider (one compute per quote tick). */
 export function useCanonicalFinancialMetrics(): UseCanonicalFinancialMetricsResult {
   const shell = useCanonicalFinancialMetricsContext();
-  if (shell) return shell.full;
-  return useCanonicalFinancialMetricsLocal();
+  const local = useCanonicalFinancialMetricsLocal({ skip: !!shell });
+  return shell?.full ?? local;
 }
 
 /** Isolated dashboard metrics without shell provider. */
-export function useDashboardCanonicalMetricsLocal(): DashboardCanonicalMetrics & {
+export function useDashboardCanonicalMetricsLocal(options?: {
+  skip?: boolean;
+}): DashboardCanonicalMetrics & {
   data: FinancialData | null;
   exchangeRate: number;
   simulatedPrices: Record<string, { price: number; change?: number; changePercent?: number }>;
   getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number };
 } {
+  const skip = options?.skip === true;
   const ctx = useContext(DataContext);
-  const data = ctx?.data ?? null;
-  const showHydrateBanner = ctx?.showHydrateBanner ?? false;
-  const getAvailableCashForAccount = ctx?.getAvailableCashForAccount;
+  const data = skip ? null : (ctx?.data ?? null);
+  const showHydrateBanner = skip ? true : (ctx?.showHydrateBanner ?? false);
+  const getAvailableCashForAccount = skip ? undefined : ctx?.getAvailableCashForAccount;
   const { exchangeRate } = useCurrency();
   const { simulatedPrices } = useMarketPrices();
   const debouncedPrices = useDebouncedValue(simulatedPrices, 250);
@@ -139,8 +147,8 @@ export function useDashboardCanonicalMetrics(): DashboardCanonicalMetrics & {
   getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number };
 } {
   const shell = useCanonicalFinancialMetricsContext();
-  if (shell) return shell.dashboard;
-  return useDashboardCanonicalMetricsLocal();
+  const local = useDashboardCanonicalMetricsLocal({ skip: !!shell });
+  return shell?.dashboard ?? local;
 }
 
 /** True when phase-2 wealth summary, allocation, and live investment ROI are merged. */

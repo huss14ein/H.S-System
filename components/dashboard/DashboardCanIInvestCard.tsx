@@ -18,9 +18,7 @@ export const DashboardCanIInvestCard: React.FC<{
     exchangeRate: sarPerUsd,
   });
 
-  if (!capitalDeployment) return null;
-
-  const deployable = capitalDeployment.investableSurplusSar ?? 0;
+  /** Always run before any early return — avoids React #310 (hooks count change). */
   const topDrift = useMemo(
     () =>
       [...budgetDriftRows]
@@ -28,6 +26,10 @@ export const DashboardCanIInvestCard: React.FC<{
         .sort((a, b) => b.driftPct - a.driftPct)[0],
     [budgetDriftRows],
   );
+
+  if (!capitalDeployment) return null;
+
+  const deployable = capitalDeployment.investableSurplusSar ?? 0;
 
   const drillTopDrift = () => {
     if (!topDrift?.category) return;
