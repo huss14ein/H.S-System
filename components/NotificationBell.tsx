@@ -6,15 +6,13 @@ interface NotificationBellProps {
 }
 
 const NotificationBell: React.FC<NotificationBellProps> = ({ className = '' }) => {
-  const { notifications, isSupported, permission, requestPermission, markAsRead, clearNotifications } = useNotifications();
+  const { notifications, isSupported, permission, requestPermission, markAsRead, clearNotifications, sendNotification } = useNotifications();
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
   const handleRequestPermission = async () => {
     const granted = await requestPermission();
     if (granted) {
-      // Send a welcome notification
-      const { sendNotification } = useNotifications();
       sendNotification('Notifications Enabled!', {
         body: 'You\'ll now receive important financial updates.',
         icon: '/icons/bell-192x192.png'

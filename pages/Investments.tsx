@@ -3931,14 +3931,6 @@ const InvestmentPlan: React.FC<{
     };
     const canAddWatchlistHoldings = unifiedUniverse.some(t => t.source !== 'Universe' && !t.source?.includes('Universe'));
 
-    if (!plan || !plan.brokerConstraints) {
-        return (
-            <div className="flex flex-col items-center justify-center p-12 bg-white rounded-lg shadow">
-                <LoadingSpinner message="Loading investment plan strategy..." size="md" className="py-8" />
-            </div>
-        );
-    }
-
     const handlePlanChange = (field: keyof InvestmentPlanSettings, value: any) => {
         setPlan(prev => ({ ...prev, [field]: value }));
     };
@@ -4574,6 +4566,15 @@ Save anyway?`)) return;
         [addOnOpportunities],
     );
     const { names: addOnCompanyNames } = useCompanyNames(addOnSymbols);
+
+    /** After all hooks — Rules of Hooks / React #310 safe. */
+    if (!plan || !plan.brokerConstraints) {
+        return (
+            <div className="flex flex-col items-center justify-center p-12 bg-white rounded-lg shadow">
+                <LoadingSpinner message="Loading investment plan strategy..." size="md" className="py-8" />
+            </div>
+        );
+    }
 
     const handleExecutePlan = async (forceRuleBased = false) => {
         setIsExecuting(true);
