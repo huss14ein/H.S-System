@@ -828,7 +828,7 @@ describe('corporateActionsSplitE2E', () => {
 
   it('DataContext apply and undo gate as_stored delta to manual portfolios', () => {
     const ctx = read('context/DataContext.tsx');
-    expect(ctx).toContain('const manualOnly = replayTxs.length === 0');
+    expect(ctx).toContain('const manualOnly = !hasPositionAffectingTransactions(replayTxs)');
     expect(ctx).toContain("holdingsBaselineMode: manualOnly ? 'as_stored' : 'replay_derived'");
   });
 

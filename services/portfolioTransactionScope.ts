@@ -21,6 +21,10 @@ export type PortfolioReplayTxFilterArgs = {
   accountId?: string | null;
 };
 
+export function hasPositionAffectingTransactions(transactions: InvestmentTransaction[]): boolean {
+  return transactions.some((t) => t.type === 'buy' || t.type === 'sell');
+}
+
 /**
  * Portfolio-scoped txs plus same-account legacy orphans for allowed symbols.
  * Allowed symbols = held symbols ∪ symbols appearing on portfolio-scoped txs.
@@ -60,7 +64,7 @@ export function filterTransactionsForPortfolioReplay(
   }
   for (const t of args.transactions) {
     if (t.portfolioId) continue;
-    if (scopedAccountId && t.accountId && String(t.accountId) !== scopedAccountId) continue;
+    if (scopedAccountId && String(t.accountId ?? '') !== scopedAccountId) continue;
     const sym = String(t.symbol ?? '').trim().toUpperCase();
     if (!sym || !allow.has(sym)) continue;
     const id = t.id ? String(t.id) : `orphan-${sym}-${t.date}-${t.type}-${t.quantity}`;

@@ -13,7 +13,10 @@ import {
 import { rebuildPortfolioFromEvents } from './portfolioReplayEngine';
 import type { Holding, InvestmentPortfolio, InvestmentTransaction, CorporateActionEvent } from '../types';
 import { roundAvgCostPerUnit, roundQuantity } from '../utils/money';
-import { filterTransactionsForPortfolioReplay } from './portfolioTransactionScope';
+import {
+  filterTransactionsForPortfolioReplay,
+  hasPositionAffectingTransactions,
+} from './portfolioTransactionScope';
 
 export {
   filterTransactionsForPortfolio,
@@ -255,7 +258,7 @@ export async function replayPortfolioHoldings(args: {
     accountId: args.portfolio.accountId ?? (args.portfolio as { account_id?: string }).account_id,
   });
   let initialHoldings: { symbol: string; quantity: number; avgCost: number }[] = [];
-  if (portfolioTxs.length === 0) {
+  if (!hasPositionAffectingTransactions(portfolioTxs)) {
     const mode = args.holdingsBaselineMode ?? 'replay_derived';
     initialHoldings = resolveManualPortfolioInitialHoldings(args.portfolio, args.corporateEvents, mode);
   }
@@ -367,7 +370,8 @@ export async function replayPortfolioHoldingsFromEvents(args: {
     portfolio: args.portfolio,
     transactions: args.transactions,
     corporateEvents: rows,
-    holdingsBaselineMode: args.holdingsBaselineMode ?? (portfolioTxs.length === 0 ? 'replay_derived' : undefined),
+    holdingsBaselineMode:
+      args.holdingsBaselineMode ?? (!hasPositionAffectingTransactions(portfolioTxs) ? 'replay_derived' : undefined),
   });
 }
 

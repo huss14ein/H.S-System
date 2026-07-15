@@ -9,6 +9,7 @@ import { formatUnknownError } from '../utils/formatUnknownError';
 import {
   filterTransactionsForPortfolio,
   filterTransactionsForPortfolioReplay,
+  hasPositionAffectingTransactions,
 } from '../services/portfolioTransactionScope';
 import type { InvestmentTransaction } from '../types';
 
@@ -38,6 +39,7 @@ describe('recordTradeCompletion', () => {
     const ctx = read('context/DataContext.tsx');
     expect(ctx).toContain('goalId: tradeGoalId');
     expect(ctx).toContain('if (tradeData.type === \'buy\')');
+    expect(ctx).toContain("const { data: holdingRow, error: holdingReadError } = await supabase");
     expect(ctx).toContain('needsPatch');
     expect(ctx).toContain('await updateHolding(patched)');
   });
@@ -45,10 +47,10 @@ describe('recordTradeCompletion', () => {
   it('CA apply/undo uses manual-only delta replay; traded books use full replay_derived', () => {
     const ctx = read('context/DataContext.tsx');
     expect(ctx).toContain('filterTransactionsForPortfolioReplay');
-    expect(ctx).toContain('const manualOnly = replayTxs.length === 0');
+    expect(ctx).toContain('const manualOnly = !hasPositionAffectingTransactions(replayTxs)');
     expect(ctx).toContain("holdingsBaselineMode: manualOnly ? 'as_stored' : 'replay_derived'");
     expect(ctx).toContain('...(manualOnly ? { holdingsReplayEvents: [ev] } : {})');
-    expect(ctx).toContain('...(manualOnly && reversalEv ? { holdingsReplayEvents: [reversalEv] } : {})');
+    expect(ctx).toContain('...(manualOnly ? { holdingsReplayEvents: [reversalEv] } : {})');
   });
 
   it('ledger sync scopes orphans by account + held/scoped symbols', () => {
@@ -120,14 +122,27 @@ describe('recordTradeCompletion', () => {
       price: 1,
       total: 100,
     };
+    const missingAccount = { ...held, id: 'orphan-missing-account', accountId: undefined as unknown as string };
     expect(filterTransactionsForPortfolio('pf1', [held, sell])).toHaveLength(1);
     const replayed = filterTransactionsForPortfolioReplay({
       portfolioId: 'pf1',
-      transactions: [held, sell, otherAcc, invent],
+      transactions: [held, sell, otherAcc, invent, missingAccount],
       holdingSymbols: ['INSP'],
       accountId: 'acc1',
     });
     expect(replayed.map((t) => t.id).sort()).toEqual(['orphan-insp', 'sell-insp']);
+  });
+
+  it('only buy and sell rows make a portfolio replay-derived', () => {
+    const nonPositionRows = [
+      { type: 'dividend' },
+      { type: 'deposit' },
+      { type: 'withdrawal' },
+      { type: 'fee' },
+      { type: 'vat' },
+    ] as unknown as InvestmentTransaction[];
+    expect(hasPositionAffectingTransactions(nonPositionRows)).toBe(false);
+    expect(hasPositionAffectingTransactions([{ ...nonPositionRows[0]!, type: 'buy' }])).toBe(true);
   });
 
   it('cash/dividend entry points use recordTrade with confirmed or system opts', () => {

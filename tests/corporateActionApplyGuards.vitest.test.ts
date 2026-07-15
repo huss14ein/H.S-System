@@ -236,7 +236,7 @@ describe('corporateActionApplyGuards', () => {
 
   it('DataContext apply/undo gate holdingsReplayEvents to manual portfolios', () => {
     const ctx = read('context/DataContext.tsx');
-    expect(ctx).toContain('const manualOnly = replayTxs.length === 0');
+    expect(ctx).toContain('const manualOnly = !hasPositionAffectingTransactions(replayTxs)');
     expect(ctx).toContain('...(manualOnly ? { holdingsReplayEvents: [ev] } : {})');
     expect(ctx).toContain("holdingsBaselineMode: manualOnly ? 'as_stored' : 'replay_derived'");
   });

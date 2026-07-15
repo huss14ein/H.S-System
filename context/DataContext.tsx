@@ -46,7 +46,10 @@ import {
 import { adjustQuotesForCorporateActionNow } from '../utils/corporateActionQuoteBridge';
 import { normalizeInvestmentCostLotRow } from '../services/investmentCostLotDb';
 import { syncPortfolioLedgerAfterChange } from '../services/portfolioLedgerSync';
-import { filterTransactionsForPortfolioReplay } from '../services/portfolioTransactionScope';
+import {
+    filterTransactionsForPortfolioReplay,
+    hasPositionAffectingTransactions,
+} from '../services/portfolioTransactionScope';
 import {
     assertDividendUpdateNotDuplicate,
     computeInvestmentTxCashDelta,
@@ -3500,7 +3503,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             holdingSymbols: portfolio.holdings?.map((h) => String(h.symbol ?? '')),
             accountId: portfolio.accountId ?? (portfolio as { account_id?: string }).account_id,
         });
-        const manualOnly = replayTxs.length === 0;
+        const manualOnly = !hasPositionAffectingTransactions(replayTxs);
         await syncPortfolioAfterLedgerMutation(args.portfolioId, {
             corporateActionEvents: mergedEvents,
             holdingsBaselineMode: manualOnly ? 'as_stored' : 'replay_derived',
@@ -3637,13 +3640,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             .match({ id: eventId, user_id: auth.user.id });
         if (markErr && markErr.code !== 'PGRST205') throw markErr;
 
-        const reversalEv: CorporateActionEvent | null = inserted
-            ? normalizeCorporateActionEventRow(inserted as Record<string, unknown>)
-            : null;
+        const reversalEv = normalizeCorporateActionEventRow(
+            (inserted ?? { ...reverseRow, id: `local-reversal-${eventId}` }) as Record<string, unknown>,
+        );
         const updatedEvents = (snapshot?.corporateActionEvents ?? []).map((e) =>
             e.id === eventId ? { ...e, status: 'reversed' as const } : e,
         );
-        const mergedEvents = reversalEv ? [reversalEv, ...updatedEvents] : updatedEvents;
+        const mergedEvents = [reversalEv, ...updatedEvents];
         setData((prev) => ({
             ...prev,
             corporateActionEvents: mergedEvents,
@@ -3656,11 +3659,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             holdingSymbols: portfolio.holdings?.map((h) => String(h.symbol ?? '')),
             accountId: portfolio.accountId ?? (portfolio as { account_id?: string }).account_id,
         });
-        const manualOnly = replayTxs.length === 0;
+        const manualOnly = !hasPositionAffectingTransactions(replayTxs);
         await syncPortfolioAfterLedgerMutation(ev.portfolioId, {
             corporateActionEvents: mergedEvents,
             holdingsBaselineMode: manualOnly ? 'as_stored' : 'replay_derived',
-            ...(manualOnly && reversalEv ? { holdingsReplayEvents: [reversalEv] } : {}),
+            ...(manualOnly ? { holdingsReplayEvents: [reversalEv] } : {}),
         });
         adjustQuotesForCorporateActionNow({
             symbol: ev.symbol,
@@ -4161,11 +4164,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 : [...(data?.investmentTransactions ?? [])];
             await syncPortfolioAfterLedgerMutation(portfolio.id, { investmentTransactions: mergedTxs });
             if (tradeData.type === 'buy') {
-                const snap = dataRef.current;
-                const pf = (snap?.investments ?? []).find((p) => p.id === portfolio.id);
-                const holdingAfter = pf?.holdings.find(
-                    (h) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol,
-                );
+                const { data: holdingRow, error: holdingReadError } = await supabase
+                    .from('holdings')
+                    .select('*')
+                    .match({ user_id: auth.user.id, portfolio_id: portfolio.id, symbol: normalizedSymbol })
+                    .maybeSingle();
+                if (holdingReadError) throw new Error(formatDbError(holdingReadError));
+                const holdingAfter = holdingRow ? normalizeHoldingFromRow(holdingRow) : undefined;
                 if (holdingAfter) {
                     const patched: Holding = {
                         ...holdingAfter,
