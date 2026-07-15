@@ -32,6 +32,7 @@ import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { formatUnknownError } from '../utils/formatUnknownError';
 import { fetchCompanyNameForSymbol, useCompanyNames, symbolsNeedingCompanyName } from '../hooks/useSymbolCompanyName';
 import MiniPriceChart from '../components/charts/MiniPriceChart';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
@@ -1285,7 +1286,7 @@ const RecordTradeModal: React.FC<{
                 onClose();
             });
         } catch (error) {
-            setSubmitError(error instanceof Error ? error.message : String(error));
+            setSubmitError(formatUnknownError(error, 'Could not record trade.'));
         } finally {
             setIsSubmitting(false);
         }
@@ -2984,7 +2985,8 @@ const PlatformCardInner: React.FC<{
                     /** Same pooled ledger as the platform header — not split across portfolios. */
                     const portfolioCashSAR = tradableCashBucketToSAR(availableCashByCurrency, sarPerUsd);
                     const portfolioRoi = pk?.roi ?? 0;
-                    const positionsTotalForAlloc = pk != null ? pk.holdingsValue : portfolioValue;
+                    /** Alloc % must use the same values as the holdings rows (live Current), not KPI totals. */
+                    const positionsTotalForAlloc = portfolioValue;
                     const portfolioCanSyncQuotes = portfolioHasRefreshableQuoteSymbols(portfolio);
                     const isPersonalPortfolio = portfoliosForMetrics.some((p) => p.id === portfolio.id);
                     const thisPortfolioSyncing =

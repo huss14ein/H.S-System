@@ -691,11 +691,10 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
         const brokenCommodityLinks = commodityList.filter((h: CommodityHolding) => h.goalId && !goalIds.has(h.goalId)).length;
         if (brokenCommodityLinks > 0) warnings.push(`${brokenCommodityLinks} commodity goal link(s) are stale (goal was deleted).`);
         const recomputedPhysical = assetsList.reduce((sum: number, a: Asset) => sum + (Number(a.value) || 0), 0);
-        const recomputedCommodities = commodityList.reduce((sum: number, h: CommodityHolding) => sum + (Number(h.currentValue) || 0), 0);
-        const recomputedTotal = recomputedPhysical + recomputedCommodities;
+        const recomputedTotal = recomputedPhysical + commoditiesValueSar;
         if (extendedReady && Math.abs(recomputedTotal - totalAssetValue) > 0.01) warnings.push('Asset total card is out of sync with row totals.');
         return warnings;
-    }, [sarPerUsd, data?.goals, assetsList, commodityList, totalAssetValue, extendedReady]);
+    }, [sarPerUsd, data?.goals, assetsList, commodityList, totalAssetValue, commoditiesValueSar, extendedReady]);
     const assetsAiContext = useMemo(() => {
         const now = new Date();
         const monthStartDay = resolveMonthStartDayFromData(data);

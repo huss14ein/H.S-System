@@ -114,4 +114,16 @@ describe('canonical metrics surface coverage', () => {
       expect(src.includes('resolveSarPerUsd')).toBe(false);
     }
   });
+
+  it('household NW helper wires live-quote platforms rollup (same family as headline)', () => {
+    const src = readFileSync(join(process.cwd(), 'services/personalNetWorth.ts'), 'utf8');
+    expect(src).toContain('computeAllPlatformsRollupSAR');
+    expect(src).toContain('computeAllCommoditiesContributionSAR');
+    expect(src).toContain('options.simulatedPrices');
+  });
+
+  it('CommandPalette uses computeCanonicalFinancialMetrics (non-React path)', () => {
+    const src = readFileSync(join(COMPONENTS_DIR, 'CommandPalette.tsx'), 'utf8');
+    expect(src).toContain('computeCanonicalFinancialMetrics');
+  });
 });

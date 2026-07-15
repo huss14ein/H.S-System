@@ -10,6 +10,7 @@ import type { CorporateActionReplayEvent } from './portfolioReplayEngine';
 import { sortInvestmentTransactionsChronological } from './portfolioReplayEngine';
 import type { InvestmentCostLot, InvestmentTransaction } from '../types';
 import { yieldToMain } from '../utils/yieldToMain';
+import { filterTransactionsForPortfolioReplay } from './portfolioTransactionScope';
 
 export type LotReplayResult = {
   lots: InvestmentCostLot[];
@@ -130,6 +131,9 @@ export async function rebuildCostLotsFromEvents(args: {
   corporateActions: CorporateActionReplayEvent[];
   bookCurrency?: 'SAR' | 'USD';
   signal?: AbortSignal;
+  /** Symbols already held — allows legacy orphan buys to feed FIFO lots. */
+  holdingSymbols?: Iterable<string>;
+  accountId?: string | null;
 }): Promise<LotReplayResult> {
   const bookCurrency = args.bookCurrency ?? 'SAR';
   let internalLots: CostLot[] = [];
@@ -140,9 +144,12 @@ export async function rebuildCostLotsFromEvents(args: {
     | { kind: 'tx'; at: string; tx: InvestmentTransaction }
     | { kind: 'ca'; at: string; ev: CorporateActionReplayEvent };
 
-  const portfolioTxs = args.transactions.filter(
-    (t) => t.portfolioId === args.portfolioId || !t.portfolioId,
-  );
+  const portfolioTxs = filterTransactionsForPortfolioReplay({
+    portfolioId: args.portfolioId,
+    transactions: args.transactions,
+    holdingSymbols: args.holdingSymbols,
+    accountId: args.accountId,
+  });
   const timeline: TimelineItem[] = [];
   for (const tx of sortInvestmentTransactionsChronological(portfolioTxs)) {
     timeline.push({ kind: 'tx', at: String(tx.date ?? '').slice(0, 10), tx });

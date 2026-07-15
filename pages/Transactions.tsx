@@ -412,12 +412,6 @@ const TransactionModal: React.FC<{
             shortfallLabel: formatCurrencyString(shortfallSar, { inCurrency: 'SAR' }),
         };
     }, [type, budgetCategory, currentBudgetRows, remainingByCategory, inputAmountSar, formatCurrencyString]);
-    const selectedBudgetOverview = budgetCoverageSummary
-        ? {
-            category: budgetCoverageSummary.category,
-            remainingSar: budgetCoverageSummary.remainingSar,
-        }
-        : null;
     const budgetCoverageState = useMemo(
         () =>
             evaluateTransactionBudgetCoverageState({
@@ -427,7 +421,11 @@ const TransactionModal: React.FC<{
                 useSplitExpense,
                 splitCoverage,
                 budgetCoverageSummary: budgetCoverageSummary
-                    ? { limitSar: budgetCoverageSummary.limitSar, remainingSar: budgetCoverageSummary.remainingSar }
+                    ? {
+                        limitSar: budgetCoverageSummary.limitSar,
+                        remainingSar: budgetCoverageSummary.remainingSar,
+                        spentSar: budgetCoverageSummary.spentSar,
+                      }
                     : null,
                 inputAmountSar,
             }),
@@ -766,54 +764,52 @@ const TransactionModal: React.FC<{
                                     </option>
                                 ))}
                             </select>
-                            {!useSplitExpense && budgetCoverageSummary && (
-                                <div
-                                    className={`rounded-md border p-2 text-xs ${
-                                        budgetCoverageSummary.remainingSar - inputAmountSar <= 0
-                                            ? 'border-rose-300 bg-rose-50 text-rose-900'
-                                            : (budgetCoverageSummary.limitSar > 0 &&
-                                                  (budgetCoverageSummary.limitSar - (budgetCoverageSummary.remainingSar - inputAmountSar)) / budgetCoverageSummary.limitSar >= 0.9)
-                                              ? 'border-amber-300 bg-amber-50 text-amber-900'
-                                              : 'border-emerald-300 bg-emerald-50 text-emerald-900'
-                                    }`}
-                                >
-                                    <div className="font-semibold">
-                                        Budget limit {budgetCoverageSummary.shortfallSar > 0 ? 'exceeded' : 'ok'} for this amount
-                                    </div>
-                                    <div>
-                                        Limit {budgetCoverageSummary.limitLabel} • Spent {budgetCoverageSummary.spentLabel} • Remaining {budgetCoverageSummary.remainingLabel}
-                                    </div>
-                                    {budgetCoverageSummary.shortfallSar > 0 && (
-                                        <div className="mt-1">
-                                            Over by {budgetCoverageSummary.shortfallLabel}. You can still save; spending will show as over budget.
-                                        </div>
-                                    )}
-                                </div>
-                            )}
                         </div>
-                        {type === 'expense' && (
+                        {type === 'expense' && (budgetCoverageState.tone !== 'neutral' || Boolean(budgetCategory.trim())) && (
                             <div
-                                className={`rounded-lg border p-3 text-sm ${
+                                className={`rounded-xl border px-3.5 py-3 text-sm ${
                                     budgetCoverageState.tone === 'red'
-                                        ? 'bg-rose-50 border-rose-200 text-rose-900'
+                                        ? 'border-rose-200 bg-rose-50 text-rose-950'
                                         : budgetCoverageState.tone === 'yellow'
-                                          ? 'bg-amber-50 border-amber-200 text-amber-900'
+                                          ? 'border-amber-200 bg-amber-50 text-amber-950'
                                           : budgetCoverageState.tone === 'green'
-                                            ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                                            : 'bg-slate-50 border-slate-200 text-slate-700'
+                                            ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
+                                            : 'border-slate-200 bg-slate-50 text-slate-700'
                                 }`}
+                                role="status"
                             >
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <p className="font-medium">Budget limit check</p>
-                                    {selectedBudgetOverview && (
-                                        <p className="text-xs">
-                                            {selectedBudgetOverview.category}: {formatCurrencyString(Math.max(0, selectedBudgetOverview.remainingSar), { inCurrency: 'SAR' })} remaining
-                                        </p>
-                                    )}
-                                </div>
-                                <p className="mt-1">
-                                    {budgetCoverageState.summary}
-                                </p>
+                                <p className="font-semibold tracking-tight">{budgetCoverageState.title}</p>
+                                <p className="mt-1 text-[13px] leading-snug opacity-90">{budgetCoverageState.summary}</p>
+                                {budgetCoverageState.detail && budgetCoverageState.detail.limitSar > 0 && (
+                                    <dl className="mt-2.5 grid grid-cols-2 gap-x-3 gap-y-1 text-xs tabular-nums sm:grid-cols-4">
+                                        <div>
+                                            <dt className="opacity-70">Limit</dt>
+                                            <dd className="font-medium">
+                                                {formatCurrencyString(budgetCoverageState.detail.limitSar, { inCurrency: 'SAR' })}
+                                            </dd>
+                                        </div>
+                                        <div>
+                                            <dt className="opacity-70">Spent</dt>
+                                            <dd className="font-medium">
+                                                {formatCurrencyString(budgetCoverageState.detail.spentSar, { inCurrency: 'SAR' })}
+                                            </dd>
+                                        </div>
+                                        <div>
+                                            <dt className="opacity-70">Remaining</dt>
+                                            <dd className="font-medium">
+                                                {formatCurrencyString(Math.max(0, budgetCoverageState.detail.remainingSar), {
+                                                    inCurrency: 'SAR',
+                                                })}
+                                            </dd>
+                                        </div>
+                                        <div>
+                                            <dt className="opacity-70">After this</dt>
+                                            <dd className="font-medium">
+                                                {formatCurrencyString(budgetCoverageState.detail.afterSar, { inCurrency: 'SAR' })}
+                                            </dd>
+                                        </div>
+                                    </dl>
+                                )}
                                 {budgetCoverageState.shortfalls.length > 0 && (
                                     <ul className="mt-2 list-disc list-inside text-xs space-y-1">
                                         {budgetCoverageState.shortfalls.map((row, idx) => (

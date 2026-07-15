@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { computePersonalHeadlineNetWorthSar } from '../services/personalNetWorth';
+import {
+  computePersonalHeadlineNetWorthSar,
+  computeAllNetWorthChartBucketsSAR,
+} from '../services/personalNetWorth';
 import { computeDashboardKpiSnapshot } from '../services/dashboardKpiSnapshot';
 import { computeWealthSummaryReportModel } from '../services/wealthSummaryReportModel';
 import type { FinancialData } from '../types';
@@ -54,5 +57,18 @@ describe('headline net worth live quotes alignment', () => {
     const dash = computeDashboardKpiSnapshot(data, fx, getCash, livePrices);
     const summary = computeWealthSummaryReportModel(data, fx, getCash, livePrices);
     expect(dash?.netWorth).toBe(summary.financialMetricsWithEf.netWorth);
+  });
+
+  it('all-scope chart buckets honor simulatedPrices like personal headline', () => {
+    const stored = computeAllNetWorthChartBucketsSAR(data, fx, {
+      getAvailableCashForAccount: getCash,
+      simulatedPrices: {},
+    });
+    const live = computeAllNetWorthChartBucketsSAR(data, fx, {
+      getAvailableCashForAccount: getCash,
+      simulatedPrices: livePrices,
+    });
+    expect(live.investments).toBeGreaterThan(stored.investments);
+    expect(live.investments - stored.investments).toBeCloseTo(10 * 100 * fx, 0);
   });
 });

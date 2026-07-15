@@ -44,10 +44,34 @@ describe('transactionBudgetCoverage', () => {
     expect(warning).toMatch(/Groceries: over by 150 SAR/);
   });
 
-  it('flags red tone when amount exceeds remaining', () => {
+  it('flags red tone only when amount exceeds remaining', () => {
     expect(
       computeBudgetCoverageTone({ limitSar: 1000, remainingSar: 50, amountSar: 100 }),
     ).toBe('red');
+  });
+
+  it('uses yellow when amount exactly equals remaining (not red)', () => {
+    expect(
+      computeBudgetCoverageTone({ limitSar: 5500, remainingSar: 5500, amountSar: 5500 }),
+    ).toBe('yellow');
+  });
+
+  it('uses green when ample headroom remains', () => {
+    expect(
+      computeBudgetCoverageTone({ limitSar: 5500, remainingSar: 5500, amountSar: 100 }),
+    ).toBe('green');
+  });
+
+  it('uses yellow near 90% of monthly limit', () => {
+    expect(
+      computeBudgetCoverageTone({ limitSar: 1000, remainingSar: 200, amountSar: 100 }),
+    ).toBe('yellow');
+  });
+
+  it('treats missing limit as neutral, not red', () => {
+    expect(
+      computeBudgetCoverageTone({ limitSar: 0, remainingSar: 0, amountSar: 100 }),
+    ).toBe('neutral');
   });
 
   it('warns on single-category over budget without implying save is blocked', () => {
@@ -69,8 +93,10 @@ describe('transactionBudgetCoverage', () => {
     });
     expect(state.isWithinBudget).toBe(false);
     expect(state.tone).toBe('red');
+    expect(state.title).toMatch(/over/i);
     expect(state.summary).toMatch(/still save/i);
     expect(state.shortfalls).toHaveLength(1);
+    expect(state.detail?.afterSar).toBe(-150);
   });
 
   it('warns on split over budget without implying save is blocked', () => {
@@ -114,10 +140,18 @@ describe('transactionBudgetCoverage', () => {
           shortfallSar: 0,
         },
       ],
-      budgetCoverageSummary: { limitSar: 500, remainingSar: 200 },
+      budgetCoverageSummary: { limitSar: 500, remainingSar: 200, spentSar: 300 },
       inputAmountSar: 40,
     });
     expect(state.isWithinBudget).toBe(true);
     expect(state.tone).toBe('green');
+    expect(state.title).toBe('Within budget');
+    expect(state.detail).toEqual({
+      category: 'Groceries',
+      limitSar: 500,
+      spentSar: 300,
+      remainingSar: 200,
+      afterSar: 160,
+    });
   });
 });

@@ -4,9 +4,10 @@
  * Lunar hawl (~354d) reduces zakatable amount unless acquisition date or earliest buy resolves the start.
  */
 
-import type { CommodityHolding, Holding, InvestmentPortfolio, InvestmentTransaction, TradeCurrency } from '../types';
+import type { CommodityHolding, Holding, InvestmentPortfolio, InvestmentTransaction, TradeCurrency, FinancialData } from '../types';
 import { toSAR } from '../utils/currencyMath';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
+import { getActivePersonalSukukPositions } from './sukuk/sukukExposure';
 import {
   evaluateHawlEligibility,
   resolveCommodityHawlStart,
@@ -102,6 +103,57 @@ export type ZakatCommodityLine = {
   hawlSource: 'manual' | 'created' | 'none';
   effectiveAcquisitionDate: string | null;
 };
+
+export type ZakatSukukLine = {
+  id: string;
+  name: string;
+  symbol: string;
+  currency: TradeCurrency;
+  outstandingPrincipal: number;
+  grossValueSar: number;
+  zakatableValueSar: number;
+  hawlEligible: boolean;
+  hawlLabel: string;
+  hawlSource: 'issue' | 'none';
+  effectiveAcquisitionDate: string | null;
+};
+
+/**
+ * Direct Sukuk contracts (`sukuk_positions`) for Zakat — same SAR conversion as headline exposure.
+ * Hawl start = issueDate when present; otherwise not counted yet (strict hawl).
+ */
+export function summarizeZakatableSukukPositionsForZakat(
+  data: FinancialData | null | undefined,
+  sarPerUsd: number,
+  asOf: Date = new Date(),
+): { totalSar: number; lines: ZakatSukukLine[] } {
+  const lines: ZakatSukukLine[] = [];
+  let totalSar = 0;
+  for (const p of getActivePersonalSukukPositions(data)) {
+    const currency: TradeCurrency = p.currency === 'USD' ? 'USD' : 'SAR';
+    const outstanding = Math.max(0, Number(p.outstandingPrincipal) || 0);
+    if (!(outstanding > 0)) continue;
+    const grossValueSar = toSAR(outstanding, currency, sarPerUsd);
+    const issue = p.issueDate ? String(p.issueDate).slice(0, 10) : null;
+    const elig = evaluateHawlEligibility(issue, asOf, false);
+    const zakatableValueSar = elig.eligible ? grossValueSar : 0;
+    totalSar += zakatableValueSar;
+    lines.push({
+      id: p.id,
+      name: p.name || 'Sukuk',
+      symbol: String(p.name || 'SUKUK').trim() || 'SUKUK',
+      currency,
+      outstandingPrincipal: outstanding,
+      grossValueSar,
+      zakatableValueSar,
+      hawlEligible: elig.eligible,
+      hawlLabel: elig.label,
+      hawlSource: issue ? 'issue' : 'none',
+      effectiveAcquisitionDate: issue,
+    });
+  }
+  return { totalSar, lines };
+}
 
 /** Commodity values are already in SAR in the app model. */
 export function summarizeZakatableCommoditiesForZakat(

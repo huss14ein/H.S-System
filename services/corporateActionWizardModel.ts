@@ -10,6 +10,7 @@ import {
   replayPortfolioHoldingsFromEvents,
   validateCorporateActionApplyPrerequisites,
 } from './corporateActionApply';
+import { filterTransactionsForPortfolioReplay } from './portfolioTransactionScope';
 
 export type CorporateActionWizardActionType =
   | 'stock_split'
@@ -327,6 +328,15 @@ export async function previewCorporateActionWizard(args: {
     transactions: args.transactions,
     corporateActionEvents: [...args.corporateActionEvents, previewEvent],
     holdingsBaselineMode: 'as_stored',
+    holdingsReplayEvents: (() => {
+      const replayTxs = filterTransactionsForPortfolioReplay({
+        portfolioId: args.state.portfolioId,
+        transactions: args.transactions,
+        holdingSymbols: args.portfolio.holdings?.map((h) => String(h.symbol ?? '')),
+        accountId: args.portfolio.accountId ?? (args.portfolio as { account_id?: string }).account_id,
+      });
+      return replayTxs.length === 0 ? [previewEvent] : undefined;
+    })(),
   });
 
   const replaySymbols = Array.from(replayed.entries())

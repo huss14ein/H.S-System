@@ -42,7 +42,7 @@ export function reconcileHoldingsWithCorporateActionsSync(args: {
   const holding = args.portfolio.holdings?.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
   const stored = Math.max(0, Number(holding?.quantity) || 0);
   const portfolioTxs = args.transactions.filter(
-    (t) => (t.portfolioId === args.portfolio.id || !t.portfolioId) && String(t.symbol ?? '').toUpperCase() === sym,
+    (t) => t.portfolioId === args.portfolio.id && String(t.symbol ?? '').toUpperCase() === sym,
   );
   const hasSymbolBuys = portfolioTxs.some((t) => isInvestmentTransactionType(t.type, 'buy'));
   const events = args.corporateActionEvents

@@ -22,6 +22,7 @@ import {
     resolveCashAccountCurrency,
 } from '../utils/investmentLedgerCurrency';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
+import { formatUnknownError } from '../utils/formatUnknownError';
 import { auditChangeLog } from '../services/auditLog';
 import { toast } from './ToastContext';
 import { validateAccount, validateGoal, validateHolding, validateTrade, validateTransactionCore, validateSettings, validateBackup, validateLiability, validateCommodityHolding, validateBudget, validateAsset, validatePlannedTrade, validateUniverseTicker, validatePortfolio, validateRecurringTransaction, validatePriceAlert, validateZakatPayment, validateWatchlistItem, validateGoalAllocation, validateTickerStatus, validateInvestmentPlan, validateExecutionLog, validateSukukPosition } from '../services/dataQuality/validation';
@@ -45,6 +46,7 @@ import {
 import { adjustQuotesForCorporateActionNow } from '../utils/corporateActionQuoteBridge';
 import { normalizeInvestmentCostLotRow } from '../services/investmentCostLotDb';
 import { syncPortfolioLedgerAfterChange } from '../services/portfolioLedgerSync';
+import { filterTransactionsForPortfolioReplay } from '../services/portfolioTransactionScope';
 import {
     assertDividendUpdateNotDuplicate,
     computeInvestmentTxCashDelta,
@@ -976,15 +978,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return error?.code === '42703' || error?.code === 'PGRST204' || message.includes('column') || message.includes('schema cache');
     };
     const formatDbError = (error: any): string => {
-        if (!error) return 'Unknown database error.';
-        if (error instanceof Error) return error.message;
-        const msg = String(error?.message ?? '').trim();
-        const details = String(error?.details ?? '').trim();
-        const hint = String(error?.hint ?? '').trim();
-        const code = String(error?.code ?? '').trim();
-        return [msg, details, hint, code ? `code=${code}` : '']
-            .filter((x) => x.length > 0)
-            .join(' | ') || 'Unknown database error.';
+        return formatUnknownError(error, 'Unknown database error.');
     };
 
     const goalPayloadVariants = (goal: Goal) => {
@@ -3337,7 +3331,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         const row = holdingToRow(holding);
         const { data: newHolding, error } = await supabase.from('holdings').insert(withUser(row)).select().single();
-        if (error) { console.error("Error adding holding:", error); throw error; }
+        if (error) { console.error("Error adding holding:", error); throw new Error(formatDbError(error)); }
         if (newHolding) {
             const normalized = normalizeHoldingFromRow(newHolding);
             startTransition(() => {
@@ -3369,7 +3363,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { error } = await db.from('holdings').update(row).match({ id: holding.id, user_id: auth.user.id });
         if (error) {
             console.error(error);
-            throw error;
+            throw new Error(formatDbError(error));
         } else {
             startTransition(() => {
                 setData((prev) => ({
@@ -3385,7 +3379,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const deleteHolding = async (holdingId: string) => {
         if (!supabase || !auth?.user) return;
         const { error } = await supabase.from('holdings').delete().match({ id: holdingId, user_id: auth.user.id });
-        if (error) { console.error("Error deleting holding:", error); throw error; }
+        if (error) { console.error("Error deleting holding:", error); throw new Error(formatDbError(error)); }
         setData(prev => ({
             ...prev,
             investments: prev.investments.map(p => ({
@@ -3400,6 +3394,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             corporateActionEvents?: CorporateActionEvent[];
             investmentTransactions?: InvestmentTransaction[];
             holdingsBaselineMode?: import('../services/corporateActionApply').HoldingsReplayBaselineMode;
+            /** Delta-only events for as_stored holdings replay (fresh CA apply/undo). */
+            holdingsReplayEvents?: CorporateActionEvent[];
         },
     ) => {
         if (!auth?.user) return;
@@ -3416,6 +3412,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             supabase,
             userId: auth.user.id,
             holdingsBaselineMode: overrides?.holdingsBaselineMode ?? 'replay_derived',
+            holdingsReplayEvents: overrides?.holdingsReplayEvents,
             onLotsUpdated: (updatedLots) => {
                 setData((prev) => ({
                     ...prev,
@@ -3497,9 +3494,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             corporateActionEvents: mergedEvents,
         }));
         await yieldToMain();
+        const replayTxs = filterTransactionsForPortfolioReplay({
+            portfolioId: args.portfolioId,
+            transactions: snapshot?.investmentTransactions ?? [],
+            holdingSymbols: portfolio.holdings?.map((h) => String(h.symbol ?? '')),
+            accountId: portfolio.accountId ?? (portfolio as { account_id?: string }).account_id,
+        });
+        const manualOnly = replayTxs.length === 0;
         await syncPortfolioAfterLedgerMutation(args.portfolioId, {
             corporateActionEvents: mergedEvents,
-            holdingsBaselineMode: 'as_stored',
+            holdingsBaselineMode: manualOnly ? 'as_stored' : 'replay_derived',
+            /** Delta-only is safe only when there are no ledger buys/sells (manual books). */
+            ...(manualOnly ? { holdingsReplayEvents: [ev] } : {}),
         });
 
         adjustQuotesForCorporateActionNow({
@@ -3644,9 +3650,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }));
         await removeCorporateActionCashDeposits(ev.idempotencyKey);
         await yieldToMain();
+        const replayTxs = filterTransactionsForPortfolioReplay({
+            portfolioId: ev.portfolioId,
+            transactions: snapshot?.investmentTransactions ?? [],
+            holdingSymbols: portfolio.holdings?.map((h) => String(h.symbol ?? '')),
+            accountId: portfolio.accountId ?? (portfolio as { account_id?: string }).account_id,
+        });
+        const manualOnly = replayTxs.length === 0;
         await syncPortfolioAfterLedgerMutation(ev.portfolioId, {
             corporateActionEvents: mergedEvents,
-            holdingsBaselineMode: 'as_stored',
+            holdingsBaselineMode: manualOnly ? 'as_stored' : 'replay_derived',
+            ...(manualOnly && reversalEv ? { holdingsReplayEvents: [reversalEv] } : {}),
         });
         adjustQuotesForCorporateActionNow({
             symbol: ev.symbol,
@@ -3731,11 +3745,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         let cashDeltaOut = 0;
         let positionDeltaOut = 0;
         try {
-            const { portfolioId, name, assetClass: tradeAssetClass, manualCurrentValue: manualCvInput, holdingType: incomingHoldingType, fees: feesInput, ...tradeData } = trade as typeof trade & {
+            const { portfolioId, name, assetClass: tradeAssetClass, manualCurrentValue: manualCvInput, holdingType: incomingHoldingType, fees: feesInput, goalId: tradeGoalId, ...tradeData } = trade as typeof trade & {
                 assetClass?: string;
                 manualCurrentValue?: number;
                 holdingType?: string;
                 fees?: number;
+                goalId?: string;
             };
             const feesRecorded =
                 typeof feesInput === 'number' && Number.isFinite(feesInput) ? Math.max(0, roundMoney(feesInput)) : 0;
@@ -4004,7 +4019,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
             if (invRpcErr && !missingInvestRpc) {
                 console.error(invRpcErr);
-                throw invRpcErr;
+                throw new Error(formatDbError(invRpcErr));
             }
             if (missingInvestRpc) {
                 try {
@@ -4042,7 +4057,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
             if (!isMissingColumnError(txError)) break;
         }
-        if (txError) { console.error("Error recording transaction:", txError); throw txError; }
+        if (txError) {
+            console.error('Error recording transaction:', txError);
+            throw new Error(formatDbError(txError));
+        }
         if (newTransaction) {
             const normalizedInserted = normalizeInvestmentTransaction(newTransaction);
             startTransition(() => {
@@ -4142,6 +4160,30 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                   ]
                 : [...(data?.investmentTransactions ?? [])];
             await syncPortfolioAfterLedgerMutation(portfolio.id, { investmentTransactions: mergedTxs });
+            if (tradeData.type === 'buy') {
+                const snap = dataRef.current;
+                const pf = (snap?.investments ?? []).find((p) => p.id === portfolio.id);
+                const holdingAfter = pf?.holdings.find(
+                    (h) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol,
+                );
+                if (holdingAfter) {
+                    const patched: Holding = {
+                        ...holdingAfter,
+                        ...(name ? { name } : {}),
+                        ...(tradeAssetClass ? { assetClass: tradeAssetClass as Holding['assetClass'] } : {}),
+                        ...(incomingHoldingType ? { holdingType: incomingHoldingType as Holding['holdingType'] } : {}),
+                        ...(manualCv != null ? { currentValue: manualCv } : {}),
+                        ...(tradeGoalId ? { goalId: tradeGoalId } : {}),
+                    };
+                    const needsPatch =
+                        (name && holdingAfter.name !== name) ||
+                        (tradeAssetClass && holdingAfter.assetClass !== tradeAssetClass) ||
+                        (incomingHoldingType && holdingAfter.holdingType !== incomingHoldingType) ||
+                        (manualCv != null && Math.abs((holdingAfter.currentValue ?? 0) - manualCv) > 0.01) ||
+                        (tradeGoalId && holdingAfter.goalId !== tradeGoalId);
+                    if (needsPatch) await updateHolding(patched);
+                }
+            }
         } catch (error) {
             console.error("Error updating holdings after trade:", error);
             let rollbackSucceeded = false;
@@ -4159,8 +4201,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 }
             }
             await fetchData();
-            const rollbackNote = rollbackSucceeded ? 'and was rolled back' : 'and rollback failed';
-            throw new Error(`Trade recorded but holding update failed ${rollbackNote}: ${error instanceof Error ? error.message : String(error)}`);
+            const rollbackNote = rollbackSucceeded
+                ? 'The trade was not kept (rolled back).'
+                : 'The trade may still be in your ledger — refresh and verify.';
+            throw new Error(
+                `Could not update holdings after trade. ${rollbackNote} ${formatUnknownError(error, 'Unknown holding update error.')}`,
+            );
         }
         
         // 4. If trade came from a plan, update the plan's status

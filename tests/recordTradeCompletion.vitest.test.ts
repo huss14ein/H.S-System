@@ -1,0 +1,144 @@
+/**
+ * Record Trade + cash/tx path completion — wiring + behavior guards (phase E2E).
+ * Trace: Investments modal → recordTrade → insert → syncPortfolioLedgerAfterChange → holdings/lots.
+ */
+import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { formatUnknownError } from '../utils/formatUnknownError';
+import {
+  filterTransactionsForPortfolio,
+  filterTransactionsForPortfolioReplay,
+} from '../services/portfolioTransactionScope';
+import type { InvestmentTransaction } from '../types';
+
+const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
+
+describe('recordTradeCompletion', () => {
+  it('Investments Record Trade surfaces readable errors (not [object Object])', () => {
+    const page = read('pages/Investments.tsx');
+    expect(page).toContain('formatUnknownError');
+    expect(page).toContain("formatUnknownError(error, 'Could not record trade.')");
+    expect(page).toContain('recordTradeConfirmed');
+    expect(page).toContain('confirmed: true');
+    expect(page).not.toMatch(/setSubmitError\(error instanceof Error \? error\.message : String\(error\)\)/);
+  });
+
+  it('DataContext recordTrade throws Error(formatDbError) on insert failure', () => {
+    const ctx = read('context/DataContext.tsx');
+    expect(ctx).toContain('const recordTrade = async');
+    expect(ctx).toContain('throw new Error(formatDbError(txError))');
+    expect(ctx).toContain('throw new Error(formatDbError(invRpcErr))');
+    expect(ctx).toContain('syncPortfolioAfterLedgerMutation(portfolio.id, { investmentTransactions: mergedTxs })');
+    expect(ctx).toContain('formatUnknownError(error,');
+    expect(ctx).not.toMatch(/if \(txError\) \{[^}]*throw txError/);
+  });
+
+  it('post-sync buy patches name / assetClass / manual value / goal', () => {
+    const ctx = read('context/DataContext.tsx');
+    expect(ctx).toContain('goalId: tradeGoalId');
+    expect(ctx).toContain('if (tradeData.type === \'buy\')');
+    expect(ctx).toContain('needsPatch');
+    expect(ctx).toContain('await updateHolding(patched)');
+  });
+
+  it('CA apply/undo uses manual-only delta replay; traded books use full replay_derived', () => {
+    const ctx = read('context/DataContext.tsx');
+    expect(ctx).toContain('filterTransactionsForPortfolioReplay');
+    expect(ctx).toContain('const manualOnly = replayTxs.length === 0');
+    expect(ctx).toContain("holdingsBaselineMode: manualOnly ? 'as_stored' : 'replay_derived'");
+    expect(ctx).toContain('...(manualOnly ? { holdingsReplayEvents: [ev] } : {})');
+    expect(ctx).toContain('...(manualOnly && reversalEv ? { holdingsReplayEvents: [reversalEv] } : {})');
+  });
+
+  it('ledger sync scopes orphans by account + held/scoped symbols', () => {
+    const scope = read('services/portfolioTransactionScope.ts');
+    expect(scope).toContain('filterTransactionsForPortfolioReplay');
+    expect(scope).toContain('scopedAccountId');
+    expect(scope).toContain('allow.add(sym)');
+    const apply = read('services/corporateActionApply.ts');
+    expect(apply).toContain('filterTransactionsForPortfolioReplay({');
+    expect(apply).toContain('accountId:');
+    const lots = read('services/portfolioLotReplayEngine.ts');
+    expect(lots).toContain('holdingSymbols');
+    expect(lots).toContain('accountId');
+    const sync = read('services/portfolioLedgerSync.ts');
+    expect(sync).toContain('formatUnknownError');
+    expect(sync).toContain('Failed to save cost lots');
+  });
+
+  it('formatUnknownError never returns [object Object] for Supabase-shaped errors', () => {
+    expect(
+      formatUnknownError({
+        message: 'violates foreign key constraint',
+        code: '23503',
+        details: 'Key (account_id) is not present',
+      }),
+    ).toMatch(/foreign key/i);
+    expect(formatUnknownError({})).not.toBe('[object Object]');
+  });
+
+  it('orphan filter: same-account held symbol included; other-account excluded; unheld invent blocked', () => {
+    const held: InvestmentTransaction = {
+      id: 'orphan-insp',
+      accountId: 'acc1',
+      date: '2026-01-01',
+      type: 'buy',
+      symbol: 'INSP',
+      quantity: 40,
+      price: 50,
+      total: 2000,
+    };
+    const sell: InvestmentTransaction = {
+      id: 'sell-insp',
+      portfolioId: 'pf1',
+      accountId: 'acc1',
+      date: '2026-07-09',
+      type: 'sell',
+      symbol: 'INSP',
+      quantity: 32,
+      price: 49.5,
+      total: 1584,
+    };
+    const otherAcc: InvestmentTransaction = {
+      id: 'orphan-other',
+      accountId: 'acc2',
+      date: '2026-01-01',
+      type: 'buy',
+      symbol: 'INSP',
+      quantity: 999,
+      price: 1,
+      total: 999,
+    };
+    const invent: InvestmentTransaction = {
+      id: 'orphan-lcid',
+      accountId: 'acc1',
+      date: '2026-01-01',
+      type: 'buy',
+      symbol: 'LCID',
+      quantity: 100,
+      price: 1,
+      total: 100,
+    };
+    expect(filterTransactionsForPortfolio('pf1', [held, sell])).toHaveLength(1);
+    const replayed = filterTransactionsForPortfolioReplay({
+      portfolioId: 'pf1',
+      transactions: [held, sell, otherAcc, invent],
+      holdingSymbols: ['INSP'],
+      accountId: 'acc1',
+    });
+    expect(replayed.map((t) => t.id).sort()).toEqual(['orphan-insp', 'sell-insp']);
+  });
+
+  it('cash/dividend entry points use recordTrade with confirmed or system opts', () => {
+    const sms = read('components/DividendSmsImportPanel.tsx');
+    expect(sms).toContain('recordTrade');
+    expect(sms).toContain('confirmed: true');
+    const stmt = read('pages/StatementUpload.tsx');
+    expect(stmt).toContain('recordTrade');
+    expect(stmt).toContain('system: true');
+    const div = read('pages/DividendTrackerView.tsx');
+    expect(div).toContain('recordTrade');
+    expect(div).toContain('system: true');
+  });
+});

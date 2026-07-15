@@ -753,3 +753,95 @@ export function computePersonalPlatformsRollupSAR(
   }
   return { subtotalSAR, dailyPnLSAR };
 }
+
+/**
+ * One investment platform row using **all** portfolios on the account (household-inclusive Analysis / managed split).
+ * Same metrics engine as {@link computePersonalPlatformCardRow}, without personal-owner filter.
+ */
+export function computeAllScopePlatformCardRow(
+  account: Account,
+  data: FinancialData,
+  options: {
+    sarPerUsd: number;
+    simulatedPrices: SimulatedPriceMap;
+    getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number };
+  },
+): PlatformCardMetrics {
+  const accounts = data.accounts ?? [];
+  const allPorts = data.investments ?? [];
+  const portfoliosOnAccount = allPorts.filter((p) => portfolioBelongsToAccount(p, account, accounts));
+  const txRaw = data.investmentTransactions ?? [];
+  const transactions = txRaw
+    .filter((t) => {
+      const txAccountId = resolveInvestmentTransactionAccountId(
+        t as InvestmentTransaction & { account_id?: string; portfolio_id?: string },
+        accounts,
+        data.investments ?? [],
+      );
+      if (!txAccountId) return false;
+      const canon = resolveCanonicalAccountId(txAccountId, accounts);
+      return canon === account.id || txAccountId === account.id;
+    })
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const currencies = [...new Set(portfoliosOnAccount.map((p) => resolveInvestmentPortfolioCurrency(p)))];
+  const platformCurrency = currencies.length === 1 ? currencies[0] : undefined;
+  return computePlatformCardMetrics({
+    portfolios: portfoliosOnAccount,
+    transactions,
+    accounts,
+    allInvestments: allPorts,
+    sarPerUsd: options.sarPerUsd,
+    availableCashByCurrency: options.getAvailableCashForAccount(account.id),
+    simulatedPrices: options.simulatedPrices,
+    platformCurrency,
+  });
+}
+
+/** Household-inclusive platforms rollup (all Investment accounts + all portfolios). */
+export function computeAllPlatformsRollupSAR(
+  data: FinancialData,
+  sarPerUsd: number,
+  simulatedPrices: SimulatedPriceMap,
+  getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number },
+): { subtotalSAR: number; dailyPnLSAR: number } {
+  const invAccounts = (data.accounts ?? []).filter((a) => a.type === 'Investment');
+  let subtotalSAR = 0;
+  let dailyPnLSAR = 0;
+  for (const account of invAccounts) {
+    const m = computeAllScopePlatformCardRow(account, data, {
+      sarPerUsd,
+      simulatedPrices,
+      getAvailableCashForAccount,
+    });
+    subtotalSAR += m.totalValueInSAR;
+    dailyPnLSAR += m.dailyPnLSAR;
+  }
+  return { subtotalSAR, dailyPnLSAR };
+}
+
+/** Household-inclusive commodities with live quotes (same mark rules as personal). */
+export function computeAllCommoditiesContributionSAR(
+  data: FinancialData,
+  _sarPerUsd: number,
+  simulatedPrices: SimulatedPriceMap,
+): { valueSAR: number; dailyDeltaSAR: number } {
+  const commodities = data.commodityHoldings ?? [];
+  let valueSAR = 0;
+  let dailyDeltaSAR = 0;
+  for (const ch of commodities) {
+    const sym = (ch.symbol || '').trim().toUpperCase();
+    const px = lookupLiveQuoteForSymbol(simulatedPrices, sym);
+    const rawSar =
+      px && Number.isFinite(px.price) ? px.price * (ch.quantity ?? 0) : (ch.currentValue ?? 0);
+    valueSAR += Number.isFinite(rawSar) ? rawSar : 0;
+    const changePerShare =
+      px && (px.change != null || px.changePercent != null)
+        ? resolveEquityListingExchange(sym) != null
+          ? quoteChangeForDailyPnL(sym, resolveQuoteChangePerShare(px))
+          : resolveQuoteChangePerShare(px)
+        : 0;
+    const chg = changePerShare * (ch.quantity ?? 0);
+    dailyDeltaSAR += Number.isFinite(chg) ? chg : 0;
+  }
+  return { valueSAR, dailyDeltaSAR };
+}

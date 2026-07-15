@@ -501,7 +501,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 totalReceivableSar: totalReceivable,
                 netPositionSar: netPosition,
                 debtToAssetPct: debtToAssetRatio,
-                liquidCashSar: liquidCheckingSavingsSar,
+                checkingSavingsSar: liquidCheckingSavingsSar,
                 liquidityRatio: liquidityRatioVal,
                 debtServicePct: debtServicePct,
                 debtStressScore: debtStress.score,

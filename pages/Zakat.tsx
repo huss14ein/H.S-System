@@ -15,7 +15,7 @@ import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { fetchLiveGoldPriceSarPerGram } from '../utils/commodityLiveValue';
-import { summarizeZakatableCommoditiesForZakat, summarizeZakatableInvestmentsForZakat } from '../services/zakatInvestmentValuation';
+import { summarizeZakatableCommoditiesForZakat, summarizeZakatableInvestmentsForZakat, summarizeZakatableSukukPositionsForZakat } from '../services/zakatInvestmentValuation';
 import { summarizeZakatableCashForZakat } from '../services/zakatCashValuation';
 import { computeDeductibleLiabilities } from '../services/zakatLiabilityMath';
 import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestments, getPersonalLiabilities, getPersonalTransactions } from '../utils/wealthScope';
@@ -135,16 +135,24 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
             invTx,
             asOf,
         );
+        const { totalSar: sukukValue, lines: sukukLines } = summarizeZakatableSukukPositionsForZakat(
+            data,
+            sarPerUsd,
+            asOf,
+        );
         const { totalSar: commodities, lines: commodityLines } = summarizeZakatableCommoditiesForZakat(commodityHoldings, asOf);
-        const total = cashZakatable + invValue + commodities;
+        const total = cashZakatable + invValue + sukukValue + commodities;
         return {
             cash: cashZakatable,
             cashGrossSar,
             cashLines,
-            investments: invValue,
+            investments: invValue + sukukValue,
+            brokerInvestments: invValue,
+            sukuk: sukukValue,
             commodities,
             total,
             investmentLines,
+            sukukLines,
             commodityLines,
         };
     }, [data, sarPerUsd]);
@@ -355,7 +363,45 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
                                         </table>
                                     </div>
                                     <p className="text-[11px] leading-5 text-slate-500 px-2 py-2 border-t border-slate-200 bg-slate-50/80">
-                                        Gross = market value (or cost basis). Zakat SAR = gross after ≈354‑day hawl when a start date exists. Non‑Zakatable positions excluded.
+                                        Broker holdings. Gross = market value (or cost basis). Zakat SAR = gross after ≈354‑day hawl when a start date exists. Non‑Zakatable positions excluded.
+                                    </p>
+                                </CollapsibleSection>
+                            )}
+                            {zakatableAssets.sukukLines.length > 0 && (
+                                <CollapsibleSection
+                                    title="Direct Sukuk"
+                                    summary={`${zakatableAssets.sukukLines.length} contract(s) · ${formatCurrencyString(zakatableAssets.sukuk, { inCurrency: 'SAR', digits: 0 })}`}
+                                    defaultExpanded={false}
+                                    card={false}
+                                    className="mt-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2"
+                                >
+                                    <div className="rounded-lg border border-slate-200 bg-white">
+                                        <table className="w-full text-xs text-left">
+                                            <thead className="sticky top-0 bg-slate-100 text-slate-600 uppercase tracking-wide">
+                                                <tr>
+                                                    <th className="py-1.5 px-2 font-semibold">Contract</th>
+                                                    <th className="py-1.5 px-2 font-semibold text-right">Gross SAR</th>
+                                                    <th className="py-1.5 px-2 font-semibold text-right">Zakat SAR</th>
+                                                    <th className="py-1.5 px-2 font-semibold">Hawl</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100 bg-white leading-relaxed">
+                                                {zakatableAssets.sukukLines.map((row) => (
+                                                    <tr key={row.id} className="text-slate-800">
+                                                        <td className="py-2 px-2 font-medium align-top">
+                                                            <div>{row.name}</div>
+                                                            <div className="text-[10px] text-slate-500">{row.symbol}</div>
+                                                        </td>
+                                                        <td className="py-2 px-2 text-right tabular-nums align-top">{formatCurrencyString(row.grossValueSar, { inCurrency: 'SAR', digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-right tabular-nums align-top font-medium">{formatCurrencyString(row.zakatableValueSar, { inCurrency: 'SAR', digits: 0 })}</td>
+                                                        <td className="py-2 px-2 text-[10px] text-slate-600 align-top max-w-[200px]">{row.hawlLabel}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <p className="text-[11px] leading-5 text-slate-500 px-2 py-2 border-t border-slate-200 bg-slate-50/80">
+                                        Direct Sukuk contracts (Investments → Sukuk). Outstanding principal in SAR. Hawl starts from issue date when set.
                                     </p>
                                 </CollapsibleSection>
                             )}

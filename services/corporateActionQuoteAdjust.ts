@@ -4,6 +4,7 @@
  */
 import type { CorporateAction } from './corporateActions';
 import { splitRatio } from './corporateActions';
+import { canonicalQuoteLookupKey } from './finnhubService';
 
 export type QuotePriceRow = { price: number; change: number; changePercent: number };
 
@@ -30,8 +31,9 @@ export function scaleQuotesForCorporateAction(
 ): { prices: Record<string, QuotePriceRow>; changed: boolean } {
   const ratio = splitQuoteAdjustRatio(action);
   if (ratio == null) return { prices, changed: false };
-  const upper = symbol.toUpperCase();
-  const keys = Object.keys(prices).filter((k) => k.toUpperCase() === upper);
+  const targetCanon = canonicalQuoteLookupKey(symbol);
+  if (!targetCanon) return { prices, changed: false };
+  const keys = Object.keys(prices).filter((k) => canonicalQuoteLookupKey(k) === targetCanon);
   if (keys.length === 0) return { prices, changed: false };
   const next = { ...prices };
   let changed = false;

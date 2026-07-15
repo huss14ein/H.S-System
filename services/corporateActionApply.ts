@@ -12,6 +12,13 @@ import {
 } from './corporateActions';
 import { rebuildPortfolioFromEvents } from './portfolioReplayEngine';
 import type { Holding, InvestmentPortfolio, InvestmentTransaction, CorporateActionEvent } from '../types';
+import { roundAvgCostPerUnit, roundQuantity } from '../utils/money';
+import { filterTransactionsForPortfolioReplay } from './portfolioTransactionScope';
+
+export {
+  filterTransactionsForPortfolio,
+  filterTransactionsForPortfolioReplay,
+} from './portfolioTransactionScope';
 
 export type CorporateActionEventRow = {
   id: string;
@@ -241,9 +248,12 @@ export async function replayPortfolioHoldings(args: {
       symbol: row.symbol,
       action: corporateActionFromRow(row),
     }));
-  const portfolioTxs = args.transactions.filter(
-    (t) => t.portfolioId === args.portfolio.id || !t.portfolioId,
-  );
+  const portfolioTxs = filterTransactionsForPortfolioReplay({
+    portfolioId: args.portfolio.id,
+    transactions: args.transactions,
+    holdingSymbols: args.portfolio.holdings?.map((h) => String(h.symbol ?? '')),
+    accountId: args.portfolio.accountId ?? (args.portfolio as { account_id?: string }).account_id,
+  });
   let initialHoldings: { symbol: string; quantity: number; avgCost: number }[] = [];
   if (portfolioTxs.length === 0) {
     const mode = args.holdingsBaselineMode ?? 'replay_derived';
@@ -336,11 +346,21 @@ export async function replayPortfolioHoldingsFromEvents(args: {
   transactions: InvestmentTransaction[];
   corporateActionEvents: CorporateActionEvent[];
   holdingsBaselineMode?: HoldingsReplayBaselineMode;
+  /**
+   * When set, holdings replay uses only these events (still portfolio-scoped).
+   * Use on fresh CA apply/undo with `as_stored` so prior events already baked into
+   * stored qty are not applied again.
+   */
+  holdingsReplayEvents?: CorporateActionEvent[];
 }): Promise<Map<string, { quantity: number; avgCost: number }>> {
-  const portfolioTxs = args.transactions.filter(
-    (t) => t.portfolioId === args.portfolio.id || !t.portfolioId,
-  );
-  const rows = args.corporateActionEvents
+  const portfolioTxs = filterTransactionsForPortfolioReplay({
+    portfolioId: args.portfolio.id,
+    transactions: args.transactions,
+    holdingSymbols: args.portfolio.holdings?.map((h) => String(h.symbol ?? '')),
+    accountId: args.portfolio.accountId ?? (args.portfolio as { account_id?: string }).account_id,
+  });
+  const eventSource = args.holdingsReplayEvents ?? args.corporateActionEvents;
+  const rows = eventSource
     .filter((e) => e.portfolioId === args.portfolio.id && e.status !== 'reversed')
     .map(corporateActionEventToRow);
   return replayPortfolioHoldings({
@@ -372,8 +392,8 @@ export async function persistHoldingsFromReplayMap(args: {
     if (existing) {
       await args.updateHolding({
         ...existing,
-        quantity: r.quantity,
-        avgCost: r.avgCost,
+        quantity: roundQuantity(r.quantity),
+        avgCost: roundAvgCostPerUnit(r.avgCost),
         // Total market exposure unchanged until quote tick; qty×price stays consistent after split-adjusted quotes.
         currentValue: existing.currentValue,
       });
@@ -382,9 +402,9 @@ export async function persistHoldingsFromReplayMap(args: {
         id: `ca-replay-${upper}-${Date.now()}`,
         symbol: upper,
         name: upper,
-        quantity: r.quantity,
-        avgCost: r.avgCost,
-        currentValue: r.quantity * r.avgCost,
+        quantity: roundQuantity(r.quantity),
+        avgCost: roundAvgCostPerUnit(r.avgCost),
+        currentValue: roundQuantity(r.quantity) * roundAvgCostPerUnit(r.avgCost),
         zakahClass: 'Zakatable',
         realizedPnL: 0,
         assetClass: 'Stock',
@@ -437,7 +457,7 @@ export function portfolioHasBuyHistoryForSymbol(args: {
   const sym = args.symbol.toUpperCase();
   return args.transactions.some(
     (t) =>
-      (t.portfolioId === args.portfolioId || !t.portfolioId) &&
+      t.portfolioId === args.portfolioId &&
       String(t.symbol ?? '').toUpperCase() === sym &&
       t.type === 'buy',
   );

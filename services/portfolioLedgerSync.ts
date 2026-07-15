@@ -19,6 +19,7 @@ import type {
   InvestmentPortfolio,
   InvestmentTransaction,
 } from '../types';
+import { formatUnknownError } from '../utils/formatUnknownError';
 
 export type SyncPortfolioLedgerArgs = {
   portfolio: InvestmentPortfolio;
@@ -30,8 +31,16 @@ export type SyncPortfolioLedgerArgs = {
   supabase?: SupabaseClient | null;
   userId?: string;
   onLotsUpdated?: (lots: InvestmentCostLot[]) => void;
-  /** Manual-only portfolios: as_stored on fresh apply/undo; replay_derived on re-sync. */
+  /**
+   * Manual-only portfolios: as_stored on fresh apply/undo (with holdingsReplayEvents = delta only);
+   * replay_derived on full re-sync.
+   */
   holdingsBaselineMode?: HoldingsReplayBaselineMode;
+  /**
+   * Holdings-only event list for as_stored delta apply/undo.
+   * Lots still rebuild from full {@link corporateActionEvents}.
+   */
+  holdingsReplayEvents?: CorporateActionEvent[];
 };
 
 function corporateEventsToReplay(events: CorporateActionEvent[], portfolioId: string): CorporateActionReplayEvent[] {
@@ -53,15 +62,13 @@ export async function syncPortfolioLedgerAfterChange(
 ): Promise<{ lots: InvestmentCostLot[]; realizedPnLBySymbol: Map<string, number> }> {
   const portfolioId = args.portfolio.id;
   const caReplay = corporateEventsToReplay(args.corporateActionEvents, portfolioId);
-  const portfolioTxs = args.investmentTransactions.filter(
-    (t) => t.portfolioId === portfolioId || !t.portfolioId,
-  );
 
   const replayed = await replayPortfolioHoldingsFromEvents({
     portfolio: args.portfolio,
     transactions: args.investmentTransactions,
     corporateActionEvents: args.corporateActionEvents,
     holdingsBaselineMode: args.holdingsBaselineMode ?? 'replay_derived',
+    holdingsReplayEvents: args.holdingsReplayEvents,
   });
 
   await persistHoldingsFromReplayMap({
@@ -75,9 +82,11 @@ export async function syncPortfolioLedgerAfterChange(
   const bookCurrency: 'SAR' | 'USD' = args.portfolio.currency === 'USD' ? 'USD' : 'SAR';
   const lotResult = await rebuildCostLotsFromEvents({
     portfolioId,
-    transactions: portfolioTxs,
+    transactions: args.investmentTransactions,
     corporateActions: caReplay,
     bookCurrency,
+    holdingSymbols: args.portfolio.holdings?.map((h) => String(h.symbol ?? '')),
+    accountId: args.portfolio.accountId ?? (args.portfolio as { account_id?: string }).account_id,
   });
 
   for (const [sym, pnl] of lotResult.realizedPnLBySymbol) {
@@ -105,7 +114,9 @@ export async function persistInvestmentCostLotsForPortfolio(
     .from('investment_cost_lots')
     .delete()
     .match({ user_id: userId, portfolio_id: portfolioId });
-  if (delErr && delErr.code !== 'PGRST205') throw delErr;
+  if (delErr && delErr.code !== 'PGRST205') {
+    throw new Error(formatUnknownError(delErr, 'Failed to clear cost lots.'));
+  }
 
   if (lots.length === 0) return;
 
@@ -115,5 +126,7 @@ export async function persistInvestmentCostLotsForPortfolio(
   }));
 
   const { error: insErr } = await supabase.from('investment_cost_lots').insert(rows);
-  if (insErr && insErr.code !== 'PGRST205') throw insErr;
+  if (insErr && insErr.code !== 'PGRST205') {
+    throw new Error(formatUnknownError(insErr, 'Failed to save cost lots.'));
+  }
 }
