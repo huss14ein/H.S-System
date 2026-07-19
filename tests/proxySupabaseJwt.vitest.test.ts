@@ -34,6 +34,13 @@ describe('proxySupabaseJwt', () => {
     expect(isProxyJwtVerificationEnabled()).toBe(true);
   });
 
+  it('isProxyJwtVerificationEnabled defaults on in production even without JWT secret (fail closed)', () => {
+    delete process.env.PROXY_REQUIRE_SUPABASE_JWT;
+    process.env.CONTEXT = 'production';
+    delete process.env.SUPABASE_JWT_SECRET;
+    expect(isProxyJwtVerificationEnabled()).toBe(true);
+  });
+
   it('isProxyJwtVerificationEnabled defaults on in production when JWT secret is set', () => {
     delete process.env.PROXY_REQUIRE_SUPABASE_JWT;
     process.env.CONTEXT = 'production';

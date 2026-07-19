@@ -1249,17 +1249,29 @@ const RecordTradeModal: React.FC<{
             const parsedDividendAmount = parseFloat(dividendAmount);
             const portfolio = portfolios.find((p) => p.id === portfolioId);
             const account = investmentAccounts.find((a) => a.id === accountId);
+            const bookCurrency = portfolio
+                ? (portfolio.currency === 'SAR' || portfolio.currency === 'USD' ? portfolio.currency : 'USD')
+                : tradeCurrency;
+            const qty = type === 'dividend' ? 0 : (parseFloat(quantity) || 0);
+            const px = type === 'dividend' ? 0 : (parseFloat(price) || 0);
+            const gross = qty * px;
+            const buySellTotal =
+                type === 'buy' ? gross + feeAmount : type === 'sell' ? Math.max(0, gross - feeAmount) : undefined;
             const tradePayload = {
                 accountId,
                 portfolioId,
                 type,
                 symbol: symbol.toUpperCase().trim(),
                 name: isNewHolding ? holdingName : undefined,
-                quantity: type === 'dividend' ? 0 : (parseFloat(quantity) || 0),
-                price: type === 'dividend' ? 0 : (parseFloat(price) || 0),
-                ...(type === 'dividend' ? { total: parsedDividendAmount || 0 } : {}),
+                quantity: qty,
+                price: px,
+                ...(type === 'dividend'
+                    ? { total: parsedDividendAmount || 0 }
+                    : buySellTotal != null
+                      ? { total: buySellTotal }
+                      : {}),
                 date,
-                currency: tradeCurrency,
+                currency: bookCurrency,
             };
             const confirmPayload = summarizeInvestmentTradeForConfirm(tradePayload, {
                 portfolioName: portfolio?.name,

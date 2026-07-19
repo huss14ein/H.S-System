@@ -18,7 +18,7 @@ describe('Analysis SAR normalization', () => {
     const transactions = [
       {
         id: 't1',
-        date: '2026-01-15',
+        date: '2026-06-15',
         description: 'STORE ONE',
         amount: -100,
         type: 'expense',
@@ -27,7 +27,7 @@ describe('Analysis SAR normalization', () => {
       },
       {
         id: 't2',
-        date: '2026-02-10',
+        date: '2026-05-10',
         description: 'STORE ONE',
         amount: -40,
         type: 'expense',

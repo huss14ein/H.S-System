@@ -55,6 +55,9 @@ Optionally run **`migrations/add_users_approved_metadata.sql`** afterward for a 
 | `add_investment_transaction_currency.sql` | `investment_transactions.currency`. |
 | `add_price_alert_currency.sql` | `price_alerts.currency`. |
 | `add_deposit_withdrawal_transaction_types.sql` | Allow `deposit` and `withdrawal` in investment_transactions. |
+| **`migrations/20260715120000_investment_transactions_portfolio_id.sql`** | **Required for Record Trade / CA / statement import:** nullable `investment_transactions.portfolio_id` + indexes. Keeps all existing rows (`NULL` until stamped by new trades). |
+| **`migrations/20260715121000_investment_transactions_fee_vat_types.sql`** | Allow `fee` and `vat` on `investment_transactions` (statement import broker fees). |
+| **`migrations/20260715122000_backfill_investment_transactions_portfolio_id.sql`** | Optional but recommended: stamp `portfolio_id` on legacy txs when the account has **exactly one** portfolio. |
 | `fix_investment_account_fk.sql` | Backfill and FK for investment_transactions.account_id. |
 | `rls_policies_optional.sql` | Row Level Security policies for investment_* tables (if using Supabase Auth). |
 | `rls_all_user_tables.sql` | **Production:** RLS for all user-scoped tables (accounts, assets, transactions, budgets, goals, etc.). Run after base tables exist. |

@@ -244,6 +244,8 @@ export function validateWizardStep(
         symbol: state.symbol,
         transactions: options.transactions,
         corporateActionEvents: options.corporateActionEvents ?? [],
+        accountId: portfolio.accountId ?? (portfolio as { account_id?: string }).account_id,
+        holdingSymbols: (portfolio.holdings ?? []).map((h) => String(h.symbol ?? '')),
       });
       if (!prereq.valid && prereq.error) errors.push(prereq.error);
     }

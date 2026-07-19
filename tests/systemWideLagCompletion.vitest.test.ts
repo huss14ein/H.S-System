@@ -112,9 +112,6 @@ describe('system-wide lag completion E2E', () => {
       'FinancialJournal.tsx',
       'SinkingFunds.tsx',
       'Notifications.tsx',
-      'Cashflow.tsx',
-      'Platforms.tsx',
-      'TransactionsPage.tsx',
     ]);
     const missing: string[] = [];
     for (const file of readdirSync(join(root, 'pages')).filter((f) => f.endsWith('.tsx'))) {

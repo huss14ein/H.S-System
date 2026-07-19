@@ -11,6 +11,7 @@ import {
 export { dividendAmountInBookCurrency } from './dividendLedgerGuards';
 import { findHoldingOptionByKey, type HoldingSymbolOption } from './holdingSymbolOptions';
 import type { RecordWriteOptions } from './recordConfirmBridge';
+import { formatUnknownError } from '../utils/formatUnknownError';
 
 /** Trade payload passed to `recordTrade` when booking SMS import rows. */
 export type DividendSmsRecordTradeInput = {
@@ -610,7 +611,7 @@ export async function importResolvedDividendSmsRows(args: {
         ),
       );
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = formatUnknownError(e, 'Import failed.');
       if (msg.toLowerCase().includes('already recorded')) {
         skippedDuplicates += 1;
       } else {

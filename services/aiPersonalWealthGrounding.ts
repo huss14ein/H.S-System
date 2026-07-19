@@ -3,7 +3,7 @@
  * budgets, goals, holdings. Keeps model replies aligned with Dashboard KPIs.
  */
 import type { Budget, FinancialData, Holding } from '../types';
-import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
+import { toSAR } from '../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { computePersonalHeadlineNetWorthSar } from './personalNetWorth';
@@ -23,7 +23,8 @@ import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 
 export type AiGroundingBuildOptions = {
   data: FinancialData;
-  exchangeRate?: number;
+  /** Required — same SAR/USD as Dashboard / headline NW (`useCanonicalFinancialMetrics().sarPerUsd`). */
+  exchangeRate: number;
   getAvailableCashForAccount?: (id: string) => { SAR: number; USD: number };
   simulatedPrices?: SimulatedPriceMap;
 };
@@ -94,7 +95,10 @@ function directSukukLines(data: FinancialData, sarPerUsd: number, limit = 3): st
 
 export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): AiPersonalWealthGrounding {
   const { data } = opts;
-  const exchangeRate = opts.exchangeRate ?? resolveSarPerUsd(data, undefined);
+  const exchangeRate = Number(opts.exchangeRate);
+  if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
+    throw new Error('buildAiPersonalWealthGrounding requires a positive exchangeRate (canonical SAR/USD).');
+  }
   const getCash = opts.getAvailableCashForAccount;
   const simulatedPrices = opts.simulatedPrices ?? {};
   const now = new Date();

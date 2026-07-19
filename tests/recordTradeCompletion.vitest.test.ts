@@ -31,8 +31,26 @@ describe('recordTradeCompletion', () => {
     expect(ctx).toContain('throw new Error(formatDbError(txError))');
     expect(ctx).toContain('throw new Error(formatDbError(invRpcErr))');
     expect(ctx).toContain('syncPortfolioAfterLedgerMutation(portfolio.id, { investmentTransactions: mergedTxs })');
+    expect(ctx).toContain('stampInvestmentTradeIdentity');
+    expect(ctx).toContain('applyFinancialDataPatch');
     expect(ctx).toContain('formatUnknownError(error,');
     expect(ctx).not.toMatch(/if \(txError\) \{[^}]*throw txError/);
+  });
+
+  it('investment/ledger cash deltas read accounts from dataRef (eager patch), not stale data closure', () => {
+    const ctx = read('context/DataContext.tsx');
+    const invFn = ctx.slice(
+      ctx.indexOf('const applyInvestmentAccountDeltaForTrade = async'),
+      ctx.indexOf('const addTransaction = async'),
+    );
+    expect(invFn).toContain('const snap = dataRef.current ?? data');
+    expect(invFn).toContain('resolveSarPerUsd(snap ?? null)');
+    expect(invFn).not.toMatch(/const acc = \(data\?\.accounts/);
+    const ledgerFn = ctx.slice(
+      ctx.indexOf('const applyLedgerAccountDeltaForTransaction = async'),
+      ctx.indexOf('const applyInvestmentAccountDeltaForTrade = async'),
+    );
+    expect(ledgerFn).toContain('const snap = dataRef.current ?? data');
   });
 
   it('post-sync buy patches name / assetClass / manual value / goal', () => {

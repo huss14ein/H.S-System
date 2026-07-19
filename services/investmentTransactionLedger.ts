@@ -77,6 +77,7 @@ export function assertDividendUpdateNotDuplicate(args: {
 export function investmentTransactionToRow(
   tx: InvestmentTransaction,
   _data: FinancialData | null,
+  opts?: { includeId?: boolean },
 ): Record<string, unknown> {
   const total = roundMoney(Math.max(0, Number(tx.total) || getInvestmentTransactionCashAmount(tx as any) || 0));
   const row: Record<string, unknown> = {
@@ -86,13 +87,26 @@ export function investmentTransactionToRow(
     quantity: tx.type === 'dividend' ? 0 : Number(tx.quantity) || 0,
     price: tx.type === 'dividend' ? 0 : Number(tx.price) || 0,
     total,
-    account_id: tx.accountId,
+    account_id: tx.accountId ?? (tx as { account_id?: string }).account_id,
   };
-  if (tx.portfolioId) {
-    row.portfolio_id = tx.portfolioId;
+  if (opts?.includeId && tx.id) {
+    row.id = tx.id;
+  }
+  const portfolioId = tx.portfolioId ?? (tx as { portfolio_id?: string }).portfolio_id;
+  if (portfolioId) {
+    row.portfolio_id = portfolioId;
   }
   if (tx.currency === 'USD' || tx.currency === 'SAR') {
     row.currency = tx.currency;
+  }
+  const linked =
+    tx.linkedCashAccountId ?? (tx as { linked_cash_account_id?: string }).linked_cash_account_id;
+  if (linked) {
+    row.linked_cash_account_id = linked;
+  }
+  const idem = tx.idempotencyKey ?? (tx as { idempotency_key?: string }).idempotency_key;
+  if (idem) {
+    row.idempotency_key = idem;
   }
   return row;
 }

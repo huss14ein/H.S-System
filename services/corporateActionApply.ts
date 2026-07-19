@@ -457,13 +457,19 @@ export function portfolioHasBuyHistoryForSymbol(args: {
   portfolioId: string;
   symbol: string;
   transactions: InvestmentTransaction[];
+  /** Platform account — lets same-account orphan buys (pre-portfolio_id) count. */
+  accountId?: string | null;
+  holdingSymbols?: Iterable<string>;
 }): boolean {
   const sym = args.symbol.toUpperCase();
-  return args.transactions.some(
-    (t) =>
-      t.portfolioId === args.portfolioId &&
-      String(t.symbol ?? '').toUpperCase() === sym &&
-      t.type === 'buy',
+  const scoped = filterTransactionsForPortfolioReplay({
+    portfolioId: args.portfolioId,
+    transactions: args.transactions,
+    holdingSymbols: args.holdingSymbols ?? [sym],
+    accountId: args.accountId,
+  });
+  return scoped.some(
+    (t) => String(t.symbol ?? '').toUpperCase() === sym && t.type === 'buy',
   );
 }
 
@@ -486,6 +492,8 @@ export function validateCorporateActionApplyPrerequisites(args: {
   symbol: string;
   transactions: InvestmentTransaction[];
   corporateActionEvents: CorporateActionEvent[];
+  accountId?: string | null;
+  holdingSymbols?: Iterable<string>;
 }): { valid: boolean; error?: string } {
   const hasBuys = portfolioHasBuyHistoryForSymbol(args);
   if (hasBuys) return { valid: true };

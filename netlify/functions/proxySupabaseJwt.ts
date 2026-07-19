@@ -21,13 +21,14 @@ function isProductionRuntime(): boolean {
 /**
  * JWT gate for Netlify proxies. Explicit opt-out: `PROXY_REQUIRE_SUPABASE_JWT=0`.
  * Explicit opt-in: `PROXY_REQUIRE_SUPABASE_JWT=1`.
- * Default in production: require JWT when `SUPABASE_JWT_SECRET` is configured.
+ * Default in production: always require JWT (fail closed even if SUPABASE_JWT_SECRET is missing —
+ * verify then returns null → 401, never an open proxy).
  */
 export function isProxyJwtVerificationEnabled(): boolean {
   const v = (process.env.PROXY_REQUIRE_SUPABASE_JWT || '').trim().toLowerCase();
   if (v === '0' || v === 'false' || v === 'no') return false;
   if (v === '1' || v === 'true' || v === 'yes') return true;
-  return isProductionRuntime() && Boolean(process.env.SUPABASE_JWT_SECRET?.trim());
+  return isProductionRuntime();
 }
 
 export function extractBearerToken(event: HandlerEvent): string | null {
