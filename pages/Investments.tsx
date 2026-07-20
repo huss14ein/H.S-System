@@ -12,6 +12,7 @@ import { InvestmentPortfolio, Holding, HoldingAssetClass, HOLDING_ASSET_CLASS_OP
 import type { Page } from '../types';
 import SukukInvestmentsSection from '../components/investments/SukukInvestmentsSection';
 import CorporateActionApplyPanel from '../components/investments/CorporateActionApplyPanel';
+import HoldingsQtyIntegrityPanel from '../components/investments/HoldingsQtyIntegrityPanel';
 import CorporateActionWizard from '../components/investments/corporateActions/CorporateActionWizard';
 import {
   clearCorporateActionWizardPlan,
@@ -5900,6 +5901,8 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
             </p>
         )}
 
+        <HoldingsQtyIntegrityPanel compact />
+
         <details className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <summary className="cursor-pointer select-none text-sm font-semibold text-slate-800">
                 How is “Net Gain/Loss” calculated?
@@ -5929,8 +5932,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                 </div>
             </div>
             <p className="mt-3 text-xs text-slate-600 leading-relaxed">
-                If this number looks wrong, open <span className="font-semibold text-slate-800">System &amp; APIs Health</span>, tab{' '}
-                <span className="font-semibold text-slate-800">Data reconciliation</span>, section <span className="font-semibold text-slate-800">Investment KPI reconciliation</span> (set URL hash <code className="text-[11px]">#investment-kpi-reconciliation</code> or choose that tab and scroll).
+                If share counts look wrong after a trade, use <span className="font-semibold text-slate-800">Holdings quantity integrity</span> above (Keep stored / Rebuild this symbol). For KPI cash detail, open System &amp; APIs Health → Data reconciliation.
             </p>
         </details>
 

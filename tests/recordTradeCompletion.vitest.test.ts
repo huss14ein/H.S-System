@@ -1,6 +1,6 @@
 /**
  * Record Trade + cash/tx path completion — wiring + behavior guards (phase E2E).
- * Trace: Investments modal → recordTrade → insert → syncPortfolioLedgerAfterChange → holdings/lots.
+ * Trace: Investments modal → recordTrade → applyPositionDeltaForTrade → syncLotsAfterTrade.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -30,11 +30,15 @@ describe('recordTradeCompletion', () => {
     expect(ctx).toContain('const recordTrade = async');
     expect(ctx).toContain('throw new Error(formatDbError(txError))');
     expect(ctx).toContain('throw new Error(formatDbError(invRpcErr))');
-    expect(ctx).toContain('syncPortfolioAfterLedgerMutation(portfolio.id, { investmentTransactions: mergedTxs })');
+    expect(ctx).toContain('applyPositionDeltaForTrade');
+    expect(ctx).toContain('syncLotsAfterTrade');
     expect(ctx).toContain('stampInvestmentTradeIdentity');
     expect(ctx).toContain('applyFinancialDataPatch');
     expect(ctx).toContain('formatUnknownError(error,');
     expect(ctx).not.toMatch(/if \(txError\) \{[^}]*throw txError/);
+    expect(ctx).not.toContain(
+      'syncPortfolioAfterLedgerMutation(portfolio.id, { investmentTransactions: mergedTxs })',
+    );
   });
 
   it('investment/ledger cash deltas read accounts from dataRef (eager patch), not stale data closure', () => {

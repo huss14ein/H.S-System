@@ -29,6 +29,7 @@ import { reconcileHoldingsWithCorporateActionsSync, reconciliationExceptionRepor
 import { buildHoldingsDividendReconciliationReport } from '../services/holdingsDividendReconciliation';
 import { findHoldingsValueOutliers, type HoldingOutlierRow } from '../services/holdingsOutlierAudit';
 import type { HoldingsReconcileRow } from '../services/holdingsDividendReconciliation';
+import HoldingsQtyIntegrityPanel from '../components/investments/HoldingsQtyIntegrityPanel';
 import DashboardKpiQualityPanel from '../components/DashboardKpiQualityPanel';
 import {
   validateSystemIntegrity,
@@ -46,7 +47,7 @@ type SystemHealthTab = 'apis' | 'data' | 'developer';
 
 const HASH_TO_TAB = (hash: string): SystemHealthTab => {
   const h = hash.replace(/^#/, '');
-  if (h === 'data-reconciliation' || h === 'investment-kpi-reconciliation') return 'data';
+  if (h === 'data-reconciliation' || h === 'investment-kpi-reconciliation' || h === 'holdings-qty-integrity') return 'data';
   if (h === 'developer') return 'developer';
   return 'apis';
 };
@@ -360,7 +361,7 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
 
   const scrollToHashTarget = useCallback((hash: string) => {
     const id = hash.replace(/^#/, '');
-    if (id !== 'investment-kpi-reconciliation' && id !== 'data-reconciliation') return;
+    if (id !== 'investment-kpi-reconciliation' && id !== 'data-reconciliation' && id !== 'holdings-qty-integrity') return;
     window.requestAnimationFrame(() => {
       document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
@@ -1048,6 +1049,8 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
               </ul>
             </div>
           )}
+
+          <HoldingsQtyIntegrityPanel />
 
           {integritySummary.holdingsDividendReport && !integritySummary.holdingsDividendReport.isClean && (
             <div className="mt-4 pt-4 border-t border-slate-200">

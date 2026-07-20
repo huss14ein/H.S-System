@@ -43,13 +43,17 @@ import {
   corporateActionDepositsCash,
   corporateActionFromEvent,
   normalizeCorporateActionEventRow,
-  portfolioHasBuyHistoryForSymbol,
   validateCorporateActionApplyPrerequisites,
 } from '../services/corporateActionApply';
 import { adjustQuotesForCorporateActionNow } from '../utils/corporateActionQuoteBridge';
 import { normalizeInvestmentCostLotRow } from '../services/investmentCostLotDb';
-import { syncPortfolioLedgerAfterChange } from '../services/portfolioLedgerSync';
 import {
+    rebuildHoldingsFromLedger,
+    syncLotsAfterTrade,
+    syncPortfolioLedgerAfterChange,
+} from '../services/portfolioLedgerSync';
+import {
+    filterTransactionsForPortfolio,
     filterTransactionsForPortfolioReplay,
     hasPositionAffectingTransactions,
 } from '../services/portfolioTransactionScope';
@@ -63,6 +67,7 @@ import {
 import { canPostTransactionToAccount } from '../services/dataQuality/accountPostingPolicy';
 import { parseSplitsFromNote } from '../services/transactionSplitNote';
 import { consolidateHoldingsBySymbol } from '../services/holdingMath';
+import { applyPositionDeltaForTrade } from '../services/applyPositionDeltaForTrade';
 import { roundAvgCostPerUnit, roundMoney, roundQuantity } from '../utils/money';
 import { normalizeCoreUpsideAllocations } from '../utils/investmentPlanAllocations';
 import { normalizePlanSlice, stripNestedPlans, toPlanSlice } from '../utils/investmentPlanPerPortfolio';
@@ -224,6 +229,8 @@ interface DataContextType {
     linkedSymbol?: string;
   }) => Promise<void>;
   reverseCorporateActionEvent: (eventId: string) => Promise<void>;
+  /** Explicit repair — rebuild named symbols from portfolio_id ledger (never runs on trade). */
+  rebuildHoldingsFromLedgerForSymbols: (args: { portfolioId: string; symbols: string[] }) => Promise<void>;
   addWatchlistItem: (item: WatchlistItem, opts?: RecordWriteOptions) => Promise<void>;
   updateWatchlistItem: (item: WatchlistItem) => Promise<void>;
   deleteWatchlistItem: (symbol: string) => Promise<void>;
@@ -319,6 +326,7 @@ const DATA_CONTEXT_ACTION_KEYS = [
   'deleteInvestmentTransaction',
   'applyCorporateActionEvent',
   'reverseCorporateActionEvent',
+  'rebuildHoldingsFromLedgerForSymbols',
   'addWatchlistItem',
   'updateWatchlistItem',
   'deleteWatchlistItem',
@@ -3409,7 +3417,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             portfolioId: (holding as any).portfolioId,
             holdingType: holding.holdingType,
         });
-        if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+        if (!v.valid) {
+            const msg = v.errors.join('\n');
+            toast(msg, 'error');
+            /** Throw so applyPositionDeltaForTrade / CA sync cannot claim success after a silent no-op. */
+            throw new Error(msg);
+        }
         const db = supabase;
         const row = holdingToRow(holding);
         const { error } = await db.from('holdings').update(row).match({ id: holding.id, user_id: auth.user.id });
@@ -3440,35 +3453,84 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const syncPortfolioAfterLedgerMutation = async (
         portfolioId: string,
-        overrides?: {
+        overrides: {
             corporateActionEvents?: CorporateActionEvent[];
             investmentTransactions?: InvestmentTransaction[];
             holdingsBaselineMode?: import('../services/corporateActionApply').HoldingsReplayBaselineMode;
             /** Delta-only events for as_stored holdings replay (fresh CA apply/undo). */
             holdingsReplayEvents?: CorporateActionEvent[];
+            /** Required — only these symbols are persisted from replay. */
+            symbols: string[];
         },
     ) => {
         if (!auth?.user) return;
         const snapshot = dataRef.current;
         const portfolio = (snapshot?.investments ?? []).find((p) => p.id === portfolioId);
         if (!portfolio) return;
+        const symbols = (overrides.symbols ?? [])
+            .map((s) => String(s ?? '').trim().toUpperCase())
+            .filter(Boolean);
+        if (symbols.length === 0) {
+            throw new Error('syncPortfolioAfterLedgerMutation requires at least one symbol.');
+        }
         await syncPortfolioLedgerAfterChange({
             portfolio,
-            investmentTransactions: overrides?.investmentTransactions ?? snapshot?.investmentTransactions ?? [],
-            corporateActionEvents: overrides?.corporateActionEvents ?? snapshot?.corporateActionEvents ?? [],
+            investmentTransactions: overrides.investmentTransactions ?? snapshot?.investmentTransactions ?? [],
+            corporateActionEvents: overrides.corporateActionEvents ?? snapshot?.corporateActionEvents ?? [],
             updateHolding,
             addHolding,
             deleteHolding,
             supabase,
             userId: auth.user.id,
-            holdingsBaselineMode: overrides?.holdingsBaselineMode ?? 'replay_derived',
-            holdingsReplayEvents: overrides?.holdingsReplayEvents,
+            holdingsBaselineMode: overrides.holdingsBaselineMode ?? 'replay_derived',
+            holdingsReplayEvents: overrides.holdingsReplayEvents,
+            symbols,
             onLotsUpdated: (updatedLots) => {
                 applyFinancialDataPatch((prev) => ({
                     ...prev,
                     investmentCostLots: [
                         ...updatedLots,
                         ...(prev.investmentCostLots ?? []).filter((l) => l.portfolioId !== portfolioId),
+                    ],
+                }));
+            },
+        });
+    };
+
+    /** Explicit repair: rebuild named symbols from portfolio_id ledger (never auto on trade). */
+    const rebuildHoldingsFromLedgerForSymbols = async (args: {
+        portfolioId: string;
+        symbols: string[];
+    }) => {
+        if (!auth?.user) return;
+        const snapshot = dataRef.current;
+        const portfolio = (snapshot?.investments ?? []).find((p) => p.id === args.portfolioId);
+        if (!portfolio) throw new Error('Portfolio not found');
+        const symbols = args.symbols.map((s) => String(s ?? '').trim().toUpperCase()).filter(Boolean);
+        if (symbols.length === 0) throw new Error('Select at least one symbol to rebuild.');
+        await rebuildHoldingsFromLedger({
+            portfolio,
+            investmentTransactions: filterTransactionsForPortfolio(
+                args.portfolioId,
+                snapshot?.investmentTransactions ?? [],
+            ),
+            corporateActionEvents: snapshot?.corporateActionEvents ?? [],
+            symbols,
+            updateHolding,
+            addHolding,
+            deleteHolding,
+            resolveHolding: (sym) => {
+                const pf = (dataRef.current?.investments ?? []).find((p) => p.id === args.portfolioId);
+                return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
+            },
+            supabase,
+            userId: auth.user.id,
+            onLotsUpdated: (updatedLots) => {
+                applyFinancialDataPatch((prev) => ({
+                    ...prev,
+                    investmentCostLots: [
+                        ...updatedLots,
+                        ...(prev.investmentCostLots ?? []).filter((l) => l.portfolioId !== args.portfolioId),
                     ],
                 }));
             },
@@ -3553,11 +3615,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             accountId: portfolio.accountId ?? (portfolio as { account_id?: string }).account_id,
         });
         const manualOnly = !hasPositionAffectingTransactions(replayTxs);
+        const caSymbols = [args.symbol, args.linkedSymbol]
+            .map((s) => String(s ?? '').trim().toUpperCase())
+            .filter(Boolean);
         await syncPortfolioAfterLedgerMutation(args.portfolioId, {
             corporateActionEvents: mergedEvents,
             holdingsBaselineMode: manualOnly ? 'as_stored' : 'replay_derived',
             /** Delta-only is safe only when there are no ledger buys/sells (manual books). */
             ...(manualOnly ? { holdingsReplayEvents: [ev] } : {}),
+            symbols: caSymbols,
         });
 
         adjustQuotesForCorporateActionNow({
@@ -3709,10 +3775,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             accountId: portfolio.accountId ?? (portfolio as { account_id?: string }).account_id,
         });
         const manualOnly = !hasPositionAffectingTransactions(replayTxs);
+        const undoSymbols = [ev.symbol, ev.linkedSymbol]
+            .map((s) => String(s ?? '').trim().toUpperCase())
+            .filter(Boolean);
         await syncPortfolioAfterLedgerMutation(ev.portfolioId, {
             corporateActionEvents: mergedEvents,
             holdingsBaselineMode: manualOnly ? 'as_stored' : 'replay_derived',
             ...(manualOnly ? { holdingsReplayEvents: [reversalEv] } : {}),
+            symbols: undoSymbols,
         });
         adjustQuotesForCorporateActionNow({
             symbol: ev.symbol,
@@ -4209,12 +4279,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     'For manual valuation, enter the current position value (e.g. Mashora balance, retirement account value).',
                 );
             }
-            if (symbolHoldingsForTrade.length > 1 && existingHolding) {
-                await updateHolding(existingHolding);
-                for (const duplicateHolding of symbolHoldingsForTrade.slice(1)) {
-                    await deleteHolding(duplicateHolding.id);
-                }
-            }
             const mergedTxs = newTransaction
                 ? [
                       stampInvestmentTradeIdentity(
@@ -4227,41 +4291,56 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                       ...(dataRef.current?.investmentTransactions ?? []).filter((t) => t.id !== newTransaction.id),
                   ]
                 : [...(dataRef.current?.investmentTransactions ?? [])];
+
             /**
-             * Sell-only (manual book, no buy ledger): reduce qty here before sync.
-             * Holdings replay trusts as_stored for sell-only symbols and skips re-applying sells
-             * (otherwise every later sync would subtract the same sells again).
+             * Position book: incremental mutation of the traded symbol only.
+             * Never run portfolio-wide persistHoldingsFromReplayMap after buy/sell.
              */
-            if (tradeData.type === 'sell' && existingHolding?.id) {
-                const hasBuys = portfolioHasBuyHistoryForSymbol({
+            if (tradeData.type === 'buy' || tradeData.type === 'sell') {
+                const deltaResult = await applyPositionDeltaForTrade({
                     portfolioId: portfolio.id,
                     symbol: normalizedSymbol,
-                    transactions: mergedTxs,
-                    accountId: accountIdForInsert,
-                    holdingSymbols: (portfolio.holdings ?? []).map((h) => String(h.symbol ?? '')),
+                    side: tradeData.type,
+                    quantity: tradeData.quantity,
+                    price: tradeData.price,
+                    existingHolding: existingHolding ?? null,
+                    duplicateHoldingIds: symbolHoldingsForTrade.slice(1).map((h) => h.id).filter(Boolean),
+                    name,
+                    assetClass: tradeAssetClass as Holding['assetClass'] | undefined,
+                    holdingType: incomingHoldingType as Holding['holdingType'] | undefined,
+                    manualCurrentValue: manualCv,
+                    goalId: tradeGoalId,
+                    updateHolding,
+                    addHolding,
+                    deleteHolding,
                 });
-                if (!hasBuys) {
-                    const nextQty = roundQuantity(
-                        Math.max(0, Number(existingHolding.quantity) || 0) - Math.max(0, Number(tradeData.quantity) || 0),
-                    );
-                    if (nextQty < 1e-9) {
-                        await deleteHolding(existingHolding.id);
-                    } else {
-                        const prevQty = Math.max(0, Number(existingHolding.quantity) || 0);
-                        const scaledCv =
-                            prevQty > 1e-9
-                                ? roundMoney((Number(existingHolding.currentValue) || 0) * (nextQty / prevQty))
-                                : nextQty * roundAvgCostPerUnit(Number(existingHolding.avgCost) || 0);
-                        await updateHolding({
-                            ...existingHolding,
-                            quantity: nextQty,
-                            currentValue: scaledCv,
-                        });
-                    }
-                }
+                positionDeltaOut = deltaResult.positionDelta;
+
+                await yieldToMain();
+                const portfolioAfter = (dataRef.current?.investments ?? []).find((p) => p.id === portfolio.id) ?? portfolio;
+                await syncLotsAfterTrade({
+                    portfolio: portfolioAfter,
+                    investmentTransactions: mergedTxs,
+                    corporateActionEvents: dataRef.current?.corporateActionEvents ?? [],
+                    touchedSymbols: [normalizedSymbol],
+                    resolveHolding: (sym) => {
+                        const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolio.id);
+                        return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
+                    },
+                    updateHolding,
+                    supabase,
+                    userId: auth.user.id,
+                    onLotsUpdated: (updatedLots) => {
+                        applyFinancialDataPatch((prev) => ({
+                            ...prev,
+                            investmentCostLots: [
+                                ...updatedLots,
+                                ...(prev.investmentCostLots ?? []).filter((l) => l.portfolioId !== portfolio.id),
+                            ],
+                        }));
+                    },
+                });
             }
-            await yieldToMain();
-            await syncPortfolioAfterLedgerMutation(portfolio.id, { investmentTransactions: mergedTxs });
             if (tradeData.type === 'buy') {
                 const snap = dataRef.current;
                 const pf = (snap?.investments ?? []).find((p) => p.id === portfolio.id);
@@ -5202,6 +5281,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         deleteInvestmentTransaction,
         applyCorporateActionEvent,
         reverseCorporateActionEvent,
+        rebuildHoldingsFromLedgerForSymbols,
         addWatchlistItem,
         updateWatchlistItem,
         deleteWatchlistItem,

@@ -11,11 +11,12 @@ import type { Holding, InvestmentPortfolio, InvestmentTransaction } from '../typ
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
 
 describe('portfolioLedgerSellCompletion', () => {
-  it('realized PnL patch uses post-replay qty (never spreads stale pre-sell holding)', () => {
+  it('realized PnL patch on CA sync uses post-replay qty (never spreads stale pre-sell holding)', () => {
     const sync = read('services/portfolioLedgerSync.ts');
     expect(sync).toContain('const pos = replayed.get(upper)');
     expect(sync).toContain('quantity: roundQuantity(pos.quantity)');
-    expect(sync).not.toMatch(/await args\.updateHolding\(\{ \.\.\.h, realizedPnL: pnl \}\)/);
+    expect(sync).toContain('syncLotsAfterTrade');
+    expect(sync).toContain('rebuildHoldingsFromLedger');
     expect(sync).toContain('Cost lot persist failed after holdings sync');
   });
 
@@ -235,6 +236,7 @@ describe('portfolioLedgerSellCompletion', () => {
       updateHolding,
       addHolding,
       deleteHolding,
+      symbols: ['LCID'],
     });
 
     // First updateHolding from persist (qty 60); any later PnL patch must also use qty 60.
@@ -248,11 +250,13 @@ describe('portfolioLedgerSellCompletion', () => {
     expect(deleteHolding).not.toHaveBeenCalled();
   });
 
-  it('DataContext sell-only path patches qty before sync (idempotent replay)', () => {
+  it('DataContext buy/sell uses applyPositionDeltaForTrade (not sell-only pre-sync special case)', () => {
     const ctx = read('context/DataContext.tsx');
-    expect(ctx).toContain('portfolioHasBuyHistoryForSymbol');
-    expect(ctx).toContain("tradeData.type === 'sell'");
-    expect(ctx).toContain('Sell-only (manual book, no buy ledger)');
+    expect(ctx).toContain('applyPositionDeltaForTrade');
+    expect(ctx).toContain('syncLotsAfterTrade');
+    expect(ctx).toContain("tradeData.type === 'buy' || tradeData.type === 'sell'");
+    expect(ctx).not.toContain('portfolioHasBuyHistoryForSymbol');
+    expect(ctx).not.toContain('Sell-only (manual book, no buy ledger)');
     const apply = read('services/corporateActionApply.ts');
     expect(apply).toContain('sellOnlySymbols');
     expect(apply).toContain('txsForHoldingsReplay');
@@ -312,6 +316,7 @@ describe('portfolioLedgerSellCompletion', () => {
       updateHolding,
       addHolding,
       deleteHolding,
+      symbols: ['LCID'],
     });
 
     expect(deleteHolding).toHaveBeenCalledWith('h1');

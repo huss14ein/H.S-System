@@ -1,7 +1,9 @@
 /**
  * Scope investment ledger rows to a single portfolio.
- * Orphan rows (missing portfolioId) must not invent unrelated symbols on a portfolio,
- * but may still apply to symbols already held or present on scoped txs (legacy data).
+ *
+ * Automatic trade / lots paths must use {@link filterTransactionsForPortfolio} only
+ * (strict portfolio_id). Orphan absorption in {@link filterTransactionsForPortfolioReplay}
+ * is for repair / reconciliation reports — never for routine position writes.
  */
 import type { InvestmentTransaction } from '../types';
 
@@ -28,6 +30,9 @@ export function hasPositionAffectingTransactions(transactions: InvestmentTransac
 /**
  * Portfolio-scoped txs plus same-account legacy orphans for allowed symbols.
  * Allowed symbols = held symbols ∪ symbols appearing on portfolio-scoped txs.
+ *
+ * Use only for repair / reconciliation visibility — never for automatic
+ * position writes after buy/sell (those must use {@link filterTransactionsForPortfolio}).
  */
 export function filterTransactionsForPortfolioReplay(
   portfolioIdOrArgs: string | PortfolioReplayTxFilterArgs,

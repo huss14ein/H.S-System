@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyBuyToHolding, consolidateHoldingsBySymbol } from '../services/holdingMath';
+import { applyBuyToHolding, applySellToHolding, consolidateHoldingsBySymbol } from '../services/holdingMath';
 
 describe('investment buy into existing holding', () => {
   it('computes weighted average cost', () => {
@@ -44,5 +44,15 @@ describe('duplicate symbol consolidation', () => {
     expect(merged?.avgCost).toBe(112);
     expect(merged?.currentValue).toBe(580);
     expect(merged?.realizedPnL).toBe(12);
+  });
+});
+
+describe('applySellToHolding', () => {
+  it('reduces qty and scales currentValue', () => {
+    const r = applySellToHolding({ quantity: 20, avgCost: 10, currentValue: 300 }, 5);
+    expect(r.quantity).toBe(15);
+    expect(r.avgCost).toBe(10);
+    expect(r.currentValue).toBe(225);
+    expect(r.closed).toBe(false);
   });
 });

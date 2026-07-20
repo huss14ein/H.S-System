@@ -267,7 +267,11 @@ export async function replayPortfolioHoldings(args: {
     tradedSymbols.add(sym);
     if (t.type === 'buy') symbolsWithBuys.add(sym);
   }
-  /** Manual books that only have sells — qty is patched in recordTrade; replaying sells would double-apply. */
+  /**
+   * Manual books that only have sells — qty is owned by applyPositionDeltaForTrade on the trade path.
+   * When this hybrid replay runs (CA / explicit rebuild), sell-only symbols keep as_stored qty and
+   * their sell txs are skipped so they are not double-applied.
+   */
   const sellOnlySymbols = new Set(
     [...tradedSymbols].filter((sym) => !symbolsWithBuys.has(sym)),
   );
@@ -277,10 +281,9 @@ export async function replayPortfolioHoldings(args: {
     initialHoldings = resolveManualPortfolioInitialHoldings(args.portfolio, args.corporateEvents, mode);
   } else {
     /**
-     * Hybrid baseline:
-     * - Symbols with buy txs rebuild from 0 (ledger is source of truth).
-     * - Manual-only + sell-only symbols keep as_stored qty (selling LCID must not wipe UNH;
-     *   sell-only qty is reduced in recordTrade before sync so re-sync stays idempotent).
+     * Hybrid baseline (CA / explicit rebuild only — not the buy/sell trade path):
+     * - Symbols with buy txs rebuild from 0 (ledger is source of truth for those symbols).
+     * - Manual-only + sell-only symbols keep as_stored qty (selling LCID must not wipe UNH).
      * Corporate actions for non-traded symbols are skipped below (already baked into stored qty).
      */
     initialHoldings = mapPortfolioToReplayHoldings(args.portfolio).filter(
@@ -421,13 +424,25 @@ export async function persistHoldingsFromReplayMap(args: {
   updateHolding: (h: Holding) => Promise<void>;
   addHolding: (h: Holding & { portfolio_id?: string }) => Promise<void>;
   deleteHolding: (id: string) => Promise<void>;
+  /**
+   * Required — only these symbols are created/updated/deleted.
+   * Prevents silent full-book rewrite (the trade-corruption bug).
+   */
+  symbols: Iterable<string>;
 }): Promise<void> {
+  const touched = new Set(
+    [...args.symbols].map((s) => String(s ?? '').trim().toUpperCase()).filter(Boolean),
+  );
+  if (touched.size === 0) {
+    throw new Error('persistHoldingsFromReplayMap requires at least one symbol.');
+  }
   const portfolioBySym = new Map(
     args.portfolio.holdings.map((h) => [String(h.symbol ?? '').toUpperCase(), h]),
   );
 
   for (const [sym, r] of args.replayed) {
     const upper = sym.toUpperCase();
+    if (!touched.has(upper)) continue;
     const existing = portfolioBySym.get(upper);
     if (r.quantity < 1e-9) {
       if (existing?.id) await args.deleteHolding(existing.id);
@@ -464,6 +479,7 @@ export async function persistHoldingsFromReplayMap(args: {
   for (const h of args.portfolio.holdings) {
     const sym = String(h.symbol ?? '').toUpperCase();
     if (!sym || !h.id) continue;
+    if (!touched.has(sym)) continue;
     const r = args.replayed.get(sym);
     if (!r || r.quantity < 1e-9) {
       await args.deleteHolding(h.id);

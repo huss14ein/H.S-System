@@ -112,6 +112,7 @@ describe('corporateActionUndo', () => {
       deleteHolding: async (id) => {
         deleted.push(id);
       },
+      symbols: ['AAPL'],
     });
 
     expect(updates).toHaveLength(1);

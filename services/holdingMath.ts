@@ -24,6 +24,78 @@ export function applyBuyToHolding(
   };
 }
 
+/**
+ * Partial sell keeps WAC (avgCost); scales currentValue with remaining qty.
+ * Full sell → closed (qty ~0).
+ */
+export function applySellToHolding(
+  holding: Pick<Holding, 'quantity' | 'avgCost' | 'currentValue'>,
+  sellQuantity: number,
+): { quantity: number; avgCost: number; currentValue: number; closed: boolean } {
+  const prevQty = Math.max(0, Number(holding.quantity) || 0);
+  const sellQty = Math.max(0, Number(sellQuantity) || 0);
+  const quantity = roundQuantity(Math.max(0, prevQty - sellQty));
+  const avgCost = roundAvgCostPerUnit(Number(holding.avgCost) || 0);
+  if (quantity < 1e-9) {
+    return { quantity: 0, avgCost, currentValue: 0, closed: true };
+  }
+  const scaledCv =
+    prevQty > 1e-9
+      ? roundMoney((Number(holding.currentValue) || 0) * (quantity / prevQty))
+      : roundMoney(quantity * avgCost);
+  return { quantity, avgCost, currentValue: scaledCv, closed: false };
+}
+
+export type PositionDeltaSide = 'buy' | 'sell';
+
+export type ComputedPositionDelta = {
+  action: 'create' | 'update' | 'delete';
+  quantity: number;
+  avgCost: number;
+  currentValue: number;
+};
+
+/** Pure position-book math for one trade — never touches other symbols. */
+export function computePositionFieldsAfterTrade(args: {
+  existing: Pick<Holding, 'quantity' | 'avgCost' | 'currentValue'> | null | undefined;
+  side: PositionDeltaSide;
+  quantity: number;
+  price: number;
+  opts?: { currentValueAdd?: number };
+}): ComputedPositionDelta {
+  const qty = Math.max(0, Number(args.quantity) || 0);
+  const px = Math.max(0, Number(args.price) || 0);
+  if (args.side === 'buy') {
+    if (!args.existing) {
+      const currentValueAdd =
+        args.opts?.currentValueAdd != null && Number.isFinite(args.opts.currentValueAdd)
+          ? Math.max(0, Number(args.opts.currentValueAdd))
+          : qty * px;
+      return {
+        action: 'create',
+        quantity: roundQuantity(qty),
+        avgCost: roundAvgCostPerUnit(px),
+        currentValue: roundMoney(currentValueAdd),
+      };
+    }
+    const bought = applyBuyToHolding(args.existing, qty, px, args.opts);
+    return { action: 'update', ...bought };
+  }
+  if (!args.existing) {
+    throw new Error('Cannot sell a holding you do not own.');
+  }
+  const sold = applySellToHolding(args.existing, qty);
+  if (sold.closed) {
+    return { action: 'delete', quantity: 0, avgCost: sold.avgCost, currentValue: 0 };
+  }
+  return {
+    action: 'update',
+    quantity: sold.quantity,
+    avgCost: sold.avgCost,
+    currentValue: sold.currentValue,
+  };
+}
+
 export function consolidateHoldingsBySymbol(holdings: Holding[]): Holding | null {
   if (!holdings.length) return null;
   const primary = holdings[0];

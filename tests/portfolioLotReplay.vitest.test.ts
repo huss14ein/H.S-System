@@ -148,13 +148,15 @@ describe('portfolioLotReplay', () => {
 });
 
 describe('portfolioLedgerSync wiring', () => {
-  it('DataContext routes recordTrade through syncPortfolioLedgerAfterChange', () => {
+  it('DataContext routes recordTrade through applyPositionDeltaForTrade + syncLotsAfterTrade', () => {
     const ctx = read('context/DataContext.tsx');
+    expect(ctx).toContain('applyPositionDeltaForTrade');
+    expect(ctx).toContain('syncLotsAfterTrade');
     expect(ctx).toContain('syncPortfolioAfterLedgerMutation');
     expect(ctx).toContain('syncPortfolioLedgerAfterChange');
     expect(ctx).toContain('investment_cost_lots');
     expect(read('services/portfolioLedgerSync.ts')).toContain('persistInvestmentCostLotsForPortfolio');
-    expect(ctx).not.toMatch(/tradeData\.type === 'buy'[\s\S]{0,200}applyBuyToHolding/);
+    expect(ctx).toContain('applyPositionDeltaForTrade');
   });
 
   it('corporate action apply/undo use unified ledger sync', () => {
