@@ -3389,8 +3389,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             holdingType: holding.holdingType,
         });
         if (!v.valid) {
-            toast(v.errors.join('\n'), 'error');
-            return;
+            const msg = v.errors.join('\n');
+            toast(msg, 'error');
+            /** Throw so trade/CA callers cannot claim success after a silent no-op. */
+            throw new Error(msg);
         }
         const row = holdingToRow(holding);
         const { data: newHolding, error } = await supabase.from('holdings').insert(withUser(row)).select().single();
@@ -3449,6 +3451,64 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 ...p,
                 holdings: p.holdings.filter((h) => h.id !== holdingId),
             })),
+        }));
+    };
+    const restoreHoldingRowsAfterTradeRollback = async (args: {
+        portfolioId: string;
+        symbol: string;
+        holdings: Holding[];
+    }) => {
+        if (!supabase || !auth?.user) throw new Error('Cannot restore holdings without an authenticated database.');
+        const userId = auth.user.id;
+        if (args.holdings.some((holding) => !holding.id)) {
+            throw new Error('Cannot restore a holding snapshot without row ids.');
+        }
+        const rows = args.holdings.map((holding) => ({
+            id: holding.id,
+            ...holdingToRow({ ...holding, portfolio_id: args.portfolioId }),
+            user_id: userId,
+        }));
+        if (rows.length > 0) {
+            const { error } = await supabase.from('holdings').upsert(rows, { onConflict: 'id' });
+            if (error) throw new Error(formatDbError(error));
+        }
+
+        const { data: currentRows, error: currentRowsError } = await supabase
+            .from('holdings')
+            .select('id, symbol')
+            .eq('user_id', userId)
+            .eq('portfolio_id', args.portfolioId);
+        if (currentRowsError) throw new Error(formatDbError(currentRowsError));
+        const originalIds = new Set(args.holdings.map((holding) => holding.id));
+        const extraIds = (currentRows ?? [])
+            .filter((row) => String(row.symbol ?? '').trim().toUpperCase() === args.symbol.toUpperCase())
+            .map((row) => String(row.id ?? ''))
+            .filter((id) => id && !originalIds.has(id));
+        if (extraIds.length > 0) {
+            const { error } = await supabase
+                .from('holdings')
+                .delete()
+                .eq('user_id', userId)
+                .in('id', extraIds);
+            if (error) throw new Error(formatDbError(error));
+        }
+
+        const symbolUpper = args.symbol.toUpperCase();
+        applyFinancialDataPatch((prev) => ({
+            ...prev,
+            investments: prev.investments.map((portfolio) =>
+                portfolio.id === args.portfolioId
+                    ? {
+                          ...portfolio,
+                          holdings: [
+                              ...portfolio.holdings.filter(
+                                  (holding) => String(holding.symbol ?? '').toUpperCase() !== symbolUpper,
+                              ),
+                              ...args.holdings,
+                          ],
+                      }
+                    : portfolio,
+            ),
         }));
     };
     const syncPortfolioAfterLedgerMutation = async (
@@ -3922,7 +3982,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
             
             normalizedSymbol = (tradeData.symbol || '').trim().toUpperCase();
-            symbolHoldingsForTrade = portfolio.holdings.filter((h: Holding) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol);
+            symbolHoldingsForTrade = portfolio.holdings
+                .filter((h: Holding) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol)
+                .map((holding) => ({ ...holding }));
             existingHolding = consolidateHoldingsBySymbol(symbolHoldingsForTrade) ?? undefined;
             if (tradeData.type === 'sell') {
                 if (!existingHolding) throw new Error("Cannot sell a holding you don't own.");
@@ -4379,6 +4441,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } catch (error) {
             console.error("Error updating holdings after trade:", error);
             let rollbackSucceeded = false;
+            let holdingsRollbackSucceeded = false;
             if (newTransaction?.id) {
                 const rollback = await supabase
                     .from('investment_transactions')
@@ -4392,12 +4455,63 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         ...prev,
                         investmentTransactions: prev.investmentTransactions.filter((t) => t.id !== newTransaction.id),
                     }));
-                    await applyInvestmentAccountDeltaForTrade(accountIdForInsert, -investmentBalanceDelta, { excludeTransactionId: newTransaction.id });
+                    try {
+                        await applyInvestmentAccountDeltaForTrade(accountIdForInsert, -investmentBalanceDelta, {
+                            excludeTransactionId: newTransaction.id,
+                        });
+                    } catch (cashRollbackError) {
+                        console.error("Failed to rollback investment cash after holding update failure:", cashRollbackError);
+                    }
+                }
+            }
+            if (rollbackSucceeded && portfolio) {
+                try {
+                    await restoreHoldingRowsAfterTradeRollback({
+                        portfolioId: portfolio.id,
+                        symbol: normalizedSymbol,
+                        holdings: symbolHoldingsForTrade,
+                    });
+                    const restoredPortfolio =
+                        (dataRef.current?.investments ?? []).find((candidate) => candidate.id === portfolio.id) ??
+                        portfolio;
+                    await syncLotsAfterTrade({
+                        portfolio: restoredPortfolio,
+                        investmentTransactions: dataRef.current?.investmentTransactions ?? [],
+                        corporateActionEvents: dataRef.current?.corporateActionEvents ?? [],
+                        touchedSymbols: [normalizedSymbol],
+                        resolveHolding: (sym) => {
+                            const currentPortfolio = (dataRef.current?.investments ?? []).find(
+                                (candidate) => candidate.id === portfolio.id,
+                            );
+                            return currentPortfolio?.holdings.find(
+                                (holding) => String(holding.symbol ?? '').toUpperCase() === sym,
+                            );
+                        },
+                        updateHolding,
+                        supabase,
+                        userId: auth.user.id,
+                        onLotsUpdated: (updatedLots) => {
+                            applyFinancialDataPatch((prev) => ({
+                                ...prev,
+                                investmentCostLots: [
+                                    ...updatedLots,
+                                    ...(prev.investmentCostLots ?? []).filter(
+                                        (lot) => lot.portfolioId !== portfolio.id,
+                                    ),
+                                ],
+                            }));
+                        },
+                    });
+                    holdingsRollbackSucceeded = true;
+                } catch (holdingsRollbackError) {
+                    console.error("Failed to restore holdings after trade rollback:", holdingsRollbackError);
                 }
             }
             await fetchData();
-            const rollbackNote = rollbackSucceeded
+            const rollbackNote = rollbackSucceeded && holdingsRollbackSucceeded
                 ? 'The trade was not kept (rolled back).'
+                : rollbackSucceeded
+                  ? 'The trade was removed, but its holdings rollback needs verification after refresh.'
                 : 'The trade may still be in your ledger — refresh and verify.';
             throw new Error(
                 `Could not update holdings after trade. ${rollbackNote} ${formatUnknownError(error, 'Unknown holding update error.')}`,

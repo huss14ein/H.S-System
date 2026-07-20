@@ -66,6 +66,20 @@ describe('recordTradeCompletion', () => {
     expect(ctx).toContain('await updateHolding(patched)');
   });
 
+  it('holding validation failures throw and trade rollback restores the holding snapshot before refresh', () => {
+    const ctx = read('context/DataContext.tsx');
+    const addHolding = ctx.slice(ctx.indexOf('const addHolding = async'), ctx.indexOf('const updateHolding = async'));
+    expect(addHolding).toContain('throw new Error(msg)');
+
+    const rollback = ctx.slice(
+      ctx.indexOf('Error updating holdings after trade:'),
+      ctx.indexOf('// 4. If trade came from a plan'),
+    );
+    expect(rollback).toContain('restoreHoldingRowsAfterTradeRollback');
+    expect(rollback).toContain('syncLotsAfterTrade');
+    expect(rollback.indexOf('restoreHoldingRowsAfterTradeRollback')).toBeLessThan(rollback.indexOf('await fetchData()'));
+  });
+
   it('CA apply/undo uses manual-only delta replay; traded books use full replay_derived', () => {
     const ctx = read('context/DataContext.tsx');
     expect(ctx).toContain('filterTransactionsForPortfolioReplay');

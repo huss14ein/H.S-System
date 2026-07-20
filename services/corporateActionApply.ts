@@ -242,6 +242,8 @@ export async function replayPortfolioHoldings(args: {
   transactions: InvestmentTransaction[];
   corporateEvents: CorporateActionEventRow[];
   holdingsBaselineMode?: HoldingsReplayBaselineMode;
+  /** Explicit repair symbols rebuild from ledger zero instead of using sell-only idempotency. */
+  ledgerRepairSymbols?: Iterable<string>;
 }): Promise<Map<string, { quantity: number; avgCost: number }>> {
   const caEvents = args.corporateEvents
     .filter((r) => r.status !== 'reversed')
@@ -260,6 +262,11 @@ export async function replayPortfolioHoldings(args: {
   let initialHoldings: { symbol: string; quantity: number; avgCost: number }[] = [];
   const tradedSymbols = new Set<string>();
   const symbolsWithBuys = new Set<string>();
+  const ledgerRepairSymbols = new Set(
+    [...(args.ledgerRepairSymbols ?? [])]
+      .map((symbol) => String(symbol ?? '').trim().toUpperCase())
+      .filter(Boolean),
+  );
   for (const t of portfolioTxs) {
     if (t.type !== 'buy' && t.type !== 'sell') continue;
     const sym = String(t.symbol ?? '').trim().toUpperCase();
@@ -269,25 +276,27 @@ export async function replayPortfolioHoldings(args: {
   }
   /**
    * Manual books that only have sells — qty is owned by applyPositionDeltaForTrade on the trade path.
-   * When this hybrid replay runs (CA / explicit rebuild), sell-only symbols keep as_stored qty and
-   * their sell txs are skipped so they are not double-applied.
+   * During CA replay, sell-only symbols keep as_stored qty and their sell txs are skipped so they
+   * are not double-applied. Explicit ledger repair opts out per symbol.
    */
   const sellOnlySymbols = new Set(
-    [...tradedSymbols].filter((sym) => !symbolsWithBuys.has(sym)),
+    [...tradedSymbols].filter((sym) => !symbolsWithBuys.has(sym) && !ledgerRepairSymbols.has(sym)),
   );
+  const ledgerDerivedSymbols = new Set([...symbolsWithBuys, ...ledgerRepairSymbols]);
 
-  if (tradedSymbols.size === 0) {
+  if (tradedSymbols.size === 0 && ledgerRepairSymbols.size === 0) {
     const mode = args.holdingsBaselineMode ?? 'replay_derived';
     initialHoldings = resolveManualPortfolioInitialHoldings(args.portfolio, args.corporateEvents, mode);
   } else {
     /**
-     * Hybrid baseline (CA / explicit rebuild only — not the buy/sell trade path):
+     * Hybrid baseline (CA / explicit repair only — not the buy/sell trade path):
      * - Symbols with buy txs rebuild from 0 (ledger is source of truth for those symbols).
+     * - Explicit repair symbols also rebuild from 0.
      * - Manual-only + sell-only symbols keep as_stored qty (selling LCID must not wipe UNH).
      * Corporate actions for non-traded symbols are skipped below (already baked into stored qty).
      */
     initialHoldings = mapPortfolioToReplayHoldings(args.portfolio).filter(
-      (h) => !symbolsWithBuys.has(h.symbol.toUpperCase()),
+      (h) => !ledgerDerivedSymbols.has(h.symbol.toUpperCase()),
     );
   }
 
@@ -392,6 +401,8 @@ export async function replayPortfolioHoldingsFromEvents(args: {
   transactions: InvestmentTransaction[];
   corporateActionEvents: CorporateActionEvent[];
   holdingsBaselineMode?: HoldingsReplayBaselineMode;
+  /** Explicit repair symbols rebuild from ledger zero instead of using sell-only idempotency. */
+  ledgerRepairSymbols?: Iterable<string>;
   /**
    * When set, holdings replay uses only these events (still portfolio-scoped).
    * Use on fresh CA apply/undo with `as_stored` so prior events already baked into
@@ -413,6 +424,7 @@ export async function replayPortfolioHoldingsFromEvents(args: {
     portfolio: args.portfolio,
     transactions: args.transactions,
     corporateEvents: rows,
+    ledgerRepairSymbols: args.ledgerRepairSymbols,
     holdingsBaselineMode:
       args.holdingsBaselineMode ?? (!hasPositionAffectingTransactions(portfolioTxs) ? 'replay_derived' : undefined),
   });

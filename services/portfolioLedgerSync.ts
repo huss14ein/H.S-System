@@ -160,6 +160,7 @@ export async function rebuildHoldingsFromLedger(args: {
     transactions: scopedTxs,
     corporateActionEvents: args.corporateActionEvents,
     holdingsBaselineMode: 'replay_derived',
+    ledgerRepairSymbols: symbols,
   });
 
   await persistHoldingsFromReplayMap({
@@ -220,10 +221,11 @@ export async function syncPortfolioLedgerAfterChange(
   const bookCurrency: 'SAR' | 'USD' = args.portfolio.currency === 'USD' ? 'USD' : 'SAR';
   const lotResult = await rebuildCostLotsFromEvents({
     portfolioId,
-    transactions: filterTransactionsForPortfolio(portfolioId, args.investmentTransactions),
+    /** Match holdings replay scope so CA sync cannot split holdings and FIFO lots across different ledgers. */
+    transactions: args.investmentTransactions,
     corporateActions: caReplay,
     bookCurrency,
-    holdingSymbols: [],
+    holdingSymbols: args.portfolio.holdings?.map((h) => String(h.symbol ?? '')),
     accountId: args.portfolio.accountId ?? (args.portfolio as { account_id?: string }).account_id,
   });
 

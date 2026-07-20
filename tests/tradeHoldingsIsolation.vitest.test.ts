@@ -222,6 +222,48 @@ describe('tradeHoldingsIsolation', () => {
     ).rejects.toThrow(/at least one symbol/i);
   });
 
+  it('rebuildHoldingsFromLedger does not preserve stored quantity for a sell-only repair', async () => {
+    const holding: Holding = {
+      id: 'h1',
+      symbol: 'LCID',
+      quantity: 60,
+      avgCost: 5,
+      currentValue: 420,
+      zakahClass: 'Zakatable',
+    };
+    const portfolio: InvestmentPortfolio = {
+      id: 'pf1',
+      name: 'T',
+      accountId: 'acc1',
+      currency: 'USD',
+      holdings: [holding],
+    };
+    const sell: InvestmentTransaction = {
+      id: 's1',
+      portfolioId: 'pf1',
+      accountId: 'acc1',
+      date: '2026-07-01',
+      type: 'sell',
+      symbol: 'LCID',
+      quantity: 40,
+      price: 7,
+      total: 280,
+    };
+    const deleteHolding = vi.fn(async () => {});
+
+    await rebuildHoldingsFromLedger({
+      portfolio,
+      investmentTransactions: [sell],
+      corporateActionEvents: [],
+      symbols: ['LCID'],
+      updateHolding: async () => {},
+      addHolding: async () => {},
+      deleteHolding,
+    });
+
+    expect(deleteHolding).toHaveBeenCalledWith('h1');
+  });
+
   it('DataContext trade path uses applyPositionDeltaForTrade + syncLotsAfterTrade (not full-book persist)', () => {
     const ctx = read('context/DataContext.tsx');
     expect(ctx).toContain('applyPositionDeltaForTrade');

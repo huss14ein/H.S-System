@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { syncPortfolioLedgerAfterChange } from '../services/portfolioLedgerSync';
 import { replayPortfolioHoldingsFromEvents } from '../services/corporateActionApply';
-import type { Holding, InvestmentPortfolio, InvestmentTransaction } from '../types';
+import type { CorporateActionEvent, Holding, InvestmentCostLot, InvestmentPortfolio, InvestmentTransaction } from '../types';
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
 
@@ -248,6 +248,62 @@ describe('portfolioLedgerSellCompletion', () => {
       }
     }
     expect(deleteHolding).not.toHaveBeenCalled();
+  });
+
+  it('CA sync uses the holdings replay scope for legacy orphan FIFO lots', async () => {
+    const portfolio: InvestmentPortfolio = {
+      id: 'pf1',
+      name: 'Test',
+      accountId: 'acc1',
+      currency: 'USD',
+      holdings: [
+        {
+          id: 'h1',
+          symbol: 'INSP',
+          quantity: 40,
+          avgCost: 50,
+          currentValue: 2000,
+          zakahClass: 'Zakatable',
+        },
+      ],
+    };
+    const orphanBuy: InvestmentTransaction = {
+      id: 'orphan-buy',
+      accountId: 'acc1',
+      date: '2026-01-01',
+      type: 'buy',
+      symbol: 'INSP',
+      quantity: 40,
+      price: 50,
+      total: 2000,
+    };
+    const split: CorporateActionEvent = {
+      id: 'ca1',
+      portfolioId: 'pf1',
+      actionType: 'stock_split',
+      symbol: 'INSP',
+      executionDate: '2026-06-01',
+      ratioNumerator: 2,
+      ratioDenominator: 1,
+      idempotencyKey: 'split-insp',
+      status: 'applied',
+    };
+    let lots: InvestmentCostLot[] = [];
+
+    await syncPortfolioLedgerAfterChange({
+      portfolio,
+      investmentTransactions: [orphanBuy],
+      corporateActionEvents: [split],
+      updateHolding: async () => {},
+      addHolding: async () => {},
+      deleteHolding: async () => {},
+      symbols: ['INSP'],
+      onLotsUpdated: (updatedLots) => {
+        lots = updatedLots;
+      },
+    });
+
+    expect(lots.reduce((sum, lot) => sum + lot.quantityRemaining, 0)).toBeCloseTo(80, 8);
   });
 
   it('DataContext buy/sell uses applyPositionDeltaForTrade (not sell-only pre-sync special case)', () => {
