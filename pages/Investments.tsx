@@ -32,6 +32,7 @@ import { PencilIcon } from '../components/icons/PencilIcon';
 import { TrashIcon } from '../components/icons/TrashIcon';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import { formatUnknownError } from '../utils/formatUnknownError';
 import { fetchCompanyNameForSymbol, useCompanyNames, symbolsNeedingCompanyName } from '../hooks/useSymbolCompanyName';
 import MiniPriceChart from '../components/charts/MiniPriceChart';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
@@ -129,6 +130,7 @@ import PlatformHoldingsOutlierBanner from '../components/investments/PlatformHol
 import InvestmentsQuoteStatusBanner from '../components/investments/InvestmentsQuoteStatusBanner';
 import { scheduleIdleWorkAsync } from '../utils/runWhenIdle';
 import { yieldToMain } from '../utils/yieldToMain';
+import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { engineSleeveKeyToTickerStatus, inferEngineSleeveKeyFromHolding } from '../services/inferHoldingUniverseClassification';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
@@ -1248,17 +1250,29 @@ const RecordTradeModal: React.FC<{
             const parsedDividendAmount = parseFloat(dividendAmount);
             const portfolio = portfolios.find((p) => p.id === portfolioId);
             const account = investmentAccounts.find((a) => a.id === accountId);
+            const bookCurrency = portfolio
+                ? (portfolio.currency === 'SAR' || portfolio.currency === 'USD' ? portfolio.currency : 'USD')
+                : tradeCurrency;
+            const qty = type === 'dividend' ? 0 : (parseFloat(quantity) || 0);
+            const px = type === 'dividend' ? 0 : (parseFloat(price) || 0);
+            const gross = qty * px;
+            const buySellTotal =
+                type === 'buy' ? gross + feeAmount : type === 'sell' ? Math.max(0, gross - feeAmount) : undefined;
             const tradePayload = {
                 accountId,
                 portfolioId,
                 type,
                 symbol: symbol.toUpperCase().trim(),
                 name: isNewHolding ? holdingName : undefined,
-                quantity: type === 'dividend' ? 0 : (parseFloat(quantity) || 0),
-                price: type === 'dividend' ? 0 : (parseFloat(price) || 0),
-                ...(type === 'dividend' ? { total: parsedDividendAmount || 0 } : {}),
+                quantity: qty,
+                price: px,
+                ...(type === 'dividend'
+                    ? { total: parsedDividendAmount || 0 }
+                    : buySellTotal != null
+                      ? { total: buySellTotal }
+                      : {}),
                 date,
-                currency: tradeCurrency,
+                currency: bookCurrency,
             };
             const confirmPayload = summarizeInvestmentTradeForConfirm(tradePayload, {
                 portfolioName: portfolio?.name,
@@ -1285,7 +1299,7 @@ const RecordTradeModal: React.FC<{
                 onClose();
             });
         } catch (error) {
-            setSubmitError(error instanceof Error ? error.message : String(error));
+            setSubmitError(formatUnknownError(error, 'Could not record trade.'));
         } finally {
             setIsSubmitting(false);
         }
@@ -2984,7 +2998,8 @@ const PlatformCardInner: React.FC<{
                     /** Same pooled ledger as the platform header — not split across portfolios. */
                     const portfolioCashSAR = tradableCashBucketToSAR(availableCashByCurrency, sarPerUsd);
                     const portfolioRoi = pk?.roi ?? 0;
-                    const positionsTotalForAlloc = pk != null ? pk.holdingsValue : portfolioValue;
+                    /** Alloc % must use the same values as the holdings rows (live Current), not KPI totals. */
+                    const positionsTotalForAlloc = portfolioValue;
                     const portfolioCanSyncQuotes = portfolioHasRefreshableQuoteSymbols(portfolio);
                     const isPersonalPortfolio = portfoliosForMetrics.some((p) => p.id === portfolio.id);
                     const thisPortfolioSyncing =
@@ -5396,7 +5411,9 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
   }
 
   useEffect(() => {
-    if (pageAction?.startsWith('open-trade-modal')) {
+    if (!pageAction) return;
+
+    if (pageAction.startsWith('open-trade-modal')) {
         if (pageAction === 'open-trade-modal:from-plan') {
             try {
                 const raw = sessionStorage.getItem(EXECUTE_PLAN_STORAGE_KEY);
@@ -5454,18 +5471,18 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
             setTradeInitialData(null);
         }
         setIsTradeModalOpen(true);
-        clearPageAction?.();
+        return scheduleClearPageAction(clearPageAction);
     }
     if (pageAction === 'focus-investment-plan') {
         setActiveTab('Investment Plan');
-        clearPageAction?.();
+        return scheduleClearPageAction(clearPageAction);
     }
     if (pageAction === 'focus-dividend-sms') {
         setActiveTab('Dividend Tracker');
         // DividendTrackerView scrolls to the SMS panel and clears the action.
         return;
     }
-    if (pageAction?.startsWith('open-corporate-action-wizard')) {
+    if (pageAction.startsWith('open-corporate-action-wizard')) {
         setActiveTab('Overview');
         let plan = pageAction === 'open-corporate-action-wizard:from-plan' ? readCorporateActionWizardPlan() : null;
         if (pageAction === 'open-corporate-action-wizard:from-plan') {
@@ -5483,21 +5500,22 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
             }),
         );
         setIsCorporateActionWizardOpen(true);
-        clearPageAction?.();
+        return scheduleClearPageAction(clearPageAction);
     }
-    if (pageAction?.startsWith('investment-tab:')) {
+    if (pageAction.startsWith('investment-tab:')) {
         const raw = pageAction.slice('investment-tab:'.length);
         const allowed = new Set<InvestmentSubPage>(INVESTMENT_SUB_PAGES.map((t) => t.name));
         if (allowed.has(raw as InvestmentSubPage)) {
             prefetchInvestmentTab(raw as InvestmentSubPage);
             setActiveTab(raw as InvestmentSubPage);
         }
-        clearPageAction?.();
+        return scheduleClearPageAction(clearPageAction);
     }
     if (pageAction === 'openRiskTradingHub') {
         triggerPageAction?.('Engines & Tools', 'openRiskTradingHub');
+        return scheduleClearPageAction(clearPageAction);
     }
-    if (pageAction?.startsWith('focus-symbol:')) {
+    if (pageAction.startsWith('focus-symbol:')) {
         const sym = pageAction.slice('focus-symbol:'.length).trim().toUpperCase();
         const inv = getPersonalInvestments(data ?? null);
         const opts = buildHoldingSymbolOptions(inv);
@@ -5516,7 +5534,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                 setIsTradeModalOpen(true);
             }
         }
-        clearPageAction?.();
+        return scheduleClearPageAction(clearPageAction);
     }
   }, [pageAction, clearPageAction, data, setActiveTab, triggerPageAction]);
 

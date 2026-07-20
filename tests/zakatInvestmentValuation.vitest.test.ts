@@ -215,3 +215,42 @@ describe('zakatInvestmentValuation', () => {
     expect(totalSar).toBe(100);
   });
 });
+
+describe('summarizeZakatableSukukPositionsForZakat', () => {
+  it('includes active direct Sukuk with FX and hawl from issueDate', async () => {
+    const { summarizeZakatableSukukPositionsForZakat } = await import('../services/zakatInvestmentValuation');
+    const asOf = new Date('2026-07-15T12:00:00.000Z');
+    const { totalSar, lines } = summarizeZakatableSukukPositionsForZakat(
+      {
+        accounts: [],
+        assets: [],
+        goals: [],
+        liabilities: [],
+        budgets: [],
+        investments: [],
+        investmentTransactions: [],
+        transactions: [],
+        commodities: [],
+        commodityHoldings: [],
+        sukukPositions: [
+          {
+            id: 'sk1',
+            name: 'Gov Sukuk',
+            investmentAccountId: 'a1',
+            currency: 'USD',
+            faceValue: 10000,
+            outstandingPrincipal: 10000,
+            issueDate: '2020-01-01',
+            maturityDate: '2030-01-01',
+            status: 'active',
+          },
+        ],
+      } as any,
+      3.75,
+      asOf,
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.grossValueSar).toBeCloseTo(37500, 0);
+    expect(totalSar).toBeCloseTo(37500, 0);
+  });
+});

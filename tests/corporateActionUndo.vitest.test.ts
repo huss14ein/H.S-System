@@ -161,11 +161,23 @@ describe('corporateActionUndo', () => {
       idempotencyKey: 'split-1|reverse|ca1',
       status: 'applied',
     };
+    const dividendTx: InvestmentTransaction = {
+      id: 'div1',
+      portfolioId: 'pf1',
+      accountId: 'a1',
+      date: '2026-05-01',
+      type: 'dividend',
+      symbol: 'AAPL',
+      quantity: 0,
+      price: 0,
+      total: 25,
+    };
     const afterUndo = await replayPortfolioHoldingsFromEvents({
       portfolio: postSplit,
-      transactions: [],
+      transactions: [dividendTx],
       corporateActionEvents: [splitEvent, reversalEvent],
       holdingsBaselineMode: 'as_stored',
+      holdingsReplayEvents: [reversalEvent],
     });
     expect(afterUndo.get('AAPL')?.quantity).toBeCloseTo(10, 4);
     expect(afterUndo.get('AAPL')?.avgCost).toBeCloseTo(100, 4);
@@ -192,5 +204,7 @@ describe('corporateActionUndo', () => {
     expect(ctx).toContain('syncPortfolioAfterLedgerMutation');
     expect(ctx).toContain("status: 'reversed'");
     expect(ctx).toContain('removeCorporateActionCashDeposits');
+    expect(ctx).toContain('id: `local-reversal-${eventId}`');
+    expect(ctx).toContain('...(manualOnly ? { holdingsReplayEvents: [reversalEv] } : {})');
   });
 });

@@ -125,6 +125,8 @@ export const CorporateActionApplyPanel: React.FC<Props> = ({
         symbol: symbol.trim(),
         transactions: investmentTransactions,
         corporateActionEvents: events,
+        accountId: portfolio.accountId ?? (portfolio as { account_id?: string }).account_id,
+        holdingSymbols: (portfolio.holdings ?? []).map((h) => String(h.symbol ?? '')),
       });
       if (!prereq.valid) {
         setError(prereq.error ?? 'Corporate action prerequisites not met.');

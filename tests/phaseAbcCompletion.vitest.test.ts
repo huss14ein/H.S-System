@@ -31,6 +31,8 @@ describe('Phase A — Transactions E2E', () => {
         expect(read('pages/Budgets.tsx')).toContain('budget.period');
         expect(read('pages/Transactions.tsx')).toContain('transactionListRef');
         expect(read('pages/Transactions.tsx')).toContain('scrollIntoView');
+        // Remount-on-clear would wipe budgetCategory — see budgetDrillDownCompletion.
+        expect(read('components/AuthenticatedAppShell.tsx')).toContain('const routeKey = shell;');
     });
 
     it('admin scope uses full accounts; collaborators gate on governanceReady', () => {

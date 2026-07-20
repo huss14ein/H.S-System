@@ -3,7 +3,7 @@ import { resolveSarPerUsd } from '../utils/currencyMath';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
-import { summarizeZakatableInvestmentsForZakat } from './zakatInvestmentValuation';
+import { summarizeZakatableInvestmentsForZakat, summarizeZakatableSukukPositionsForZakat } from './zakatInvestmentValuation';
 
 export interface ZakatTradeSuggestion {
   symbol: string;
@@ -15,18 +15,26 @@ export interface ZakatAdviceSummary {
   suggestions: ZakatTradeSuggestion[];
 }
 
-export function buildZakatTradeAdvice(data: FinancialData | null | undefined): ZakatAdviceSummary {
+export function buildZakatTradeAdvice(
+  data: FinancialData | null | undefined,
+  uiExchangeRate?: number,
+): ZakatAdviceSummary {
   if (!data) return { suggestions: [] };
 
   const investments = getPersonalInvestments(data);
   const personalAccounts = getPersonalAccounts(data);
   const personalAccountIds = new Set(personalAccounts.map((a) => a.id));
-  const sarPerUsd = resolveSarPerUsd(data, undefined);
+  const sarPerUsd = resolveSarPerUsd(data, uiExchangeRate);
   const txs = (data.investmentTransactions ?? []) as InvestmentTransaction[];
   const { lines } = summarizeZakatableInvestmentsForZakat(investments, sarPerUsd, txs);
+  const { lines: sukukLines } = summarizeZakatableSukukPositionsForZakat(data, sarPerUsd);
 
   const bySymbol = new Map<string, number>();
   for (const row of lines) {
+    const sym = row.symbol.toUpperCase();
+    bySymbol.set(sym, (bySymbol.get(sym) ?? 0) + row.zakatableValueSar);
+  }
+  for (const row of sukukLines) {
     const sym = row.symbol.toUpperCase();
     bySymbol.set(sym, (bySymbol.get(sym) ?? 0) + row.zakatableValueSar);
   }

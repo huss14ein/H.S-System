@@ -11,7 +11,13 @@ describe('transaction budget submit wiring', () => {
   it('uses warn-only budget submit helpers in TransactionModal', () => {
     expect(transactionsSource).toContain('getTransactionBudgetSubmitBlockReason');
     expect(transactionsSource).toContain('buildTransactionBudgetConfirmWarning');
-    expect(transactionsSource).toMatch(/You can still save/i);
+    expect(transactionsSource).toContain('budgetCoverageState');
+    const coverage = fs.readFileSync(
+      path.join(process.cwd(), 'services/transactionBudgetCoverage.ts'),
+      'utf8',
+    );
+    expect(coverage).toMatch(/You can still save/i);
+    expect(coverage).toContain('BUDGET_OVER_UTILIZATION_BLOCKS_SUBMIT = false');
   });
 
   it('does not hard-stop on budget shortfall in handleSubmit', () => {

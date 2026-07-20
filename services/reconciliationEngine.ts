@@ -12,6 +12,7 @@ import {
   corporateActionEventToRow,
   resolveManualPortfolioInitialHoldings,
 } from './corporateActionApply';
+import { filterTransactionsForPortfolioReplay } from './portfolioTransactionScope';
 
 /** Compare sum of (buy - sell) quantity to current holding quantity. */
 export function reconcileHoldings(args: {
@@ -41,9 +42,12 @@ export function reconcileHoldingsWithCorporateActionsSync(args: {
   const sym = String(args.symbol ?? '').toUpperCase();
   const holding = args.portfolio.holdings?.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
   const stored = Math.max(0, Number(holding?.quantity) || 0);
-  const portfolioTxs = args.transactions.filter(
-    (t) => (t.portfolioId === args.portfolio.id || !t.portfolioId) && String(t.symbol ?? '').toUpperCase() === sym,
-  );
+  const portfolioTxs = filterTransactionsForPortfolioReplay({
+    portfolioId: args.portfolio.id,
+    transactions: args.transactions,
+    holdingSymbols: [sym, ...(args.portfolio.holdings ?? []).map((h) => String(h.symbol ?? ''))],
+    accountId: args.portfolio.accountId ?? (args.portfolio as { account_id?: string }).account_id,
+  }).filter((t) => String(t.symbol ?? '').toUpperCase() === sym);
   const hasSymbolBuys = portfolioTxs.some((t) => isInvestmentTransactionType(t.type, 'buy'));
   const events = args.corporateActionEvents
     .filter(
@@ -69,7 +73,8 @@ export function reconcileHoldingsWithCorporateActionsSync(args: {
     );
     holdingLike = seed ?? { quantity: stored, avgCost: Number(holding?.avgCost) || 0 };
   } else {
-    holdingLike = { quantity: 0, avgCost: Number(holding?.avgCost) || 0 };
+    // Sell-only / manual: holdings qty is source of truth (sells applied in recordTrade, not re-summed here).
+    holdingLike = { quantity: stored, avgCost: Number(holding?.avgCost) || 0 };
   }
 
   for (const ev of events) {

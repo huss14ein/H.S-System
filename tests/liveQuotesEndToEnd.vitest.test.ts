@@ -44,7 +44,7 @@ describe('live quotes E2E wiring', () => {
 
   it('quote hooks split live cells vs KPI-aligned canonical map', () => {
     const canonicalHook = read('hooks/useCanonicalFinancialMetrics.ts');
-    expect(canonicalHook).toContain('shell.full.simulatedPrices');
+    expect(canonicalHook).toMatch(/shell\?\.full\.simulatedPrices|shell\.full\.simulatedPrices/);
     expect(canonicalHook).toContain('useDebouncedValue(simulatedPrices, 250)');
     expect(read('hooks/useLiveQuotePrices.ts')).toContain('useMarketPrices');
     expect(read('pages/Investments.tsx')).toContain('useMarketPrices()');

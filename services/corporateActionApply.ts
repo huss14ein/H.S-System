@@ -12,6 +12,16 @@ import {
 } from './corporateActions';
 import { rebuildPortfolioFromEvents } from './portfolioReplayEngine';
 import type { Holding, InvestmentPortfolio, InvestmentTransaction, CorporateActionEvent } from '../types';
+import { roundAvgCostPerUnit, roundMoney, roundQuantity } from '../utils/money';
+import {
+  filterTransactionsForPortfolioReplay,
+  hasPositionAffectingTransactions,
+} from './portfolioTransactionScope';
+
+export {
+  filterTransactionsForPortfolio,
+  filterTransactionsForPortfolioReplay,
+} from './portfolioTransactionScope';
 
 export type CorporateActionEventRow = {
   id: string;
@@ -241,17 +251,60 @@ export async function replayPortfolioHoldings(args: {
       symbol: row.symbol,
       action: corporateActionFromRow(row),
     }));
-  const portfolioTxs = args.transactions.filter(
-    (t) => t.portfolioId === args.portfolio.id || !t.portfolioId,
-  );
+  const portfolioTxs = filterTransactionsForPortfolioReplay({
+    portfolioId: args.portfolio.id,
+    transactions: args.transactions,
+    holdingSymbols: args.portfolio.holdings?.map((h) => String(h.symbol ?? '')),
+    accountId: args.portfolio.accountId ?? (args.portfolio as { account_id?: string }).account_id,
+  });
   let initialHoldings: { symbol: string; quantity: number; avgCost: number }[] = [];
-  if (portfolioTxs.length === 0) {
+  const tradedSymbols = new Set<string>();
+  const symbolsWithBuys = new Set<string>();
+  for (const t of portfolioTxs) {
+    if (t.type !== 'buy' && t.type !== 'sell') continue;
+    const sym = String(t.symbol ?? '').trim().toUpperCase();
+    if (!sym) continue;
+    tradedSymbols.add(sym);
+    if (t.type === 'buy') symbolsWithBuys.add(sym);
+  }
+  /** Manual books that only have sells — qty is patched in recordTrade; replaying sells would double-apply. */
+  const sellOnlySymbols = new Set(
+    [...tradedSymbols].filter((sym) => !symbolsWithBuys.has(sym)),
+  );
+
+  if (tradedSymbols.size === 0) {
     const mode = args.holdingsBaselineMode ?? 'replay_derived';
     initialHoldings = resolveManualPortfolioInitialHoldings(args.portfolio, args.corporateEvents, mode);
+  } else {
+    /**
+     * Hybrid baseline:
+     * - Symbols with buy txs rebuild from 0 (ledger is source of truth).
+     * - Manual-only + sell-only symbols keep as_stored qty (selling LCID must not wipe UNH;
+     *   sell-only qty is reduced in recordTrade before sync so re-sync stays idempotent).
+     * Corporate actions for non-traded symbols are skipped below (already baked into stored qty).
+     */
+    initialHoldings = mapPortfolioToReplayHoldings(args.portfolio).filter(
+      (h) => !symbolsWithBuys.has(h.symbol.toUpperCase()),
+    );
   }
+
+  const caEventsForReplay =
+    tradedSymbols.size === 0
+      ? caEvents
+      : caEvents.filter((e) => tradedSymbols.has(String(e.symbol ?? '').toUpperCase()));
+
+  const txsForHoldingsReplay =
+    sellOnlySymbols.size === 0
+      ? portfolioTxs
+      : portfolioTxs.filter((t) => {
+          if (t.type !== 'buy' && t.type !== 'sell') return true;
+          const sym = String(t.symbol ?? '').trim().toUpperCase();
+          return !sym || !sellOnlySymbols.has(sym);
+        });
+
   const result = await rebuildPortfolioFromEvents({
-    transactions: portfolioTxs,
-    corporateActions: caEvents,
+    transactions: txsForHoldingsReplay,
+    corporateActions: caEventsForReplay,
     initialHoldings,
   });
   return result.holdings;
@@ -336,18 +389,29 @@ export async function replayPortfolioHoldingsFromEvents(args: {
   transactions: InvestmentTransaction[];
   corporateActionEvents: CorporateActionEvent[];
   holdingsBaselineMode?: HoldingsReplayBaselineMode;
+  /**
+   * When set, holdings replay uses only these events (still portfolio-scoped).
+   * Use on fresh CA apply/undo with `as_stored` so prior events already baked into
+   * stored qty are not applied again.
+   */
+  holdingsReplayEvents?: CorporateActionEvent[];
 }): Promise<Map<string, { quantity: number; avgCost: number }>> {
-  const portfolioTxs = args.transactions.filter(
-    (t) => t.portfolioId === args.portfolio.id || !t.portfolioId,
-  );
-  const rows = args.corporateActionEvents
+  const portfolioTxs = filterTransactionsForPortfolioReplay({
+    portfolioId: args.portfolio.id,
+    transactions: args.transactions,
+    holdingSymbols: args.portfolio.holdings?.map((h) => String(h.symbol ?? '')),
+    accountId: args.portfolio.accountId ?? (args.portfolio as { account_id?: string }).account_id,
+  });
+  const eventSource = args.holdingsReplayEvents ?? args.corporateActionEvents;
+  const rows = eventSource
     .filter((e) => e.portfolioId === args.portfolio.id && e.status !== 'reversed')
     .map(corporateActionEventToRow);
   return replayPortfolioHoldings({
     portfolio: args.portfolio,
     transactions: args.transactions,
     corporateEvents: rows,
-    holdingsBaselineMode: args.holdingsBaselineMode ?? (portfolioTxs.length === 0 ? 'replay_derived' : undefined),
+    holdingsBaselineMode:
+      args.holdingsBaselineMode ?? (!hasPositionAffectingTransactions(portfolioTxs) ? 'replay_derived' : undefined),
   });
 }
 
@@ -370,26 +434,30 @@ export async function persistHoldingsFromReplayMap(args: {
       continue;
     }
     if (existing) {
+      const prevQty = Math.max(0, Number(existing.quantity) || 0);
+      const nextQty = roundQuantity(r.quantity);
+      const scaledCv =
+        prevQty > 1e-9
+          ? roundMoney((Number(existing.currentValue) || 0) * (nextQty / prevQty))
+          : nextQty * roundAvgCostPerUnit(r.avgCost);
       await args.updateHolding({
         ...existing,
-        quantity: r.quantity,
-        avgCost: r.avgCost,
-        // Total market exposure unchanged until quote tick; qty×price stays consistent after split-adjusted quotes.
-        currentValue: existing.currentValue,
+        quantity: nextQty,
+        avgCost: roundAvgCostPerUnit(r.avgCost),
+        currentValue: scaledCv,
       });
     } else {
       await args.addHolding({
-        id: `ca-replay-${upper}-${Date.now()}`,
         symbol: upper,
         name: upper,
-        quantity: r.quantity,
-        avgCost: r.avgCost,
-        currentValue: r.quantity * r.avgCost,
+        quantity: roundQuantity(r.quantity),
+        avgCost: roundAvgCostPerUnit(r.avgCost),
+        currentValue: roundQuantity(r.quantity) * roundAvgCostPerUnit(r.avgCost),
         zakahClass: 'Zakatable',
         realizedPnL: 0,
         assetClass: 'Stock',
         portfolio_id: args.portfolio.id,
-      });
+      } as Holding & { portfolio_id?: string });
     }
   }
 
@@ -433,13 +501,19 @@ export function portfolioHasBuyHistoryForSymbol(args: {
   portfolioId: string;
   symbol: string;
   transactions: InvestmentTransaction[];
+  /** Platform account — lets same-account orphan buys (pre-portfolio_id) count. */
+  accountId?: string | null;
+  holdingSymbols?: Iterable<string>;
 }): boolean {
   const sym = args.symbol.toUpperCase();
-  return args.transactions.some(
-    (t) =>
-      (t.portfolioId === args.portfolioId || !t.portfolioId) &&
-      String(t.symbol ?? '').toUpperCase() === sym &&
-      t.type === 'buy',
+  const scoped = filterTransactionsForPortfolioReplay({
+    portfolioId: args.portfolioId,
+    transactions: args.transactions,
+    holdingSymbols: args.holdingSymbols ?? [sym],
+    accountId: args.accountId,
+  });
+  return scoped.some(
+    (t) => String(t.symbol ?? '').toUpperCase() === sym && t.type === 'buy',
   );
 }
 
@@ -462,6 +536,8 @@ export function validateCorporateActionApplyPrerequisites(args: {
   symbol: string;
   transactions: InvestmentTransaction[];
   corporateActionEvents: CorporateActionEvent[];
+  accountId?: string | null;
+  holdingSymbols?: Iterable<string>;
 }): { valid: boolean; error?: string } {
   const hasBuys = portfolioHasBuyHistoryForSymbol(args);
   if (hasBuys) return { valid: true };

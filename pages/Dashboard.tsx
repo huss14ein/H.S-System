@@ -31,6 +31,7 @@ import { useLiveQuotePrices } from '../hooks/useLiveQuotePrices';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
+import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import { getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
 import { supabase } from '../services/supabaseClient';
 import { tryAutoCaptureNetWorthSnapshot } from '../services/netWorthSnapshotCapture';
@@ -285,8 +286,11 @@ const DashboardContent: React.FC<{
             document.getElementById('dashboard-kpi-row')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         };
         const t = window.setTimeout(scrollToKpis, 120);
-        clearPageAction?.();
-        return () => window.clearTimeout(t);
+        const cancelClear = scheduleClearPageAction(clearPageAction);
+        return () => {
+            window.clearTimeout(t);
+            cancelClear();
+        };
     }, [pageAction, clearPageAction]);
     const todosOpt = useTodosOptional();
     const dashboardTasksPreview = useMemo(() => {

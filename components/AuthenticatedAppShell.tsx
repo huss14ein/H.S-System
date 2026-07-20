@@ -96,9 +96,16 @@ const AppRouteHost: React.FC<AppRouteHostProps> = ({
   const renderPage = () => {
     const shell = resolveShellPage(activePage);
     const Lazy = PAGE_MODULES[shell]?.Lazy ?? PAGE_MODULES.Dashboard!.Lazy;
-    const routeKey = `${shell}:${pageAction ?? ''}`;
+    /**
+     * Stable key by shell only. Including `pageAction` remounts the page when
+     * `clearPageAction()` runs after consume — wiping Transactions budget filters
+     * (and other in-page state) immediately after drill-down applies them.
+     * Pages re-apply actions via `useEffect([pageAction])` prop updates instead.
+     */
+    const routeKey = shell;
+    /** Prefer explicit pageAction (e.g. open-trade-modal) over any derived tab action. */
     const tabAction = investmentTabAction(activePage);
-    const effectivePageAction = tabAction ?? pageAction;
+    const effectivePageAction = pageAction ?? tabAction;
     const actionProps = { pageAction: effectivePageAction, clearPageAction };
     const nav = { setActivePage, triggerPageAction };
 
@@ -246,7 +253,14 @@ const AuthenticatedAppShell: React.FC = () => {
     prefetchPage(page);
     startTransition(() => {
       setActivePageState(resolveShellPage(page));
-      setPageAction(action);
+      setPageAction((prev) => {
+        // Re-fire when the same action is already set (e.g. Log a Trade while already on Investments).
+        if (prev === action) {
+          queueMicrotask(() => setPageAction(action));
+          return null;
+        }
+        return action;
+      });
       try {
         const hash = '#' + encodeURIComponent(resolveShellPage(page));
         if (window.location.hash !== hash) {

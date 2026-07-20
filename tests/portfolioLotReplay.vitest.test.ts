@@ -176,4 +176,40 @@ describe('portfolioLedgerSync wiring', () => {
     expect(allocations[0]?.lotId).toBe('l1');
     expect(allocations[0]?.quantity).toBe(5);
   });
+
+  it('cost lot rows never send lot-prefixed ids to Postgres uuid columns', async () => {
+    const { investmentCostLotToRow, isCostLotUuid } = await import('../services/investmentCostLotDb');
+    const { newCostLotId } = await import('../services/investmentCostLots');
+    expect(isCostLotUuid('lot-3845ec05-3d90-47ec-ba40-c979b3518aab')).toBe(false);
+    expect(isCostLotUuid('3845ec05-3d90-47ec-ba40-c979b3518aab')).toBe(true);
+    const bad = investmentCostLotToRow({
+      id: 'lot-3845ec05-3d90-47ec-ba40-c979b3518aab',
+      portfolioId: '3845ec05-3d90-47ec-ba40-c979b3518aab',
+      symbol: 'LCID',
+      market: 'US',
+      acquisitionDate: '2026-01-01',
+      quantityRemaining: 10,
+      costPerShare: 5,
+      bookCurrency: 'USD',
+      sourceTransactionId: 'lot-3845ec05-3d90-47ec-ba40-c979b3518aab',
+    });
+    expect(bad).not.toHaveProperty('id');
+    expect(bad.source_transaction_id).toBeNull();
+    const goodId = newCostLotId();
+    const good = investmentCostLotToRow({
+      id: goodId,
+      portfolioId: '3845ec05-3d90-47ec-ba40-c979b3518aab',
+      symbol: 'LCID',
+      market: 'US',
+      acquisitionDate: '2026-01-01',
+      quantityRemaining: 10,
+      costPerShare: 5,
+      bookCurrency: 'USD',
+      sourceTransactionId: '3845ec05-3d90-47ec-ba40-c979b3518aab',
+    });
+    expect(good.id).toBe(goodId);
+    expect(good.source_transaction_id).toBe('3845ec05-3d90-47ec-ba40-c979b3518aab');
+    expect(read('services/portfolioLotReplayEngine.ts')).toContain('newCostLotId()');
+    expect(read('services/portfolioLotReplayEngine.ts')).not.toContain('lot-${tx.id}');
+  });
 });

@@ -20,6 +20,8 @@ const TONE_RANK: Record<Exclude<BudgetCoverageTone, 'neutral'>, number> = {
   red: 2,
 };
 
+const EPS = 0.0001;
+
 /** @internal exported for tests */
 export function worstBudgetCoverageTone(tones: BudgetCoverageTone[]): BudgetCoverageTone {
   const nonNeutral = tones.filter((t) => t !== 'neutral') as Exclude<BudgetCoverageTone, 'neutral'>[];
@@ -35,12 +37,17 @@ export function computeBudgetCoverageTone(args: {
   const limitSar = Number(args.limitSar) || 0;
   const remainingSar = Number(args.remainingSar) || 0;
   const amountSar = Math.max(0, Number(args.amountSar) || 0);
-  if (!(amountSar > 0)) return 'neutral';
-  if (!(limitSar > 0)) return 'red';
+  if (!(amountSar > EPS)) return 'neutral';
+  /** No monthly limit on this envelope — informational, not an error. */
+  if (!(limitSar > EPS)) return 'neutral';
   const projectedRemaining = remainingSar - amountSar;
-  if (projectedRemaining <= 0) return 'red';
-  const consumedPctAfter = (limitSar - projectedRemaining) / limitSar;
-  if (Number.isFinite(consumedPctAfter) && consumedPctAfter >= 0.9) return 'yellow';
+  /** Over budget only when amount strictly exceeds remaining. */
+  if (projectedRemaining < -EPS) return 'red';
+  const consumedPctAfter = (limitSar - Math.max(0, projectedRemaining)) / limitSar;
+  /** Exactly uses remaining, or ≥90% of the monthly limit after this expense. */
+  if (projectedRemaining <= EPS || (Number.isFinite(consumedPctAfter) && consumedPctAfter >= 0.9)) {
+    return 'yellow';
+  }
   return 'green';
 }
 
@@ -50,13 +57,22 @@ export function evaluateTransactionBudgetCoverageState(args: {
   budgetCategory: string;
   useSplitExpense: boolean;
   splitCoverage: BudgetCoverageLineInput[];
-  budgetCoverageSummary: { limitSar: number; remainingSar: number } | null;
+  budgetCoverageSummary: { limitSar: number; remainingSar: number; spentSar?: number } | null;
   inputAmountSar: number;
 }): {
   tone: BudgetCoverageTone;
+  title: string;
   summary: string;
   shortfalls: BudgetCoverageLineInput[];
   isWithinBudget: boolean;
+  /** Single-category detail for the status card (null when split / N/A). */
+  detail: {
+    category: string;
+    limitSar: number;
+    spentSar: number;
+    remainingSar: number;
+    afterSar: number;
+  } | null;
 } {
   const {
     transactionType,
@@ -71,39 +87,46 @@ export function evaluateTransactionBudgetCoverageState(args: {
   if (transactionType !== 'expense') {
     return {
       tone: 'neutral',
-      summary: 'Income transactions do not consume budget limits.',
+      title: 'Budget',
+      summary: 'Income does not use budget limits.',
       shortfalls: [],
       isWithinBudget: true,
+      detail: null,
     };
   }
   if (!hasAmount) {
     return {
       tone: 'neutral',
-      summary: 'Enter amount to check budget headroom.',
+      title: 'Budget',
+      summary: 'Enter an amount to check remaining budget.',
       shortfalls: [],
       isWithinBudget: true,
+      detail: null,
     };
   }
   if (!String(budgetCategory || '').trim()) {
     return {
       tone: 'neutral',
+      title: 'Budget',
       summary: 'Select a budget category to check limits.',
       shortfalls: [],
       isWithinBudget: true,
+      detail: null,
     };
   }
 
-  const shortfalls = splitCoverage.filter((line) => line.shortfallSar > 0.0001);
+  const shortfalls = splitCoverage.filter((line) => line.shortfallSar > EPS);
   const isWithinBudget = shortfalls.length === 0;
 
   if (useSplitExpense) {
     if (!isWithinBudget) {
       return {
         tone: 'red',
-        summary:
-          'Some split lines exceed remaining budget. You can still save; totals will show as over budget.',
+        title: 'Over budget on some splits',
+        summary: 'Some split lines exceed remaining budget. You can still save; totals will show as over budget.',
         shortfalls,
         isWithinBudget: false,
+        detail: null,
       };
     }
     const tones = splitCoverage
@@ -118,9 +141,11 @@ export function evaluateTransactionBudgetCoverageState(args: {
     const tone = worstBudgetCoverageTone(tones);
     return {
       tone,
-      summary: 'Split allocation is within selected budget limits.',
+      title: tone === 'yellow' ? 'Near budget limit' : 'Within budget',
+      summary: 'Split allocation fits the selected budget limits.',
       shortfalls: [],
       isWithinBudget: true,
+      detail: null,
     };
   }
 
@@ -132,13 +157,64 @@ export function evaluateTransactionBudgetCoverageState(args: {
       })
     : 'neutral';
 
+  const limitSar = budgetCoverageSummary?.limitSar ?? 0;
+  const remainingSar = budgetCoverageSummary?.remainingSar ?? 0;
+  const spentSar =
+    budgetCoverageSummary?.spentSar != null
+      ? budgetCoverageSummary.spentSar
+      : Math.max(0, limitSar - remainingSar);
+  const afterSar = remainingSar - inputAmountSar;
+  const detail = {
+    category: String(budgetCategory || '').trim(),
+    limitSar,
+    spentSar,
+    remainingSar,
+    afterSar,
+  };
+
+  if (!isWithinBudget) {
+    return {
+      tone: 'red',
+      title: 'Over remaining budget',
+      summary: 'This amount exceeds what is left in the budget. You can still save; it will show as over budget.',
+      shortfalls,
+      isWithinBudget: false,
+      detail,
+    };
+  }
+
+  if (tone === 'yellow') {
+    return {
+      tone: 'yellow',
+      title: afterSar <= EPS ? 'Uses remaining budget' : 'Near monthly limit',
+      summary:
+        afterSar <= EPS
+          ? 'This transaction uses the rest of the available budget for this category.'
+          : 'After this transaction you will be at or above 90% of the monthly limit.',
+      shortfalls: [],
+      isWithinBudget: true,
+      detail,
+    };
+  }
+
+  if (tone === 'neutral') {
+    return {
+      tone: 'neutral',
+      title: 'Budget',
+      summary: limitSar > EPS ? 'Budget check ready.' : 'No monthly limit set for this category.',
+      shortfalls: [],
+      isWithinBudget: true,
+      detail,
+    };
+  }
+
   return {
-    tone,
-    summary: isWithinBudget
-      ? 'Selected budget can cover this transaction.'
-      : 'This transaction exceeds remaining budget. You can still save; it will count as over budget.',
-    shortfalls,
-    isWithinBudget,
+    tone: 'green',
+    title: 'Within budget',
+    summary: 'This amount fits the remaining budget for the selected category.',
+    shortfalls: [],
+    isWithinBudget: true,
+    detail,
   };
 }
 

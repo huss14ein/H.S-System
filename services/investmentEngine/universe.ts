@@ -3,7 +3,6 @@ import type {
   FinancialData,
   Holding,
   InvestmentPortfolio,
-  SukukPosition,
   TickerStatus,
   TradeCurrency,
   UniverseTicker,
@@ -12,6 +11,10 @@ import { resolveSarPerUsd, toSAR, inferInstrumentCurrencyFromSymbol } from '../.
 import { holdingUsesLiveQuote } from '../../utils/holdingValuation';
 import { canonicalQuoteLookupKey } from '../finnhubService';
 import { engineSleeveKeyToTickerStatus, inferEngineSleeveKeyFromHolding } from '../inferHoldingUniverseClassification';
+import {
+  getActivePersonalSukukPositions,
+  sumPersonalSukukPositionsSar,
+} from '../sukuk/sukukExposure';
 
 export type EngineInstrumentKind = 'equity' | 'commodity' | 'sukuk';
 
@@ -120,11 +123,8 @@ export function buildInvestmentEngineUniverse(args: {
   const commodities = (data?.commodityHoldings ?? []) as CommodityHolding[];
   const commoditiesSarTotal = commodities.reduce((s, c) => s + Math.max(0, Number(c.currentValue) || 0), 0); // already SAR in app data
 
-  // Direct Sukuk contracts (sukuk_positions)
-  const sukukPositions = (data?.sukukPositions ?? []) as SukukPosition[];
-  const sukukSarTotal = sukukPositions
-    .filter((p) => p.status === 'active')
-    .reduce((s, p) => s + Math.max(0, Number(p.outstandingPrincipal) || 0), 0);
+  // Direct Sukuk contracts (sukuk_positions) — SAR via same helper as headline exposure
+  const sukukSarTotal = sumPersonalSukukPositionsSar(data, sarPerUsd);
 
   const instruments: EngineInstrument[] = [];
 
@@ -222,19 +222,21 @@ export function buildInvestmentEngineUniverse(args: {
     });
   }
 
-  // Direct Sukuk positions
-  for (const p of sukukPositions.filter((x) => x.status === 'active')) {
+  // Direct Sukuk positions (personal active contracts; USD principal → SAR)
+  for (const p of getActivePersonalSukukPositions(data)) {
     const sym = `SUKUK:${p.id}`;
-    const valueSar = Math.max(0, Number(p.outstandingPrincipal) || 0);
-    if (!(valueSar > 0)) continue;
+    const currency: TradeCurrency = p.currency === 'USD' ? 'USD' : 'SAR';
+    const outstanding = Math.max(0, Number(p.outstandingPrincipal) || 0);
+    if (!(outstanding > 0)) continue;
+    const valueSar = toSAR(outstanding, currency, sarPerUsd);
     instruments.push({
       instrumentId: `sukuk:${p.id}`,
       kind: 'sukuk',
       symbol: sym,
       name: p.name ? `${p.name} (Sukuk)` : 'Sukuk',
-      instrumentCurrency: p.currency === 'USD' ? 'USD' : 'SAR',
-      bookCurrency: p.currency === 'USD' ? 'USD' : 'SAR',
-      positionValueBook: valueSar,
+      instrumentCurrency: currency,
+      bookCurrency: currency,
+      positionValueBook: outstanding,
       positionValueSar: valueSar,
       status: 'Core',
       monthlyWeight: null,

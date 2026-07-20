@@ -4,12 +4,13 @@
  */
 import type { CorporateAction } from './corporateActions';
 import { splitRatio, shouldFloorSplitQuantity } from './corporateActions';
-import { allocateFifoSell, openCostLotFromBuy, type CostLot } from './investmentCostLots';
-import { costLotToInvestmentCostLot } from './investmentCostLotDb';
+import { allocateFifoSell, openCostLotFromBuy, newCostLotId, type CostLot } from './investmentCostLots';
+import { costLotToInvestmentCostLot, isCostLotUuid } from './investmentCostLotDb';
 import type { CorporateActionReplayEvent } from './portfolioReplayEngine';
 import { sortInvestmentTransactionsChronological } from './portfolioReplayEngine';
 import type { InvestmentCostLot, InvestmentTransaction } from '../types';
 import { yieldToMain } from '../utils/yieldToMain';
+import { filterTransactionsForPortfolioReplay } from './portfolioTransactionScope';
 
 export type LotReplayResult = {
   lots: InvestmentCostLot[];
@@ -89,12 +90,13 @@ function applyCorporateActionToCostLots(
       parentUpdated.push({ ...lot, costPerShare: parentCostPerShare });
       if (childQty > 1e-9) {
         childLots.push({
-          id: `ca-spin-${lot.id}-${childSym}`,
+          id: newCostLotId(),
           symbol: childSym,
           acquisitionDate: lot.acquisitionDate,
           quantityRemaining: childQty,
           costPerShare: childQty > 0 ? childCostTotal / childQty : 0,
           bookCurrency: lot.bookCurrency,
+          sourceTransactionId: lot.sourceTransactionId ?? null,
         });
       }
     }
@@ -109,12 +111,13 @@ function applyCorporateActionToCostLots(
       const grantQty = lot.quantityRemaining * conv;
       if (grantQty > 1e-9) {
         childLots.push({
-          id: `ca-merge-${lot.id}-${childSym}`,
+          id: newCostLotId(),
           symbol: childSym,
           acquisitionDate: lot.acquisitionDate,
           quantityRemaining: grantQty,
           costPerShare: grantQty > 0 ? (lot.quantityRemaining * lot.costPerShare) / grantQty : lot.costPerShare,
           bookCurrency: lot.bookCurrency,
+          sourceTransactionId: lot.sourceTransactionId ?? null,
         });
       }
     }
@@ -130,6 +133,9 @@ export async function rebuildCostLotsFromEvents(args: {
   corporateActions: CorporateActionReplayEvent[];
   bookCurrency?: 'SAR' | 'USD';
   signal?: AbortSignal;
+  /** Symbols already held — allows legacy orphan buys to feed FIFO lots. */
+  holdingSymbols?: Iterable<string>;
+  accountId?: string | null;
 }): Promise<LotReplayResult> {
   const bookCurrency = args.bookCurrency ?? 'SAR';
   let internalLots: CostLot[] = [];
@@ -140,9 +146,12 @@ export async function rebuildCostLotsFromEvents(args: {
     | { kind: 'tx'; at: string; tx: InvestmentTransaction }
     | { kind: 'ca'; at: string; ev: CorporateActionReplayEvent };
 
-  const portfolioTxs = args.transactions.filter(
-    (t) => t.portfolioId === args.portfolioId || !t.portfolioId,
-  );
+  const portfolioTxs = filterTransactionsForPortfolioReplay({
+    portfolioId: args.portfolioId,
+    transactions: args.transactions,
+    holdingSymbols: args.holdingSymbols,
+    accountId: args.accountId,
+  });
   const timeline: TimelineItem[] = [];
   for (const tx of sortInvestmentTransactionsChronological(portfolioTxs)) {
     timeline.push({ kind: 'tx', at: String(tx.date ?? '').slice(0, 10), tx });
@@ -171,14 +180,16 @@ export async function rebuildCostLotsFromEvents(args: {
         tx.currency === 'USD' || tx.currency === 'SAR' ? tx.currency : bookCurrency;
 
       if (tx.type === 'buy' && sym && qty > 0) {
+        const txId = tx.id ? String(tx.id) : '';
         internalLots.push(
           openCostLotFromBuy({
-            id: `lot-${tx.id}`,
+            id: newCostLotId(),
             symbol: sym,
             acquisitionDate: String(tx.date ?? '').slice(0, 10),
             quantity: qty,
             costPerShare: px,
             bookCurrency: txBook,
+            sourceTransactionId: isCostLotUuid(txId) ? txId : null,
           }),
         );
       } else if (tx.type === 'sell' && sym && qty > 0) {
@@ -212,7 +223,7 @@ export async function rebuildCostLotsFromEvents(args: {
         quantityRemaining: l.quantityRemaining,
         costPerShare: l.costPerShare,
         bookCurrency: l.bookCurrency,
-        sourceTransactionId: l.id.startsWith('lot-') ? l.id.slice(4) : null,
+        sourceTransactionId: isCostLotUuid(l.sourceTransactionId) ? l.sourceTransactionId : null,
       }),
     );
 

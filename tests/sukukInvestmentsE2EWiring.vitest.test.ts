@@ -162,6 +162,13 @@ describe('sukuk investments E2E wiring', () => {
     expect(inv).toContain('sukukPositionsValueSAR');
   });
 
+  it('Zakat includes direct Sukuk positions in zakatable investments', () => {
+    const page = read('pages/Zakat.tsx');
+    expect(page).toContain('summarizeZakatableSukukPositionsForZakat');
+    expect(page).toContain('sukukLines');
+    expect(page).toContain('invValue + sukukValue');
+  });
+
   it('diagnose-sukuk-positions script exists and is read-only', () => {
     const script = read('scripts/diagnose-sukuk-positions.mjs');
     expect(script).toContain("'sukuk_positions'");

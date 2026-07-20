@@ -24,20 +24,23 @@ const PAGE_NO_HEADLINE_METRICS = new Set([
   'FinancialJournal.tsx',
   'SinkingFunds.tsx',
   'Notifications.tsx',
-  /** Empty routing stubs — real UI lives in Transactions.tsx / Investments.tsx */
-  'Cashflow.tsx',
-  'Platforms.tsx',
-  'TransactionsPage.tsx',
 ]);
 
 /** Shared UI that shows wealth / FX — full metrics or spot-only hook (not raw resolveSarPerUsd). */
 const COMPONENT_CANONICAL_REQUIRED = new Set([
   'AIFeed.tsx',
+  'AIAdvisor.tsx',
+  'Header.tsx',
   'MarketSimulator.tsx',
   'DividendSmsImportPanel.tsx',
 ]);
 
 const CONTEXT_CANONICAL_REQUIRED = new Set(['NotificationsContext.tsx']);
+
+const HOOK_SPOT_FX_REQUIRED = new Set([
+  'useEmergencyFund.ts',
+  'useFinancialEnhancementInsights.ts',
+]);
 
 function pageFiles(): string[] {
   return readdirSync(PAGES_DIR).filter((f) => f.endsWith('.tsx'));
@@ -113,5 +116,24 @@ describe('canonical metrics surface coverage', () => {
       expect(usesCanonicalFx).toBe(true);
       expect(src.includes('resolveSarPerUsd')).toBe(false);
     }
+  });
+
+  it('named hooks use useCanonicalSpotFx for liquid-cash / enhancement FX', () => {
+    for (const file of HOOK_SPOT_FX_REQUIRED) {
+      const src = readFileSync(join(process.cwd(), 'hooks', file), 'utf8');
+      expect(src.includes('useCanonicalSpotFx'), file).toBe(true);
+    }
+  });
+
+  it('household NW helper wires live-quote platforms rollup (same family as headline)', () => {
+    const src = readFileSync(join(process.cwd(), 'services/personalNetWorth.ts'), 'utf8');
+    expect(src).toContain('computeAllPlatformsRollupSAR');
+    expect(src).toContain('computeAllCommoditiesContributionSAR');
+    expect(src).toContain('options.simulatedPrices');
+  });
+
+  it('CommandPalette uses computeCanonicalFinancialMetrics (non-React path)', () => {
+    const src = readFileSync(join(COMPONENTS_DIR, 'CommandPalette.tsx'), 'utf8');
+    expect(src).toContain('computeCanonicalFinancialMetrics');
   });
 });

@@ -11,6 +11,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import { personalInvestmentTerminalValueSAR } from '../utils/currencyMath';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import { effectivePayoutMonths } from '../services/dividendExpectedSchedule';
 import type { Holding, InvestmentTransaction, Page } from '../types';
 import { useCompanyNames, symbolsNeedingCompanyName } from '../hooks/useSymbolCompanyName';
@@ -348,7 +349,7 @@ const DividendTrackerView: React.FC<{
             window.setTimeout(() => {
                 document.getElementById(DIVIDEND_SMS_IMPORT_SECTION_ID)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }, 120);
-            clearPageAction?.();
+            return scheduleClearPageAction(clearPageAction);
         }
     }, [pageAction, clearPageAction]);
 

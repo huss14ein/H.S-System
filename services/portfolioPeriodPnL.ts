@@ -30,9 +30,11 @@ import { yieldToMain } from '../utils/yieldToMain';
 import {
   allocateFifoSell,
   openCostLotFromBuy,
+  newCostLotId,
   type CostLot,
   type LotSellAllocation,
 } from './investmentCostLots';
+import { isCostLotUuid } from './investmentCostLotDb';
 
 export type PortfolioPeriodPnLBreakdown = {
   /** Realized on sells + dividends − fees/vat in the window (ledger, SAR). */
@@ -530,14 +532,16 @@ function applyFifoBuy(fifoLots: CostLot[], tx: InvestmentTransaction, defaultBoo
   const sym = String(tx.symbol ?? '').trim().toUpperCase();
   const qty = Math.abs(Number(tx.quantity) || 0);
   if (!(sym && qty > 0)) return;
+  const txId = tx.id ? String(tx.id) : '';
   fifoLots.push(
     openCostLotFromBuy({
-      id: `lot-${tx.id}`,
+      id: newCostLotId(),
       symbol: sym,
       acquisitionDate: String(tx.date ?? '').slice(0, 10),
       quantity: qty,
       costPerShare: txSellPricePerShare(tx),
       bookCurrency: txBookCurrency(tx, defaultBook),
+      sourceTransactionId: isCostLotUuid(txId) ? txId : null,
     }),
   );
 }

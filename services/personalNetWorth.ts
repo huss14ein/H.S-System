@@ -4,6 +4,8 @@ import { getPersonalAccounts, getPersonalAssets, getPersonalLiabilities, getPers
 import { getCreditCardLinkedAccountIds } from './creditCardLinking';
 import { hydrateSarPerUsdDailySeries } from './fxDailySeries';
 import {
+  computeAllCommoditiesContributionSAR,
+  computeAllPlatformsRollupSAR,
   computePersonalCommoditiesContributionSAR,
   computePersonalPlatformsRollupSAR,
   type SimulatedPriceMap,
@@ -89,7 +91,10 @@ function accumulateBalanceSheetSlices(
         (a: { id?: string; type?: string; balance?: number }) =>
           a.type === 'Credit' && (a.balance ?? 0) < 0 && !linkedCreditIds.has(String(a.id ?? '')),
       )
-      .reduce((sum: number, acc: { balance?: number }) => sum + Math.abs(acc.balance ?? 0), 0) +
+      .reduce((sum: number, acc: { balance?: number; currency?: string }) => {
+        const cur = acc.currency === 'USD' ? 'USD' : 'SAR';
+        return sum + Math.abs(toSAR(acc.balance ?? 0, cur as 'SAR' | 'USD', exchangeRate));
+      }, 0) +
     cashAndSavingsNegative;
 
   const totalReceivable = liabilities
@@ -168,6 +173,8 @@ function resolveBalanceSheetSarPerUsd(data: FinancialData, uiExchangeRate: numbe
 
 /**
  * Balance-sheet buckets for **all** accounts/assets (household-inclusive). Use for Analysis / full-ledger views.
+ * When `getAvailableCashForAccount` (+ optional `simulatedPrices`) is set, investments/commodities use the same
+ * live-quote path as personal headline NW (platforms rollup + commodities marks + direct Sukuk).
  *
  * @param uiExchangeRate CurrencyContext UI rate; resolved via `wealthUltraConfig` when set (same as headline NW).
  */
@@ -191,12 +198,24 @@ export function computeAllNetWorthChartBucketsSAR(
     sarPerUsd,
     options
   );
+  /** All active contracts (Sukuk has no owner field — same set for personal and household). */
   const sukukPositionsSar = sumPersonalSukukPositionsSar(data, sarPerUsd);
+  let totalInvestmentsValue = b.totalInvestmentsValue;
+  let brokerageCashSAR = b.brokerageCashSAR;
+  let totalCommodities = b.totalCommodities;
+  if (options?.getAvailableCashForAccount) {
+    const prices = options.simulatedPrices ?? {};
+    const platform = computeAllPlatformsRollupSAR(data, sarPerUsd, prices, options.getAvailableCashForAccount);
+    const commodities = computeAllCommoditiesContributionSAR(data, sarPerUsd, prices);
+    totalInvestmentsValue = platform.subtotalSAR;
+    brokerageCashSAR = 0;
+    totalCommodities = commodities.valueSAR;
+  }
   const cash = b.cashAndSavingsPositive;
   const receivables = b.totalReceivable;
   const liabilities = -b.totalDebt;
   /** Same bucket taxonomy as personal headline (commodities in investments, not physical). */
-  const investments = b.totalInvestmentsValue + b.brokerageCashSAR + sukukPositionsSar + b.totalCommodities;
+  const investments = totalInvestmentsValue + brokerageCashSAR + sukukPositionsSar + totalCommodities;
   const physicalAndCommodities = b.physicalAssetsSar;
   const netWorth = cash + investments + physicalAndCommodities + receivables + liabilities;
   return { cash, investments, physicalAndCommodities, receivables, liabilities, netWorth };

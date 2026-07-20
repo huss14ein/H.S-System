@@ -2,6 +2,7 @@
  * Corporate actions — splits, reverse splits, cash-in-lieu, spinoffs, mergers (KSA/US/Tadawul).
  * Cost basis and realized P/L in SAR — not tax reporting.
  */
+import { roundAvgCostPerUnit, roundQuantity } from '../utils/money';
 
 export type CorporateActionType =
   | 'stock_split'
@@ -64,16 +65,18 @@ export function recalculateCostBasisAfterAction(args: {
 
   if (action.type === 'stock_split' || action.type === 'stock_dividend') {
     const ratio = splitRatio(action);
-    const newQuantity = q * ratio;
-    const newAvgCost = ratio > 0 ? avgCost / ratio : avgCost;
+    const newQuantity = roundQuantity(q * ratio);
+    const newAvgCost = ratio > 0 ? roundAvgCostPerUnit(avgCost / ratio) : avgCost;
     return { quantity: newQuantity, avgCost: newAvgCost };
   }
 
   if (action.type === 'reverse_stock_split') {
     const ratio = splitRatio(action);
     const newQtyRaw = q * ratio;
-    const newQuantity = shouldFloorSplitQuantity(action, q) ? Math.floor(newQtyRaw) : newQtyRaw;
-    const newAvgCost = ratio > 0 ? avgCost / ratio : avgCost;
+    const newQuantity = shouldFloorSplitQuantity(action, q)
+      ? Math.floor(newQtyRaw)
+      : roundQuantity(newQtyRaw);
+    const newAvgCost = ratio > 0 ? roundAvgCostPerUnit(avgCost / ratio) : avgCost;
     return { quantity: newQuantity, avgCost: newAvgCost };
   }
 
@@ -85,12 +88,12 @@ export function recalculateCostBasisAfterAction(args: {
     const ratio = splitRatio(action);
     const newQty = q * ratio;
     const whole = Math.floor(newQty);
-    return { quantity: whole, avgCost: ratio > 0 ? avgCost / ratio : avgCost };
+    return { quantity: whole, avgCost: ratio > 0 ? roundAvgCostPerUnit(avgCost / ratio) : avgCost };
   }
 
   if (action.type === 'spinoff') {
     const pct = Math.min(1, Math.max(0, Number(action.costBasisAllocationPct) || 0));
-    return { quantity: q, avgCost: avgCost * (1 - pct) };
+    return { quantity: q, avgCost: roundAvgCostPerUnit(avgCost * (1 - pct)) };
   }
 
   if (action.type === 'merger') {

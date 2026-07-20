@@ -826,9 +826,10 @@ describe('corporateActionsSplitE2E', () => {
     expect(page).toContain('corporateActionEvents');
   });
 
-  it('DataContext apply and undo pass holdingsBaselineMode as_stored', () => {
+  it('DataContext apply and undo gate as_stored delta to manual portfolios', () => {
     const ctx = read('context/DataContext.tsx');
-    expect(ctx).toContain("holdingsBaselineMode: 'as_stored'");
+    expect(ctx).toContain('const manualOnly = !hasPositionAffectingTransactions(replayTxs)');
+    expect(ctx).toContain("holdingsBaselineMode: manualOnly ? 'as_stored' : 'replay_derived'");
   });
 
   it('DataContext reverses corporate action cash deposits on undo', () => {

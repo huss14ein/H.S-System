@@ -410,7 +410,7 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
                 >
                 <ul className="text-sm text-slate-700 space-y-2 list-disc pl-5 leading-relaxed">
                     <li>
-                            <strong className="text-slate-900">What moves:</strong> we grow one “investment pile” (your portfolios + brokerage cash today) with your monthly contribution and return %. Everything else in today’s net worth (home, Sukuk, cash outside that pile, debt) stays fixed — so this is a <strong>simplified</strong> story, not a full balance-sheet simulator.
+                            <strong className="text-slate-900">What moves:</strong> we grow one “investment pile” (platforms + commodities + direct Sukuk — your Investments total today) with your monthly contribution and return %. Everything else in today’s net worth (home, cash outside broker platforms, debt) stays fixed — so this is a <strong>simplified</strong> story, not a full balance-sheet simulator.
                     </li>
                     <li>
                             <strong className="text-slate-900">Net worth line:</strong> fixed slice of today’s NW + growing investment pile — stays aligned month by month (no rounding drift).

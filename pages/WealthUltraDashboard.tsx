@@ -610,13 +610,13 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
               <Card
-                title="Total portfolio value"
+                title="Platform equity (USD)"
                 value={<CurrencyDualDisplay value={totalPortfolioValue} inCurrency="USD" digits={0} size="2xl" />}
-                trend={`SAR equivalent uses ${sarPerUsd.toFixed(4)} / USD · Confidence: ${metricConfidence.totalPortfolio}`}
+                trend={`Broker holdings only · Finova investment exposure (platforms + commodities + Sukuk): ${investmentsTotalSar.toLocaleString(undefined, { maximumFractionDigits: 0 })} SAR · Confidence: ${metricConfidence.totalPortfolio}`}
                 density="compact"
                 indicatorColor="green"
                 valueColor="text-slate-900"
-                tooltip="Wealth Ultra values holdings using USD notionally; SAR is for comparison with the rest of your Finova totals."
+                tooltip="Wealth Ultra engine equity is platform holdings in USD. Canonical Finova investment exposure also includes commodities and direct Sukuk (see SAR line above)."
               />
               <Card
                 title="Combined monthly plan budget"
@@ -1494,13 +1494,13 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
 
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
             <Card
-              title="Total portfolio value"
+              title="Platform equity (USD)"
               value={<CurrencyDualDisplay value={totalPortfolioValue} inCurrency="USD" digits={0} size="2xl" />}
-              trend={`Confidence: ${metricConfidence.totalPortfolio}`}
+              trend={`Finova exposure ${investmentsTotalSar.toLocaleString(undefined, { maximumFractionDigits: 0 })} SAR · Confidence: ${metricConfidence.totalPortfolio}`}
               density="compact"
               indicatorColor="green"
               valueColor="text-slate-900"
-              tooltip="Total market value as the engine sees it (USD)."
+              tooltip="Broker holdings in USD. Canonical Finova investment exposure also includes commodities and direct Sukuk."
             />
             <Card
               title="Deployable cash"

@@ -914,18 +914,40 @@ Give exact example swaps and new monthly budget if possible. Swap low-joy spendi
     return response?.text ?? '';
 }
 
-export type AiInsightOptions = Pick<
-    AiGroundingBuildOptions,
-    'exchangeRate' | 'getAvailableCashForAccount' | 'simulatedPrices'
->;
+export type AiInsightOptions = {
+  /** Canonical SAR/USD — pass `useCanonicalFinancialMetrics().sarPerUsd` / `useCanonicalSpotFx()`. */
+  exchangeRate?: number;
+  getAvailableCashForAccount?: AiGroundingBuildOptions['getAvailableCashForAccount'];
+  simulatedPrices?: AiGroundingBuildOptions['simulatedPrices'];
+};
+
+/** Optional grounding FX — returns null when opts/exchangeRate omitted or invalid. */
+function tryAiExchangeRate(opts: AiInsightOptions | null | undefined): number | null {
+  const n = Number(opts?.exchangeRate);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
+function buildWealthGroundingOrNull(data: FinancialData, opts?: AiInsightOptions | null) {
+  const exchangeRate = tryAiExchangeRate(opts);
+  if (exchangeRate == null) return null;
+  return buildAiPersonalWealthGrounding({
+    data,
+    exchangeRate,
+    getAvailableCashForAccount: opts?.getAvailableCashForAccount,
+    simulatedPrices: opts?.simulatedPrices,
+  });
+}
+
+const AI_FX_REQUIRED_MSG =
+  'Canonical exchange rate is required for AI wealth insights. Pass useCanonicalSpotFx() / useCanonicalFinancialMetrics().sarPerUsd.';
 
 export const getAIFeedInsights = async (data: FinancialData, opts?: AiInsightOptions): Promise<FeedItem[]> => {
-    const g = buildAiPersonalWealthGrounding({
-        data,
-        exchangeRate: opts?.exchangeRate,
-        getAvailableCashForAccount: opts?.getAvailableCashForAccount,
-        simulatedPrices: opts?.simulatedPrices,
-    });
+    const g = buildWealthGroundingOrNull(data, opts);
+    if (!g) {
+        console.warn('getAIFeedInsights:', AI_FX_REQUIRED_MSG);
+        return [];
+    }
     const resolvedFp = resolvedGoalAmountsFingerprint(data, g.sarPerUsd);
     const cacheKey = `getAIFeedInsights:v2:${g.netWorthSar}:${g.monthlyPnLSar}:${(data?.budgets ?? []).length}:${resolvedFp}`;
     const cached = getFromCache(cacheKey);
@@ -968,12 +990,8 @@ Each item: type (BUDGET|GOAL|INVESTMENT|SAVINGS), title (short), description (on
 
 /** Dashboard / wealth overview — uses canonical headline NW and financial-month cashflow. */
 export const getAIDashboardInsight = async (data: FinancialData, opts?: AiInsightOptions): Promise<string> => {
-    const g = buildAiPersonalWealthGrounding({
-        data,
-        exchangeRate: opts?.exchangeRate,
-        getAvailableCashForAccount: opts?.getAvailableCashForAccount,
-        simulatedPrices: opts?.simulatedPrices,
-    });
+    const g = buildWealthGroundingOrNull(data, opts);
+    if (!g) return AI_FX_REQUIRED_MSG;
     const cacheKey = `getAIDashboardInsight:v2:${g.netWorthSar}:${g.monthlyPnLSar}:${g.roiPct}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
@@ -1555,14 +1573,7 @@ export const getAIAnalysisPageInsights = async (
     opts?: AiInsightOptions,
     extras?: AnalysisInsightExtras,
 ): Promise<string> => {
-    const g = data
-        ? buildAiPersonalWealthGrounding({
-              data,
-              exchangeRate: opts?.exchangeRate,
-              getAvailableCashForAccount: opts?.getAvailableCashForAccount,
-              simulatedPrices: opts?.simulatedPrices,
-          })
-        : null;
+    const g = data ? buildWealthGroundingOrNull(data, opts) : null;
     const chartsBlock = formatAnalysisChartsForPrompt(spendingData, trendData, compositionData);
     const cacheKey = `getAIAnalysisPageInsights:v2:${chartsBlock}:${g?.netWorthSar ?? 0}`;
     const cached = getFromCache(cacheKey);
@@ -1632,12 +1643,8 @@ export const getAILiabilitiesInsight = async (
     data: FinancialData,
     opts?: AiInsightOptions,
 ): Promise<string> => {
-    const g = buildAiPersonalWealthGrounding({
-        data,
-        exchangeRate: opts?.exchangeRate,
-        getAvailableCashForAccount: opts?.getAvailableCashForAccount,
-        simulatedPrices: opts?.simulatedPrices,
-    });
+    const g = buildWealthGroundingOrNull(data, opts);
+    if (!g) return AI_FX_REQUIRED_MSG;
     const debtTypes = metrics.debtByType.map((d) => `${d.name} ${fmtSar(d.value)} SAR`).join('; ') || 'none';
     const cacheKey = `getAILiabilitiesInsight:v1:${g.netWorthSar}:${metrics.totalDebtSar}:${metrics.debtStressScore}`;
     const cached = getFromCache(cacheKey);
@@ -1712,12 +1719,8 @@ export const getAIForecastInsight = async (
     data: FinancialData,
     opts?: AiInsightOptions,
 ): Promise<string> => {
-    const g = buildAiPersonalWealthGrounding({
-        data,
-        exchangeRate: opts?.exchangeRate,
-        getAvailableCashForAccount: opts?.getAvailableCashForAccount,
-        simulatedPrices: opts?.simulatedPrices,
-    });
+    const g = buildWealthGroundingOrNull(data, opts);
+    if (!g) return AI_FX_REQUIRED_MSG;
     const cacheKey = `getAIForecastInsight:v1:${g.netWorthSar}:${forecast.projectedNetWorthSar}:${forecast.horizonYears}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
@@ -1827,12 +1830,8 @@ export const getAIInvestmentOverviewAnalysis = async (
 };
 
 export const getAIExecutiveSummary = async (data: FinancialData, opts?: AiInsightOptions): Promise<string> => {
-    const g = buildAiPersonalWealthGrounding({
-        data,
-        exchangeRate: opts?.exchangeRate,
-        getAvailableCashForAccount: opts?.getAvailableCashForAccount,
-        simulatedPrices: opts?.simulatedPrices,
-    });
+    const g = buildWealthGroundingOrNull(data, opts);
+    if (!g) return AI_FX_REQUIRED_MSG;
     const resolvedFp = resolvedGoalAmountsFingerprint(data, g.sarPerUsd);
     const cacheKey = `getAIExecutiveSummary:v2:${g.netWorthSar}:${g.monthlyPnLSar}:${resolvedFp}`;
     const cached = getFromCache(cacheKey);
@@ -2320,14 +2319,7 @@ export const getAIWatchlistAdvice = async (
         .join(', ');
     const held = new Set((options?.holdingsSymbols ?? []).map((s) => s.trim().toUpperCase()));
     const overlap = normalized.filter((s) => held.has(s));
-    const g = options?.data
-        ? buildAiPersonalWealthGrounding({
-              data: options.data,
-              exchangeRate: options.insightOpts?.exchangeRate,
-              getAvailableCashForAccount: options.insightOpts?.getAvailableCashForAccount,
-              simulatedPrices: options.insightOpts?.simulatedPrices,
-          })
-        : null;
+    const g = options?.data ? buildWealthGroundingOrNull(options.data, options.insightOpts) : null;
     const ensureWatchlistMarkdown = (raw: string): string => {
         const text = String(raw || '').trim();
         if (!text) return '### Diversification\n- No suggestions generated.\n\n### Arabic Summary (ملخص عربي)\n- تعذر إنشاء الرد حالياً.';
