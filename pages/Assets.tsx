@@ -26,6 +26,7 @@ import SectionCard from '../components/SectionCard';
 import PageLayout from '../components/PageLayout';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { parseMoneyInput, roundMoney, roundQuantity } from '../utils/money';
+import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
 import { useExtendedCanonicalMetrics, pickCommoditiesValueSar } from '../hooks/useCanonicalFinancialMetrics';
 import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
@@ -590,7 +591,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     useEffect(() => {
         if (pageAction === 'open-asset-modal') {
             handleOpenAssetModal();
-            clearPageAction?.();
+            return scheduleClearPageAction(clearPageAction);
         }
     }, [pageAction, clearPageAction]);
 

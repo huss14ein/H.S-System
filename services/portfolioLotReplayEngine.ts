@@ -4,8 +4,8 @@
  */
 import type { CorporateAction } from './corporateActions';
 import { splitRatio, shouldFloorSplitQuantity } from './corporateActions';
-import { allocateFifoSell, openCostLotFromBuy, type CostLot } from './investmentCostLots';
-import { costLotToInvestmentCostLot } from './investmentCostLotDb';
+import { allocateFifoSell, openCostLotFromBuy, newCostLotId, type CostLot } from './investmentCostLots';
+import { costLotToInvestmentCostLot, isCostLotUuid } from './investmentCostLotDb';
 import type { CorporateActionReplayEvent } from './portfolioReplayEngine';
 import { sortInvestmentTransactionsChronological } from './portfolioReplayEngine';
 import type { InvestmentCostLot, InvestmentTransaction } from '../types';
@@ -90,12 +90,13 @@ function applyCorporateActionToCostLots(
       parentUpdated.push({ ...lot, costPerShare: parentCostPerShare });
       if (childQty > 1e-9) {
         childLots.push({
-          id: `ca-spin-${lot.id}-${childSym}`,
+          id: newCostLotId(),
           symbol: childSym,
           acquisitionDate: lot.acquisitionDate,
           quantityRemaining: childQty,
           costPerShare: childQty > 0 ? childCostTotal / childQty : 0,
           bookCurrency: lot.bookCurrency,
+          sourceTransactionId: lot.sourceTransactionId ?? null,
         });
       }
     }
@@ -110,12 +111,13 @@ function applyCorporateActionToCostLots(
       const grantQty = lot.quantityRemaining * conv;
       if (grantQty > 1e-9) {
         childLots.push({
-          id: `ca-merge-${lot.id}-${childSym}`,
+          id: newCostLotId(),
           symbol: childSym,
           acquisitionDate: lot.acquisitionDate,
           quantityRemaining: grantQty,
           costPerShare: grantQty > 0 ? (lot.quantityRemaining * lot.costPerShare) / grantQty : lot.costPerShare,
           bookCurrency: lot.bookCurrency,
+          sourceTransactionId: lot.sourceTransactionId ?? null,
         });
       }
     }
@@ -178,14 +180,16 @@ export async function rebuildCostLotsFromEvents(args: {
         tx.currency === 'USD' || tx.currency === 'SAR' ? tx.currency : bookCurrency;
 
       if (tx.type === 'buy' && sym && qty > 0) {
+        const txId = tx.id ? String(tx.id) : '';
         internalLots.push(
           openCostLotFromBuy({
-            id: `lot-${tx.id}`,
+            id: newCostLotId(),
             symbol: sym,
             acquisitionDate: String(tx.date ?? '').slice(0, 10),
             quantity: qty,
             costPerShare: px,
             bookCurrency: txBook,
+            sourceTransactionId: isCostLotUuid(txId) ? txId : null,
           }),
         );
       } else if (tx.type === 'sell' && sym && qty > 0) {
@@ -219,7 +223,7 @@ export async function rebuildCostLotsFromEvents(args: {
         quantityRemaining: l.quantityRemaining,
         costPerShare: l.costPerShare,
         bookCurrency: l.bookCurrency,
-        sourceTransactionId: l.id.startsWith('lot-') ? l.id.slice(4) : null,
+        sourceTransactionId: isCostLotUuid(l.sourceTransactionId) ? l.sourceTransactionId : null,
       }),
     );
 

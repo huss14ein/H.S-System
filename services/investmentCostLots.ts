@@ -8,6 +8,8 @@ export type CostLot = {
   quantityRemaining: number;
   costPerShare: number;
   bookCurrency: 'SAR' | 'USD';
+  /** Original buy transaction id when known (must be UUID for DB). */
+  sourceTransactionId?: string | null;
 };
 
 export type LotSellAllocation = {
@@ -16,6 +18,19 @@ export type LotSellAllocation = {
   costPerShare: number;
   realizedPnL: number;
 };
+
+/** UUID for cost-lot primary keys (Postgres `investment_cost_lots.id`). */
+export function newCostLotId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // Deterministic-enough fallback for non-browser test hosts without Web Crypto.
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
 
 /** Allocate a sell quantity across lots FIFO (oldest acquisition first). */
 export function allocateFifoSell(
@@ -65,6 +80,7 @@ export function openCostLotFromBuy(args: {
   quantity: number;
   costPerShare: number;
   bookCurrency?: 'SAR' | 'USD';
+  sourceTransactionId?: string | null;
 }): CostLot {
   return {
     id: args.id,
@@ -73,5 +89,6 @@ export function openCostLotFromBuy(args: {
     quantityRemaining: Math.max(0, args.quantity),
     costPerShare: Math.max(0, args.costPerShare),
     bookCurrency: args.bookCurrency ?? 'SAR',
+    sourceTransactionId: args.sourceTransactionId ?? null,
   };
 }

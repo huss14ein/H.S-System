@@ -79,12 +79,15 @@ describe('recordTradeCompletion', () => {
     const apply = read('services/corporateActionApply.ts');
     expect(apply).toContain('filterTransactionsForPortfolioReplay({');
     expect(apply).toContain('accountId:');
+    expect(apply).toContain('Hybrid baseline');
     const lots = read('services/portfolioLotReplayEngine.ts');
     expect(lots).toContain('holdingSymbols');
     expect(lots).toContain('accountId');
     const sync = read('services/portfolioLedgerSync.ts');
     expect(sync).toContain('formatUnknownError');
     expect(sync).toContain('Failed to save cost lots');
+    expect(sync).toContain('const pos = replayed.get(upper)');
+    expect(sync).not.toMatch(/await args\.updateHolding\(\{ \.\.\.h, realizedPnL: pnl \}\)/);
   });
 
   it('formatUnknownError never returns [object Object] for Supabase-shaped errors', () => {

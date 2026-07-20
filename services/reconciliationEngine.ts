@@ -73,7 +73,8 @@ export function reconcileHoldingsWithCorporateActionsSync(args: {
     );
     holdingLike = seed ?? { quantity: stored, avgCost: Number(holding?.avgCost) || 0 };
   } else {
-    holdingLike = { quantity: 0, avgCost: Number(holding?.avgCost) || 0 };
+    // Sell-only / manual: holdings qty is source of truth (sells applied in recordTrade, not re-summed here).
+    holdingLike = { quantity: stored, avgCost: Number(holding?.avgCost) || 0 };
   }
 
   for (const ev of events) {

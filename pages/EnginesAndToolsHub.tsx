@@ -24,6 +24,7 @@ import { BoltIcon } from '../components/icons/BoltIcon';
 import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
 import CollapsibleSection from '../components/CollapsibleSection';
 import PageActionsDropdown from '../components/PageActionsDropdown';
+import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 
 const LogicEnginesHub = lazy(() => import('./LogicEnginesHub'));
 const LiquidationPlanner = lazy(() => import('./LiquidationPlanner'));
@@ -187,16 +188,16 @@ const EnginesAndToolsHub: React.FC<EnginesAndToolsHubProps> = ({
   useEffect(() => {
     if (pageAction === 'openLiquidation') {
       setTab('Liquidation');
-      clearPageAction?.();
+      return scheduleClearPageAction(clearPageAction);
     } else if (pageAction === 'openJournal') {
       setTab('Journal');
-      clearPageAction?.();
+      return scheduleClearPageAction(clearPageAction);
     } else if (pageAction === 'openLogic') {
       setTab('Logic & Engines');
-      clearPageAction?.();
+      return scheduleClearPageAction(clearPageAction);
     } else if (pageAction === 'openRiskTradingHub') {
       setTab('Safety & rules');
-      clearPageAction?.();
+      return scheduleClearPageAction(clearPageAction);
     }
   }, [pageAction, clearPageAction, setTab]);
 

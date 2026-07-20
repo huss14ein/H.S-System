@@ -1,5 +1,6 @@
 import type { ExpenseBudgetAnalysisModel } from './expenseBudgetAnalysisModel';
 import type { BudgetDriftRow } from './budgetDrift';
+import { buildBudgetDrillDownAction } from './spendingDrillDown';
 
 export type AnalyticsVisitSnapshot = {
   at: string;
@@ -92,7 +93,9 @@ export function mergeInsightsFromModel(
       title: ins.title,
       detail: ins.detail,
       category: ins.category,
-      drillAction: ins.category ? `filter-by-budget:${encodeURIComponent(ins.category)}` : undefined,
+      drillAction: ins.category
+        ? buildBudgetDrillDownAction({ budgetCategory: ins.category })
+        : undefined,
     });
   }
   for (const d of driftRows.slice(0, 3)) {
@@ -102,7 +105,7 @@ export function mergeInsightsFromModel(
       title: `${d.category} drift`,
       detail: `${d.driftPct >= 0 ? '+' : ''}${d.driftPct.toFixed(0)}% vs 3-mo avg`,
       category: d.category,
-      drillAction: `filter-by-budget:${encodeURIComponent(d.category)}`,
+      drillAction: buildBudgetDrillDownAction({ budgetCategory: d.category }),
     });
   }
   const seen = new Set<string>();

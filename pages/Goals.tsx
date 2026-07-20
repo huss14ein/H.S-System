@@ -23,6 +23,7 @@ import CollapsibleSection from '../components/CollapsibleSection';
 import { useCurrency } from '../context/CurrencyContext';
 import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
 import { toSAR } from '../utils/currencyMath';
+import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { getPersonalAccounts } from '../utils/wealthScope';
@@ -754,7 +755,7 @@ const Goals: React.FC<{
                     setFocusedGoalId((prev) => (prev === id ? null : prev));
                 }, 3500);
             }
-            clearPageAction?.();
+            return scheduleClearPageAction(clearPageAction);
         }
     }, [pageAction, clearPageAction]);
 

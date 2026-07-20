@@ -43,6 +43,7 @@ import {
   corporateActionDepositsCash,
   corporateActionFromEvent,
   normalizeCorporateActionEventRow,
+  portfolioHasBuyHistoryForSymbol,
   validateCorporateActionApplyPrerequisites,
 } from '../services/corporateActionApply';
 import { adjustQuotesForCorporateActionNow } from '../utils/corporateActionQuoteBridge';
@@ -4226,6 +4227,39 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                       ...(dataRef.current?.investmentTransactions ?? []).filter((t) => t.id !== newTransaction.id),
                   ]
                 : [...(dataRef.current?.investmentTransactions ?? [])];
+            /**
+             * Sell-only (manual book, no buy ledger): reduce qty here before sync.
+             * Holdings replay trusts as_stored for sell-only symbols and skips re-applying sells
+             * (otherwise every later sync would subtract the same sells again).
+             */
+            if (tradeData.type === 'sell' && existingHolding?.id) {
+                const hasBuys = portfolioHasBuyHistoryForSymbol({
+                    portfolioId: portfolio.id,
+                    symbol: normalizedSymbol,
+                    transactions: mergedTxs,
+                    accountId: accountIdForInsert,
+                    holdingSymbols: (portfolio.holdings ?? []).map((h) => String(h.symbol ?? '')),
+                });
+                if (!hasBuys) {
+                    const nextQty = roundQuantity(
+                        Math.max(0, Number(existingHolding.quantity) || 0) - Math.max(0, Number(tradeData.quantity) || 0),
+                    );
+                    if (nextQty < 1e-9) {
+                        await deleteHolding(existingHolding.id);
+                    } else {
+                        const prevQty = Math.max(0, Number(existingHolding.quantity) || 0);
+                        const scaledCv =
+                            prevQty > 1e-9
+                                ? roundMoney((Number(existingHolding.currentValue) || 0) * (nextQty / prevQty))
+                                : nextQty * roundAvgCostPerUnit(Number(existingHolding.avgCost) || 0);
+                        await updateHolding({
+                            ...existingHolding,
+                            quantity: nextQty,
+                            currentValue: scaledCv,
+                        });
+                    }
+                }
+            }
             await yieldToMain();
             await syncPortfolioAfterLedgerMutation(portfolio.id, { investmentTransactions: mergedTxs });
             if (tradeData.type === 'buy') {
@@ -4275,7 +4309,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     console.error("Failed to rollback recorded transaction after holding update failure:", rollback.error);
                 } else {
                     rollbackSucceeded = true;
-                    setData(prev => ({ ...prev, investmentTransactions: prev.investmentTransactions.filter(t => t.id !== newTransaction.id) }));
+                    applyFinancialDataPatch((prev) => ({
+                        ...prev,
+                        investmentTransactions: prev.investmentTransactions.filter((t) => t.id !== newTransaction.id),
+                    }));
                     await applyInvestmentAccountDeltaForTrade(accountIdForInsert, -investmentBalanceDelta, { excludeTransactionId: newTransaction.id });
                 }
             }

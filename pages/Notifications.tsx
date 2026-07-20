@@ -18,6 +18,7 @@ import { DataContext } from '../context/DataContext';
 import TodoListPanel from '../components/TodoListPanel';
 import { useToast } from '../context/ToastContext';
 import { isSupportedPageAction } from '../utils/pageActions';
+import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import { sortByNewestFirst } from '../utils/sortRecency';
 import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
 import { useFinancialEnhancementInsights } from '../hooks/useFinancialEnhancementInsights';
@@ -85,11 +86,11 @@ const Notifications: React.FC<{
   useEffect(() => {
     if (pageAction === 'notifications-tab:tasks') {
       setMainTab('tasks');
-      clearPageAction?.();
+      return scheduleClearPageAction(clearPageAction);
     }
     if (pageAction === 'notifications-tab:alerts') {
       setMainTab('alerts');
-      clearPageAction?.();
+      return scheduleClearPageAction(clearPageAction);
     }
   }, [pageAction, clearPageAction]);
 

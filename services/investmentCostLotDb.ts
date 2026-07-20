@@ -1,6 +1,12 @@
 import type { InvestmentCostLot } from '../types';
 import { roundAvgCostPerUnit, roundQuantity } from '../utils/money';
 
+/** Postgres uuid columns reject prefixed ids like `lot-{txId}`. */
+export function isCostLotUuid(id: string | null | undefined): boolean {
+  if (!id) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id).trim());
+}
+
 export function inferLotMarket(symbol: string): InvestmentCostLot['market'] {
   const s = String(symbol ?? '').toUpperCase();
   if (s.endsWith('.SR') || s.endsWith('.SA') || /^\d{4}$/.test(s)) return 'Tadawul';
@@ -35,8 +41,7 @@ export function normalizeInvestmentCostLotRow(raw: Record<string, unknown>): Inv
 export function investmentCostLotToRow(
   lot: InvestmentCostLot,
 ): Record<string, unknown> {
-  return {
-    id: lot.id,
+  const row: Record<string, unknown> = {
     portfolio_id: lot.portfolioId,
     symbol: lot.symbol.toUpperCase(),
     market: lot.market,
@@ -44,9 +49,14 @@ export function investmentCostLotToRow(
     quantity_remaining: roundQuantity(lot.quantityRemaining),
     cost_per_share: roundAvgCostPerUnit(lot.costPerShare),
     book_currency: lot.bookCurrency,
-    source_transaction_id: lot.sourceTransactionId ?? null,
-    source_corporate_action_id: lot.sourceCorporateActionId ?? null,
+    source_transaction_id: isCostLotUuid(lot.sourceTransactionId) ? lot.sourceTransactionId : null,
+    source_corporate_action_id: isCostLotUuid(lot.sourceCorporateActionId)
+      ? lot.sourceCorporateActionId
+      : null,
   };
+  // Only send id when it is a real UUID — otherwise let Postgres gen_random_uuid().
+  if (isCostLotUuid(lot.id)) row.id = lot.id;
+  return row;
 }
 
 export function costLotToInvestmentCostLot(args: {

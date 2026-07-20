@@ -130,6 +130,7 @@ import PlatformHoldingsOutlierBanner from '../components/investments/PlatformHol
 import InvestmentsQuoteStatusBanner from '../components/investments/InvestmentsQuoteStatusBanner';
 import { scheduleIdleWorkAsync } from '../utils/runWhenIdle';
 import { yieldToMain } from '../utils/yieldToMain';
+import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import { engineSleeveKeyToTickerStatus, inferEngineSleeveKeyFromHolding } from '../services/inferHoldingUniverseClassification';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
@@ -5410,7 +5411,9 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
   }
 
   useEffect(() => {
-    if (pageAction?.startsWith('open-trade-modal')) {
+    if (!pageAction) return;
+
+    if (pageAction.startsWith('open-trade-modal')) {
         if (pageAction === 'open-trade-modal:from-plan') {
             try {
                 const raw = sessionStorage.getItem(EXECUTE_PLAN_STORAGE_KEY);
@@ -5468,18 +5471,18 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
             setTradeInitialData(null);
         }
         setIsTradeModalOpen(true);
-        clearPageAction?.();
+        return scheduleClearPageAction(clearPageAction);
     }
     if (pageAction === 'focus-investment-plan') {
         setActiveTab('Investment Plan');
-        clearPageAction?.();
+        return scheduleClearPageAction(clearPageAction);
     }
     if (pageAction === 'focus-dividend-sms') {
         setActiveTab('Dividend Tracker');
         // DividendTrackerView scrolls to the SMS panel and clears the action.
         return;
     }
-    if (pageAction?.startsWith('open-corporate-action-wizard')) {
+    if (pageAction.startsWith('open-corporate-action-wizard')) {
         setActiveTab('Overview');
         let plan = pageAction === 'open-corporate-action-wizard:from-plan' ? readCorporateActionWizardPlan() : null;
         if (pageAction === 'open-corporate-action-wizard:from-plan') {
@@ -5497,21 +5500,22 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
             }),
         );
         setIsCorporateActionWizardOpen(true);
-        clearPageAction?.();
+        return scheduleClearPageAction(clearPageAction);
     }
-    if (pageAction?.startsWith('investment-tab:')) {
+    if (pageAction.startsWith('investment-tab:')) {
         const raw = pageAction.slice('investment-tab:'.length);
         const allowed = new Set<InvestmentSubPage>(INVESTMENT_SUB_PAGES.map((t) => t.name));
         if (allowed.has(raw as InvestmentSubPage)) {
             prefetchInvestmentTab(raw as InvestmentSubPage);
             setActiveTab(raw as InvestmentSubPage);
         }
-        clearPageAction?.();
+        return scheduleClearPageAction(clearPageAction);
     }
     if (pageAction === 'openRiskTradingHub') {
         triggerPageAction?.('Engines & Tools', 'openRiskTradingHub');
+        return scheduleClearPageAction(clearPageAction);
     }
-    if (pageAction?.startsWith('focus-symbol:')) {
+    if (pageAction.startsWith('focus-symbol:')) {
         const sym = pageAction.slice('focus-symbol:'.length).trim().toUpperCase();
         const inv = getPersonalInvestments(data ?? null);
         const opts = buildHoldingSymbolOptions(inv);
@@ -5530,7 +5534,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                 setIsTradeModalOpen(true);
             }
         }
-        clearPageAction?.();
+        return scheduleClearPageAction(clearPageAction);
     }
   }, [pageAction, clearPageAction, data, setActiveTab, triggerPageAction]);
 

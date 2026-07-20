@@ -32,6 +32,7 @@ import CollapsibleSection from '../components/CollapsibleSection';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { buildBudgetDrillDownAction, triggerSpendingDrillDown } from '../services/spendingDrillDown';
 import { buildBudgetSpendFingerprint } from '../services/budgetSpendFingerprint';
+import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import { fetchSharedConsumedMap } from '../services/sharedBudgetConsumedRpc';
 import BudgetSharedRpcStatusLine from '../components/budgets/BudgetSharedRpcStatusLine';
 import BudgetSharedRpcBanner from '../components/budgets/BudgetSharedRpcBanner';
@@ -589,20 +590,20 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         };
         if (pageAction === 'budgets-focus-requests') {
             scrollTo('budget-requests-center');
-            clearPageAction?.();
+            return scheduleClearPageAction(clearPageAction);
         } else if (pageAction === 'budgets-focus-my-pending') {
             scrollTo('budget-my-pending-requests');
-            clearPageAction?.();
+            return scheduleClearPageAction(clearPageAction);
         } else if (pageAction === 'budgets-open-request-form' || pageAction === 'budgets-advance-from-next-month' || pageAction?.startsWith('budgets-advance-from-next-month:')) {
             if (pageAction === 'budgets-advance-from-next-month' || pageAction?.startsWith('budgets-advance-from-next-month:')) {
                 setRequestType('AdvanceFromNextMonth');
             }
             scrollTo('budget-request-form');
-            clearPageAction?.();
+            return scheduleClearPageAction(clearPageAction);
         } else if (pageAction === 'budgets-focus-admin-pending') {
             setRequestStatusFilter('Pending');
             scrollTo('budget-requests-center');
-            clearPageAction?.();
+            return scheduleClearPageAction(clearPageAction);
         }
     }, [pageAction, clearPageAction]);
     const [householdAdults, setHouseholdAdults] = useState(2);

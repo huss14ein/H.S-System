@@ -20,6 +20,7 @@ import type {
   InvestmentTransaction,
 } from '../types';
 import { formatUnknownError } from '../utils/formatUnknownError';
+import { roundAvgCostPerUnit, roundQuantity } from '../utils/money';
 
 export type SyncPortfolioLedgerArgs = {
   portfolio: InvestmentPortfolio;
@@ -89,15 +90,35 @@ export async function syncPortfolioLedgerAfterChange(
     accountId: args.portfolio.accountId ?? (args.portfolio as { account_id?: string }).account_id,
   });
 
+  /**
+   * Patch realized PnL only — never spread pre-sync holding qty/avgCost.
+   * Spreading `args.portfolio.holdings` here rewrote sells back to pre-trade quantities.
+   */
   for (const [sym, pnl] of lotResult.realizedPnLBySymbol) {
-    const h = args.portfolio.holdings.find((x) => String(x.symbol ?? '').toUpperCase() === sym);
-    if (h?.id && Math.abs(pnl - (h.realizedPnL ?? 0)) > 0.01) {
-      await args.updateHolding({ ...h, realizedPnL: pnl });
-    }
+    const upper = String(sym).toUpperCase();
+    const pos = replayed.get(upper);
+    if (!pos || pos.quantity < 1e-9) continue;
+    const h = args.portfolio.holdings.find((x) => String(x.symbol ?? '').toUpperCase() === upper);
+    if (!h?.id) continue;
+    if (Math.abs(pnl - (h.realizedPnL ?? 0)) <= 0.01) continue;
+    await args.updateHolding({
+      ...h,
+      quantity: roundQuantity(pos.quantity),
+      avgCost: roundAvgCostPerUnit(pos.avgCost),
+      realizedPnL: pnl,
+    });
   }
 
   if (args.supabase && args.userId) {
-    await persistInvestmentCostLotsForPortfolio(args.supabase, args.userId, portfolioId, lotResult.lots);
+    try {
+      await persistInvestmentCostLotsForPortfolio(args.supabase, args.userId, portfolioId, lotResult.lots);
+    } catch (lotErr) {
+      // Holdings already match the trade; do not fail the sell/buy because lots failed.
+      console.warn(
+        'Cost lot persist failed after holdings sync (trade kept):',
+        formatUnknownError(lotErr, 'Unknown lot persist error.'),
+      );
+    }
   }
 
   args.onLotsUpdated?.(lotResult.lots);

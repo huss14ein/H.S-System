@@ -12,7 +12,7 @@ import {
 } from './corporateActions';
 import { rebuildPortfolioFromEvents } from './portfolioReplayEngine';
 import type { Holding, InvestmentPortfolio, InvestmentTransaction, CorporateActionEvent } from '../types';
-import { roundAvgCostPerUnit, roundQuantity } from '../utils/money';
+import { roundAvgCostPerUnit, roundMoney, roundQuantity } from '../utils/money';
 import {
   filterTransactionsForPortfolioReplay,
   hasPositionAffectingTransactions,
@@ -258,13 +258,53 @@ export async function replayPortfolioHoldings(args: {
     accountId: args.portfolio.accountId ?? (args.portfolio as { account_id?: string }).account_id,
   });
   let initialHoldings: { symbol: string; quantity: number; avgCost: number }[] = [];
-  if (!hasPositionAffectingTransactions(portfolioTxs)) {
+  const tradedSymbols = new Set<string>();
+  const symbolsWithBuys = new Set<string>();
+  for (const t of portfolioTxs) {
+    if (t.type !== 'buy' && t.type !== 'sell') continue;
+    const sym = String(t.symbol ?? '').trim().toUpperCase();
+    if (!sym) continue;
+    tradedSymbols.add(sym);
+    if (t.type === 'buy') symbolsWithBuys.add(sym);
+  }
+  /** Manual books that only have sells — qty is patched in recordTrade; replaying sells would double-apply. */
+  const sellOnlySymbols = new Set(
+    [...tradedSymbols].filter((sym) => !symbolsWithBuys.has(sym)),
+  );
+
+  if (tradedSymbols.size === 0) {
     const mode = args.holdingsBaselineMode ?? 'replay_derived';
     initialHoldings = resolveManualPortfolioInitialHoldings(args.portfolio, args.corporateEvents, mode);
+  } else {
+    /**
+     * Hybrid baseline:
+     * - Symbols with buy txs rebuild from 0 (ledger is source of truth).
+     * - Manual-only + sell-only symbols keep as_stored qty (selling LCID must not wipe UNH;
+     *   sell-only qty is reduced in recordTrade before sync so re-sync stays idempotent).
+     * Corporate actions for non-traded symbols are skipped below (already baked into stored qty).
+     */
+    initialHoldings = mapPortfolioToReplayHoldings(args.portfolio).filter(
+      (h) => !symbolsWithBuys.has(h.symbol.toUpperCase()),
+    );
   }
+
+  const caEventsForReplay =
+    tradedSymbols.size === 0
+      ? caEvents
+      : caEvents.filter((e) => tradedSymbols.has(String(e.symbol ?? '').toUpperCase()));
+
+  const txsForHoldingsReplay =
+    sellOnlySymbols.size === 0
+      ? portfolioTxs
+      : portfolioTxs.filter((t) => {
+          if (t.type !== 'buy' && t.type !== 'sell') return true;
+          const sym = String(t.symbol ?? '').trim().toUpperCase();
+          return !sym || !sellOnlySymbols.has(sym);
+        });
+
   const result = await rebuildPortfolioFromEvents({
-    transactions: portfolioTxs,
-    corporateActions: caEvents,
+    transactions: txsForHoldingsReplay,
+    corporateActions: caEventsForReplay,
     initialHoldings,
   });
   return result.holdings;
@@ -394,16 +434,20 @@ export async function persistHoldingsFromReplayMap(args: {
       continue;
     }
     if (existing) {
+      const prevQty = Math.max(0, Number(existing.quantity) || 0);
+      const nextQty = roundQuantity(r.quantity);
+      const scaledCv =
+        prevQty > 1e-9
+          ? roundMoney((Number(existing.currentValue) || 0) * (nextQty / prevQty))
+          : nextQty * roundAvgCostPerUnit(r.avgCost);
       await args.updateHolding({
         ...existing,
-        quantity: roundQuantity(r.quantity),
+        quantity: nextQty,
         avgCost: roundAvgCostPerUnit(r.avgCost),
-        // Total market exposure unchanged until quote tick; qty×price stays consistent after split-adjusted quotes.
-        currentValue: existing.currentValue,
+        currentValue: scaledCv,
       });
     } else {
       await args.addHolding({
-        id: `ca-replay-${upper}-${Date.now()}`,
         symbol: upper,
         name: upper,
         quantity: roundQuantity(r.quantity),
@@ -413,7 +457,7 @@ export async function persistHoldingsFromReplayMap(args: {
         realizedPnL: 0,
         assetClass: 'Stock',
         portfolio_id: args.portfolio.id,
-      });
+      } as Holding & { portfolio_id?: string });
     }
   }
 

@@ -52,6 +52,7 @@ import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { financialMonthNetCashflowSar } from '../services/dashboardKpiSnapshot';
 import { getPersonalAccounts, getScopedCashTransactions } from '../utils/wealthScope';
 import { filterTransactionsForLedgerView, filterTransactionsForLedgerExport, parseFilterByBudgetPageAction, ledgerDateRangeForFilters, formatLedgerDateYmd, budgetDrillDownDateRange, defaultLedgerMonthMode, initialLedgerMonthIso } from '../utils/transactionLedgerFilters';
+import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { exportCashTransactionsToCsv } from '../services/reportingEngine';
 import { computeMonthlyCashflowKpisSar } from '../services/financeTruth';
@@ -1679,14 +1680,12 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         if (!pageAction) return;
         if (pageAction === 'open-transaction-modal') {
             handleOpenTransactionModal();
-            clearPageAction?.();
-            return;
+            return scheduleClearPageAction(clearPageAction);
         }
         if (pageAction.startsWith('filter-by-budget:')) {
             const parsed = parseFilterByBudgetPageAction(pageAction);
             if (!parsed) {
-                clearPageAction?.();
-                return;
+                return scheduleClearPageAction(clearPageAction);
             }
             const { category, period, year, month } = parsed;
             const monthIso = `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}`;
@@ -1719,8 +1718,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             window.setTimeout(() => {
                 transactionListRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }, 120);
-            clearPageAction?.();
-            return;
+            return scheduleClearPageAction(clearPageAction);
         }
         if (pageAction.startsWith('filter-by-month:')) {
             const monthKey = decodeURIComponent(pageAction.slice('filter-by-month:'.length));
@@ -1732,8 +1730,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 dateRangeOverride: undefined,
                 budgetCategory: 'all',
             }));
-            clearPageAction?.();
-            return;
+            return scheduleClearPageAction(clearPageAction);
         }
         if (pageAction.startsWith('filter-by-merchant:')) {
             const merchant = decodeURIComponent(pageAction.slice('filter-by-merchant:'.length));
@@ -1742,8 +1739,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 merchantQuery: merchant,
                 searchText: merchant,
             }));
-            clearPageAction?.();
-            return;
+            return scheduleClearPageAction(clearPageAction);
         }
         if (pageAction.startsWith('filter-plan-expense:')) {
             const [, rawYear, rawMonth, ...catParts] = pageAction.split(':');
@@ -1762,8 +1758,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
             window.setTimeout(() => {
                 transactionListRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }, 120);
-            clearPageAction?.();
-            return;
+            return scheduleClearPageAction(clearPageAction);
         }
     }, [pageAction, clearPageAction, monthStartDay]);
 
@@ -1790,7 +1785,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         }
         const nextStatus = userRole === 'Restricted' ? 'Pending' : 'Approved';
         addTransaction({ ...transaction, status: nextStatus }, { confirmed: true });
-        triggerPageAction('Dashboard', `open-trade-modal:with-amount:${Math.abs(transaction.amount)}`);
+        triggerPageAction('Investments', `open-trade-modal:with-amount:${Math.abs(transaction.amount)}`);
     };
     
     const handleConfirmDelete = () => {

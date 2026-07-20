@@ -27,6 +27,7 @@ describe('spendingDrillDownWiring', () => {
     expect(read('components/dashboard/ExpenseDonutDrilldown.tsx')).toContain('spendingIntelMapping');
     expect(read('components/analysis/ExpenseBudgetAnalysisPanel.tsx')).toContain('triggerSpendingDrillDown');
     expect(read('components/charts/ExpenseBreakdownChart.tsx')).toContain('buildBudgetDrillDownAction');
+    expect(read('components/AuthenticatedAppShell.tsx')).toContain('const routeKey = shell;');
   });
 
   it('fiscal month drill-down action format', () => {
