@@ -57,6 +57,8 @@ create table public.holdings (
 create index idx_holdings_user on public.holdings(user_id);
 create index idx_holdings_portfolio on public.holdings(portfolio_id);
 create index idx_holdings_symbol on public.holdings(symbol);
+create unique index holdings_user_portfolio_symbol_uidx
+  on public.holdings (user_id, portfolio_id, (upper(trim(symbol))));
 
 create table public.investment_transactions (
   id uuid primary key default gen_random_uuid(),

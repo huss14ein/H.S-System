@@ -58,6 +58,7 @@ Optionally run **`migrations/add_users_approved_metadata.sql`** afterward for a 
 | **`migrations/20260715120000_investment_transactions_portfolio_id.sql`** | **Required for Record Trade / CA / statement import:** nullable `investment_transactions.portfolio_id` + indexes. Keeps all existing rows (`NULL` until stamped by new trades). |
 | **`migrations/20260715121000_investment_transactions_fee_vat_types.sql`** | Allow `fee` and `vat` on `investment_transactions` (statement import broker fees). |
 | **`migrations/20260715122000_backfill_investment_transactions_portfolio_id.sql`** | Optional but recommended: stamp `portfolio_id` on legacy txs when the account has **exactly one** portfolio. |
+| **`migrations/20260722120000_holdings_unique_per_portfolio_symbol.sql`** | **Required to stop ghost shares after Record Trade:** dedupe duplicate holdings (exact ledger-net match, else newest id — never sum), then unique index on `(user_id, portfolio_id, upper(symbol))`. |
 | `fix_investment_account_fk.sql` | Backfill and FK for investment_transactions.account_id. |
 | `rls_policies_optional.sql` | Row Level Security policies for investment_* tables (if using Supabase Auth). |
 | `rls_all_user_tables.sql` | **Production:** RLS for all user-scoped tables (accounts, assets, transactions, budgets, goals, etc.). Run after base tables exist. |
@@ -90,6 +91,10 @@ If you already have base tables (accounts, assets, transactions, etc.), run in t
 5. `ensure_transactions_budget_category.sql`
 
 Then add any optional scripts you need (currency columns, governance, etc.).
+
+**Also required for Record Trade ghost-holdings lock** (if not already applied):
+
+- `migrations/20260722120000_holdings_unique_per_portfolio_symbol.sql` — dedupe + unique `(user_id, portfolio_id, upper(symbol))`
 
 ## App ↔ DB column names
 

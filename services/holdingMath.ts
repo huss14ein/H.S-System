@@ -96,6 +96,11 @@ export function computePositionFieldsAfterTrade(args: {
   };
 }
 
+/**
+ * Weighted merge of same-symbol rows. Do NOT use for trade prep or auto-heal —
+ * summing ghosts (e.g. LCID 500+1390) recreates historical books. Use
+ * resolveDuplicateHoldingsGroup from holdingsDedupe instead.
+ */
 export function consolidateHoldingsBySymbol(holdings: Holding[]): Holding | null {
   if (!holdings.length) return null;
   const primary = holdings[0];

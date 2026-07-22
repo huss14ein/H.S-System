@@ -66,7 +66,7 @@ import {
 } from '../services/investmentTransactionLedger';
 import { canPostTransactionToAccount } from '../services/dataQuality/accountPostingPolicy';
 import { parseSplitsFromNote } from '../services/transactionSplitNote';
-import { consolidateHoldingsBySymbol } from '../services/holdingMath';
+import { resolveDuplicateHoldingsGroup } from '../services/holdingsDedupe';
 import { applyPositionDeltaForTrade } from '../services/applyPositionDeltaForTrade';
 import { roundAvgCostPerUnit, roundMoney, roundQuantity } from '../utils/money';
 import { normalizeCoreUpsideAllocations } from '../utils/investmentPlanAllocations';
@@ -810,6 +810,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const corporateActionInFlightRef = useRef(false);
     const duplicateHoldingsReconcileInFlightRef = useRef(false);
     const duplicateHoldingsLastSignatureRef = useRef<string>('');
+    /**
+     * Monotonic book generation — bumped after local holdings mutations / successful recordTrade.
+     * Stale fetchData investments payloads are ignored when generation advanced mid-fetch.
+     */
+    const holdingsBookGenerationRef = useRef(0);
     /** After first successful Supabase hydrate, refetches refresh in the background without blocking pages. */
     const financialDataLoadedRef = useRef(false);
     /** UI gate: true until first hydrate for this session/user completes (independent of background `loading`). */
@@ -826,6 +831,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const next = recipe(dataRef.current);
         dataRef.current = next;
         setData(next);
+    };
+    const bumpHoldingsBookGeneration = () => {
+        holdingsBookGenerationRef.current += 1;
+    };
+    /** After buy/sell/dividend/DRIP — advance generation and persist hydrate cache so ghosts cannot return from stale cache. */
+    const sealHoldingsBookAfterTrade = () => {
+        bumpHoldingsBookGeneration();
+        if (auth?.user?.id && financialDataHasHydrated(dataRef.current)) {
+            writeWorkspaceHydrateCache(auth.user.id, dataRef.current);
+        }
     };
     /** Keep dataRef aligned after React commits — useLayoutEffect so cash reads see accounts before paint. */
     useLayoutEffect(() => {
@@ -1189,10 +1204,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
             await yieldToMain();
 
+            /** Captured before network apply — if a trade bumps generation mid-fetch, skip investments overwrite. */
+            const investmentsHydrateGenAtStart = holdingsBookGenerationRef.current;
+
             const applyHydrateFinancialDataPatch = (
                 patch: Partial<FinancialData> & Pick<FinancialData, 'accounts'>,
                 wealthUltraConfig = wuBase,
             ) => {
+            const investmentsStale =
+                patch.investments != null &&
+                holdingsBookGenerationRef.current !== investmentsHydrateGenAtStart;
+            if (investmentsStale) {
+                console.warn(
+                    '[holdings] Skipping stale investments hydrate — local book generation advanced during fetch.',
+                );
+            }
             startTransition(() => {
             setData((prev) => ({
                 ...prev,
@@ -1201,7 +1227,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 liabilities: patch.liabilities ?? prev.liabilities,
                 goals: patch.goals ?? prev.goals,
                 transactions: patch.transactions ?? prev.transactions,
-                investments: patch.investments ?? prev.investments,
+                investments: investmentsStale ? prev.investments : (patch.investments ?? prev.investments),
                 investmentTransactions: patch.investmentTransactions ?? prev.investmentTransactions,
                 sukukPayoutSchedules: patch.sukukPayoutSchedules ?? prev.sukukPayoutSchedules,
                 sukukPayoutEvents: patch.sukukPayoutEvents ?? prev.sukukPayoutEvents,
@@ -3394,18 +3420,38 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             /** Throw so trade/CA callers cannot claim success after a silent no-op. */
             throw new Error(msg);
         }
+        const portfolioKey = String(
+            holding.portfolio_id ?? (holding as { portfolioId?: string }).portfolioId ?? '',
+        );
+        const sym = String(holding.symbol ?? '').trim().toUpperCase();
+        /**
+         * Never insert a second row for the same portfolio+symbol (LCID ghost path).
+         * Callers must update the existing row; DB unique index is the hard backstop.
+         */
+        if (portfolioKey && sym) {
+            const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolioKey);
+            const existing = (pf?.holdings ?? []).find(
+                (h) => String(h.symbol ?? '').trim().toUpperCase() === sym && h.id,
+            );
+            if (existing) {
+                throw new Error(
+                    `Holding ${sym} already exists in this portfolio — refusing duplicate insert.`,
+                );
+            }
+        }
         const row = holdingToRow(holding);
         const { data: newHolding, error } = await supabase.from('holdings').insert(withUser(row)).select().single();
         if (error) { console.error("Error adding holding:", error); throw new Error(formatDbError(error)); }
         if (newHolding) {
             const normalized = normalizeHoldingFromRow(newHolding);
-            const portfolioKey = newHolding.portfolio_id ?? (newHolding as any).portfolioId;
+            const portfolioIdKey = newHolding.portfolio_id ?? (newHolding as any).portfolioId;
             applyFinancialDataPatch((prev) => ({
                 ...prev,
                 investments: prev.investments.map((p) =>
-                    p.id === portfolioKey ? { ...p, holdings: [...p.holdings, normalized] } : p,
+                    p.id === portfolioIdKey ? { ...p, holdings: [...p.holdings, normalized] } : p,
                 ),
             }));
+            bumpHoldingsBookGeneration();
         }
     };
     const updateHolding = async (holding: Holding) => {
@@ -3425,6 +3471,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             /** Throw so applyPositionDeltaForTrade / CA sync cannot claim success after a silent no-op. */
             throw new Error(msg);
         }
+        const prevQty = (() => {
+            for (const p of dataRef.current?.investments ?? []) {
+                const h = p.holdings.find((x) => x.id === holding.id);
+                if (h) return Math.max(0, Number(h.quantity) || 0);
+            }
+            return null;
+        })();
         const db = supabase;
         const row = holdingToRow(holding);
         const { error } = await db.from('holdings').update(row).match({ id: holding.id, user_id: auth.user.id });
@@ -3439,6 +3492,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     holdings: p.holdings.map((h) => (h.id === holding.id ? holding : h)),
                 })),
             }));
+            const nextQty = Math.max(0, Number(holding.quantity) || 0);
+            if (prevQty == null || Math.abs(prevQty - nextQty) > 1e-9) {
+                bumpHoldingsBookGeneration();
+            }
         }
     };
     const deleteHolding = async (holdingId: string) => {
@@ -3452,6 +3509,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 holdings: p.holdings.filter((h) => h.id !== holdingId),
             })),
         }));
+        bumpHoldingsBookGeneration();
     };
     const restoreHoldingRowsAfterTradeRollback = async (args: {
         portfolioId: string;
@@ -3945,6 +4003,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         let portfolio: InvestmentPortfolio | undefined;
         let existingHolding: Holding | undefined;
         let symbolHoldingsForTrade: Holding[] = [];
+        /** Ghost duplicate ids to delete — from resolveDuplicateHoldingsGroup (never sum). */
+        let duplicateHoldingIdsForTrade: string[] = [];
         let normalizedSymbol: string;
 
         let investmentAccount: Account | undefined;
@@ -3985,7 +4045,27 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             symbolHoldingsForTrade = portfolio.holdings
                 .filter((h: Holding) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol)
                 .map((holding) => ({ ...holding }));
-            existingHolding = consolidateHoldingsBySymbol(symbolHoldingsForTrade) ?? undefined;
+            /**
+             * Never consolidateHoldingsBySymbol here — that sums ghost rows (LCID 500+1390→1890).
+             * Pick one canonical row via resolveDuplicateHoldingsGroup; delete extras on apply.
+             */
+            if (symbolHoldingsForTrade.length === 1) {
+                existingHolding = symbolHoldingsForTrade[0];
+            } else if (symbolHoldingsForTrade.length > 1) {
+                const resolved = resolveDuplicateHoldingsGroup({
+                    holdings: symbolHoldingsForTrade,
+                    portfolioId: portfolio.id,
+                    symbol: normalizedSymbol,
+                    transactions: data?.investmentTransactions ?? [],
+                });
+                existingHolding = resolved.keep;
+                duplicateHoldingIdsForTrade = resolved.deleteIds;
+                if (resolved.disagreed) {
+                    console.warn(
+                        `[holdings] Trade prep ${normalizedSymbol}: keeping qty ${resolved.keep.quantity}, discarding ${resolved.discardedQuantities.join('+')} (never sum).`,
+                    );
+                }
+            }
             if (tradeData.type === 'sell') {
                 if (!existingHolding) throw new Error("Cannot sell a holding you don't own.");
                 if (existingHolding.quantity < tradeData.quantity) throw new Error("Not enough shares to sell.");
@@ -4277,6 +4357,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         // 3. Process trade logic (skip for deposit/withdrawal / dividend — dividend only updates ledger cash)
         if (isCashFlow) {
+            sealHoldingsBookAfterTrade();
             tradeSubmissionInFlightRef.current = false;
             return {
                 insertedInvestmentTransactionId,
@@ -4289,8 +4370,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         if (tradeData.type === 'dividend') {
+            /**
+             * Dividend (payout): cash only — no position delta and no ledger holdings persist.
+             * DRIP nests recordTrade(buy) for the same symbol only.
+             */
             const dripHolding = existingHolding;
             const divId = insertedInvestmentTransactionId;
+            sealHoldingsBookAfterTrade();
             tradeSubmissionInFlightRef.current = false;
             if (
                 dripHolding?.dividendDistribution === 'Reinvest' &&
@@ -4366,7 +4452,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     quantity: tradeData.quantity,
                     price: tradeData.price,
                     existingHolding: existingHolding ?? null,
-                    duplicateHoldingIds: symbolHoldingsForTrade.slice(1).map((h) => h.id).filter(Boolean),
+                    duplicateHoldingIds: duplicateHoldingIdsForTrade,
                     name,
                     assetClass: tradeAssetClass as Holding['assetClass'] | undefined,
                     holdingType: incomingHoldingType as Holding['holdingType'] | undefined,
@@ -4438,6 +4524,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     if (needsPatch) await updateHolding(patched);
                 }
             }
+            sealHoldingsBookAfterTrade();
         } catch (error) {
             console.error("Error updating holdings after trade:", error);
             let rollbackSucceeded = false;
@@ -5301,7 +5388,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const showHydrateBanner = awaitingInitialHydrate;
     const showBlockingLoader = false;
 
-    // Auto-heal legacy duplicate holdings (same portfolio + symbol) once per unique snapshot.
+    // Auto-heal legacy duplicate holdings — never sum disagreeing quantities (LCID 500→1890 bug).
     useEffect(() => {
         if (
             loading ||
@@ -5313,7 +5400,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         ) {
             return;
         }
-        const duplicateGroups: Holding[][] = [];
+        const duplicateGroups: { portfolioId: string; symbol: string; holdings: Holding[] }[] = [];
         (data.investments ?? []).forEach((portfolio: InvestmentPortfolio) => {
             const bySymbol = new Map<string, Holding[]>();
             (portfolio.holdings ?? []).forEach((h: Holding) => {
@@ -5323,13 +5410,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 list.push(h);
                 bySymbol.set(key, list);
             });
-            bySymbol.forEach((list) => {
-                if (list.length > 1) duplicateGroups.push(list);
+            bySymbol.forEach((list, symbol) => {
+                if (list.length > 1) {
+                    duplicateGroups.push({ portfolioId: portfolio.id, symbol, holdings: list });
+                }
             });
         });
         if (!duplicateGroups.length) return;
         const signature = duplicateGroups
-            .map((list) => list.map((h) => h.id).sort().join(','))
+            .map((g) => g.holdings.map((h) => h.id).sort().join(','))
             .sort()
             .join('|');
         if (!signature || signature === duplicateHoldingsLastSignatureRef.current) return;
@@ -5338,12 +5427,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         duplicateHoldingsReconcileInFlightRef.current = true;
         (async () => {
             try {
+                const txs = dataRef.current?.investmentTransactions ?? [];
                 for (const group of duplicateGroups) {
-                    const merged = consolidateHoldingsBySymbol(group);
-                    if (!merged) continue;
-                    await updateHolding(merged);
-                    for (const dup of group.slice(1)) {
-                        await deleteHolding(dup.id);
+                    const resolved = resolveDuplicateHoldingsGroup({
+                        holdings: group.holdings,
+                        portfolioId: group.portfolioId,
+                        symbol: group.symbol,
+                        transactions: txs,
+                    });
+                    if (resolved.disagreed) {
+                        console.warn(
+                            `[holdings] Duplicate ${group.symbol} in portfolio ${group.portfolioId}: keeping qty ${resolved.keep.quantity}, discarding ${resolved.discardedQuantities.join('+')} (never sum).`,
+                        );
+                    }
+                    for (const dupId of resolved.deleteIds) {
+                        await deleteHolding(dupId);
                     }
                 }
             } catch (error) {

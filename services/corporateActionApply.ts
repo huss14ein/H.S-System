@@ -448,53 +448,72 @@ export async function persistHoldingsFromReplayMap(args: {
   if (touched.size === 0) {
     throw new Error('persistHoldingsFromReplayMap requires at least one symbol.');
   }
-  const portfolioBySym = new Map(
-    args.portfolio.holdings.map((h) => [String(h.symbol ?? '').toUpperCase(), h]),
-  );
 
-  for (const [sym, r] of args.replayed) {
-    const upper = sym.toUpperCase();
-    if (!touched.has(upper)) continue;
-    const existing = portfolioBySym.get(upper);
-    if (r.quantity < 1e-9) {
-      if (existing?.id) await args.deleteHolding(existing.id);
+  const holdingsBySym = new Map<string, Holding[]>();
+  for (const h of args.portfolio.holdings) {
+    const sym = String(h.symbol ?? '').trim().toUpperCase();
+    if (!sym || !touched.has(sym)) continue;
+    const list = holdingsBySym.get(sym) ?? [];
+    list.push(h);
+    holdingsBySym.set(sym, list);
+  }
+
+  const replayFor = (upper: string): { quantity: number; avgCost: number } | undefined => {
+    const direct = args.replayed.get(upper);
+    if (direct) return direct;
+    for (const [k, v] of args.replayed) {
+      if (String(k).trim().toUpperCase() === upper) return v;
+    }
+    return undefined;
+  };
+
+  for (const upper of touched) {
+    const rows = holdingsBySym.get(upper) ?? [];
+    const r = replayFor(upper);
+    const qty = r ? Math.max(0, Number(r.quantity) || 0) : 0;
+
+    if (qty < 1e-9) {
+      for (const h of rows) {
+        if (h.id) await args.deleteHolding(h.id);
+      }
       continue;
     }
-    if (existing) {
-      const prevQty = Math.max(0, Number(existing.quantity) || 0);
-      const nextQty = roundQuantity(r.quantity);
+
+    /**
+     * Collapse ghosts for this symbol before upsert — Map-by-symbol used to keep one
+     * row and leave extras (LCID 500 + 1390) after CA / Rebuild.
+     */
+    const keep = [...rows].sort((a, b) => String(b.id ?? '').localeCompare(String(a.id ?? '')))[0];
+    for (const extra of rows) {
+      if (extra.id && extra.id !== keep?.id) await args.deleteHolding(extra.id);
+    }
+
+    const nextQty = roundQuantity(qty);
+    const avgCost = roundAvgCostPerUnit(r!.avgCost);
+    if (keep?.id) {
+      const prevQty = Math.max(0, Number(keep.quantity) || 0);
       const scaledCv =
         prevQty > 1e-9
-          ? roundMoney((Number(existing.currentValue) || 0) * (nextQty / prevQty))
-          : nextQty * roundAvgCostPerUnit(r.avgCost);
+          ? roundMoney((Number(keep.currentValue) || 0) * (nextQty / prevQty))
+          : nextQty * avgCost;
       await args.updateHolding({
-        ...existing,
+        ...keep,
         quantity: nextQty,
-        avgCost: roundAvgCostPerUnit(r.avgCost),
+        avgCost,
         currentValue: scaledCv,
       });
     } else {
       await args.addHolding({
         symbol: upper,
         name: upper,
-        quantity: roundQuantity(r.quantity),
-        avgCost: roundAvgCostPerUnit(r.avgCost),
-        currentValue: roundQuantity(r.quantity) * roundAvgCostPerUnit(r.avgCost),
+        quantity: nextQty,
+        avgCost,
+        currentValue: nextQty * avgCost,
         zakahClass: 'Zakatable',
         realizedPnL: 0,
         assetClass: 'Stock',
         portfolio_id: args.portfolio.id,
       } as Holding & { portfolio_id?: string });
-    }
-  }
-
-  for (const h of args.portfolio.holdings) {
-    const sym = String(h.symbol ?? '').toUpperCase();
-    if (!sym || !h.id) continue;
-    if (!touched.has(sym)) continue;
-    const r = args.replayed.get(sym);
-    if (!r || r.quantity < 1e-9) {
-      await args.deleteHolding(h.id);
     }
   }
 }

@@ -75,11 +75,25 @@ describe('investmentTradeE2ECompletion', () => {
     expect(read('services/dividendSmsParser.ts')).toContain('portfolioId: row.portfolioId');
   });
 
+  it('ghost holdings lock: trade prep never sums; hydrate seal + unique migration', () => {
+    const ctx = read('context/DataContext.tsx');
+    expect(ctx).not.toContain('consolidateHoldingsBySymbol(symbolHoldingsForTrade)');
+    expect(ctx).toContain('duplicateHoldingIdsForTrade');
+    expect(ctx).toContain('resolveDuplicateHoldingsGroup');
+    expect(ctx).toContain('sealHoldingsBookAfterTrade');
+    expect(ctx).toContain('writeWorkspaceHydrateCache');
+    expect(ctx).toContain('Skipping stale investments hydrate');
+    expect(read('supabase/migrations/20260722120000_holdings_unique_per_portfolio_symbol.sql')).toContain(
+      'holdings_user_portfolio_symbol_uidx',
+    );
+  });
+
   it('README documents portfolio_id and fee/vat migrations', () => {
     const readme = read('supabase/README_DB_MIGRATIONS.md');
     expect(readme).toContain('20260715120000_investment_transactions_portfolio_id.sql');
     expect(readme).toContain('20260715121000_investment_transactions_fee_vat_types.sql');
     expect(readme).toContain('20260715122000_backfill_investment_transactions_portfolio_id.sql');
+    expect(readme).toContain('20260722120000_holdings_unique_per_portfolio_symbol.sql');
     const rebuild = read('supabase/rebuild_investments_tables_from_scratch.sql');
     expect(rebuild).toContain('DO NOT run on production');
     expect(rebuild).toContain('portfolio_id');

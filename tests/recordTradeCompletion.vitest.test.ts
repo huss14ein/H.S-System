@@ -35,6 +35,9 @@ describe('recordTradeCompletion', () => {
     expect(ctx).toContain('stampInvestmentTradeIdentity');
     expect(ctx).toContain('applyFinancialDataPatch');
     expect(ctx).toContain('formatUnknownError(error,');
+    expect(ctx).toContain('resolveDuplicateHoldingsGroup');
+    expect(ctx).toContain('sealHoldingsBookAfterTrade');
+    expect(ctx).not.toContain('consolidateHoldingsBySymbol(symbolHoldingsForTrade)');
     expect(ctx).not.toMatch(/if \(txError\) \{[^}]*throw txError/);
     expect(ctx).not.toContain(
       'syncPortfolioAfterLedgerMutation(portfolio.id, { investmentTransactions: mergedTxs })',

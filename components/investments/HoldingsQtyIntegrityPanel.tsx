@@ -50,20 +50,29 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false }) => {
     return null;
   }
 
-  const rebuild = async (portfolioId: string, symbol: string, portfolioName: string, expectedLedgerQty?: number) => {
+  const rebuild = async (
+    portfolioId: string,
+    symbol: string,
+    portfolioName: string,
+    opts?: { expectedLedgerQty?: number; reopenSold?: boolean },
+  ) => {
     if (!ctx?.rebuildHoldingsFromLedgerForSymbols) return;
     const key = `${portfolioId}:${symbol}`;
     const ok = window.confirm(
-      expectedLedgerQty != null
-        ? `Rebuild ${symbol} in “${portfolioName}” from the portfolio ledger?\n\nThis only changes this symbol (ledger net ≈ ${expectedLedgerQty.toLocaleString()}).`
-        : `Rebuild ${symbol} in “${portfolioName}” from the portfolio ledger?\n\nThis may re-open a closed position if the ledger still nets shares. Only this symbol is touched.`,
+      opts?.reopenSold
+        ? `RE-OPEN sold position ${symbol} in “${portfolioName}”?\n\nThis recreates a holding that is currently closed because the ledger still nets shares.\nPrefer Keep closed unless you are sure the ledger is complete and correct.\nOnly this symbol is touched.`
+        : opts?.expectedLedgerQty != null
+          ? `Rebuild ${symbol} in “${portfolioName}” from the portfolio ledger?\n\nThis only changes this symbol (ledger net ≈ ${opts.expectedLedgerQty.toLocaleString()}).\nPrefer Keep stored unless you trust the ledger for this symbol.`
+          : `Rebuild ${symbol} in “${portfolioName}” from the portfolio ledger?\n\nOnly this symbol is touched. Prefer Keep stored unless you trust the ledger.`,
     );
     if (!ok) return;
     setRebuildBusyKey(key);
     setRebuildMessage(null);
     try {
       await ctx.rebuildHoldingsFromLedgerForSymbols({ portfolioId, symbols: [symbol] });
-      setRebuildMessage(`Rebuilt ${symbol} from ledger.`);
+      setRebuildMessage(
+        opts?.reopenSold ? `Re-opened ${symbol} from ledger.` : `Rebuilt ${symbol} from ledger.`,
+      );
     } catch (err) {
       setRebuildMessage(err instanceof Error ? err.message : 'Rebuild failed.');
     } finally {
@@ -126,7 +135,11 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false }) => {
                     type="button"
                     disabled={rebuildBusyKey === key || !ctx?.rebuildHoldingsFromLedgerForSymbols}
                     className="text-xs px-2 py-1 rounded border border-amber-300 text-amber-950 bg-amber-50 disabled:opacity-50"
-                    onClick={() => rebuild(r.portfolioId, r.symbol, r.portfolioName, r.ledgerQuantity)}
+                    onClick={() =>
+                      rebuild(r.portfolioId, r.symbol, r.portfolioName, {
+                        expectedLedgerQty: r.ledgerQuantity,
+                      })
+                    }
                   >
                     {rebuildBusyKey === key ? 'Rebuilding…' : 'Rebuild this symbol'}
                   </button>
@@ -170,7 +183,9 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false }) => {
                       type="button"
                       disabled={rebuildBusyKey === key || !ctx?.rebuildHoldingsFromLedgerForSymbols}
                       className="text-xs px-2 py-1 rounded border border-rose-300 text-rose-950 bg-rose-50 disabled:opacity-50"
-                      onClick={() => rebuild(r.portfolioId, r.symbol, r.portfolioName)}
+                      onClick={() =>
+                        rebuild(r.portfolioId, r.symbol, r.portfolioName, { reopenSold: true })
+                      }
                     >
                       {rebuildBusyKey === key ? 'Rebuilding…' : 'Rebuild (re-open)'}
                     </button>
