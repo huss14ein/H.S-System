@@ -3,7 +3,6 @@ import Modal from './Modal';
 import type { FunctionDeclaration, Content, Part, FunctionCall } from '@google/genai';
 import { SchemaType } from '../services/geminiSchemaTypes';
 import { DataContext } from '../context/DataContext';
-import { useCurrency } from '../context/CurrencyContext';
 import { useCanonicalFinancialMetrics, useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
 import { formatGoalsProgressForPrompt } from '../services/goalResolvedTotals';
 import { buildAiPersonalWealthGrounding } from '../services/aiPersonalWealthGrounding';
@@ -21,8 +20,9 @@ const ADVISOR_LANG_KEY = 'finova_default_ai_lang_v1';
 
 const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({ isOpen, onClose }) => {
     const { data, addWatchlistItem, getAvailableCashForAccount } = useContext(DataContext)!;
-    const { exchangeRate } = useCurrency();
     const simulatedPrices = useCanonicalSimulatedPrices();
+    const { netWorth: headlineNetWorthSar, liquidCashSar: headlineLiquidCashSar, kpiSnapshot, sarPerUsd } =
+        useCanonicalFinancialMetrics();
     const [history, setHistory] = useState<Content[]>([]);
     const [userInput, setUserInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -62,15 +62,12 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
         () =>
             buildAiPersonalWealthGrounding({
                 data,
-                exchangeRate,
+                exchangeRate: sarPerUsd,
                 getAvailableCashForAccount,
                 simulatedPrices,
             }),
-        [data, exchangeRate, getAvailableCashForAccount, simulatedPrices],
+        [data, sarPerUsd, getAvailableCashForAccount, simulatedPrices],
     );
-
-    const { netWorth: headlineNetWorthSar, liquidCashSar: headlineLiquidCashSar, kpiSnapshot, sarPerUsd } =
-        useCanonicalFinancialMetrics();
 
     const getNetWorth_ = useCallback(() => {
         return {
@@ -135,13 +132,13 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
     }, [data]);
 
     const getCapitalDeployment_ = useCallback(() => {
-        const cap = computeCapitalDeployment(data, exchangeRate, getAvailableCashForAccount, 0, 6);
+        const cap = computeCapitalDeployment(data, sarPerUsd, getAvailableCashForAccount, 0, 6);
         return {
             canInvest: cap.canInvest,
             runwayMonths: cap.runwayMonths,
             reasons: cap.reasons,
         };
-    }, [data, exchangeRate, getAvailableCashForAccount]);
+    }, [data, sarPerUsd, getAvailableCashForAccount]);
 
     const handleAddWatchlistItem_ = useCallback(async ({ symbol, name }: { symbol: string, name: string }) => {
         if (!symbol || !name) return { success: false, error: "Symbol and name are required." };
@@ -222,7 +219,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
 ${recentSnippet}${budgetSnippet}
 
 > Live AI provider is temporarily unavailable, so this answer is generated from your current in-app data.`;
-    }, [data, exchangeRate, getAvailableCashForAccount, wealthGroundingRef]);
+    }, [data, sarPerUsd, getAvailableCashForAccount, wealthGroundingRef]);
 
     const processTurn = async (chatHistory: Content[], remainingToolRounds = 4) => {
         setIsLoading(true);

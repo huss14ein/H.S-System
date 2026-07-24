@@ -4,6 +4,7 @@ import {
     MAX_HOLDING_BOOK_NOTIONAL,
     buildCommodityHoldingValueUpdatesFromTrustedSnapshot,
     buildEquityHoldingValueUpdatesFromTrustedSnapshot,
+    filterNoOpHoldingValueUpdates,
 } from '../services/marketSimulatorHoldingPersist';
 
 describe('marketSimulatorHoldingPersist', () => {
@@ -44,7 +45,9 @@ describe('marketSimulatorHoldingPersist', () => {
         ];
         const trusted = { AAPL: { price: 10, change: 0, changePercent: 0 } };
         const updates = buildEquityHoldingValueUpdatesFromTrustedSnapshot(portfolios, trusted, sarPerUsd);
-        expect(updates).toEqual([{ id: 'h-usd', currentValue: 10 * 2 * sarPerUsd }]);
+        expect(updates).toEqual([
+            { id: 'h-usd', currentValue: 10 * 2 * sarPerUsd, currentPrice: 10 },
+        ]);
     });
 
     it('uses SAR notion as-is for .SR in SAR book', () => {
@@ -64,7 +67,7 @@ describe('marketSimulatorHoldingPersist', () => {
         ];
         const trusted = { '1150.SR': { price: 42, change: 0, changePercent: 0 } };
         expect(buildEquityHoldingValueUpdatesFromTrustedSnapshot(portfolios, trusted, sarPerUsd)).toEqual([
-            { id: 'h-sr', currentValue: 420 },
+            { id: 'h-sr', currentValue: 420, currentPrice: 42 },
         ]);
     });
 
@@ -125,7 +128,63 @@ describe('marketSimulatorHoldingPersist', () => {
         ];
         const trusted = { '2222.SR': { price: 3200, change: 0, changePercent: 0 } };
         const updates = buildEquityHoldingValueUpdatesFromTrustedSnapshot(portfolios, trusted, sarPerUsd);
-        expect(updates).toEqual([{ id: 'h-tdwl', currentValue: 3200 }]);
+        expect(updates).toEqual([{ id: 'h-tdwl', currentValue: 3200, currentPrice: 32 }]);
+    });
+
+    it('persists a changed unit price even when rounded position value is unchanged', () => {
+        const portfolios: InvestmentPortfolio[] = [
+            {
+                id: 'p1',
+                currency: 'USD',
+                holdings: [
+                    {
+                        id: 'h1',
+                        symbol: 'AAPL',
+                        quantity: 0.001,
+                        currentValue: 0.1,
+                        currentPrice: 100,
+                        holdingType: 'ticker',
+                    } as any,
+                ],
+            } as any,
+        ];
+        expect(
+            filterNoOpHoldingValueUpdates(portfolios, [
+                { id: 'h1', currentValue: 0.1, currentPrice: 100.5 },
+            ]),
+        ).toHaveLength(1);
+    });
+
+    it('carries the original trusted quote retrieval timestamp', () => {
+        const portfolios: InvestmentPortfolio[] = [
+            {
+                id: 'p1',
+                currency: 'USD',
+                holdings: [
+                    {
+                        id: 'h1',
+                        symbol: 'AAPL',
+                        quantity: 2,
+                        holdingType: 'ticker',
+                    } as any,
+                ],
+            } as any,
+        ];
+        expect(
+            buildEquityHoldingValueUpdatesFromTrustedSnapshot(
+                portfolios,
+                { AAPL: { price: 10, change: 0, changePercent: 0 } },
+                sarPerUsd,
+                { AAPL: '2026-07-25T00:00:00.000Z' },
+            ),
+        ).toEqual([
+            {
+                id: 'h1',
+                currentValue: 20,
+                currentPrice: 10,
+                priceUpdatedAt: '2026-07-25T00:00:00.000Z',
+            },
+        ]);
     });
 
     it('buildCommodityHoldingValueUpdatesFromTrustedSnapshot skips when trusted lacks commodity row', () => {

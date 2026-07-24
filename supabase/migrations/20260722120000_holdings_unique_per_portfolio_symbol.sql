@@ -1,6 +1,38 @@
 -- Dedupe holdings ghosts then enforce one row per (user, portfolio, symbol).
 -- Prevents auto-heal / trade side-effects from summing historical qty (e.g. LCID 500→1890).
 -- Prefer EXACT ledger-net match; otherwise newest id. Never "nearest" drift (that kept ghosts).
+--
+-- LIVE-DATA SAFE: no table is dropped, recreated, or truncated, and no column is removed.
+-- The only rows removed are duplicate holdings for the same (user, portfolio, symbol) — and every
+-- removed row is archived first in public.holdings_dedupe_backup, so the delete is reversible.
+-- Re-running this file is harmless: after the unique index exists there is nothing left to remove.
+
+begin;
+
+create table if not exists public.holdings_dedupe_backup (
+  backup_id uuid primary key default gen_random_uuid(),
+  user_id uuid not null,
+  removed_at timestamptz not null default now(),
+  migration text not null,
+  row_data jsonb not null
+);
+
+alter table public.holdings_dedupe_backup enable row level security;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename = 'holdings_dedupe_backup'
+      and policyname = 'Users read own holdings_dedupe_backup'
+  ) then
+    create policy "Users read own holdings_dedupe_backup"
+      on public.holdings_dedupe_backup for select
+      using (auth.uid() = user_id);
+  end if;
+end
+$$;
 
 WITH ledger_net AS (
   SELECT
@@ -46,11 +78,21 @@ ranked AS (
     ON ln.user_id = h.user_id
    AND ln.portfolio_id = h.portfolio_id
    AND ln.sym = upper(trim(h.symbol))
+),
+removed AS (
+  DELETE FROM public.holdings h
+  USING ranked r
+  WHERE h.id = r.id
+    AND r.rn > 1
+  RETURNING h.*
 )
-DELETE FROM public.holdings h
-USING ranked r
-WHERE h.id = r.id
-  AND r.rn > 1;
+INSERT INTO public.holdings_dedupe_backup (user_id, migration, row_data)
+SELECT removed.user_id,
+       '20260722120000_holdings_unique_per_portfolio_symbol',
+       to_jsonb(removed)
+FROM removed;
 
 CREATE UNIQUE INDEX IF NOT EXISTS holdings_user_portfolio_symbol_uidx
   ON public.holdings (user_id, portfolio_id, (upper(trim(symbol))));
+
+commit;

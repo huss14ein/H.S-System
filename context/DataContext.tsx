@@ -210,7 +210,13 @@ interface DataContextType {
   deletePortfolio: (portfolioId: string) => Promise<void>;
   addHolding: (holding: Omit<Holding, 'id' | 'user_id'>) => Promise<void>;
   updateHolding: (holding: Holding) => Promise<void>;
-  batchUpdateHoldingValues: (updates: { id: string; currentValue: number }[]) => void;
+  /**
+   * Persist latest trusted provider price + book-currency position value.
+   * Partial market update only: never writes quantity or average cost.
+   */
+  batchUpdateHoldingValues: (
+    updates: { id: string; currentValue: number; currentPrice: number; priceUpdatedAt?: string }[],
+  ) => Promise<void>;
   recordTrade: (trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number }, executedPlanId?: string, opts?: RecordWriteOptions) => Promise<{
     insertedInvestmentTransactionId: string | null;
     insertedTradeTransactions: number;
@@ -709,6 +715,11 @@ function normalizeHoldingFromRow(row: any): Holding {
         quantity: roundQuantity(Number(row.quantity ?? 0)),
         avgCost: roundAvgCostPerUnit(Number(row.avg_cost ?? row.avgCost ?? 0)),
         currentValue: roundMoney(Number(row.current_value ?? row.currentValue ?? 0)),
+        currentPrice:
+            row.current_price != null || row.currentPrice != null
+                ? Number(row.current_price ?? row.currentPrice)
+                : undefined,
+        priceUpdatedAt: row.price_updated_at ?? row.priceUpdatedAt ?? undefined,
         realizedPnL: roundMoney(Number(row.realized_pnl ?? row.realizedPnL ?? 0)),
         zakahClass: row.zakah_class ?? row.zakahClass ?? 'Zakatable',
         assetClass: row.asset_class ?? row.assetClass,
@@ -810,6 +821,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const corporateActionInFlightRef = useRef(false);
     const duplicateHoldingsReconcileInFlightRef = useRef(false);
     const duplicateHoldingsLastSignatureRef = useRef<string>('');
+    /** Monotonic trusted-quote timestamp so an older async persist cannot replace a newer mark. */
+    const lastHoldingMarketValuePersistMsRef = useRef(0);
     /**
      * Monotonic book generation — bumped after local holdings mutations / successful recordTrade.
      * Stale fetchData investments payloads are ignored when generation advanced mid-fetch.
@@ -3912,19 +3925,149 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
-    const batchUpdateHoldingValues = (updates: { id: string; currentValue: number }[]) => {
-      startTransition(() => {
-        setData(prevData => {
-            const updatesMap = new Map(updates.map(u => [u.id, u.currentValue]));
-            return {
+    const batchUpdateHoldingValues = async (
+        updates: { id: string; currentValue: number; currentPrice: number; priceUpdatedAt?: string }[],
+    ): Promise<void> => {
+        if (!supabase || !auth?.user) return;
+        const db = supabase;
+        const userId = auth.user.id;
+
+        const storedMarketById = new Map<string, { ms: number | null; price: number | null }>();
+        for (const portfolio of dataRef.current?.investments ?? []) {
+            for (const holding of portfolio.holdings ?? []) {
+                if (!holding.id) continue;
+                const ms = holding.priceUpdatedAt ? Date.parse(holding.priceUpdatedAt) : Number.NaN;
+                const price = Number(holding.currentPrice);
+                storedMarketById.set(holding.id, {
+                    ms: Number.isFinite(ms) ? ms : null,
+                    price: Number.isFinite(price) && price > 0 ? price : null,
+                });
+            }
+        }
+
+        const fallbackNowMs = Math.max(Date.now(), lastHoldingMarketValuePersistMsRef.current + 1);
+        lastHoldingMarketValuePersistMsRef.current = fallbackNowMs;
+        const byId = new Map<
+            string,
+            { id: string; currentValue: number; currentPrice: number; priceUpdatedAt: string }
+        >();
+        for (const update of updates) {
+            const id = String(update.id ?? '').trim();
+            const currentValue = roundMoney(Number(update.currentValue));
+            const currentPrice = Number(update.currentPrice);
+            const suppliedMs = update.priceUpdatedAt ? Date.parse(update.priceUpdatedAt) : Number.NaN;
+            const quoteMs = Number.isFinite(suppliedMs) ? suppliedMs : fallbackNowMs;
+            if (
+                !id ||
+                !Number.isFinite(currentValue) ||
+                currentValue <= 0 ||
+                !Number.isFinite(currentPrice) ||
+                currentPrice <= 0
+            ) {
+                continue;
+            }
+
+            const stored = storedMarketById.get(id);
+            let effectiveMs = quoteMs;
+            if (stored?.ms != null && quoteMs < stored.ms) {
+                const samePrice = stored.price != null && Math.abs(stored.price - currentPrice) < 1e-8;
+                // An older quote must never overwrite a newer price. When it carries the same price
+                // it still corrects the position value after a quantity change (trade / corporate
+                // action), so keep the newer stamp and let the value through.
+                if (!samePrice) continue;
+                effectiveMs = stored.ms;
+            }
+
+            byId.set(id, {
+                id,
+                currentValue,
+                currentPrice,
+                priceUpdatedAt: new Date(effectiveMs).toISOString(),
+            });
+        }
+        const safeUpdates = [...byId.values()];
+        if (safeUpdates.length === 0) return;
+
+        const payload = safeUpdates.map((u) => ({
+            id: u.id,
+            current_value: u.currentValue,
+            current_price: u.currentPrice,
+            price_updated_at: u.priceUpdatedAt,
+        }));
+
+        // One RPC call avoids N holdings PATCH requests and applies only market columns.
+        const rpcResult = await db.rpc('update_holding_market_values', { p_updates: payload });
+        let persistError = rpcResult.error;
+        const missingRpc =
+            persistError?.code === 'PGRST202' ||
+            (String(persistError?.message ?? '').toLowerCase().includes('function') &&
+                String(persistError?.message ?? '').toLowerCase().includes('does not exist'));
+
+        if (missingRpc) {
+            // Compatibility while the migration rolls out: try the new columns row-by-row.
+            const modernResults = await Promise.all(
+                payload.map((u) =>
+                    db
+                        .from('holdings')
+                        .update({
+                            current_value: u.current_value,
+                            current_price: u.current_price,
+                            price_updated_at: u.price_updated_at,
+                        })
+                        .match({ id: u.id, user_id: userId }),
+                ),
+            );
+            persistError = modernResults.find((r) => r.error)?.error ?? null;
+
+            const missingColumns =
+                persistError?.code === '42703' ||
+                persistError?.code === 'PGRST204' ||
+                String(persistError?.message ?? '').toLowerCase().includes('current_price');
+            if (missingColumns) {
+                // Legacy schema still persists the correct position value. Exact unit price starts
+                // persisting as soon as 20260725120000_holdings_market_price_persistence.sql is applied.
+                const legacyResults = await Promise.all(
+                    payload.map((u) =>
+                        db
+                            .from('holdings')
+                            .update({ current_value: u.current_value })
+                            .match({ id: u.id, user_id: userId }),
+                    ),
+                );
+                persistError = legacyResults.find((r) => r.error)?.error ?? null;
+                if (!persistError) {
+                    console.warn(
+                        '[holdings] Saved latest market values; apply holdings market-price migration to persist exact unit price/timestamp.',
+                    );
+                }
+            }
+        }
+
+        if (persistError) {
+            console.error('Error persisting trusted holding market values:', persistError);
+            throw new Error(formatDbError(persistError));
+        }
+
+        const updatesMap = new Map(safeUpdates.map((u) => [u.id, u]));
+        startTransition(() => {
+            applyFinancialDataPatch((prevData) => ({
                 ...prevData,
-                investments: prevData.investments.map(p => ({
+                investments: prevData.investments.map((p) => ({
                     ...p,
-                    holdings: p.holdings.map(h => h.id && updatesMap.has(h.id) ? { ...h, currentValue: updatesMap.get(h.id)! } : h)
-                }))
-            };
+                    holdings: p.holdings.map((h) => {
+                        const update = h.id ? updatesMap.get(h.id) : undefined;
+                        return update
+                            ? {
+                                  ...h,
+                                  currentValue: update.currentValue,
+                                  currentPrice: update.currentPrice,
+                                  priceUpdatedAt: update.priceUpdatedAt,
+                              }
+                            : h;
+                    }),
+                })),
+            }));
         });
-      });
     };
     const recordTrade = async (
         trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string, transferGroupId?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number },
@@ -4505,6 +4648,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         .maybeSingle();
                     if (holdingReadError) throw new Error(formatDbError(holdingReadError));
                     if (holdingRow) holdingAfter = normalizeHoldingFromRow(holdingRow);
+                }
+                /**
+                 * Critical: a buy must leave an open holding. Otherwise the trade appears in the
+                 * transaction log with no portfolio position (and KPIs miss the exposure).
+                 */
+                if (!holdingAfter || !(Number(holdingAfter.quantity) > 0)) {
+                    throw new Error(
+                        `Buy for ${normalizedSymbol} did not create an open holding. Rolling back the trade so the ledger and positions stay aligned.`,
+                    );
                 }
                 if (holdingAfter) {
                     const patched: Holding = {

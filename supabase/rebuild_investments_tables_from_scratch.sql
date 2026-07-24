@@ -44,6 +44,8 @@ create table public.holdings (
   quantity numeric not null default 0,
   avg_cost numeric not null default 0,
   current_value numeric not null default 0,
+  current_price numeric null,
+  price_updated_at timestamptz null,
   realized_pnl numeric not null default 0,
   zakah_class text not null default 'Zakatable',
   holding_type text not null default 'ticker',

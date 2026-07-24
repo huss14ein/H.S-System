@@ -67,6 +67,7 @@ describe('recordTradeCompletion', () => {
     expect(ctx).toContain("const { data: holdingRow, error: holdingReadError } = await supabase");
     expect(ctx).toContain('needsPatch');
     expect(ctx).toContain('await updateHolding(patched)');
+    expect(ctx).toContain('did not create an open holding');
   });
 
   it('holding validation failures throw and trade rollback restores the holding snapshot before refresh', () => {

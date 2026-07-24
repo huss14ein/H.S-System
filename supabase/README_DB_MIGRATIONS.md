@@ -59,6 +59,7 @@ Optionally run **`migrations/add_users_approved_metadata.sql`** afterward for a 
 | **`migrations/20260715121000_investment_transactions_fee_vat_types.sql`** | Allow `fee` and `vat` on `investment_transactions` (statement import broker fees). |
 | **`migrations/20260715122000_backfill_investment_transactions_portfolio_id.sql`** | Optional but recommended: stamp `portfolio_id` on legacy txs when the account has **exactly one** portfolio. |
 | **`migrations/20260722120000_holdings_unique_per_portfolio_symbol.sql`** | **Required to stop ghost shares after Record Trade:** dedupe duplicate holdings (exact ledger-net match, else newest id — never sum), then unique index on `(user_id, portfolio_id, upper(symbol))`. |
+| **`migrations/20260725120000_holdings_market_price_persistence.sql`** | **Required to persist trusted API marks:** adds `current_price` / `price_updated_at` and one scoped batch RPC that updates market fields only (never quantity or average cost). |
 | `fix_investment_account_fk.sql` | Backfill and FK for investment_transactions.account_id. |
 | `rls_policies_optional.sql` | Row Level Security policies for investment_* tables (if using Supabase Auth). |
 | `rls_all_user_tables.sql` | **Production:** RLS for all user-scoped tables (accounts, assets, transactions, budgets, goals, etc.). Run after base tables exist. |
@@ -95,6 +96,48 @@ Then add any optional scripts you need (currency columns, governance, etc.).
 **Also required for Record Trade ghost-holdings lock** (if not already applied):
 
 - `migrations/20260722120000_holdings_unique_per_portfolio_symbol.sql` — dedupe + unique `(user_id, portfolio_id, upper(symbol))`
+
+## Live data: never rebuild investment tables
+
+`rebuild_investments_tables_from_scratch.sql` **drops and recreates** `investment_portfolios`,
+`holdings`, and `investment_transactions`. Never run it on a database with real data — it is only
+for a clean/empty environment. Every investment fix ships as an **additive migration** instead, so
+you never need it.
+
+The required investment migrations are all safe on live data: they add nullable columns, indexes,
+and RPCs. None drops a table, truncates, or removes a column.
+
+| Migration | What it changes |
+| --- | --- |
+| `20260715120000_investment_transactions_portfolio_id.sql` | Adds nullable `portfolio_id` + indexes. Existing rows keep their data. |
+| `20260715122000_backfill_investment_transactions_portfolio_id.sql` | Stamps `portfolio_id` on legacy rows only where the account has exactly one portfolio. |
+| `20260722120000_holdings_unique_per_portfolio_symbol.sql` | Removes **duplicate** holdings rows for the same `(user, portfolio, symbol)`, then adds the unique index. Archives every removed row first (see below). |
+| `20260725120000_holdings_market_price_persistence.sql` | Adds `current_price` / `price_updated_at` and a batch RPC that writes market fields only. |
+
+### The one delete, and how to undo it
+
+The dedupe migration is the only script that removes rows, and it removes only ghost duplicates —
+the extra rows that made quantities re-sum (LCID 500 + 1390 → 1890). Each removed row is copied into
+`public.holdings_dedupe_backup` as JSON before deletion, so nothing is unrecoverable. Re-running the
+file is harmless: once the unique index exists there is nothing left to remove.
+
+Inspect what was removed:
+
+```sql
+select removed_at, row_data->>'symbol' as symbol, row_data->>'quantity' as quantity, row_data
+from public.holdings_dedupe_backup
+order by removed_at desc;
+```
+
+Restore one archived row (only if you are sure it is not a ghost — it will conflict with the unique
+index if the symbol already has a row in that portfolio):
+
+```sql
+insert into public.holdings
+select (jsonb_populate_record(null::public.holdings, row_data)).*
+from public.holdings_dedupe_backup
+where backup_id = '<backup_id>';
+```
 
 ## App ↔ DB column names
 

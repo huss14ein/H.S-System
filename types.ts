@@ -278,6 +278,10 @@ export interface Holding {
   quantity: number;
   avgCost: number;
   currentValue: number;
+  /** Latest trusted provider unit price in the symbol's quote currency. */
+  currentPrice?: number;
+  /** ISO timestamp when currentPrice/currentValue were last persisted from a trusted quote. */
+  priceUpdatedAt?: string;
   goalId?: string;
   assetClass?: HoldingAssetClass;
   percentage?: number;

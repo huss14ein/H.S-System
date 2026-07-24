@@ -9,6 +9,16 @@ import { sanitizeLiveQuoteRow } from './tadawulQuoteSanity';
 /** Skip persisting nonsense totals if upstream data is corrupt (protects DB / UI aggregates). */
 export const MAX_HOLDING_BOOK_NOTIONAL = 1e12;
 
+export type HoldingMarketValueUpdate = {
+    id: string;
+    /** Book-currency position value. */
+    currentValue: number;
+    /** Exact trusted provider unit price in the symbol's quote currency. */
+    currentPrice: number;
+    /** Original API/cache retrieval timestamp; prevents stale cache from looking newly fetched. */
+    priceUpdatedAt?: string;
+};
+
 function trustedQuoteRowForHolding(
     sym: string,
     trusted: Record<string, LiveQuoteRow>,
@@ -32,8 +42,9 @@ export function buildEquityHoldingValueUpdatesFromTrustedSnapshot(
     portfolios: InvestmentPortfolio[],
     trusted: Record<string, LiveQuoteRow>,
     sarPerUsd: number,
-): { id: string; currentValue: number }[] {
-    const out: { id: string; currentValue: number }[] = [];
+    quoteUpdatedAtBySymbol: Record<string, string | undefined> = {},
+): HoldingMarketValueUpdate[] {
+    const out: HoldingMarketValueUpdate[] = [];
     for (const p of portfolios) {
         const book = resolveInvestmentPortfolioCurrency(p);
         for (const holding of p.holdings ?? []) {
@@ -46,7 +57,14 @@ export function buildEquityHoldingValueUpdatesFromTrustedSnapshot(
             if (!(qty > 0)) continue;
             const notion = quoteNotionalInBookCurrency(row.price, qty, sym, book, sarPerUsd, trusted);
             if (!Number.isFinite(notion) || notion <= 0 || notion > MAX_HOLDING_BOOK_NOTIONAL) continue;
-            out.push({ id: holding.id, currentValue: notion });
+            out.push({
+                id: holding.id,
+                currentValue: notion,
+                currentPrice: row.price,
+                ...(quoteUpdatedAtBySymbol[String(sym).trim().toUpperCase()]
+                    ? { priceUpdatedAt: quoteUpdatedAtBySymbol[String(sym).trim().toUpperCase()] }
+                    : {}),
+            });
         }
     }
     return out;
@@ -55,19 +73,28 @@ export function buildEquityHoldingValueUpdatesFromTrustedSnapshot(
 /** Drop updates where book notional is unchanged (avoids redundant DataContext writes on quote ticks). */
 export function filterNoOpHoldingValueUpdates(
     portfolios: InvestmentPortfolio[],
-    updates: { id: string; currentValue: number }[],
+    updates: HoldingMarketValueUpdate[],
     epsilon = 0.01,
-): { id: string; currentValue: number }[] {
-    const currentById = new Map<string, number>();
+): HoldingMarketValueUpdate[] {
+    const currentById = new Map<string, { currentValue: number; currentPrice?: number }>();
     for (const p of portfolios) {
         for (const h of p.holdings ?? []) {
-            if (h.id) currentById.set(h.id, Number(h.currentValue) || 0);
+            if (h.id) {
+                currentById.set(h.id, {
+                    currentValue: Number(h.currentValue) || 0,
+                    currentPrice: Number.isFinite(Number(h.currentPrice)) ? Number(h.currentPrice) : undefined,
+                });
+            }
         }
     }
     return updates.filter((u) => {
         const prev = currentById.get(u.id);
         if (prev == null) return true;
-        return Math.abs(prev - u.currentValue) > epsilon;
+        return (
+            Math.abs(prev.currentValue - u.currentValue) > epsilon ||
+            prev.currentPrice == null ||
+            Math.abs(prev.currentPrice - u.currentPrice) > 1e-8
+        );
     });
 }
 

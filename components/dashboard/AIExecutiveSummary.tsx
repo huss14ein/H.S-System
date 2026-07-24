@@ -1,7 +1,6 @@
 import React, { useCallback, useContext, useState } from 'react';
 import { DataContext } from '../../context/DataContext';
-import { useCurrency } from '../../context/CurrencyContext';
-import { useCanonicalSimulatedPrices } from '../../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSimulatedPrices, useCanonicalSpotFx } from '../../hooks/useCanonicalFinancialMetrics';
 import { useAI } from '../../context/AiContext';
 import { useSelfLearning } from '../../context/SelfLearningContext';
 import { getAIExecutiveSummary, formatAiError, translateFinancialInsightToArabic } from '../../services/geminiService';
@@ -15,7 +14,7 @@ const AI_SUMMARY_LANG_KEY = 'finova_wealth_analytics_ai_summary_lang_v1';
 /** On-demand executive summary (Wealth Analytics — kept off Dashboard for performance). */
 export const AIExecutiveSummary: React.FC = () => {
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
-    const { exchangeRate } = useCurrency();
+    const sarPerUsd = useCanonicalSpotFx();
     const simulatedPrices = useCanonicalSimulatedPrices();
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { trackAction } = useSelfLearning();
@@ -41,7 +40,7 @@ export const AIExecutiveSummary: React.FC = () => {
         setSummaryEn('');
         try {
             const result = await getAIExecutiveSummary(data, {
-                exchangeRate,
+                exchangeRate: sarPerUsd,
                 getAvailableCashForAccount,
                 simulatedPrices,
             });
@@ -59,7 +58,7 @@ export const AIExecutiveSummary: React.FC = () => {
             setError(formatAiError(err));
         }
         setIsLoading(false);
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, trackAction, summaryLanguage]);
+    }, [data, sarPerUsd, getAvailableCashForAccount, simulatedPrices, trackAction, summaryLanguage]);
 
     const handleTranslateToArabic = useCallback(async () => {
         if (!summaryEn.trim()) return;

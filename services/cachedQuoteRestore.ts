@@ -16,6 +16,7 @@ import {
   buildCommodityHoldingValueUpdatesFromTrustedSnapshot,
   buildEquityHoldingValueUpdatesFromTrustedSnapshot,
   filterNoOpHoldingValueUpdates,
+  type HoldingMarketValueUpdate,
 } from './marketSimulatorHoldingPersist';
 
 export type CachedSymbolTimestamps = Record<string, string>;
@@ -86,7 +87,7 @@ export function collectTrackedQuoteSymbols(data: FinancialData): string[] {
 
 export type RestoreCachedQuotesResult = {
   trusted: Record<string, LiveQuoteRow>;
-  equityUpdates: { id: string; currentValue: number }[];
+  equityUpdates: HoldingMarketValueUpdate[];
   commodityUpdates: { id: string; currentValue: number }[];
   timestamps: CachedSymbolTimestamps;
   lastUpdated: Date | null;

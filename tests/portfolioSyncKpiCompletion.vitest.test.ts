@@ -172,6 +172,6 @@ describe('portfolio sync + KPI completion', () => {
       { '2222.SR': { price: 3200, change: 0, changePercent: 0 } },
       3.75,
     );
-    expect(updates).toEqual([{ id: 'h1', currentValue: 3200 }]);
+    expect(updates).toEqual([{ id: 'h1', currentValue: 3200, currentPrice: 32 }]);
   });
 });

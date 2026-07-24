@@ -28,6 +28,7 @@ import {
     buildCommodityHoldingValueUpdatesFromTrustedSnapshot,
     buildEquityHoldingValueUpdatesFromTrustedSnapshot,
     filterNoOpHoldingValueUpdates,
+    type HoldingMarketValueUpdate,
 } from '../services/marketSimulatorHoldingPersist';
 import {
     isQuoteRefreshInCooldown,
@@ -40,6 +41,8 @@ import { scheduleIdleWork, scheduleIdleWorkAsync, waitUntilBackgroundWorkResumed
 import { yieldToMain } from '../utils/yieldToMain';
 import { computeRestoreCachedQuotesPatch, collectTrackedQuoteSymbols, sessionTimestampsForTrackedSymbols, rehydrateSessionPricesFromQuoteCache, latestQuoteCacheTimestamp, symbolTimestampsFromCacheRows } from '../services/cachedQuoteRestore';
 import type { CachedQuoteRow } from '../services/quotePriceCache';
+import { seedQuoteCacheFromPersistedHoldingPrices } from '../services/persistedHoldingQuoteSeed';
+import { getPersonalInvestments } from '../utils/wealthScope';
 import { registerQuoteRefreshKick } from '../utils/quoteRefreshBridge';
 import { nextQuotesPriceSourceAfterTick, quotesPriceSourceAfterCacheRehydrate } from '../services/quoteSessionStatus';
 
@@ -134,7 +137,10 @@ const MarketSimulator: React.FC = () => {
         const cancelIdle = scheduleIdleWorkAsync(async () => {
             await waitUntilBackgroundWorkResumed();
             if (cancelled || didAlignHoldingsFromCacheRef.current) return;
-            const patch = computeRestoreCachedQuotesPatch(data, sarPerUsd);
+            // Prices persisted on holdings are the durable carrier of the last trusted quote:
+            // seed them first so a new device / cleared storage still shows real prices.
+            const seed = seedQuoteCacheFromPersistedHoldingPrices(getPersonalInvestments(data));
+            const patch = computeRestoreCachedQuotesPatch(data, sarPerUsd, seed.rows);
             if (!patch.hasCache) {
                 didAlignHoldingsFromCacheRef.current = true;
                 return;
@@ -166,9 +172,8 @@ const MarketSimulator: React.FC = () => {
                 if (patch.lastUpdated && marketContext?.setLastUpdated) {
                     marketContext.setLastUpdated(patch.lastUpdated);
                 }
-                const rows = loadQuoteCacheRows();
                 const tracked = data ? collectTrackedQuoteSymbols(data) : Object.keys(patch.trusted);
-                marketContext?.mergeSymbolQuoteTimestamps(sessionTimestampsForTrackedSymbols(tracked, rows));
+                marketContext?.mergeSymbolQuoteTimestamps(sessionTimestampsForTrackedSymbols(tracked, seed.rows));
             });
             // Holding notionals are updated only from manual/live sync ticks — not cache hydrate
             // (avoids stale Tadawul cache overwriting fresh SAHMK quotes).
@@ -399,6 +404,8 @@ const MarketSimulator: React.FC = () => {
             let newPrices: Record<string, { price: number; change: number; changePercent: number }> = {};
             /** Equity + commodity quotes from cache/API only — never RNG `simulateSymbol` fills (those must not mutate stored `currentValue`). */
             let trustedQuoteSnapshot: Record<string, LiveQuoteRow> = {};
+            /** Original provider/cache retrieval time per symbol (stale cache must retain its age). */
+            let trustedQuoteUpdatedAt: Record<string, string | undefined> = {};
             let liveStatus = false;
             let networkFetchedThisTick = false;
 
@@ -519,6 +526,7 @@ const MarketSimulator: React.FC = () => {
                     }
 
                     trustedQuoteSnapshot = { ...newPrices };
+                    trustedQuoteUpdatedAt = sessionTimestampsForTrackedSymbols(uniqueSymbols, cacheRows);
 
                     const allTickerSymbols = Array.from(new Set([...uniqueSymbols, ...commoditySymbols]));
                     const allowCacheFallback = !(forceFetch && priceScope.manual === true);
@@ -573,6 +581,7 @@ const MarketSimulator: React.FC = () => {
                     }
 
                     trustedQuoteSnapshot = { ...newPrices };
+                    trustedQuoteUpdatedAt = sessionTimestampsForTrackedSymbols(uniqueSymbols, cacheRows);
 
                     const allTickerSymbols = Array.from(new Set([...uniqueSymbols, ...commoditySymbols]));
                     const allowCacheFallback = !(forceFetch && priceScope.manual === true);
@@ -613,6 +622,7 @@ const MarketSimulator: React.FC = () => {
                     };
                 }
                 trustedQuoteSnapshot = { ...newPrices };
+                trustedQuoteUpdatedAt = sessionTimestampsForTrackedSymbols(uniqueSymbols, cacheRows);
                 liveStatus = Object.keys(fromCache).length > 0;
                 if (!liveStatus) {
                     Array.from(new Set([...uniqueSymbols, ...commoditySymbols])).forEach((symbol) => {
@@ -623,7 +633,7 @@ const MarketSimulator: React.FC = () => {
                 }
             }
 
-            const holdingUpdates: { id: string, currentValue: number }[] = [];
+            const holdingUpdates: HoldingMarketValueUpdate[] = [];
             const commodityUpdates: { id: string, currentValue: number }[] = [];
             const activeAlertsBySymbol = new Map<string, PriceAlert[]>();
             (data?.priceAlerts ?? []).filter(a => a.status === 'active').forEach(alert => {
@@ -747,7 +757,12 @@ const MarketSimulator: React.FC = () => {
             // Persist market value only from trusted (cache/API) quotes. RNG `simulateSymbol` fills must not
             // overwrite `currentValue` — that caused inflated/wrong platform totals when live feeds failed.
             holdingUpdates.push(
-                ...buildEquityHoldingValueUpdatesFromTrustedSnapshot(portfoliosInScope, trustedQuoteSnapshot, sarPerUsd),
+                ...buildEquityHoldingValueUpdatesFromTrustedSnapshot(
+                    portfoliosInScope,
+                    trustedQuoteSnapshot,
+                    sarPerUsd,
+                    trustedQuoteUpdatedAt,
+                ),
             );
             commodityUpdates.push(
                 ...buildCommodityHoldingValueUpdatesFromTrustedSnapshot(
@@ -762,7 +777,13 @@ const MarketSimulator: React.FC = () => {
             if (holdingUpdatesFiltered.length > 0 && allowHoldingPersist(priceScope.manual === true)) {
                 await yieldToMain();
                 if (!allowHoldingPersist(priceScope.manual === true)) return;
-                batchUpdateHoldingValues(holdingUpdatesFiltered);
+                try {
+                    await batchUpdateHoldingValues(holdingUpdatesFiltered);
+                } catch (persistErr) {
+                    // Quotes are already on screen; a failed save must not skip price alerts,
+                    // commodity marks, or the queued follow-up fetch below.
+                    console.warn('Holding market value persist failed:', persistErr);
+                }
             }
 
             const commodityPrevById = new Map(

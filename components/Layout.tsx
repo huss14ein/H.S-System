@@ -121,7 +121,7 @@ const Layout: React.FC<LayoutProps> = ({
         userId: uid,
         data,
         headline,
-        exchangeRate,
+        exchangeRate: headline?.sarPerUsd ?? exchangeRate,
         getAvailableCashForAccount: dataCtx.getAvailableCashForAccount,
         simulatedPrices: liveQuotePrices,
         supabase,

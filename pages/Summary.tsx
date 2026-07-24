@@ -216,16 +216,16 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         if (!data) return;
         const fm = reportModel?.financialMetricsWithEf;
         const surplus = Math.max(0, (fm?.monthlyIncome ?? 0) - (fm?.monthlyExpenses ?? 0));
-        const pack = buildReviewPack(data, exchangeRate, getAvailableCashForAccount, surplus, canonicalSimulatedPrices);
+        const pack = buildReviewPack(data, canonicalSarPerUsd, getAvailableCashForAccount, surplus, canonicalSimulatedPrices);
         downloadReviewPackMarkdown(pack.markdown);
         trackAction('export-review-pack', 'Summary');
-    }, [data, exchangeRate, getAvailableCashForAccount, canonicalSimulatedPrices, reportModel?.financialMetricsWithEf, trackAction]);
+    }, [data, canonicalSarPerUsd, getAvailableCashForAccount, canonicalSimulatedPrices, reportModel?.financialMetricsWithEf, trackAction]);
 
     const handleEmailReviewPack = useCallback(async () => {
         if (!data || reviewPackEmailSending) return;
         const fm = reportModel?.financialMetricsWithEf;
         const surplus = Math.max(0, (fm?.monthlyIncome ?? 0) - (fm?.monthlyExpenses ?? 0));
-        const pack = buildReviewPack(data, exchangeRate, getAvailableCashForAccount, surplus, canonicalSimulatedPrices);
+        const pack = buildReviewPack(data, canonicalSarPerUsd, getAvailableCashForAccount, surplus, canonicalSimulatedPrices);
         setReviewPackEmailSending(true);
         const result = await sendReviewPackEmail(pack.markdown);
         setReviewPackEmailSending(false);
@@ -235,7 +235,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         } else {
             toast(result.error, 'error');
         }
-    }, [data, exchangeRate, getAvailableCashForAccount, canonicalSimulatedPrices, reportModel?.financialMetricsWithEf, reviewPackEmailSending, trackAction]);
+    }, [data, canonicalSarPerUsd, getAvailableCashForAccount, canonicalSimulatedPrices, reportModel?.financialMetricsWithEf, reviewPackEmailSending, trackAction]);
 
     const handleCaptureSnapshot = useCallback(() => {
         if (!data) return;

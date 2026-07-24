@@ -2519,14 +2519,31 @@ export const PortfolioModal: React.FC<{
 
 // #region Platform View Components
 
-const TransactionHistoryModal: React.FC<{ isOpen: boolean, onClose: () => void, transactions: InvestmentTransaction[], platformName: string }> = ({ isOpen, onClose, transactions, platformName }) => {
+const TransactionHistoryModal: React.FC<{
+    isOpen: boolean;
+    onClose: () => void;
+    transactions: InvestmentTransaction[];
+    platformName: string;
+    portfolios?: InvestmentPortfolio[];
+}> = ({ isOpen, onClose, transactions, platformName, portfolios = [] }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const sortedTransactions = useMemo(
         () => sortByNewestFirst(transactions),
         [transactions],
     );
+    const portfolioNameById = useMemo(() => {
+        const map = new Map<string, string>();
+        for (const p of portfolios) {
+            if (p.id) map.set(p.id, p.name || p.id);
+        }
+        return map;
+    }, [portfolios]);
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Transaction History: ${platformName}`}>
+            <p className="text-xs text-slate-600 mb-2">
+                Platform cash ledger. Holdings live under each <strong>portfolio</strong> — check the Portfolio column
+                if a symbol is missing from a holdings table.
+            </p>
             <div className="max-h-[60vh] overflow-y-auto">
                 <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50 sticky top-0">
@@ -2534,6 +2551,7 @@ const TransactionHistoryModal: React.FC<{ isOpen: boolean, onClose: () => void, 
                             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
                             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Symbol</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Portfolio</th>
                             <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Amount</th>
                             <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Currency</th>
                         </tr>
@@ -2541,11 +2559,16 @@ const TransactionHistoryModal: React.FC<{ isOpen: boolean, onClose: () => void, 
                     <tbody className="bg-white divide-y divide-gray-200">
                         {sortedTransactions.map(t => {
                             const cur = (t.currency === 'SAR' || t.currency === 'USD' ? t.currency : 'USD') as TradeCurrency;
+                            const pfId = String(t.portfolioId ?? (t as { portfolio_id?: string }).portfolio_id ?? '');
+                            const pfLabel = pfId
+                                ? (portfolioNameById.get(pfId) ?? 'Other portfolio')
+                                : 'Unassigned';
                             return (
                                 <tr key={t.id} className="hover:bg-gray-50">
                                     <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">{new Date(t.date).toLocaleDateString()}</td>
                                     <td className={`px-4 py-2 whitespace-nowrap text-sm font-medium ${t.type === 'buy' || t.type === 'deposit' ? 'text-green-600' : t.type === 'sell' || t.type === 'withdrawal' ? 'text-red-600' : 'text-blue-600'}`}>{t.type.toUpperCase()}</td>
                                     <td className="px-4 py-2 whitespace-nowrap text-sm font-semibold text-dark">{t.symbol === 'CASH' ? '—' : t.symbol}</td>
+                                    <td className={`px-4 py-2 whitespace-nowrap text-xs ${pfId ? 'text-slate-600' : 'text-amber-800 font-medium'}`}>{pfLabel}</td>
                                     <td className="px-4 py-2 whitespace-nowrap text-sm text-center font-bold text-dark">{formatCurrencyString(t.total ?? 0, { inCurrency: cur })}</td>
                                     <td className="px-3 py-2 whitespace-nowrap text-center text-xs font-medium text-slate-600">{cur}</td>
                                 </tr>
@@ -3415,7 +3438,13 @@ const PlatformCardInner: React.FC<{
                 })}
             </div>}
 
-            <TransactionHistoryModal isOpen={isTxnModalOpen} onClose={() => setIsTxnModalOpen(false)} transactions={transactions} platformName={platform.name} />
+            <TransactionHistoryModal
+                isOpen={isTxnModalOpen}
+                onClose={() => setIsTxnModalOpen(false)}
+                transactions={transactions}
+                platformName={platform.name}
+                portfolios={portfolios}
+            />
             {pnlBreakdown && breakdownData ? (
                 <PortfolioPeriodPnLBreakdownDrawer
                     portfolioName={pnlBreakdown.portfolioName}
@@ -5932,7 +5961,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                 </div>
             </div>
             <p className="mt-3 text-xs text-slate-600 leading-relaxed">
-                If share counts look wrong after a trade, use <span className="font-semibold text-slate-800">Holdings quantity integrity</span> above (Keep stored / Rebuild this symbol). For KPI cash detail, open System &amp; APIs Health → Data reconciliation.
+                If share counts look wrong after a trade, use <span className="font-semibold text-slate-800">Holdings quantity integrity</span> above — <span className="font-semibold">Keep stored</span> dismisses the warning (KPIs already use stored shares); rebuild only if you trust the ledger. For KPI cash detail, open System &amp; APIs Health → Data reconciliation.
             </p>
         </details>
 

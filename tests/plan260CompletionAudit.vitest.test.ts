@@ -1,5 +1,6 @@
 /**
- * Plan 2.6.0.0 completion audit — Sukuk, corporate actions, spending, ultra analytics.
+ * Plan 2.6 feature completion audit — Sukuk, corporate actions, spending, ultra analytics.
+ * Current packaged app version is asserted as 2.7.0.0.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
@@ -30,10 +31,10 @@ const REQUIRED_TESTS = [
   'tests/wealthAnalyticsZones.vitest.test.ts',
 ];
 
-describe('plan 2.6.0.0 completion audit', () => {
-  it('version 2.6.0.0 in package and buildInfo', () => {
-    expect(read('package.json')).toContain('"version": "2.6.0.0"');
-    expect(read('utils/buildInfo.ts')).toContain("APP_VERSION = '2.6.0.0'");
+describe('plan 2.6 feature completion audit', () => {
+  it('version 2.7.0.0 in package and buildInfo', () => {
+    expect(read('package.json')).toContain('"version": "2.7.0.0"');
+    expect(read('utils/buildInfo.ts')).toContain("APP_VERSION = '2.7.0.0'");
   });
 
   it('Track A — Sukuk recovery artifacts', () => {

@@ -253,7 +253,7 @@ const DashboardContent: React.FC<{
     const { maskBalance } = usePrivacyMask();
     const { dir } = useLanguage();
     const workingData = showHydrateBanner ? null : data;
-    const { model: spendingModel, ready: spendingReady } = useSpendingCommandCenterModel(workingData, exchangeRate, 'personal');
+    const { model: spendingModel, ready: spendingReady } = useSpendingCommandCenterModel(workingData, canonicalSarPerUsd, 'personal');
     const { selectedCategory, setSelectedCategory } = useAnalyticsWorkspace();
     const budgetDriftRows = useMemo(
         () => (workingData ? detectBudgetDrift(workingData, canonicalSarPerUsd) : []),

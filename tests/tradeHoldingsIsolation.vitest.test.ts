@@ -743,7 +743,9 @@ describe('tradeHoldingsIsolation', () => {
     const panel = read('components/investments/HoldingsQtyIntegrityPanel.tsx');
     expect(panel).toContain('Rebuild this symbol');
     expect(panel).toContain('Keep stored');
-    expect(panel).toContain('listLedgerSymbolsMissingFromHoldings');
+    expect(panel).toContain('acknowledgeHoldingsIntegrity');
+    expect(panel).toContain('listMissingLedgerHoldingsAcrossPortfolios');
+    expect(panel).toContain('Restore holding');
     expect(panel).toContain('rebuildHoldingsFromLedgerForSymbols');
     expect(read('pages/SystemHealth.tsx')).toContain('HoldingsQtyIntegrityPanel');
     expect(read('pages/Investments.tsx')).toContain('HoldingsQtyIntegrityPanel');

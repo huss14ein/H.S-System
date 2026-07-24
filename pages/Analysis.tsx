@@ -23,7 +23,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { computeAllNetWorthChartBucketsSAR } from '../services/personalNetWorth';
-import { useExtendedCanonicalMetrics, useCanonicalSimulatedPrices, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics, useCanonicalSimulatedPrices, useCanonicalSpotFx, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
 import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
@@ -107,9 +107,9 @@ const AssetLiabilityChart: React.FC = () => {
         const n = Number(value);
         return Number.isFinite(n) ? Math.max(0, n) : 0;
     };
-    const { exchangeRate } = useCurrency();
+    const sarPerUsd = useCanonicalSpotFx();
     const chartData = useMemo(() => {
-        const buckets = computeAllNetWorthChartBucketsSAR(data, exchangeRate, { getAvailableCashForAccount, simulatedPrices });
+        const buckets = computeAllNetWorthChartBucketsSAR(data, sarPerUsd, { getAvailableCashForAccount, simulatedPrices });
 
         return [
             { name: 'Investments (platforms + commodities + Sukuk)', value: toFiniteMoney(buckets.investments) },
@@ -118,7 +118,7 @@ const AssetLiabilityChart: React.FC = () => {
             { name: 'Receivables', value: toFiniteMoney(buckets.receivables) },
             { name: 'Debt', value: toFiniteMoney(Math.abs(buckets.liabilities)) },
         ];
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
+    }, [data, sarPerUsd, getAvailableCashForAccount, simulatedPrices]);
 
     const hasSignal = chartData.some((x) => Number.isFinite(x.value) && x.value > 0);
     const isEmpty = !hasSignal;
@@ -164,9 +164,8 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { computeData } = usePageDeferredData();
     const engineData = computeData ?? data;
-    const { exchangeRate, currency: displayCurrency } = useCurrency();
+    const { currency: displayCurrency } = useCurrency();
     const simulatedPrices = useCanonicalSimulatedPrices();
-    useHydrateSarPerUsdDailySeries(engineData, exchangeRate);
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const metrics = useExtendedCanonicalMetrics();
     const {
@@ -176,12 +175,13 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         kpiSnapshot,
         extendedReady,
     } = metrics;
+    useHydrateSarPerUsdDailySeries(engineData, headlineFx);
     const investmentsTotalSar = pickInvestmentsTotalSar(metrics, extendedReady);
     const { scope, periodPreset, analysisStudioTab, setAnalysisStudioTab } = useAnalyticsWorkspace();
     const { openPassport } = useMetricPassport();
     const { model: expenseBudgetAnalysis, ready: expenseBudgetReady } = useSpendingCommandCenterModel(
         engineData,
-        exchangeRate,
+        headlineFx,
         scope,
         analysisStudioTab === 'explore' || analysisStudioTab === 'command',
         periodPreset,
@@ -201,7 +201,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         const monthStartDay = resolveMonthStartDayFromData(engineData);
         const trendData = buildTrendDataSar(transactions as Transaction[], accounts, headlineFx, monthStartDay, 6);
 
-        const nwBuckets = computeAllNetWorthChartBucketsSAR(engineData, exchangeRate, { getAvailableCashForAccount, simulatedPrices });
+        const nwBuckets = computeAllNetWorthChartBucketsSAR(engineData, headlineFx, { getAvailableCashForAccount, simulatedPrices });
         const compositionData = [
             { name: 'Investments (platforms + commodities + Sukuk)', value: nwBuckets.investments },
             { name: 'Cash', value: nwBuckets.cash },
@@ -230,7 +230,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
             sarPerUsd: headlineFx,
             expenseBudgetAnalysis: expenseBudgetReady ? expenseBudgetAnalysis : null,
         };
-    }, [engineData, exchangeRate, getAvailableCashForAccount, headlineFx, simulatedPrices, expenseBudgetAnalysis, expenseBudgetReady]);
+    }, [engineData, getAvailableCashForAccount, headlineFx, simulatedPrices, expenseBudgetAnalysis, expenseBudgetReady]);
 
     const analysisValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
@@ -251,7 +251,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         const debtMag = Number(debtRow?.value) || 0;
         const assetsSum = rows.filter((x) => x.name !== 'Debt').reduce((s, x) => s + (Number(x.value) || 0), 0);
         const reconstructedNw = assetsSum - debtMag;
-        const nwFromBuckets = computeAllNetWorthChartBucketsSAR(data, exchangeRate, { getAvailableCashForAccount, simulatedPrices }).netWorth;
+        const nwFromBuckets = computeAllNetWorthChartBucketsSAR(data, headlineFx, { getAvailableCashForAccount, simulatedPrices }).netWorth;
         if (Math.abs(reconstructedNw - nwFromBuckets) > 2) {
             warnings.push('Position bars do not reconcile to net worth — check accounts, liabilities, and FX (System & APIs Health → Data reconciliation).');
         }
@@ -270,9 +270,9 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
             warnings.push('Personal investment total does not match net worth investments band.');
         }
         return warnings;
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, contextData, headlineFx, kpiSnapshot, personalNetWorth, personalBuckets, investmentsTotalSar, extendedReady]);
+    }, [data, getAvailableCashForAccount, simulatedPrices, contextData, headlineFx, kpiSnapshot, personalNetWorth, personalBuckets, investmentsTotalSar, extendedReady]);
 
-    const budgetDriftRows = useMemo(() => detectBudgetDrift(engineData ?? null, exchangeRate), [engineData, exchangeRate]);
+    const budgetDriftRows = useMemo(() => detectBudgetDrift(engineData ?? null, headlineFx), [engineData, headlineFx]);
     const visitDelta = React.useMemo(() => {
         const current = buildVisitSnapshotFromModel(personalNetWorth, expenseBudgetReady ? expenseBudgetAnalysis : null);
         const prior = loadAnalyticsVisitSnapshot();
