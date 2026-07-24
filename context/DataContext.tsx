@@ -4003,6 +4003,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             (String(persistError?.message ?? '').toLowerCase().includes('function') &&
                 String(persistError?.message ?? '').toLowerCase().includes('does not exist'));
 
+        /** Local patch source — must match rows actually written (RPC may skip newer DB stamps). */
+        let appliedUpdates: {
+            id: string;
+            currentValue: number;
+            currentPrice: number;
+            priceUpdatedAt: string;
+        }[] = safeUpdates;
+
         if (missingRpc) {
             // Compatibility while the migration rolls out: try the new columns row-by-row.
             const modernResults = await Promise.all(
@@ -4041,6 +4049,49 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     );
                 }
             }
+        } else if (!persistError) {
+            const affected = Number(rpcResult.data);
+            if (Number.isFinite(affected) && affected === 0) {
+                // DB rejected every row (newer price_updated_at) — leave memory unchanged.
+                return;
+            }
+            if (Number.isFinite(affected) && affected < safeUpdates.length) {
+                // Partial skip: re-read so in-memory marks match what the RPC actually persisted.
+                const { data: rows, error: readError } = await db
+                    .from('holdings')
+                    .select('id, current_value, current_price, price_updated_at')
+                    .in(
+                        'id',
+                        safeUpdates.map((u) => u.id),
+                    )
+                    .eq('user_id', userId);
+                if (readError) {
+                    console.error('Error re-reading holdings after partial market-value update:', readError);
+                    throw new Error(formatDbError(readError));
+                }
+                appliedUpdates = (rows ?? [])
+                    .map((row) => {
+                        const currentValue = Number(row.current_value);
+                        const currentPrice = Number(row.current_price);
+                        const priceUpdatedAt =
+                            typeof row.price_updated_at === 'string' ? row.price_updated_at : '';
+                        if (
+                            !row.id ||
+                            !Number.isFinite(currentValue) ||
+                            !Number.isFinite(currentPrice) ||
+                            !priceUpdatedAt
+                        ) {
+                            return null;
+                        }
+                        return {
+                            id: String(row.id),
+                            currentValue,
+                            currentPrice,
+                            priceUpdatedAt,
+                        };
+                    })
+                    .filter((u): u is NonNullable<typeof u> => u != null);
+            }
         }
 
         if (persistError) {
@@ -4048,7 +4099,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             throw new Error(formatDbError(persistError));
         }
 
-        const updatesMap = new Map(safeUpdates.map((u) => [u.id, u]));
+        if (appliedUpdates.length === 0) return;
+
+        const updatesMap = new Map(appliedUpdates.map((u) => [u.id, u]));
         startTransition(() => {
             applyFinancialDataPatch((prevData) => ({
                 ...prevData,

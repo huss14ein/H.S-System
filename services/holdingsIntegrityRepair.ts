@@ -111,8 +111,13 @@ export function classifyMissingLedgerHoldings(args: {
   portfolio: InvestmentPortfolio;
   transactions: InvestmentTransaction[];
 }): Omit<MissingLedgerHoldingRow, 'portfolioId' | 'portfolioName'>[] {
+  // Only positive qty counts as held — a stale 0-qty row is not an open position and must
+  // still surface as critical missing when the ledger nets shares with last-leg buy.
   const held = new Set(
-    (args.portfolio.holdings ?? []).map((h) => String(h.symbol ?? '').trim().toUpperCase()).filter(Boolean),
+    (args.portfolio.holdings ?? [])
+      .filter((h) => (Number(h.quantity) || 0) > 1e-9)
+      .map((h) => String(h.symbol ?? '').trim().toUpperCase())
+      .filter(Boolean),
   );
   const scoped = filterTransactionsForPortfolio(args.portfolio.id, args.transactions);
   const symbols = new Set<string>();

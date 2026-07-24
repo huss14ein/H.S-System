@@ -66,21 +66,29 @@ describe('holdingsIntegrityAck', () => {
     ).toHaveLength(1);
   });
 
-  it('Keep closed ack dismisses missing-from-holdings row', () => {
+  it('Keep closed ack dismisses matching ledger-net missing row and invalidates when ledger changes', () => {
     const userId = 'user-1';
     acknowledgeHoldingsIntegrity({
       userId,
       portfolioId: 'pf-awaed',
       symbol: 'ATYR',
       kind: 'keep_closed',
-      storedQty: 0,
+      storedQty: 60,
     });
     const acks = loadHoldingsIntegrityAcks(userId);
     const missing = [
-      { portfolioId: 'pf-awaed', symbol: 'ATYR' },
-      { portfolioId: 'pf-awaed', symbol: 'AIIO' },
+      { portfolioId: 'pf-awaed', symbol: 'ATYR', ledgerNet: 60 },
+      { portfolioId: 'pf-awaed', symbol: 'AIIO', ledgerNet: 10 },
     ];
     expect(filterUnackedMissingRows(missing, acks).map((r) => r.symbol)).toEqual(['AIIO']);
+
+    // Later buys change ledger net — keep_closed must not permanently hide the gap.
+    expect(
+      filterUnackedMissingRows(
+        [{ portfolioId: 'pf-awaed', symbol: 'ATYR', ledgerNet: 160 }],
+        acks,
+      ),
+    ).toHaveLength(1);
   });
 
   it('ack key normalizes symbol case', () => {

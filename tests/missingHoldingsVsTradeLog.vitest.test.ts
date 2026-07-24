@@ -109,6 +109,45 @@ describe('missing holdings vs trade log', () => {
     expect(classifyMissingLedgerHoldings({ portfolio, transactions: txs })).toEqual([]);
   });
 
+  it('treats zero-quantity holding rows as missing (critical when last leg is buy)', () => {
+    const portfolioWithZero: InvestmentPortfolio = {
+      ...portfolio,
+      holdings: [
+        ...portfolio.holdings,
+        {
+          id: 'h-atyR-closed',
+          symbol: 'ATYR',
+          quantity: 0,
+          avgCost: 1,
+          currentValue: 0,
+          zakahClass: 'Zakatable',
+        },
+      ],
+    };
+    const txs: InvestmentTransaction[] = [
+      {
+        id: 'b1',
+        portfolioId: 'pf1',
+        accountId: 'acc1',
+        date: '2026-01-01',
+        type: 'buy',
+        symbol: 'ATYR',
+        quantity: 1000,
+        price: 1,
+        total: 1000,
+      },
+    ];
+    const rows = classifyMissingLedgerHoldings({ portfolio: portfolioWithZero, transactions: txs });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        symbol: 'ATYR',
+        ledgerNet: 1000,
+        lastLeg: 'buy',
+        likelyOpen: true,
+      }),
+    ]);
+  });
+
   it('listMissingLedgerHoldingsAcrossPortfolios sorts likelyOpen first', () => {
     const data = {
       investments: [portfolio],

@@ -96,13 +96,13 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false }) => {
     );
   };
 
-  const keepClosed = (r: { portfolioId: string; symbol: string }) => {
+  const keepClosed = (r: { portfolioId: string; symbol: string; ledgerNet: number }) => {
     const next = acknowledgeHoldingsIntegrity({
       userId,
       portfolioId: r.portfolioId,
       symbol: r.symbol,
       kind: 'keep_closed',
-      storedQty: 0,
+      storedQty: r.ledgerNet,
     });
     setAcks(next);
     toast(`Kept ${r.symbol} closed — will not re-open from ledger.`, 'success');

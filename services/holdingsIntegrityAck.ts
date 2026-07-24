@@ -1,7 +1,8 @@
 /**
  * Persist "Keep stored" / "Keep closed" acknowledgments for holdings qty integrity.
  * Stored holdings remain the calculation source of truth; these acks only dismiss repair UI noise.
- * Ack fingerprint includes stored qty (or closed) so a later trade that changes qty resurfaces drift.
+ * Ack fingerprint includes stored qty (keep_stored) or ledger net (keep_closed) so a later trade
+ * that changes qty / ledger resurfaces the prompt.
  */
 const STORAGE_PREFIX = 'finova_holdings_qty_ack_v1:';
 
@@ -11,7 +12,7 @@ export type HoldingsIntegrityAckEntry = {
   portfolioId: string;
   symbol: string;
   kind: HoldingsIntegrityAckKind;
-  /** Round stored qty at ack time; for keep_closed use 0. */
+  /** Round stored qty (keep_stored) or ledger net (keep_closed) at ack time. */
   storedQtyFingerprint: number;
   at: string;
 };
@@ -118,7 +119,7 @@ export function filterUnackedDriftRows<
 }
 
 export function filterUnackedMissingRows<
-  T extends { portfolioId: string; symbol: string },
+  T extends { portfolioId: string; symbol: string; ledgerNet: number },
 >(rows: T[], acks: HoldingsIntegrityAckMap): T[] {
   return rows.filter(
     (r) =>
@@ -127,7 +128,7 @@ export function filterUnackedMissingRows<
         portfolioId: r.portfolioId,
         symbol: r.symbol,
         kind: 'keep_closed',
-        storedQty: 0,
+        storedQty: r.ledgerNet,
       }),
   );
 }

@@ -49,6 +49,17 @@ describe('trusted holding market price persistence', () => {
     expect(block).not.toMatch(/update\(\{[^}]*quantity/);
   });
 
+  it('local memory patch honors RPC skips when DB has a newer price_updated_at', () => {
+    const context = read('context/DataContext.tsx');
+    const start = context.indexOf('const batchUpdateHoldingValues = async');
+    const block = context.slice(start, context.indexOf('const recordTrade = async', start));
+    expect(block).toContain('const affected = Number(rpcResult.data)');
+    expect(block).toContain('affected === 0');
+    expect(block).toContain('affected < safeUpdates.length');
+    expect(block).toContain(".select('id, current_value, current_price, price_updated_at')");
+    expect(block).toContain('appliedUpdates');
+  });
+
   it('migration adds price fields and a user-scoped latest-wins RPC', () => {
     const migration = read(
       'supabase/migrations/20260725120000_holdings_market_price_persistence.sql',
