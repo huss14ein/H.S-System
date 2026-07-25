@@ -4,7 +4,7 @@
   publish = "dist"
 
 [build.environment]
-  NODE_VERSION = "20"
+  NODE_VERSION = "24"
   VITE_CANONICAL_APP_URL = "https://finova-hussein.netlify.app"
   # Netlify injects COMMIT_REF — vite.config.ts uses it for finova-build-sha in index.html.
 

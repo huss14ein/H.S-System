@@ -58,6 +58,7 @@ describe('deploy completion — Wealth Analytics + production hosts', () => {
 
   it('GitHub deploy workflow ensures production serves push sha (no stale alias)', () => {
     const wf = read('.github/workflows/deploy-production.yml');
+    expect(wf).toContain('node-version: 24');
     expect(wf).toContain('Wealth Analytics');
     expect(wf).toContain('finova-build-sha');
     expect(wf).toContain('Ensure production serves this commit');
@@ -68,6 +69,7 @@ describe('deploy completion — Wealth Analytics + production hosts', () => {
 
   it('Netlify build self-publishes production alias when NETLIFY_AUTH_TOKEN is set', () => {
     const toml = read('netlify.toml');
+    expect(toml).toContain('NODE_VERSION = "24"');
     expect(toml).toContain('npm run build');
     expect(toml).toContain('netlify-self-publish.mjs');
     expect(toml).not.toContain('npm run test');
