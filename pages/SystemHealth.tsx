@@ -49,7 +49,14 @@ type SystemHealthTab = 'apis' | 'data' | 'developer';
 
 const HASH_TO_TAB = (hash: string): SystemHealthTab => {
   const h = hash.replace(/^#/, '');
-  if (h === 'data-reconciliation' || h === 'investment-kpi-reconciliation' || h === 'holdings-qty-integrity') return 'data';
+  if (
+    h === 'data-reconciliation' ||
+    h === 'investment-kpi-reconciliation' ||
+    h === 'holdings-qty-integrity' ||
+    h === 'reconciliation-audit-log'
+  ) {
+    return 'data';
+  }
   if (h === 'developer') return 'developer';
   return 'apis';
 };
@@ -410,7 +417,14 @@ const SystemHealth: React.FC<{
 
   const scrollToHashTarget = useCallback((hash: string) => {
     const id = hash.replace(/^#/, '');
-    if (id !== 'investment-kpi-reconciliation' && id !== 'data-reconciliation' && id !== 'holdings-qty-integrity') return;
+    if (
+      id !== 'investment-kpi-reconciliation' &&
+      id !== 'data-reconciliation' &&
+      id !== 'holdings-qty-integrity' &&
+      id !== 'reconciliation-audit-log'
+    ) {
+      return;
+    }
     window.requestAnimationFrame(() => {
       document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });

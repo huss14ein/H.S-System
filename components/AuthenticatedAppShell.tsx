@@ -50,7 +50,12 @@ function decodeHashPage(): string {
 
 /** Hash anchors that denote a section on System Health (not standalone page names). */
 function isSystemHealthSectionHash(decoded: string): boolean {
-  return decoded === 'data-reconciliation' || decoded === 'investment-kpi-reconciliation' || decoded === 'developer';
+  return (
+    decoded === 'data-reconciliation' ||
+    decoded === 'investment-kpi-reconciliation' ||
+    decoded === 'reconciliation-audit-log' ||
+    decoded === 'developer'
+  );
 }
 
 function getPageFromHash(): Page | null {

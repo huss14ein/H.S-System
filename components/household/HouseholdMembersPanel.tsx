@@ -69,6 +69,7 @@ const HouseholdMembersPanel: React.FC = () => {
         });
         if (error && error.code !== 'PGRST205') {
           toast(`Could not save member: ${error.message}`, 'error');
+          return;
         }
       }
       applyFinancialDataPatch((prev) => ({
@@ -111,6 +112,7 @@ const HouseholdMembersPanel: React.FC = () => {
         });
         if (error && error.code !== 'PGRST205') {
           toast(`Could not save allocation: ${error.message}`, 'error');
+          return;
         }
       }
       applyFinancialDataPatch((prev) => ({

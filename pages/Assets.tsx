@@ -638,6 +638,22 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const assetsList = (data as any)?.personalAssets ?? data?.assets ?? [];
     const commodityList = (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [];
 
+    useEffect(() => {
+        if (!pageAction || !pageAction.startsWith('open-revalue')) return;
+        if (!canRevalue) {
+            toast('Your role cannot post reconciliation adjustments.', 'error');
+            clearPageAction?.();
+            return;
+        }
+        const requestedId = pageAction.includes(':') ? pageAction.split(':').slice(1).join(':') : '';
+        const target = requestedId
+            ? (assetsList as Asset[]).find((a) => a.id === requestedId) ?? null
+            : (assetsList as Asset[])[0] ?? null;
+        if (target) setRevalueTarget({ kind: 'asset', asset: target });
+        else toast('No physical asset found to revalue.', 'info');
+        clearPageAction?.();
+    }, [pageAction, clearPageAction, canRevalue, assetsList]);
+
     const { totalAssetValue, totalPhysicalAssetValue, totalCommodityValue, totalRentalIncome } = useMemo(() => {
         const physicalValue = assetsList.reduce((sum: number, asset: { value?: number }) => sum + (asset.value ?? 0), 0);
         const commodityValue = commoditiesValueSar;

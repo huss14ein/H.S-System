@@ -77,8 +77,8 @@ const HoldingLotsPanel: React.FC<Props> = ({ symbol, portfolioId, compact = fals
                 <tr key={l.id} className="border-t border-slate-100">
                   <td className="py-1 pr-3">{String(l.acquisitionDate).slice(0, 10)}</td>
                   <td className="py-1 pr-3">{qty.toLocaleString()}</td>
-                  <td className="py-1 pr-3">{formatCurrencyString(cost, { digits: 2 })}</td>
-                  <td className="py-1 pr-3">{formatCurrencyString(qty * cost, { digits: 0 })}</td>
+                  <td className="py-1 pr-3">{formatCurrencyString(cost, { digits: 2, inCurrency: l.bookCurrency })}</td>
+                  <td className="py-1 pr-3">{formatCurrencyString(qty * cost, { digits: 0, inCurrency: l.bookCurrency })}</td>
                   <td className="py-1">{l.bookCurrency}</td>
                 </tr>
               );
