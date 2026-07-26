@@ -51,6 +51,7 @@ import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import ReconcileBalanceModal from '../components/reconciliation/ReconcileBalanceModal';
 import { portfolioIdsForAccount } from '../services/reconciliation';
+import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import { toast } from '../context/ToastContext';
 
 type SharedAccountRow = Account & { ownerEmail?: string; owner_user_id?: string; account_id?: string; show_balance?: boolean };
@@ -503,8 +504,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
         if (!pageAction || !pageAction.startsWith('open-reconcile-balance')) return;
         if (!canReconcileBalances) {
             toast('Your role cannot post reconciliation adjustments.', 'error');
-            clearPageAction?.();
-            return;
+            return scheduleClearPageAction(clearPageAction);
         }
         const requestedId = pageAction.includes(':') ? pageAction.split(':')[1] : '';
         const candidates = [...orderedCashAccounts, ...orderedCreditAccounts, ...orderedInvestmentAccounts];
@@ -513,7 +513,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
             : candidates[0] ?? null;
         if (target) setReconcileAccount(target);
         else toast('Add a cash, credit, or investment account first to reconcile a balance.', 'info');
-        clearPageAction?.();
+        return scheduleClearPageAction(clearPageAction);
     }, [pageAction, clearPageAction, canReconcileBalances, orderedCashAccounts, orderedCreditAccounts, orderedInvestmentAccounts]);
     const accountValidationWarnings = useMemo(() => {
         const warnings: string[] = [];

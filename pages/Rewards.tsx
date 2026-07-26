@@ -86,7 +86,7 @@ const Rewards: React.FC<RewardsPageProps> = ({ pageAction, clearPageAction }) =>
       setShowCreate(true);
       return scheduleClearPageAction(clearPageAction);
     }
-    scheduleClearPageAction(clearPageAction);
+    return scheduleClearPageAction(clearPageAction);
   }, [pageAction, accounts, clearPageAction, expiring.length, toast]);
 
   const handleCreate = async () => {

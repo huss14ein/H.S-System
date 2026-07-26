@@ -25,6 +25,7 @@ import { useConfirmAction } from '../hooks/useConfirmAction';
 import { summarizeCommodityForConfirm } from '../utils/recordConfirmMessages';
 import RevaluationModal from '../components/reconciliation/RevaluationModal';
 import { AuthContext } from '../context/AuthContext';
+import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import { toast } from '../context/ToastContext';
 
 const CommodityHoldingModal: React.FC<{
@@ -337,8 +338,7 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage, pageAction, cl
         if (!pageAction || !pageAction.startsWith('open-revalue')) return;
         if (!canRevalue) {
             toast('Your role cannot post reconciliation adjustments.', 'error');
-            clearPageAction?.();
-            return;
+            return scheduleClearPageAction(clearPageAction);
         }
         const requestedId = pageAction.includes(':') ? pageAction.split(':').slice(1).join(':') : '';
         const target = requestedId
@@ -346,7 +346,7 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage, pageAction, cl
             : (commodityRows as CommodityHolding[])[0] ?? null;
         if (target) setRevalueHolding(target);
         else toast('No commodity found to revalue.', 'info');
-        clearPageAction?.();
+        return scheduleClearPageAction(clearPageAction);
     }, [pageAction, clearPageAction, canRevalue, commodityRows]);
 
     const commoditiesAiContext = useMemo(

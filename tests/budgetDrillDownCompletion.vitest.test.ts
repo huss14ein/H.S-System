@@ -185,6 +185,10 @@ describe('budgetDrillDownCompletion', () => {
       'pages/EnginesAndToolsHub.tsx',
       'pages/Notifications.tsx',
       'pages/DividendTrackerView.tsx',
+      'pages/Accounts.tsx',
+      'pages/Liabilities.tsx',
+      'pages/Commodities.tsx',
+      'pages/Rewards.tsx',
     ];
     for (const p of pages) {
       const src = read(p);

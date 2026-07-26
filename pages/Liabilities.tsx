@@ -12,6 +12,7 @@ import { HomeIcon } from '../components/icons/HomeIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { PencilIcon } from '../components/icons/PencilIcon';
 import RevaluationModal from '../components/reconciliation/RevaluationModal';
+import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import { toast } from '../context/ToastContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -480,8 +481,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage, pageAction, cl
         if (!pageAction || !pageAction.startsWith('open-restate')) return;
         if (!canRestate) {
             toast('Your role cannot post reconciliation adjustments.', 'error');
-            clearPageAction?.();
-            return;
+            return scheduleClearPageAction(clearPageAction);
         }
         const requestedId = pageAction.includes(':') ? pageAction.split(':').slice(1).join(':') : '';
         const candidates = [...allDebts, ...allReceivables].filter((l) => liabilityIds.has(l.id));
@@ -490,7 +490,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage, pageAction, cl
             : candidates[0] ?? null;
         if (target) setRestateLiability(target);
         else toast('No liability found to restate.', 'info');
-        clearPageAction?.();
+        return scheduleClearPageAction(clearPageAction);
     }, [pageAction, clearPageAction, canRestate, allDebts, allReceivables, liabilityIds]);
 
     /** Checking + savings only, SAR equivalent (mixed USD/SAR accounts). */
